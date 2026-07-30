@@ -1,0 +1,34 @@
+# Dependency Review Action
+#
+# Scans dependency manifest files that change as part of a Pull Request,
+# surfacing known-vulnerable versions of the packages declared or updated.
+# In this repository the dependency graph covers GitHub Actions workflow
+# dependencies only (JUCE arrives via CMake FetchContent, which the graph does
+# not index), so this gate primarily vets action version changes -- including
+# the weekly grouped Dependabot bumps.
+#
+# Source repository: https://github.com/actions/dependency-review-action
+name: 'Dependency review'
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+  # Write permissions for pull-requests are required for the
+  # `comment-summary-in-pr` option below.
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v7
+      - name: 'Dependency Review'
+        uses: actions/dependency-review-action@v5
+        with:
+          # Comment only when the review fails; most PRs here change no
+          # dependency manifests at all and an unconditional summary comment on
+          # every PR is pure noise. Results always appear in the Checks tab.
+          comment-summary-in-pr: on-failure

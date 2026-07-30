@@ -1,0 +1,8 @@
+Placeholder. Source lands at P1 (docs/DEVELOPMENT_BRIEF.md §11, §24).
+
+Layout (docs/REPOSITORY_MAP.md):
+  src/           wrapper + editor (global namespace)
+  src/dsp/       format-agnostic DSP core, namespace anabasis, AnabasisDSP INTERFACE lib
+  src/gui/       LookAndFeel + visualisers
+
+Do not write DSP code before DESIGN.md is signed off.

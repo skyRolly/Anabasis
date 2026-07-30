@@ -1,0 +1,8 @@
+Session-local investigation records for future agents.
+
+NOT architecture docs and never citable as policy (docs/SOURCE_OF_TRUTH.md).
+A worklog holds the raw evidence trail: what was measured, on what material,
+which alternatives were tried and why they were rejected. Finalized decisions
+graduate to ADRs, which cite the worklog.
+
+A decision recorded without its rejected alternatives is not reviewable.

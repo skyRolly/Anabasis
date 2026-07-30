@@ -1,0 +1,7 @@
+Placeholder. The format-agnostic DSP core (AnabasisDSP INTERFACE library).
+
+Depends only on juce_dsp / juce_audio_basics -- never on the plugin wrapper or
+any GUI header (docs/policies/DSP_POLICY.md invariant 13).
+
+One module per signal-chain stage; the chain order is fixed by
+docs/policies/DSP_POLICY.md invariant 1.

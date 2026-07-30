@@ -1,0 +1,7 @@
+Placeholder. Tests land at P1.
+
+  tests/dsp_tests.cpp    -> AnabasisTests       (DSP acceptance suite)
+  tests/state_tests.cpp  -> AnabasisStateTests  (state/parameter compatibility)
+
+Harness: a dependency-free check(cond, "what") counter; main() runs every test;
+non-zero exit on any failure. See docs/procedures/TESTING.md.

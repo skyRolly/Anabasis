@@ -1,0 +1,9 @@
+Placeholder for compatibility fixtures:
+
+  parameter_registry.snapshot   frozen parameter surface; re-written ONLY via
+                                AnabasisStateTests --write-snapshot, and ONLY for
+                                an INTENTIONAL parameter change.
+  <legacy session XMLs>         one frozen session per shipped state format.
+
+Freeze the first snapshot as soon as the parameter layout exists
+(docs/policies/PARAMETER_COMPATIBILITY_POLICY.md).

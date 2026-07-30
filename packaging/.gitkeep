@@ -1,0 +1,5 @@
+Placeholder. Per-platform install notes + installer assets land at P6
+(linux/, windows/, macos/).
+
+Whether v0.1.0 ships installers or plain zips is an open decision --
+docs/OPEN_QUESTIONS.md OQ-007.

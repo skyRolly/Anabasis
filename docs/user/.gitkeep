@@ -1,0 +1,5 @@
+Placeholder. End-user documentation (USER_MANUAL.md, INSTALLATION.md) lands at P6.
+
+User documentation is DERIVED: it describes what the code and the developer
+documentation chain establish, and is corrected on any conflict. It is never
+evidence for a technical claim (docs/SOURCE_OF_TRUTH.md).
