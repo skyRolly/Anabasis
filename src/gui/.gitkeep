@@ -1,0 +1,6 @@
+Placeholder. LookAndFeel + visualisers (primary knob, GR history, LUFS/dBTP
+meters, transfer-curve display, spectrum overlay).
+
+Structural elements shared with Anamorph (frame, About page, Settings page,
+Bypass placement, typography, colours, preset/A-B interaction) must match --
+docs/BRAND_CONSISTENCY_CHECKLIST.md is the P5 exit criterion.

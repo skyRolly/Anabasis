@@ -1,0 +1,159 @@
+name: Test report — bug
+description: Something in this Anabasis test build behaves incorrectly, crashes, or will not load.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Anabasis is **closed-source commercial software** currently in **pre-release development**.
+        Before filing, check
+        [`docs/KNOWN_ISSUES.md`](../blob/main/docs/KNOWN_ISSUES.md) — the problem may already be a
+        documented limitation with a workaround.
+
+        ⚠ **This tracker is public.** Attach nothing you are not willing to publish. If you were
+        given a private channel for this testing round, use it for anything else.
+
+        **There is no log file.** Anabasis writes no diagnostic output, so the fields below are
+        what make a report reproducible.
+
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What went wrong, and what you expected instead.
+      placeholder: |
+        Expected: ...
+        Actually: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >
+        The shortest sequence that shows the problem, starting from a freshly inserted instance on
+        a new track. If it only happens with a specific preset, source material or session, say so.
+      placeholder: |
+        1. Insert Anabasis on a stereo master bus
+        2. Load the "Transparent Master" preset
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Anabasis version and build number
+      description: >
+        The About screen shows "Version x.y.z   build N" — please give both.
+      placeholder: "Version 0.1.0   build 137"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: format
+    attributes:
+      label: Plug-in format
+      options:
+        - VST3
+        - AU (macOS only)
+        - Standalone application
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: >
+        On Apple Silicon, whether the host runs natively or under Rosetta matters — some issues
+        only appear in one of the two.
+      options:
+        - Windows (x86-64)
+        - macOS — Apple Silicon, host running natively (arm64)
+        - macOS — Apple Silicon, host running under Rosetta (x86_64)
+        - macOS — Intel
+        - Linux (x86-64)
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "Windows 11 24H2 / macOS 15.3 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: input
+    id: daw
+    attributes:
+      label: DAW and version
+      description: >
+        Several issues are host-specific, so the exact version matters. Put "n/a" if you are using
+        the Standalone application.
+      placeholder: "REAPER 7.22 / Logic Pro 11.1 / Ableton Live 12.1"
+    validations:
+      required: true
+
+  - type: input
+    id: audio-settings
+    attributes:
+      label: Sample rate and buffer size
+      description: Needed for any audio problem (clicks, dropouts, CPU, latency, overshoot).
+      placeholder: "48 kHz, 256 samples"
+
+  - type: dropdown
+    id: oversampling
+    attributes:
+      label: Oversampling setting
+      description: >
+        In the Settings page. This is session state, not a host parameter, so it cannot be
+        recovered from anything you attach — and it is the single biggest influence on CPU and on
+        the reported latency.
+      options:
+        - "Off"
+        - "2x"
+        - "4x"
+        - "8x"
+        - "16x"
+        - "Don't know / not relevant"
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode were you in?
+      options:
+        - Simple
+        - Advanced
+        - "Both / it happens when switching between them"
+        - "Don't know"
+
+  - type: input
+    id: ceiling-and-push
+    attributes:
+      label: Ceiling and Loudness/Push settings
+      description: >
+        For any loudness, distortion or overshoot report these two decide almost everything.
+      placeholder: "Ceiling -1.0 dBTP, Push 78"
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, screen recording, audio example, or anything else
+      description: >
+        Drag files in here. For a metering or visual problem a screenshot is worth far more than a
+        description. For an audio problem, a short source excerpt that reproduces it is the single
+        most useful attachment. For a crash, say whether it is reproducible and attach the host's
+        crash report if you have one.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Quick checks
+      description: These account for a large share of reports. Please try them first.
+      options:
+        - label: I forced a plug-in rescan in my DAW (and cleared any blocklist/failed-scan entry for Anabasis).
+        - label: I compared **loudness-matched** — using the plug-in's loudness-compensated monitoring, not raw bypass. (An uncompensated A/B always favours the louder version.)
+        - label: If it sounds like pumping or breathing, I checked whether engaging **Freeze** removes it.

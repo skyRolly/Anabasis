@@ -1,0 +1,20 @@
+# Build output
+/build/
+build*/
+cmake-build-*/
+
+# Fetched tooling
+/.tools/
+
+# JUCE fetch cache (if any local)
+_deps/
+
+# CI staging
+/dist/
+
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/
+*.user
+*.swp

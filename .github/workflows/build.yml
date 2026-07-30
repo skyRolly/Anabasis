@@ -1,0 +1,557 @@
+name: Build & Validate
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+  workflow_dispatch:
+  # Lets a future release.yml REUSE this exact build+validation matrix on a
+  # release tag (single build, same gates, artifacts land in the caller run).
+  # Purely additive -- branch/PR/dispatch behaviour is unchanged, and tag
+  # pushes still do not trigger THIS workflow (the `branches` filter excludes
+  # tag events).
+  workflow_call:
+
+permissions:
+  contents: read
+
+# ---------------------------------------------------------------------------
+# pluginval strictness escalates with the project phase, and lives in ONE place
+# so raising the bar is a one-line edit (docs/policies/TESTING_POLICY.md):
+#
+#     P1-P2 (skeleton, DSP core)   -> 5   development bar
+#     P3-P5 (metering, adaptive, UI) -> 8 standard gate
+#     P6 / every release           -> 10  pre-release gold standard, REQUIRED
+#
+# Lowering it below the current phase's value is a deliberate act that must be
+# justified in the PR.
+# ---------------------------------------------------------------------------
+env:
+  ANABASIS_PLUGINVAL_STRICTNESS: 5
+
+# Every push builds the FULL set of formats on all three desktop OSes so beta
+# testers can install on any platform:
+#   * Linux   -> VST3 + Standalone
+#   * Windows -> VST3 + Standalone
+#   * macOS   -> VST3 + AU + Standalone  (universal arm64 + x86_64)
+#
+# Validation is UNIFORM across all three platforms and BLOCKING on each:
+# pluginval at the phase strictness, run in two explicit modes -- deterministic
+# and randomise -- each repeated 3 consecutive times (scripts/run-pluginval.sh on
+# Linux/macOS, scripts/run-pluginval.ps1 on Windows). A non-zero pluginval exit
+# fails the job on every platform (no continue-on-error / swallowed exit codes).
+# Both mode steps ALWAYS run: the randomise step is guarded with `if: !cancelled()`
+# so a deterministic failure never SKIPS randomise -- both modes always report
+# independently. The job still fails if either mode fails.
+#
+# Symbol handling: every platform generates full debug info, retains it as a
+# separate *-debug artifact (split .debug / PDB / dSYM) for crash symbolication,
+# and ships STRIPPED public binaries. On Linux the strip runs before pluginval so
+# the release gate validates the shipped bytes. On macOS the dSYM capture is
+# BEST-EFFORT: under Release+LTO the DWARF needed for dSYM reconstruction may no
+# longer exist at packaging time, in which case the -debug upload is skipped with
+# a warning while the customer artifacts ship normally.
+#
+# Customer uploads are gated on the self-tests AND their strip/packaging steps
+# SUCCEEDING (never `if: always()`), and the staging steps self-validate (no
+# symbol table, no debug files in the public copy) -- neither a partial packaging
+# failure nor a failed behavioural gate can ship a customer artifact. Developer
+# *-debug artifacts and (on pluginval-only failures) beta artifacts remain
+# available.
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Pre-P1 guard. This repository is currently a scaffold: the governance docs,
+  # scripts and workflows exist, but there is no CMakeLists.txt and no src/
+  # (docs/DEVELOPMENT_BRIEF.md §11 -- the build lands at P1). Without this
+  # check every push would report a red build for a project that has not been
+  # written yet, which trains everyone to ignore CI.
+  #
+  # The moment CMakeLists.txt appears this job outputs ready=true and becomes a
+  # permanent no-op; it may then be deleted, but does no harm if left.
+  # -------------------------------------------------------------------------
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        shell: bash
+        run: |
+          if [ -f CMakeLists.txt ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CMakeLists.txt yet (pre-P1 scaffold) -- build and validation jobs are skipped."
+          fi
+
+  linux:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/setup-linux.sh
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build (VST3 + Standalone + tests)
+        run: cmake --build build --config Release
+
+      # Capture split debug info, then strip the shipped binaries. Runs BEFORE
+      # pluginval so the release gate validates the exact stripped bytes users
+      # receive. --strip-unneeded keeps .dynsym (the VST3 entry points hosts
+      # resolve); the .debug files carry the full symbol/debug info for crash
+      # symbolication and ship as a SEPARATE artifact, never inside the public one.
+      - name: Extract debug symbols + strip shipped binaries
+        id: strip
+        run: |
+          set -e
+          SO="build/Anabasis_artefacts/Release/VST3/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so"
+          APP="build/Anabasis_artefacts/Release/Standalone/Anabasis"
+          DBG="dist/Anabasis-Linux-debug"
+          mkdir -p "$DBG"
+          objcopy --only-keep-debug "$SO"  "$DBG/Anabasis.vst3.so.debug"
+          objcopy --only-keep-debug "$APP" "$DBG/Anabasis.standalone.debug"
+          strip --strip-unneeded "$SO"
+          strip --strip-unneeded "$APP"
+          objcopy --add-gnu-debuglink="$DBG/Anabasis.vst3.so.debug"    "$SO"
+          objcopy --add-gnu-debuglink="$DBG/Anabasis.standalone.debug" "$APP"
+          # Verify the strip: no static symbol table left, and the plugin must
+          # still export its VST3 entry point from .dynsym.
+          for BIN in "$SO" "$APP"; do
+            if readelf -S "$BIN" | grep -q '\.symtab'; then
+              echo "::error::$BIN still carries a .symtab after strip"; exit 1
+            fi
+          done
+          nm -D "$SO" | grep -q GetPluginFactory
+
+      - name: Self-tests (DSP + state)
+        id: tests
+        run: ./scripts/run-tests.sh
+
+      - name: pluginval (deterministic x3 -- release gate)
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
+
+      - name: pluginval (randomise x3 -- release gate)
+        # NEVER skipped: run the randomise gate even if the deterministic gate above failed, so both
+        # modes always report independently (a deterministic failure must not hide the randomise result).
+        # The job still fails if either gate fails; !cancelled() only skips on an actual run cancellation.
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
+
+      # Customer-artifact safety: staging and upload are gated on the strip step
+      # having SUCCEEDED -- never `if: always()` -- so an unstripped binary cannot
+      # reach the public artifact if stripping fails. `!cancelled()` (not plain
+      # success()) keeps the beta artifact available when only pluginval failed.
+      # The staging step additionally self-validates the artifact it just built.
+      - name: Stage Linux artifacts (VST3 + Standalone)
+        id: stage
+        if: ${{ !cancelled() && steps.strip.outcome == 'success' }}
+        run: |
+          set -e
+          DIST="dist/Anabasis-Linux"
+          mkdir -p "$DIST"
+          cp -R build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 "$DIST/"
+          cp    build/Anabasis_artefacts/Release/Standalone/Anabasis "$DIST/Anabasis"
+          # Installer scripts + INSTALL.txt are added at P6 (packaging/).
+          # The customer artifact must contain no symbol table and no debug files.
+          while IFS= read -r -d '' ELF; do
+            if readelf -S "$ELF" 2>/dev/null | grep -q '\.symtab'; then
+              echo "::error::customer artifact contains an unstripped binary: $ELF"; exit 1
+            fi
+          done < <(find "$DIST" -type f \( -name 'Anabasis*' -o -name '*.so' \) -print0)
+          if find "$DIST" -type f \( -name '*.debug' -o -name '*.pdb' -o -name '*.dSYM' \) | grep -q .; then
+            echo "::error::customer artifact contains debug files"; exit 1
+          fi
+          # ONE artifact ships from this validated staging dir: Anabasis-Linux
+          # uploads the staged FILES themselves, so the zip GitHub serves contains
+          # the payload directly -- extract once, no wrapper folder, no nested
+          # archive. NOTE: the artifact transport does NOT preserve Unix file
+          # modes; a P6 release.yml must restore the executable bits before
+          # archiving the published release zip, behind a fail-closed self-check.
+
+      # A failed self-test blocks the CUSTOMER upload (fail-closed: only a build
+      # that passed its behavioural gate may ship), while a pluginval-only
+      # failure still yields beta artifacts.
+      - name: Upload Linux artifacts
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anabasis-Linux
+          path: dist/Anabasis-Linux
+          if-no-files-found: error
+
+      # Developer debug artifacts are preserved even when a later step fails
+      # (they never contain customer-facing binaries), but not if the strip step
+      # never ran at all.
+      - name: Upload Linux debug symbols (crash symbolication)
+        if: ${{ !cancelled() && steps.strip.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anabasis-Linux-debug
+          path: dist/Anabasis-Linux-debug
+          if-no-files-found: error
+
+  windows:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Default Visual Studio generator (multi-config); MSVC is auto-detected.
+      - name: Configure
+        run: cmake -B build -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build (VST3 + Standalone + tests)
+        run: cmake --build build --config Release
+
+      - name: Self-tests (DSP + state)
+        id: tests
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse -Path build -Filter AnabasisTests.exe | Select-Object -First 1
+          if (-not $exe) { Write-Error 'AnabasisTests.exe not found'; exit 1 }
+          & $exe.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $stateExe = Get-ChildItem -Recurse -Path build -Filter AnabasisStateTests.exe | Select-Object -First 1
+          if (-not $stateExe) { Write-Error 'AnabasisStateTests.exe not found'; exit 1 }
+          & $stateExe.FullName
+
+      - name: pluginval (deterministic x3 -- release gate)
+        shell: pwsh
+        run: ./scripts/run-pluginval.ps1 -Strictness ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} -Mode deterministic
+
+      - name: pluginval (randomise x3 -- release gate)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./scripts/run-pluginval.ps1 -Strictness ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} -Mode randomise
+
+      # Release links with /DEBUG (+/OPT:REF,ICF), so linker PDBs exist for the
+      # shipped images. They are retained as a SEPARATE debug artifact for crash
+      # symbolication and are actively removed from the public artifact.
+      #
+      # Customer-artifact safety: the order below is deliberate -- locate
+      # everything BEFORE copying anything, purge every debug file from the
+      # public copy IMMEDIATELY after the copy, and only then run steps that can
+      # abort (PDB retention, validation). A failure at any point can therefore
+      # never leave a symbol-bearing public artifact behind, and the upload below
+      # is additionally gated on this step succeeding.
+      #
+      # PDB location: the linker does NOT necessarily drop each image's PDB
+      # beside the shipped binary under the same name -- JUCE retargets
+      # RUNTIME/LIBRARY_OUTPUT_DIRECTORY for the .vst3/.exe but PDB_OUTPUT_DIRECTORY
+      # is never set, so /PDB: falls back to the target's own CMake binary
+      # directory under $(TargetName). Rather than guess a path, the PDB is
+      # identified from the authoritative source: the CodeView (RSDS)
+      # debug-directory record MSVC embeds in the linked image itself, which
+      # carries the PDB's exact link-time name and path.
+      - name: Stage Windows artifacts (VST3 + Standalone; PDBs separated)
+        id: stage_windows
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = 'dist/Anabasis-Windows'
+          $dbg  = 'dist/Anabasis-Windows-debug'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          New-Item -ItemType Directory -Force -Path $dbg  | Out-Null
+
+          # Read the CodeView (RSDS) debug-directory record MSVC embeds in a
+          # /DEBUG-linked PE image, returning the PDB path exactly as the linker
+          # recorded it (or $null if the image carries no debug directory).
+          function Get-EmbeddedPdbPath {
+            param([Parameter(Mandatory)][string]$ImagePath)
+            $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
+            if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+              Write-Error "$ImagePath is not a valid PE image (missing MZ signature)"
+            }
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            if ($bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45) {
+              Write-Error "$ImagePath is not a valid PE image (missing PE signature)"
+            }
+            $coffOffset = $peOffset + 4
+            $numberOfSections = [BitConverter]::ToUInt16($bytes, $coffOffset + 2)
+            $sizeOfOptionalHeader = [BitConverter]::ToUInt16($bytes, $coffOffset + 16)
+            $optHeaderOffset = $coffOffset + 20
+            $magic = [BitConverter]::ToUInt16($bytes, $optHeaderOffset)
+            $dataDirOffset = $optHeaderOffset + $(if ($magic -eq 0x20B) { 112 } else { 96 })
+            $debugEntryOffset = $dataDirOffset + (6 * 8)   # data-directory index 6 = Debug
+            $debugRva  = [BitConverter]::ToUInt32($bytes, $debugEntryOffset)
+            $debugSize = [BitConverter]::ToUInt32($bytes, $debugEntryOffset + 4)
+            if ($debugRva -eq 0 -or $debugSize -eq 0) { return $null }
+            # Map the debug directory's RVA to a file offset via the section table.
+            $sectionTableOffset = $optHeaderOffset + $sizeOfOptionalHeader
+            $debugFileOffset = -1
+            for ($i = 0; $i -lt $numberOfSections; $i++) {
+              $s = $sectionTableOffset + ($i * 40)
+              $vsize = [BitConverter]::ToUInt32($bytes, $s + 8)
+              $vaddr = [BitConverter]::ToUInt32($bytes, $s + 12)
+              $rawPtr = [BitConverter]::ToUInt32($bytes, $s + 20)
+              if ($debugRva -ge $vaddr -and $debugRva -lt ($vaddr + [Math]::Max($vsize, 1))) {
+                $debugFileOffset = $rawPtr + ($debugRva - $vaddr); break
+              }
+            }
+            if ($debugFileOffset -lt 0) {
+              Write-Error "$ImagePath : could not map the debug directory RVA to a file offset"
+            }
+            # Walk the IMAGE_DEBUG_DIRECTORY array (28 bytes/entry) for an
+            # IMAGE_DEBUG_TYPE_CODEVIEW (2) entry carrying an RSDS record.
+            $entryCount = [Math]::Floor($debugSize / 28)
+            for ($i = 0; $i -lt $entryCount; $i++) {
+              $e = $debugFileOffset + ($i * 28)
+              $type = [BitConverter]::ToUInt32($bytes, $e + 12)
+              $pointerToRaw = [BitConverter]::ToUInt32($bytes, $e + 24)
+              if ($type -eq 2 -and $pointerToRaw -gt 0) {
+                $sig = [BitConverter]::ToUInt32($bytes, $pointerToRaw)
+                if ($sig -eq 0x53445352) {   # 'RSDS'
+                  # Signature(4) + GUID(16) + Age(4), then a NUL-terminated path.
+                  $strStart = $pointerToRaw + 24
+                  $strEnd = $strStart
+                  while ($strEnd -lt $bytes.Length -and $bytes[$strEnd] -ne 0) { $strEnd++ }
+                  return [System.Text.Encoding]::ASCII.GetString($bytes, $strStart, $strEnd - $strStart)
+                }
+              }
+            }
+            return $null
+          }
+
+          # 1) Locate everything first -- an abort here copies NOTHING public.
+          #    Each locate demands EXACTLY ONE match: zero is a build-layout
+          #    failure, more than one is ambiguity we refuse to guess about.
+          $vst3 = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.vst3 -Directory)
+          if ($vst3.Count -ne 1) { Write-Error "expected exactly one Anabasis.vst3 bundle, found $($vst3.Count)" }
+          $vst3 = $vst3[0]
+          $vst3Bin = @(Get-ChildItem -Recurse -Path $vst3.FullName -File | Where-Object { $_.Extension -eq '.vst3' })
+          if ($vst3Bin.Count -ne 1) { Write-Error "expected exactly one .vst3 image inside $($vst3.FullName), found $($vst3Bin.Count)" }
+          $vst3Bin = $vst3Bin[0]
+          $exe = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.exe | Where-Object { $_.Directory.Name -eq 'Standalone' })
+          if ($exe.Count -ne 1) { Write-Error "expected exactly one Standalone Anabasis.exe, found $($exe.Count)" }
+          $exe = $exe[0]
+          # 2) Copy the public artifact. (INSTALL.txt is added at P6.)
+          Copy-Item -Recurse -Force $vst3.FullName $dist
+          Copy-Item -Force $exe.FullName $dist
+          # 3) Purge ALL debug material from the public copy BEFORE any further
+          #    step that can abort.
+          Get-ChildItem -Recurse -Path $dist -File |
+            Where-Object { $_.Extension -in '.pdb', '.ilk', '.exp', '.debug' } |
+            Remove-Item -Force
+          # 4) Retain each shipped image's linker PDB (an abort here is now
+          #    leak-safe), identified via its embedded CodeView record.
+          foreach ($img in @(@{ tag = 'vst3'; bin = $vst3Bin }, @{ tag = 'standalone'; bin = $exe })) {
+            $recordedPdbPath = Get-EmbeddedPdbPath -ImagePath $img.bin.FullName
+            if (-not $recordedPdbPath) {
+              Write-Error ("no CodeView debug-directory entry embedded in " + $img.bin.FullName +
+                           " -- expected one because Release links with /DEBUG (CMakeLists.txt AnabasisHardening); " +
+                           "debug artifact would be wrong/incomplete")
+            }
+            $pdbName = Split-Path -Leaf $recordedPdbPath
+            $pdbFile = $null
+            if (Test-Path -LiteralPath $recordedPdbPath -PathType Leaf) {
+              $pdbFile = Get-Item -LiteralPath $recordedPdbPath
+            } else {
+              $candidates = @(Get-ChildItem -Recurse -Path build -Filter $pdbName -File)
+              if ($candidates.Count -ne 1) {
+                Write-Error ("PDB '" + $pdbName + "' (recorded in " + $img.bin.FullName + "'s debug info at link " +
+                             "time) not found uniquely under build/ -- found " + $candidates.Count +
+                             " -- debug artifact would be wrong/incomplete")
+              }
+              $pdbFile = $candidates[0]
+            }
+            Copy-Item -Force $pdbFile.FullName (Join-Path $dbg ("Anabasis." + $img.tag + ".pdb"))
+          }
+          # 5) Validate: the customer artifact must contain no debug files.
+          $leak = Get-ChildItem -Recurse -Path $dist -File |
+                  Where-Object { $_.Extension -in '.pdb', '.ilk', '.exp', '.debug' }
+          if ($leak) { Write-Error ("customer artifact contains debug files: " + ($leak.FullName -join ', ')) }
+
+      - name: Upload Windows artifacts
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anabasis-Windows
+          path: dist/Anabasis-Windows
+          if-no-files-found: error
+
+      - name: Upload Windows debug symbols (crash symbolication)
+        if: ${{ !cancelled() && steps.stage_windows.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anabasis-Windows-debug
+          path: dist/Anabasis-Windows-debug
+          if-no-files-found: error
+
+  macos:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: macos-14   # Apple Silicon runner; we build a universal binary
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install ninja || true
+
+      - name: Configure (universal arm64 + x86_64)
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build (VST3 + AU + Standalone + tests)
+        run: cmake --build build --config Release
+
+      - name: Self-tests (DSP + state)
+        id: tests
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/run-tests.sh
+
+      - name: pluginval (deterministic x3 -- release gate)
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
+
+      - name: pluginval (randomise x3 -- release gate)
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
+
+      # Order matters -- 1) dsymutil captures a universal dSYM per bundle (the
+      # only crash-symbolication source once stripped), 2) strip -x removes local
+      # symbols, 3) codesign LAST (stripping after signing would invalidate the
+      # seal). Signing and slice verification are NOT '|| true': a failure must
+      # fail the job, not silently ship a broken artifact.
+      #
+      # dsymutil WARNINGS ARE NOT FATAL. Under Release + LTO the DWARF the linked
+      # binary references lives in the linker's TEMPORARY LTO object, already
+      # deleted when dsymutil runs; dsymutil then warns, exits 0, and emits a
+      # dSYM without usable DWARF. That is an expected property of the build
+      # configuration, not a broken customer artifact. dSYM capture is therefore
+      # BEST-EFFORT and judged on its OUTPUT, never on warning text: a produced
+      # dSYM is kept only if its DWARF payload exists, its UUID set matches the
+      # binary's slices exactly, and it carries at least one DWARF compile unit;
+      # anything else is discarded with a ::warning:: and packaging CONTINUES.
+      # The customer pipeline (strip -x -> codesign -> verify) is never blocked by
+      # debug-capture problems. Restoring full macOS symbolication needs the LTO
+      # object persisted via -Wl,-object_path_lto -- a linker-flag change that is
+      # a deliberate future decision, not a silent addition.
+      - name: Package macOS plugins (VST3 + AU + Standalone)
+        id: package
+        if: ${{ !cancelled() }}
+        run: |
+          set -e
+          DIST="dist/Anabasis-macOS"
+          DBG="dist/Anabasis-macOS-debug"
+          mkdir -p "$DIST" "$DBG"
+          VST3="build/Anabasis_artefacts/Release/VST3/Anabasis.vst3"
+          AU="build/Anabasis_artefacts/Release/AU/Anabasis.component"
+          APP="build/Anabasis_artefacts/Release/Standalone/Anabasis.app"
+          USABLE_DSYMS=0
+          for B in "$VST3" "$AU" "$APP"; do
+            BIN="$B/Contents/MacOS/Anabasis"
+            NAME="$(basename "$B")"
+            DSYM="$DBG/$NAME.dSYM"
+            # ---- Best-effort developer dSYM capture: nothing in this block may
+            # abort the job -- failures degrade to a ::warning:: and the dSYM is
+            # discarded. Customer-artifact steps are NOT gated on it.
+            DSYM_OK=1
+            BIN_UUIDS="$(dwarfdump --uuid "$BIN" | awk '{print $2}' | sort)" || BIN_UUIDS=""
+            if [ -z "$BIN_UUIDS" ]; then
+              echo "::warning::$NAME: cannot read Mach-O slice UUIDs -- a dSYM would be unvalidatable, skipping debug capture"
+              DSYM_OK=0
+            fi
+            if [ "$DSYM_OK" -eq 1 ]; then
+              DSYMUTIL_LOG="$(mktemp)"
+              if ! dsymutil "$BIN" -o "$DSYM" >"$DSYMUTIL_LOG" 2>&1; then
+                cat "$DSYMUTIL_LOG"
+                echo "::warning::$NAME: dsymutil failed -- continuing without a dSYM (best-effort debug capture)"
+                DSYM_OK=0
+              elif [ -s "$DSYMUTIL_LOG" ]; then
+                # Informational only: usability is decided by validating the
+                # OUTPUT below, never by the presence of dsymutil warnings.
+                cat "$DSYMUTIL_LOG"
+              fi
+              rm -f "$DSYMUTIL_LOG"
+            fi
+            if [ "$DSYM_OK" -eq 1 ]; then
+              DWARF_FILE="$DSYM/Contents/Resources/DWARF/$(basename "$BIN")"
+              if [ ! -s "$DWARF_FILE" ]; then
+                echo "::warning::$NAME: dSYM has no (or an empty) DWARF payload -- discarding it (expected under Release+LTO)"
+                DSYM_OK=0
+              else
+                DSYM_UUIDS="$(dwarfdump --uuid "$DWARF_FILE" | awk '{print $2}' | sort)" || DSYM_UUIDS=""
+                CU_COUNT="$(dwarfdump --debug-info "$DWARF_FILE" 2>/dev/null | grep -c 'DW_TAG_compile_unit' || true)"
+                if [ "$DSYM_UUIDS" != "$BIN_UUIDS" ]; then
+                  echo "::warning::$NAME: dSYM UUIDs do not match the binary's slices -- discarding the mismatched dSYM"
+                  DSYM_OK=0
+                elif [ "$CU_COUNT" -eq 0 ]; then
+                  echo "::warning::$NAME: dSYM carries no DWARF compile units (degenerate) -- discarding it"
+                  DSYM_OK=0
+                fi
+              fi
+            fi
+            if [ "$DSYM_OK" -eq 1 ]; then
+              USABLE_DSYMS=$((USABLE_DSYMS + 1))
+              echo "$NAME: validated dSYM captured (UUID-matched, $CU_COUNT compile units)"
+            else
+              rm -rf "$DSYM"
+            fi
+            # ---- Customer artifact: stripping ALWAYS proceeds -- debug capture
+            # problems never weaken or skip it.
+            strip -x "$BIN"
+          done
+          if [ "$USABLE_DSYMS" -eq 0 ]; then
+            echo "::warning::no usable dSYM was produced (expected under Release+LTO) -- the -debug upload will be skipped; crash symbolication is unavailable for this build"
+          fi
+          # Written BEFORE codesign/copy/verification below so dSYMs captured
+          # above still upload even if those later steps fail.
+          echo "debug_artifacts=$([ "$USABLE_DSYMS" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # Ad-hoc codesign so macOS will load the bundles after quarantine removal.
+          codesign --force --deep --sign - "$VST3"
+          codesign --force --deep --sign - "$AU"
+          codesign --force --deep --sign - "$APP"
+          cp -R "$VST3" "$DIST/"
+          cp -R "$AU"   "$DIST/"
+          cp -R "$APP"  "$DIST/"
+          # INSTALL.txt is added at P6 (packaging/).
+          # Verify both slices are present in the universal binary.
+          echo "== VST3 arches =="; lipo -archs "$DIST/Anabasis.vst3/Contents/MacOS/Anabasis"
+          echo "== AU arches ==";   lipo -archs "$DIST/Anabasis.component/Contents/MacOS/Anabasis"
+          echo "== App arches ==";  lipo -archs "$DIST/Anabasis.app/Contents/MacOS/Anabasis"
+          # The stripped, signed plugin must still expose its VST3 entry point.
+          nm -gU "$DIST/Anabasis.vst3/Contents/MacOS/Anabasis" | grep -q GetPluginFactory
+          # The customer artifact must contain no debug material (parity with the
+          # Linux/Windows staging self-checks).
+          if find "$DIST" \( -name '*.dSYM' -o -name '*.debug' -o -name '*.pdb' \) -print | grep -q .; then
+            echo "::error::customer artifact contains debug files"; exit 1
+          fi
+          # NOTE: the artifact transport drops executable bits; a P6 release.yml
+          # must restore them on Contents/MacOS/* before archiving the release
+          # zip. The ad-hoc signature lives inside each Mach-O and in
+          # Contents/_CodeSignature (ordinary files), so it survives the round
+          # trip -- only the mode bits need restoring.
+
+      - name: Upload macOS plugins (VST3 + AU + Standalone)
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anabasis-macOS
+          path: dist/Anabasis-macOS
+          if-no-files-found: error
+
+      # Uploaded only when at least one VALIDATED dSYM was captured: with zero
+      # usable dSYMs the upload is skipped -- with a warning already emitted by
+      # the package step -- instead of failing on an empty directory.
+      - name: Upload macOS debug symbols (dSYMs, crash symbolication)
+        if: ${{ !cancelled() && steps.package.outcome != 'skipped' && steps.package.outputs.debug_artifacts == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anabasis-macOS-debug
+          path: dist/Anabasis-macOS-debug
+          if-no-files-found: error

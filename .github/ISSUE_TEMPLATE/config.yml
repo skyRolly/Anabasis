@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Known issues
+    url: https://github.com/skyRolly/Anabasis/blob/main/docs/KNOWN_ISSUES.md
+    about: Confirmed limitations and their workarounds — check here before filing a bug.
+  - name: Development brief (what Anabasis is meant to do)
+    url: https://github.com/skyRolly/Anabasis/blob/main/docs/DEVELOPMENT_BRIEF.md
+    about: The product specification — scope, signal chain, modes, metering and acceptance criteria.
+  - name: Changelog
+    url: https://github.com/skyRolly/Anabasis/blob/main/CHANGELOG.md
+    about: What changed in each build.

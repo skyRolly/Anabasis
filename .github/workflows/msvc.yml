@@ -1,0 +1,119 @@
+# Microsoft C++ Code Analysis (MSVC /analyze) -- complements CodeQL with the
+# MSVC-specific C6xxx security/correctness rules (NativeRecommendedRules).
+#
+# The build step is REQUIRED for this project: juce_add_plugin generates
+# metadata/helper files via juceaide during the build, so analyzing a
+# configure-only tree fails on missing generated files. Only the VST3 and test
+# targets are built -- Standalone (CMake option, default ON) recompiles the
+# identical translation units for zero extra coverage.
+#
+# The FetchContent'd JUCE tree (build/_deps) is treated as external/system code
+# (ignoredIncludePaths + ignoredTargetPaths) so the uploaded SARIF only carries
+# findings in the repository's own sources; JUCE is pin-locked and review-gated
+# per docs/policies/DEPENDENCY_POLICY.md.
+#
+# Triggers are path-filtered to C++/CMake changes: this workflow performs a full
+# MSVC build plus a second /analyze compile pass, which is pure cost on
+# docs/CI-script changes. The weekly schedule keeps a baseline scan against
+# newly-added rules.
+#
+# The action below is not certified by GitHub; it is provided by Microsoft under
+# its own terms (https://github.com/microsoft/msvc-code-analysis-action) and is
+# pinned to a commit rather than a tag: the last tagged release (v0.1.1) predates
+# the buildConfiguration input and silently analyzes
+# codemodel.configurations[0] on multi-config generators, whereas this commit
+# fails closed unless the analyzed configuration is named explicitly.
+name: Microsoft C++ Code Analysis
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/msvc.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/msvc.yml'
+  schedule:
+    - cron: '24 0 * * 1'
+  workflow_dispatch:
+
+env:
+  # Path to the CMake build directory.
+  build: '${{ github.workspace }}/build'
+
+permissions:
+  contents: read
+
+jobs:
+  # Pre-P1 guard -- see .github/workflows/build.yml for the rationale.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        shell: bash
+        run: |
+          if [ -f CMakeLists.txt ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CMakeLists.txt yet (pre-P1 scaffold) -- MSVC analysis is skipped."
+          fi
+
+  analyze:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    permissions:
+      contents: read           # for actions/checkout
+      security-events: write   # for upload-sarif
+      actions: read            # required for private repos by upload-sarif
+    name: Analyze
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B ${{ env.build }} -DANABASIS_BUILD_STANDALONE=OFF
+
+      # Required (see header): juceaide-generated files are consumed by the
+      # plugin translation units. Release, matching the repository's entire
+      # validation strategy (build.yml gates, self-tests, pluginval and the
+      # CodeQL manual build all run Release -- "validate the shipped
+      # configuration"): analysis then sees the NDEBUG preprocessor state
+      # customers receive, where assert-guards vanish and their findings become
+      # real, plus the Release-only hardening flags -- instead of the
+      # never-shipped _DEBUG/JUCE_DEBUG paths.
+      - name: Build CMake
+        run: cmake --build ${{ env.build }} --config Release --target Anabasis_VST3 AnabasisTests
+
+      - name: Initialize MSVC Code Analysis
+        uses: microsoft/msvc-code-analysis-action@96315324a485db21449515180214ecb78c16a1c5 # main 2023-03-22 (v0.1.1 + buildConfiguration; no later release)
+        id: run-analysis
+        with:
+          cmakeBuildDirectory: ${{ env.build }}
+          # windows-latest uses the (multi-config) Visual Studio generator;
+          # analyze exactly the configuration the Build step compiled. The pinned
+          # action version errors out if this does not name an existing
+          # configuration -- no silent first-configuration fallback.
+          buildConfiguration: Release
+          ruleset: NativeRecommendedRules.ruleset
+          # FetchContent'd JUCE: suppress diagnostics from its headers and skip
+          # analysis of its helper targets (juceaide etc.).
+          ignoredIncludePaths: ${{ env.build }}/_deps
+          ignoredTargetPaths: ${{ env.build }}/_deps
+
+      - name: Upload SARIF to GitHub
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.run-analysis.outputs.sarif }}
