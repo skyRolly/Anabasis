@@ -455,8 +455,9 @@ Copy the structural pattern from Anamorph's `CMakeLists.txt`:
 - **pluginval runs in two modes, 3 consecutive passes each**: `deterministic` (fixed
   `--random-seed 0`) **and** `randomise` (`--randomise` — randomised test order + time-seeded
   fuzzing, which catches state-restoration defects a fixed seed misses).
-- The randomise step is guarded with `if: ${{ !cancelled() }}` so a deterministic failure never
-  *skips* it — both modes always report independently, and the job still fails if either fails.
+- The randomise step is guarded with `if: ${{ !cancelled() && steps.build.outcome == 'success' }}`
+  so a *deterministic* failure never **skips** it — both modes always report independently, and the
+  job still fails if either fails — while a failed *build* does skip it (nothing to validate).
 - **Retain-then-strip symbol pipeline**: every platform generates full debug info, uploads it as a
   separate `Anabasis-<OS>-debug` artifact for crash symbolication, and ships **stripped** public
   binaries. On Linux the strip runs *before* pluginval, so the gate validates the exact bytes

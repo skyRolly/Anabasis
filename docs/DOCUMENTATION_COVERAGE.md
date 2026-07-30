@@ -6,7 +6,58 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **third review pass** (2026-07-30). Four findings fixed, three were
+**Last updated:** for the **fourth review pass** (2026-07-30). Six findings fixed, six were
+confirmations or already-documented repeats.
+
+**The macOS universality "check" checked nothing.** The packaging step *printed* `lipo -archs` for
+each bundle. `lipo -archs` exits 0 for any valid Mach-O including a thin one, so a single-slice
+build would have been packaged, uploaded and labelled universal — Intel users would download a
+plug-in that cannot load, with CI green. It is now an assertion: both `arm64` and `x86_64` must be
+present or the job fails. This is the exact failure mode the folded-scalar regression above would
+have produced had it hit `-DCMAKE_OSX_ARCHITECTURES`, so the two findings are the same story twice.
+
+**A developer-side symbol problem could withhold the Windows customer artifact.** The upload gated
+on the whole staging step succeeding, and PDB retention lived inside it — so a missing CodeView
+record or a non-unique PDB blocked the beta artifact even though the public copy was already
+assembled, purged and clean. macOS treats that class of failure as best-effort, so the platforms
+had opposite policies. The staging step now emits `public_ok=true` immediately after the public
+copy passes its leak check and *before* the PDB work; the customer upload gates on that checkpoint,
+the `-debug` upload on the later one. PDB retention stays strict on purpose — on macOS a missing
+dSYM is expected under Release+LTO, whereas `/DEBUG` guarantees a PDB — but its strictness now
+costs only the artifact it protects.
+
+**Workflow security scanning was switched off for all of P0.** `codeql.yml`'s `preflight` gated the
+whole matrix, including the `actions` entry, which needs no build and analyses the very workflow
+files being written this phase. The gate is now per matrix *entry*: `actions` always runs, `c-cpp`
+waits for `CMakeLists.txt`.
+
+**Windows self-test discovery took the first match.** `Select-Object -First 1` against a
+multi-config generator could run a Debug binary while the artifacts come from Release. Now exactly
+one match or fail — matching the staging step in the same job and `run-tests.sh`. The same
+`head -n1` pattern in `run-pluginval.sh` is fixed the same way (verified across none / one / two
+matches), so the release gate cannot validate a different bundle than the one just built.
+
+**This audit claimed a checker that does not exist (C7).** The previous entry said "a checker
+asserts every configure flag survives comment-stripping on all three platforms". No such checker is
+in any workflow or script — the flag list was verified *by hand* during that fix and nothing re-runs
+it. Corrected to say so. Inventing a safety net is worse than having none, because it stops anyone
+writing the real one.
+
+**`CI_CD.md` documented the old randomise guard** (`!cancelled()` only) after the workflow gained
+`&& steps.build.outcome == 'success'`; the summary in `DEVELOPMENT_BRIEF` §19.1 had the same drift.
+
+**Confirmations and already-handled repeats:** the PE/CodeView offsets were independently
+re-verified against the spec; the macOS `set -e` / best-effort-dSYM interaction was traced and is
+sound; CodeQL's `paths-ignore` is an alert filter as its comment says; `run-tests.sh`'s fail-closed
+discovery was re-confirmed. Newly recorded in `CI_CD.md` rather than changed: the same-repo PR skip
+means the **push** build validates the branch head while a PR-event build would have validated the
+*merge commit* — a real gap only once a merge queue or "require branches to be up to date" is
+enabled; and `msvc.yml` is doubly inert until P1, so its pinned third-party action should be
+rehearsed via `workflow_dispatch` at P1 rather than first executing inside the P1 build PR.
+`CMAKE_OSX_DEPLOYMENT_TARGET` (OQ-011) and the CodeQL `paths-ignore` / required-check trap are
+unchanged and already tracked.
+
+Prior: for the **third review pass** (2026-07-30). Four findings fixed, three were
 confirmations or verified non-issues.
 
 **A regression introduced by the previous pass — the macOS build silently lost two flags.** The
@@ -16,8 +67,11 @@ with a trailing comment and dropped everything after it — `-DCMAKE_OSX_DEPLOYM
 `-DANABASIS_BUILD_NUMBER`. Consequence once P1 lands: macOS builds would carry an unintended
 minimum-OS setting and report **build number 0** in the About box, which the bug-report form asks
 testers to quote. No error would have revealed it. The comment now lives above the step, says why
-it must stay there, and a checker asserts every configure flag survives comment-stripping on all
-three platforms.
+it must stay there. **No automated checker guards this** — the flag list was verified by hand
+during that fix (parsing the workflow, stripping at the first `#` the way bash would, and
+confirming every configure flag survives on all three platforms) and nothing re-runs that check;
+an earlier revision of this paragraph claimed a checker exists, which was an invented facility
+(constraint C7). If it is worth guarding, it needs writing.
 
 **The randomise pluginval step ran after a failed build.** Its `if: ${{ !cancelled() }}` forced it
 to run when the build had failed, producing a second red step complaining about a missing plugin —

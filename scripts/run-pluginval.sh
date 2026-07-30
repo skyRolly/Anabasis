@@ -32,11 +32,26 @@ BUILD_DIR="$ROOT/build"
 TOOLS_DIR="$ROOT/.tools"
 mkdir -p "$TOOLS_DIR"
 
-VST3_PATH="$(find "$BUILD_DIR" -name 'Anabasis.vst3' 2>/dev/null | head -n1 || true)"
-if [ -z "$VST3_PATH" ]; then
-    echo "Anabasis.vst3 not found -- build first (scripts/build.sh)."
+# Fail closed on ABSENCE and on AMBIGUITY, matching scripts/run-tests.sh. Taking
+# `find ... | head -n1` would validate whichever bundle find happened to emit
+# first: with a multi-config layout or a leftover build tree the release gate
+# could pass on a different .vst3 than the one just built. CI always has a single
+# fresh tree, so this only bites locally -- which is exactly where it would go
+# unnoticed. P1 note: replace with the explicit expected path once CMakeLists.txt
+# fixes the artefact layout.
+VST3_MATCHES="$(find "$BUILD_DIR" -maxdepth 8 -name 'Anabasis.vst3' 2>/dev/null || true)"
+VST3_COUNT="$(printf '%s' "$VST3_MATCHES" | grep -c . || true)"
+if [ "$VST3_COUNT" -eq 0 ]; then
+    echo "Anabasis.vst3 not found under $BUILD_DIR -- build first (scripts/build.sh)."
     exit 1
 fi
+if [ "$VST3_COUNT" -ne 1 ]; then
+    echo "Anabasis.vst3 is ambiguous -- found $VST3_COUNT under $BUILD_DIR:"
+    printf '  %s\n' $VST3_MATCHES
+    echo "Refusing to guess which bundle the release gate should validate. Remove the stale build tree."
+    exit 1
+fi
+VST3_PATH="$VST3_MATCHES"
 
 # Platform-specific pluginval release + binary path (Linux vs macOS).
 case "$(uname -s)" in

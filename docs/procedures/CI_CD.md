@@ -15,10 +15,15 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 ## The pre-P1 preflight guard
 
 `build.yml`, `codeql.yml` and `msvc.yml` each start with a `preflight` job that checks whether
-`CMakeLists.txt` exists and gates every build job on the result. While the repository is a P0
-scaffold with no build, the jobs skip cleanly with a notice instead of failing on a missing
-project. The guard becomes a permanent no-op the moment P1 lands — it needs no removal, but it may
-be removed once the build is real.
+`CMakeLists.txt` exists. While the repository is a P0 scaffold with no build, the gated jobs skip
+cleanly with a notice instead of failing on a missing project. The guard becomes a permanent no-op
+the moment P1 lands — it needs no removal, but it may be removed once the build is real.
+
+**In `codeql.yml` the guard is per matrix *entry*, not per job.** Only `c-cpp` needs a project; the
+`actions` entry analyses `.github/workflows/**`, which exist right now and need no build. Gating
+the whole matrix would switch **workflow** security scanning off for the entire P0 phase — exactly
+the phase in which these workflow files are being written. So `actions` always runs and `c-cpp`
+waits for `CMakeLists.txt`.
 
 ## `build.yml` — triggers
 
@@ -78,8 +83,9 @@ stated accurately rather than tidily.
 
 On macOS the packaging step runs after validation and orders itself `dsymutil` → `strip -x` →
 ad-hoc codesign (stripping after signing would invalidate the seal); dSYM capture is best-effort
-and never blocks the customer pipeline. Windows retains each shipped image's linker PDB into a
-separate debug artifact and purges all debug material from the public copy.
+and never blocks the customer pipeline. Windows purges all debug material from the public copy,
+validates it, and only then retains each shipped image's linker PDB into a separate debug
+artifact — see the checkpoint rule below for why that order matters.
 
 > **Known asymmetry: only Linux validates the shipped bytes.** Because macOS and Windows strip
 > (and, on macOS, sign) *after* pluginval, a defect introduced **by stripping or signing** would
@@ -89,8 +95,10 @@ separate debug artifact and purges all debug material from the public copy.
 > there is a binary to measure rather than a guess to make.
 
 **pluginval** runs deterministic ×3, then randomise ×3. The randomise step is guarded with
-`if: ${{ !cancelled() }}` so a deterministic failure never *skips* it: both modes always report
-independently, and the job still fails if either fails.
+`if: ${{ !cancelled() && steps.build.outcome == 'success' }}` so a **deterministic** failure never
+*skips* it — both modes always report independently, and the job still fails if either fails —
+while a failed **build** does skip it, because there is no plugin to validate and a second red step
+about a missing `.vst3` only obscures the real cause.
 
 **Uploads** produce customer artifacts (`Anabasis-<OS>`, loose files) and debug artifacts
 (`Anabasis-<OS>-debug`).
@@ -105,6 +113,14 @@ push happens in the fork, so the `pull_request` event is the only trigger that s
 `codeql.yml` and `msvc.yml` do **not** need the same guard: both are `branches: [main]`-only, so a
 feature-branch push cannot double up with its PR.
 
+## `msvc.yml` is doubly inert until P1 — rehearse it on purpose
+
+Its path filters (`src/**`, `tests/**`, `CMakeLists.txt`, its own file) match nothing buildable
+yet, so push/PR events cannot start it; the weekly schedule and `workflow_dispatch` do start it and
+are then stopped by `preflight`. Two independent no-ops is consistent, but it means the pinned
+third-party analysis action has never executed in this repository. **Run it once via
+`workflow_dispatch` at P1**, rather than discovering an incompatibility inside the P1 build PR.
+
 ## Before enabling branch protection — read this
 
 Two trigger designs here interact with **required status checks**, and both bite only once
@@ -115,6 +131,12 @@ protection is switched on. Neither is a defect; both are traps if configured bli
    required check as satisfied, so this is expected to be fine — but if a required check ever sits
    in a "waiting" state on internal PRs, this guard is the first thing to look at. The build that
    actually validates the commit is the one on the **push** event for the same SHA.
+
+   **What that costs:** the push build validates the *branch head*; the PR-event build would have
+   validated the *merge commit*. Those differ, and the difference is exactly what catches a semantic
+   merge conflict — code that is fine on both sides but broken once combined. Today nothing merges
+   without a fresh push, so the gap is theoretical. It stops being theoretical the moment a merge
+   queue or "require branches to be up to date" is enabled, and the dedup should be revisited then.
 
 2. **`codeql.yml` on docs-only PRs — the sharper one.** Its `paths-ignore` means the workflow is
    **not created at all** for a docs-only PR, so a required `Analyze (c-cpp)` / `Analyze (actions)`
@@ -128,8 +150,21 @@ protection is switched on. Neither is a defect; both are traps if configured bli
 
 These are the rules, not incidental details — each blocks a specific way a bad artifact can ship:
 
-- Customer uploads are gated on the self-tests **and** the staging/strip step having **succeeded**
-  — never `if: always()`. An unstripped or unvalidated binary cannot reach the public artifact.
+- Customer uploads are gated on the self-tests **and** on the public copy having been assembled,
+  purged and validated — never `if: always()`. An unstripped or unvalidated binary cannot reach the
+  public artifact.
+- **Two checkpoints, not one step outcome (Windows).** The staging step emits `public_ok=true` as
+  soon as the public copy passes its leak check, *before* the PDB retention that follows it, and
+  the customer upload gates on that output rather than on the step's overall outcome. `$GITHUB_OUTPUT`
+  is read after the step regardless of how it ended, so a later failure cannot retract the
+  checkpoint. Without this, a purely **developer-side** symbol problem — no CodeView record, or the
+  recorded PDB not uniquely locatable — would also withhold the Windows beta artifact even though
+  the public copy was already finished and clean. macOS treats the same class of failure as
+  best-effort, so the two platforms otherwise had opposite policies for it.
+- **PDB retention stays strict, and that is deliberate.** On macOS a missing dSYM is an *expected*
+  consequence of Release+LTO; on Windows `/DEBUG` guarantees a PDB, so its absence means the build
+  or the retention logic is wrong and must be seen. The strictness now costs only the `-debug`
+  artifact, which is what it is actually protecting.
 - `!cancelled()` (rather than plain `success()`) keeps the beta artifact available when *only*
   pluginval failed, while a failed behavioural gate still blocks it.
 - The staging step **self-validates** what it just built: no symbol table, no `.debug`/`.pdb`/

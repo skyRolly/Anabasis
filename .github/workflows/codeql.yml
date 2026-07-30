@@ -51,6 +51,12 @@ permissions:
 jobs:
   # Pre-P1 guard -- see .github/workflows/build.yml for the rationale.
   # Becomes a permanent no-op once CMakeLists.txt exists.
+  #
+  # NOTE: this gates the C-CPP entry ONLY (see the matrix condition below). The
+  # `actions` entry analyses .github/workflows/**, which exist right now and need
+  # no build at all -- gating it too would switch workflow security scanning off
+  # for the whole of P0, i.e. exactly the phase in which these workflow files are
+  # being written.
   preflight:
     runs-on: ubuntu-latest
     outputs:
@@ -64,12 +70,18 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No CMakeLists.txt yet (pre-P1 scaffold) -- CodeQL analysis is skipped."
+            echo "::notice::No CMakeLists.txt yet (pre-P1 scaffold) -- the c-cpp CodeQL analysis is skipped; the actions analysis still runs."
           fi
 
   analyze:
     needs: preflight
-    if: needs.preflight.outputs.ready == 'true'
+    # Per-ENTRY gate, not per-job: `actions` always runs (nothing to build),
+    # `c-cpp` waits for a project to exist. `always()` is required so the job is
+    # still considered after `preflight` reports ready=false -- without it the
+    # whole matrix would be skipped again.
+    if: >-
+      always() && needs.preflight.result == 'success' &&
+      (matrix.language != 'c-cpp' || needs.preflight.outputs.ready == 'true')
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:

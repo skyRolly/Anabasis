@@ -258,12 +258,30 @@ jobs:
         id: tests
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Recurse -Path build -Filter AnabasisTests.exe | Select-Object -First 1
-          if (-not $exe) { Write-Error 'AnabasisTests.exe not found'; exit 1 }
+          $ErrorActionPreference = 'Stop'
+          # Exactly ONE match -- like the staging step below, and like
+          # scripts/run-tests.sh. NOT `Select-Object -First 1`: Windows uses the
+          # multi-config Visual Studio generator, so a tree ever built in more than
+          # one configuration holds several AnabasisTests.exe, and taking whichever
+          # enumerates first could run a Debug binary while the artifacts come from
+          # Release -- a green gate reporting on the wrong build.
+          function Get-OneTestExe {
+            param([Parameter(Mandatory)][string]$Name)
+            $found = @(Get-ChildItem -Recurse -Path build -Filter $Name -File)
+            if ($found.Count -eq 0) { Write-Error "$Name not found under build -- build first" }
+            if ($found.Count -ne 1) {
+              Write-Error ("$Name is ambiguous -- found " + $found.Count + ": " + ($found.FullName -join ', ') +
+                           " -- refusing to guess which one the gate should run")
+            }
+            return $found[0]
+          }
+          # Locate BOTH before running either, so an ambiguous tree fails before any
+          # test output invites a partial reading.
+          $exe = Get-OneTestExe -Name AnabasisTests.exe
+          $stateExe = Get-OneTestExe -Name AnabasisStateTests.exe
+          $ErrorActionPreference = 'Continue'
           & $exe.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $stateExe = Get-ChildItem -Recurse -Path build -Filter AnabasisStateTests.exe | Select-Object -First 1
-          if (-not $stateExe) { Write-Error 'AnabasisStateTests.exe not found'; exit 1 }
           & $stateExe.FullName
 
       - name: pluginval (deterministic x3 -- release gate)
@@ -405,8 +423,27 @@ jobs:
           Get-ChildItem -Recurse -Path $dist -File |
             Where-Object { $_.Extension -in '.pdb', '.ilk', '.exp', '.debug' } |
             Remove-Item -Force
-          # 4) Retain each shipped image's linker PDB (an abort here is now
-          #    leak-safe), identified via its embedded CodeView record.
+          # 4) Validate the PUBLIC copy and checkpoint it. Everything the customer
+          #    artifact needs is done at this point, so `public_ok` is emitted HERE,
+          #    before the developer-side PDB work below can abort. $GITHUB_OUTPUT is
+          #    read after the step regardless of its outcome, so a later failure
+          #    cannot retract it -- the same mechanism the macOS job already uses.
+          #    Previously the customer upload gated on this whole step succeeding,
+          #    which meant a purely developer-side symbol problem ALSO withheld the
+          #    Windows beta artifact, even though the public copy was already
+          #    assembled and purged. macOS treats that class of failure as
+          #    best-effort, so the two platforms had opposite policies for it.
+          $leak = Get-ChildItem -Recurse -Path $dist -File |
+                  Where-Object { $_.Extension -in '.pdb', '.ilk', '.exp', '.debug' }
+          if ($leak) { Write-Error ("customer artifact contains debug files: " + ($leak.FullName -join ', ')) }
+          "public_ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          # 5) Retain each shipped image's linker PDB, identified via its embedded
+          #    CodeView record. DELIBERATELY STRICT, unlike the macOS dSYM capture:
+          #    there, a missing dSYM is an EXPECTED consequence of Release+LTO; here
+          #    /DEBUG guarantees a PDB, so its absence means the build or this logic
+          #    is wrong and must be seen. The strictness now costs only the -debug
+          #    artifact, which is what it is actually protecting.
           foreach ($img in @(@{ tag = 'vst3'; bin = $vst3Bin }, @{ tag = 'standalone'; bin = $exe })) {
             $recordedPdbPath = Get-EmbeddedPdbPath -ImagePath $img.bin.FullName
             if (-not $recordedPdbPath) {
@@ -429,10 +466,6 @@ jobs:
             }
             Copy-Item -Force $pdbFile.FullName (Join-Path $dbg ("Anabasis." + $img.tag + ".pdb"))
           }
-          # 5) Validate: the customer artifact must contain no debug files.
-          $leak = Get-ChildItem -Recurse -Path $dist -File |
-                  Where-Object { $_.Extension -in '.pdb', '.ilk', '.exp', '.debug' }
-          if ($leak) { Write-Error ("customer artifact contains debug files: " + ($leak.FullName -join ', ')) }
           # Written LAST, for the same reason as the Linux strip step: $dbg is
           # created at the top of this step, so gating the debug upload on "this
           # step was not skipped" would fire it against an empty directory when the
@@ -444,7 +477,7 @@ jobs:
           "debug_artifacts=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload Windows artifacts
-        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outputs.public_ok == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: Anabasis-Windows
@@ -615,10 +648,25 @@ jobs:
           cp -R "$AU"   "$DIST/"
           cp -R "$APP"  "$DIST/"
           # INSTALL.txt is added at P6 (packaging/).
-          # Verify both slices are present in the universal binary.
-          echo "== VST3 arches =="; lipo -archs "$DIST/Anabasis.vst3/Contents/MacOS/Anabasis"
-          echo "== AU arches ==";   lipo -archs "$DIST/Anabasis.component/Contents/MacOS/Anabasis"
-          echo "== App arches ==";  lipo -archs "$DIST/Anabasis.app/Contents/MacOS/Anabasis"
+          # ASSERT both slices are present -- do not merely print them. `lipo -archs`
+          # exits 0 for ANY valid Mach-O, including a thin one, so echoing its output
+          # verifies nothing: an arm64-only build would ship labelled "universal" and
+          # Intel users would get a plug-in that cannot load. Not hypothetical -- a
+          # folded-scalar comment once swallowed the trailing configure flags in this
+          # very workflow, and the same accident on -DCMAKE_OSX_ARCHITECTURES produces
+          # exactly that thin build.
+          for B in "$DIST/Anabasis.vst3/Contents/MacOS/Anabasis" \
+                   "$DIST/Anabasis.component/Contents/MacOS/Anabasis" \
+                   "$DIST/Anabasis.app/Contents/MacOS/Anabasis"; do
+            ARCHES="$(lipo -archs "$B")"
+            echo "== $B == $ARCHES"
+            for WANT in arm64 x86_64; do
+              case " $ARCHES " in
+                *" $WANT "*) ;;
+                *) echo "::error::$B is missing the $WANT slice (found: $ARCHES) -- not a universal binary"; exit 1 ;;
+              esac
+            done
+          done
           # The stripped, signed plugin must still expose its VST3 entry point.
           nm -gU "$DIST/Anabasis.vst3/Contents/MacOS/Anabasis" | grep -q GetPluginFactory
           # The customer artifact must contain no debug material (parity with the
