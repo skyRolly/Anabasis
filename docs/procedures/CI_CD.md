@@ -123,13 +123,23 @@ push happens in the fork, so the `pull_request` event is the only trigger that s
 `codeql.yml` and `msvc.yml` do **not** need the same guard: both are `branches: [main]`-only, so a
 feature-branch push cannot double up with its PR.
 
+**Latent hazard for `workflow_call` (re-check at P6).** Inside a reusable workflow
+`github.event_name` reflects the **caller's** event, and every build job gates on
+`needs.preflight.outputs.ready`. So a future caller invoked on a same-repo `pull_request` — a
+release rehearsal wired to PRs, say — would skip `preflight`, get **zero** build jobs, and still
+report success. The planned caller (`release.yml`) is tag-push-triggered, so this is latent rather
+than broken; the condition needs re-reading when `release.yml` lands.
+
 ## `msvc.yml` is doubly inert until P1 — rehearse it on purpose
 
-Its path filters (`src/**`, `tests/**`, `CMakeLists.txt`, its own file) match nothing buildable
-yet, so push/PR events cannot start it; the weekly schedule and `workflow_dispatch` do start it and
-are then stopped by `preflight`. Two independent no-ops is consistent, but it means the pinned
-third-party analysis action has never executed in this repository. **Run it once via
-`workflow_dispatch` at P1**, rather than discovering an incompatibility inside the P1 build PR.
+Its path filters are `src/**`, `tests/**`, `CMakeLists.txt` — none of which exist yet — **and its
+own file**. So a change to `msvc.yml` itself on `main` *does* start it (this bootstrap change
+included); what makes it a no-op in that case is `preflight`, not the filters. Everything else
+(the weekly schedule, `workflow_dispatch`) is likewise started and then stopped by `preflight`.
+
+The conclusion still holds — the workflow is inert until P1 — but the pinned third-party analysis
+action has consequently **never executed** here. **Run it once via `workflow_dispatch` at P1**,
+rather than discovering an incompatibility inside the P1 build PR.
 
 ## Before enabling branch protection — read this
 

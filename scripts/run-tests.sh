@@ -29,7 +29,13 @@ find_one() {
     fi
     if [ "$count" -ne 1 ]; then
         echo "$name is ambiguous -- found $count under $BUILD_DIR:" >&2
-        printf '  %s\n' $matches >&2
+        # Read line by line rather than `printf '  %s\n' $matches`: unquoted, that
+        # relied on word splitting, which also splits on spaces INSIDE a path; quoted,
+        # printf applies the format once so only the first line gets indented. find
+        # emits one path per line, so this prints each exactly, indented. Only the
+        # diagnostic in an already-failing branch -- but a mangled path is a bad thing
+        # to hand someone who is mid-debug.
+        while IFS= read -r m; do echo "  $m" >&2; done <<< "$matches"
         echo "Refusing to guess which one the gate should run. Remove the stale build tree." >&2
         return 1
     fi

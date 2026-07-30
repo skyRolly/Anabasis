@@ -47,7 +47,10 @@ if [ "$VST3_COUNT" -eq 0 ]; then
 fi
 if [ "$VST3_COUNT" -ne 1 ]; then
     echo "Anabasis.vst3 is ambiguous -- found $VST3_COUNT under $BUILD_DIR:"
-    printf '  %s\n' $VST3_MATCHES
+    # Read line by line -- see the same guard in scripts/run-tests.sh: unquoted,
+    # printf relied on word splitting (which also splits on spaces inside a path);
+    # quoted, printf applies the format once so only the first line gets indented.
+    while IFS= read -r m; do echo "  $m"; done <<< "$VST3_MATCHES"
     echo "Refusing to guess which bundle the release gate should validate. Remove the stale build tree."
     exit 1
 fi

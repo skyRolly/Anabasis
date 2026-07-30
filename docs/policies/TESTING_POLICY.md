@@ -81,8 +81,20 @@ its methodology is not permitted (constraint C2).
 1. **Every bug fix ships a regression test** that fails on the old code and passes on the fix.
 2. **DSP-policy invariants must have a guarding test** where feasible — see the invariant → test
    map in `DSP_POLICY.md`. An untested invariant is listed as a gap, never left implicit.
-3. A pluginval **crash retry** is permitted only for a signal-crash in the host-side validator
-   (exit ≥ 128); a real validation failure (exit < 128) fails immediately and is never retried.
+3. A pluginval **crash retry** is permitted only for an abnormal termination of the host-side
+   validator; a real validation failure fails immediately and is never retried. The boundary is
+   **platform-specific**, because the exit-code conventions are:
+   - **Linux/macOS** — a signal crash is `exit ≥ 128` (128 + signal number). So `< 128` is a real
+     failure and fails immediately; `≥ 128` may be retried.
+   - **Windows** — there are no signals, and pluginval returns its assertion count directly, so a
+     code in **128…255 is a real failure** there and must **not** be retried. An abnormal
+     termination surfaces instead as a Win32 exception code (`≥ 256`), a negative value, or no code
+     at all; those may be retried.
+
+   `scripts/run-pluginval.ps1` therefore classifies differently from `run-pluginval.sh` **by
+   design**. Recording the difference here is the point: a reader comparing the gate to the scripts
+   must not have to reconstruct it, and the repository's own rule is that a script and the policy
+   describing it never diverge silently.
 4. **A skipped test category must be visible in this document, not only in a script.** The three
    platforms run the same pluginval test set; no `--skip-*` flag is in use. If an environmental
    limit later forces one — the likeliest is the GPU-less `windows-latest` runner being unable to

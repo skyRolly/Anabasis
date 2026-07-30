@@ -89,6 +89,14 @@ jobs:
     # duplicate build per commit for as long as the PR is open. Fork PRs are NOT
     # covered by the push trigger (the push happens in the fork), so they still
     # run -- which is the only case the pull_request trigger uniquely serves here.
+    #
+    # LATENT HAZARD for `workflow_call` (P6): inside a reusable workflow,
+    # `github.event_name` reflects the CALLER's event. A future caller invoked on a
+    # same-repo pull_request would therefore skip this job -- and, because every
+    # build job gates on `needs.preflight.outputs.ready`, would get ZERO build jobs
+    # while still reporting success. The planned caller (release.yml) is
+    # tag-push-triggered, so this is latent, not broken. Re-check it when release.yml
+    # lands; see docs/procedures/CI_CD.md.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository
@@ -272,7 +280,15 @@ jobs:
           # Release -- a green gate reporting on the wrong build.
           function Get-OneTestExe {
             param([Parameter(Mandatory)][string]$Name)
-            $found = @(Get-ChildItem -Recurse -Path build -Filter $Name -File)
+            # -ErrorAction SilentlyContinue for the same reason as
+            # scripts/run-pluginval.ps1: $ErrorActionPreference is 'Stop', so a
+            # missing build/ would make Get-ChildItem THROW and the intended
+            # "build first" message below would be unreachable -- the operator
+            # would get a .NET stack trace instead of the one-line fix. In CI this
+            # step only runs after a successful build, so it is a diagnostics gap
+            # rather than a functional one; it is fixed for consistency, because
+            # two discovery sites behaving differently is what invites the next bug.
+            $found = @(Get-ChildItem -Recurse -Path build -Filter $Name -File -ErrorAction SilentlyContinue)
             if ($found.Count -eq 0) { Write-Error "$Name not found under build -- build first" }
             if ($found.Count -ne 1) {
               Write-Error ("$Name is ambiguous -- found " + $found.Count + ": " + ($found.FullName -join ', ') +
@@ -411,13 +427,15 @@ jobs:
           # 1) Locate everything first -- an abort here copies NOTHING public.
           #    Each locate demands EXACTLY ONE match: zero is a build-layout
           #    failure, more than one is ambiguity we refuse to guess about.
-          $vst3 = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.vst3 -Directory)
+          # -ErrorAction SilentlyContinue: see the self-test step -- a missing build/
+          # must produce the diagnostic below, not a terminating .NET error.
+          $vst3 = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.vst3 -Directory -ErrorAction SilentlyContinue)
           if ($vst3.Count -ne 1) { Write-Error "expected exactly one Anabasis.vst3 bundle, found $($vst3.Count)" }
           $vst3 = $vst3[0]
           $vst3Bin = @(Get-ChildItem -Recurse -Path $vst3.FullName -File | Where-Object { $_.Extension -eq '.vst3' })
           if ($vst3Bin.Count -ne 1) { Write-Error "expected exactly one .vst3 image inside $($vst3.FullName), found $($vst3Bin.Count)" }
           $vst3Bin = $vst3Bin[0]
-          $exe = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.exe | Where-Object { $_.Directory.Name -eq 'Standalone' })
+          $exe = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.exe -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq 'Standalone' })
           if ($exe.Count -ne 1) { Write-Error "expected exactly one Standalone Anabasis.exe, found $($exe.Count)" }
           $exe = $exe[0]
           # 2) Copy the public artifact. (INSTALL.txt is added at P6.)

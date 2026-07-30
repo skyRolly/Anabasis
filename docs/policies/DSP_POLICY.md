@@ -21,11 +21,24 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    Guarded by: the chain-order test + the transfer-order test.
    *Any change here is a DSP signal-order change → Architecture Review Gate + ADR + Hard Stop.*
 
-2. **Reported latency is exact and matches the measured latency.** Every latency source —
-   lookahead and oversampling — is reported to the host so PDC compensates correctly. With
-   oversampling off, the reported latency is **exactly the engaged lookahead**, and nothing else
-   contributes. Latency must never change mid-block: an oversampling-factor or lookahead change is
-   **latched** and applied at a reset or a crossfaded boundary.
+2. **Reported latency is exact and matches the measured latency.** *Every* latency source is
+   reported to the host so PDC compensates correctly — reported latency is the sum of whatever
+   actually delays the signal, not a subset chosen for convenience. Latency must never change
+   mid-block: an oversampling-factor or lookahead change is **latched** and applied at a reset or a
+   crossfaded boundary.
+
+   **Open point for the P0 oversampling/latency ADR — do not paper over it.** Invariant 3 requires
+   true-peak detection at **≥ 4× regardless of the user's oversampling setting**. Whether that costs
+   latency depends on a design decision that has not been made:
+   - if the detector is a **measurement tap** (the ≥ 4× upsampling feeds only the peak estimator and
+     the ceiling clamp's decision, never the audio that is output), it contributes **no** delay, and
+     with user oversampling off the reported latency is exactly the engaged lookahead;
+   - if the ≥ 4× path is **in the signal path** — in particular with linear-phase/polyphase
+     filtering — it contributes its own delay, and "exactly the lookahead" is then simply false.
+
+   These cannot both be asserted. The ADR must state which one this product implements, and
+   `testReportedLatencyMatchesImpulse` must be written against that statement rather than against a
+   convenient one — an impulse measurement will show the truth regardless of what the policy claims.
 
    Note that `DEVELOPMENT_BRIEF.md` §4.3 specifies the limiter lookahead as **0.5–10 ms**, with no
    zero position — so on that range **the plugin always reports non-zero latency**, and "reports 0"
@@ -51,7 +64,10 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
 
 5. **Oversampling wraps the nonlinear stages; linear stages stay at base rate.** The clipper /
    saturation stage and the true-peak detector are inside the oversampled region; the EQ and the
-   metering taps that do not need it stay outside. Oversampling off ⇒ no oversampling latency.
+   metering taps that do not need it stay outside. "Oversampling off ⇒ no oversampling latency"
+   holds only under the *measurement-tap* reading of the ≥ 4× true-peak path — see the open point in
+   invariant 2, which the P0 ADR must settle before this sentence can be asserted rather than
+   assumed.
    Guarded by: the latency-matrix test + the aliasing measurement.
 
 6. **The soft-clip stage uses antiderivative antialiasing (ADAA)** in addition to global

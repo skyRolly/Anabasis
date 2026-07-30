@@ -6,7 +6,60 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **fifth review pass** (2026-07-30). Three findings fixed, the rest
+**Last updated:** for the **sixth review pass** (2026-07-30). Seven findings fixed, four
+confirmations.
+
+**`HANDOVER` understated the P1 blockers — the one drift that could actually mislead someone.** It
+said "One item blocks P1: owner sign-off on `DESIGN.md`", while `OPEN_QUESTIONS` tags **three**
+entries `Blocking P1`: that sign-off plus **OQ-010** (lookahead 0/off position — must be settled
+before the parameter exists, since widening a range later re-scales saved sessions) and **OQ-011**
+(macOS deployment target, carrying a `TODO(P1)` in `build.yml`). Someone resuming from the
+designated status snapshot would have started P1 believing it was clear. Corrected, with a standing
+instruction that the row must agree with every `Blocking P1` entry in `OPEN_QUESTIONS`.
+
+**`DSP_POLICY` invariants 2 and 3 could not both hold as written.** Invariant 2 asserted that with
+oversampling off the reported latency is "exactly the engaged lookahead, and nothing else
+contributes", while invariant 3 requires true-peak detection at **≥ 4× regardless of the user
+setting**. If that ≥ 4× path sits in the signal path (linear-phase/polyphase in particular) it
+contributes its own delay and invariant 2 is simply false. The two readings — measurement tap vs
+in-path — are now stated explicitly as an **open point the P0 oversampling/latency ADR must
+settle**, with the guarding test to be written against whichever is chosen rather than against the
+convenient one. Invariant 5's "oversampling off ⇒ no oversampling latency" is cross-referenced,
+since it rests on the same assumption.
+
+**`TESTING_POLICY` rule 3 stated the retry boundary platform-neutrally** (`exit ≥ 128` is a crash)
+while `run-pluginval.ps1` classifies 128…255 as a *real* failure and only ≥ 256 / negative / absent
+as an abnormal termination — correct for Windows, which has no signals, but the binding policy did
+not carve it out. Now stated per platform, because this repository's own rule is that a script and
+the policy describing it never diverge silently.
+
+**Two PowerShell discovery sites threw instead of diagnosing.** `Get-OneTestExe` and the Windows
+staging locates run `Get-ChildItem` under `$ErrorActionPreference = 'Stop'` with no
+`-ErrorAction SilentlyContinue`, so a missing `build/` produces a .NET stack trace instead of the
+"build first" message written right below. Same defect fixed in `run-pluginval.ps1` last pass;
+fixed here for consistency, which is the point — two discovery sites behaving differently is what
+invites the next bug.
+
+**`CI_CD.md` gave an inaccurate reason for `msvc.yml` being inert.** It said the path filters mean
+"push/PR events cannot start it" — but `.github/workflows/msvc.yml` is *itself* in the filter list,
+so a change to that workflow on `main` does start it; what makes it a no-op is `preflight`. The
+conclusion held, the reasoning did not.
+
+**The ambiguity diagnostics mangled paths containing spaces.** `printf '  %s\n' $matches` relied on
+word splitting; quoting it would have indented only the first line. Both scripts now read line by
+line, verified against a build tree with a space in a directory name.
+
+**Recorded, not changed:** inside a reusable workflow `github.event_name` reflects the **caller's**
+event, so a future `workflow_call` caller invoked on a same-repo `pull_request` would skip
+`preflight` and get **zero** build jobs while still reporting success. The planned caller
+(`release.yml`, tag-push-triggered) is unaffected, so this is latent — noted in `build.yml` and
+`CI_CD.md` to be re-read when `release.yml` lands at P6.
+
+**Confirmations:** the PE/CodeView offsets, the randomise-gate and checkpoint behaviour, the macOS
+`set -e` / best-effort-dSYM interaction, and CodeQL's `paths-ignore` as an alert filter were all
+independently re-verified with no change needed.
+
+Prior: for the **fifth review pass** (2026-07-30). Three findings fixed, the rest
 confirmations or repeats against an earlier revision.
 
 **The per-entry CodeQL gate added last pass did not work.** It used a job-level
