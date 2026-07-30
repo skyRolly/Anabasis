@@ -208,8 +208,18 @@ These are the rules, not incidental details — each blocks a specific way a bad
   artifact, which is what it is actually protecting.
 - `!cancelled()` (rather than plain `success()`) keeps the beta artifact available when *only*
   pluginval failed, while a failed behavioural gate still blocks it.
-- The staging step **self-validates** what it just built: no symbol table, no `.debug`/`.pdb`/
-  `.dSYM` in the public copy, and the plugin entry point still exported after the strip.
+- The staging step **self-validates** what it just built — but **not equally on the three
+  platforms**, and the difference is worth knowing before trusting the phrase:
+
+  | Platform | What the staging check actually proves |
+  |---|---|
+  | **Linux** | Independent property check: reads ELF section headers to assert no `.symtab` survives, and asserts `nm -D` still shows `GetPluginFactory` — i.e. the *stripped* plugin is still loadable |
+  | **macOS** | Independent property check: asserts both `arm64` and `x86_64` slices are present (`lipo`), plus the `.dSYM` leak scan |
+  | **Windows** | **Delete-confirmation only**: it re-lists the very extensions the purge just removed, so it can fire only if `Remove-Item` silently failed. Nothing asserts the shipped `.vst3` still exports its entry point |
+
+  Closing the Windows gap is a **P1** item (`TODO(P1)` in `build.yml`): it needs a real binary to
+  assert against, and the honest option is the PE export table — not a byte-string search for the
+  symbol name, which proves only that the name appears somewhere in the file.
 - Locate everything **before** copying anything; purge debug material from the public copy
   **immediately** after the copy and before any step that can abort — so an abort can never leave
   a symbol-bearing public artifact behind.

@@ -103,6 +103,15 @@ whole mechanism.
 Test *order* is shuffled per repeat, so a pinned seed reproduces the draw, not necessarily the
 interleaving of a 3-pass run.
 
+**Copy the logged value verbatim — do not uppercase it.** pluginval accepts the `0x…` form
+(`CommandLine.cpp`: `if (seedString.startsWith ("0x")) return seedString.getHexValue64();`) and
+round-trips it exactly — verified against 1.0.4: `--random-seed 0x4aeacb4` logs
+`Random seed: 0x4aeacb4`. But the character whitelist it is checked against
+(`containsOnly ("x-0123456789acbdef")`) is **case-sensitive**, so `0X4AEACB4` is rejected with
+*"Invalid random seed argument!"* and exit `-1` — which, per the retry table above, both scripts
+misclassify as an abnormal termination and retry three times before failing. Decimal works too
+(`78248628` logs `0x4a9fab4`), and is what the scripts themselves pass.
+
 The script downloads pluginval if absent, finds the built `Anabasis.vst3`, and runs under
 `xvfb-run` when available (Linux editor tests need a display).
 

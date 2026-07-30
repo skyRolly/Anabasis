@@ -57,6 +57,13 @@ jobs:
   # it too would switch workflow security scanning off for the whole of P0 --
   # exactly the phase in which these workflow files are being written.
   #
+  # SCOPE, precisely: both triggers are `branches: [main]`, so a workflow change
+  # is analysed on the PR into main and on the post-merge push -- NOT on direct
+  # pushes to a feature branch. Nothing reaches main unscanned, which is the
+  # property that matters, but the scan is not continuous while a branch is being
+  # iterated on. `.github/**` is deliberately absent from paths-ignore, so a
+  # workflow-only PR still triggers this analysis.
+  #
   # It is done by EMITTING THE MATRIX, not by a condition on the analyze job.
   # `matrix` is not an available context in `jobs.<id>.if` (only `github`,
   # `needs`, `vars`, `inputs` are), so a job-level `matrix.language != 'c-cpp'`

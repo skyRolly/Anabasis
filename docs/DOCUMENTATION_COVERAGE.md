@@ -6,7 +6,56 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **ninth review pass** (2026-07-30). Four findings fixed, four
+**Last updated:** for the **tenth review pass** (2026-07-30). Four findings fixed, three
+confirmations. **This is the closing pass of the P0 scaffolding work** — see the note at the end.
+
+**The hex replay recipe works; the trap is next to it.** The review suspected `--random-seed
+0x4aeacb4` would parse as `0` — pluginval's "generate a random seed" sentinel — making the
+documented way to reproduce a randomise-only failure silently reproduce nothing. It does not:
+`CommandLine.cpp` branches on `startsWith ("0x")` and calls `getHexValue64()`, and 1.0.4 round-trips
+`0x4aeacb4` exactly. But reading it surfaced a real adjacent trap: the whitelist it is validated
+against, `containsOnly ("x-0123456789acbdef")`, is **case-sensitive**, so an uppercased
+`0X4AEACB4` is rejected with exit `-1` — the one code both scripts misclassify as an abnormal
+termination and retry three times. Documented, with the decimal form as the alternative.
+
+**The PE parser's hardening was only partial.** The previous pass bounds-checked the CodeView
+record but left `e_lfanew`, the section table and the debug-directory array indexed unchecked, so a
+truncated image still threw a raw .NET `IndexOutOfRangeException` instead of the diagnosable error
+the function exists to produce. All four offsets are now checked in the same style. Diagnostics
+quality, not correctness — these images come from MSVC in the same job — but a half-hardened parser
+reads as a hardened one.
+
+**"The staging step self-validates" was true on two platforms of three.** Linux reads ELF section
+headers and asserts the stripped `.so` still exports `GetPluginFactory`; macOS asserts both slices
+are present. **Windows re-lists the extensions the purge just deleted** — it can only fire if
+`Remove-Item` silently failed, so it is a delete-confirmation, not a property check, and nothing
+asserts the shipped `.vst3` is still loadable. `CI_CD.md` now carries a per-platform table instead
+of one sentence covering all three, and the gap is a `TODO(P1)` in the workflow. Recorded with it:
+the honest closure is the PE export table, **not** a byte-string search for the symbol name, which
+would prove only that the name appears somewhere in the file — the same "looks like a check, checks
+nothing" shape as the `lipo -archs` finding in the fourth pass.
+
+**CodeQL `actions` coverage is narrower than its rationale implied.** The comment argues workflow
+scanning must stay on through P0 "exactly the phase in which these workflow files are being
+written", but both triggers are `branches: [main]`: a workflow change is analysed on the PR into
+`main` and on the post-merge push, never on a direct feature-branch push. Nothing reaches `main`
+unscanned — the property that actually matters — but the scan is not continuous during iteration.
+Stated in the workflow rather than left to be rediscovered.
+
+**Confirmations (all previously recorded, re-reported unchanged):** the `GIT_SHALLOW` + commit-SHA
+trap, the reusable-workflow caller-event hazard, and CodeQL's `paths-ignore` being an alert filter.
+
+### Closing note on the review cycle
+
+Ten passes. The defects that mattered were found by **executing** something — pluginval's seed
+sentinel, `build.sh`'s exit status, the `lipo` non-assertion, the folded-scalar flag loss — and the
+last three passes returned only documentation-consistency findings, because there is nothing left in
+this repository to execute: no `src/`, no `tests/`, no `CMakeLists.txt`. Further review of the
+scaffolding is negative-yield; the remaining risk lives entirely in code that does not exist yet.
+The P0→P1 gate is `DEVELOPMENT_BRIEF.md` §11/§24 (owner sign-off on `DESIGN.md`) plus the three
+`Blocking P1` entries in `OPEN_QUESTIONS.md` — decisions, not findings.
+
+Prior: for the **ninth review pass** (2026-07-30). Four findings fixed, four
 confirmations — two of them closed with live evidence from the repository's own CI rather than
 reasoning.
 

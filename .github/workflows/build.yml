@@ -223,7 +223,10 @@ jobs:
       # having SUCCEEDED -- never `if: always()` -- so an unstripped binary cannot
       # reach the public artifact if stripping fails. `!cancelled()` (not plain
       # success()) keeps the beta artifact available when only pluginval failed.
-      # The staging step additionally self-validates the artifact it just built.
+      # The staging step additionally self-validates the artifact it just built --
+      # on LINUX and macOS as an independent property check (section headers /
+      # exported entry point, and slice presence). The Windows equivalent is only
+      # a delete-confirmation; see the TODO(P1) in that job.
       - name: Stage Linux artifacts (VST3 + Standalone)
         id: stage
         if: ${{ !cancelled() && steps.strip.outcome == 'success' }}
@@ -396,7 +399,17 @@ jobs:
             if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
               Write-Error "$ImagePath is not a valid PE image (missing MZ signature)"
             }
+            # EVERY offset below is read OUT OF the image being parsed, so each one
+            # is bounds-checked before it is used as an index. Without that, a
+            # truncated or malformed file throws a raw .NET IndexOutOfRangeException
+            # instead of the diagnosable Write-Error this function is written to
+            # produce -- and the operator gets a stack trace where a one-line cause
+            # was intended. Diagnostics quality, not correctness: these images come
+            # from MSVC in this same job.
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            if ($peOffset -lt 0 -or ($peOffset + 24) -gt $bytes.Length) {
+              Write-Error "$ImagePath : e_lfanew ($peOffset) points outside the file ($($bytes.Length) bytes) -- image is truncated or malformed"
+            }
             if ($bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45) {
               Write-Error "$ImagePath is not a valid PE image (missing PE signature)"
             }
@@ -407,11 +420,17 @@ jobs:
             $magic = [BitConverter]::ToUInt16($bytes, $optHeaderOffset)
             $dataDirOffset = $optHeaderOffset + $(if ($magic -eq 0x20B) { 112 } else { 96 })
             $debugEntryOffset = $dataDirOffset + (6 * 8)   # data-directory index 6 = Debug
+            if (($debugEntryOffset + 8) -gt $bytes.Length) {
+              Write-Error "$ImagePath : optional header / data directories run past the end of the file ($($bytes.Length) bytes) -- image is truncated or malformed"
+            }
             $debugRva  = [BitConverter]::ToUInt32($bytes, $debugEntryOffset)
             $debugSize = [BitConverter]::ToUInt32($bytes, $debugEntryOffset + 4)
             if ($debugRva -eq 0 -or $debugSize -eq 0) { return $null }
             # Map the debug directory's RVA to a file offset via the section table.
             $sectionTableOffset = $optHeaderOffset + $sizeOfOptionalHeader
+            if (($sectionTableOffset + ($numberOfSections * 40)) -gt $bytes.Length) {
+              Write-Error "$ImagePath : section table ($numberOfSections sections at $sectionTableOffset) runs past the end of the file ($($bytes.Length) bytes) -- image is truncated or malformed"
+            }
             $debugFileOffset = -1
             for ($i = 0; $i -lt $numberOfSections; $i++) {
               $s = $sectionTableOffset + ($i * 40)
@@ -428,6 +447,9 @@ jobs:
             # Walk the IMAGE_DEBUG_DIRECTORY array (28 bytes/entry) for an
             # IMAGE_DEBUG_TYPE_CODEVIEW (2) entry carrying an RSDS record.
             $entryCount = [Math]::Floor($debugSize / 28)
+            if (($debugFileOffset + ($entryCount * 28)) -gt $bytes.Length) {
+              Write-Error "$ImagePath : debug directory ($entryCount entries at $debugFileOffset) runs past the end of the file ($($bytes.Length) bytes) -- image is truncated or malformed"
+            }
             for ($i = 0; $i -lt $entryCount; $i++) {
               $e = $debugFileOffset + ($i * 28)
               $type = [BitConverter]::ToUInt32($bytes, $e + 12)
@@ -486,6 +508,18 @@ jobs:
           #    Windows beta artifact, even though the public copy was already
           #    assembled and purged. macOS treats that class of failure as
           #    best-effort, so the two platforms had opposite policies for it.
+          #    WHAT THIS CHECK IS, PRECISELY: it re-lists the same extensions step 3
+          #    just deleted, so it can only fire if Remove-Item silently failed. That
+          #    is a DELETE-CONFIRMATION, not an independent property check, and it is
+          #    weaker than the Linux equivalent (which inspects ELF section headers
+          #    for .symtab and asserts the stripped .so still exports
+          #    GetPluginFactory) and than macOS (which asserts both slices are
+          #    present). Nothing here asserts the shipped .vst3 is still loadable.
+          #    TODO(P1): add an independent assertion once there is a real binary to
+          #    assert against -- the export table is the obvious property, and this
+          #    job already parses PE headers for the CodeView record. Do NOT
+          #    substitute a raw byte-string search for `GetPluginFactory`: matching
+          #    the name anywhere in the file is not evidence that it is exported.
           $leak = Get-ChildItem -Recurse -Path $dist -File |
                   Where-Object { $_.Extension -in '.pdb', '.ilk', '.exp', '.debug' }
           if ($leak) { Write-Error ("customer artifact contains debug files: " + ($leak.FullName -join ', ')) }
