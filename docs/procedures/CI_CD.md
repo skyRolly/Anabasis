@@ -158,7 +158,14 @@ protection is switched on. Neither is a defect; both are traps if configured bli
    without a fresh push, so the gap is theoretical. It stops being theoretical the moment a merge
    queue or "require branches to be up to date" is enabled, and the dedup should be revisited then.
 
-2. **`codeql.yml` on docs-only PRs — the sharper one.** Its `paths-ignore` means the workflow is
+2. **`codeql.yml`'s check *names* change between phases.** Because the matrix is emitted by
+   `preflight`, the job `Analyze (c-cpp)` **does not exist at all** before `CMakeLists.txt` is
+   committed — only `Analyze (actions)` does. A required check named after the c-cpp entry would
+   therefore block every pre-P1 PR on a check that cannot report. Require `Analyze (actions)` now if
+   you want one; add the c-cpp name only once P1 has landed. (This is the dynamic matrix working as
+   intended — it is the *naming* that needs care, not the mechanism.)
+
+3. **`codeql.yml` on docs-only PRs — the sharpest one.** Its `paths-ignore` means the workflow is
    **not created at all** for a docs-only PR, so a required `Analyze (c-cpp)` / `Analyze (actions)`
    check has nothing to report and the PR blocks forever. This is a documented GitHub behaviour,
    not a repository bug, and it matters here because docs-only PRs are most of this repository's

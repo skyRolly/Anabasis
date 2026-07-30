@@ -40,10 +40,13 @@ env:
 # and randomise -- each repeated 3 consecutive times (scripts/run-pluginval.sh on
 # Linux/macOS, scripts/run-pluginval.ps1 on Windows). A non-zero pluginval exit
 # fails the job on every platform (no continue-on-error / swallowed exit codes).
-# Both mode steps report independently: the randomise step is guarded so a
-# DETERMINISTIC failure never SKIPS it. The job still fails if either mode fails.
-# The guard also requires a successful BUILD, so a broken build does not produce a
-# second, misleading pluginval failure about a plugin that was never produced.
+# Both mode steps carry the SAME explicit condition, so they report independently:
+# a DETERMINISTIC failure never skips randomise, and the job still fails if either
+# mode fails. That condition names the steps which must have succeeded for the
+# binary to be worth validating -- the build, plus (on LINUX ONLY) the strip, which
+# there runs BEFORE validation so the gate sees the exact stripped bytes users
+# receive. A failure in either leaves nothing meaningful to validate, and running
+# anyway would only add a red step that hides the real cause.
 #
 # Symbol handling: every platform generates full debug info, retains it as a
 # separate *-debug artifact (split .debug / PDB / dSYM) for crash symbolication,
@@ -181,17 +184,30 @@ jobs:
         run: ./scripts/run-tests.sh
 
       - name: pluginval (deterministic x3 -- release gate)
+        # Explicit condition rather than relying on "no `if:`, so it self-skips".
+        # Both pluginval steps carry the SAME condition, naming exactly what must have
+        # succeeded for the binary to be in the state we intend to validate. The
+        # implicit self-skip made the two modes behave differently after an earlier
+        # failure -- the opposite of "both modes report independently".
+        # On Linux `strip` is a prerequisite too: it runs BEFORE validation so the gate
+        # sees the exact stripped bytes users receive (see the header). If it fails the
+        # binaries are in a partially-stripped state nobody ships, and validating them
+        # adds a red step that hides the real cause.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.strip.outcome == 'success' }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
 
       - name: pluginval (randomise x3 -- release gate)
-        # Run the randomise gate even if the DETERMINISTIC gate above failed, so both modes always
-        # report independently (a deterministic failure must not hide the randomise result). The job
-        # still fails if either gate fails.
-        # But NOT after a failed BUILD: with nothing built there is no .vst3 to validate, so this
-        # would fail a second time on a missing plugin -- a red step unrelated to the real cause.
-        # `!cancelled()` alone forces exactly that, because the deterministic step (which has no
-        # `if:`) correctly skips itself when the build fails.
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        # Same condition as the deterministic step above -- deliberately NOT
+        # `!cancelled()` alone. Two different things are being separated:
+        #   * a DETERMINISTIC pluginval failure must never skip randomise (that is what
+        #     `!cancelled()` buys, and it still holds);
+        #   * an earlier PIPELINE failure must skip BOTH, because nothing worth
+        #     validating exists.
+        # On Linux `strip` is a prerequisite too: it runs BEFORE validation so the gate
+        # sees the exact stripped bytes users receive (see the header). If it fails the
+        # binaries are in a partially-stripped state nobody ships, and validating them
+        # adds a red step that hides the real cause.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.strip.outcome == 'success' }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
 
       # Customer-artifact safety: staging and upload are gated on the strip step
@@ -306,17 +322,22 @@ jobs:
           & $stateExe.FullName
 
       - name: pluginval (deterministic x3 -- release gate)
+        # Explicit condition rather than relying on "no `if:`, so it self-skips".
+        # Both pluginval steps carry the SAME condition, naming exactly what must have
+        # succeeded for the binary to be in the state we intend to validate. The
+        # implicit self-skip made the two modes behave differently after an earlier
+        # failure -- the opposite of "both modes report independently".
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: ./scripts/run-pluginval.ps1 -Strictness ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} -Mode deterministic
 
       - name: pluginval (randomise x3 -- release gate)
-        # Run the randomise gate even if the DETERMINISTIC gate above failed, so both modes always
-        # report independently (a deterministic failure must not hide the randomise result). The job
-        # still fails if either gate fails.
-        # But NOT after a failed BUILD: with nothing built there is no .vst3 to validate, so this
-        # would fail a second time on a missing plugin -- a red step unrelated to the real cause.
-        # `!cancelled()` alone forces exactly that, because the deterministic step (which has no
-        # `if:`) correctly skips itself when the build fails.
+        # Same condition as the deterministic step above -- deliberately NOT
+        # `!cancelled()` alone. Two different things are being separated:
+        #   * a DETERMINISTIC pluginval failure must never skip randomise (that is what
+        #     `!cancelled()` buys, and it still holds);
+        #   * an earlier PIPELINE failure must skip BOTH, because nothing worth
+        #     validating exists.
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: ./scripts/run-pluginval.ps1 -Strictness ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} -Mode randomise
@@ -558,16 +579,21 @@ jobs:
           ./scripts/run-tests.sh
 
       - name: pluginval (deterministic x3 -- release gate)
+        # Explicit condition rather than relying on "no `if:`, so it self-skips".
+        # Both pluginval steps carry the SAME condition, naming exactly what must have
+        # succeeded for the binary to be in the state we intend to validate. The
+        # implicit self-skip made the two modes behave differently after an earlier
+        # failure -- the opposite of "both modes report independently".
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
 
       - name: pluginval (randomise x3 -- release gate)
-        # Run the randomise gate even if the DETERMINISTIC gate above failed, so both modes always
-        # report independently (a deterministic failure must not hide the randomise result). The job
-        # still fails if either gate fails.
-        # But NOT after a failed BUILD: with nothing built there is no .vst3 to validate, so this
-        # would fail a second time on a missing plugin -- a red step unrelated to the real cause.
-        # `!cancelled()` alone forces exactly that, because the deterministic step (which has no
-        # `if:`) correctly skips itself when the build fails.
+        # Same condition as the deterministic step above -- deliberately NOT
+        # `!cancelled()` alone. Two different things are being separated:
+        #   * a DETERMINISTIC pluginval failure must never skip randomise (that is what
+        #     `!cancelled()` buys, and it still holds);
+        #   * an earlier PIPELINE failure must skip BOTH, because nothing worth
+        #     validating exists.
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
 

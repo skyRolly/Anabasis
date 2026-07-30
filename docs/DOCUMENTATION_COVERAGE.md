@@ -6,7 +6,47 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **sixth review pass** (2026-07-30). Seven findings fixed, four
+**Last updated:** for the **seventh review pass** (2026-07-30). Four findings fixed, five
+confirmations.
+
+**The Linux randomise gate could validate bytes nobody ships.** Both pluginval steps keyed on
+`steps.build.outcome == 'success'`, which stays `success` when the Linux **strip** step fails — so
+`build.yml`'s header claim that "on Linux the gate validates exactly the stripped bytes users
+receive" was false in precisely the case that matters. Both steps now carry the same explicit
+per-platform condition, Linux additionally requiring `steps.strip.outcome == 'success'`; the earlier
+asymmetry (deterministic carried no `if:` and self-skipped, randomise carried one) is gone, so the
+two modes still report independently but neither runs against a binary in an unshippable state.
+Verified by parsing the workflow: Linux both modes identical and requiring strip, Windows/macOS both
+modes identical and not.
+
+**`TESTING.md` stated the pluginval retry boundary platform-neutrally**, the same defect corrected
+in `TESTING_POLICY` rule 3 last pass — the procedure a developer actually reads still said
+`exit ≥ 128` is a crash everywhere, while `run-pluginval.ps1` treats 128…255 on Windows as a *real*
+failure. Replaced with the per-platform table and the reason (Windows has no signals; pluginval
+returns its assertion count directly). A policy and the procedure describing it diverging is the
+same class of drift as a policy and its script.
+
+**Requiring the CodeQL check by name would block every pre-P1 PR.** The dynamic matrix means the
+`Analyze (c-cpp)` check *does not exist* until `CMakeLists.txt` lands — a required check that is
+never created never reports, so the PR waits forever. This is a second, distinct branch-protection
+trap from the `paths-ignore` one already recorded (that one is about docs-only PRs; this one is
+about the phase). Written into `CI_CD.md` as its own item: require `Analyze (actions)` now,
+`Analyze (c-cpp)` only from P1.
+
+**`GIT_SHALLOW` + a commit SHA is a documented CMake trap**, recorded in `DEPENDENCY_POLICY` to be
+verified when `CMakeLists.txt` lands. CMake's own documentation says `GIT_SHALLOW` expects `GIT_TAG`
+to name a branch or tag; fetching an arbitrary SHA shallowly works only where the server permits
+`uploadpack.allowReachableSHA1InWant`. Failure is either a silent full clone (slow, not wrong) or a
+hard configure error against a stricter mirror. The resolution is stated in advance so nobody
+"fixes" it the wrong way: **drop `GIT_SHALLOW`, never the SHA** — the SHA is what makes the pin
+immutable.
+
+**Confirmations:** the PE/CodeView offsets, the macOS `set -e` / best-effort-dSYM interaction,
+CodeQL's `paths-ignore` as an alert filter, `run-tests.sh`'s fail-closed discovery, and the
+reusable-workflow caller-event hazard (already written into `build.yml` and `CI_CD.md`) were all
+re-checked with no change needed.
+
+Prior: for the **sixth review pass** (2026-07-30). Seven findings fixed, four
 confirmations.
 
 **`HANDOVER` understated the P1 blockers — the one drift that could actually mislead someone.** It

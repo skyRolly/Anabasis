@@ -90,10 +90,22 @@ The script downloads pluginval if absent, finds the built `Anabasis.vst3`, and r
 
 ### Crash retry — what it is and is not
 
-A **signal-crash** (exit ≥ 128) is retried up to 3 times; a **real validation failure**
-(exit < 128) fails immediately and is never retried. The retry exists to absorb host-side
-validator crashes, not plugin defects — a real plugin defect crashes deterministically and still
-fails after the retries.
+An **abnormal termination** of the validator is retried up to 3 times; a **real validation
+failure** fails immediately and is never retried. The retry exists to absorb host-side validator
+crashes, not plugin defects — a real plugin defect crashes deterministically and still fails after
+the retries.
+
+**The boundary is platform-specific** (`docs/policies/TESTING_POLICY.md` rule 3 is the binding
+statement):
+
+| | abnormal termination → retried | real failure → immediate |
+|---|---|---|
+| **Linux / macOS** | `exit ≥ 128` (128 + signal number) | `exit < 128` |
+| **Windows** | Win32 exception code (`≥ 256`), negative, or no code at all | **`1…255`, including 128…255** |
+
+Windows has no signals, and pluginval returns its assertion count directly — so a code in 128…255
+there is a *real* failure and must not be retried. `run-pluginval.ps1` therefore classifies
+differently from `run-pluginval.sh` by design.
 
 On Windows, `run-pluginval.ps1` launches pluginval via `System.Diagnostics.Process` and
 `WaitForExit()` rather than the call operator: pluginval is a **GUI-subsystem** app, so `& $pv`

@@ -21,6 +21,15 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
   reproducible and keeps audited behaviour stable.
   Two cache variables carry it: `ANABASIS_JUCE_VERSION` (human-readable) and `ANABASIS_JUCE_TAG`
   (the SHA).
+- **`GIT_SHALLOW` + a commit SHA needs verifying at P1 — it is a documented CMake trap.** CMake's
+  own `ExternalProject`/`FetchContent` documentation states that `GIT_SHALLOW` expects `GIT_TAG` to
+  name a **branch or tag**. Fetching an arbitrary SHA shallowly works only where the server permits
+  `uploadpack.allowReachableSHA1InWant` (GitHub does today) *and* CMake is new enough to attempt
+  it. Otherwise the likely outcomes are a silent fallback to a full clone (slow, not wrong) or a
+  hard configure failure against a mirror that disallows it (wrong, and confusing). The SHA pin is
+  not negotiable — it is what makes the dependency immutable — so if the combination misbehaves,
+  drop `GIT_SHALLOW`, never the SHA. Check this explicitly when `CMakeLists.txt` lands rather than
+  discovering it on someone else's machine.
 - **The pin is shared with Anamorph on purpose.** Both products sit on JUCE 9.0.0 at the same
   commit, so a JUCE-attributable behaviour difference between them is impossible by construction,
   one dependency audit covers both, and a Level-5 audition of one is a meaningful baseline for the
