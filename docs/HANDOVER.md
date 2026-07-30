@@ -19,7 +19,7 @@ Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BRIEF.md
 | **Build Status** | **No build exists.** There is no `CMakeLists.txt` and no `src/`. The three build/analysis workflows are guarded by a `preflight` job and self-skip until `CMakeLists.txt` appears. |
 | **Test Status** | **No tests exist.** The gate activates at P1 (`docs/policies/TESTING_POLICY.md`). |
 | **Release Status** | Pre-0.1.0. Nothing has ever left this repository, which is why the compatibility contract can still be shaped at zero cost (`COMPATIBILITY_POLICY.md` §"When the contract starts"). |
-| **Known Blockers** | Three items block P1, all requiring a decision rather than code: the JUCE pin (OQ-001), the plugin identity codes (OQ-003), and owner sign-off on `DESIGN.md`. The JUCE licence tier (OQ-002) blocks commercial distribution but not development. |
+| **Known Blockers** | One item blocks P1: owner sign-off on `DESIGN.md`. The JUCE pin (OQ-001) and the plugin identity codes (OQ-003) are **decided** and recorded; both must be written into `CMakeLists.txt` when it is created at P1. The JUCE licence tier (OQ-002) blocks commercial distribution but not development. |
 | **Pending Tasks** | P0: read the Anamorph repository in full; resolve/escalate every `OPEN_QUESTIONS.md` entry; produce `DESIGN.md` (architecture, **full parameter table**, draft macro-mapping curves, UI wireframes, proposed initial ADR set); wait for sign-off. |
 | **Roadmap** | P0 research & design → P1 skeleton (pluginval L5) → P2 DSP core → P3 metering engine → P4 Simple adaptive engine → P5 UI → P6 polish & release (pluginval L10, DAW matrix, docs). `DEVELOPMENT_BRIEF.md` §11. v2 candidates (codec preview, reference matching, dynamic EQ, multiband limiting) are out of scope — leave architectural room only. |
 | **Ownership** | `TODO: no owner/team metadata in the repository. Requires project-owner input (OQ-009).` Company of record: RollyTech. |
@@ -28,7 +28,7 @@ Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BRIEF.md
 
 | Dependency | Pin | Version-lock reason |
 |---|---|---|
-| **JUCE** | **TODO** — newest stable 9.x, by immutable commit SHA (OQ-001) | Framework for all DSP, parameters/state, GUI and plugin wrappers. An unpinned bump can silently change DSP/latency/state-ABI. A bump is a Build System change (ADR + Review). `docs/policies/DEPENDENCY_POLICY.md`. |
+| **JUCE** | **9.0.0** — immutable commit `f8f8864…` (OQ-001, decided 2026-07-30; same pin as Anamorph) | Framework for all DSP, parameters/state, GUI and plugin wrappers. An unpinned bump can silently change DSP/latency/state-ABI. Sharing the pin with the sibling product makes a JUCE-attributable difference between them impossible and makes a bump a product-family decision. A bump is a Build System change (ADR + Review). `docs/policies/DEPENDENCY_POLICY.md`. |
 | **C++ standard** | C++20 (+ a non-blocking C++23 canary job) | Project baseline per `DEVELOPMENT_BRIEF.md` §2.1; raising it is a build-contract change. |
 | **pluginval** | latest release (downloaded) | The conformance gate. Not vendored; fetched by `scripts/run-pluginval.sh`. Pinning it is a tracked improvement. |
 | Linux system libs | distro (`scripts/setup-linux.sh`) | ALSA/JACK/X11/FreeType/GTK/mesa/**EGL**/xvfb for headless build + validation. |

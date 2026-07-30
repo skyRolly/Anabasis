@@ -11,28 +11,6 @@ Status values: `Open` · `Blocking <phase>` · `Resolved`.
 
 ---
 
-## OQ-001 — Which JUCE 9.x point release do we pin? · `Blocking P1`
-
-**Question.** §2 requires pinning the newest stable JUCE 9.x point release, by its tag's
-**immutable commit SHA**, and recording the tag in `README.md`. This repository has no network
-evidence of the current 9.x release list.
-
-**Why it cannot be guessed.** A wrong pin is a build-system change later
-(`ARCHITECTURE_REVIEW_GATE.md`) and can silently move DSP behaviour, latency, the editor path and
-the state ABI (`DEPENDENCY_POLICY.md`). Anamorph currently pins 9.0.0
-(`f8f8864172464b9adf9eba6101e1f784838d1597`).
-
-**Action.** At P0, read `github.com/juce-framework/JUCE` releases/tags, take the newest stable
-`9.x`, resolve the tag to its commit SHA, and record **both** in `CMakeLists.txt`
-(`ANABASIS_JUCE_VERSION` + `ANABASIS_JUCE_TAG`) and `README.md`. If a JUCE 10 has appeared, report
-it and **ask** before adopting it (§2).
-
-**Recommendation.** Prefer matching Anamorph's pin unless a newer 9.x fixes something this project
-needs — a single shared framework version across the product family keeps the Level-5 audition
-baseline comparable.
-
----
-
 ## OQ-002 — Which JUCE licence tier does Anabasis ship under? · `Blocking commercial release`
 
 **Question.** §2 says to confirm which tier Anamorph ships under and keep this project on the
@@ -48,29 +26,6 @@ commercial distribution absolutely.
 
 **Related.** Commercial VST3 distribution additionally requires reviewing Steinberg's licensing
 terms separately.
-
----
-
-## OQ-003 — Plugin identity codes and bundle ID · `Blocking P1`
-
-**Question.** `juce_add_plugin` needs `PLUGIN_MANUFACTURER_CODE`, `PLUGIN_CODE`, `BUNDLE_ID`.
-These are **permanent host-facing identity** — a host keys its plugin database and a user's saved
-sessions off them, so changing one after any build reaches a tester breaks that tester's sessions.
-
-**Anamorph's values (for reference):** `COMPANY_NAME "RollyTech"`,
-`BUNDLE_ID "com.rollytech.anamorph"`, `PLUGIN_MANUFACTURER_CODE Anmf`, `PLUGIN_CODE Anmr`.
-
-**Proposal (needs confirmation, not assumed):**
-
-| Field | Proposed | Rationale |
-|---|---|---|
-| `COMPANY_NAME` | `RollyTech` | same brand |
-| `PLUGIN_MANUFACTURER_CODE` | `Anmf` | manufacturer codes are per-*vendor*, so the family should share one; note it reads as an Anamorph abbreviation, which is why this needs a decision rather than a copy |
-| `PLUGIN_CODE` | `Anbs` | must be unique per product; `Anmr` is taken by Anamorph |
-| `BUNDLE_ID` | `com.rollytech.anabasis` | matches the Anamorph pattern |
-| `VST3_CATEGORIES` | `"Fx" "Dynamics" "Mastering"` | maximizer, not a spatial effect |
-
-**Action.** Owner confirms (or corrects) the table above before the first `juce_add_plugin` call.
 
 ---
 
@@ -161,4 +116,66 @@ inferred from Anamorph.
 
 ## Resolved
 
-*(none yet)*
+### OQ-001 — Which JUCE 9.x point release do we pin? · `Resolved 2026-07-30`
+
+**Question.** §2 requires pinning the newest stable JUCE 9.x point release by its tag's
+**immutable commit SHA**, and recording the tag in `README.md`.
+
+**Decision (owner, 2026-07-30).** Pin **the same JUCE the sibling product pins: 9.0.0**, by the
+tag's immutable commit SHA `f8f8864172464b9adf9eba6101e1f784838d1597`.
+
+**Rationale.** A single shared framework version across the product family keeps the Level-5
+audition baseline comparable between the two plugins and means one dependency audit, one set of
+JUCE-attributable behaviour, and one bump decision for both products. Anamorph has already
+verified this exact commit headlessly (its ADR-0022 records a 32-scenario twin dump proving
+engine output bit-identical 8.0.14 → 9.0.0, including reported latencies), so Anabasis inherits a
+framework revision with evidence behind it rather than an unexercised newer one.
+
+**Recorded in.** `README.md`, `docs/policies/DEPENDENCY_POLICY.md`, `docs/procedures/BUILD.md`,
+`docs/HANDOVER.md`. It must additionally be written into `CMakeLists.txt`
+(`ANABASIS_JUCE_VERSION "9.0.0"` + `ANABASIS_JUCE_TAG "f8f8864…"`) when that file is created at
+P1, and recorded in the P0 build-decision ADR.
+
+**Evidence [Verified]:** the version + SHA are read from the sibling repository's
+`CMakeLists.txt:36-38` and its ADR-0022. **Not verified from this repository** — Anabasis has no
+build yet, so "this pin configures and builds" becomes Verified only at P1.
+
+**Standing obligation.** This is now a pin, so `DEPENDENCY_POLICY.md` applies in full: any later
+change is an `ARCHITECTURE_REVIEW_GATE` Build System change requiring an ADR plus the rule-2
+verification. Also: §2 requires checking for a newer stable 9.x (and reporting rather than
+adopting a JUCE 10) — that check is now a *deliberate deferral*, not an oversight. Re-run it if
+9.0.0 turns out to lack something this project needs.
+
+---
+
+### OQ-003 — Plugin identity codes and bundle ID · `Resolved 2026-07-30`
+
+**Question.** `juce_add_plugin` needs `PLUGIN_MANUFACTURER_CODE`, `PLUGIN_CODE`, `BUNDLE_ID`.
+These are **permanent host-facing identity**: the manufacturer code is the AU component's
+manufacturer field, and JUCE derives the VST3 class UID from the manufacturer code + plugin code +
+plugin name. A host that recorded the old identity in a session does not load a *changed* plugin —
+it reports the plugin as **missing**.
+
+**Decision (owner, 2026-07-30).**
+
+| Field | Value | Rationale |
+|---|---|---|
+| `COMPANY_NAME` | `RollyTech` | same brand |
+| `PLUGIN_MANUFACTURER_CODE` | **`RTec`** | The manufacturer code identifies the **vendor**, so it is shared by every RollyTech plug-in. `Anmf` was rejected: it abbreviates *Anamorph*, the first product, which does not survive a product line. **Anamorph is changing to `RTec` in its 0.9.1** so the two products agree from the start (Anamorph ADR-0023). Also considered and rejected: `Roll` (a common English word — higher chance of colliding with another vendor's registered code), `RolT`, `RlyT`. AU requires ≥ 1 uppercase character; `RTec` satisfies it. |
+| `PLUGIN_CODE` | **`Anbs`** | Per-product and must be unique; `Anmr` is Anamorph's. |
+| `BUNDLE_ID` | **`com.rollytech.anabasis`** | Matches the sibling product's pattern. |
+| `VST3_CATEGORIES` | **`"Fx" "Dynamics" "Mastering"`** | A maximizer, not a spatial effect (Anamorph uses `"Fx" "Spatial" "Stereo"`). |
+
+**Consequence — none, and that is the point.** Anabasis has never built, so it adopts the final
+vendor code before it can ever have an identity to break. Anamorph pays a one-time disruption
+(its KI-016) precisely so that this repository does not.
+
+**Standing obligation.** From the first build that leaves this repository these values are frozen
+(`COMPATIBILITY_POLICY.md`). Anamorph has already spent the "before the first release" exception
+for the manufacturer code; there is no comparable exception available here.
+
+**Recorded in.** `docs/procedures/BUILD.md` §Plugin identity. Must be written into
+`CMakeLists.txt` when it is created at P1, and into the P0 build-decision ADR.
+
+**Evidence [Unverified].** No build exists, so "these values register correctly in a host" is
+unproven — it becomes Verified at the first Level-5 check (P1).

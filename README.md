@@ -36,10 +36,11 @@ headless Linux machine, no IDE.
 ## Requirements
 
 - **CMake ≥ 3.22**, a **C++20** compiler, **Ninja** (recommended).
-- **JUCE 9.x**, fetched automatically by CMake `FetchContent` and pinned to the release tag's
-  **immutable commit SHA**. The exact pinned tag is decided at P0 and recorded here — see
-  `docs/OPEN_QUESTIONS.md` OQ-001. `docs/policies/DEPENDENCY_POLICY.md` carries the version-lock
-  reasoning.
+- **JUCE 9.0.0**, fetched automatically by CMake `FetchContent` and pinned to that tag's
+  **immutable commit SHA** `f8f8864172464b9adf9eba6101e1f784838d1597` — the same revision the
+  sibling product Anamorph pins, so both plugins share one framework baseline
+  (`docs/OPEN_QUESTIONS.md` OQ-001, resolved). `docs/policies/DEPENDENCY_POLICY.md` carries the
+  version-lock reasoning; changing the pin is an Architecture Review Gate item.
 - Linux build deps install via `scripts/setup-linux.sh`. See `docs/procedures/BUILD.md`.
 
 ## Quick start (headless Linux) — active from P1 onward

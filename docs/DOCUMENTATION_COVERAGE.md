@@ -6,7 +6,19 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** repository bootstrap — the migration of Anamorph's governance system,
+**Last updated:** for the **OQ-001 / OQ-003 resolutions** (2026-07-30). Two blocking decisions
+moved to `Resolved` in `OPEN_QUESTIONS.md` (entries are never deleted): the JUCE pin is **9.0.0 at
+commit `f8f8864…`**, the same revision Anamorph pins, so the product line shares one framework
+baseline; and the plugin identity is **`RTec` / `Anbs` / `com.rollytech.anabasis`**, with the
+vendor code spelling RollyTech rather than the first product. Synced: README (§Requirements),
+`DEPENDENCY_POLICY` (pin row + the shared-pin rationale), `BUILD.md` (toolchain, options table,
+new §Plugin identity), `HANDOVER` (dependency row, Known Blockers — now one, `DESIGN.md`
+sign-off), `DEVELOPMENT_BRIEF` §23.2. Both values must be written into `CMakeLists.txt` at P1 and
+are frozen from the first build that leaves this repository. Anabasis pays nothing for the
+identity decision because it has never built; the sibling product absorbs the one-time break
+(Anamorph 0.9.1 / its ADR-0023 / its KI-016). No `src/` change — there is still no `src/`.
+
+Prior: repository bootstrap — the migration of Anamorph's governance system,
 documentation library, build/CI scaffolding and working conventions into a previously empty
 Anabasis repository, plus the product brief (`docs/DEVELOPMENT_BRIEF.md`, Part I unchanged from
 the owner-supplied prompt + an additive Part II recording the inherited engineering standard).

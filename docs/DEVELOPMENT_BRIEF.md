@@ -637,8 +637,15 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 ### 23.2 Decisions that are still open
 
 Every unresolved item is tracked in [`docs/OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) — including the
-plugin identity codes, the JUCE point release and licence tier, and whether to extract a shared
-`rollytech-ui` module (§1.2). **Do not guess at any of them** (§13).
+licence tier and whether to extract a shared `rollytech-ui` module (§1.2). **Do not guess at any
+of them** (§13).
+
+Two are now **resolved** and are therefore *decisions*, not choices to revisit: the JUCE pin
+(**9.0.0** at commit `f8f8864…`, the same revision Anamorph pins — OQ-001) and the plugin identity
+(**`RTec` / `Anbs` / `com.rollytech.anabasis`** — OQ-003; the vendor code spells RollyTech, and
+Anamorph moved to it in its 0.9.1 so the product line agrees from the start). Both must be written
+into `CMakeLists.txt` at P1 and are frozen from the first build that leaves the repository
+(`docs/procedures/BUILD.md` §Plugin identity).
 
 ---
 

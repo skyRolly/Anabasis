@@ -10,9 +10,9 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
 ## Toolchain
 
 - **CMake ≥ 3.22**, a **C++20** compiler, **Ninja** (recommended generator).
-- **JUCE 9.x** is fetched automatically (CMake `FetchContent`, pinned to the release tag's
-  **immutable commit SHA**) — or pointed at a local checkout. The exact tag and SHA are resolved
-  at P0 (`docs/OPEN_QUESTIONS.md` OQ-001) and recorded in `CMakeLists.txt` and `README.md`. See
+- **JUCE 9.0.0** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
+  commit SHA** `f8f8864172464b9adf9eba6101e1f784838d1597`) — or pointed at a local checkout. Same
+  revision as the sibling product (`docs/OPEN_QUESTIONS.md` OQ-001, resolved). See
   `docs/policies/DEPENDENCY_POLICY.md` for the version-lock reasoning.
 
 ## Linux dependencies (Ubuntu)
@@ -49,7 +49,7 @@ scripts/build.sh            # scripts/build.sh [Release|Debug]
 | `ANABASIS_BUILD_TESTS` | ON | Build the `AnabasisTests` + `AnabasisStateTests` console apps |
 | `ANABASIS_BUILD_STANDALONE` | ON | Add the Standalone target (debugging convenience) |
 | `ANABASIS_JUCE_PATH` | "" | Use a local JUCE checkout instead of fetching |
-| `ANABASIS_JUCE_TAG` | *(the pinned SHA)* | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` carries the human-readable version |
+| `ANABASIS_JUCE_TAG` | `f8f8864…` (= tag 9.0.0) | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` (`9.0.0`) carries the human-readable version |
 | `ANABASIS_BUILD_NUMBER` | 0 | CI build/dev number shown in the About box (`-DANABASIS_BUILD_NUMBER=${{ github.run_number }}`) |
 
 Offline build (no network) with a local JUCE:
@@ -83,6 +83,23 @@ one exists because of a specific failure mode:
 
 `VST3` everywhere; `+ AU` additionally on macOS (Logic Pro loads only AU); `+ Standalone` when
 `ANABASIS_BUILD_STANDALONE` is ON. **AAX is Not Supported** by decision.
+
+## Plugin identity (frozen — `juce_add_plugin` arguments)
+
+| Field | Value | Note |
+|---|---|---|
+| `COMPANY_NAME` | `RollyTech` | |
+| `BUNDLE_ID` | `com.rollytech.anabasis` | |
+| `PLUGIN_MANUFACTURER_CODE` | **`RTec`** | The **vendor** code — identical in every RollyTech plug-in. Anamorph moved from `Anmf` to `RTec` in its 0.9.1 for this reason (its ADR-0023). |
+| `PLUGIN_CODE` | **`Anbs`** | Per-product, unique. `Anmr` is Anamorph's. |
+| `PRODUCT_NAME` | `Anabasis` | |
+| `VST3_CATEGORIES` | `"Fx" "Dynamics" "Mastering"` | |
+
+These are **host-facing identity**, not cosmetics: the manufacturer code is the AU component's
+manufacturer field, and JUCE derives the VST3 class UID from the manufacturer code + plugin code +
+plugin name. Change one after a build has left this repository and every saved session reports the
+plugin as **missing** — the host cannot match it at all. They are frozen from the first build
+(`docs/policies/COMPATIBILITY_POLICY.md`; decided in `docs/OPEN_QUESTIONS.md` OQ-003).
 
 ## Compile definitions (part of the build contract)
 

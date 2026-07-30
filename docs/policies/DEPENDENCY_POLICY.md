@@ -6,7 +6,7 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
 
 | Dependency | Pin | Mechanism | Status |
 |---|---|---|---|
-| **JUCE** | **9.x — the newest stable point release, pinned by its tag's IMMUTABLE commit SHA** | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH` | **TODO** — the exact tag + SHA are resolved at P0 and recorded here, in `CMakeLists.txt` and in `README.md` (`OPEN_QUESTIONS.md` OQ-001) |
+| **JUCE** | **9.0.0**, pinned by the tag's **IMMUTABLE commit SHA** `f8f8864172464b9adf9eba6101e1f784838d1597` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH` | Decided (OQ-001, 2026-07-30). Must be written into `CMakeLists.txt` as `ANABASIS_JUCE_VERSION` + `ANABASIS_JUCE_TAG` when that file is created at P1 |
 | **pluginval** | latest release (downloaded) | `scripts/run-pluginval.sh` / `.ps1` | pinning it is a tracked improvement, not yet done |
 | **C++ standard** | **C++20** | `CMAKE_CXX_STANDARD 20`, `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | per `DEVELOPMENT_BRIEF.md` §2.1 |
 | Linux system libs | distro packages | `scripts/setup-linux.sh` (ALSA, JACK, X11, FreeType, GTK/WebKit, mesa, **EGL — required by JUCE 9's Linux GL context path**, xvfb) | scaffolded |
@@ -21,6 +21,11 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
   reproducible and keeps audited behaviour stable.
   Two cache variables carry it: `ANABASIS_JUCE_VERSION` (human-readable) and `ANABASIS_JUCE_TAG`
   (the SHA).
+- **The pin is shared with Anamorph on purpose.** Both products sit on JUCE 9.0.0 at the same
+  commit, so a JUCE-attributable behaviour difference between them is impossible by construction,
+  one dependency audit covers both, and a Level-5 audition of one is a meaningful baseline for the
+  other. The corollary is that a future bump is a **product-family decision**, not a per-repo one:
+  bumping only Anabasis re-introduces exactly the divergence this pin removes.
 - **C++20 is the baseline, not a floor to drift above.** C++20 **modules are not used** — they
   remain a build-system liability in plugin projects. Where a C++23 library feature would clearly
   improve the code (`std::expected`, `std::mdspan`, `std::float32_t`, `[[assume]]`, `std::print`
