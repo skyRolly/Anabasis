@@ -29,30 +29,6 @@ terms separately.
 
 ---
 
-## OQ-010 — Does the limiter lookahead get an explicit 0 / off position? · `Blocking P1`
-
-**Question.** §4.3 specifies the limiter lookahead as **0.5–10 ms** (default ≈ 2 ms). On that
-range the plugin **always reports non-zero latency to the host**; there is no zero-latency
-configuration.
-
-**Why it cannot be deferred.** Parameter ranges are semantic and become contract at the first
-shipped build (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3): widening the range later to add a 0
-position re-scales every saved session's normalised value and is an `ARCHITECTURE_REVIEW_GATE`
-item. It also determines what `DSP_POLICY.md` invariant 2 and the release checklist can assert —
-"with lookahead 0 and oversampling off, reported latency is 0" is not testable on a 0.5–10 ms
-range, so the invariant is currently phrased against the engaged lookahead instead.
-
-**Trade-off.** An off position enables a genuinely zero-latency mode (useful while tracking, and
-in hosts with poor PDC), at the cost of a limiter that cannot catch transients ahead of time — a
-markedly different, and worse, sound. Several mastering limiters deliberately omit it for exactly
-that reason.
-
-**Action.** Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
-position", say so explicitly in the parameter table so it reads as a decision rather than an
-oversight.
-
----
-
 ## OQ-004 — Simple ⇄ Advanced coexistence strategy · `Blocking P4`
 
 **Question.** §5.3 requires a decision: when the user has edited parameters manually in Advanced
@@ -135,6 +111,74 @@ metadata exists in this repository.
 
 **Action.** Owner supplies. Until then the field stays `TODO` (constraint C7) — it is not
 inferred from Anamorph.
+
+---
+
+## OQ-010 — Does the limiter lookahead get an explicit 0 / off position? · `Blocking P1`
+
+**Question.** §4.3 specifies the limiter lookahead as **0.5–10 ms** (default ≈ 2 ms). On that
+range the plugin **always reports non-zero latency to the host**; there is no zero-latency
+configuration.
+
+**Why it cannot be deferred.** Parameter ranges are semantic and become contract at the first
+shipped build (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3): widening the range later to add a 0
+position re-scales every saved session's normalised value and is an `ARCHITECTURE_REVIEW_GATE`
+item. It also determines what `DSP_POLICY.md` invariant 2 and the release checklist can assert —
+"with lookahead 0 and oversampling off, reported latency is 0" is not testable on a 0.5–10 ms
+range, so the invariant is currently phrased against the engaged lookahead instead.
+
+**Trade-off.** An off position enables a genuinely zero-latency mode (useful while tracking, and
+in hosts with poor PDC), at the cost of a limiter that cannot catch transients ahead of time — a
+markedly different, and worse, sound. Several mastering limiters deliberately omit it for exactly
+that reason.
+
+**Action.** Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
+position", say so explicitly in the parameter table so it reads as a decision rather than an
+oversight.
+
+---
+
+## OQ-011 — What is the macOS deployment target? · `Blocking P1`
+
+**Question.** `build.yml` passes `CMAKE_OSX_DEPLOYMENT_TARGET=10.13` on a universal
+`arm64;x86_64` build. That value is inherited from the sibling product and has never been
+validated for this one.
+
+**Why it needs deciding rather than carrying over.** arm64 macOS starts at **11.0**, so the arm64
+slice's minimum is silently raised (or warned about) by clang/ld regardless of what is requested —
+the number only really governs the x86_64 slice. 10.13 may also sit below JUCE 9's supported floor.
+Either way an unnoticed toolchain warning is precisely what the warning-free-build rule
+(`CODE_STYLE.md`) exists to catch, and the deployment target is a **user-visible support claim**:
+it decides which macOS versions the plugin loads on at all.
+
+**Why not guessed at now.** No build exists, so nothing here can be measured, and JUCE 9's
+documented minimum is not evidence this repository holds (constraint C7).
+
+**Action.** At P1, check JUCE 9's supported macOS minimum, set the value deliberately, and record
+the supported-OS claim in `COMPATIBILITY_MATRIX.md`. The `build.yml` line carries a `TODO(P1)`
+pointing here.
+
+---
+
+## OQ-012 — Should macOS/Windows validate the stripped, signed bytes? · `Open (decide at P6)`
+
+**Question.** Only the **Linux** job validates what users actually receive: its strip step runs
+before pluginval. On macOS `strip -x` + ad-hoc codesign run in the packaging step *after*
+pluginval, and on Windows the public copy is produced after validation too. So a defect introduced
+**by stripping or signing** would ship unvalidated on those two platforms.
+
+**Why it is not simply "reorder them".** macOS must codesign **last** — stripping after signing
+invalidates the seal — so the pluginval step would have to move after the whole
+strip→sign→verify sequence, which changes what a pluginval failure means for artifact gating. On
+Windows the same reordering is cheaper but still shifts which step the customer upload depends on.
+
+**Why not decided now.** There is no binary. The honest way to settle this is to measure whether
+strip/sign actually perturbs anything on a real build — which is a P6 activity, alongside the
+release pipeline.
+
+**Interim.** The asymmetry is stated in the `build.yml` header and in
+`docs/procedures/CI_CD.md` rather than glossed over by the "uniform and blocking" wording, which
+refers to the pluginval **gate**, not to which bytes it sees.
 
 ---
 

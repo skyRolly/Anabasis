@@ -614,7 +614,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 | Area | Anamorph | Anabasis | Why |
 |---|---|---|---|
 | **C++ standard** | C++17 | **C++20** + a non-blocking C++23 canary CI job | §2.1 of this brief |
-| **JUCE** | 9.0.0, SHA-pinned | **newest stable 9.x**, SHA-pinned — the exact tag must be checked at P0 and recorded in `README.md` | §2 |
+| **JUCE** | 9.0.0, SHA-pinned | **9.0.0 at the same commit** `f8f8864…` — §2 asked for the newest stable 9.x to be checked at P0; that check was made and resolved in favour of matching the sibling product, so the line shares one framework baseline (OQ-001, resolved — see §23.2) | §2 |
 | **Signal chain** | Input → engine → Mix → Mono Maker → Output → Solo | Input Gain → EQ → Comp → Clipper/Sat → Limiter → Ceiling → Dither → Output | §3 |
 | **Oversampling scope** | wraps the nonlinear stages only | must additionally serve **true-peak detection at ≥ 4×** (BS.1770-4) | §4.3 |
 | **Simple/Advanced** | Advanced *adds* modules; Advanced-only modules default-bypass | Simple is a **macro layer over the same parameter model**; switching must not change the sound | §5.3 — a new policy, `MODE_AND_ADAPTATION_POLICY.md` |
@@ -623,6 +623,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 | **Compatibility legacy paths** | three frozen legacy formats | **none yet** — the contract begins at v0.1.0; freeze a fixture the moment the first format ships | §9 |
 | **Presets** | `.anamorph` | `.anabasis`, ≥ 12 factory presets, **parameter lock (Ceiling at minimum)** | §9 |
 | **Packaging/installers** | shipped (Inno Setup / `.pkg` / Linux scripts) | added at **P6** | §11 |
+| **Plugin identity** | `Anmf` / `Anmr` / `com.rollytech.anamorph`; VST3 categories Fx, Spatial, Stereo | **`RTec`** (shared vendor code — Anamorph moved to it in its 0.9.1) / **`Anbs`** / `com.rollytech.anabasis`; VST3 categories Fx, **Dynamics, Mastering** | OQ-003, resolved — `docs/procedures/BUILD.md` §Plugin identity |
 
 ### 23.1 Shared with Anamorph (do NOT diverge)
 

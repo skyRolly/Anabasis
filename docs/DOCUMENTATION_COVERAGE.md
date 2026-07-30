@@ -6,13 +6,60 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **first review pass** (2026-07-30). Ten findings fixed. Corrected in this
+**Last updated:** for the **second review pass** (2026-07-30). Eleven findings addressed.
+
+**The overview contradicted the decisions.** README §Project status still listed the JUCE pin and
+the plugin identity as open items "not to be guessed at" after the same change set resolved and
+froze both, and the `DEVELOPMENT_BRIEF` §23 delta table still said the JUCE tag "must be checked at
+P0" — contradicted three sections later by §23.2. README now separates *decided and frozen* from
+*still open*, and §23 gained a **Plugin identity** row so the delta table records the real
+difference (`RTec`/`Anbs`/`com.rollytech.anabasis`, VST3 categories Fx/Dynamics/Mastering) rather
+than a stale instruction.
+
+**CI correctness.** The Windows staging and macOS packaging steps ran on `!cancelled()` alone, so a
+failed *build* let them run and fail a second time on missing paths — a red step unrelated to the
+cause; both now also require `steps.build.outcome == 'success'` (the Linux job needs no guard, its
+strip step has no `if:`). `objcopy --add-gnu-debuglink` recorded a CI-workspace path that exists on
+no user's machine, so a downloaded `-debug` artifact would never be found automatically; objcopy now
+runs from inside the debug dir with a bare basename, the conventional lookup. The hand-rolled PE
+CodeView parser now bounds-checks `PointerToRawData` before indexing, so a truncated image produces
+the intended diagnosable error instead of a raw .NET exception.
+
+**Honesty about what the gate covers.** The `build.yml` header claimed the release gate validates
+the shipped bytes; that is true only on **Linux**, where the strip precedes pluginval. macOS and
+Windows strip (and macOS signs) *after* validation, so a defect introduced by stripping or signing
+would ship unvalidated there. Stated plainly in the header and in `CI_CD.md`, and raised as
+**OQ-012** for P6 — reordering is not free (macOS must codesign last) and deserves a measurement,
+not a guess.
+
+**Branch-protection traps documented before they bite.** `CI_CD.md` gained a "before enabling
+branch protection" section: `build.yml`'s same-repo PR skip reports a *skipped* conclusion (fine,
+but the first thing to check if a required check ever hangs), and — the sharper one — `codeql.yml`'s
+`paths-ignore` means the workflow is **never created** for docs-only PRs, so a required CodeQL check
+would block them forever. Neither is a bug; both are traps if configured blindly. The standard
+same-job-names no-op companion workflow is named as the fix, to be added when CodeQL is made
+required and not before.
+
+**Scripts.** `run-tests.sh` now fails closed on **ambiguity** as well as absence: `find | head -n1`
+would silently gate on whichever binary `find` emitted first, so a stale second build tree could
+produce a green report about the wrong artifact. Verified in all three cases (none / exactly one /
+two). `run-pluginval.sh`'s `chmod +x … || true` no longer swallows a setup failure that would
+otherwise resurface as an opaque "cannot execute" from the validation loop.
+
+**Also:** `CMAKE_OSX_DEPLOYMENT_TARGET=10.13` was inherited unexamined — arm64 macOS starts at 11.0,
+so the arm64 slice's minimum is silently raised, and 10.13 may sit below JUCE 9's floor. Carrying a
+`TODO(P1)` and raised as **OQ-011**; not guessed at, since the deployment target is a user-visible
+support claim (C7). `TESTING_POLICY`'s rule "3a" did not render as a list item (Markdown does not
+recognise `3a.`), so the skipped-test-category rule — cross-referenced from the coverage audit — is
+renumbered to **rule 4**, with the hostile-inputs rule to 5.
+
+Prior: for the **first review pass** (2026-07-30). Ten findings fixed. Corrected in that
 audit: the policies row said 15 docs, the tree has **16**. Scripts: `setup-linux.sh` now installs
 `curl` + `unzip` (`run-pluginval.sh` calls both; `libcurl4-openssl-dev` is headers, not the CLI, and
 GitHub runners preinstall them — so the gap only ever showed on a fresh machine);
 `run-pluginval.ps1` **no longer passes `--skip-gui-tests`**, which was inherited from the sibling
 product where an evidenced runner limitation justifies it, and here suppressed nothing while
-contradicting the "uniform and blocking on every platform" gate — `TESTING_POLICY` gains rule 3a
+contradicting the "uniform and blocking on every platform" gate — `TESTING_POLICY` gains rule 4
 requiring any future skip to be documented, not merely scripted; `build.sh` `find` calls take
 `-maxdepth` before `-name`. CI: all actions re-aligned to the versions the sibling repository runs
 green (`checkout@v7`, `upload-artifact@v7`, `codeql-action@v4`, `dependency-review-action@v5`) —

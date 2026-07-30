@@ -48,7 +48,10 @@ if [ ! -x "$PLUGINVAL" ]; then
     echo "Fetching pluginval ($PV_ZIP)..."
     curl -L "https://github.com/Tracktion/pluginval/releases/latest/download/$PV_ZIP" -o "$TOOLS_DIR/pluginval.zip"
     (cd "$TOOLS_DIR" && unzip -o pluginval.zip >/dev/null)
-    chmod +x "$PLUGINVAL" || true
+    # NOT `|| true`: a failed chmod here resurfaces later as an opaque "cannot
+    # execute" from the validation loop, which reads as a plugin problem rather
+    # than the setup problem it is. Fail where the fault actually is.
+    chmod +x "$PLUGINVAL"
 fi
 
 RUN_PREFIX=""

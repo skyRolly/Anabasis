@@ -46,11 +46,22 @@ env:
 #
 # Symbol handling: every platform generates full debug info, retains it as a
 # separate *-debug artifact (split .debug / PDB / dSYM) for crash symbolication,
-# and ships STRIPPED public binaries. On Linux the strip runs before pluginval so
-# the release gate validates the shipped bytes. On macOS the dSYM capture is
-# BEST-EFFORT: under Release+LTO the DWARF needed for dSYM reconstruction may no
-# longer exist at packaging time, in which case the -debug upload is skipped with
-# a warning while the customer artifacts ship normally.
+# and ships STRIPPED public binaries.
+#
+# ASYMMETRY, stated rather than glossed: ONLY LINUX validates the shipped bytes.
+# Its strip step runs BEFORE pluginval, so the gate sees exactly what users get.
+# On macOS `strip -x` + ad-hoc codesign happen in the packaging step AFTER
+# pluginval, and on Windows the public copy is produced after validation too --
+# so on those two platforms a defect introduced BY stripping or signing would
+# ship unvalidated. Reordering them is not free (macOS must codesign last, or the
+# seal breaks), so it is a real design question to settle at P6 when there is a
+# binary to measure against, not something to guess at now. Recorded in
+# docs/procedures/CI_CD.md and docs/OPEN_QUESTIONS.md (OQ-012).
+#
+# On macOS the dSYM capture is BEST-EFFORT: under Release+LTO the DWARF needed
+# for dSYM reconstruction may no longer exist at packaging time, in which case
+# the -debug upload is skipped with a warning while the customer artifacts ship
+# normally.
 #
 # Customer uploads are gated on the self-tests AND their strip/packaging steps
 # SUCCEEDING (never `if: always()`), and the staging steps self-validate (no
@@ -129,8 +140,17 @@ jobs:
           objcopy --only-keep-debug "$APP" "$DBG/Anabasis.standalone.debug"
           strip --strip-unneeded "$SO"
           strip --strip-unneeded "$APP"
-          objcopy --add-gnu-debuglink="$DBG/Anabasis.vst3.so.debug"    "$SO"
-          objcopy --add-gnu-debuglink="$DBG/Anabasis.standalone.debug" "$APP"
+          # objcopy stores the debuglink filename EXACTLY as given, and a debugger
+          # resolves it relative to the stripped binary's own directory (then
+          # .debug/, then the global debug dir). Passing "$DBG/..." would bake in a
+          # CI-workspace-relative path that exists on no user's machine, so the
+          # downloaded -debug artifact would never be found automatically. Run
+          # objcopy from inside $DBG and pass the bare basename, which is the
+          # conventional lookup; the binary paths are made absolute first because
+          # the working directory changes.
+          SO_ABS="$(readlink -f "$SO")"; APP_ABS="$(readlink -f "$APP")"
+          ( cd "$DBG" && objcopy --add-gnu-debuglink=Anabasis.vst3.so.debug    "$SO_ABS" )
+          ( cd "$DBG" && objcopy --add-gnu-debuglink=Anabasis.standalone.debug "$APP_ABS" )
           # Verify the strip: no static symbol table left, and the plugin must
           # still export its VST3 entry point from .dynsym.
           for BIN in "$SO" "$APP"; do
@@ -225,6 +245,7 @@ jobs:
         run: cmake -B build -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests)
+        id: build
         run: cmake --build build --config Release
 
       - name: Self-tests (DSP + state)
@@ -267,9 +288,15 @@ jobs:
       # identified from the authoritative source: the CodeView (RSDS)
       # debug-directory record MSVC embeds in the linked image itself, which
       # carries the PDB's exact link-time name and path.
+      # Gated on the BUILD, not merely on `!cancelled()`: with a failed build there
+      # is nothing to stage, and this step would fail a second time on "expected
+      # exactly one Anabasis.vst3 bundle, found 0" -- a red step with nothing to do
+      # with the real cause. `!cancelled()` still lets it run after a pluginval-only
+      # failure, which is the behaviour worth keeping. (The Linux job needs no such
+      # guard: its strip step has no `if:` at all, so it skips automatically.)
       - name: Stage Windows artifacts (VST3 + Standalone; PDBs separated)
         id: stage_windows
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -324,6 +351,14 @@ jobs:
               $type = [BitConverter]::ToUInt32($bytes, $e + 12)
               $pointerToRaw = [BitConverter]::ToUInt32($bytes, $e + 24)
               if ($type -eq 2 -and $pointerToRaw -gt 0) {
+                # Bounds-check before indexing: PointerToRawData comes from the
+                # image being parsed, so a truncated or malformed file would
+                # otherwise throw a raw .NET IndexOutOfRange instead of the
+                # intended, diagnosable Write-Error. 28 = Signature(4) + GUID(16)
+                # + Age(4), then at least one path byte.
+                if ($pointerToRaw + 28 -gt $bytes.Length) {
+                  Write-Error "$ImagePath : CodeView record at offset $pointerToRaw runs past the end of the file ($($bytes.Length) bytes) -- image is truncated or malformed"
+                }
                 $sig = [BitConverter]::ToUInt32($bytes, $pointerToRaw)
                 if ($sig -eq 0x53445352) {   # 'RSDS'
                   # Signature(4) + GUID(16) + Age(4), then a NUL-terminated path.
@@ -426,10 +461,18 @@ jobs:
           cmake -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          # TODO(P1, OQ-011): 10.13 is inherited from the sibling product and is
+          # NOT validated for this one. arm64 macOS starts at 11.0, so the arm64
+          # slice's minimum is silently raised (or warned about) by clang/ld, and
+          # 10.13 may also sit below JUCE 9's supported floor. Re-check against
+          # JUCE 9's documented minimum at P1 and set a value on purpose -- an
+          # unnoticed toolchain warning here is exactly what the warning-free
+          # build rule exists to catch. Not guessed at now (constraint C7).
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + AU + Standalone + tests)
+        id: build
         run: cmake --build build --config Release
 
       - name: Self-tests (DSP + state)
@@ -464,9 +507,11 @@ jobs:
       # debug-capture problems. Restoring full macOS symbolication needs the LTO
       # object persisted via -Wl,-object_path_lto -- a linker-flag change that is
       # a deliberate future decision, not a silent addition.
+      # Gated on the BUILD (see the Windows staging step): with a failed build
+      # `strip -x` would run against a nonexistent binary and fail a second time.
       - name: Package macOS plugins (VST3 + AU + Standalone)
         id: package
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -e
           DIST="dist/Anabasis-macOS"

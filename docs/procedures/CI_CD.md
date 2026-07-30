@@ -81,6 +81,13 @@ ad-hoc codesign (stripping after signing would invalidate the seal); dSYM captur
 and never blocks the customer pipeline. Windows retains each shipped image's linker PDB into a
 separate debug artifact and purges all debug material from the public copy.
 
+> **Known asymmetry: only Linux validates the shipped bytes.** Because macOS and Windows strip
+> (and, on macOS, sign) *after* pluginval, a defect introduced **by stripping or signing** would
+> ship unvalidated there. "Uniform and blocking" above describes the pluginval **gate** — same
+> strictness, same two modes ×3, failing the job on every platform — not which bytes it sees.
+> Whether to reorder is `docs/OPEN_QUESTIONS.md` **OQ-012**, deliberately deferred to P6 when
+> there is a binary to measure rather than a guess to make.
+
 **pluginval** runs deterministic ×3, then randomise ×3. The randomise step is guarded with
 `if: ${{ !cancelled() }}` so a deterministic failure never *skips* it: both modes always report
 independently, and the job still fails if either fails.
@@ -94,6 +101,28 @@ independently, and the job still fails if either fails.
 open — two full 3-OS matrix runs per commit. The `preflight` job therefore skips **same-repo**
 pull_request events, since the push event already covered that SHA. Fork PRs still run: their
 push happens in the fork, so the `pull_request` event is the only trigger that sees them.
+
+`codeql.yml` and `msvc.yml` do **not** need the same guard: both are `branches: [main]`-only, so a
+feature-branch push cannot double up with its PR.
+
+## Before enabling branch protection — read this
+
+Two trigger designs here interact with **required status checks**, and both bite only once
+protection is switched on. Neither is a defect; both are traps if configured blindly.
+
+1. **`build.yml` on same-repo PRs.** The jobs are skipped by the `preflight` guard above, so they
+   report a *skipped* conclusion on the PR event rather than running. GitHub treats a skipped
+   required check as satisfied, so this is expected to be fine — but if a required check ever sits
+   in a "waiting" state on internal PRs, this guard is the first thing to look at. The build that
+   actually validates the commit is the one on the **push** event for the same SHA.
+
+2. **`codeql.yml` on docs-only PRs — the sharper one.** Its `paths-ignore` means the workflow is
+   **not created at all** for a docs-only PR, so a required `Analyze (c-cpp)` / `Analyze (actions)`
+   check has nothing to report and the PR blocks forever. This is a documented GitHub behaviour,
+   not a repository bug, and it matters here because docs-only PRs are most of this repository's
+   traffic during P0. The standard workaround is a companion no-op workflow declaring jobs with
+   the **same names** and the inverse path filter. Add it when — and only when — CodeQL is made
+   required; adding it earlier is dead weight.
 
 ## Artifact safety rules (fail-closed)
 

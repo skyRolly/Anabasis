@@ -15,8 +15,14 @@ headless Linux machine, no IDE.
 - **No DSP source code exists yet.** This repository currently carries the governance system,
   documentation library, build/CI scaffolding and the product brief. Implementation starts at P1,
   after `DESIGN.md` is signed off (`docs/DEVELOPMENT_BRIEF.md` §11, §24).
-- Open decisions — including the JUCE point release, plugin identity codes and the licence tier —
-  are tracked in [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) and are **not** to be guessed at.
+- **Already decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit
+  `f8f8864…`, the same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
+  `com.rollytech.anabasis`**). Both must be written into `CMakeLists.txt` at P1 —
+  [`docs/procedures/BUILD.md`](docs/procedures/BUILD.md) §Plugin identity.
+- **Still open** — including the JUCE licence tier, the Simple ⇄ Advanced coexistence strategy and
+  whether the limiter lookahead gets a 0/off position — tracked in
+  [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) and **not** to be guessed at. Resolved
+  entries stay in that file's `Resolved` section; they are decisions, not choices to revisit.
 
 ## Planned scope (see `docs/DEVELOPMENT_BRIEF.md` for the full specification)
 
