@@ -19,11 +19,21 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 cleanly with a notice instead of failing on a missing project. The guard becomes a permanent no-op
 the moment P1 lands — it needs no removal, but it may be removed once the build is real.
 
-**In `codeql.yml` the guard is per matrix *entry*, not per job.** Only `c-cpp` needs a project; the
-`actions` entry analyses `.github/workflows/**`, which exist right now and need no build. Gating
-the whole matrix would switch **workflow** security scanning off for the entire P0 phase — exactly
-the phase in which these workflow files are being written. So `actions` always runs and `c-cpp`
-waits for `CMakeLists.txt`.
+**In `codeql.yml` the guard selects the matrix, rather than conditioning the job.** Only `c-cpp`
+needs a project; the `actions` entry analyses `.github/workflows/**`, which exist right now and
+need no build. Gating the whole matrix would switch **workflow** security scanning off for the
+entire P0 phase — exactly the phase in which these workflow files are being written. So `preflight`
+**emits the matrix as JSON** (always `actions`; plus `c-cpp` once `CMakeLists.txt` exists) and
+`analyze` consumes it via `strategy.matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}`. The
+`analyze` job carries no `if:` at all: an entry that is not in the matrix simply does not exist, so
+nothing is skipped and nothing reports red.
+
+The obvious-looking alternative — a job-level `if: matrix.language != 'c-cpp' || …` — **does not
+work**, and silently: `matrix` is not an available context in `jobs.<id>.if` (only `github`,
+`needs`, `vars` and `inputs` are). The expression either fails workflow validation or evaluates
+`matrix.language` as empty, which makes the test always true, so the `c-cpp` entry runs anyway and
+fails on the missing project. `needs` **is** available in `jobs.<id>.strategy`, which is why the
+dynamic matrix is the mechanism that actually holds.
 
 ## `build.yml` — triggers
 

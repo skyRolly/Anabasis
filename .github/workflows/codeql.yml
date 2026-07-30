@@ -52,36 +52,41 @@ jobs:
   # Pre-P1 guard -- see .github/workflows/build.yml for the rationale.
   # Becomes a permanent no-op once CMakeLists.txt exists.
   #
-  # NOTE: this gates the C-CPP entry ONLY (see the matrix condition below). The
-  # `actions` entry analyses .github/workflows/**, which exist right now and need
-  # no build at all -- gating it too would switch workflow security scanning off
-  # for the whole of P0, i.e. exactly the phase in which these workflow files are
-  # being written.
+  # This must gate the C-CPP entry ONLY: the `actions` entry analyses
+  # .github/workflows/**, which exist right now and need no build at all. Gating
+  # it too would switch workflow security scanning off for the whole of P0 --
+  # exactly the phase in which these workflow files are being written.
+  #
+  # It is done by EMITTING THE MATRIX, not by a condition on the analyze job.
+  # `matrix` is not an available context in `jobs.<id>.if` (only `github`,
+  # `needs`, `vars`, `inputs` are), so a job-level `matrix.language != 'c-cpp'`
+  # test either fails workflow validation or evaluates empty -- in which case the
+  # c-cpp entry runs anyway and fails on the missing project, which is the exact
+  # red-CI noise this guard exists to prevent. `needs` IS available in
+  # `jobs.<id>.strategy`, so a dynamic matrix is the mechanism that actually works.
   preflight:
     runs-on: ubuntu-latest
     outputs:
-      ready: ${{ steps.check.outputs.ready }}
+      matrix: ${{ steps.check.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
       - id: check
         shell: bash
         run: |
+          ACTIONS='{"language":"actions","build-mode":"none"}'
+          CCPP='{"language":"c-cpp","build-mode":"manual"}'
           if [ -f CMakeLists.txt ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "matrix={\"include\":[$ACTIONS,$CCPP]}" >> "$GITHUB_OUTPUT"
           else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No CMakeLists.txt yet (pre-P1 scaffold) -- the c-cpp CodeQL analysis is skipped; the actions analysis still runs."
+            echo "matrix={\"include\":[$ACTIONS]}" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CMakeLists.txt yet (pre-P1 scaffold) -- the c-cpp entry is omitted from the matrix; the actions analysis still runs."
           fi
 
   analyze:
     needs: preflight
-    # Per-ENTRY gate, not per-job: `actions` always runs (nothing to build),
-    # `c-cpp` waits for a project to exist. `always()` is required so the job is
-    # still considered after `preflight` reports ready=false -- without it the
-    # whole matrix would be skipped again.
-    if: >-
-      always() && needs.preflight.result == 'success' &&
-      (matrix.language != 'c-cpp' || needs.preflight.outputs.ready == 'true')
+    # No job-level `if:` -- the gating lives in the matrix preflight emits (see
+    # above). An entry that is not in the matrix simply does not exist, so
+    # nothing is skipped and nothing reports red.
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
@@ -92,12 +97,9 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - language: actions
-            build-mode: none
-          - language: c-cpp
-            build-mode: manual
+      # Built by `preflight`: always the `actions` entry, plus `c-cpp` once
+      # CMakeLists.txt exists.
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}
 
     steps:
       - name: Checkout repository

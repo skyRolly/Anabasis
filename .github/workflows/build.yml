@@ -207,7 +207,12 @@ jobs:
               echo "::error::customer artifact contains an unstripped binary: $ELF"; exit 1
             fi
           done < <(find "$DIST" -type f \( -name 'Anabasis*' -o -name '*.so' \) -print0)
-          if find "$DIST" -type f \( -name '*.debug' -o -name '*.pdb' -o -name '*.dSYM' \) | grep -q .; then
+          # No `-type f`: a .dSYM is a DIRECTORY on macOS, so `-type f` would make
+          # that arm permanently dead and the check would read stronger than it is.
+          # Linux produces no dSYMs today, but the macOS step calls this "parity
+          # with the Linux/Windows staging self-checks" -- so it has to actually be
+          # parity. (macOS already omits -type f.)
+          if find "$DIST" \( -name '*.debug' -o -name '*.pdb' -o -name '*.dSYM' \) -print | grep -q .; then
             echo "::error::customer artifact contains debug files"; exit 1
           fi
           # ONE artifact ships from this validated staging dir: Anabasis-Linux

@@ -33,8 +33,30 @@ $build = Join-Path $root "build"
 $tools = Join-Path $root ".tools"
 New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
-$vst3 = Get-ChildItem -Recurse -Path $build -Filter Anabasis.vst3 -Directory | Select-Object -First 1
-if (-not $vst3) { Write-Host "Anabasis.vst3 not found -- build first (scripts/build.sh)."; exit 1 }
+# Fail closed on ABSENCE and on AMBIGUITY, matching scripts/run-tests.sh,
+# scripts/run-pluginval.sh and the "exactly one match" rule the Windows staging
+# step in build.yml applies. `Select-Object -First 1` is worst HERE of all places:
+# windows-latest uses the multi-config Visual Studio generator, so several
+# configurations of Anabasis.vst3 genuinely coexist in one build tree, and the
+# release gate could pass on a Debug or leftover bundle while the artifacts come
+# from Release.
+#
+# -ErrorAction SilentlyContinue is required because $ErrorActionPreference is
+# 'Stop' above: without it a missing build/ makes Get-ChildItem THROW, so the
+# intended "build first" message below is never reached and the operator sees a
+# stack trace instead of the one-line fix.
+$vst3Matches = @(Get-ChildItem -Recurse -Path $build -Filter Anabasis.vst3 -Directory -ErrorAction SilentlyContinue)
+if ($vst3Matches.Count -eq 0) {
+    Write-Host "Anabasis.vst3 not found under $build -- build first (scripts/build.sh)."
+    exit 1
+}
+if ($vst3Matches.Count -ne 1) {
+    Write-Host "Anabasis.vst3 is ambiguous -- found $($vst3Matches.Count) under ${build}:"
+    $vst3Matches | ForEach-Object { Write-Host "  $($_.FullName)" }
+    Write-Host "Refusing to guess which bundle the release gate should validate. Remove the stale build tree."
+    exit 1
+}
+$vst3 = $vst3Matches[0]
 
 $pv = Join-Path $tools "pluginval.exe"
 if (-not (Test-Path $pv)) {

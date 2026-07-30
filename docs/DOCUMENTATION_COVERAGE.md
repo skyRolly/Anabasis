@@ -6,7 +6,43 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **fourth review pass** (2026-07-30). Six findings fixed, six were
+**Last updated:** for the **fifth review pass** (2026-07-30). Three findings fixed, the rest
+confirmations or repeats against an earlier revision.
+
+**The per-entry CodeQL gate added last pass did not work.** It used a job-level
+`if: matrix.language != 'c-cpp' || …`, but **`matrix` is not an available context in
+`jobs.<id>.if`** (only `github`, `needs`, `vars`, `inputs` are). The expression either fails
+workflow validation or evaluates empty — making the test always true, so the `c-cpp` entry would
+have run regardless and failed on the missing project: precisely the red-CI noise the guard exists
+to prevent, and the previous entry claimed it was fixed. Replaced with the mechanism that actually
+holds: `preflight` **emits the matrix as JSON**, `analyze` consumes it through
+`strategy.matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}` (where `needs` *is* available),
+and the job carries no `if:` at all. Both matrix shapes were validated as JSON.
+
+**`run-pluginval.ps1` was the last discovery site still taking the first match**, on the one
+platform where it matters most — `windows-latest` uses the multi-config Visual Studio generator, so
+several configurations of `Anabasis.vst3` genuinely coexist in one tree and the release gate could
+have passed on a Debug or leftover bundle. Now exactly one match or fail, matching `run-tests.sh`,
+`run-pluginval.sh` and the Windows staging step. A second defect in the same lines: with
+`$ErrorActionPreference = 'Stop'`, a missing `build/` made `Get-ChildItem` **throw**, so the
+intended "build first" message was unreachable and the operator got a stack trace instead of the
+one-line fix — fixed with `-ErrorAction SilentlyContinue`.
+
+**The Linux debug-leak check had a dead predicate.** `find … -type f \( … -o -name '*.dSYM' \)`
+can never match: a `.dSYM` is a **directory**. Harmless on Linux (no dSYMs are produced there), but
+the macOS step calls this "parity with the Linux/Windows staging self-checks" while correctly
+omitting `-type f`, so the Linux check read stronger than it was. Aligned, and confirmed by test
+that the predicate now matches a `.dSYM` directory.
+
+**Repeats already handled, re-confirmed here:** the merge-commit / merge-queue nuance of the
+same-repo PR skip and the `msvc.yml` double-no-op rehearsal note were both written into `CI_CD.md`
+in the previous pass; the deployment target (OQ-011) and the CodeQL `paths-ignore` required-check
+trap remain tracked and unchanged. Independently verified again with no change needed: the
+PE/CodeView offsets, the randomise-gate and `public_ok`/`debug_artifacts` checkpoint behaviour, the
+macOS `set -e` / best-effort-dSYM interaction, CodeQL's `paths-ignore` being an alert filter, and
+`run-tests.sh`'s fail-closed discovery.
+
+Prior: for the **fourth review pass** (2026-07-30). Six findings fixed, six were
 confirmations or already-documented repeats.
 
 **The macOS universality "check" checked nothing.** The packaging step *printed* `lipo -archs` for
