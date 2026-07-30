@@ -6,7 +6,39 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **second review pass** (2026-07-30). Eleven findings addressed.
+**Last updated:** for the **third review pass** (2026-07-30). Four findings fixed, three were
+confirmations or verified non-issues.
+
+**A regression introduced by the previous pass — the macOS build silently lost two flags.** The
+`TODO(P1, OQ-011)` comment added last pass sat *inside* a `run: >` folded block scalar. YAML joins
+every line of a folded block into one line and gives `#` no meaning, so bash saw a single command
+with a trailing comment and dropped everything after it — `-DCMAKE_OSX_DEPLOYMENT_TARGET` **and**
+`-DANABASIS_BUILD_NUMBER`. Consequence once P1 lands: macOS builds would carry an unintended
+minimum-OS setting and report **build number 0** in the About box, which the bug-report form asks
+testers to quote. No error would have revealed it. The comment now lives above the step, says why
+it must stay there, and a checker asserts every configure flag survives comment-stripping on all
+three platforms.
+
+**The randomise pluginval step ran after a failed build.** Its `if: ${{ !cancelled() }}` forced it
+to run when the build had failed, producing a second red step complaining about a missing plugin —
+exactly the noise the staging/packaging guards were fixed for in the previous pass. Now
+`!cancelled() && steps.build.outcome == 'success'` on all three jobs (the Linux build step gained
+the `id` it needed); the deterministic step has no `if:` and already skipped itself correctly. The
+"both modes report independently" intent is unchanged.
+
+**`FUTURE_RISKS` RISK-003 cited `TESTING_POLICY` rule 4** for the hostile-input requirement, which
+the previous pass's renumbering moved to rule **5** (rule 4 is now the skipped-test-category rule).
+Swept the repository for other stale rule pointers — the two remaining (`POSTMORTEMS`, `TESTING.md`,
+both rule 1) are correct.
+
+**Verified, no change:** the issue-form / `config.yml` URLs use `skyRolly/Anabasis`, which matches
+both this repository's git remote and the sibling product's own links — the casing is the canonical
+display slug, not a mismatch. CodeQL's `paths-ignore` is an alert filter, which is exactly what its
+inline comment claims. The `run-tests.sh` fail-closed discovery was re-confirmed behaviourally.
+The branch-protection interactions (`build.yml` same-repo PR skip, `codeql.yml` `paths-ignore`)
+were already documented in `CI_CD.md` §"Before enabling branch protection" in the previous pass.
+
+Prior: for the **second review pass** (2026-07-30). Eleven findings addressed.
 
 **The overview contradicted the decisions.** README §Project status still listed the JUCE pin and
 the plugin identity as open items "not to be guessed at" after the same change set resolved and

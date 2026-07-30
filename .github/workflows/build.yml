@@ -40,9 +40,10 @@ env:
 # and randomise -- each repeated 3 consecutive times (scripts/run-pluginval.sh on
 # Linux/macOS, scripts/run-pluginval.ps1 on Windows). A non-zero pluginval exit
 # fails the job on every platform (no continue-on-error / swallowed exit codes).
-# Both mode steps ALWAYS run: the randomise step is guarded with `if: !cancelled()`
-# so a deterministic failure never SKIPS randomise -- both modes always report
-# independently. The job still fails if either mode fails.
+# Both mode steps report independently: the randomise step is guarded so a
+# DETERMINISTIC failure never SKIPS it. The job still fails if either mode fails.
+# The guard also requires a successful BUILD, so a broken build does not produce a
+# second, misleading pluginval failure about a plugin that was never produced.
 #
 # Symbol handling: every platform generates full debug info, retains it as a
 # separate *-debug artifact (split .debug / PDB / dSYM) for crash symbolication,
@@ -121,6 +122,7 @@ jobs:
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests)
+        id: build
         run: cmake --build build --config Release
 
       # Capture split debug info, then strip the shipped binaries. Runs BEFORE
@@ -174,10 +176,14 @@ jobs:
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
 
       - name: pluginval (randomise x3 -- release gate)
-        # NEVER skipped: run the randomise gate even if the deterministic gate above failed, so both
-        # modes always report independently (a deterministic failure must not hide the randomise result).
-        # The job still fails if either gate fails; !cancelled() only skips on an actual run cancellation.
-        if: ${{ !cancelled() }}
+        # Run the randomise gate even if the DETERMINISTIC gate above failed, so both modes always
+        # report independently (a deterministic failure must not hide the randomise result). The job
+        # still fails if either gate fails.
+        # But NOT after a failed BUILD: with nothing built there is no .vst3 to validate, so this
+        # would fail a second time on a missing plugin -- a red step unrelated to the real cause.
+        # `!cancelled()` alone forces exactly that, because the deterministic step (which has no
+        # `if:`) correctly skips itself when the build fails.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
 
       # Customer-artifact safety: staging and upload are gated on the strip step
@@ -265,7 +271,14 @@ jobs:
         run: ./scripts/run-pluginval.ps1 -Strictness ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} -Mode deterministic
 
       - name: pluginval (randomise x3 -- release gate)
-        if: ${{ !cancelled() }}
+        # Run the randomise gate even if the DETERMINISTIC gate above failed, so both modes always
+        # report independently (a deterministic failure must not hide the randomise result). The job
+        # still fails if either gate fails.
+        # But NOT after a failed BUILD: with nothing built there is no .vst3 to validate, so this
+        # would fail a second time on a missing plugin -- a red step unrelated to the real cause.
+        # `!cancelled()` alone forces exactly that, because the deterministic step (which has no
+        # `if:`) correctly skips itself when the build fails.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: ./scripts/run-pluginval.ps1 -Strictness ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} -Mode randomise
 
@@ -456,18 +469,25 @@ jobs:
       - name: Install build tools
         run: brew install ninja || true
 
+      # TODO(P1, OQ-011): CMAKE_OSX_DEPLOYMENT_TARGET=10.13 is inherited from the
+      # sibling product and is NOT validated for this one. arm64 macOS starts at
+      # 11.0, so the arm64 slice's minimum is silently raised (or warned about) by
+      # clang/ld and the value really only governs the x86_64 slice; 10.13 may also
+      # sit below JUCE 9's supported floor. Re-check against JUCE 9's documented
+      # minimum at P1 and set it on purpose -- an unnoticed toolchain warning here
+      # is exactly what the warning-free build rule exists to catch. Not guessed at
+      # now (constraint C7).
+      #
+      # This note lives OUTSIDE the `run:` scalar deliberately. In a YAML folded
+      # block (`run: >`) every line is joined into ONE shell line and `#` has no
+      # YAML meaning, so an inline comment there silently swallows every argument
+      # after it -- which is exactly what happened to the two flags below before
+      # this was moved out.
       - name: Configure (universal arm64 + x86_64)
         run: >
           cmake -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-          # TODO(P1, OQ-011): 10.13 is inherited from the sibling product and is
-          # NOT validated for this one. arm64 macOS starts at 11.0, so the arm64
-          # slice's minimum is silently raised (or warned about) by clang/ld, and
-          # 10.13 may also sit below JUCE 9's supported floor. Re-check against
-          # JUCE 9's documented minimum at P1 and set a value on purpose -- an
-          # unnoticed toolchain warning here is exactly what the warning-free
-          # build rule exists to catch. Not guessed at now (constraint C7).
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
@@ -485,7 +505,14 @@ jobs:
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
 
       - name: pluginval (randomise x3 -- release gate)
-        if: ${{ !cancelled() }}
+        # Run the randomise gate even if the DETERMINISTIC gate above failed, so both modes always
+        # report independently (a deterministic failure must not hide the randomise result). The job
+        # still fails if either gate fails.
+        # But NOT after a failed BUILD: with nothing built there is no .vst3 to validate, so this
+        # would fail a second time on a missing plugin -- a red step unrelated to the real cause.
+        # `!cancelled()` alone forces exactly that, because the deterministic step (which has no
+        # `if:`) correctly skips itself when the build fails.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
 
       # Order matters -- 1) dsymutil captures a universal dSYM per bundle (the

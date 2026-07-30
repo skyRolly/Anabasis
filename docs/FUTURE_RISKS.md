@@ -61,7 +61,7 @@ or a sample rate the suite does not cover.
 (`DSP_POLICY.md` invariant 4), and a limiter that holds only on well-behaved music satisfies a
 green test suite while failing a real master.
 **Mitigation:** hostile-input testing is a policy requirement, not an optional extra
-(`TESTING_POLICY.md` rule 4); a final safety clamp sits after the limiter regardless of what the
+(`TESTING_POLICY.md` rule 5); a final safety clamp sits after the limiter regardless of what the
 limiter did; the tolerance (≤ 0.1 dBTP) is stated numerically so a near-miss is a failure.
 **Owner:** TODO.
 
