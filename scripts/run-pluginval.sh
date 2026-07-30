@@ -13,10 +13,25 @@
 #           mode       : deterministic (default) | randomise
 #
 #  Both modes run 3 CONSECUTIVE passes; ALL must pass:
-#    deterministic -- fixed `--random-seed 0`, reproducible.
-#    randomise     -- `--randomise` (randomised test ORDER + time-seeded fuzzing);
-#                     a value-/order-dependent defect surfaces here even when the
-#                     deterministic pass is green.
+#    deterministic -- fixed `--random-seed $PLUGINVAL_SEED` (NONZERO -- see below),
+#                     reproducible.
+#    randomise     -- `--randomise` (randomised test ORDER) with NO seed, so each
+#                     run also draws a fresh seed; a value-/order-dependent defect
+#                     surfaces here even when the deterministic pass is green.
+#
+#  SEED 0 IS NOT A SEED. pluginval treats 0 as "generate a random one":
+#  `Source/PluginTests.h` -- "randomSeed = 0; the seed to use for the tests, 0
+#  signifies a randomly generated seed" -- and `Source/CommandLine.cpp` only
+#  forwards --random-seed to the validator when it differs from that default.
+#  Passing `--random-seed 0` is therefore EXACTLY equivalent to passing nothing,
+#  and the "deterministic" mode was not deterministic. Verified against pluginval
+#  1.0.4: `--random-seed 0` printed a different `Random seed:` on every run, while
+#  `--random-seed 1` printed `0x1` every time. Any nonzero value works; keep it
+#  nonzero and keep it pinned.
+#
+#  The seed is meaningful WITHOUT --randomise: it seeds the RNG the tests
+#  themselves draw from (`Validator.cpp` passes it to `UnitTestRunner::runTests`),
+#  whereas --randomise only shuffles test ORDER. The two flags are independent.
 #
 #  Release gate: strictness 10, BOTH modes, on all three platforms
 #  (docs/policies/TESTING_POLICY.md).
@@ -78,9 +93,14 @@ if command -v xvfb-run >/dev/null 2>&1; then
 fi
 
 # Extra flags + pass count per mode. Both modes run 3 consecutive passes.
+# PLUGINVAL_SEED must stay NONZERO -- 0 is pluginval's "pick a random seed"
+# sentinel, not a seed (see the header). The exact value is arbitrary; that it is
+# fixed and nonzero is not. Keep it identical to run-pluginval.ps1 so the three
+# platforms validate against the same seed.
+PLUGINVAL_SEED=1
 case "$MODE" in
-    randomise)     MODE_ARGS=(--randomise);     PASSES=3 ;;
-    deterministic) MODE_ARGS=(--random-seed 0); PASSES=3 ;;
+    randomise)     MODE_ARGS=(--randomise);                     PASSES=3 ;;
+    deterministic) MODE_ARGS=(--random-seed "$PLUGINVAL_SEED"); PASSES=3 ;;
     *) echo "Unknown mode '$MODE' (expected deterministic|randomise)"; exit 2 ;;
 esac
 

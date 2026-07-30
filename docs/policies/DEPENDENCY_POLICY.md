@@ -10,6 +10,24 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
 | **pluginval** | latest release (downloaded) | `scripts/run-pluginval.sh` / `.ps1` | pinning it is a tracked improvement, not yet done |
 | **C++ standard** | **C++20** | `CMAKE_CXX_STANDARD 20`, `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | per `DEVELOPMENT_BRIEF.md` §2.1 |
 | Linux system libs | distro packages | `scripts/setup-linux.sh` (ALSA, JACK, X11, FreeType, GTK/WebKit, mesa, **EGL — required by JUCE 9's Linux GL context path**, xvfb) | scaffolded |
+| GitHub Actions | floating **major** refs (`@v7`, `@v4`, `@v5`), except `microsoft/msvc-code-analysis-action`, pinned by SHA | `.github/workflows/*` + Dependabot (`github-actions` ecosystem) | Verified to resolve, 2026-07-30 — see below |
+
+### Action-ref verification (2026-07-30)
+
+Every `uses:` ref in `.github/workflows/` was resolved against GitHub. All exist:
+`actions/checkout@v7` and `actions/upload-artifact@v7` (tags), `github/codeql-action/{init,analyze,upload-sarif}@v4`
+(tag), `microsoft/msvc-code-analysis-action@96315324…` (commit, still a ref tip).
+
+**`actions/dependency-review-action@v5` resolves through a BRANCH, not a tag** — the repository's
+tags run `v4.9.0` → `v5.0.0` with no bare `v5` tag, and `refs/heads/v5` is what the ref matches.
+It works, and it is the vendor's own advertised usage, but it is worth knowing that this one moves
+under a branch rather than a re-pointable tag: strictly less immutable than the others, on the one
+workflow that is **not** gated behind `preflight` and therefore runs on every PR today. This is the
+only ref in the repository whose resolution differs in kind from what its `@vN` spelling suggests.
+
+Floating majors are a deliberate trade — Dependabot tracks them and a first-party GitHub action
+re-pointing a major tag maliciously is not the threat model this repository defends against. The
+one third-party action is SHA-pinned because it is.
 
 ## Version-lock reasoning
 

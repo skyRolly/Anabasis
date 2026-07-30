@@ -452,12 +452,17 @@ Copy the structural pattern from Anamorph's `CMakeLists.txt`:
 - Matrix: `ubuntu-latest` (VST3 + Standalone), `windows-latest` (VST3 + Standalone, MSVC
   multi-config), `macos-14` (universal `arm64;x86_64` VST3 + **AU** + Standalone).
 - **Validation is uniform and BLOCKING on all three platforms.** No `continue-on-error`.
-- **pluginval runs in two modes, 3 consecutive passes each**: `deterministic` (fixed
-  `--random-seed 0`) **and** `randomise` (`--randomise` — randomised test order + time-seeded
-  fuzzing, which catches state-restoration defects a fixed seed misses).
-- The randomise step is guarded with `if: ${{ !cancelled() && steps.build.outcome == 'success' }}`
-  so a *deterministic* failure never **skips** it — both modes always report independently, and the
-  job still fails if either fails — while a failed *build* does skip it (nothing to validate).
+- **pluginval runs in two modes, 3 consecutive passes each**: `deterministic` (a fixed **nonzero**
+  `--random-seed` — 0 is pluginval's "generate a random seed" sentinel and pins nothing) **and**
+  `randomise` (`--randomise` — randomised test order, unpinned seed, which catches
+  state-restoration defects a fixed seed misses).
+- **Both** pluginval steps carry the same guard, so a *deterministic* failure never **skips** the
+  randomise step — both modes always report independently, and the job fails if either fails —
+  while a build that produced nothing to validate skips both. The guard is
+  `if: ${{ !cancelled() && steps.build.outcome == 'success' }}` on Windows and macOS, and
+  `… && steps.strip.outcome == 'success'` additionally on Linux, where the strip runs *before*
+  validation: `steps.build.outcome` stays `success` when the strip fails, so without that term the
+  gate could validate bytes that will never ship.
 - **Retain-then-strip symbol pipeline**: every platform generates full debug info, uploads it as a
   separate `Anabasis-<OS>-debug` artifact for crash symbolication, and ships **stripped** public
   binaries. On Linux the strip runs *before* pluginval, so the gate validates the exact bytes
@@ -555,8 +560,11 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 1. **Every bug fix ships a regression test** that fails on the old code and passes on the fix.
 2. **Every DSP-policy invariant has a guarding test** where feasible; `DSP_POLICY.md` carries the
    invariant → test map.
-3. A pluginval retry is permitted **only** for a signal-crash in the host-side validator, never
-   for a real validation failure (exit < 128 fails immediately).
+3. A pluginval retry is permitted **only** for an abnormal termination of the host-side validator,
+   never for a real validation failure. The boundary is **platform-specific** — on Linux/macOS
+   `exit < 128` fails immediately, but on Windows there are no signals, so **1…255 including
+   128…255** is a real failure and only a Win32 exception code (`≥ 256`), a negative value or no
+   code at all may be retried. `TESTING_POLICY.md` rule 3 is the binding statement.
 
 ---
 

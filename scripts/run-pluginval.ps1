@@ -18,6 +18,11 @@
 #  (garbled interleaved output). The exit code is the only signal, and it is only
 #  trustworthy after an explicit wait.
 #
+#  SEED 0 IS NOT A SEED -- see the same note in run-pluginval.sh. pluginval treats
+#  0 as "generate a random one" (`Source/PluginTests.h`), so `--random-seed 0` is
+#  equivalent to passing nothing. $PluginvalSeed below must stay NONZERO and must
+#  match run-pluginval.sh, so all three platforms validate against the same seed.
+#
 #  Network domain needed: github.com (pluginval download).
 # ============================================================================
 param(
@@ -65,9 +70,11 @@ if (-not (Test-Path $pv)) {
     Expand-Archive -Force "$tools\pluginval.zip" -DestinationPath $tools
 }
 
+# NONZERO by requirement, and identical to PLUGINVAL_SEED in run-pluginval.sh.
+$PluginvalSeed = 1
 switch ($Mode) {
-    "randomise"     { $modeArgs = @("--randomise");        $passes = 3 }
-    "deterministic" { $modeArgs = @("--random-seed", "0"); $passes = 3 }
+    "randomise"     { $modeArgs = @("--randomise");                    $passes = 3 }
+    "deterministic" { $modeArgs = @("--random-seed", "$PluginvalSeed"); $passes = 3 }
     default         { Write-Host "Unknown mode '$Mode' (expected deterministic|randomise)"; exit 2 }
 }
 

@@ -114,6 +114,13 @@ jobs:
           # FetchContent'd JUCE sources under build/_deps out of the results.
           # Harmless for the actions matrix entry -- nothing under .github/ lives
           # in build/.
+          # P1 CHECK: this filter is written against the assumption that JUCE
+          # lands under build/_deps, which holds only while the configure below
+          # uses `-B build` AND CMakeLists.txt leaves FETCHCONTENT_BASE_DIR at its
+          # default. If CMakeLists.txt overrides that dir -- or an offline
+          # -DANABASIS_JUCE_PATH tree is used instead -- JUCE sources fall outside
+          # `build` and every JUCE alert reappears in the results. Re-verify when
+          # CMakeLists.txt lands rather than triaging a few thousand alerts.
           config: |
             paths-ignore:
               - build

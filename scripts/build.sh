@@ -28,11 +28,26 @@ else
     echo "WARNING: Anabasis.vst3 not found under $BUILD_DIR"
 fi
 
+# These three are OPTIONAL artefacts (a target set may omit the tests, or they may
+# be configured off), so their absence is not an error -- but it must not look like
+# one either. `[ -n "$VAR" ] && echo ...` is wrong here: `set -e` does not abort on
+# the left-hand side of an `&&` list, yet the status of the LAST command in a script
+# becomes the SCRIPT's exit status. With the state-test binary missing, the final
+# test returned 1 and build.sh exited 1 after a completely successful build --
+# turning `scripts/build.sh Debug && scripts/run-tests.sh`
+# (docs/procedures/DEVELOPMENT.md) into a build that silently never runs the tests.
+# `if ... fi` reports the same thing and always exits 0, whatever ends up last.
 STANDALONE="$(find "$BUILD_DIR" -maxdepth 8 -name 'Anabasis' -type f 2>/dev/null | head -n1 || true)"
-[ -n "$STANDALONE" ] && echo "Standalone: $STANDALONE"
+if [ -n "$STANDALONE" ]; then
+    echo "Standalone: $STANDALONE"
+fi
 
 TESTS="$(find "$BUILD_DIR" -maxdepth 8 -name 'AnabasisTests' -type f 2>/dev/null | head -n1 || true)"
-[ -n "$TESTS" ] && echo "Tests: $TESTS"
+if [ -n "$TESTS" ]; then
+    echo "Tests: $TESTS"
+fi
 
 STATE_TESTS="$(find "$BUILD_DIR" -maxdepth 8 -name 'AnabasisStateTests' -type f 2>/dev/null | head -n1 || true)"
-[ -n "$STATE_TESTS" ] && echo "State tests: $STATE_TESTS"
+if [ -n "$STATE_TESTS" ]; then
+    echo "State tests: $STATE_TESTS"
+fi

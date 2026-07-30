@@ -72,7 +72,7 @@ parameters automated at audio rate.
 ## pluginval (VST3 conformance)
 
 ```bash
-scripts/run-pluginval.sh 10 deterministic   # strictness 10, fixed seed (release gate, mode A)
+scripts/run-pluginval.sh 10 deterministic   # strictness 10, fixed nonzero seed (release gate, mode A)
 scripts/run-pluginval.sh 10 randomise        # strictness 10, --randomise x3 (release gate, mode B)
 scripts/run-pluginval.sh 5                   # development bar (P1–P2 default), deterministic
 scripts/run-pluginval.sh                     # default strictness 8
@@ -82,8 +82,26 @@ Strictness targets: **5** development (P1–P2), **8** standard gate (P3–P5), 
 (P6/release). Each mode runs **3 consecutive** passes; both modes must pass on all three platforms
 at the release bar. Windows uses `run-pluginval.ps1`.
 
-The randomise mode exercises state restoration under randomised test order and time-seeded
-fuzzing — defects a fixed seed reproducibly misses.
+The randomise mode exercises state restoration under randomised test order and an unpinned,
+per-run seed — defects a fixed seed reproducibly misses.
+
+**Do not "simplify" the deterministic mode's seed to 0.** pluginval treats `--random-seed 0` as
+*"generate a random seed"* (`Source/PluginTests.h`), so 0 makes the deterministic mode identical to
+the randomise mode minus the shuffle. The scripts pin a nonzero constant
+(`PLUGINVAL_SEED` / `$PluginvalSeed`), and the same value on all three platforms. **Nothing
+enforces that the two constants stay equal** — each script's comment names the other; that is the
+whole mechanism.
+
+**Reproducing a randomise-only failure.** pluginval logs the seed it drew as
+`Random seed: 0x…` at the top of every run. Take that value from the failing CI log and replay it:
+
+```bash
+.tools/pluginval --strictness-level 10 --randomise --random-seed 0x4aeacb4 \
+                 --validate build/…/Anabasis.vst3 --timeout-ms 600000
+```
+
+Test *order* is shuffled per repeat, so a pinned seed reproduces the draw, not necessarily the
+interleaving of a 3-pass run.
 
 The script downloads pluginval if absent, finds the built `Anabasis.vst3`, and runs under
 `xvfb-run` when available (Linux editor tests need a display).
@@ -103,9 +121,17 @@ statement):
 | **Linux / macOS** | `exit ≥ 128` (128 + signal number) | `exit < 128` |
 | **Windows** | Win32 exception code (`≥ 256`), negative, or no code at all | **`1…255`, including 128…255** |
 
-Windows has no signals, and pluginval returns its assertion count directly — so a code in 128…255
-there is a *real* failure and must not be retried. `run-pluginval.ps1` therefore classifies
-differently from `run-pluginval.sh` by design.
+pluginval's own exit code is only ever **0 or 1** (`Source/CommandLine.cpp` funnels every failure
+through `exitWithError`, which returns 1; the failure count goes to the log, not the exit code), so
+anything larger comes from the OS. Windows has no signals — nothing the OS reports lands in 1…255
+there — so a code in that range came from pluginval and is a *real* failure, **including 128…255**,
+which on Linux/macOS would read as a crash. `run-pluginval.ps1` therefore classifies differently
+from `run-pluginval.sh` by design.
+
+The one code neither script classifies correctly is a **malformed command-line argument**:
+pluginval exits `-1` (255 on POSIX), which both scripts read as an abnormal termination and retry
+three times before failing. Both scripts construct their own arguments, so that code means the
+script itself is broken — it still fails, just noisily.
 
 On Windows, `run-pluginval.ps1` launches pluginval via `System.Diagnostics.Process` and
 `WaitForExit()` rather than the call operator: pluginval is a **GUI-subsystem** app, so `& $pv`

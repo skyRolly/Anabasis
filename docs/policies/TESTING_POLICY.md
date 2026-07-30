@@ -33,9 +33,15 @@ Lowering strictness below the phase value is a deliberate act that must be justi
   broken build cannot silently pass by producing nothing.
 - **pluginval must pass at strictness 10 in BOTH modes on ALL THREE platforms** (Linux, Windows,
   macOS), each mode run as **3 consecutive passes**:
-  - **deterministic** (`run-pluginval.sh 10 deterministic`, fixed `--random-seed 0`) — reproducible;
-  - **randomise** (`run-pluginval.sh 10 randomise`, `--randomise`) — randomised test order +
-    time-seeded fuzzing, which exercises state restoration in ways a fixed seed cannot.
+  - **deterministic** (`run-pluginval.sh 10 deterministic`) — a **fixed, nonzero** `--random-seed`,
+    so the run is reproducible. **`--random-seed 0` does not pin anything**: pluginval documents 0
+    as "generate a random seed" (`Source/PluginTests.h`) and only forwards the flag when it differs
+    from that default, so passing 0 is identical to passing nothing. The scripts pass a nonzero
+    constant; changing it to 0 silently deletes this mode's only distinguishing property.
+  - **randomise** (`run-pluginval.sh 10 randomise`, `--randomise`) — randomised test order, and no
+    pinned seed, so each run also draws a fresh one. The two flags are independent: the seed feeds
+    the RNG the tests draw from, `--randomise` only shuffles their order. Together they exercise
+    state restoration in ways a fixed seed cannot.
 
   **All are blocking** — no `continue-on-error`; a non-zero pluginval exit fails the job on every
   platform.
@@ -84,12 +90,20 @@ its methodology is not permitted (constraint C2).
 3. A pluginval **crash retry** is permitted only for an abnormal termination of the host-side
    validator; a real validation failure fails immediately and is never retried. The boundary is
    **platform-specific**, because the exit-code conventions are:
+   **pluginval's own exit code is only ever 0 or 1** — `Source/CommandLine.cpp` routes any nonzero
+   internal result through `exitWithError`, which sets the return value to **1**; the failure
+   *count* appears in the log text, never in the exit code. (A malformed command-line argument is
+   the one exception: `ConsoleApplication::fail (…, -1)` → **255** on POSIX, **-1** on Windows.
+   Both scripts build their own arguments, so that code means the *script* is broken; it is
+   misclassified as an abnormal termination and still fails, after three wasted retries.)
+   Everything above 1 therefore comes from the OS, and the OS conventions differ:
    - **Linux/macOS** — a signal crash is `exit ≥ 128` (128 + signal number). So `< 128` is a real
      failure and fails immediately; `≥ 128` may be retried.
-   - **Windows** — there are no signals, and pluginval returns its assertion count directly, so a
-     code in **128…255 is a real failure** there and must **not** be retried. An abnormal
-     termination surfaces instead as a Win32 exception code (`≥ 256`), a negative value, or no code
-     at all; those may be retried.
+   - **Windows** — there are no signals, so nothing the OS reports lands in 1…255; a code in that
+     range came from pluginval itself and is a **real failure** that must **not** be retried —
+     including **128…255**, which on the other two platforms would read as a crash. An abnormal
+     termination surfaces instead as a Win32 exception code (`≥ 256`, e.g. `0xC0000005`), a
+     negative value, or no code at all; those may be retried.
 
    `scripts/run-pluginval.ps1` therefore classifies differently from `run-pluginval.sh` **by
    design**. Recording the difference here is the point: a reader comparing the gate to the scripts

@@ -6,7 +6,68 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **seventh review pass** (2026-07-30). Four findings fixed, five
+**Last updated:** for the **eighth review pass** (2026-07-30). Six findings fixed, five
+confirmations — two of them upgraded from `Unverified` to `Verified` by running the actual tool.
+
+**The "deterministic" pluginval mode was never deterministic.** Both scripts passed
+`--random-seed 0`, and **0 is pluginval's sentinel for "generate a random seed"** — `PluginTests.h`
+states it outright ("the seed to use for the tests, 0 signifies a randomly generated seed") and
+`CommandLine.cpp` only forwards the flag to the validator when it differs from that default, so
+passing 0 was byte-for-byte equivalent to passing nothing. The release gate's mode A therefore drew
+a fresh seed on every run while the policy, the brief and the procedure all called it reproducible;
+a seed-dependent failure would have been unreproducible from the CI log. Confirmed against
+pluginval 1.0.4 before and after: `--random-seed 0` printed a different `Random seed:` on each of
+three runs, `--random-seed 1` printed `0x1` every time, and the fixed script now prints `0x1`
+twice while randomise mode still varies. Both scripts pin a nonzero constant, documented as
+load-bearing in each. *Nothing enforces that the two constants stay equal* — each script's comment
+names the other, which is the entire mechanism; stated as such rather than dressed up as a check.
+
+*The review raised this differently* — that `--random-seed` is a no-op without `--randomise`. That
+premise is wrong, and checking it is what surfaced the real defect: the seed feeds the RNG the
+tests themselves draw from (`Validator.cpp` hands it to `UnitTestRunner::runTests`), while
+`--randomise` only shuffles test order. The flags are independent; the value 0 was the bug.
+
+**`scripts/build.sh` reported failure after a successful build.** The last statement was
+`[ -n "$STATE_TESTS" ] && echo …`; `set -e` does not abort on the left of an `&&` list, but the
+last command's status *is* the script's status, so a build without the state-test binary exited 1.
+`docs/procedures/DEVELOPMENT.md` documents `scripts/build.sh Debug && scripts/run-tests.sh`, which
+would then never have run the tests — and it fails *silently*, since the build genuinely succeeded.
+Reproduced (exit 1 with the artefacts absent, exit 0 only when the last one happened to be
+present), converted to `if … fi`, and re-verified: exit 0 with none, some, and all artefacts.
+
+**The Windows retry rationale was invented (C7).** `TESTING_POLICY` rule 3 and `TESTING.md` both
+said "pluginval returns its assertion count directly", which is why 128…255 counts as a real
+failure there. It does not: `CommandLine.cpp` routes every failure through `exitWithError`, which
+sets the return value to **1** — the count goes to the log text only. The *conclusion* survives
+(Windows has no signals, so nothing in 1…255 can be a crash) but the reason is now the evidenced
+one. Also recorded: a malformed argument exits `-1` (255 on POSIX), which both scripts misclassify
+as an abnormal termination and retry three times — harmless, since only a broken script can produce
+it, but it is the one code neither classifier gets right.
+
+**Action refs verified rather than asserted.** The previous audit said the pinned majors were
+"re-aligned to the versions the sibling repository runs green", which this repository cannot
+substantiate. All seven `uses:` refs were resolved against GitHub: all exist. One is not what its
+spelling suggests — **`actions/dependency-review-action@v5` resolves through a branch**
+(`refs/heads/v5`); the tags run `v4.9.0` → `v5.0.0` with no bare `v5` tag. It works and is the
+vendor's advertised usage, but it is strictly less immutable than a tag, on the one workflow *not*
+gated behind `preflight` and therefore running on every PR today. Recorded in `DEPENDENCY_POLICY`
+with the deliberate trade behind floating majors.
+
+**`DEVELOPMENT_BRIEF` §19.1 still described the pre-per-platform randomise guard** — it named only
+the randomise step and omitted Linux's `steps.strip.outcome` term added last pass. §20.5 rule 3 had
+the matching platform-neutral drift (`exit < 128`). Both re-synced to the workflow.
+
+**Two comments added where the correctness is load-bearing but invisible:** that
+`dist/Anabasis-Linux-debug` and `dist/Anabasis-Linux` must stay *siblings* (a rename to a prefix
+relationship would put the symbols inside the uploaded tree and the scanned tree at once), and that
+CodeQL's `paths-ignore: build` only keeps JUCE out of the results while `FETCHCONTENT_BASE_DIR`
+stays at its default under `-B build` — to re-verify when `CMakeLists.txt` lands.
+
+**Confirmations:** the PE/CodeView offsets, the macOS `set -e` / best-effort-dSYM interaction,
+`run-tests.sh`'s fail-closed discovery, the reusable-workflow caller-event hazard, and the
+`GIT_SHALLOW` + SHA trap (recorded last pass) all re-checked with no change needed.
+
+Prior: for the **seventh review pass** (2026-07-30). Four findings fixed, five
 confirmations.
 
 **The Linux randomise gate could validate bytes nobody ships.** Both pluginval steps keyed on
@@ -23,8 +84,9 @@ modes identical and not.
 in `TESTING_POLICY` rule 3 last pass — the procedure a developer actually reads still said
 `exit ≥ 128` is a crash everywhere, while `run-pluginval.ps1` treats 128…255 on Windows as a *real*
 failure. Replaced with the per-platform table and the reason (Windows has no signals; pluginval
-returns its assertion count directly). A policy and the procedure describing it diverging is the
-same class of drift as a policy and its script.
+returns its assertion count directly — **that second clause was wrong; see the eighth pass above,
+which replaces it with the evidenced reason**). A policy and the procedure describing it diverging
+is the same class of drift as a policy and its script.
 
 **Requiring the CodeQL check by name would block every pre-P1 PR.** The dynamic matrix means the
 `Analyze (c-cpp)` check *does not exist* until `CMakeLists.txt` lands — a required check that is
