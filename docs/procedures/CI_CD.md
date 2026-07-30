@@ -104,11 +104,25 @@ artifact — see the checkpoint rule below for why that order matters.
 > Whether to reorder is `docs/OPEN_QUESTIONS.md` **OQ-012**, deliberately deferred to P6 when
 > there is a binary to measure rather than a guess to make.
 
-**pluginval** runs deterministic ×3, then randomise ×3. The randomise step is guarded with
-`if: ${{ !cancelled() && steps.build.outcome == 'success' }}` so a **deterministic** failure never
-*skips* it — both modes always report independently, and the job still fails if either fails —
-while a failed **build** does skip it, because there is no plugin to validate and a second red step
-about a missing `.vst3` only obscures the real cause.
+**pluginval** runs deterministic ×3, then randomise ×3. **Both** steps carry the **same** explicit
+guard — neither relies on implicit skipping — so a **deterministic** failure never *skips* the
+randomise step: both modes always report independently, and the job still fails if either fails.
+A failed **build** skips both, because there is no plugin to validate and a second red step about
+a missing `.vst3` only obscures the real cause.
+
+| Job | Guard on **both** pluginval steps |
+|---|---|
+| `windows`, `macos` | `if: ${{ !cancelled() && steps.build.outcome == 'success' }}` |
+| `linux` | `if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.strip.outcome == 'success' }}` |
+
+The extra Linux term is load-bearing, not decoration: Linux strips **before** validating, and
+`steps.build.outcome` stays `success` when the *strip* step fails — so without it the gate would
+validate a partially-stripped binary while this document claims Linux validates the exact bytes
+users receive. Weakening it re-opens exactly that hole.
+
+Both modes pass a strictness and a mode to `scripts/run-pluginval.sh` (`.ps1` on Windows);
+deterministic mode pins a **nonzero** `--random-seed` — `0` is pluginval's "generate a random seed"
+sentinel and pins nothing (`docs/procedures/TESTING.md`).
 
 **Uploads** produce customer artifacts (`Anabasis-<OS>`, loose files) and debug artifacts
 (`Anabasis-<OS>-debug`).

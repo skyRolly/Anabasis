@@ -103,8 +103,8 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
     integrated, gated per BS.1770-4 / EBU R128) is accurate to **≤ 0.1 LU** against the official
     EBU test vectors; true peak to **≤ 0.1 dB**. PLR is derived (true peak − integrated LUFS), not
     independently estimated.
-    Guarded by: the EBU R128 vector test + the inter-sample-peak test (`TESTING_POLICY.md` §20.4
-    of the brief).
+    Guarded by: the EBU R128 vector test + the inter-sample-peak test (`TESTING_POLICY.md`
+    §"Anabasis measurement gates", which restates `DEVELOPMENT_BRIEF.md` §20.4).
 
 12. **Dither is off by default and is the last stage before output.** It is intended for final
     export only; enabling it must not change gain staging. TPDF, with optional noise shaping.

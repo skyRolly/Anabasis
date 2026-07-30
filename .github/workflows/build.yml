@@ -147,13 +147,15 @@ jobs:
           set -e
           SO="build/Anabasis_artefacts/Release/VST3/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so"
           APP="build/Anabasis_artefacts/Release/Standalone/Anabasis"
-          # KEEP THESE TWO AS SIBLINGS, NEVER NEST THE DEBUG DIR INSIDE THE PUBLIC
-          # ONE. The customer artifact uploads `path: dist/Anabasis-Linux` and the
-          # leak checks scan only that directory, so a rename to a PREFIX
-          # relationship (dist/Anabasis-Linux/debug) would put the .debug files
-          # inside the uploaded tree AND inside the scanned tree -- shipping
-          # symbols, or failing the leak check, depending on the pattern. The
-          # sibling layout is what makes both correct, so it is load-bearing.
+          # NEVER MAKE THIS DIR A DESCENDANT OF THE PUBLIC ONE. The invariant is
+          # about PATH ANCESTRY, not string prefixes: "dist/Anabasis-Linux" IS a
+          # string prefix of "dist/Anabasis-Linux-debug" today and that is fine,
+          # because `upload-artifact` treats `path: dist/Anabasis-Linux` as a
+          # literal directory and `find "$DIST"` descends only that directory --
+          # neither matches by prefix. What would break is a rename to a nested
+          # layout (dist/Anabasis-Linux/debug), which puts the .debug files inside
+          # the uploaded tree AND inside the leak-checked tree at once: shipped
+          # symbols, or a failing leak check, depending on the pattern.
           DBG="dist/Anabasis-Linux-debug"
           mkdir -p "$DBG"
           objcopy --only-keep-debug "$SO"  "$DBG/Anabasis.vst3.so.debug"

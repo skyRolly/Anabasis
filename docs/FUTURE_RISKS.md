@@ -87,7 +87,8 @@ listening test across ≥ 5 genres (`TESTING_POLICY.md`) is where this actually 
 **Likelihood:** High **Impact:** Medium
 **Trigger:** Any release. Levels 1–4 are automated; audio quality, GUI appearance and real-DAW
 behaviour are not, and never will be.
-**Mitigation:** Level 5 is a **required release precondition** (`RELEASE_POLICY.md` §8), not a
+**Mitigation:** Level 5 is a **required release precondition**
+(`RELEASE_POLICY.md` §"Preconditions"), not a
 nice-to-have; the DAW smoke-test matrix (Reaper/Windows, Logic Pro/macOS AU) is named explicitly
 so "we tested it" has a definition.
 **Owner:** TODO.

@@ -6,7 +6,50 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **eighth review pass** (2026-07-30). Six findings fixed, five
+**Last updated:** for the **ninth review pass** (2026-07-30). Four findings fixed, four
+confirmations — two of them closed with live evidence from the repository's own CI rather than
+reasoning.
+
+**`CI_CD.md` still described the pre-per-platform pluginval guard.** The eighth pass re-synced
+`DEVELOPMENT_BRIEF` §19.1 and left behind the procedure a developer actually opens: it named only
+the randomise step and omitted Linux's `steps.strip.outcome` term — the one term that stops the
+gate validating a partially-stripped binary. Replaced with a per-job table of the *actual*
+conditions plus why the Linux term is load-bearing, so weakening it requires overruling a stated
+reason rather than deleting an unexplained clause.
+
+**Two stale section pointers, found by sweeping rather than by report.** `DSP_POLICY` invariant 11
+cited `TESTING_POLICY.md §20.4`, which does not exist — `TESTING_POLICY` has no numbered sections;
+§20.4 belongs to `DEVELOPMENT_BRIEF`. The review caught that one. Sweeping every `FILE.md §N`
+reference in the repository against the target's actual headings caught a second the review missed:
+`FUTURE_RISKS` RISK-005 cited `RELEASE_POLICY.md §8`, also unnumbered. Both now point at heading
+names, which do not renumber.
+
+**The debug-directory comment stated the wrong invariant.** It warned against "a rename to a PREFIX
+relationship", but `dist/Anabasis-Linux` *is* already a string prefix of `dist/Anabasis-Linux-debug`
+— the comment described the current layout as avoiding something it does not avoid. The real
+invariant is **path ancestry**: `upload-artifact` and `find` both treat the path as a literal
+directory, so a shared prefix is harmless and only *nesting* would leak symbols. Restated.
+
+**`dependency-review.yml` closed with evidence, not analysis.** The review reasoned it could fail
+on every PR, since the action needs the dependency graph and a *private* repo would additionally
+need GHAS, while the product is described as closed-source. Checked the repository instead: it is
+**public**, and the `dependency-review` check on PR #1 is **green**. The fork-PR half of the
+finding is real but already handled — `pull-requests: write` is not grantable to fork PRs, so
+`comment-summary-in-pr: on-failure` simply cannot comment there; results still appear in Checks,
+which is where the gate lives.
+
+*Separately, and not a code matter:* the repository being public contradicts the "closed-source
+commercial software" description in `README.md` and `bug_report.yml`. Flagged to the owner; not
+changed from here, in either direction.
+
+**Confirmations:** the pre-P1 CI state was verified live rather than predicted — `preflight`
+succeeds, all three build jobs skip, `Analyze (actions)` succeeds and no `Analyze (c-cpp)` check is
+created, exactly as the dynamic matrix and the branch-protection note in `CI_CD.md` describe. The
+`GIT_SHALLOW` + SHA trap, the reusable-workflow caller-event hazard, the CodeQL `paths-ignore`
+scope and the macOS `set -e` / dSYM interaction were all re-reported by the review and are
+unchanged from the passes that recorded them.
+
+Prior: for the **eighth review pass** (2026-07-30). Six findings fixed, five
 confirmations — two of them upgraded from `Unverified` to `Verified` by running the actual tool.
 
 **The "deterministic" pluginval mode was never deterministic.** Both scripts passed
