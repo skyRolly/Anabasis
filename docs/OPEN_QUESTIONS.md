@@ -29,6 +29,30 @@ terms separately.
 
 ---
 
+## OQ-010 — Does the limiter lookahead get an explicit 0 / off position? · `Blocking P1`
+
+**Question.** §4.3 specifies the limiter lookahead as **0.5–10 ms** (default ≈ 2 ms). On that
+range the plugin **always reports non-zero latency to the host**; there is no zero-latency
+configuration.
+
+**Why it cannot be deferred.** Parameter ranges are semantic and become contract at the first
+shipped build (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3): widening the range later to add a 0
+position re-scales every saved session's normalised value and is an `ARCHITECTURE_REVIEW_GATE`
+item. It also determines what `DSP_POLICY.md` invariant 2 and the release checklist can assert —
+"with lookahead 0 and oversampling off, reported latency is 0" is not testable on a 0.5–10 ms
+range, so the invariant is currently phrased against the engaged lookahead instead.
+
+**Trade-off.** An off position enables a genuinely zero-latency mode (useful while tracking, and
+in hosts with poor PDC), at the cost of a limiter that cannot catch transients ahead of time — a
+markedly different, and worse, sound. Several mastering limiters deliberately omit it for exactly
+that reason.
+
+**Action.** Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
+position", say so explicitly in the parameter table so it reads as a decision rather than an
+oversight.
+
+---
+
 ## OQ-004 — Simple ⇄ Advanced coexistence strategy · `Blocking P4`
 
 **Question.** §5.3 requires a decision: when the user has edited parameters manually in Advanced

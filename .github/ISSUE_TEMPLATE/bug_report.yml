@@ -1,3 +1,6 @@
+# Doc links here are ABSOLUTE on purpose: this form renders at
+# /<owner>/<repo>/issues/new, where a relative `../blob/main/...` does not resolve
+# predictably. config.yml uses absolute URLs for the same reason.
 name: Test report — bug
 description: Something in this Anabasis test build behaves incorrectly, crashes, or will not load.
 labels: ["bug"]
@@ -7,8 +10,8 @@ body:
       value: |
         Anabasis is **closed-source commercial software** currently in **pre-release development**.
         Before filing, check
-        [`docs/KNOWN_ISSUES.md`](../blob/main/docs/KNOWN_ISSUES.md) — the problem may already be a
-        documented limitation with a workaround.
+        [`docs/KNOWN_ISSUES.md`](https://github.com/skyRolly/Anabasis/blob/main/docs/KNOWN_ISSUES.md)
+        — the problem may already be a documented limitation with a workaround.
 
         ⚠ **This tracker is public.** Attach nothing you are not willing to publish. If you were
         given a private channel for this testing round, use it for anything else.

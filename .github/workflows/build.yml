@@ -72,10 +72,18 @@ jobs:
   # -------------------------------------------------------------------------
   preflight:
     runs-on: ubuntu-latest
+    # Same-repo pull_request events are skipped entirely: `push: ["**"]` already
+    # built that exact SHA, so running the 3-OS matrix again on the PR event is a
+    # duplicate build per commit for as long as the PR is open. Fork PRs are NOT
+    # covered by the push trigger (the push happens in the fork), so they still
+    # run -- which is the only case the pull_request trigger uniquely serves here.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: check
         shell: bash
         run: |
@@ -91,7 +99,7 @@ jobs:
     if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: |
@@ -131,6 +139,12 @@ jobs:
             fi
           done
           nm -D "$SO" | grep -q GetPluginFactory
+          # Written LAST, so it is set only if every objcopy/strip/verify above
+          # succeeded. The debug upload gates on it rather than on "the step was
+          # not skipped": $DBG is created at the top of this step, so an abort
+          # part-way through would otherwise leave an empty directory and make the
+          # upload fail a SECOND time on if-no-files-found, burying the real error.
+          echo "debug_artifacts=true" >> "$GITHUB_OUTPUT"
 
       - name: Self-tests (DSP + state)
         id: tests
@@ -182,18 +196,18 @@ jobs:
       # failure still yields beta artifacts.
       - name: Upload Linux artifacts
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Anabasis-Linux
           path: dist/Anabasis-Linux
           if-no-files-found: error
 
-      # Developer debug artifacts are preserved even when a later step fails
-      # (they never contain customer-facing binaries), but not if the strip step
-      # never ran at all.
+      # Developer debug artifacts are preserved even when a LATER step fails (they
+      # never contain customer-facing binaries) -- but only when the strip step
+      # itself completed, which is what actually produced the .debug files.
       - name: Upload Linux debug symbols (crash symbolication)
-        if: ${{ !cancelled() && steps.strip.outcome != 'skipped' }}
-        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.strip.outputs.debug_artifacts == 'true' }}
+        uses: actions/upload-artifact@v7
         with:
           name: Anabasis-Linux-debug
           path: dist/Anabasis-Linux-debug
@@ -204,7 +218,7 @@ jobs:
     if: needs.preflight.outputs.ready == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Default Visual Studio generator (multi-config); MSVC is auto-detected.
       - name: Configure
@@ -371,18 +385,27 @@ jobs:
           $leak = Get-ChildItem -Recurse -Path $dist -File |
                   Where-Object { $_.Extension -in '.pdb', '.ilk', '.exp', '.debug' }
           if ($leak) { Write-Error ("customer artifact contains debug files: " + ($leak.FullName -join ', ')) }
+          # Written LAST, for the same reason as the Linux strip step: $dbg is
+          # created at the top of this step, so gating the debug upload on "this
+          # step was not skipped" would fire it against an empty directory when the
+          # step aborts before the PDB copies -- a second, misleading failure on
+          # if-no-files-found on top of the real one.
+          # -Encoding utf8 is explicit: the runner uses pwsh 7 (UTF-8 by default),
+          # but Windows PowerShell 5.1 would write UTF-16LE and the runner would
+          # not parse the output at all.
+          "debug_artifacts=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload Windows artifacts
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Anabasis-Windows
           path: dist/Anabasis-Windows
           if-no-files-found: error
 
       - name: Upload Windows debug symbols (crash symbolication)
-        if: ${{ !cancelled() && steps.stage_windows.outcome != 'skipped' }}
-        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.stage_windows.outputs.debug_artifacts == 'true' }}
+        uses: actions/upload-artifact@v7
         with:
           name: Anabasis-Windows-debug
           path: dist/Anabasis-Windows-debug
@@ -393,7 +416,7 @@ jobs:
     if: needs.preflight.outputs.ready == 'true'
     runs-on: macos-14   # Apple Silicon runner; we build a universal binary
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools
         run: brew install ninja || true
@@ -539,7 +562,7 @@ jobs:
 
       - name: Upload macOS plugins (VST3 + AU + Standalone)
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.package.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Anabasis-macOS
           path: dist/Anabasis-macOS
@@ -550,7 +573,7 @@ jobs:
       # the package step -- instead of failing on an empty directory.
       - name: Upload macOS debug symbols (dSYMs, crash symbolication)
         if: ${{ !cancelled() && steps.package.outcome != 'skipped' && steps.package.outputs.debug_artifacts == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Anabasis-macOS-debug
           path: dist/Anabasis-macOS-debug

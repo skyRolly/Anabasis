@@ -21,15 +21,19 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
 scripts/setup-linux.sh     # safe to re-run; installs build + X11/audio/GTK deps + xvfb
 ```
 
-Installs: `build-essential cmake git ninja-build pkg-config`, ALSA/JACK/curl, FreeType/Fontconfig,
-X11 (`libx11/xcomposite/xcursor/xext/xinerama/xrandr/xrender`), `libglu1-mesa-dev
-mesa-common-dev libegl-dev`, `libwebkit2gtk-4.1-dev libgtk-3-dev`, and `xvfb`.
+Installs: `build-essential cmake git ninja-build pkg-config`, `curl unzip`, ALSA/JACK/libcurl,
+FreeType/Fontconfig, X11 (`libx11/xcomposite/xcursor/xext/xinerama/xrandr/xrender`),
+`libglu1-mesa-dev mesa-common-dev libegl-dev`, `libwebkit2gtk-4.1-dev libgtk-3-dev`, and `xvfb`.
 
 **`libegl-dev` is required for JUCE 9** — it creates Linux OpenGL contexts via EGL instead of GLX,
 so the EGL headers are a build dependency even if the plugin never attaches a GL context on Linux.
 If `libwebkit2gtk-4.1-dev` is unavailable on your release, try `libwebkit2gtk-4.0-dev`.
 
-`xvfb` is needed for pluginval's editor open/close tests, not for the build itself.
+Three of these serve **pluginval**, not the build: `xvfb` (the editor open/close tests need a
+display) and `curl` + `unzip` (`run-pluginval.sh` downloads and extracts the pluginval release).
+`curl` the CLI is *not* implied by `libcurl4-openssl-dev`, which is only the development headers —
+GitHub-hosted runners preinstall both tools, so a missing one shows up on a fresh machine or a
+minimal container rather than in CI.
 
 ## Configure + build
 

@@ -6,7 +6,29 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **OQ-001 / OQ-003 resolutions** (2026-07-30). Two blocking decisions
+**Last updated:** for the **first review pass** (2026-07-30). Ten findings fixed. Corrected in this
+audit: the policies row said 15 docs, the tree has **16**. Scripts: `setup-linux.sh` now installs
+`curl` + `unzip` (`run-pluginval.sh` calls both; `libcurl4-openssl-dev` is headers, not the CLI, and
+GitHub runners preinstall them — so the gap only ever showed on a fresh machine);
+`run-pluginval.ps1` **no longer passes `--skip-gui-tests`**, which was inherited from the sibling
+product where an evidenced runner limitation justifies it, and here suppressed nothing while
+contradicting the "uniform and blocking on every platform" gate — `TESTING_POLICY` gains rule 3a
+requiring any future skip to be documented, not merely scripted; `build.sh` `find` calls take
+`-maxdepth` before `-name`. CI: all actions re-aligned to the versions the sibling repository runs
+green (`checkout@v7`, `upload-artifact@v7`, `codeql-action@v4`, `dependency-review-action@v5`) —
+the scaffold had them a major version behind; `preflight` now skips same-repo `pull_request` events
+that `push: ["**"]` already built; the Linux/Windows debug uploads gate on a `debug_artifacts`
+output written last rather than on "not skipped", so an aborted symbol step cannot produce a second
+misleading `if-no-files-found` failure. Docs: `CI_CD.md`'s pipeline list claimed self-tests before
+symbol handling — on Linux the strip runs **first**, deliberately, so the gate validates the
+shipped bytes; the list is now per-platform. `DSP_POLICY` invariant 2 and the release checklist
+asserted "with lookahead 0 … reported latency is 0", which §4.3's 0.5–10 ms range makes unreachable
+— rephrased against the engaged lookahead, with the underlying question raised as **OQ-010**
+(does lookahead get an explicit off position? — it must be settled before the parameter exists,
+since widening a range later is compatibility-gated). `bug_report.yml` uses an absolute doc URL
+(a relative one does not resolve from `/issues/new`).
+
+Prior: for the **OQ-001 / OQ-003 resolutions** (2026-07-30). Two blocking decisions
 moved to `Resolved` in `OPEN_QUESTIONS.md` (entries are never deleted): the JUCE pin is **9.0.0 at
 commit `f8f8864…`**, the same revision Anamorph pins, so the product line shares one framework
 baseline; and the plugin identity is **`RTec` / `Anbs` / `com.rollytech.anabasis`**, with the
@@ -40,7 +62,7 @@ Rows are added as modules land. The planned module set and its responsibilities 
 | Tier | Files | Status |
 |---|---|---|
 | docs root | DEVELOPMENT_BRIEF, SOURCE_OF_TRUTH, REPOSITORY_MAP, OPEN_QUESTIONS, HANDOVER, DOCUMENTATION_COVERAGE, KNOWN_ISSUES, FUTURE_RISKS, POSTMORTEMS, BRAND_CONSISTENCY_CHECKLIST | Present |
-| policies | 15 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
+| policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
 | architecture | `design-decisions/ADR_INDEX.md` only | Skeleton — the descriptive set lands with P1–P2 |
 | user | — | Deferred to P6 |

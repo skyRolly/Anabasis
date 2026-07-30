@@ -83,6 +83,13 @@ its methodology is not permitted (constraint C2).
    map in `DSP_POLICY.md`. An untested invariant is listed as a gap, never left implicit.
 3. A pluginval **crash retry** is permitted only for a signal-crash in the host-side validator
    (exit ≥ 128); a real validation failure (exit < 128) fails immediately and is never retried.
+3a. **A skipped test category must be visible in this document, not only in a script.** The three
+   platforms run the same pluginval test set; no `--skip-*` flag is in use. If an environmental
+   limit later forces one — the likeliest is the GPU-less `windows-latest` runner being unable to
+   host the editor once P5 exists, which is why the sibling product skips GUI tests there — the
+   flag may be added **only** together with a `KNOWN_ISSUES.md` entry stating what is no longer
+   verified and on which platform. A gate documented as "uniform and blocking" that quietly skips
+   a category on one platform is worse than an honestly narrower gate.
 4. **Hostile inputs are part of the suite**, not an afterthought: full-scale square waves,
    inter-sample-peak-heavy material, DC, silence, and automation swept at audio rate. A limiter
    that only holds its ceiling on well-behaved music does not satisfy `DSP_POLICY.md` invariant 4.

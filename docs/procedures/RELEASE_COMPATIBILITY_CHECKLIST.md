@@ -33,9 +33,12 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       Ref: `docs/procedures/TESTING.md`.
 
 - [ ] **Latency reporting verified** — reported PDC matches the actual chain delay across the
-      **lookahead × oversampling** matrix; with lookahead 0 and oversampling off, it reports 0.
-      A latency change between releases desyncs every saved session's PDC.
-      Ref: `docs/architecture/LATENCY_MODEL.md`.
+      **lookahead × oversampling** matrix, at both ends of the lookahead range; with oversampling
+      off, the reported value is exactly the engaged lookahead. A latency change between releases
+      desyncs every saved session's PDC.
+      Ref: `docs/architecture/LATENCY_MODEL.md`, `docs/policies/DSP_POLICY.md` invariant 2
+      (which records why "reports 0" is not a checkable state unless lookahead gains an explicit
+      off position).
 
 - [ ] **Ceiling guarantee re-verified** — output never exceeds the ceiling (≤ 0.1 dBTP) under the
       hostile-input sweep, at every supported sample rate and oversampling factor.

@@ -21,18 +21,18 @@ cmake --build "$BUILD_DIR" --config "$BUILD_TYPE"
 
 echo
 echo "=== Build artefacts ==="
-VST3_PATH="$(find "$BUILD_DIR" -name 'Anabasis.vst3' -maxdepth 8 2>/dev/null | head -n1 || true)"
+VST3_PATH="$(find "$BUILD_DIR" -maxdepth 8 -name 'Anabasis.vst3' 2>/dev/null | head -n1 || true)"
 if [ -n "$VST3_PATH" ]; then
     echo "VST3: $VST3_PATH"
 else
     echo "WARNING: Anabasis.vst3 not found under $BUILD_DIR"
 fi
 
-STANDALONE="$(find "$BUILD_DIR" -name 'Anabasis' -type f -maxdepth 8 2>/dev/null | head -n1 || true)"
+STANDALONE="$(find "$BUILD_DIR" -maxdepth 8 -name 'Anabasis' -type f 2>/dev/null | head -n1 || true)"
 [ -n "$STANDALONE" ] && echo "Standalone: $STANDALONE"
 
-TESTS="$(find "$BUILD_DIR" -name 'AnabasisTests' -type f -maxdepth 8 2>/dev/null | head -n1 || true)"
+TESTS="$(find "$BUILD_DIR" -maxdepth 8 -name 'AnabasisTests' -type f 2>/dev/null | head -n1 || true)"
 [ -n "$TESTS" ] && echo "Tests: $TESTS"
 
-STATE_TESTS="$(find "$BUILD_DIR" -name 'AnabasisStateTests' -type f -maxdepth 8 2>/dev/null | head -n1 || true)"
+STATE_TESTS="$(find "$BUILD_DIR" -maxdepth 8 -name 'AnabasisStateTests' -type f 2>/dev/null | head -n1 || true)"
 [ -n "$STATE_TESTS" ] && echo "State tests: $STATE_TESTS"

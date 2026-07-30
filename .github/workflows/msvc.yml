@@ -58,7 +58,7 @@ jobs:
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: check
         shell: bash
         run: |
@@ -81,7 +81,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure CMake
         run: cmake -B ${{ env.build }} -DANABASIS_BUILD_STANDALONE=OFF
@@ -114,6 +114,6 @@ jobs:
           ignoredTargetPaths: ${{ env.build }}/_deps
 
       - name: Upload SARIF to GitHub
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ steps.run-analysis.outputs.sarif }}

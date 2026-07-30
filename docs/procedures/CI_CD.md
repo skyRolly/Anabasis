@@ -47,7 +47,12 @@ env:
 Raising the bar is a one-line edit to `build.yml`. The release gate is **10**
 (`docs/policies/TESTING_POLICY.md`).
 
-## Pipeline (per job)
+## Pipeline
+
+**The step order differs by platform, and the difference is deliberate**, so the numbering below
+is per-platform rather than a single list.
+
+Common to all three:
 
 1. **Checkout**.
 2. **Configure** — `cmake -B build [-G Ninja] -DCMAKE_BUILD_TYPE=Release
@@ -55,21 +60,40 @@ Raising the bar is a one-line edit to `build.yml`. The release gate is **10**
    number). Windows uses the default VS generator; macOS adds
    `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` and a deployment target.
 3. **Build** — `cmake --build build --config Release`.
-4. **Self-tests** — `scripts/run-tests.sh` runs `AnabasisTests` **and** `AnabasisStateTests`
-   fail-closed (Linux/macOS); on Windows the runner locates and runs both `.exe`s, propagating the
-   first failing exit code.
-5. **Symbol handling** — Linux extracts split debug info (`objcopy --only-keep-debug`), strips the
-   shipped binaries (`strip --strip-unneeded`, `.gnu_debuglink` embedded) and asserts the VST3
-   entry point is still exported. This runs **before** pluginval so the gate validates the exact
-   stripped bytes users receive. macOS runs `dsymutil` → `strip -x` → ad-hoc codesign, in that
-   order (stripping after signing would invalidate the seal); dSYM capture is best-effort and
-   never blocks the customer pipeline. Windows retains the linker PDB into a separate debug
-   artifact and purges all debug material from the public copy.
-6. **pluginval** — deterministic ×3, then randomise ×3. The randomise step is guarded with
-   `if: ${{ !cancelled() }}` so a deterministic failure never *skips* it: both modes always report
-   independently, and the job still fails if either fails.
-7. **Stage + upload** — customer artifacts (`Anabasis-<OS>`, loose files) and debug artifacts
-   (`Anabasis-<OS>-debug`).
+
+Then:
+
+| | **Linux** | **Windows / macOS** |
+|---|---|---|
+| 4 | **Symbol handling** — `objcopy --only-keep-debug`, `strip --strip-unneeded`, `.gnu_debuglink` embedded, VST3 entry point re-asserted | **Self-tests** |
+| 5 | **Self-tests** | **pluginval** |
+| 6 | **pluginval** | **Stage / package** (incl. symbol handling) |
+| 7 | **Stage + upload** | **Upload** |
+
+**On Linux the strip runs before the self-tests and pluginval on purpose:** the release gate then
+validates the exact stripped bytes users receive, not a differently-linked intermediate. It also
+means the strip step is what the customer-artifact staging gates on, so a strip failure blocks the
+public upload while leaving the developer debug artifact — reason enough for the order to be
+stated accurately rather than tidily.
+
+On macOS the packaging step runs after validation and orders itself `dsymutil` → `strip -x` →
+ad-hoc codesign (stripping after signing would invalidate the seal); dSYM capture is best-effort
+and never blocks the customer pipeline. Windows retains each shipped image's linker PDB into a
+separate debug artifact and purges all debug material from the public copy.
+
+**pluginval** runs deterministic ×3, then randomise ×3. The randomise step is guarded with
+`if: ${{ !cancelled() }}` so a deterministic failure never *skips* it: both modes always report
+independently, and the job still fails if either fails.
+
+**Uploads** produce customer artifacts (`Anabasis-<OS>`, loose files) and debug artifacts
+(`Anabasis-<OS>-debug`).
+
+## Duplicate-build avoidance
+
+`push: ["**"]` builds every branch, and `pull_request` would rebuild the same SHA once a PR is
+open — two full 3-OS matrix runs per commit. The `preflight` job therefore skips **same-repo**
+pull_request events, since the push event already covered that SHA. Fork PRs still run: their
+push happens in the fork, so the `pull_request` event is the only trigger that sees them.
 
 ## Artifact safety rules (fail-closed)
 
@@ -86,8 +110,12 @@ These are the rules, not incidental details — each blocks a specific way a bad
   a symbol-bearing public artifact behind.
 - Each locate demands **exactly one** match: zero is a build-layout failure, more than one is
   ambiguity that must not be guessed about.
-- Developer `-debug` artifacts are preserved even when a later step fails (they never contain
-  customer-facing binaries).
+- Developer `-debug` artifacts are preserved even when a *later* step fails (they never contain
+  customer-facing binaries) — but each is gated on a `debug_artifacts` output written **last** by
+  the step that produces the symbols, not on "that step was not skipped". The debug directory is
+  created at the top of those steps, so the weaker gate would fire the upload against an empty
+  directory whenever the step aborted part-way, failing a second time on `if-no-files-found` and
+  burying the real error.
 
 ## Security scanning
 

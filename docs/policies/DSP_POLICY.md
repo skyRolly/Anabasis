@@ -23,11 +23,19 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
 
 2. **Reported latency is exact and matches the measured latency.** Every latency source —
    lookahead and oversampling — is reported to the host so PDC compensates correctly. With
-   lookahead at 0 and oversampling off, reported latency is **0**. Latency must never change
-   mid-block: an oversampling-factor or lookahead change is **latched** and applied at a reset or
-   a crossfaded boundary.
+   oversampling off, the reported latency is **exactly the engaged lookahead**, and nothing else
+   contributes. Latency must never change mid-block: an oversampling-factor or lookahead change is
+   **latched** and applied at a reset or a crossfaded boundary.
+
+   Note that `DEVELOPMENT_BRIEF.md` §4.3 specifies the limiter lookahead as **0.5–10 ms**, with no
+   zero position — so on that range **the plugin always reports non-zero latency**, and "reports 0"
+   is not a reachable state to test for. Whether lookahead gets an explicit **0 / off** position is
+   a P0 `DESIGN.md` decision with real consequences (it is the only way to offer a zero-latency
+   tracking mode, and adding it later widens a parameter range, which is itself an
+   `ARCHITECTURE_REVIEW_GATE` item under `PARAMETER_COMPATIBILITY_POLICY.md` rule 3). Decide it
+   before the parameter is created, not after.
    Guarded by: `testReportedLatencyMatchesImpulse` (impulse-response measurement across the
-   oversampling × lookahead matrix).
+   oversampling × lookahead matrix, including both ends of the lookahead range).
 
 3. **True-peak detection runs at ≥ 4× oversampling and is BS.1770-4 compliant.** A true-peak
    reading is an inter-sample estimate, not a sample peak; the ceiling is interpreted as dBTP when

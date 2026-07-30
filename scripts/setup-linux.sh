@@ -15,7 +15,8 @@
 #  (juce_opengl linuxPackages "egl gl"), so EGL headers are a build dependency
 #  even if Anabasis never attaches a GL context on Linux.
 #
-#  xvfb is for pluginval's editor open/close tests, not for the build.
+#  xvfb, curl and unzip are for pluginval (editor tests need a display; the
+#  release download needs the other two), not for the build itself.
 # ============================================================================
 set -euo pipefail
 
@@ -24,8 +25,14 @@ if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
 
 $SUDO apt-get update -y
 
+# curl + unzip are for scripts/run-pluginval.sh, which downloads and extracts the
+# pluginval release. They are NOT implied by libcurl4-openssl-dev (that is the
+# development headers, not the CLI). GitHub-hosted runners preinstall both, which
+# is exactly why their absence would only ever bite on a fresh machine or a
+# minimal container -- i.e. the case this script exists to cover.
 $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential cmake git ninja-build pkg-config \
+    curl unzip \
     libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev \
     libfreetype6-dev libfontconfig1-dev \
     libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \

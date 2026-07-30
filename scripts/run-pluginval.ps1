@@ -64,25 +64,32 @@ function Invoke-Pluginval {
     return $proc.ExitCode
 }
 
-# WINDOWS-ONLY: skip the editor GUI tests. The GitHub `windows-latest` runner is
-# GPU-less/headless and cannot host a plugin editor's "Editor Automation" test --
-# it fails there in both GL mode (the GDI-generic OpenGL 1.1 renderer has no GL2
-# shader/VBO entry points) and CPU mode. This is an ENVIRONMENTAL limit of the
-# runner, not a plugin defect: the editor validates cleanly on Linux (xvfb, CPU)
-# and macOS (GPU/GL). All non-GUI tests (audio/state/parameter/bus/automation)
-# still run and still block.
+# NO skip flags. Windows runs the SAME test set as Linux and macOS, which is what
+# `docs/policies/TESTING_POLICY.md` and `docs/procedures/CI_CD.md` claim -- the
+# claim and the script must not diverge.
 #
-# NOTE: re-confirm this is still necessary once Anabasis has a real editor (P5).
-# If the runner or JUCE has moved on, DROP this flag -- skipping GUI tests is a
-# coverage loss that must not outlive its justification.
-$guiArgs = @("--skip-gui-tests")
+# Known hazard for P5 (recorded here so it is not rediscovered from scratch, NOT
+# pre-emptively worked around): the sibling product Anamorph passes
+# `--skip-gui-tests` on Windows because the GitHub `windows-latest` runner is
+# GPU-less and cannot host its editor's "Editor Automation" test -- it fails there
+# in both GL mode (the GDI-generic OpenGL 1.1 renderer has no GL2 shader/VBO entry
+# points) and CPU mode. That is an environmental limit of the runner, evidenced
+# against THAT product's editor (its KI-007), and it may well recur here once
+# Anabasis has an editor at P5.
+#
+# It is deliberately NOT inherited now: Anabasis has no editor, so the flag would
+# suppress nothing while quietly contradicting the "uniform and blocking on every
+# platform" gate. If P5 reproduces the failure, add the flag THEN, with a
+# KNOWN_ISSUES entry recording the measured coverage loss -- a skipped test
+# category must always be visible in the documentation, never only in a script.
+$guiArgs = @()
 
 # Each pass gets up to $attempts tries against the REAL exit code: 0 is a pass; a
 # small non-zero (1..255) is a real validation failure and fails the step
 # immediately; a null / negative / >=256 code is an abnormal termination (Win32
 # exception) and is retried, then still fails after the retries.
 $pvArgs = @('--strictness-level', "$Strictness") + $modeArgs + $guiArgs + @('--validate', $vst3.FullName, '--timeout-ms', '600000')
-Write-Host "Validating $($vst3.FullName) at strictness $Strictness -- mode=$Mode ($passes consecutive pass(es) required); GUI tests skipped on this runner"
+Write-Host "Validating $($vst3.FullName) at strictness $Strictness -- mode=$Mode ($passes consecutive pass(es) required)"
 $attempts = 3
 for ($p = 1; $p -le $passes; $p++) {
     $passed = $false
