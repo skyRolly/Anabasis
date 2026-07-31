@@ -3,7 +3,8 @@
 **Status: `Proposed` — awaiting owner sign-off (`DEVELOPMENT_BRIEF.md` §11 P0 exit criterion).**
 No DSP code exists or may be written until this document is signed off (brief §24). Sign-off ratifies:
 every value marked **⊕ proposed** below (values the brief does not specify — including range
-tapers and the parameter **display names**, which are product wording under C8), the named
+tapers) and the parameter **display names** as launch wording (C8; names remain revisable
+afterwards under `PARAMETER_COMPATIBILITY_POLICY.md` rule 2 — see §4.2), the named
 decisions (§3.2 measurement-tap, §3.4 no-zero-lookahead, §5.2 macro architecture, §5.3
 coexistence, §8 copy-and-adapt), the §5.5 draft curves *as the P4 tuning starting point*, and
 promotes the ADR set in §10 from `Proposed` to `Accepted`. The §11 checklist is the complete
@@ -148,9 +149,14 @@ antialiasing) on the soft-clip curve, inside the oversampled region (§3). Drive
 level compensation (peak-preserving makeup — precedent for the identity-preserving formulation:
 Anamorph's `driveTanh` makeup + clean blend so 0 dB drive is bit-identity,
 `Anamorph:src/dsp/AnamorphEngine.cpp:597-643` [Verified]). Colour models Clean/Tape/Tube/
-Transistor as harmonic-shaping variants (odd/even balance + colouration tilt); Clean at zero
-drive is exact identity. Live transfer-curve visualisation feeds from the same coefficient set
-the DSP uses (one source of truth for the curve).
+Transistor as harmonic-shaping variants (odd/even balance + colouration tilt), with
+**`colourDepth`** as the continuous *how much of the model's character is applied* control —
+0% = the model contributes nothing, so `colourDepth = 0` is exact identity regardless of which
+model is selected, and the Character macro has a managed target whose default is 0 (§5.5's
+fixed-point rule). This is deliberately distinct from `clipMix`, which is the clipper stage's
+parallel dry/wet blend (default 100% wet) and stays a manual control. Live transfer-curve
+visualisation feeds from the same coefficient set the DSP uses (one source of truth for the
+curve).
 
 ### 2.5 Limiter
 Lookahead 0.5–10 ms (default 2 ms), dual-stage release (fast transient stage + slow program
@@ -303,8 +309,14 @@ in `ANABASIS_INTERNAL`.
 
 Type: F float · C choice · B bool. Auto: host-automatable. Values, ranges and tapers marked
 **⊕** are proposals (the brief does not specify them); unmarked values are the brief's. The
-**Name column is proposed product wording in its entirety** (C8) — sign-off ratifies the display
-names too, and they freeze in the P1 registry snapshot. Defaults satisfy DSP_POLICY inv 7 *as
+**Name column is proposed product wording in its entirety** (C8) — sign-off ratifies it as the
+launch wording, but **display names stay revisable afterwards**:
+`PARAMETER_COMPATIBILITY_POLICY.md` rule 2 permits a rename at any time while the ID is fixed
+(registry + a `Changed` CHANGELOG entry), and that policy outranks this document
+(`SOURCE_OF_TRUTH.md`). What freezes at v0.1.0 is the **ID**, and — per rule 3 — the range,
+default and choice ordering. The P1 registry snapshot does capture names, so a later rename
+re-freezes the snapshot deliberately; that is rule 2's normal workflow, not a violation.
+Defaults satisfy DSP_POLICY inv 7 *as
 that invariant is conditioned*: with all defaults **and no processing engaged** (material below
 the comp threshold−knee region and below the ceiling) output is bit-exact identity — near-full-
 scale material engages the default ceiling (⊕ −1 dBTP) and the comp knee by design, which is
@@ -360,6 +372,7 @@ what `testNullWithDefaults`'s stimulus level must respect.
 | 46 | `dither` | Dither | C | Off/16-bit/24-bit | Off | ⊕ no | output |
 | 47 | `ditherShaping` | Noise Shaping | B | — | ⊕ off | ⊕ no | output |
 | 48 | `dynTilt` | Dynamic Tame | F | ⊕ 0…2 dB | ⊕ 0 | yes | clip |
+| 49 | `colourDepth` | Colour Depth | F | ⊕ 0…100 % | ⊕ 0 | yes | clip |
 
 ¹ Anamorph precedent: host-automating a view toggle drives editor resizes that crash X11 hosts
 (`Anamorph:src/PluginParameters.cpp:274-281`, its KI-003 [Verified]).
@@ -528,9 +541,22 @@ All values **⊕ draft**. `L` = loudness 0…100, normalised `l = L/100`. Manage
 | `compRatio` | `1.5 + 0.5·l` | stays gentle |
 | `clipDrive` | `0` for l<0.3, then `9·(l−0.3)/0.7` dB | clipper absorbs transients from the mid range |
 | `clipShape` | `0.5 → 0.35` over l=0.3…1 | harder knee as drive rises |
-| `colour amount` (via `clipMix`/model depth) | `character · (0.4 + 0.6·l)` | Character scales colour, loudness deepens it |
-| `dynTilt` | `0 → 1.5 dB` over l=0.5…1 | tames HF harshness at high push (managed param, row 48) |
-| `tone` → `eqTilt` + `colourTone` | `tone·2 dB` tilt, `tone·0.5` colour tone | one dark↔bright gesture |
+| `colourDepth` | `100 · character · (0.4 + 0.6·l)` % | Character scales colour, loudness deepens it (row 49) |
+| `dynTilt` | `0 → 1.5 dB` over l=0.5…1 | tames HF harshness at high push (row 48) |
+| `eqTilt` | `tone · 2` dB | one dark↔bright gesture… |
+| `colourTone` | `tone · 0.5` | …split across the two tone controls |
+
+**Binding rule — the default patch is a fixed point of the mapping.** For every managed
+parameter, `M(loudness=0, character=0, tone=0)` **must equal that parameter's declared default**
+in §4.2. Otherwise the first macro gesture would jump the value instead of gliding from where it
+already was — an unexplained state change in the factory patch. Check by inspection above:
+`limGain` 0, `compThreshold` 0, `compRatio` 1.5, `clipDrive` 0, `clipShape` 0.5,
+`colourDepth` 0, `dynTilt` 0, `eqTilt` 0, `colourTone` 0 — each matching its row in §4.2. This
+rule is why the colour amount is `colourDepth` (default 0) and **not** `clipMix`: `clipMix` is a
+manual parallel-blend control that defaults to 100% wet, so it can never be a fixed point of a
+curve that starts at zero colour. `clipMix` and `compMix` are therefore **not** in the managed
+set. A P4 curve revision that breaks the fixed-point rule is a defect, not a taste choice, and
+`testMacroDefaultIsFixedPoint` guards it.
 
 Adaptive trims ride *around* these curves within their §5.4 bounds. The curve table is the
 tuning artifact for the P4 listening sessions against Master Plan (§5.4 of the brief); every
@@ -590,15 +616,15 @@ illustrative).
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                          ┌─────────────────┐ │
 │                 ╭────────────╮                           │  LUFS  M  S  I  │ │
-│                ╱              ╲                          │  -14.2  ▐▌      │ │
+│                ╱              ╲                          │   -9.5  ▐▌      │ │
 │               │    LOUDNESS    │                         │  target lines   │ │
 │               │      ◉ 42      │                         │  Sp Ap YT ─ ─ ─ │ │
 │                ╲              ╱                          │  TP  -1.02 dBTP │ │
-│                 ╰────────────╯                           │  PLR   12.8     │ │
-│        the one knob — visual focus                       │  penalty  -0.2  │ │
+│                 ╰────────────╯                           │  PLR    8.5     │ │
+│        the one knob — visual focus                       │  penalty  -4.5  │ │
 │                                                          └─────────────────┘ │
 │   CHARACTER ◯──────   TONE ◯──────   CEILING ◯ -1.0 dBTP 🔒                  │
-│   [Loudness Comp]  [Delta]  [Freeze]  [Learn]            out LUFS  -14.2     │
+│   [Loudness Comp]  [Delta]  [Freeze]  [Learn]            out LUFS   -9.5     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │  GR history (10–30 s scrolling waveform + GR trace)                ▁▂▄▂▁▂▆▁  │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -711,7 +737,7 @@ Anabasis-local, no reserved blocks.
   P5. (4) `dither`/`truePeakMode` non-automatability choices are conservative-frozen — loosening
   later is a kVersion bump.
 
-**Sign-off checklist for the owner**: ⊕ values, ranges, tapers **and display names** in
-§4.2/§4.3 · §3.2 measurement-tap · §3.4
+**Sign-off checklist for the owner**: ⊕ values, ranges and tapers in §4.2/§4.3 (frozen at
+v0.1.0) · display names as launch wording (revisable later, rule 2) · §3.2 measurement-tap · §3.4
 no-zero-lookahead · §5.2/§5.3 macro architecture & coexistence · §5.5 draft curves as the P4
 starting point · §6.1 accent-family + variable-font direction · §8 copy-and-adapt · §10 ADR set.

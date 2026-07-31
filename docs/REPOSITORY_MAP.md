@@ -90,6 +90,10 @@ a no-op the moment P1 lands.
 docs/
 ├── DEVELOPMENT_BRIEF.md   The owner-supplied product spec (Part I) + the inherited engineering
 │                          standard (Part II). See SOURCE_OF_TRUTH.md §"Where the product brief sits".
+├── DESIGN.md              The P0 design deliverable (brief §11/§24): architecture, the full
+│                          parameter table, macro curves, wireframes, the proposed ADR set.
+│                          Answers to the brief; the ADRs it spawns outrank it once Accepted.
+│                          See SOURCE_OF_TRUTH.md §"Where `DESIGN.md` sits".
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
 │   BRAND_CONSISTENCY_CHECKLIST.md

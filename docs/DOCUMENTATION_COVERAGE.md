@@ -15,7 +15,7 @@ The document was produced from a five-domain research pass over the full Anamorp
 module inventory; per-stage DSP design; the oversampling/true-peak/latency contract — including
 the **measurement-tap** resolution proposed for `DSP_POLICY.md` invariants 2/5's open point
 (the policy text itself is edited only when ADR-0003 is accepted, per C6); the full
-**48-parameter table** plus the host-hidden state table and serialization schema v1; the macro
+**49-parameter table** plus the host-hidden state table and serialization schema v1; the macro
 layer and OQ-004 coexistence argument; draft macro curves (explicitly ⊕-marked as tuning
 material, C2); UI wireframes with the family-consistency contract; the OQ-005 recommendation;
 the performance-budget allocation and benchmark commitment; and the proposed 7-ADR set. Every
@@ -28,6 +28,49 @@ decision event), `HANDOVER.md` (P0 execution done; the one remaining blocker is 
 `REPOSITORY_MAP.md`, `README.md` §Project status. Confidence: the design document is a
 *contract proposal* — nothing in it is `Verified` about Anabasis (there is no code); Anamorph
 precedent claims cite file:line and are `Verified` from the research pass.
+
+**Review pass on the design document (same day).** Three findings fixed, two confirmations.
+
+*The new document was registered in only one of the four required places.*
+`DOCUMENTATION_LIFECYCLE_POLICY.md`'s add-a-document trigger requires four updates — the
+`REPOSITORY_MAP` **tree entry**, the `SOURCE_OF_TRUTH` **class list**, `README` **§Documentation**,
+and this audit — and only this audit plus a prose note at the bottom of `REPOSITORY_MAP` had been
+done. So the P0 deliverable was invisible to anyone following the standard navigation path, and
+its authority rank was undefined. All four are now correct, and `SOURCE_OF_TRUTH` gained a
+dedicated §"Where `DESIGN.md` sits": no authority before sign-off; ranked with descriptive
+Architecture after it; **superseded section by section** by the ADRs it spawns, which win on any
+disagreement. Getting that rank written down matters more than the index entry — ADR-0001…0007
+will cite this document, and without the rule a reader could not tell which side of a future
+conflict wins.
+
+*The default patch was not a fixed point of the macro mapping.* The colour-amount curve
+(`character · (0.4 + 0.6·l)`) evaluates to **0** at the default macro position, but its declared
+managed target was `clipMix`, whose default is **100 %** — so the first touch of the big knob
+would have collapsed the clipper blend from fully wet to nearly dry, an unexplained jump in the
+factory patch. Root cause: `clipMix` is a *parallel dry/wet blend* and was the wrong target for a
+*colour amount*. Fixed by giving the colour amount its own parameter — `colourDepth` (row 49,
+⊕ 0…100 %, default ⊕ 0) — and removing `clipMix`/`compMix` from the managed set entirely. The
+general rule the defect exposed is now stated as binding in §5.5: **for every managed parameter,
+`M(0,0,0)` must equal that parameter's declared default**, verified by inspection across all nine
+managed rows and guarded by `testMacroDefaultIsFixedPoint`. A P4 curve revision that breaks it is
+a defect, not a taste choice.
+
+*Freezing display names contradicted a policy that outranks the design document.*
+`PARAMETER_COMPATIBILITY_POLICY.md` rule 2 explicitly permits renaming a user-facing name at any
+time while the ID stays fixed, and the same policy advises decoupling the ID vocabulary from
+display wording *precisely so* copy stays revisable under C8. DESIGN.md said names "freeze in the
+P1 registry snapshot". Softened to the accurate reading: sign-off ratifies the names as **launch
+wording**, IDs/ranges/defaults freeze at v0.1.0, and a later rename is rule 2's normal workflow
+(registry + a `Changed` CHANGELOG entry + a deliberate snapshot re-freeze).
+
+*Confirmations:* the reviewer independently re-derived the BS.1770-4 interpolator group delay
+((48−1)/2 = 23.5 upsampled ≈ 5.9 base samples ≈ 0.122 ms at 48 kHz, inside the 0.5 ms minimum
+lookahead) and confirmed the measurement-tap latency claim is arithmetically sound with the P2
+impulse verification correctly scheduled; and cross-checked every unmarked value in the parameter
+table against the brief §4–§5 plus every macro-curve endpoint against its declared range — all
+consistent. The wireframe's illustrative meter values were made self-consistent with the formulas
+they sit beside (I −9.5 LUFS, TP −1.02 dBTP ⇒ PLR 8.5; Spotify penalty −14 − (−9.5) = −4.5),
+since a sign convention read off a mock-up is the kind of thing an implementer copies.
 
 Prior: for the **tenth review pass** (2026-07-30). Four findings fixed, three
 confirmations. **This is the closing pass of the P0 scaffolding work** — see the note at the end.
@@ -500,12 +543,12 @@ Rows are added as modules land. The planned module set and its responsibilities 
 
 | Tier | Files | Status |
 |---|---|---|
-| docs root | DEVELOPMENT_BRIEF, SOURCE_OF_TRUTH, REPOSITORY_MAP, OPEN_QUESTIONS, HANDOVER, DOCUMENTATION_COVERAGE, KNOWN_ISSUES, FUTURE_RISKS, POSTMORTEMS, BRAND_CONSISTENCY_CHECKLIST | Present |
+| docs root | DEVELOPMENT_BRIEF, **DESIGN**, SOURCE_OF_TRUTH, REPOSITORY_MAP, OPEN_QUESTIONS, HANDOVER, DOCUMENTATION_COVERAGE, KNOWN_ISSUES, FUTURE_RISKS, POSTMORTEMS, BRAND_CONSISTENCY_CHECKLIST | Present (`DESIGN.md` is `Proposed` — see SOURCE_OF_TRUTH §"Where `DESIGN.md` sits") |
+| worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
 | architecture | `design-decisions/ADR_INDEX.md` only | Skeleton — the descriptive set lands with P1–P2 |
 | user | — | Deferred to P6 |
-| worklogs | — | Empty (no investigation has happened yet) |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
 | root — legal | — | Deferred to P6 (produced against a real dependency tree; copying another project's inventory would be invented evidence) |
 | root — internal/testing | — | Deferred to P6 (SUPPORT.md ships with the first tester build) |

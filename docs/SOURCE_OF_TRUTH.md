@@ -41,6 +41,29 @@ generated document. It sits *outside* the numbered chain:
   binding versions of those rules are the files in `docs/policies/`; on any conflict the
   policy file wins and the brief's summary is corrected.
 
+## Where `DESIGN.md` sits
+
+`docs/DESIGN.md` is the **P0 design deliverable** (`DEVELOPMENT_BRIEF.md` §11, §24) — the
+document that answers the brief and from which the first ADR batch is spawned. It sits *below*
+the ADRs it produces, at the same rank as descriptive **Architecture** (level 5):
+
+- **Before owner sign-off** it is a `Proposed` document with **no authority at all**. Nothing may
+  be implemented from it, and no other document may cite it as settling a question. Its purpose
+  is to make the decisions reviewable in one place.
+- **After sign-off** it is a *ratified proposal*, not an enforcement document. The decisions in it
+  become binding only through the ADRs it names (level 3) and the policies those ADRs amend
+  (level 4). Where `DESIGN.md` and an `Accepted` ADR disagree, **the ADR wins** and `DESIGN.md`
+  is corrected — the same relationship descriptive Architecture has with ADRs.
+- It is **not evidence** for a claim about implemented behaviour. Once code exists, "what the
+  plugin does" cites source/tests; `DESIGN.md` only ever states what the code was asked to do.
+- Its own evidence base is the P0 research trail in `worklogs/`, which — per the rule below — is
+  raw material, never authority.
+
+The practical consequence: as P1–P6 land, `DESIGN.md` is **superseded section by section** by the
+ADRs plus the descriptive architecture set (`ARCHITECTURE.md`, `LATENCY_MODEL.md`,
+`PARAMETER_REGISTRY.md`, …). It is not deleted, and it is not maintained as a living spec; drift
+between it and shipped behaviour is expected and is resolved in favour of the higher source.
+
 ## Scope: the other three documentation classes
 
 The numbered order above governs the **developer documentation** chain. The other three

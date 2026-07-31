@@ -77,14 +77,17 @@ To build without network (JUCE already on disk):
 
 The full technical documentation lives in **[`docs/`](docs/)**:
 
-- **Start here:** [`docs/DEVELOPMENT_BRIEF.md`](docs/DEVELOPMENT_BRIEF.md) ·
+- **Start here:** [`docs/DEVELOPMENT_BRIEF.md`](docs/DEVELOPMENT_BRIEF.md) (the product spec) ·
+  [`docs/DESIGN.md`](docs/DESIGN.md) (**the P0 design deliverable** — architecture, full
+  parameter table, macro curves, wireframes, proposed ADR set) ·
   [`docs/SOURCE_OF_TRUTH.md`](docs/SOURCE_OF_TRUTH.md) ·
   [`docs/REPOSITORY_MAP.md`](docs/REPOSITORY_MAP.md) ·
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)
 - **Rules (binding):** [`docs/policies/`](docs/policies/) — real-time audio, threading, DSP,
   mode/adaptation, compatibility, AI-agent, testing, release, dependency, code style
 - **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) (ADRs; the descriptive
-  architecture set lands with P1–P2)
+  architecture set lands with P1–P2). `DESIGN.md` ranks *below* the ADRs it spawns — see
+  `docs/SOURCE_OF_TRUTH.md` §"Where `DESIGN.md` sits"
 - **How-to:** [`docs/procedures/`](docs/procedures/) (build, development, CI/CD, testing, release)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
