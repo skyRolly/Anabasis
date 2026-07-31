@@ -9,6 +9,51 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton, second commit — the adversarial review earned its cost (2026-07-31)
+
+Three read-only agents were run against the fresh skeleton (parameter contract · DSP/latency/
+threading correctness · state schema) before it could reach a human. The parameter surface came
+back clean row-for-row. The other two agents found **2 blockers and 8 real defects** — in code
+whose 34 checks and pluginval L5 were all green, which is the point worth recording: *the suites
+proved the contracts they encoded, and the review found the contracts they didn't.*
+
+- **The limiter's gain computer was misaligned with the audio tap** (blocker, proven by
+  simulation): the sliding window watched the newest inputs — 10 ms ahead of the output regardless
+  of the engaged lookahead — so the envelope attacked early, then *released before the peak
+  played*; peaks reached the clamp under-attenuated (up to +5 dB over at fast release) and were
+  flat-topped. Invisible to the green tests because the clamp masks overshoot at the peak and the
+  null tests use sub-ceiling stimuli. Fixed by feeding the detector from the ring at
+  `writePos − (delay − W)` — the sample that plays W steps from now — with the window widened to
+  W+1 so the playing sample stays covered (the second, off-by-one finding). The corrected contract
+  is now stated ON the class and pinned by `testLimiterWindowCoverage` (unit) and
+  `testLimiterAlignment` (engine-level: the duck may begin no earlier than the engaged lookahead).
+- **Every state restore armed a macro re-map that clobbered the restored values** (blocker):
+  landing the macro parameters notifies their listeners, so session load / A/B switch / preset
+  apply queued a mapping pass that rewrote the nine managed parameters from the curves — exactly
+  the off-curve values a restore exists to bring back. Green in the suite only because no message
+  loop runs there. Fixed at the §5.3 boundary: a restore is not a gesture, so every restore path
+  ends with `abortPendingMapping()`; the suite now flushes deterministically and pins both
+  directions (restore preserves, gesture still maps).
+- **Six more, all fixed and pinned:** A/B slots saved without the `raw` overlay (switching was not
+  raw-exact; log-taper values drifted ulps per round trip); a slot tree carrying `raw` leaked it
+  into the live tree; the ceiling lock was write-then-revert (an audio block between the two writes
+  starts the smoother toward the preset's ceiling — now a skip, no write at all); a root without an
+  `AB` child kept the previous session's trims/mask/name (chimera state on next save — slot fields
+  now reset to defaults first); AB slots were read by child position, so a tolerated unknown child
+  shifted both slots (now collected by type); presets serialised UNSNAPPED mid-step discrete values.
+- **Schema names aligned with ADR-0007 before first ship freezes them:** the AB index property is
+  `active` (not `activeIndex`), and an empty `ADAPTIVE` child is no longer written — "absent =
+  never learned" is the discriminator and writing it from day one would have destroyed it.
+- **Also from the review:** `getBypassParameter()` now routes host bypass through the engine's
+  delay-aligned crossfade; `prepareToPlay(sr, 0)` can no longer zero the group delay; the
+  invariant-9 header comment now says what the code does. Accepted without change, with reasons:
+  the MacroEngine's `triggerAsyncUpdate` on the unsupported automated-macro path, and
+  `int_uiScale`'s value-set enforcement (the editor's job at P5).
+
+After the fixes: 59 checks green (23 DSP + 36 state), warning-free, pluginval L5 both modes ×3.
+ADR-0007's own test obligation — a frozen slot and a non-clear mask in the round-trip fixture —
+is now met rather than vacuously satisfied.
+
 ### P1 skeleton lands — the first code, verified by building and running it (2026-07-31)
 
 **What exists now.** `CMakeLists.txt` (ADR-0008's five-target graph, identity frozen, JUCE 9.0.0

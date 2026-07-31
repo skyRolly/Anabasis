@@ -66,11 +66,27 @@ public:
     int  activeSlotIndex() const noexcept { return activeSlot; }
     void switchToSlot (int newIndex);   // message thread; P1 form (TODO(P2): §2.8 duck)
 
+    // Preset apply goes through here, never through PresetManager directly:
+    // the wrapper lands the slot-level fields (name, detach mask) and drops
+    // the restore-armed macro mapping (§5.3: a restore is not a gesture).
+    bool applyPresetFile (const juce::File& file);
+
+    // Host-side bypass routes through our own `bypass` parameter, so it takes
+    // the engine's delay-aligned crossfade path instead of the wrapper's
+    // zero-latency processBlockBypassed fallback.
+    juce::AudioProcessorParameter* getBypassParameter() const override;
+
+    MacroEngine& getMacroEngine() noexcept { return *macroEngine; }
+    PresetManager& getPresetManager() noexcept { return *presetManager; }
+
 private:
     void updateLatency();               // the single setLatencySamples call site
+    juce::ValueTree copyStateWithRaw();  // APVTS copy + additive exact-`raw` per PARAM
+    void adoptParamsTree (const juce::ValueTree& paramsWithRaw);   // strip → replaceState → reassert
     juce::ValueTree saveSlotFromLive();
     void applySlotToLive (const juce::ValueTree& slot);
     void reassertFromRaw (const juce::ValueTree& apvtsTree);
+    void resetSlotFieldsToDefaults();
 
     CachedParams cached;
     anabasis::AnabasisEngine engine;
@@ -83,6 +99,7 @@ private:
     // Per-slot StateSet = {params, presetName, baseline, frozenTrims,
     // detachMask} (ADR-0007) — all five fields or none on every copy path.
     int activeSlot = 0;
+    juce::ValueTree defaultSlot;         // pristine defaults, for the missing-AB read rule
     juce::ValueTree storedSlot;          // the inactive slot's SLOT tree
     juce::String    livePresetName;
     juce::ValueTree liveBaseline;        // BASELINE (absent until a macro gesture, §5.3/P4)

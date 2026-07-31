@@ -204,9 +204,92 @@ static void testBypassNull()
 }
 
 // ---------------------------------------------------------------------------
+// The LookaheadLimiter CONTRACT, pinned as a unit test: fed[t] is the sample
+// playing W steps from now; the returned gain applies to the sample playing
+// NOW; the window covers W+1 fed values, so the envelope attacks W early,
+// holds through the instant the peak plays, and releases only afterwards.
+// (The first revision attacked 10 ms early regardless of W and expired the
+// playing sample one step early — both proven by simulation to pass peaks to
+// the clamp under-attenuated.)
+static void testLimiterWindowCoverage()
+{
+    anabasis::LookaheadLimiter lim;
+    lim.prepare (48000.0, 480);
+    lim.setPerBlock (0.5f, 2.0f, 1000.0f);   // W = 96, slow release
+    const int w = lim.windowLengthSamples();
+    check (w == 96, "limiter: window length is ceil(2 ms) at 48 kHz");
+
+    const int spikeAt = 500;
+    float envBefore = 1.0f, envAtSpikeEnter = 1.0f, envAtPlay = 1.0f, envAfter = 1.0f;
+    for (int t = 0; t < 1200; ++t)
+    {
+        const float fed = (t == spikeAt) ? 1.0f : 0.0f;
+        const float env = lim.processSample (fed);
+        if (t == spikeAt - 1)     envBefore      = env;
+        if (t == spikeAt)         envAtSpikeEnter = env;   // spike enters window: playing sample is t - 0? no: this IS the attack instant
+        if (t == spikeAt + w)     envAtPlay      = env;    // spike is the PLAYING sample now
+        if (t == spikeAt + w + 1) envAfter       = env;    // spike has played: release may begin
+    }
+    check (juce::exactlyEqual (envBefore, 1.0f),      "limiter: no attack before the spike is visible");
+    check (juce::exactlyEqual (envAtSpikeEnter, 0.5f), "limiter: instant attack the moment the spike enters the window");
+    check (juce::exactlyEqual (envAtPlay, 0.5f),       "limiter: gain still held when the spike PLAYS (off-by-one guard)");
+    check (envAfter > 0.5f,                            "limiter: release begins only after the spike has played");
+}
+
+// ---------------------------------------------------------------------------
+// The engine-level alignment: with engaged lookahead W, the output duck must
+// begin exactly W samples before the over-ceiling sample plays — not at the
+// full 10 ms allowance. (The first revision fed the gain computer from the
+// write end of the ring, so the duck began 480 samples early and had partly
+// RELEASED by the time the peak played.)
+static void testLimiterAlignment()
+{
+    anabasis::AnabasisEngine engine;
+    const double sr = 48000.0;
+    const int block = 512;
+    engine.prepare (sr, block, 2);
+    const int delay = engine.groupDelaySamples();        // 480
+
+    anabasis::EngineParameters p;
+    p.lookaheadMs  = 2.0f;                               // W = 96
+    p.limReleaseMs = 1000.0f;                            // slow: any early release is visible
+    const int w = 96;
+
+    const float steady  = 0.25f;
+    const int   spikeIn = 2048;                          // input index of the over-ceiling sample
+    const int   spikeOut = spikeIn + delay;              // where it plays
+
+    std::vector<float> out;
+    juce::AudioBuffer<float> buf (2, block);
+    for (int b = 0; b * block < 6144; ++b)
+    {
+        for (int n = 0; n < block; ++n)
+        {
+            const float v = (b * block + n == spikeIn) ? 1.6f : steady;
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < block; ++n)
+            out.push_back (buf.getSample (0, n));
+    }
+
+    check (juce::exactlyEqual (out[(size_t) (spikeOut - w - 40)], steady),
+           "alignment: no duck earlier than the engaged lookahead before the peak");
+    check (out[(size_t) (spikeOut - 2)] < steady,
+           "alignment: duck engaged within the lookahead window");
+    const float ceilingLin = std::pow (10.0f, p.ceilingDbTp / 20.0f);
+    check (out[(size_t) spikeOut] <= ceilingLin * 1.0001f,
+           "alignment: the peak itself is limited to the ceiling");
+    check (out[(size_t) spikeOut] >= ceilingLin * 0.995f,
+           "alignment: the envelope has not released early when the peak plays");
+}
+
 int main()
 {
     testNullWithDefaults();
+    testLimiterWindowCoverage();
+    testLimiterAlignment();
     testReportedLatencyMatchesImpulse();
     testOutputNeverExceedsCeiling();
     testNoBadSamples();

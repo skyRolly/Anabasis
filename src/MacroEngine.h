@@ -53,6 +53,19 @@ public:
     // the other half.
     bool isApplyingMacro() const noexcept { return applying; }
 
+    // §5.3: a state RESTORE is not a macro gesture. Every restore path
+    // (session load, A/B switch, preset apply) notifies the macro listeners
+    // as a side effect of landing the macro values, which would otherwise
+    // queue a mapping pass that rewrites the nine managed parameters from the
+    // curves — clobbering the exact off-curve values the restore just placed
+    // and breaking raw-exact restoration (ADR-0007). Restores call this to
+    // drop any mapping the notifications armed.
+    void abortPendingMapping() { cancelPendingUpdate(); }
+
+    // Deterministic flush for the headless tests (no message loop runs there):
+    // applies a pending mapping now, on the calling (message) thread.
+    void flushPendingMapping() { handleUpdateNowIfNeeded(); }
+
 private:
     void parameterChanged (const juce::String&, float) override;   // any thread → async hop
     void handleAsyncUpdate() override;                             // message thread only

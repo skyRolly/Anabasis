@@ -13,10 +13,17 @@ bool PresetManager::savePreset (const juce::File& file, const juce::StringArray&
         const auto id = node.getProperty ("id").toString();
         if (isPresetExcludedParam (id))
             continue;
+        auto* param = apvts.getParameter (id);
+        if (param == nullptr)
+            continue;
+        // SNAPPED denormalised value only — the preset contract (ADR-0007).
+        // The tree's `value` is convertFrom0to1(getValue()) UNSNAPPED for the
+        // Raw* discrete classes (they deliberately hold mid-step raw values),
+        // so snap through the range here rather than copying the property.
+        const auto& r = param->getNormalisableRange();
         auto* p = root.createNewChildElement ("PARAM");
         p->setAttribute ("id", id);
-        // Snapped denormalised value only — the preset contract (ADR-0007).
-        p->setAttribute ("value", (double) (float) node.getProperty ("value"));
+        p->setAttribute ("value", (double) r.snapToLegalValue (r.convertFrom0to1 (param->getValue())));
     }
 
     auto* mask = root.createNewChildElement ("DETACH_MASK");
@@ -33,19 +40,21 @@ bool PresetManager::applyPreset (const juce::File& file, juce::StringArray& deta
     if (xml == nullptr || ! xml->hasTagName ("AnabasisPreset"))
         return false;   // foreign/corrupt input is a no-op, never a crash (schema read rules)
 
-    // Ceiling lock: capture before, re-assert after — browsing presets never
-    // moves a locked ceiling (DESIGN §4.2; the mechanism is generic, the
-    // lockable set is {ceiling} in v1).
+    // Ceiling lock is a SKIP, not a write-then-revert: a revert leaves a
+    // window in which an audio block snapshots the preset's ceiling and the
+    // smoother starts gliding toward it — "browsing presets never moves a
+    // locked ceiling" (DESIGN §4.2) means the locked parameter is never
+    // written at all. The mechanism is generic; the lockable set is {ceiling}
+    // in v1.
     const bool locked = internal.ceilingLocked();
-    float lockedCeiling = 0.0f;
-    if (auto* ceilingParam = apvts.getParameter (pid::ceiling); locked && ceilingParam != nullptr)
-        lockedCeiling = ceilingParam->getValue();
 
     for (auto* p : xml->getChildWithTagNameIterator ("PARAM"))
     {
         const auto id = p->getStringAttribute ("id");
         if (id.isEmpty() || isPresetExcludedParam (id))
             continue;                                   // the shared predicate, applied on read too
+        if (locked && id == pid::ceiling)
+            continue;
         if (auto* param = apvts.getParameter (id))      // unknown ids ignored
         {
             const auto value = (float) p->getDoubleAttribute ("value");
@@ -59,9 +68,6 @@ bool PresetManager::applyPreset (const juce::File& file, juce::StringArray& deta
     if (auto* mask = xml->getChildByName ("DETACH_MASK"))
         for (auto* p : mask->getChildWithTagNameIterator ("PARAM"))
             detachMaskOut.add (p->getStringAttribute ("id"));
-
-    if (auto* ceilingParam = apvts.getParameter (pid::ceiling); locked && ceilingParam != nullptr)
-        ceilingParam->setValueNotifyingHost (lockedCeiling);
 
     return true;
 }

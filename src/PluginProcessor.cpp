@@ -24,7 +24,13 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // audio-thread state, so this is safe from any non-audio thread.
     internalState.onLatencyInputChanged = [this] { updateLatency(); };
 
-    storedSlot = saveSlotFromLive();    // slot B starts as a copy of defaults
+    defaultSlot = saveSlotFromLive();   // pristine defaults (missing-AB read rule)
+    storedSlot  = defaultSlot.createCopy();   // slot B starts as a copy of defaults
+}
+
+juce::AudioProcessorParameter* AnabasisAudioProcessor::getBypassParameter() const
+{
+    return apvts.getParameter (pid::bypass);
 }
 
 bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -88,11 +94,42 @@ juce::AudioProcessorEditor* AnabasisAudioProcessor::createEditor()
 // ---------------------------------------------------------------------------
 //  Schema v1 (ADR-0007)
 // ---------------------------------------------------------------------------
+juce::ValueTree AnabasisAudioProcessor::copyStateWithRaw()
+{
+    // Anamorph ADR-0013's additive exact-`raw` attribute, stamped on EVERY
+    // serialised copy of the parameter tree — the session's ANABASIS child
+    // AND the AB slots — so every restore path can be raw-exact. Stamping
+    // only the top-level copy left A/B switching value-only: log-taper
+    // params drift ulps through the pow/log round trip and discrete Raw*
+    // params lose their mid-step values.
+    auto params = apvts.copyState();
+    for (int i = 0; i < params.getNumChildren(); ++i)
+    {
+        auto node = params.getChild (i);
+        if (node.hasType ("PARAM"))
+            if (auto* p = apvts.getParameter (node.getProperty ("id").toString()))
+                node.setProperty ("raw", (double) p->getValue(), nullptr);
+    }
+    return params;
+}
+
+void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithRaw)
+{
+    // Strip the `raw` overlay BEFORE replaceState — the live tree never
+    // carries it (save→load→save must stay byte-identical) — then re-assert
+    // from the unstripped copy, which is what makes the restore raw-exact.
+    auto stripped = paramsWithRaw.createCopy();
+    for (int i = 0; i < stripped.getNumChildren(); ++i)
+        stripped.getChild (i).removeProperty ("raw", nullptr);
+    apvts.replaceState (stripped);
+    reassertFromRaw (paramsWithRaw);
+}
+
 juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
 {
     juce::ValueTree slot ("SLOT");
     slot.setProperty ("presetName", livePresetName, nullptr);
-    slot.appendChild (apvts.copyState(), nullptr);
+    slot.appendChild (copyStateWithRaw(), nullptr);
     if (liveBaseline.isValid())
         slot.appendChild (liveBaseline.createCopy(), nullptr);
     if (liveFrozenTrims.isValid())
@@ -129,7 +166,9 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
     if (params.isValid())
     {
         // View-tier parameters never travel with a slot (the shared
-        // predicate): keep the live values across the swap.
+        // predicate): overwrite the incoming copy with the LIVE values —
+        // value from the tree, raw from the parameter itself — so both the
+        // replaceState and the raw re-assert leave them untouched.
         auto incoming = params.createCopy();
         for (int i = 0; i < incoming.getNumChildren(); ++i)
         {
@@ -138,12 +177,11 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
                 if (auto live = apvts.state.getChildWithProperty ("id", node.getProperty ("id")); live.isValid())
                 {
                     node.setProperty ("value", live.getProperty ("value"), nullptr);
-                    if (live.hasProperty ("raw")) node.setProperty ("raw", live.getProperty ("raw"), nullptr);
-                    else                          node.removeProperty ("raw", nullptr);
+                    if (auto* lp = apvts.getParameter (node.getProperty ("id").toString()))
+                        node.setProperty ("raw", (double) lp->getValue(), nullptr);
                 }
         }
-        apvts.replaceState (incoming);
-        reassertFromRaw (incoming);
+        adoptParamsTree (incoming);
     }
 
     livePresetName  = slot.getProperty ("presetName").toString();
@@ -172,6 +210,32 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     applySlotToLive (storedSlot);
     storedSlot = std::move (newlyStored);
     activeSlot = newIndex;
+    macroEngine->abortPendingMapping();   // an A/B restore is not a macro gesture (§5.3)
+}
+
+bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
+{
+    juce::StringArray mask;
+    if (! presetManager->applyPreset (file, mask))
+        return false;
+    liveDetachMask = mask;
+    livePresetName = file.getFileNameWithoutExtension();
+    macroEngine->abortPendingMapping();   // a preset apply is not a macro gesture (§5.3)
+    return true;
+}
+
+void AnabasisAudioProcessor::resetSlotFieldsToDefaults()
+{
+    // The §4.4 read rule "missing fields are taken at their defaults" applies
+    // to the slot fields too: a valid root WITHOUT an AB child must not leave
+    // the previous session's mask/trims/name/slot behind, or the next save
+    // serialises a chimera of two sessions.
+    activeSlot = 0;
+    livePresetName.clear();
+    liveBaseline    = juce::ValueTree();
+    liveFrozenTrims = juce::ValueTree();
+    liveDetachMask.clear();
+    storedSlot = defaultSlot.createCopy();
 }
 
 void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -180,26 +244,19 @@ void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     root.setProperty ("schemaVersion", kSchemaVersion, nullptr);
 
     // ANABASIS with the additive exact-`raw` attribute per PARAM.
-    auto params = apvts.copyState();
-    for (int i = 0; i < params.getNumChildren(); ++i)
-    {
-        auto node = params.getChild (i);
-        if (node.hasType ("PARAM"))
-            if (auto* p = apvts.getParameter (node.getProperty ("id").toString()))
-                node.setProperty ("raw", (double) p->getValue(), nullptr);
-    }
-    root.appendChild (params, nullptr);
+    root.appendChild (copyStateWithRaw(), nullptr);
     root.appendChild (internalState.state().createCopy(), nullptr);
 
     juce::ValueTree ab ("AB");
-    ab.setProperty ("activeIndex", activeSlot, nullptr);
+    ab.setProperty ("active", activeSlot, nullptr);   // ADR-0007's field name
     ab.appendChild (activeSlot == 0 ? saveSlotFromLive() : storedSlot.createCopy(), nullptr);
     ab.appendChild (activeSlot == 0 ? storedSlot.createCopy() : saveSlotFromLive(), nullptr);
     root.appendChild (ab, nullptr);
 
-    // ADAPTIVE — global learned reference targets only (§4.4); none exist
-    // until Learn lands (P4), and "absent = never learned" is the contract.
-    root.appendChild (juce::ValueTree ("ADAPTIVE"), nullptr);
+    // ADAPTIVE is deliberately NOT written while nothing has been learned:
+    // "absent = never learned" is the §4.4 discriminator, and writing an
+    // empty child from the first shipped session would destroy it (Learn
+    // lands at P4 and starts writing the child when it has targets).
 
     if (const auto xml = root.createXml())
         copyXmlToBinary (*xml, destData);
@@ -217,27 +274,28 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // (structural-tolerance read rules, §4.4).
 
     if (const auto params = root.getChildWithName ("ANABASIS"); params.isValid())
-    {
-        // Strip the additive `raw` annotations BEFORE replaceState: they are a
-        // serialisation-time overlay, and letting them into the live tree
-        // would make save→load→save non-byte-identical (the original never
-        // carries them). reassertFromRaw still reads them from `params`.
-        auto stripped = params.createCopy();
-        for (int i = 0; i < stripped.getNumChildren(); ++i)
-            stripped.getChild (i).removeProperty ("raw", nullptr);
-        apvts.replaceState (stripped);
-        reassertFromRaw (params);
-    }
+        adoptParamsTree (params);
     internalState.replaceFrom (root.getChildWithName ("ANABASIS_INTERNAL"));
 
+    // Slot fields FIRST go to defaults (the missing-fields read rule), then
+    // whatever the AB child actually carries overlays them.
+    resetSlotFieldsToDefaults();
     if (const auto ab = root.getChildWithName ("AB"); ab.isValid())
     {
-        activeSlot = anabasis::clampAbSlotIndex ((int) ab.getProperty ("activeIndex", 0));
-        const auto live   = ab.getChild (activeSlot);
-        const auto stored = ab.getChild (1 - activeSlot);
-        if (stored.isValid() && stored.hasType ("SLOT"))
+        // Collect SLOT children BY TYPE, never by raw position: the
+        // tolerance rules admit unknown children, and indexing ab.getChild(i)
+        // directly would let a tolerated foreign child shift both slots.
+        juce::Array<juce::ValueTree> slots;
+        for (int i = 0; i < ab.getNumChildren(); ++i)
+            if (ab.getChild (i).hasType ("SLOT"))
+                slots.add (ab.getChild (i));
+
+        activeSlot = anabasis::clampAbSlotIndex ((int) ab.getProperty ("active", 0));
+        const auto live   = activeSlot     < slots.size() ? slots[activeSlot]     : juce::ValueTree();
+        const auto stored = 1 - activeSlot < slots.size() ? slots[1 - activeSlot] : juce::ValueTree();
+        if (stored.isValid())
             storedSlot = stored.createCopy();
-        if (live.isValid() && live.hasType ("SLOT"))
+        if (live.isValid())
         {
             // The ANABASIS child above is already the live surface; take the
             // slot's non-parameter fields (name/baseline/trims/mask) from AB.
@@ -251,6 +309,7 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         }
     }
 
+    macroEngine->abortPendingMapping();   // a session restore is not a macro gesture (§5.3)
     updateLatency();   // int_ latency inputs may have changed with the session
 }
 

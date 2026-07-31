@@ -1,22 +1,29 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 // ============================================================================
 //  LookaheadLimiter — P1 "basic limiter" (DESIGN §11): a stereo-linked peak
 //  limiter whose gain computer sees `lookahead` ms ahead of the audio tap.
 //
-//  The AUDIO delay is owned by AnabasisEngine's fixed 10 ms line and never
-//  moves (ADR-0004: constant allowance). This class only computes the gain
-//  envelope: a sliding-window maximum over the engaged lookahead window
-//  (monotonic-wedge, O(1) amortised, allocation-free after prepare), instant
-//  attack toward the required gain, exponential release.
+//  CONTRACT (this is what the engine's tap offset and the coverage test pin):
+//  the value fed at step t must be the signal sample that plays W steps from
+//  now, where W = windowLengthSamples(). The returned gain applies to the
+//  sample playing NOW. The sliding maximum therefore covers W+1 fed values —
+//  the playing sample and the W upcoming ones — so the envelope attacks
+//  exactly `lookahead` early, holds while the peak is still in the window
+//  (including the instant it plays), and releases only after it has played.
+//  An earlier revision fed the just-written input (10 ms early regardless of
+//  the engaged lookahead) and expired the playing sample one step early; both
+//  let peaks reach the clamp under-attenuated.
 //
-//  P2+ replaces this with the full styles/transient-preserve/true-peak design
-//  (DESIGN §2.5); the CONTRACT it must keep is exactly this one: unity gain
-//  for material below the ceiling (inv 7's null), never above it after the
-//  clamp (inv 4).
+//  Implementation: monotonic-wedge sliding maximum, O(1) amortised,
+//  allocation-free after prepare(). P2+ replaces this with the full styles /
+//  transient-preserve / true-peak design (DESIGN §2.5) under the same contract:
+//  unity gain for material below the ceiling (inv 7's null), never above it
+//  after the clamp (inv 4).
 // ============================================================================
 
 namespace anabasis
@@ -28,8 +35,10 @@ public:
     void prepare (double sampleRate, int maxWindowSamples)
     {
         sr = sampleRate;
-        wedgeValues.assign ((size_t) maxWindowSamples + 1, 0.0f);
-        wedgeIndices.assign ((size_t) maxWindowSamples + 1, 0);
+        maxWindow = maxWindowSamples;
+        // W+1 window entries plus one spare slot so head==tail stays "empty".
+        wedgeValues.assign ((size_t) maxWindowSamples + 2, 0.0f);
+        wedgeIndices.assign ((size_t) maxWindowSamples + 2, 0);
         reset();
     }
 
@@ -46,22 +55,24 @@ public:
         windowSamples = (int) std::ceil (lookaheadMs * 0.001 * sr);
         if (windowSamples < 1)
             windowSamples = 1;
-        if ((size_t) windowSamples + 1 > wedgeValues.size())
-            windowSamples = (int) wedgeValues.size() - 1;   // sized for 10 ms max in prepare()
+        if (windowSamples > maxWindow)
+            windowSamples = maxWindow;      // sized for the 10 ms allowance in prepare()
         // One-pole release toward gain 1. Time constant from the limRelease
         // parameter (§4.2 row 28); P1 ignores Auto and the style switch.
         releaseAlpha = 1.0f - std::exp (-1.0f / (float) (releaseMs * 0.001 * sr));
     }
 
-    // Feed the stereo-max magnitude of the sample ENTERING the delay line;
-    // returns the gain for the sample LEAVING it. The wedge front is the
-    // maximum over the most recent `windowSamples` inputs — i.e. the audio
-    // the output tap is about to see, which is what makes the attack
-    // pre-emptive rather than reactive.
+    // The engine's detector-tap offset: delaySamples - windowLengthSamples()
+    // is how far behind the write head the fed sample must be read so that
+    // fed[t] is exactly the sample playing W steps from now.
+    int windowLengthSamples() const noexcept { return windowSamples; }
+
     float processSample (float stereoMaxMagnitude) noexcept
     {
-        // Drop expired entries from the front.
-        while (head != tail && wedgeIndices[head] <= writeCount - windowSamples)
+        // Expire entries older than the playing sample: keep indices
+        // >= writeCount - windowSamples, so after the push below the window
+        // holds W+1 entries — the playing sample through the newest fed one.
+        while (head != tail && wedgeIndices[head] < writeCount - windowSamples)
             head = next (head);
         // Drop dominated entries from the back, then push.
         while (head != tail && wedgeValues[prev (tail)] <= stereoMaxMagnitude)
@@ -92,6 +103,7 @@ private:
     int64_t writeCount = 0;
 
     double sr            = 48000.0;
+    int    maxWindow     = 480;
     int    windowSamples = 96;
     float  ceilingLinear = 0.8912509f;
     float  releaseAlpha  = 0.01f;

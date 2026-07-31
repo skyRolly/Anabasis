@@ -22,8 +22,9 @@
 //  Bypass is a delay-aligned dry path with a bit-exact-at-the-endpoints
 //  crossfade (§2.8's always-running-crossfade mechanism, minimal P1 form).
 //
-//  Invariant 9: non-finite input is caught per block; the engine self-heals
-//  by resetting its state and emitting silence for the affected samples.
+//  Invariant 9: non-finite samples are replaced with silence at the ring
+//  write and at the output, and a block that saw any resets the limiter
+//  envelope — one bad buffer cannot poison the gain state.
 // ============================================================================
 
 namespace anabasis

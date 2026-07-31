@@ -7,7 +7,9 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
 {
     sr           = sampleRate;
     delaySamples = maxLookaheadSamples (sampleRate);
-    ringSize     = delaySamples + maxBlockSize;   // room for one block past the tap
+    ringSize     = delaySamples + juce::jmax (1, maxBlockSize);   // room past the tap;
+    // the jmax guards a prepareToPlay(sr, 0) host: ringSize == delaySamples would
+    // make readPos == writePos and silently zero the group delay.
 
     const int chans = juce::jlimit (1, kMaxChannels, numChannels);
     wetRing.setSize (chans, ringSize);
@@ -64,9 +66,6 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         const float gIn   = inputGain.getNextValue();
         const float gPush = pushGain.getNextValue();
 
-        // Write into both fixed 10 ms lines; find the stereo-max magnitude of
-        // the sample ENTERING the wet line for the pre-emptive gain computer.
-        float stereoMax = 0.0f;
         for (int ch = 0; ch < numChannels; ++ch)
         {
             const float in = buffer.getSample (ch, n);
@@ -77,9 +76,22 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                             * (juce::exactlyEqual (gPush, 1.0f) ? 1.0f : gPush);
             wetRing.setSample (ch, writePos, std::isfinite (wet) ? wet : 0.0f);
             dryRing.setSample (ch, writePos, std::isfinite (in)  ? in  : 0.0f);
+        }
 
-            const float mag = std::abs (wet);
-            if (std::isfinite (mag) && mag > stereoMax)
+        // Detector tap (the LookaheadLimiter CONTRACT): feed the sample that
+        // plays W steps from now, i.e. the one written (delaySamples - W)
+        // steps ago — NOT the just-written input, which is 10 ms ahead
+        // regardless of the engaged lookahead. This offset is what makes the
+        // `lookahead` parameter the real pre-emption time while the audio
+        // delay stays at the full allowance (ADR-0004).
+        int detPos = writePos - (delaySamples - limiter.windowLengthSamples());
+        if (detPos < 0)
+            detPos += ringSize;
+        float stereoMax = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float mag = std::abs (wetRing.getSample (ch, detPos));
+            if (mag > stereoMax)
                 stereoMax = mag;
         }
 

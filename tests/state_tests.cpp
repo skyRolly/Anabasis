@@ -171,6 +171,188 @@ static void testAbSlotsAndTiers()
 }
 
 // ---------------------------------------------------------------------------
+// §5.3: a restore is not a macro gesture. Restoring a session whose managed
+// parameters sit OFF the macro curves must leave them exactly where the
+// restore put them — the armed mapping is dropped, not applied. A genuine
+// gesture still maps. (The unfixed code clobbered every restore as soon as
+// the message loop ran; this suite flushes deterministically instead.)
+static void testMacroRestoreDoesNotClobber()
+{
+    AnabasisAudioProcessor a;
+    a.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.5f);   // gesture: L = 50
+    a.getMacroEngine().flushPendingMapping();
+    const float curveClip = a.apvts.getRawParameterValue (pid::clipDrive)->load();
+    a.apvts.getParameter (pid::clipDrive)->setValueNotifyingHost (6.0f / 24.0f);  // manual 6 dB, off-curve
+    juce::MemoryBlock state;
+    a.getStateInformation (state);
+
+    AnabasisAudioProcessor b;
+    b.setStateInformation (state.getData(), (int) state.getSize());
+    b.getMacroEngine().flushPendingMapping();   // what the message loop would do next
+    check (juce::exactlyEqual (b.apvts.getRawParameterValue (pid::clipDrive)->load(), 6.0f),
+           "macro: restore does not clobber off-curve managed values");
+    check (! juce::exactlyEqual (curveClip, 6.0f),
+           "macro: (test premise) 6 dB really is off the L=50 curve");
+
+    b.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.5f + 1.0f / 100.0f);
+    b.getMacroEngine().flushPendingMapping();
+    check (! juce::exactlyEqual (b.apvts.getRawParameterValue (pid::clipDrive)->load(), 6.0f),
+           "macro: a genuine gesture still re-maps the managed set");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0007: every slot-copy path is raw-exact. A mid-step discrete value and
+// a log-taper float must survive A -> B -> A bit-exactly.
+static void testAbRawExact()
+{
+    AnabasisAudioProcessor proc;
+    proc.apvts.getParameter (pid::colourModel)->setValueNotifyingHost (0.807f);
+    proc.apvts.getParameter (pid::scHpfFreq)->setValueNotifyingHost (0.377f);
+    proc.switchToSlot (1);
+    proc.switchToSlot (0);
+    check (std::abs (proc.apvts.getParameter (pid::colourModel)->getValue() - 0.807f) < 1.0e-6f,
+           "abRaw: mid-step discrete value survives A->B->A exactly");
+    check (std::abs (proc.apvts.getParameter (pid::scHpfFreq)->getValue() - 0.377f) < 1.0e-6f,
+           "abRaw: log-taper float survives A->B->A without pow/log drift");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0007's named obligation: the round-trip fixture must include a frozen
+// slot and a non-clear detach mask, or frozenTrims/detachMask are exercised
+// vacuously. Built by editing a real session tree, then checked byte-wise.
+static void testFrozenSlotRoundTrip()
+{
+    AnabasisAudioProcessor a;
+    juce::MemoryBlock blank;
+    a.getStateInformation (blank);
+    auto root = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (blank.getData(), (int) blank.getSize()));
+
+    auto ab   = root.getChildWithName ("AB");
+    auto slot = ab.getChild (0);
+    slot.setProperty ("presetName", "Frozen A", nullptr);
+    juce::ValueTree trims ("FROZEN_TRIMS");
+    trims.setProperty ("release",    0.25,  nullptr);
+    trims.setProperty ("stereoLink", -0.1,  nullptr);
+    trims.setProperty ("scHpf",      3.0,   nullptr);
+    trims.setProperty ("dynTilt",    0.4,   nullptr);
+    slot.appendChild (trims, nullptr);
+    auto mask = slot.getChildWithName ("DETACH_MASK");
+    juce::ValueTree m ("PARAM");
+    m.setProperty ("id", "clipDrive", nullptr);
+    mask.appendChild (m, nullptr);
+
+    juce::MemoryBlock in;
+    juce::AudioProcessor::copyXmlToBinary (*root.createXml(), in);
+
+    AnabasisAudioProcessor b;
+    b.setStateInformation (in.getData(), (int) in.getSize());
+    juce::MemoryBlock out1, out2;
+    b.getStateInformation (out1);
+    AnabasisAudioProcessor c;
+    c.setStateInformation (out1.getData(), (int) out1.getSize());
+    c.getStateInformation (out2);
+    check (out1 == out2, "frozenSlot: save -> load -> save is byte-identical WITH trims + mask");
+
+    const auto r2 = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (out1.getData(), (int) out1.getSize()));
+    const auto s2 = r2.getChildWithName ("AB").getChild (0);
+    check (s2.getChildWithName ("FROZEN_TRIMS").isValid()
+             && juce::exactlyEqual ((double) s2.getChildWithName ("FROZEN_TRIMS").getProperty ("release"), 0.25),
+           "frozenSlot: the frozen trim vector survives the round trip");
+    check (s2.getChildWithName ("DETACH_MASK").getNumChildren() == 1,
+           "frozenSlot: the non-clear detach mask survives the round trip");
+
+    // Per-slot travel: switching away and back must carry both fields.
+    b.switchToSlot (1);
+    b.switchToSlot (0);
+    juce::MemoryBlock out3;
+    b.getStateInformation (out3);
+    const auto r3 = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (out3.getData(), (int) out3.getSize()));
+    const auto s3 = r3.getChildWithName ("AB").getChild (0);
+    check (s3.getChildWithName ("FROZEN_TRIMS").isValid() && s3.getChildWithName ("DETACH_MASK").getNumChildren() == 1,
+           "frozenSlot: trims + mask travel per-slot through the A/B swap paths");
+}
+
+// ---------------------------------------------------------------------------
+// §4.4 read rules, the two AB shapes the tolerance rules admit: a root with
+// NO AB child resets every slot field to defaults (no chimera of two
+// sessions), and an unknown child INSIDE AB must not shift the slots.
+static void testAbToleranceRules()
+{
+    AnabasisAudioProcessor proc;
+    // Load the frozen-slot session first so the slot fields are non-default.
+    juce::MemoryBlock blank;
+    proc.getStateInformation (blank);
+    auto root = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (blank.getData(), (int) blank.getSize()));
+    auto slot0 = root.getChildWithName ("AB").getChild (0);
+    slot0.setProperty ("presetName", "Session X", nullptr);
+    slot0.appendChild (juce::ValueTree ("FROZEN_TRIMS"), nullptr);
+    juce::MemoryBlock withTrims;
+    juce::AudioProcessor::copyXmlToBinary (*root.createXml(), withTrims);
+    proc.setStateInformation (withTrims.getData(), (int) withTrims.getSize());
+
+    // Now a valid root WITHOUT an AB child: slot fields must go to defaults.
+    juce::ValueTree minimal ("AnabasisRoot");
+    minimal.setProperty ("schemaVersion", 1, nullptr);
+    juce::MemoryBlock minBlock;
+    juce::AudioProcessor::copyXmlToBinary (*minimal.createXml(), minBlock);
+    proc.setStateInformation (minBlock.getData(), (int) minBlock.getSize());
+    juce::MemoryBlock after;
+    proc.getStateInformation (after);
+    const auto rAfter = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (after.getData(), (int) after.getSize()));
+    const auto sAfter = rAfter.getChildWithName ("AB").getChild (0);
+    check (! sAfter.getChildWithName ("FROZEN_TRIMS").isValid()
+             && sAfter.getProperty ("presetName").toString().isEmpty(),
+           "tolerance: a root without AB resets the slot fields to defaults");
+
+    // Unknown child inside AB must not shift the SLOT children.
+    AnabasisAudioProcessor d;
+    d.apvts.getParameter (pid::limGain)->setValueNotifyingHost (0.5f);   // 9 dB in slot A
+    juce::MemoryBlock shifted;
+    d.getStateInformation (shifted);
+    auto rs = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (shifted.getData(), (int) shifted.getSize()));
+    auto abT = rs.getChildWithName ("AB");
+    abT.addChild (juce::ValueTree ("AB_META"), 0, nullptr);   // tolerated foreign child, FIRST
+    juce::MemoryBlock shiftedIn;
+    juce::AudioProcessor::copyXmlToBinary (*rs.createXml(), shiftedIn);
+    AnabasisAudioProcessor e;
+    e.setStateInformation (shiftedIn.getData(), (int) shiftedIn.getSize());
+    check (juce::exactlyEqual (e.apvts.getRawParameterValue (pid::limGain)->load(), 9.0f),
+           "tolerance: an unknown first child inside AB does not shift the slots");
+}
+
+// ---------------------------------------------------------------------------
+// Preset contract (ADR-0007): snapped values in the file, and a locked
+// ceiling is SKIPPED on apply — never written and reverted.
+static void testPresetContract()
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getChildFile ("anabasis-test-presets");
+    dir.createDirectory();
+    const auto file = dir.getChildFile ("t.anabasis");
+
+    AnabasisAudioProcessor a;
+    a.apvts.getParameter (pid::colourModel)->setValueNotifyingHost (0.807f);  // mid-step raw
+    a.apvts.getParameter (pid::ceiling)->setValueNotifyingHost (0.7f);        // -6 dBTP
+    check (a.getPresetManager().savePreset (file, {}), "preset: save succeeds");
+
+    const auto xml = juce::XmlDocument::parse (file);
+    bool snapped = false;
+    for (auto* p : xml->getChildWithTagNameIterator ("PARAM"))
+        if (p->getStringAttribute ("id") == pid::colourModel)
+            snapped = juce::exactlyEqual ((float) p->getDoubleAttribute ("value"), 2.0f);
+    check (snapped, "preset: discrete values are written SNAPPED, not mid-step");
+
+    AnabasisAudioProcessor b;
+    const float lockedNorm = b.apvts.getParameter (pid::ceiling)->getValue();  // default -1 dBTP
+    b.internalState.state().setProperty (iid::ceilingLock, true, nullptr);
+    check (b.applyPresetFile (file), "preset: apply succeeds");
+    check (juce::exactlyEqual (b.apvts.getParameter (pid::ceiling)->getValue(), lockedNorm),
+           "preset: a locked ceiling is never moved by a preset apply");
+    check (! juce::exactlyEqual (b.apvts.getRawParameterValue (pid::colourModel)->load(), 1.0f),
+           "preset: unlocked parameters do land from the preset");
+    file.deleteFile();
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -183,6 +365,11 @@ int main (int argc, char** argv)
         testCorruptAndForeignState();
         testMacroDefaultIsFixedPoint();
         testAbSlotsAndTiers();
+        testMacroRestoreDoesNotClobber();
+        testAbRawExact();
+        testFrozenSlotRoundTrip();
+        testAbToleranceRules();
+        testPresetContract();
     }
 
     std::printf ("%s: %d checks, %d failure(s)\n",
