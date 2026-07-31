@@ -402,7 +402,8 @@ Evidence [Unverified]:
 - Related ADRs: ADR-0001 (POD snapshot boundary, block-boundary parameter adoption), ADR-0004
   (latency contract — why OS factor/phase are the only PDC inputs), ADR-0005 (macro-layer
   contract whose threading half is settled here), ADR-0007 (per-slot state whose audio-side
-  restore uses the inject atomic).
+  restore happens at the duck's silent bottom — by a transport **OQ-013** has not yet fixed; see
+  the exception in §Consequences).
 - Anabasis runtime claims are **Unverified** by construction: no `src/` exists at sign-off. Every
   statement about Anabasis behaviour above is the contract the P1+ code must satisfy, not a
   measurement (C2). Code evidence accrues from P1.

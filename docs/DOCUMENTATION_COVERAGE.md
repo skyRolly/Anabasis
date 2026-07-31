@@ -9,6 +9,64 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Ninth post-sign-off pass — the lint itself was the defect; six fixes, three declined
+
+**Three bugs in `scripts/check-docs.py`, all mine, all shipped last pass.** The script was written to
+stop a class of regression and was itself the regression: on documents it had no business rejecting,
+it would have failed. It scanned clean only because no current document happens to exercise any of
+the three paths.
+
+- **No fence tracking.** Every line starting with `|` was treated as a table row, including inside
+  ``` fences — so any document showing table syntax as an *example* would be reported as a broken
+  table. This file and the ADRs are full of quoted markup; the script's own docstring would have
+  tripped it.
+- **Lazy continuation over-reported.** CommonMark applies it only to *paragraph continuation text*.
+  A quote ending in a bare `>` has closed its paragraph, and an ordered list starting at 1
+  interrupts one — neither is absorbed, and both were flagged. The interrupter set also mistook
+  prefix-matching for block detection (`*emphasis*` counted as a bullet).
+- **Link titles broke link checking.** `[t](path "Title")` is valid markdown; the code stripped only
+  a `#` fragment, so the destination became `path "Title"` and the file "did not exist".
+
+Rewritten: a fence mask excludes fenced content from all three checks; `interrupts_paragraph()`
+encodes the actual CommonMark interrupters (including the only-at-1 rule for ordered lists); and
+`link_destination()` parses angle-bracketed destinations and all three title forms.
+
+**A fourth bug appeared during that fix, and is the one worth recording.** The rewritten interrupter
+patterns anchored at column 0 (`^\s{0,3}`), which is what CommonMark specifies — measured against the
+*container's* content column. A line-based lint has no container stack, so inside a numbered ADR item
+(five columns of indent) every quote line stopped counting as a quote, and the run reported **31**
+findings in ADR-0004 alone. All 31 were false: each "absorbed" line was itself a quote line. Fixed by
+stripping indentation before matching, which trades a few false negatives for zero false positives —
+the correct direction for a check nobody is obliged to run. **The finding is the method, not the
+patch:** the first version was verified only against a hand-written fixture and the clean tree, which
+is exactly the "green means correct" mistake that produced `--random-seed 0` and the `build.sh` exit
+code. A check must be run against the *real corpus* and every finding accounted for.
+
+`--self-test` now pins all fourteen cases — five that must stay silent, four that must fire, five
+destination-parsing forms — so the next edit to this script cannot quietly re-open any of them.
+
+**Two residual singular descriptions of the frozen-trims transport**, the tail of the OQ-013
+propagation. ADR-0011's Related-ADRs line ("restore uses **the inject atomic**") and ADR-0009's
+copied-scope list (the pattern authorised for copy with no caveat, under a standing authorisation
+whose only conditions are provenance and the item-5 list). Neither is as load-bearing as the
+ADR-0005/ADR-0010 sentences fixed last pass, but both are records a P1 author could cite while
+wiring the blocked path — and "almost fully propagated" is precisely what made the last pair
+dangerous. ADR-0009's authorisation is now explicitly scoped to **single-scalar commands only**.
+
+**Two rendering/terminology fixes.** `REPOSITORY_MAP.md`'s docs tree carried `**bold**` and backticks
+*inside* the fence, where they render as literal asterisks — the same "invisible in source, wrong when
+rendered" class the lint exists for, and one its three checks do not cover. Removed. (A sweep found
+18 other fenced-emphasis occurrences, all of them **intentional**: the entry-format templates in
+`FUTURE_RISKS`, `KNOWN_ISSUES`, `POSTMORTEMS` and `ADR_INDEX` show the literal markup an author is
+meant to copy. Left alone.) And `DESIGN.md` §3.3 called the three `onChanged` callbacks plus
+`setNonRealtime()` "those four … latency *inputs*", while `DSP_POLICY.md` invariant 2 says three
+inputs **plus the transition** — the transition is a trigger, not an input. Same words, different
+referents, in a spot this audit had just claimed to align. Re-worded to the policy's counting.
+
+**Declined, unchanged and for the same reasons** (third and fourth time for two of them): the
+ring-read / OpenGL tension; ADR-0006's base-rate clip trade; and invariant 4's wording, again
+confirmed literally true.
+
 ### Eighth post-sign-off pass — six fixes, one new script; three declined
 
 **The validation battery is now an artefact, not a habit — and the reviewer was right that it

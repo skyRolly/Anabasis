@@ -355,8 +355,10 @@ Consequences, all of them intended:
   under `isNonRealtime()` uses the forced factor) — all three are host-hidden
   `ANABASIS_INTERNAL` settings (§4.3), never carried by presets, A/B or undo. PDC therefore
   recomputes on those three `onChanged` callbacks **plus `setNonRealtime()`**, which is the only
-  callback guaranteed to fire on the realtime→offline transition (ADR-0011) — those four are the
-  latency *inputs*; `prepare()` is a further call site, counted separately because it is the host
+  callback guaranteed to fire on the realtime→offline transition (ADR-0011). Counted the way
+  `DSP_POLICY.md` invariant 2 counts them: **three latency inputs** (`int_oversample`,
+  `int_osPhase`, `int_offlineQuality`) *plus the transition itself* — the transition is a trigger,
+  not an input — and `prepare()` is a further call site again, because it is the host
   re-establishing the whole model rather than an input changing (ADR-0004 item 5 and its
   Related-code note). So a preset step, A/B switch or undo is *always* dry-fillable and never
   touches PDC. This is what makes §7's "copy the Anamorph state machinery wholesale" safe here.

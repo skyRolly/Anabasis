@@ -95,13 +95,13 @@ docs/
 │                          architecture, the 49-parameter table, macro curves, wireframes.
 │                          Answers to the brief; the eleven ADRs it spawned now outrank it and
 │                          supersede it section by section as P1-P6 land.
-│                          See SOURCE_OF_TRUTH.md §"Where `DESIGN.md` sits".
+│                          See SOURCE_OF_TRUTH.md §"Where DESIGN.md sits".
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
 │   BRAND_CONSISTENCY_CHECKLIST.md
 ├── user/           [P6] end-user class: USER_MANUAL, INSTALLATION
-├── architecture/   design-decisions/ — ADR_INDEX.md + **ADR-0001…0011 (all Accepted**
-│                   **2026-07-31)**. [P1–P2] the descriptive set:
+├── architecture/   design-decisions/ — ADR_INDEX.md + ADR-0001…0011 (all Accepted
+│                   2026-07-31). [P1–P2] the descriptive set:
 │                   ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE, DSP_ALGORITHMS,
 │                   THREAD_MODEL, API_REFERENCE, PARAMETER_REGISTRY/REFERENCE,
 │                   SERIALIZATION_REGISTRY, STATE_SERIALIZATION, LATENCY_MODEL,

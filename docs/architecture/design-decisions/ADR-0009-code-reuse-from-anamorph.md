@@ -146,7 +146,9 @@ the **`StateSet` A/B slot + per-slot undo** machinery, here widened to
 128 and never serialized; eager slot initialisation; `abCopyToOther` pushing onto the *other* slot's
 stack; gesture-gated undo coalescing with host automation folded into the baseline; preset-load undo
 bracketing that parses before the bracket opens; `requestDuck()` before every bulk swap; the
-sentinel-atomic inject-at-the-duck-bottom pattern; `PresetManager` (folder layout, snapped-value
+sentinel-atomic inject-at-the-duck-bottom pattern **for single-scalar commands only — this
+authorisation does not extend to the four-scalar frozen trim vector, whose transport is `OQ-013`
+and an AI-agent Hard Stop until an ADR settles it**; `PresetManager` (folder layout, snapped-value
 contract, compiled-in factory override tables); **raw-exact serialization** (the additive exact `raw`
 attribute, Anamorph ADR-0013) with structural-tolerance read rules; the `pid::` namespace shape,
 `ParameterID{id, kVersion}`, the Raw\* exact-normalised discrete classes, the formatter/parser

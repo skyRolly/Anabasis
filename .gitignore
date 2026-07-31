@@ -18,3 +18,8 @@ _deps/
 .idea/
 *.user
 *.swp
+
+# Python bytecode — scripts/check-docs.py leaves this behind when imported
+# (e.g. by its own --self-test run from another directory).
+__pycache__/
+*.py[cod]
