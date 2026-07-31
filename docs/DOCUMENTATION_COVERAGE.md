@@ -815,7 +815,7 @@ Rows are added as modules land. The planned module set and its responsibilities 
 
 | Tier | Files | Status |
 |---|---|---|
-| docs root | DEVELOPMENT_BRIEF, **DESIGN**, SOURCE_OF_TRUTH, REPOSITORY_MAP, OPEN_QUESTIONS, HANDOVER, DOCUMENTATION_COVERAGE, KNOWN_ISSUES, FUTURE_RISKS, POSTMORTEMS, BRAND_CONSISTENCY_CHECKLIST | Present (`DESIGN.md` is `Proposed` — see SOURCE_OF_TRUTH §"Where `DESIGN.md` sits") |
+| docs root | DEVELOPMENT_BRIEF, **DESIGN**, SOURCE_OF_TRUTH, REPOSITORY_MAP, OPEN_QUESTIONS, HANDOVER, DOCUMENTATION_COVERAGE, KNOWN_ISSUES, FUTURE_RISKS, POSTMORTEMS, BRAND_CONSISTENCY_CHECKLIST | Present (`DESIGN.md` is **`Accepted`**, signed off 2026-07-31; it ranks at level 5 and is superseded section by section by its ADRs — SOURCE_OF_TRUTH §"Where `DESIGN.md` sits") |
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
@@ -835,8 +835,10 @@ These are **deliberate**, not oversights. Each names what would close it.
   `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md`,
   `REALTIME_SAFETY_AUDIT.md`, `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`,
   `PERFORMANCE_BUDGET.md` all describe code that does not exist. Closed by P1–P2.
-- **No ADRs** — ADRs are evidence-driven (constraint C1); the first batch comes out of P0's
-  `DESIGN.md`. `ADR_INDEX.md` exists as the registry.
+- ~~**No ADRs**~~ — **closed 2026-07-31**: ADR-0001…0011 are Accepted and registered. They remain
+  `Unverified` in confidence (no `src/`), which is a *different* gap from absence: each is a
+  contract the P1+ code must satisfy, and its confidence is upgraded as its code and tests land.
+  New decisions still follow C1 — evidence-driven, no quota.
 - **Policy compliance sections are `TODO (no code yet)`** in `REALTIME_AUDIO_POLICY`,
   `THREADING_POLICY`, `DSP_POLICY` and `MODE_AND_ADAPTATION_POLICY`. Closed as each phase lands,
   with evidence citations.

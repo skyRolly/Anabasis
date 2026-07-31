@@ -66,19 +66,54 @@ The adaptive layer may move parameters within their declared ranges. It may **no
 ### 5. Manual Advanced edits are user intent
 
 If the user edits a parameter manually in Advanced, that edit is not silently discarded when they
-return to Simple. The coexistence strategy — macro-takes-precedence with a clear notice, versus a
-"carry over" option — is **an open decision** (`docs/OPEN_QUESTIONS.md` OQ-004) that must be
-argued in `DESIGN.md` and recorded as an ADR **before** P4 implementation. Whatever is chosen must
-still satisfy invariant 2.
+return to Simple.
+
+**Settled by ADR-0005** (Accepted 2026-07-31; OQ-004 `Resolved`) — **macro-latch with re-engage on
+touch**, which is binding, not a suggestion:
+
+1. Returning to Simple moves nothing (invariant 2 holds by construction — there is no value path
+   at the switch).
+2. Each manually edited managed parameter is **detached** from the macro, tracked by a
+   per-parameter detach mask that is **per-A/B-slot** state and travels with presets (ADR-0007).
+3. The **next macro gesture re-engages every detached parameter** through the normal rate-limited
+   glide. That gesture *is* the "clear notice" the brief asks for — the user is explicitly choosing
+   the macro over their edits.
+4. A "reset to macro" affordance re-engages without moving the macro position.
+
+Carry-over offsets were **rejected**: they make the knob's sound at a given position
+history-dependent, so the mapping stops being a pure function and stops being testable.
+
+Two mechanisms this invariant depends on, both binding: a change counts as a *manual edit* only if
+it is **not macro-originated** (the MacroEngine raises a message-thread re-entrancy flag around its
+own write burst) **and** is **gesture-bracketed** — so automation playback, preset apply, A/B and
+undo never detach anything. And a preset apply must satisfy both conditions, or a preset holding
+off-curve managed values could not be recalled faithfully at all.
 
 ### 6. Automation and recall see the real parameters
 
 Because Simple is a macro layer, host automation, preset recall and A/B compare operate on the
-underlying Advanced parameters. Whether the macro knob is itself host-visible and automatable —
-and if so, how a recorded macro automation lane interacts with recorded per-parameter lanes — is
-part of the parameter surface and therefore governed by `PARAMETER_COMPATIBILITY_POLICY.md`. Decide
-it in `DESIGN.md` and record it in `PARAMETER_REGISTRY.md`; it is a contract from the first
-shipped build.
+underlying Advanced parameters.
+
+**Settled by ADR-0005 and ADR-0010** (Accepted 2026-07-31): the three macro controls (`loudness`,
+`character`, `tone`) are real, host-visible APVTS parameters but are **not automatable**. The
+automation surface is the *managed Advanced parameters* themselves. A recorded macro lane
+therefore cannot exist, which removes the question of how it would interact with per-parameter
+lanes.
+
+Two consequences that are part of the contract, not implementation detail:
+
+- `withAutomatable(false)` is **advisory** — some hosts expose the parameter regardless
+  (`PARAMETER_COMPATIBILITY_POLICY.md` rule 5). The MacroEngine therefore consumes macro changes
+  only through an async **message-thread** listener; a host that automates a macro anyway gets the
+  mapping applied at message-thread rate, and offline-render determinism is explicitly not promised
+  for that unsupported usage.
+- Making a macro automatable later is a parameter-surface change: `kVersion` bump + ADR
+  (`PARAMETER_COMPATIBILITY_POLICY.md` rules 4–5). The macro **mapping curves** are likewise
+  semantic from the first shipped build — changing one changes what a recorded automation lane on a
+  managed parameter sounds like (rule 7).
+
+Recorded in `PARAMETER_REGISTRY.md` when it is written at P1; `DESIGN.md` §4.2 is the interim table
+of record.
 
 ## Current implementation
 

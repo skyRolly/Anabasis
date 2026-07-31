@@ -70,10 +70,11 @@ violation and would mislead a mastering decision.
 documented "as of" date, or user-editable), and record the decision plus each value's source in
 `DESIGN.md`. Any number that reaches the UI needs a citable origin.
 
-**Mechanism decided in `DESIGN.md` §2.9 (2026-07-30, pending sign-off).** One compiled table,
+**Mechanism ratified at the 2026-07-31 sign-off** (`DESIGN.md` §2.9): one compiled table,
 per-value source citation, "as of" date surfaced in the tooltip, not user-editable in v1,
 refreshed each release. The **values themselves remain TODO** — gathered with citations at P5,
-never invented (C2). This entry stays `Open` until those citations exist.
+never invented (C2). This entry therefore stays `Open`: what is undecided is the numbers, not how
+they are carried.
 
 ---
 
@@ -154,11 +155,11 @@ in hosts with poor PDC), at the cost of a limiter that cannot catch transients a
 markedly different, and worse, sound. Several mastering limiters deliberately omit it for exactly
 that reason.
 
-**Action.** Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
+**Action** *(historical — superseded by the Decision below)*. Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
 position", say so explicitly in the parameter table so it reads as a decision rather than an
 oversight.
 
-**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §3.4: **no zero/off position** —
+**Recommendation** *(2026-07-30, as it stood before the decision)*. `DESIGN.md` §3.4: **no zero/off position** —
 keep 0.5–10 ms exactly. A 0 ms limiter degenerates into a clipper (the chain already has a
 better one); the zero-latency tracking use case is out of this product class; and narrowing
 never breaks sessions while widening later would. Stated in the §4.2 parameter table
@@ -188,10 +189,10 @@ prioritises shipping on schedule) at the cost of guaranteed divergence.
 **Note.** Anabasis must not modify the Anamorph repository, so extraction is not unilaterally
 available to this project in any case — it would require a coordinated change to both.
 
-**Action.** Give a recommendation in `DESIGN.md` (§1.2 requires one). Do not extract without
+**Action** *(historical — superseded by the Decision below)*. Give a recommendation in `DESIGN.md` (§1.2 requires one). Do not extract without
 owner approval.
 
-**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §8: **copy-and-adapt now**, with
+**Recommendation** *(2026-07-30, as it stood before the decision)*. `DESIGN.md` §8: **copy-and-adapt now**, with
 provenance headers pointing at the Anamorph originals; revisit extraction as a product-family
 ADR after Anabasis v0.1.0 ships, when both UI layers are stable enough to see what is actually
 common. **Becomes ADR-0009 on sign-off** (`DESIGN.md` §10), whose scope is wider than the UI
@@ -218,9 +219,9 @@ and requires the strategy to be **argued in the design document before implement
 moment of the switch* (`MODE_AND_ADAPTATION_POLICY.md`). Any strategy that fails that is
 excluded.
 
-**Action.** Argue and decide in `DESIGN.md`; record as an ADR before P4 implementation.
+**Action** *(historical — superseded by the Decision below)*. Argue and decide in `DESIGN.md`; record as an ADR before P4 implementation.
 
-**Recommendation (2026-07-30, pending sign-off).** Argued in `DESIGN.md` §5.3:
+**Recommendation** *(2026-07-30, as it stood before the decision)*. Argued in `DESIGN.md` §5.3:
 **macro-latch with re-engage on touch** — returning to Simple moves nothing (invariant 2 holds by
 construction); manually edited parameters are *detached* from the macro and badged; the next
 macro-knob gesture re-engages them through the normal rate-limited glide, which is the "clear
