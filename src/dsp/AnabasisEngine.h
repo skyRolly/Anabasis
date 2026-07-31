@@ -41,6 +41,13 @@ public:
 
     int groupDelaySamples() const noexcept { return delaySamples; }
 
+    // The engaged lookahead window in samples, as last handed to the
+    // detector. Exposed because it is where invariant 8's "smooth,
+    // band-limited" requirement for a lookahead move is observable — the
+    // output is not, since the wedge and the attack/release asymmetry
+    // absorb a tap step.
+    int engagedWindowSamples() const noexcept { return engagedWindow; }
+
 private:
     static constexpr int kMaxChannels = 2;
 
@@ -54,8 +61,17 @@ private:
     // the delay-aligned bypass.
     juce::AudioBuffer<float> wetRing, dryRing;
 
-    juce::SmoothedValue<float> inputGain { 1.0f };   // zipper-noise rule (CODE_STYLE)
-    juce::SmoothedValue<float> pushGain  { 1.0f };   // limGain (the macro's primary target)
+    // CODE_STYLE §Real-time discipline: every parameter that reaches the DSP
+    // is smoothed. `ceiling` is host-automatable and `lookahead` is named by
+    // DSP_POLICY invariant 8 as the switchable path most likely to be skipped
+    // at P1 — its move must be "a smooth, band-limited control signal", which
+    // for the detector tap means gliding the offset, not stepping it.
+    juce::SmoothedValue<float> inputGain      { 1.0f };   // zipper-noise rule
+    juce::SmoothedValue<float> pushGain       { 1.0f };   // limGain (the macro's primary target)
+    juce::SmoothedValue<float> ceilingLinear  { 0.8912509f };  // -1 dBTP default
+    juce::SmoothedValue<float> windowSamples  { 96.0f };        // engaged lookahead, in samples
+    bool smoothersPrimed = false;   // first block after prepare/reset snaps instead of gliding
+    int  engagedWindow   = 96;      // last window handed to the detector (test observable)
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;

@@ -19,6 +19,13 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // enough to feel immediate on a gain control.
     inputGain.reset (sampleRate, 0.020);
     pushGain.reset (sampleRate, 0.020);
+    ceilingLinear.reset (sampleRate, 0.020);
+    windowSamples.reset (sampleRate, 0.020);
+
+    // The bypass fade length is derived from the sample rate, so it belongs
+    // here as well as at the toggle: a host that re-prepares at a new rate
+    // mid-fade would otherwise finish that fade at the old rate's step size.
+    bypassStep = 1.0f / (float) juce::jmax (1, (int) (0.010 * sampleRate));
 
     limiter.prepare (sampleRate, delaySamples);
     reset();
@@ -32,6 +39,7 @@ void AnabasisEngine::reset() noexcept
     limiter.reset();
     inputGain.setCurrentAndTargetValue (inputGain.getTargetValue());
     pushGain.setCurrentAndTargetValue (pushGain.getTargetValue());
+    smoothersPrimed = false;   // the next block adopts its values without a glide
 }
 
 void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept
@@ -45,19 +53,29 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     inputGain.setTargetValue (juce::Decibels::decibelsToGain (p.inputGainDb));
     pushGain.setTargetValue  (juce::Decibels::decibelsToGain (p.limGainDb));
 
-    const float ceilingLin = juce::Decibels::decibelsToGain (p.ceilingDbTp);
-    const float lookMs     = juce::jlimit ((float) kMinLookaheadMs, (float) kMaxLookaheadMs,
-                                           p.lookaheadMs);
-    limiter.setPerBlock (ceilingLin, lookMs, juce::jmax (1.0f, p.limReleaseMs));
-    clamp.setCeilingDb (p.ceilingDbTp);
+    const float ceilingTarget = juce::Decibels::decibelsToGain (p.ceilingDbTp);
+    const float lookMs        = juce::jlimit ((float) kMinLookaheadMs, (float) kMaxLookaheadMs,
+                                              p.lookaheadMs);
+    const float windowTarget  = juce::jlimit (1.0f, (float) delaySamples,
+                                              (float) std::ceil (lookMs * 0.001 * sr));
+    if (! smoothersPrimed)
+    {
+        // First block after prepare/reset: adopt, do not glide. A ramp from a
+        // stale value here would be an artefact of construction, not a user
+        // move, and it would break the impulse-at-the-allowance test.
+        ceilingLinear.setCurrentAndTargetValue (ceilingTarget);
+        windowSamples.setCurrentAndTargetValue (windowTarget);
+        smoothersPrimed = true;
+    }
+    else
+    {
+        ceilingLinear.setTargetValue (ceilingTarget);
+        windowSamples.setTargetValue (windowTarget);
+    }
+    limiter.setRelease (juce::jmax (1.0f, p.limReleaseMs));
 
     if (p.bypass != bypassTarget)
-    {
-        bypassTarget = p.bypass;
-        // ~10 ms linear crossfade (§2.8's always-running output crossfade,
-        // minimal P1 form; exact endpoints below keep both nulls bit-exact).
-        bypassStep = 1.0f / (float) juce::jmax (1, (int) (0.010 * sr));
-    }
+        bypassTarget = p.bypass;   // step size is rate-derived, set in prepare()
 
     bool sawNonFinite = false;
 
@@ -83,8 +101,15 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // steps ago — NOT the just-written input, which is 10 ms ahead
         // regardless of the engaged lookahead. This offset is what makes the
         // `lookahead` parameter the real pre-emption time while the audio
-        // delay stays at the full allowance (ADR-0004).
-        int detPos = writePos - (delaySamples - limiter.windowLengthSamples());
+        // delay stays at the full allowance (ADR-0004). W is the SMOOTHED
+        // window, so a lookahead move slides the tap instead of jumping it by
+        // hundreds of samples at a block boundary (invariant 8).
+        const int w = juce::jlimit (1, delaySamples,
+                                    juce::roundToInt (windowSamples.getNextValue()));
+        engagedWindow = w;
+        const float ceilingNow = ceilingLinear.getNextValue();
+
+        int detPos = writePos - (delaySamples - w);
         if (detPos < 0)
             detPos += ringSize;
         float stereoMax = 0.0f;
@@ -95,7 +120,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                 stereoMax = mag;
         }
 
-        const float gr = limiter.processSample (stereoMax);
+        const float gr = limiter.processSample (stereoMax, w, ceilingNow);
 
         int readPos = writePos - delaySamples;
         if (readPos < 0)
@@ -113,13 +138,19 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
 
             // gr == 1 multiplies exactly; the clamp passes sub-ceiling samples
             // untouched — together that is inv 7's bit-exact identity path.
-            float processed = clamp.processSample (juce::exactlyEqual (gr, 1.0f) ? delayedWet : delayedWet * gr);
+            float processed = clamp.processSample (
+                juce::exactlyEqual (gr, 1.0f) ? delayedWet : delayedWet * gr, ceilingNow);
 
             // P1 dither: Off (the §4.2 default) is a true no-op. The 16/24-bit
             // TPDF stage lands with the metering work at P2 (DESIGN §2.9);
             // selecting it early must not silently alter the signal, so until
             // then the modes are inert by construction.
 
+            // Bypass carries the UNCLAMPED dry signal, deliberately: invariant 7
+            // requires bypass to be a bit-exact delay-aligned null, so invariant
+            // 4's ceiling guarantee is a property of the PROCESSED path. The two
+            // can only both hold under that reading, and it is stated here
+            // rather than left to be inferred.
             float out;
             if (bypassMix <= 0.0f)      out = processed;                        // exact endpoint
             else if (bypassMix >= 1.0f) out = delayedDry;                       // exact endpoint
@@ -137,8 +168,13 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             writePos = 0;
     }
 
-    // Invariant 9 self-heal: a non-finite anywhere resets the affected state
-    // so one bad buffer cannot poison the envelope or the rings forever.
+    // Invariant 9 self-heal: a non-finite anywhere resets the limiter so one
+    // bad buffer cannot poison the envelope forever. The reset empties the
+    // sliding window, so for the next W samples the maximum covers fewer than
+    // W+1 values and an over-ceiling peak already inside the delay line is not
+    // pre-empted — it meets the final clamp instead. That is a transient
+    // quality cost, not a contract break: the clamp is unconditional, so
+    // invariant 4 still holds throughout the recovery.
     if (sawNonFinite)
         limiter.reset();
 }

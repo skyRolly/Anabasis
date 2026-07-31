@@ -19,7 +19,7 @@
 //
 //  State: schema v1 (ADR-0007) — root AnabasisRoot { schemaVersion=1,
 //  ANABASIS (+ additive exact `raw` attribute per PARAM), ANABASIS_INTERNAL,
-//  AB { activeIndex + per-slot params/presetName/BASELINE/FROZEN_TRIMS/
+//  AB { active + per-slot params/presetName/BASELINE/FROZEN_TRIMS/
 //  DETACH_MASK }, ADAPTIVE }. Read rules: unknown ignored, missing default,
 //  indices clamped.
 //
@@ -77,6 +77,7 @@ public:
     juce::AudioProcessorParameter* getBypassParameter() const override;
 
     MacroEngine& getMacroEngine() noexcept { return *macroEngine; }
+    const CachedParams& cachedForTest() const noexcept { return cached; }
     PresetManager& getPresetManager() noexcept { return *presetManager; }
 
 private:

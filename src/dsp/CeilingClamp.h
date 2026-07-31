@@ -21,20 +21,17 @@ namespace anabasis
 class CeilingClamp
 {
 public:
-    void setCeilingDb (float dbTp) noexcept
-    {
-        ceilingLinear = std::pow (10.0f, dbTp * (1.0f / 20.0f));
-    }
-
-    float processSample (float x) const noexcept
+    // The ceiling arrives PER SAMPLE from the engine's smoother, and it is the
+    // SAME instantaneous value the limiter's gain computer used for this
+    // sample — so the clamp is a backstop for a limiter that failed, never a
+    // second, differently-timed threshold that could clip a correctly limited
+    // signal while the control glides.
+    float processSample (float x, float ceilingLinear) const noexcept
     {
         if (x >  ceilingLinear) return  ceilingLinear;
         if (x < -ceilingLinear) return -ceilingLinear;
         return x;   // untouched below the ceiling — bit-exact for inv 7's null
     }
-
-private:
-    float ceilingLinear = 0.8912509f;   // -1 dBTP, the §4.2 default; overwritten per block
 };
 
 } // namespace anabasis

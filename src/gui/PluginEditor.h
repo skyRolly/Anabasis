@@ -16,8 +16,10 @@ class AnabasisAudioProcessor;
 //  P5 per §6.2/§6.3.
 //
 //  OpenGL: attached on macOS/Windows, NEVER on Linux/X11 (DESIGN §6.1,
-//  ADR-0011 §6.1 note). The module is linked on every platform; only the
-//  attach is gated — which is why this include compiles everywhere.
+//  ADR-0011 §6.1 note). CMake links `juce_opengl` on every platform (ADR-0008
+//  — unconditional link, platform-gated attach), but the include and the
+//  context member are compiled only where the context is actually attached:
+//  on Linux this class simply has no GL member.
 // ============================================================================
 
 class AnabasisAudioProcessorEditor : public juce::AudioProcessorEditor

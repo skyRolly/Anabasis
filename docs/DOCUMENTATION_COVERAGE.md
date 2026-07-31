@@ -9,6 +9,60 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton, third commit — the smoothing rule, and a test that proved itself worthless (2026-07-31)
+
+**The substantive fix: `ceiling` and `lookahead` reached the DSP unsmoothed.** `CODE_STYLE.md`
+§Real-time discipline says every parameter that reaches the DSP is smoothed, and `DSP_POLICY.md`
+invariant 8 names *the lookahead* as "the one switchable path with neither a duck nor a latch …
+the path most likely to be skipped at P1", requiring its move to be "a smooth, band-limited control
+signal". Both were adopted per block: a ceiling automation lane stepped the limiter's gain and the
+clamp together, and a lookahead move jumped the detector tap by hundreds of samples at a block
+boundary. Both are now per-sample values from `juce::SmoothedValue` (20 ms), handed down to the
+limiter and the clamp — which also means the clamp uses the **same instantaneous ceiling** the gain
+computer used for that sample, so it stays a backstop rather than a second, differently-timed
+threshold.
+
+**The finding that matters more than the fix.** The first smoothing test passed against
+deliberately unsmoothed code. Two separate reasons, both worth recording:
+
+1. The scan started at `stepAt + 1` — one sample *past* the discontinuity it existed to catch.
+2. After fixing that, the *lookahead* half still passed, and instrumenting it explained why:
+   enlarging the window cannot retroactively add samples the wedge already dropped, and shrinking
+   it only relaxes the gain, which goes through the slow release. **An unsmoothed `W` steps the
+   detector tap without stepping the output** — so the output-watching assertion was measuring a
+   property that does not hold.
+
+The response was not to loosen the threshold but to move the assertion to where the property
+actually lives: the engine now exposes `engagedWindowSamples()` and the test pins the glide itself
+(first block adopts, one block in it is strictly between the two values, it reaches the target, and
+no block moves the tap more than a block's worth). **Five mutants are now caught** — ceiling
+unsmoothed, W unsmoothed, either prime removed, and the detector tap reverted to the write head.
+A test that passes against the bug it was written for is not a test, and mutation is the only thing
+that tells you which kind you have.
+
+**Six smaller items from the same review, all fixed.** `bypassStep` is derived in `prepare()` so
+the ~10 ms figure holds across a sample-rate change mid-fade; `CachedParams` is sized from the real
+count (44, not 49) with a `static_assert`, and `testCachedParamsMapping` pins the *positional*
+coupling between `kCacheOrder` and `toEngine` field by field — a swap of two adjacent lines now
+fails (verified by mutation), where before it would have silently shifted every later field; the
+`CHANGELOG` entry cites its Evidence Source commits per `CHANGELOG_POLICY.md` rule 2; KI-001 moved
+from the format template into `## Open issues`, replacing the "none — no build exists" placeholder
+it was contradicting; `REPOSITORY_MAP.md`'s `[P1]` markers dropped from `CMakeLists.txt` and
+`tests/`; and two stale comments corrected — the schema banner said `activeIndex` where the code
+writes `active`, and the editor banner claimed an unconditional OpenGL include that is in fact
+platform-gated (the *link* is unconditional, the include and the context member are not).
+
+**Two accepted without change, with the reasoning recorded in the code:** bypass carries the
+unclamped dry signal — invariant 7 requires a bit-exact null, so invariant 4's ceiling guarantee is
+a property of the *processed* path, and that reading is now stated at the branch rather than
+inferred; and the invariant-9 self-heal empties the sliding window, so for one window's worth of
+samples a peak already in the delay line meets the clamp instead of being pre-empted — a transient
+quality cost, not a contract break, since the clamp is unconditional. **Declined:** `setNonRealtime`
+being `noexcept` is the base-class signature, and the `updateLatency` call in it is ADR-0004 item
+5's mandated trigger.
+
+After: 71 checks green (29 DSP + 42 state), warning-free, pluginval L5 both modes ×3.
+
 ### P1 skeleton, second commit — the adversarial review earned its cost (2026-07-31)
 
 Three read-only agents were run against the fresh skeleton (parameter contract · DSP/latency/

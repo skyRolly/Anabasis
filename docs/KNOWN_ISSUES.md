@@ -28,6 +28,13 @@ Evidence [Verified | Partially Verified | Unverified]:
 - Commit: <sha>
 ```
 
+
+
+Numbering is sequential and permanent: a fixed issue is **removed from the open list and recorded
+in `POSTMORTEMS.md`**, and its number is never reused.
+
+## Open issues
+
 ## KI-001 — A/B slot switch is not click-safe in the P1 skeleton
 
 **Severity:** Low
@@ -51,14 +58,6 @@ Evidence [Verified]:
 - Commit: P1 skeleton commit (this change)
 
 ---
-
-
-Numbering is sequential and permanent: a fixed issue is **removed from the open list and recorded
-in `POSTMORTEMS.md`**, and its number is never reused.
-
-## Open issues
-
-*(none — no build exists. The first entries arrive with P1.)*
 
 ## Standing note for P1 onward
 

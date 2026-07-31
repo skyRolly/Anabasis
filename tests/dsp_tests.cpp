@@ -102,6 +102,134 @@ static void testReportedLatencyMatchesImpulse()
 }
 
 // ---------------------------------------------------------------------------
+// CODE_STYLE §Real-time discipline + DSP_POLICY invariant 8: every parameter
+// reaching the DSP is smoothed. `ceiling` is host-automatable, so an
+// automation lane exercises this on every session; taking it per block used to
+// step the limiter's gain and the clamp together. The bound below is what a
+// 20 ms glide allows per sample; a per-block step fails it by ~2 orders.
+static void testCeilingIsSmoothed()
+{
+    anabasis::AnabasisEngine engine;
+    const double sr = 48000.0;
+    const int block = 256;
+    engine.prepare (sr, block, 2);
+
+    anabasis::EngineParameters p;
+    p.ceilingDbTp = 0.0f;               // start wide open
+    p.limGainDb   = 0.0f;
+
+    juce::AudioBuffer<float> buf (2, block);
+    auto runBlock = [&] (std::vector<float>& out)
+    {
+        for (int n = 0; n < block; ++n)
+        {
+            const float v = 0.9f;       // DC-ish: any gain change is visible directly
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < block; ++n)
+            out.push_back (buf.getSample (0, n));
+    };
+
+    std::vector<float> out;
+    for (int b = 0; b < 8; ++b) runBlock (out);      // settle at ceiling 0 dB
+    const size_t stepAt = out.size();
+    p.ceilingDbTp = -12.0f;                          // a big automation jump
+    for (int b = 0; b < 8; ++b) runBlock (out);
+
+    float maxDelta = 0.0f;
+    for (size_t n = stepAt; n < out.size(); ++n)
+        maxDelta = juce::jmax (maxDelta, std::abs (out[n] - out[n - 1]));
+
+    // 0.9 -> ~0.25 over 20 ms at 48 kHz is < 0.001 per sample; a block-boundary
+    // step would show the whole ~0.65 jump in one sample.
+    check (maxDelta < 0.01f, "smoothing: a ceiling automation jump glides, never steps");
+    check (out.back() < 0.30f, "smoothing: the ceiling change does arrive at its target");
+}
+
+// ---------------------------------------------------------------------------
+// The first block after prepare() ADOPTS its control values instead of gliding
+// from the constructor defaults — a ramp there is an artefact of construction,
+// not a user move. Observable only with a ceiling far from the -1 dBTP default:
+// unprimed, the first audible samples sit well above the target while the
+// smoother is still travelling.
+static void testControlsPrimedOnPrepare()
+{
+    anabasis::AnabasisEngine engine;
+    const double sr = 48000.0;
+    const int block = 256;
+    engine.prepare (sr, block, 2);
+
+    anabasis::EngineParameters p;
+    p.ceilingDbTp = -12.0f;                 // 0.251 linear, far from the 0.891 default
+    const float target = std::pow (10.0f, p.ceilingDbTp / 20.0f);
+
+    juce::AudioBuffer<float> buf (2, block);
+    std::vector<float> out;
+    for (int b = 0; b < 4; ++b)             // 1024 samples > the 480 delay
+    {
+        for (int n = 0; n < block; ++n) { buf.setSample (0, n, 0.9f); buf.setSample (1, n, 0.9f); }
+        engine.process (buf, p);
+        for (int n = 0; n < block; ++n) out.push_back (buf.getSample (0, n));
+    }
+
+    // Sample 500 is the first fully-emerged output; primed it is already at the
+    // target ceiling, unprimed the smoother would still be gliding down to it.
+    check (std::abs (out[500] - target) < 1.0e-3f,
+           "priming: the ceiling is adopted on the first block, not glided into");
+}
+
+// ---------------------------------------------------------------------------
+// invariant 8 names the lookahead as "the one switchable path with neither a
+// duck nor a latch ... the path most likely to be skipped at P1", requiring
+// its move to be a smooth control signal. The detector tap offset is
+// delaySamples - W, so an unsmoothed W jumps the tap by hundreds of samples at
+// one block boundary.
+static void testLookaheadIsSmoothed()
+{
+    // Tests the PROPERTY, not a proxy. An earlier version of this test watched
+    // the output for a discontinuity and passed against deliberately
+    // unsmoothed code (verified by mutation): enlarging W cannot retroactively
+    // add samples the wedge already dropped, and shrinking it only relaxes the
+    // gain, which goes through the slow release — so an unsmoothed W steps the
+    // detector tap without stepping the output. The smoothing is still
+    // required (invariant 8: the lookahead move must be "a smooth,
+    // band-limited control signal"), so the assertion is made where the
+    // property actually lives: the engaged window the engine hands the
+    // detector each sample.
+    anabasis::AnabasisEngine engine;
+    const double sr = 48000.0;
+    const int block = 64;
+    engine.prepare (sr, block, 2);
+
+    anabasis::EngineParameters p;
+    p.lookaheadMs = 0.5f;
+    juce::AudioBuffer<float> buf (2, block);
+    buf.clear();
+    engine.process (buf, p);
+    check (engine.engagedWindowSamples() == 24,
+           "lookahead: the first block adopts its window without a glide");
+
+    p.lookaheadMs = 10.0f;                       // 24 -> 480 samples
+    engine.process (buf, p);
+    const int afterOne = engine.engagedWindowSamples();
+    check (afterOne > 24 && afterOne < 480,
+           "lookahead: one block into a move the window is between the two values");
+
+    int prev = afterOne, maxStep = 0;
+    for (int b = 0; b < 40; ++b)                 // 40 * 64 = 2560 samples > 20 ms
+    {
+        engine.process (buf, p);
+        const int now = engine.engagedWindowSamples();
+        maxStep = juce::jmax (maxStep, std::abs (now - prev));
+        prev = now;
+    }
+    check (prev == 480, "lookahead: the glide reaches the target window");
+    check (maxStep <= block, "lookahead: no block moves the tap more than a block's worth");
+}
+
+// ---------------------------------------------------------------------------
 // inv 4 (P1 sample-level form; the dBTP matrix arrives with TruePeak at P2):
 // hot material pushed +12 dB never exceeds the ceiling after the clamp.
 static void testOutputNeverExceedsCeiling()
@@ -215,16 +343,16 @@ static void testLimiterWindowCoverage()
 {
     anabasis::LookaheadLimiter lim;
     lim.prepare (48000.0, 480);
-    lim.setPerBlock (0.5f, 2.0f, 1000.0f);   // W = 96, slow release
-    const int w = lim.windowLengthSamples();
-    check (w == 96, "limiter: window length is ceil(2 ms) at 48 kHz");
+    lim.setRelease (1000.0f);                // slow release: early recovery is visible
+    const int w = 96;                        // ceil(2 ms) at 48 kHz
+    const float ceilingLin = 0.5f;
 
     const int spikeAt = 500;
     float envBefore = 1.0f, envAtSpikeEnter = 1.0f, envAtPlay = 1.0f, envAfter = 1.0f;
     for (int t = 0; t < 1200; ++t)
     {
         const float fed = (t == spikeAt) ? 1.0f : 0.0f;
-        const float env = lim.processSample (fed);
+        const float env = lim.processSample (fed, w, ceilingLin);
         if (t == spikeAt - 1)     envBefore      = env;
         if (t == spikeAt)         envAtSpikeEnter = env;   // spike enters window: playing sample is t - 0? no: this IS the attack instant
         if (t == spikeAt + w)     envAtPlay      = env;    // spike is the PLAYING sample now
@@ -285,11 +413,15 @@ static void testLimiterAlignment()
            "alignment: the envelope has not released early when the peak plays");
 }
 
+
 int main()
 {
     testNullWithDefaults();
     testLimiterWindowCoverage();
     testLimiterAlignment();
+    testCeilingIsSmoothed();
+    testControlsPrimedOnPrepare();
+    testLookaheadIsSmoothed();
     testReportedLatencyMatchesImpulse();
     testOutputNeverExceedsCeiling();
     testNoBadSamples();

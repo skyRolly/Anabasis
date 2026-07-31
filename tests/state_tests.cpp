@@ -353,6 +353,54 @@ static void testPresetContract()
     file.deleteFile();
 }
 
+// ---------------------------------------------------------------------------
+// kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
+// row in one without the matching line in the other silently shifts every
+// later field, and the static_assert only catches a length change. Distinct
+// values per parameter, checked field by field, catch a shift of any size.
+static void testCachedParamsMapping()
+{
+    AnabasisAudioProcessor proc;
+    auto set = [&] (const char* id, float denorm)
+    {
+        auto* p = proc.apvts.getParameter (id);
+        p->setValueNotifyingHost (p->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    set (pid::inputGain, 7.0f);
+    set (pid::scHpfFreq, 120.0f);
+    set (pid::compRatio, 3.0f);
+    set (pid::compThreshold, -18.0f);
+    set (pid::compKnee, 9.0f);
+    set (pid::clipDrive, 5.0f);
+    set (pid::colourBalance, 0.5f);
+    set (pid::dynTilt, 1.25f);
+    set (pid::limGain, 11.0f);
+    set (pid::lookahead, 4.0f);
+    set (pid::limRelease, 250.0f);
+    set (pid::eqTilt, -2.0f);
+    set (pid::eqLowShelfGain, 3.0f);
+    set (pid::eqBell2Q, 2.0f);
+    set (pid::ceiling, -3.0f);
+    set (pid::compMix, 40.0f);          // percent in, 0..1 out
+    set (pid::stereoLink, 80.0f);
+    set (pid::colourDepth, 60.0f);
+
+    anabasis::EngineParameters e;
+    proc.cachedForTest().toEngine (e);
+
+    auto near = [] (float a, float b) { return std::abs (a - b) < 1.0e-3f; };
+    check (near (e.inputGainDb, 7.0f)        && near (e.scHpfFreqHz, 120.0f),   "cache: input/detector fields");
+    check (near (e.compRatio, 3.0f)          && near (e.compThresholdDb, -18.0f)
+            && near (e.compKneeDb, 9.0f)     && near (e.compMix, 0.40f),        "cache: compressor fields");
+    check (near (e.clipDriveDb, 5.0f)        && near (e.colourBalance, 0.5f)
+            && near (e.dynTiltDb, 1.25f)     && near (e.colourDepth, 0.60f),    "cache: clip/colour fields");
+    check (near (e.limGainDb, 11.0f)         && near (e.lookaheadMs, 4.0f)
+            && near (e.limReleaseMs, 250.0f) && near (e.stereoLink, 0.80f),     "cache: limiter fields");
+    check (near (e.eqTiltDb, -2.0f)          && near (e.eqLowShelfGainDb, 3.0f)
+            && near (e.eqBell2Q, 2.0f),                                          "cache: eq fields");
+    check (near (e.ceilingDbTp, -3.0f),                                          "cache: shared/output fields");
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -370,6 +418,7 @@ int main (int argc, char** argv)
         testFrozenSlotRoundTrip();
         testAbToleranceRules();
         testPresetContract();
+        testCachedParamsMapping();
     }
 
     std::printf ("%s: %d checks, %d failure(s)\n",

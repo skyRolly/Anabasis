@@ -8,14 +8,14 @@ scaffolded but not yet populated — they land in the phase named
 
 ```
 Anabasis/
-├── CMakeLists.txt          [P1] Build: JUCE FetchContent (9.x, pinned by commit SHA), AnabasisDSP
+├── CMakeLists.txt          Build: JUCE FetchContent (9.x, pinned by commit SHA), AnabasisDSP
 │                           INTERFACE lib, AnabasisHardening flags, plugin target
 │                           (VST3 [+AU on macOS] [+Standalone]), two test console apps.
 ├── README.md               Project façade (scope, status, quick start, docs nav).
 ├── CHANGELOG.md            Version history (Keep a Changelog; evidence-cited). Empty until 0.1.0.
 ├── CLAUDE.md               AI/contributor entry point: mandatory policy pre-read + repo constraints.
 ├── src/                    Source (wrapper + GUI + DSP core) — P1 skeleton in place.
-├── tests/                  [P1] Headless self-tests (DSP + state compatibility) and fixtures.
+├── tests/                  Headless self-tests (DSP + state compatibility) and fixtures.
 ├── worklogs/               Session-local investigation records for future agents (NOT architecture
 │                           docs; finalized decisions graduate to ADRs — worklogs are the raw
 │                           evidence trail: measurements, rejected alternatives and why).
@@ -50,7 +50,7 @@ EQ, compressor, clipper/saturation (ADAA), limiter (lookahead + true peak), ceil
 dither, plus the measurement side: LUFS/BS.1770 meter, true-peak meter, loudness compensation,
 delta monitoring, feature extraction for the adaptive engine, and a lock-free scope ring.
 
-## `tests/` [P1]
+## `tests/`
 
 | Path | Responsibility |
 |---|---|

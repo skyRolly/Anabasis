@@ -10,7 +10,7 @@
 //
 //  CONTRACT (this is what the engine's tap offset and the coverage test pin):
 //  the value fed at step t must be the signal sample that plays W steps from
-//  now, where W = windowLengthSamples(). The returned gain applies to the
+//  now, where W is the window length passed in. The returned gain applies to the
 //  sample playing NOW. The sliding maximum therefore covers W+1 fed values —
 //  the playing sample and the W upcoming ones — so the envelope attacks
 //  exactly `lookahead` early, holds while the peak is still in the window
@@ -49,26 +49,26 @@ public:
         envelope = 1.0f;
     }
 
-    void setPerBlock (float ceilingLinearIn, float lookaheadMs, float releaseMs) noexcept
+    // Release is the only genuinely per-block input: it sets a time constant,
+    // not a level, so a block-boundary change cannot step the output.
+    void setRelease (float releaseMs) noexcept
     {
-        ceilingLinear = ceilingLinearIn;
-        windowSamples = (int) std::ceil (lookaheadMs * 0.001 * sr);
-        if (windowSamples < 1)
-            windowSamples = 1;
-        if (windowSamples > maxWindow)
-            windowSamples = maxWindow;      // sized for the 10 ms allowance in prepare()
-        // One-pole release toward gain 1. Time constant from the limRelease
-        // parameter (§4.2 row 28); P1 ignores Auto and the style switch.
         releaseAlpha = 1.0f - std::exp (-1.0f / (float) (releaseMs * 0.001 * sr));
     }
 
-    // The engine's detector-tap offset: delaySamples - windowLengthSamples()
-    // is how far behind the write head the fed sample must be read so that
-    // fed[t] is exactly the sample playing W steps from now.
-    int windowLengthSamples() const noexcept { return windowSamples; }
-
-    float processSample (float stereoMaxMagnitude) noexcept
+    // Window length and ceiling arrive PER SAMPLE: both are level-affecting
+    // controls, so CODE_STYLE's "every parameter that reaches the DSP is
+    // smoothed" and DSP_POLICY invariant 8 (which names the lookahead as the
+    // switchable path most likely to be skipped at P1, and requires its move
+    // to be "a smooth, band-limited control signal") apply to them. The engine
+    // owns the smoothers and hands the instantaneous values down; taking them
+    // per block instead let a ceiling drag step the gain and let a lookahead
+    // move jump the detector tap by hundreds of samples in one boundary.
+    float processSample (float stereoMaxMagnitude, int windowSamples, float ceilingLinear) noexcept
     {
+        if (windowSamples < 1)          windowSamples = 1;
+        if (windowSamples > maxWindow)  windowSamples = maxWindow;
+
         // Expire entries older than the playing sample: keep indices
         // >= writeCount - windowSamples, so after the push below the window
         // holds W+1 entries — the playing sample through the newest fed one.
@@ -102,12 +102,10 @@ private:
     size_t  head = 0, tail = 0;
     int64_t writeCount = 0;
 
-    double sr            = 48000.0;
-    int    maxWindow     = 480;
-    int    windowSamples = 96;
-    float  ceilingLinear = 0.8912509f;
-    float  releaseAlpha  = 0.01f;
-    float  envelope      = 1.0f;
+    double sr           = 48000.0;
+    int    maxWindow    = 480;
+    float  releaseAlpha = 0.01f;
+    float  envelope     = 1.0f;
 };
 
 } // namespace anabasis

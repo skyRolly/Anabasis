@@ -263,6 +263,9 @@ constexpr const char* kCacheOrder[] = {
     pid::eqBell2Freq, pid::eqBell2Gain, pid::eqBell2Q, pid::eqPosition,
     pid::ceiling, pid::dither, pid::ditherShaping,
 };
+static_assert (std::size (kCacheOrder) == (size_t) kCachedParamCount,
+               "kCacheOrder and CachedParams::raw must stay the same length — the "
+               "cache order and toEngine's assignment sequence are positionally coupled");
 } // namespace
 
 void CachedParams::resolve (juce::AudioProcessorValueTreeState& apvts)

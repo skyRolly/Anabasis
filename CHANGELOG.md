@@ -25,7 +25,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   clamp, constant reported latency (10 ms lookahead allowance — browsing presets never moves
   host PDC, ADR-0004), Simple-mode macro knobs mapped by the §5.5 draft curves, schema-v1
   session state with A/B slots, and a placeholder editor. No EQ/compressor/clipper processing,
-  no oversampling, no metering yet — those are P2–P5. Evidence: the P1 skeleton commit.
+  no oversampling, no metering yet — those are P2–P5.
+  Evidence Source: commits `91ece13` (skeleton), `e0c24d5` (limiter alignment + state
+  restore fixes) and the smoothing/contract commit that follows them on
+  `claude/anabasis-init-migration-mvbbq9`. [Verified]
 
 The first entry will be `[0.1.0]`, cut at the end of P6.
 

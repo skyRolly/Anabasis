@@ -86,6 +86,15 @@ bool isPresetExcludedParam (const juce::String& paramID);
 // Cached raw-value pointers: resolved once after APVTS construction, then read
 // ONCE PER BLOCK into the POD snapshot on the audio thread (ADR-0001/0011 —
 // never piecemeal mid-block).
+//
+// 44, not 49: the five macro/view-only parameters (advancedMode, loudness,
+// character, tone, freeze) never reach the engine. The cache order and
+// toEngine's assignment sequence are coupled POSITIONALLY — inserting one
+// without the other silently shifts every later field — so a static_assert
+// pins the count and `testCachedParamsMapping` pins the field-by-field
+// mapping end to end.
+inline constexpr int kCachedParamCount = 44;
+
 struct CachedParams
 {
     void resolve (juce::AudioProcessorValueTreeState& apvts);
@@ -95,5 +104,5 @@ struct CachedParams
     // caller's to add — they are not APVTS parameters (§4.3).
     void toEngine (anabasis::EngineParameters& out) const noexcept;
 
-    std::atomic<float>* raw[49] = {};
+    std::atomic<float>* raw[kCachedParamCount] = {};
 };
