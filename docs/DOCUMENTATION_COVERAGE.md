@@ -9,6 +9,38 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Seventeenth post-sign-off pass — one fix: indentation was counted in characters, not columns
+
+**One actionable item in the whole review, and it is in the lint again.** `indented_code_mask`
+measured indentation with `len(line) - len(line.lstrip())`, which counts *characters*. CommonMark
+advances a tab to the next four-column tab stop, so a single tab is four columns — but one
+character. A tab-indented example therefore failed the `>= 4` test, was never masked, and had its
+contents inspected as document structure: a table, link or quote shown that way produced findings on
+prose GitHub renders as code, and the `docs` job would have exited 1 on a correct document.
+
+Fixed with an `indent_columns()` helper used at all three sites that measured indentation (the
+qualifying test, the list-context predecessor test, and the run-extension loop). Pinned four new
+cases — tab table, tab link, `"  \t"` reaching column four, and a tab-nested table under a list
+marker that must **still** be checked — plus the existing space-indented cases as regressions. The
+corpus uses no tab indentation, so this was latent; the reason to fix it anyway is that the failure
+mode is a red CI run pointing at correct prose, which is the one outcome that makes a lint get
+switched off.
+
+**Two limits found while fixing it, both stated rather than papered over.** An indented code block on
+a file's *first* line is not masked (the mask requires a preceding blank line, which CommonMark does
+not) — no file opens that way. And `FENCE` still measures its own three-column allowance in
+characters, so a tab-indented ` ``` ` reads as a fence opener where CommonMark would call it indented
+code. Both readings mask the block, so no finding differs — except that an *unpaired* tab-indented
+fence line would be reported as an unclosed fence. Left deliberately: tightening `FENCE` would trade
+that narrow case for the risk of a spurious unclosed-fence report, which is the louder failure, and
+the last three passes have shown that widening a matcher to close a hypothetical gap is how this
+script acquires real ones.
+
+**Declined, unchanged** — both for the fifth-plus time, and neither is presented as a defect by the
+reviewer: the ring-read / OpenGL tension (ADR-0011 records it and defers to `THREAD_MODEL.md` at P1)
+and the `docs` job's same-repo-PR skip (documented in the job's comment block; whether branch
+protection should require it is an owner decision, not a repository edit).
+
 ### Sixteenth post-sign-off pass — two latent lint false positives, one uniform-failure gap, one stale snapshot
 
 **Nothing in the design set moved this pass.** Three of the four fixes are in the lint; the fourth

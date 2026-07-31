@@ -41,7 +41,10 @@ scoped to what it can actually prove:
     or more columns, preceded by a blank line, outside any list container) and
     inline code spans are all excluded from checks 1-3. A document that shows
     table syntax, a link, or quote syntax as an *example* is not making a claim
-    about its own structure, in whichever form it shows it.
+    about its own structure, in whichever form it shows it. Indentation is
+    measured in **columns**, so one tab counts as four and `"  \\t"` also
+    reaches four -- counting characters instead let a tab-indented example
+    through as if it were structure.
   * Lazy continuation is only reported where CommonMark applies it: to *paragraph
     continuation text*. A quote ending in a blank `>` has closed its paragraph,
     and a line starting a new block -- heading, fence, list, table row, thematic
@@ -94,6 +97,15 @@ KNOWN LIMITS, stated rather than implied (constraint C7):
     checking is only safe here because such a block would have to be indented
     four columns beyond its container's content column, which does not occur in
     this corpus.
+  * An indented code block at the very **first** line of a file is not masked
+    (the mask requires a preceding blank line). CommonMark does not need one
+    there; no file in this corpus opens that way.
+  * `FENCE` still measures its own three-column allowance in characters, so a
+    tab-indented ` ``` ` is read as a fence opener where CommonMark would call it
+    indented code. Both readings mask the block, so no finding differs -- except
+    that an *unpaired* tab-indented fence line would be reported as an unclosed
+    fence. Left as is deliberately: tightening it would trade this narrow case
+    for the risk of a spurious unclosed-fence report, which is the louder failure.
   * Link existence is checked against the filesystem, so on a case-insensitive
     filesystem (macOS) a case-mismatched path passes here and 404s on GitHub.
     Root-relative destinations (`/docs/x.md`) resolve against the **repository**
@@ -260,6 +272,26 @@ def blanked_lines(lines: list[str], fenced: list[bool]) -> list[str]:
 LIST_MARKER = re.compile(r"^\s*([-*+]|\d{1,9}[.)])(\s|$)")
 
 
+def indent_columns(line: str) -> int:
+    """Leading indentation in Markdown **columns**, not characters.
+
+    CommonMark advances a tab to the next four-column tab stop, so one tab is
+    four columns and `"  \\t"` is also four. Counting characters instead made a
+    tab-indented code example fail the `>= 4` test, so it was never masked and
+    its contents were inspected as document structure -- GitHub renders it as
+    code, so every finding on it was invented.
+    """
+    col = 0
+    for char in line:
+        if char == " ":
+            col += 1
+        elif char == "\t":
+            col += 4 - (col % 4)
+        else:
+            break
+    return col
+
+
 def indented_code_mask(lines: list[str], fenced: list[bool]) -> list[bool]:
     """True for lines inside a CommonMark *indented* code block (4+ spaces).
 
@@ -281,7 +313,7 @@ def indented_code_mask(lines: list[str], fenced: list[bool]) -> list[bool]:
     i, n = 0, len(lines)
     while i < n:
         line = lines[i]
-        if fenced[i] or not line.strip() or len(line) - len(line.lstrip()) < 4:
+        if fenced[i] or not line.strip() or indent_columns(line) < 4:
             i += 1
             continue
         if i == 0 or lines[i - 1].strip():
@@ -292,12 +324,12 @@ def indented_code_mask(lines: list[str], fenced: list[bool]) -> list[bool]:
             k -= 1
         prev = lines[k] if k >= 0 else ""
         in_list_context = bool(prev.strip()) and (
-            LIST_MARKER.match(prev) or len(prev) - len(prev.lstrip()) > 0
+            LIST_MARKER.match(prev) or indent_columns(prev) > 0
         )
         if in_list_context:
             i += 1
             continue
-        while i < n and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) >= 4):
+        while i < n and (not lines[i].strip() or indent_columns(lines[i]) >= 4):
             if lines[i].strip():
                 mask[i] = True
             i += 1
@@ -508,6 +540,9 @@ def self_test() -> int:
         ("quote in an indented code block", 0, ["Example:", "", "    > quote", "    absorbed"]),
         ("tilde fence indented four columns", 0,
          ["Example:", "", "    ~~~", "    | a | b |", "    ~~~"]),
+        ("tab-indented table example", 0, ["Example:", "", "\t| a | b |", "\t| c | d |"]),
+        ("tab-indented link example", 0, ["Example:", "", "\t[a](nope.md)"]),
+        ("two spaces plus a tab reaches column four", 0, ["Example:", "", "  \t| a | b |"]),
         ("delimiter row without trailing pipe is valid GFM", 0,
          ["| A | B |", "|---|---", "| 1 | 2 |"]),
         ("delimiter row with alignment colons, no trailing pipe", 0,
@@ -531,6 +566,8 @@ def self_test() -> int:
          ["1. item", "", "      | a | b |", "      | c | d |"]),
         ("indent with no blank line before it is not code", 1,
          ["Example:", "    | a | b |", "    | c | d |"]),
+        ("tab-nested table in a list item stays checked", 1,
+         ["- item", "", "\t\t| a | b |", "\t\t| c | d |"]),
         ("whitespace-only row is not a delimiter", 1,
          ["| a | b |", "|   |", "| 1 | 2 |"]),
         ("unclosed fence is a finding", 1, ["intro", "```", "rest of the file"]),
