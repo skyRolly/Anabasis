@@ -283,7 +283,7 @@ realtime→offline **transition** via `setNonRealtime()` — **and on `prepare()
 See decision item 5. The transition is a *trigger*, not an *input*, and `prepare()` is neither: it
 is the host re-establishing the whole model. This is `DSP_POLICY.md` invariant 2's counting
 verbatim — "three inputs … plus the realtime→offline transition itself … recomputes on all four" —
-and `DESIGN.md` §3.3's),
+and `DESIGN.md` §3.3 counts them the same way),
 `src/InternalState.h` (`int_oversample`,
 `int_osPhase`, `int_offlineQuality` + `onChanged`), `src/dsp/EngineParameters.h` (POD snapshot
 carrying `lookahead`), `src/PluginParameters.{h,cpp}` (`pid::lookahead`, row 27, non-automatable),

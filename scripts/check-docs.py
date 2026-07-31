@@ -64,6 +64,13 @@ KNOWN LIMITS, stated rather than implied (constraint C7):
     checks both ignore them -- but a fenced *example* inside a prescribed policy
     block whose inner lines are not quoted would be examined as if it were
     structure. No such block exists today.
+  * **Tables written without a leading pipe are not checked at all.** GFM accepts
+    `A | B` / `---|---`, but `TABLE_ROW` requires the pipe to be the first
+    non-whitespace character, so such a table -- including a mid-table intrusion
+    in one -- is invisible to check 1. Matching the pipeless form would mean
+    treating any prose line containing a `|` as a candidate table row, which is
+    the false-positive direction this script refuses. No table in this corpus is
+    written that way; the repository's convention is leading pipes throughout.
   * **Blockquoted tables are not checked at all.** `TABLE_ROW` requires the pipe
     to be the first non-whitespace character, so the table rows the ADRs carry
     inside prescribed policy blocks are invisible to check 1. That is deliberate:

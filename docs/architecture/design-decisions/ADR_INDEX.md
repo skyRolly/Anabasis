@@ -35,10 +35,22 @@ and builds here" becomes `Verified` at the first green P1 build and not before
 (`DOCUMENTATION_COVERAGE.md`: never upgrade a confidence level without the evidence that justifies
 it).
 
-**Three of them amended a Policy** (`ADR_POLICY.md` rule 5 — a policy change is enacted by an ADR):
-ADR-0002 and ADR-0004 each carried a **Hard-Stop** amendment to `DSP_POLICY.md` invariant 1 and
-invariant 2 respectively, ratified by the same sign-off; ADR-0003 closed the open point in
-invariants 2 and 5.
+**Five of them amended a Policy** (`ADR_POLICY.md` rule 5 — a policy change is enacted by an ADR).
+Three carry the amendment inside a decision item, two in a dedicated
+*Policy amendments enacted by this ADR* section; both forms are equally binding, and this list is
+the registry of record for "which rules were rewritten, and by what authority":
+
+| ADR | Policy amended | What changed |
+|---|---|---|
+| **0002** | `DSP_POLICY.md` invariant 1 | Chain order prints the ceiling clamp as always-last-before-dither, in both EQ positions. **Hard Stop**, ratified at sign-off. |
+| **0003** | `DSP_POLICY.md` invariants 2 and 5 | Closes the open point: true-peak detection is a measurement tap, so "oversampling off ⇒ no oversampling latency" holds unconditionally. |
+| **0004** | `DSP_POLICY.md` invariants 2 and 8 | Reported latency is the constant lookahead allowance + OS; the latch sentence names factor **and** phase mode; invariant 8's click-free enumeration gains the phase mode, the lookahead and the colour model. **Hard Stop**, ratified at sign-off. |
+| **0005** | `MODE_AND_ADAPTATION_POLICY.md` invariants 1, 4, 5 and 6; `PARAMETER_COMPATIBILITY_POLICY.md` rule 7 | Invariant 1 gains a named guard with its binary; invariant 4's lookahead bar is re-grounded off the lapsed latency derivation; invariants 5 and 6 are rewritten from "open decision" wording to the settled coexistence strategy and macro non-automatability; rule 7's macro-curve freeze is re-grounded on **recall**, not automation. (Only 1 and 4 are carried as prescribed verbatim blocks — 5 and 6 reproduce this ADR's own decision text.) |
+| **0011** | `THREADING_POLICY.md` | The adaptive-engine placement clause stops deferring to a future ADR; a seventh permitted-path row is added for single-scalar sentinel commands; the PDC rule is restated as *off the audio thread* rather than the unsatisfiable *on the message thread*. |
+
+An earlier revision of this paragraph said "three", counting only the `DSP_POLICY.md` amendments and
+missing ADR-0005's and ADR-0011's entirely — which would let a reader auditing the sign-off conclude
+that two rewritten rule documents had been changed without authorisation.
 
 ## Expected first batch (from P0 `DESIGN.md`) — delivered 2026-07-31
 

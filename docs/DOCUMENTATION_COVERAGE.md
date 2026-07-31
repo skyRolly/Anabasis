@@ -9,6 +9,46 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Thirteenth post-sign-off pass — two stale records, one truncated sentence
+
+**The registry of binding decisions undercounted its own amendments.** `ADR_INDEX.md` said "Three of
+them amended a Policy" and named only the `DSP_POLICY.md` edits (ADR-0002, ADR-0003, ADR-0004). Two
+more do: **ADR-0005** amends `MODE_AND_ADAPTATION_POLICY.md` invariants 1, 4, 5 and 6 plus
+`PARAMETER_COMPATIBILITY_POLICY.md` rule 7, and **ADR-0011** amends `THREADING_POLICY.md` in three
+places. Both carry explicit *Policy amendments enacted by this ADR* sections, and every one of those
+edits is present in the tree.
+
+The consequence is specific and bad: `ADR_POLICY.md` rule 5 makes an ADR the *only* instrument that
+changes a policy, so someone auditing the sign-off against this index would find two rewritten rule
+documents with no listed authority — and would be entitled to conclude they were changed without
+one. The count was written when only three ADRs amended policies and was never revisited as
+ADR-0005 and ADR-0011 grew their sections.
+
+Replaced with a **table of the five**, naming for each the policy, the specific invariants or rules,
+and what changed — because the failure here was that a bare count carried no way to check itself.
+The distinction the index now records: three ADRs amend inside a decision item, two in a dedicated
+section, and both forms are equally binding.
+
+**A sentence in ADR-0004's Related-code paragraph was truncated mid-clause** — "…and `DESIGN.md`
+§3.3's)," — an editing artefact left by the pass that relabelled the PDC trigger count. The
+substantive content (three inputs, plus the transition, plus `prepare()` as a fifth call site) was
+complete and consistent with `DSP_POLICY.md` invariant 2 and `DESIGN.md` §3.3, so nothing was
+miswired; only the sentence was unfinished. Completed.
+
+**One more limit added to the lint's KNOWN LIMITS**: GFM accepts tables written without a leading
+pipe (`A | B` / `---|---`), and `TABLE_ROW` requires the pipe to be the first non-whitespace
+character, so such a table is invisible to check 1. Matching the pipeless form would mean treating
+any prose line containing a `|` as a candidate row — the false-positive direction this script
+refuses — so the limit stands and is now stated. The repository writes leading pipes throughout.
+
+**Declined, unchanged:** the ring-read / OpenGL tension. **Noted, no change:** the `docs` job's
+same-repo-PR skip, already documented in its comment block. **Confirmed by the reviewer, twice
+over:** the linter's own measurements reproduce (37 self-test cases, 50 files clean,
+`indented_code_mask()` exempting zero corpus lines, ~96.8 % of lines in scope), and the full numeric
+sweep of `DESIGN.md` §4.2/§5.5 — 49 rows, nine non-automatable, the fixed-point property, every
+curve maximum, the interpolator group delay, the ten `int_` fields, the 7/2/1 split, Tape Glue's
+40 % cap and the wireframe arithmetic — is consistent for the fifth pass running.
+
 ### Twelfth post-sign-off pass — the widening from last pass had a cost I had not measured
 
 **Last pass widened `check_tables` to match a table row at any indent, and that created a
