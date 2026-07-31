@@ -82,8 +82,10 @@ delta monitoring, feature extraction for the adaptive engine, and a lock-free sc
 | `ISSUE_TEMPLATE/` | `bug_report.yml` (test-report form) + `config.yml` (doc links). |
 
 All three build/analysis workflows are guarded by a `preflight` job that skips them while
-`CMakeLists.txt` does not exist, so the P0 scaffold does not report a red build. The guard becomes
-a no-op the moment P1 lands.
+`CMakeLists.txt` does not exist, so the P0 scaffold does not report a red build *for code that has
+not been written*. The guard becomes a no-op the moment P1 lands. The **`docs` job** in `build.yml`
+is deliberately outside it and runs on every push — pre-P1 the documentation is the deliverable, so
+it is the one thing that *can* legitimately go red before `src/` exists. It gates no build job.
 
 ## `docs/` — documentation library
 

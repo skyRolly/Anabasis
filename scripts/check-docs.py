@@ -49,7 +49,11 @@ scoped to what it can actually prove:
     encodes those cases, including CommonMark's rule that an ordered list
     interrupts a paragraph only when it starts at 1.
   * Link destinations are parsed, not string-sliced: `[t](path "Title")`,
-    `[t](<path with spaces>)` and percent-encoded paths are all valid.
+    `[t](<path with spaces>)`, percent-encoded paths, and destinations or titles
+    containing parentheses (`[t](a(1).md)`) are all valid and none is truncated.
+  * A file that is not valid UTF-8 is reported as a finding in the usual
+    `path:line:` form rather than raised as a traceback, so the job's output
+    contract holds for every failure it can produce.
 
 KNOWN LIMITS, stated rather than implied (constraint C7):
   * Indentation is stripped before block matching, and a table row is matched at
@@ -125,7 +129,7 @@ from urllib.parse import unquote
 # tolerated direction: cells with internal spaces (`|- - -|`) are accepted as
 # delimiters here and rejected there -- a false negative, never a false positive.
 SEPARATOR = re.compile(r"^\|[\s:|-]*-[\s:|-]*$")
-INLINE_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
+LINK_OPEN = re.compile(r"\[[^\]]*\]\(")
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 TABLE_ROW = re.compile(r"^\s*\|")
 SKIP_DIRS = {".git", "build", "node_modules", "JUCE"}
@@ -312,6 +316,44 @@ def markdown_files(roots: list[Path]) -> list[Path]:
     return out
 
 
+def inline_link_targets(line: str) -> list[str]:
+    """Raw destination text of every inline link on one line.
+
+    Scanned rather than matched by regex, because a destination or title may
+    contain parentheses: `[t](docs/a(1).md)` and `[t](p.md "A (note)")` are both
+    valid, and a `[^)]*` pattern truncates them into paths that do not exist --
+    a false broken-link report on correct markup. Depth counting handles nested
+    parens, quotes suppress counting inside a title, and an angle-bracketed
+    destination is skipped whole. An unterminated `](` yields nothing, which is
+    also how CommonMark treats it: not a link.
+    """
+    targets: list[str] = []
+    for match in LINK_OPEN.finditer(line):
+        start = j = match.end()
+        if j < len(line) and line[j] == "<":            # <dest> may hold anything
+            close = line.find(">", j)
+            if close == -1:
+                continue
+            j = close + 1
+        depth, quote = 1, ""
+        while j < len(line):
+            char = line[j]
+            if quote:
+                if char == quote:
+                    quote = ""
+            elif char in "\"'":
+                quote = char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    targets.append(line[start:j])
+                    break
+            j += 1
+    return targets
+
+
 def link_destination(raw: str) -> str | None:
     """The path part of a link destination, or None if there is nothing to check.
 
@@ -363,8 +405,8 @@ def check_links(path: Path, lines: list[str], skip: list[bool], root: Path) -> l
     for i, line in enumerate(lines):
         if skip[i]:
             continue
-        for match in INLINE_LINK.finditer(line):
-            dest = link_destination(match.group(1))
+        for raw in inline_link_targets(line):
+            dest = link_destination(raw)
             if dest is None:
                 continue
             target = unquote(dest.split("#", 1)[0].strip())
@@ -416,7 +458,18 @@ def analyse(path: Path, lines: list[str], root: Path) -> list[str]:
 
 
 def check_file(path: Path, root: Path) -> list[str]:
-    return analyse(path, path.read_text(encoding="utf-8").split("\n"), root)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # Report as a finding, not a traceback: the CI job's whole contract is
+        # `path:line: message`, and a stray legacy-encoded byte in a corpus this
+        # full of typographic characters (— · ⊕ ≥) is a plausible accident.
+        line = path.read_bytes()[: exc.start].count(b"\n") + 1
+        return [
+            f"{path}:{line}: not valid UTF-8 (byte {exc.object[exc.start]:#04x} "
+            f"at offset {exc.start}: {exc.reason}) -- the file cannot be checked"
+        ]
+    return analyse(path, text.split("\n"), root)
 
 
 def self_test() -> int:
@@ -447,6 +500,9 @@ def self_test() -> int:
          ["prose `oversample != Off && (drive > 0.01", "|| isMod)` continues here"]),
         ("titled link resolves", 0, ['[a](scripts/check-docs.py "Title")']),
         ("percent-encoded link resolves", 0, ["[a](scripts/check%2Ddocs.py)"]),
+        ("title containing parentheses", 0, ['[a](scripts/check-docs.py "A (note)")']),
+        ("angle-bracketed destination", 0, ["[a](<scripts/check-docs.py>)"]),
+        ("unterminated link is not a link", 0, ["[a](scripts/nope.py"]),
         ("table in an indented code block", 0, ["Example:", "", "    | A | B |", "    | 1 | 2 |"]),
         ("link in an indented code block", 0, ["Example:", "", "    [a](nope.md)"]),
         ("quote in an indented code block", 0, ["Example:", "", "    > quote", "    absorbed"]),

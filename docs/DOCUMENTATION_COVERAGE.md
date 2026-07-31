@@ -9,6 +9,48 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Sixteenth post-sign-off pass — two latent lint false positives, one uniform-failure gap, one stale snapshot
+
+**Nothing in the design set moved this pass.** Three of the four fixes are in the lint; the fourth
+is a status row that the lint's own CI job made stale. The reviewer independently re-verified the
+amendment bookkeeping (five policy-amending ADRs against the four policies they touch), the
+49/9/40 parameter split, the fixed-point rule at `(0,0,0)`, and OQ-013's propagation — all clean.
+
+- **The link matcher truncated at the first `)`.** `\[[^\]]*\]\(([^)]*)\)` cannot see a destination
+  or title containing a parenthesis, so `[t](docs/a(1).md)` became the non-existent path
+  `docs/a(1)` and would have been reported broken. Replaced with a scanner that counts paren depth,
+  suppresses counting inside a quoted title, and skips an angle-bracketed destination whole; an
+  unterminated `](` yields nothing, which is what CommonMark does too. Latent — no such link exists
+  today — but this is the false-positive class the docstring names as the reason lints get ignored,
+  and the parenthesised-title form is ordinary markdown.
+- **A non-UTF-8 file crashed the job with a traceback** instead of producing a finding. The `docs`
+  job's whole contract is `path:line: message`; a stray legacy-encoded byte in a corpus this full of
+  typographic characters (— · ⊕ ≥) is a plausible accident, and a `UnicodeDecodeError` stack trace
+  is not something a contributor can act on. Now a finding, with the offending byte, its offset and
+  the line it falls on.
+- **Pointing the lint at a non-Markdown file reported "0 file(s) clean"** and exited 0 — fixed in the
+  previous commit; noted here because it is the same *false pass* family as the two above: the tool
+  saying "fine" about something it did not examine.
+
+**The `docs` job made two status records stale, and this is the second-order effect worth naming.**
+`HANDOVER.md`'s Build Status row and `REPOSITORY_MAP.md`'s workflow note both said the P0 scaffold
+never reports a red build, because all build/analysis workflows self-skip until `CMakeLists.txt`
+appears. That stopped being true the moment the `docs` job was added *outside* the `preflight` gate —
+which was the correct design (pre-P1 the documentation is the deliverable) but is exactly what those
+two sentences deny. Both now say a pre-P1 run is not all-skip, and that the docs job is the one thing
+that can legitimately go red before `src/` exists. Adding a CI job is a documentation-affecting
+change under `DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger map; the map routed it to `CI_CD.md` and
+`TESTING.md`, both of which were updated, but the *status snapshots* are not on that map and were
+missed.
+
+**Checked and found correct, not changed:** `indented_code_mask`'s run-consumption across blank
+lines. A run that qualifies as top-level indented code continues through blank lines to any further
+4-column-indented content — which is precisely CommonMark's rule, so a "table" indented that far in
+the same block is not a table. Verified that a list marker breaks the run and the table nested under
+it *is* checked. The asymmetry the reviewer flagged is the correct behaviour rather than a limit to
+document. **Declined, unchanged:** the ring-read / OpenGL tension; the `docs` job's same-repo-PR
+skip; blockquoted tables outside check 1.
+
 ### Fifteenth post-sign-off pass — a fence rule the lint had backwards, and one file in two places
 
 **`check-docs.py` treated an info-string fence line as a closer.** CommonMark §4.5 is explicit: a
