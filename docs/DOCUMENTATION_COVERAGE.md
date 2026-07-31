@@ -9,6 +9,46 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Fifteenth post-sign-off pass — a fence rule the lint had backwards, and one file in two places
+
+**`check-docs.py` treated an info-string fence line as a closer.** CommonMark §4.5 is explicit: a
+closing fence may carry nothing but trailing whitespace, so a line with an info string is an
+*opening* fence and can never close anything. The mask compared only the fence character and run
+length, so in a `` ```markdown `` example containing `` ```cpp ``, the inner line closed the outer
+block — the example's contents were then scanned as real structure (a false "table fragment") and
+the real closer *re-opened* a block that read as unclosed. Two invented findings on valid markup,
+which is the failure the module docstring calls the worst outcome. Fixed by requiring the closer's
+remainder to be blank, and pinned: the reviewer's exact shape, plus the case that must still fire
+(a genuinely unterminated fence) so the fix does not buy silence with a blind spot.
+
+No corpus document nests a fenced example today — but `TESTING.md` now tells contributors to run
+this lint, and a documentation page quoting fenced markdown is the obvious next thing someone
+writes.
+
+**A fixture of mine was wrong before the code was.** My first self-test case for the fix had five
+lines, the fifth a bare fence that legitimately opens an unterminated block — so the test failed
+and the code was right. Caught by running it, corrected to four lines. Worth recording because the
+reflex under "don't add bugs" is to trust the fixture and change the code.
+
+**`PluginEditor` had two paths across three Accepted ADRs.** ADR-0008 owns `ANABASIS_PLUGIN_SOURCES`
+— the list both the plugin target and `AnabasisStateTests` read verbatim — and places the editor at
+`src/gui/PluginEditor.{h,cpp}`, consistent with `DESIGN.md`'s `gui` module rows and with every other
+`src/gui/` file. ADR-0009, ADR-0010 and ADR-0005 wrote `src/PluginEditor.{h,cpp}`; ADR-0009 did so
+*on the same line* as a correct `src/gui/FrameClock.h`, which identifies the cause: **Anamorph really
+does keep its editor at `src/PluginEditor.h`**, and the path came across with the idiom. All three
+corrected to ADR-0008's path. The five `Anamorph:src/PluginEditor.h` evidence citations are
+deliberately **not** touched — they describe the sibling's real layout and are correct as written.
+
+**One false pass in the lint's argument handling:** an existing file with a non-`.md` suffix took
+neither the `is_file()` branch nor `rglob("*.md")`, so `check-docs.py notes.txt` printed
+"0 file(s) clean" and exited 0. Unreachable from CI, which passes no arguments, but reachable by the
+contributor `TESTING.md` now instructs. Now an error.
+
+**Already fixed at HEAD, re-reported against an older SHA:** `TESTING.md`'s documentation-lint
+section, which discharges the `DOCUMENTATION_LIFECYCLE_POLICY.md` trigger-map row for CI-workflow
+changes. **Declined, unchanged:** the ring-read / OpenGL tension; the `docs` job's same-repo-PR skip;
+blockquoted tables being outside check 1 (all three already recorded, the last in KNOWN LIMITS).
+
 ### Fourteenth post-sign-off pass — the undercount had siblings, and the bulk swaps were one name for three paths
 
 **The ADR_INDEX undercount fixed last pass existed in two more records, and in a third form.**

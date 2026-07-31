@@ -280,7 +280,7 @@ listener), `src/PluginParameters.{h,cpp}` (`pid::` macro IDs, `withAutomatable(f
 `toEngine()`), `src/PluginProcessor.{h,cpp}` (gesture-bracketed undo coalescing, A/B and undo slot
 unit), `src/PresetManager.{h,cpp}` (mask-carrying preset apply), `src/dsp/AdaptiveEngine.{h,cpp}`
 (bounded trims, Freeze, Learn), `src/dsp/EngineParameters.h` (POD snapshot), and
-`PluginEditor.{h,cpp}` (Simple/Advanced views, detach badges, adaptive delta overlay) — per
+`src/gui/PluginEditor.{h,cpp}` (Simple/Advanced views, detach badges, adaptive delta overlay) — per
 `docs/DESIGN.md` §1.3.
 
 Evidence [Unverified]:

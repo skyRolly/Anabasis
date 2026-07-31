@@ -247,7 +247,7 @@ evidence-backed answer to "what is actually common", which cannot be known at P0
 ## Related code
 
 None yet — P1 onward. Planned: `src/gui/LookAndFeel.{h,cpp}` (palette, `glass::`, componentID-keyed
-variants), `src/gui/FrameClock.h`, `src/PluginEditor.{h,cpp}` (top bar, `Backdrop`, `DimLayer`,
+variants), `src/gui/FrameClock.h`, `src/gui/PluginEditor.{h,cpp}` (top bar, `Backdrop`, `DimLayer`,
 `setScaleFactor`), the visualizer views (`GrHistoryView`, `LoudnessMeterView`, `SpectrumView`,
 `CurveView`), `src/InternalState.h`, `src/AbSlotIndex.h` (the `clampAbSlotIndex` idiom),
 `src/PluginProcessor.{h,cpp}` (StateSet A/B + per-slot undo, raw-exact serialization, duck-bottom

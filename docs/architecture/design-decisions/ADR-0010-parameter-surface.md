@@ -221,7 +221,7 @@ None yet — P1 onward. Planned: `src/PluginParameters.{h,cpp}` (`pid::` IDs, la
 formatters/parsers, exclusion predicate, `toEngine()` snapshot builder), `src/InternalState.h`
 (`ANABASIS_INTERNAL`, `int_ceilingLock`), `src/PluginProcessor.{h,cpp}` (APVTS ownership, A/B, undo,
 state), `src/PresetManager.{h,cpp}` (lock-aware apply, preset exclusion), `src/MacroEngine.{h,cpp}`
-(non-automatable macro consumption), `src/AbSlotIndex.h`, `src/PluginEditor.{h,cpp}` (`advancedMode`
+(non-automatable macro consumption), `src/AbSlotIndex.h`, `src/gui/PluginEditor.{h,cpp}` (`advancedMode`
 view switch), `src/dsp/EngineParameters.h` (POD snapshot), `src/dsp/AdaptiveEngine.{h,cpp}`
 (`freeze`, frozen trims).
 

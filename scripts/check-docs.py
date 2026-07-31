@@ -126,7 +126,7 @@ from urllib.parse import unquote
 # delimiters here and rejected there -- a false negative, never a false positive.
 SEPARATOR = re.compile(r"^\|[\s:|-]*-[\s:|-]*$")
 INLINE_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
-FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 TABLE_ROW = re.compile(r"^\s*\|")
 SKIP_DIRS = {".git", "build", "node_modules", "JUCE"}
 
@@ -192,8 +192,14 @@ def blank_code_spans(line: str) -> str:
 def fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
     """(mask, unclosed_opener_line) — True for lines inside or delimiting a fence.
 
-    A closing fence must use the opener's character and be at least as long
-    (CommonMark §4.5), so a shorter run inside a longer block does not end it.
+    A closing fence must use the opener's character, be at least as long, and
+    carry **nothing but trailing whitespace** (CommonMark §4.5) -- a line with an
+    info string is an *opening* fence, never a closer. Both conditions matter:
+    without the length rule a shorter run inside a longer block ends it early;
+    without the info-string rule a nested ```cpp inside a ```markdown example
+    closes the outer block, so the example's contents get scanned as real
+    structure and the real closer re-opens a block that then reads as unclosed.
+
     The second element is the 1-based line of an opener that was never closed,
     or None. Callers must report it: silently masking to EOF is how this script
     once passed a file it had not read.
@@ -211,8 +217,8 @@ def fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
             continue
         mask[i] = True                       # inside the fence, including its closer
         if match:
-            run = match.group(1)
-            if run[0] == char and len(run) >= width:
+            run, rest = match.group(1), match.group(2)
+            if run[0] == char and len(run) >= width and not rest.strip():
                 char, width, opened_at = None, 0, None
     return mask, opened_at
 
@@ -450,6 +456,10 @@ def self_test() -> int:
          ["| A | B |", "|---|---", "| 1 | 2 |"]),
         ("delimiter row with alignment colons, no trailing pipe", 0,
          ["| A | B |", "|:---|---:", "| 1 | 2 |"]),
+        ("info-string fence cannot close an enclosing fence", 0,
+         ["```markdown", "```cpp", "| A | B |", "```"]),
+        ("nested markdown example stays masked to its real closer", 0,
+         ["```markdown", "| A | B |", "> quote", "absorbed?", "```"]),
         # --- must fire --------------------------------------------------------
         ("block inserted mid-table", 1,
          ["| A | B |", "|---|---|", "| 1 | 2 |", "> intruder", "| 3 | 4 |"]),
@@ -537,6 +547,13 @@ def main(argv: list[str]) -> int:
     for root in roots:
         if not root.exists():
             print(f"check-docs: no such path: {root}", file=sys.stderr)
+            return 1
+        # An existing file with the wrong suffix would otherwise contribute no
+        # files and be reported as "0 file(s) clean" -- a false pass for anyone
+        # running this by hand on a typo'd path (`TESTING.md` tells contributors
+        # to). Only reachable outside CI, which passes no arguments.
+        if root.is_file() and root.suffix != ".md":
+            print(f"check-docs: not a Markdown file: {root}", file=sys.stderr)
             return 1
 
     files = markdown_files(roots)
