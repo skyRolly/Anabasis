@@ -247,9 +247,10 @@ engine output bit-identical 8.0.14 → 9.0.0, including reported latencies), so 
 framework revision with evidence behind it rather than an unexercised newer one.
 
 **Recorded in.** `README.md`, `docs/policies/DEPENDENCY_POLICY.md`, `docs/procedures/BUILD.md`,
-`docs/HANDOVER.md`. **Recorded by ADR-0008** (Accepted 2026-07-31) — the P0 build-decision ADR this entry's standing obligation named. It must additionally be written into `CMakeLists.txt`
-(`ANABASIS_JUCE_VERSION "9.0.0"` + `ANABASIS_JUCE_TAG "f8f8864…"`) when that file is created at
-P1, and recorded in the P0 build-decision ADR.
+`docs/HANDOVER.md`. **Recorded by ADR-0008** (Accepted 2026-07-31) — the P0 build-decision ADR this
+entry's standing obligation named, so that half of the obligation is **discharged**. What remains is
+that it must be written into `CMakeLists.txt` (`ANABASIS_JUCE_VERSION "9.0.0"` +
+`ANABASIS_JUCE_TAG "f8f8864…"`) when that file is created at P1.
 
 **Evidence [Verified]:** the version + SHA are read from the sibling repository's
 `CMakeLists.txt:36-38` and its ADR-0022. **Not verified from this repository** — Anabasis has no

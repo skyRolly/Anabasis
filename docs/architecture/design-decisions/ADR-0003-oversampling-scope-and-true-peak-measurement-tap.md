@@ -219,7 +219,13 @@ it at ≥ 4× when the user's factor is Off or 2×**, without double-resampling 
 9. **Guards.** The ≤ 0.1 dB true-peak accuracy test (invariants 3 and 11) runs **across the whole
    oversampling matrix** — Off / 2× / 4× / 8× / 16× × both phase modes — because item 6 makes the
    estimator's *input path* differ per setting, so a single-setting pass proves nothing about the
-   others; it covers the clamp's tap as well as the limiter's detector (ADR-0002). The latency-matrix
+   others; it covers the clamp's tap as well as the limiter's detector (ADR-0002). **One cell of that
+   matrix is degenerate and is expected to be:** at `int_oversample = Off` no oversampling filter is
+   instantiated in the audio path, so `int_osPhase` cannot reach the estimator's input and
+   `Off × linear` duplicates `Off × minimum`. It is left in because the matrix is cheap and a
+   uniformly-generated sweep is harder to get wrong than a hand-pruned one — but it is named here so
+   a P3 implementer neither hunts for a phase-dependent difference at Off nor concludes the mandated
+   matrix is wrong and prunes further than this one cell. The latency-matrix
    test plus `testReportedLatencyMatchesImpulse` assert `maxLookahead + osLatency(factor, phaseMode)`
    over the OS × lookahead matrix, with Off reporting the lookahead allowance and nothing else. The
    aliasing/image-suppression measurement is recorded in dB at 4× (invariant 6, brief §10). OS factor and

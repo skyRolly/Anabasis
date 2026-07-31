@@ -208,7 +208,14 @@ actually uses).
 If `ANABASIS_JUCE_PATH` is set, a local checkout is `add_subdirectory`'d instead and
 no fetch occurs — the escape hatch for offline or network-restricted CI.
 
-**Targets.** Four declared targets, plus the format targets JUCE generates:
+**Targets.** Five declared targets, plus the format targets JUCE generates. (Item 4 below declares
+**two** console apps, so the numbered list runs to 4 while the target count is 5. An earlier
+revision of this line said "Four declared targets" and then enumerated five — the miscount was
+inherited verbatim from `worklogs/2026-07-30-p0-anamorph-research.md:394`, which numbers items up to
+(5) under the same "Four explicitly declared targets" heading. It matters because
+`AnabasisStateTests` is the *only* target that compiles the wrapper sources: a reviewer checking the
+build against the stated count could mark it complete with the entire state / parameter-compatibility
+suite unbuildable.)
 
 1. **`AnabasisHardening`** — INTERFACE library carrying behaviour-neutral binary hygiene as usage
    requirements, linked **`PUBLIC`** so the flags reach every format target's **compile and link**
@@ -224,15 +231,32 @@ no fetch occurs — the escape hatch for offline or network-restricted CI.
    INTERFACE sources compiled into each consuming final target, linking `juce_dsp` and
    `juce_audio_basics` and nothing else.
 3. **The plugin target** — `juce_add_plugin(Anabasis …)`, which spawns the shared-code and
-   per-format targets. Links `PRIVATE`: `AnabasisDSP`, `juce::juce_audio_utils`, `juce::juce_dsp`.
-   Links `PUBLIC`: `AnabasisHardening`, `juce::juce_recommended_config_flags`,
-   `juce::juce_recommended_lto_flags`, `juce::juce_recommended_warning_flags`.
+   per-format targets. Links `PRIVATE`: `AnabasisDSP`, `juce::juce_audio_utils`, `juce::juce_dsp`,
+   **`juce::juce_opengl`**. Links `PUBLIC`: `AnabasisHardening`,
+   `juce::juce_recommended_config_flags`, `juce::juce_recommended_lto_flags`,
+   `juce::juce_recommended_warning_flags`.
 4. **`AnabasisTests`** (DSP acceptance; compiles the `AnabasisDSP` sources directly, no wrapper —
    this is what makes `DSP_POLICY.md` invariant 13's build-level test writable as stated) and
    **`AnabasisStateTests`** (state / parameter-compatibility; compiles `tests/state_tests.cpp` plus
    the shared wrapper/GUI source list to exercise the **real** `AnabasisAudioProcessor`). Both are
    `juce_add_console_app` targets behind a single option `ANABASIS_BUILD_TESTS` (default ON), and
-   neither links the LTO-flags target.
+   neither links the LTO-flags target. `AnabasisStateTests` links the same `PRIVATE` set as the
+   plugin target — **including `juce::juce_opengl`** — because it compiles the GUI sources.
+
+   > **Correction, same day (2026-07-31) — a completeness fix, not a change of decision.** An
+   > earlier revision of this section listed the plugin target's `PRIVATE` links as `AnabasisDSP` /
+   > `juce::juce_audio_utils` / `juce::juce_dsp` only, with no `juce::juce_opengl` on either target.
+   > `DESIGN.md` §6.1 mandates an `OpenGLContext` attached on macOS and Windows (never on
+   > Linux/X11), ADR-0009 carries that platform rule as copied-in scope and ADR-0011 §Consequences
+   > reasons about components painting on that context — and attaching one requires linking the
+   > module. This ADR claims ownership of the *CMake target graph*, and an ADR outranks `DESIGN.md`
+   > (`SOURCE_OF_TRUTH.md`), so a P1 author following the highest-authority record would have
+   > written a `CMakeLists.txt` that either fails to compile the GL path or silently ships without
+   > it on the two platforms that use it. The sibling product links `juce::juce_opengl` `PRIVATE` on
+   > **both** its plugin target and its state-test target (`Anamorph:CMakeLists.txt:206`,
+   > `Anamorph:CMakeLists.txt:271` [Verified]) — the second one because the state test compiles the
+   > GUI sources and therefore the editor's context member. The link is unconditional; only the
+   > **attach** is platform-gated at runtime, so no generator expression belongs on the link line.
 
 **One source list, two consumers (binding).** The wrapper and GUI sources are declared **once**, in
 a single CMake variable (`ANABASIS_PLUGIN_SOURCES`), used verbatim by both the plugin target and

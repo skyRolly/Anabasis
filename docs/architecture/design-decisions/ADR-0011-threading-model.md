@@ -185,7 +185,10 @@ Gate item and an AI-agent Hard Stop, and requires an ADR superseding this one.
 ## Consequences
 
 - `THREADING_POLICY.md`'s permitted-path table is satisfied with **no path outside it**: every
-  cross-thread edge above is one of its six rows. The policy's "Adaptive engine — where it runs"
+  cross-thread edge above is one of its seven rows — six as originally written, plus the
+  sentinel-valued command row this ADR adds (see *Policy amendments* below; an earlier revision of
+  this sentence claimed compliance against the six original rows while listing an edge none of them
+  described). The policy's "Adaptive engine — where it runs"
   clause, which explicitly defers the choice to "an ADR before implementation", is discharged
   here: feature extraction and trim slewing run on the audio thread within the real-time budget
   (§9's ≤0.5% metering-and-features allocation), not on a worker and not on the message thread.
@@ -254,6 +257,26 @@ discharge is carried as a prescribed block, matching the enacted text verbatim.
 
   The opening sentence ("The Simple-mode adaptive engine … is **not** a licence for a worker
   thread") is unchanged — this ADR strengthens it rather than replacing it.
+
+- **The permitted-path table gains a seventh row, for a payload-carrying command atomic** *(added
+  2026-07-31, same day)*. The Decision's "Commands, message → audio" paragraph routes the **frozen
+  trim vector** (ADR-0007) through sentinel-valued per-slot inject atomics, which *carry a value*.
+  The table's nearest row — "GUI → Audio (momentary / transient requests) | a single
+  `std::atomic<int>` per request" — describes a payload-free integer request where the arrival *is*
+  the message; the Anamorph precedent this copies is an `atomic<float>` carrying a gain
+  (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). Since the policy states "Any path not in
+  this table is a new cross-thread path → Architecture Review Gate", the Consequences claim of full
+  compliance was asserting conformance to a row that did not describe the edge. Rather than qualify
+  the claim, this ADR enacts the missing row — the mechanism is real, decided and about to be
+  implemented, so the table should say so before `THREAD_MODEL.md` is generated from this ADR at P1.
+  Appended after the momentary-request row:
+
+  > | GUI → Audio (sentinel-valued command **carrying a value**) | one `std::atomic<float>` per slot, an out-of-range **sentinel** meaning "nothing pending" | The `abMatchGain` idiom (ADR-0011): the writer stores the value, the audio thread `exchange`s the sentinel back in, so arrival and payload are one indivisible operation and no second flag can tear against it. One writer, one consumer, one value per slot — a *bounded* set of slots fixed at compile time, never a queue. Used for the frozen trim vector injected at the duck's silent bottom (ADR-0007). Anything unbounded, multi-word, or needing ordering against other state is **not** this row and is a new cross-thread path. |
+
+  The existing momentary-request row gains the clarifying tail "Payload-free: the *arrival* is the
+  whole message." so the two rows cannot be confused. The boundary in the new row's last sentence is
+  the load-bearing part: it keeps the row from becoming a licence for a general message queue, which
+  **is** a thread-model change and an Architecture Review Gate item.
 
 **Not amended, deliberately.** The forbidden-access rule "**No second producer** on a scope/GR ring,
 and no reads off the message thread" stays exactly as written. The Consequences section records the

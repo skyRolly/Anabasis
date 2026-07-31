@@ -136,7 +136,16 @@ promised for that unsupported usage (§5.2).
 | Tier | Members | Excluded from | Serialized |
 |---|---|---|---|
 | view | `bypass`, `loudnessComp`, `deltaMonitor`, `advancedMode` | A/B, undo **and** presets | with the session |
-| preset-excluded | view tier **+** `freeze` | presets | with the session; travels in A/B and undo |
+| preset-excluded | `freeze` | presets | with the session; travels in A/B and undo |
+
+The rows list **tier membership**, which is disjoint. The **predicate** the code computes for preset
+exclusion is the union `view ∪ {freeze}` — a preset skips both tiers — exactly as `DESIGN.md` §4.2
+and ADR-0004 phrase it ("*Preset-excluded* adds `{freeze}`"). An earlier revision of this table gave
+the second row's members as "view tier **+** `freeze`", merging the two, which made its "travels in
+A/B and undo" column false for the four view-tier members it swept in: those are excluded from A/B
+and undo by row 1. Only `freeze` travels. A reader building the shared predicate from the merged row
+alone could have let `advancedMode` into A/B and undo — the exact X11 editor-resize crash path the
+paragraph below spends its length excluding.
 
 `advancedMode` sits in the **view** tier — the departure from Anamorph — because the switch is
 sound-neutral here and letting it travel would make an A/B compare or an undo step resize the editor,

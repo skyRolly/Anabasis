@@ -9,6 +9,74 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Fifth post-sign-off pass — seven fixes, three confirmations
+
+**The first defect in this set would have failed the first real build**, which is a different class
+from anything the previous four passes found.
+
+- **ADR-0008's target graph omitted `juce::juce_opengl`.** `DESIGN.md` §6.1 mandates an
+  `OpenGLContext` attached on macOS and Windows (never Linux/X11), ADR-0009 carries that as
+  copied-in scope and ADR-0011 reasons about components painting on that context — but the ADR that
+  *owns the CMake target graph* listed the plugin's `PRIVATE` links as `AnabasisDSP` /
+  `juce_audio_utils` / `juce_dsp` only. An ADR outranks `DESIGN.md`, so a P1 author working from the
+  highest-authority record writes a `CMakeLists.txt` that either fails to compile the GL path or
+  silently ships without it on the two platforms that use it. Fixed on **both** targets that need
+  it: the sibling links it `PRIVATE` on its plugin target *and* its state-test target
+  (`Anamorph:CMakeLists.txt:206,271` [Verified]), the second because the state test compiles the GUI
+  sources and therefore the editor's context member — an omission there is a link error, not a
+  missing render. `BUILD.md` §"One source list, two consumers" now says so too.
+- **ADR-0008 said "Four declared targets" and enumerated five.** Item 4 declares two console apps.
+  The miscount was inherited verbatim from `worklogs/2026-07-30-p0-anamorph-research.md:394`, which
+  numbers to (5) under a "Four" heading — corrected there as well, since it is the evidence file
+  every build claim cites. `AnabasisStateTests` is the one target that compiles the wrapper sources,
+  so a reviewer checking against the stated count could have passed the build with the whole
+  state / parameter-compatibility suite unbuildable. Same class as ADR-0004's trigger list last pass.
+
+**Two policy records that outlived their reasons — the pattern this project keeps producing.**
+
+- **`PARAMETER_COMPATIBILITY_POLICY.md` rule 7 still justified the macro-curve freeze by
+  automation.** `MODE_AND_ADAPTATION_POLICY.md` invariant 6 was re-grounded on **recall** because
+  the macros are non-automatable (ADR-0005/ADR-0010) and a lane on a managed parameter writes it
+  directly without consulting the mapping — but rule 7 sits at the *same* authority level, so the
+  corrected record did not outrank the uncorrected one, and a maintainer could have concluded the
+  freeze does not apply and waved a post-release curve change through. The obligation was never in
+  doubt; only its reason was false. Rule 7 re-grounded, enacted by a prescribed block appended to
+  ADR-0005 (`ADR_POLICY.md` rule 5), and invariant 6's now-stale "independent of rule 7's automation
+  framing" aside updated to point at the corrected rule.
+- **ADR-0011 claimed conformance to a permitted-path row that did not describe its edge.** Its
+  Consequences said every cross-thread edge "is one of its six rows", but the Decision routes the
+  **frozen trim vector** (ADR-0007) through sentinel-valued per-slot inject atomics that *carry a
+  value*, while the nearest row is a payload-free `atomic<int>` where the arrival is the whole
+  message. The policy says "Any path not in this table is a new cross-thread path → Architecture
+  Review Gate", so the claim was self-refuting. Rather than qualify it, ADR-0011 now **enacts a
+  seventh row** for the `abMatchGain` idiom — value plus sentinel in one `exchange`, one writer, one
+  consumer, a compile-time-bounded slot set — with the boundary stated explicitly so the row cannot
+  be read as a licence for a general message queue (which *is* a thread-model change). Settled now
+  because `THREAD_MODEL.md` is generated from this ADR at P1.
+
+**Three smaller ones.**
+
+- **ADR-0010's exclusion-tier table defined `preset-excluded` as "view tier + `freeze`"**, which made
+  its "travels in A/B and undo" column false for the four view-tier members swept in — only `freeze`
+  travels. A reader building the shared predicate from that row alone could have let `advancedMode`
+  into A/B and undo, which is the X11 editor-resize crash path the next paragraph exists to prevent.
+  Rows now list disjoint membership with the `view ∪ {freeze}` predicate stated separately — the
+  phrasing `DESIGN.md` §4.2 and ADR-0004 already used ("*Preset-excluded* adds `{freeze}`"), so the
+  tier name is unchanged and nothing else in the corpus moves.
+- **The mandated true-peak matrix has one degenerate cell.** At OS Off no filter is instantiated, so
+  `int_osPhase` cannot reach the estimator and `Off × linear` duplicates `Off × minimum`. Kept — a
+  uniform sweep is harder to get wrong than a hand-pruned one — but named in ADR-0003 item 9 and in
+  `TESTING.md` so a P3 implementer neither hunts for a phase difference at Off nor prunes further.
+- **OQ-001 ended with the obligation the same sentence says is discharged** ("…and recorded in the
+  P0 build-decision ADR", after "**Recorded by ADR-0008**"). OQ-003's sibling edit dropped that
+  trailing clause correctly, so this was an inconsistency between two edits rather than a decision.
+
+**Confirmed, no change:** the §4.2 arithmetic and count sweep; the prescribed-block ↔ enacted-policy
+comparison (the emphasis/attribution differences are the artefact ADR-0003 now documents); and
+`HANDOVER.md`'s Blocking-P1 claim. **Still open by design:** the ring-read / OpenGL-context tension —
+the reviewer agrees it is acknowledged rather than hidden, and ADR-0011 defers it to `THREAD_MODEL.md`
+at P1 rather than amending the policy's single-reader phrasing without grounds.
+
 ### Fourth post-sign-off pass — eight fixes, three confirmations
 
 The theme this pass is **records that still describe a decision as open after it was taken**. Three

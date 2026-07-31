@@ -80,7 +80,10 @@ one exists because of a specific failure mode:
      frozen by `DSP_POLICY.md`. Stripping happens in CI packaging only; local builds stay
      debuggable.
 3. **One wrapper/GUI source list, two consumers** — the plugin target and `AnabasisStateTests`
-   both read the same CMake variable, so a new file can never be added to only one of them.
+   both read the same CMake variable, so a new file can never be added to only one of them. Both
+   also carry the **same `PRIVATE` link set**, `juce::juce_opengl` included: the editor attaches an
+   `OpenGLContext` on macOS/Windows (`DESIGN.md` §6.1), and the state test compiles the GUI sources,
+   so omitting the module there breaks the link rather than the render (ADR-0008).
 4. `juce::juce_recommended_config_flags` + `_lto_flags` + `_warning_flags`, warning-free.
 
 ## Formats produced

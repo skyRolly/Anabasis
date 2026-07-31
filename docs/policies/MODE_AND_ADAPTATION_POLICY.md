@@ -120,10 +120,11 @@ Two consequences that are part of the contract, not implementation detail:
   *does* break is **recall**: every saved session and preset stores a macro position, and the next
   macro gesture maps that stored position through the *new* curve — so the same patch produces a
   different sound, and a user's saved master no longer reloads as they left it. That is a
-  `COMPATIBILITY_POLICY.md` violation on its own terms, independent of
-  `PARAMETER_COMPATIBILITY_POLICY.md` rule 7's automation framing (which is written for the
-  host-visible/automatable macro this product does not have). A post-release curve change is
-  therefore an **Architecture Review Gate** item and needs an ADR.
+  `COMPATIBILITY_POLICY.md` violation on its own terms. `PARAMETER_COMPATIBILITY_POLICY.md` rule 7
+  carries the same obligation and, since 2026-07-31, the same reason — its original automation
+  framing was written for the host-visible/automatable macro this product does not have, and was
+  corrected by ADR-0005 rather than left at equal authority to this one. A post-release curve change
+  is therefore an **Architecture Review Gate** item and needs an ADR.
 
 Recorded in `PARAMETER_REGISTRY.md` when it is written at P1; `DESIGN.md` §4.2 is the interim table
 of record.

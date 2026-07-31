@@ -206,6 +206,33 @@ decision requires are carried here as prescribed blocks, matching the enacted te
   establishes (coexistence strategy; macro non-automatability) — those are this ADR's own decision
   text, reproduced in the policy rather than prescribed separately.
 
+- **`PARAMETER_COMPATIBILITY_POLICY.md` rule 7's rationale is corrected** *(added 2026-07-31, same
+  day)*. Invariant 6 was re-grounded from automation to recall, but rule 7 — a policy at the **same**
+  authority level (`SOURCE_OF_TRUTH.md` level 4, so the corrected record does not outrank the
+  uncorrected one) — still justified the macro-curve freeze by "changing the mapping curve changes
+  what a recorded automation lane sounds like". Under this ADR the macros are non-automatable, so
+  that scenario cannot occur in this product, and a maintainer who noticed could conclude the freeze
+  does not apply and wave a post-release curve change through. **The obligation does not change**;
+  only its reason does. Rule 7's second sentence onward is replaced by:
+
+  > **Macro-curve changes after the first shipped build require an ADR.**
+  >
+  > **The reason is recall, not automation** (ADR-0005, 2026-07-31). This rule was written for a
+  > host-visible, automatable macro; under ADR-0005/ADR-0010 the macros are **non-automatable**, so
+  > no macro automation lane can exist, and a lane on a *managed* parameter writes that parameter
+  > directly without ever consulting the mapping — changing a curve does **not** change how such a
+  > lane sounds. What a curve change breaks is **recall**: every saved session and preset stores a
+  > macro *position*, and the next macro gesture maps that stored position through the *new* curve,
+  > so the same patch produces a different sound and a user's saved master no longer reloads as they
+  > left it. That is a `COMPATIBILITY_POLICY.md` violation on its own terms. The obligation is
+  > unchanged and applies in full — only its justification is corrected, so that a maintainer who
+  > notices the automation argument does not hold cannot conclude the freeze does not apply.
+  > `MODE_AND_ADAPTATION_POLICY.md` invariant 6 states the same thing at greater length.
+
+  Rule 7's opening sentence ("The macro layer is part of the parameter surface…") is unchanged
+  except for ending at "is itself semantic", the clause that carried the falsified reason having
+  moved into the block above.
+
 ## Consequences
 
 - **One value model.** The Advanced view always shows the numbers the DSP is using; a host
