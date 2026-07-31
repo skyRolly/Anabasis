@@ -9,6 +9,43 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton, fifth commit — the Windows-only snapshot red, and the restore guard (2026-07-31)
+
+**The Windows CI red was a line-ending artefact, not a parameter change.** `AnabasisStateTests`
+failed exactly one check on the `windows` leg — the frozen registry snapshot, which reports as a
+Hard Stop — while the Linux and macOS legs were green. Cause: Git for Windows defaults to
+`core.autocrlf=true` on the hosted runners, so `parameter_registry.snapshot` (LF in the index) is
+checked out with CRLF, and the comparison is byte-wise against a dump built with `"\n"`. Confirmed
+by reproducing it locally: CRLF-ifying the fixture reproduces the failure to the check and the
+count (48 checks, 1 failure), and the fix passes with the fixture in either encoding. `.gitattributes`
+now pins `tests/fixtures/*.snapshot` (and `*.sh`) to LF, the comparison normalises line endings —
+and only those — and a mismatch prints the **first differing line with both sides**, because a bare
+`FAIL` on a 49-line byte comparison costs a full CI round to diagnose.
+
+**The macro abort was ordering-dependent, and the ordering is a host's to break.**
+`abortPendingMapping()` at the END of each restore path drops the mapping the restore's own
+notifications armed — but only if the restore finishes before the 30 ms drain timer next fires.
+VST3 does not promise `setStateInformation` arrives on the message thread, and on a host that
+restores off it the timer can apply the mapping *mid-restore*, rewriting the nine managed
+parameters from the curves; no later abort takes that back. `MacroEngine::ScopedRestore` now wraps
+each restore body: the drain is suppressed for the scope's whole lifetime and the flag is dropped
+on the way out (abort **before** the depth decrement, so no window exists where the flag is armed
+and the guard is already down). `abortPendingMapping()` is private — the scope is the only way to
+reach it, so a new restore path cannot forget the step. Depth counter, not a bool, so a nested
+restore's exit cannot re-open the window for the rest of the outer one.
+
+This is **not** a thread-model change: no new thread, no new cross-thread edge (the same
+any-thread → message-thread flag `mappingPending` already is), no new ordering primitive. It
+implements ADR-0005/ADR-0011's "MacroEngine is message-thread-only" and §5.3's "a restore is not a
+macro gesture" without depending on a race outcome. What it does **not** cover — `replaceState`
+mutating a `ValueTree` the editor may be reading, and the few-instruction check-then-act window in
+the guard — needs a synchroniser outside the set `THREADING_POLICY.md` admits, so it is an
+Architecture Review Gate item and is recorded as **KI-003** rather than patched.
+
+`testDrainInsideRestoreIsSuppressed` models the mid-restore drain single-threaded (a flush inside a
+`ScopedRestore` is exactly what the timer would do there); removing the guard fails both of its
+checks.
+
 ### P1 skeleton, fourth commit — thread discipline and the structural-tolerance read rules (2026-07-31)
 
 **`MacroEngine::parameterChanged` was an audio-thread hazard.** APVTS delivers parameter-change

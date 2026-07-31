@@ -87,6 +87,14 @@ Re-freezing to turn a red test green is a compatibility break in disguise
 (`PARAMETER_COMPATIBILITY_POLICY.md`). This test is what automates the "Parameter IDs unchanged"
 release-checklist item.
 
+**The fixture is pinned to LF by `.gitattributes`, and the comparison normalises line endings
+anyway.** Git for Windows defaults to `core.autocrlf=true` — including on the GitHub-hosted
+`windows` runner — so without the pin the fixture is checked out with CRLF there and all 49 lines
+mismatch: a Windows-only red reporting a frozen-parameter-surface break that did not happen. Both
+defences are kept because they fail differently: the pin fixes new checkouts, the normalisation
+covers a clone made before the pin existed. On a real mismatch the test now prints the **first
+differing line** and both sides — a bare `FAIL` costs a whole CI round to diagnose.
+
 **Two defaults in the snapshot are knowingly off by ulps, and that is recorded here rather than
 "fixed".** The dump writes `range.convertFrom0to1 (param->getDefaultValue())` — the value that
 survives the *normalised* round trip, which is what a host actually restores — so a log taper's

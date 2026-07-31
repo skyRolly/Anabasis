@@ -38,19 +38,31 @@ void MacroEngine::parameterChanged (const juce::String&, float)
 
 void MacroEngine::handleAsyncUpdate()
 {
-    if (mappingPending.exchange (false, std::memory_order_relaxed))
-        applyMapping();
+    drainPendingMapping();
 }
 
 void MacroEngine::timerCallback()
 {
-    if (mappingPending.exchange (false, std::memory_order_relaxed))
-        applyMapping();
+    drainPendingMapping();
 }
 
 void MacroEngine::flushPendingMapping()
 {
     cancelPendingUpdate();
+    drainPendingMapping();
+}
+
+void MacroEngine::drainPendingMapping()
+{
+    // A restore is in flight: leave the flag ARMED and do nothing. The
+    // restore's ScopedRestore drops it on the way out, which is the §5.3
+    // outcome — "a restore is not a macro gesture" — reached without this
+    // thread writing the nine managed parameters underneath it. Consuming the
+    // flag here instead would be the same outcome by a longer route, but it
+    // would make the drain's behaviour depend on which of the two ran first.
+    if (restoreDepth.load (std::memory_order_relaxed) > 0)
+        return;
+
     if (mappingPending.exchange (false, std::memory_order_relaxed))
         applyMapping();
 }

@@ -1,0 +1,14 @@
+# Line-ending normalisation.
+#
+# `tests/fixtures/parameter_registry.snapshot` is compared BYTE-WISE by
+# AnabasisStateTests against a dump built with "\n". Git for Windows ships with
+# core.autocrlf=true — the setting the GitHub-hosted windows runners use — so
+# without a rule here the fixture is checked out with CRLF on Windows and every
+# one of its 49 lines mismatches. The failure is Windows-only, reports as a
+# frozen-parameter-surface break (a Hard Stop), and names no differing line.
+tests/fixtures/*.snapshot text eol=lf
+
+# The shell scripts are the CI gate on the Linux and macOS legs; CRLF in a
+# shebang line makes the interpreter path unresolvable. Same class of defect,
+# pinned for the same reason.
+*.sh text eol=lf

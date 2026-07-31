@@ -64,9 +64,45 @@ static void testRegistrySnapshot (bool writeSnapshot)
 
     check (fixture.existsAsFile(), "registry: snapshot fixture exists (run --write-snapshot once)");
     if (fixture.existsAsFile())
-        check (fixture.loadFileAsString() == dump,
+    {
+        // Compare with line endings normalised, and ONLY those: every
+        // character of every field stays byte-exact, which is the whole
+        // assertion. `.gitattributes` pins the fixture to LF, but a clone that
+        // predates it (or an editor that rewrites on save) still holds CRLF in
+        // the working tree, and "\r" is not part of the parameter surface —
+        // failing on it reports a Hard Stop that did not happen.
+        const auto onDisk = fixture.loadFileAsString().replace ("\r\n", "\n");
+        check (onDisk == dump,
                "registry: parameter surface matches the frozen snapshot "
                "(an ID/range/default/order/flag change is a Hard Stop)");
+
+        // A bare FAIL here costs a whole CI round to diagnose — the failing
+        // line is the diagnosis. Report the first mismatch and the line
+        // counts; do not dump 49 lines nobody asked for.
+        if (onDisk != dump)
+        {
+            juce::StringArray was, now;
+            was.addLines (onDisk);
+            now.addLines (dump);
+            // Both strings end in "\n", so addLines leaves a trailing empty
+            // entry. Drop it, or the reported count reads as one parameter
+            // more than the file holds.
+            for (auto* a : { &was, &now })
+                if (a->size() > 0 && (*a)[a->size() - 1].isEmpty())
+                    a->remove (a->size() - 1);
+
+            for (int i = 0; i < juce::jmax (was.size(), now.size()); ++i)
+                if (was[i] != now[i])
+                {
+                    std::printf ("      first difference at line %d of %d/%d\n"
+                                 "        snapshot: %s\n"
+                                 "        built   : %s\n",
+                                 i + 1, was.size(), now.size(),
+                                 was[i].toRawUTF8(), now[i].toRawUTF8());
+                    break;
+                }
+        }
+    }
 
     int count = 0, nonAuto = 0;
     for (auto* p : proc.getParameters())
@@ -198,6 +234,39 @@ static void testMacroRestoreDoesNotClobber()
     b.getMacroEngine().flushPendingMapping();
     check (! juce::exactlyEqual (b.apvts.getRawParameterValue (pid::clipDrive)->load(), 6.0f),
            "macro: a genuine gesture still re-maps the managed set");
+}
+
+// ---------------------------------------------------------------------------
+// The stronger half of §5.3: dropping the armed mapping at the END of a
+// restore only holds while the restore out-races the 30 ms drain timer, which
+// a host restoring off the message thread does not promise. A drain that fires
+// INSIDE the restore must be a no-op — that is what MacroEngine::ScopedRestore
+// exists for, and a flush inside the scope is exactly the timer's behaviour
+// there, without needing a second thread to reproduce it.
+static void testDrainInsideRestoreIsSuppressed()
+{
+    AnabasisAudioProcessor proc;
+    proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.5f);
+    proc.getMacroEngine().flushPendingMapping();
+    proc.apvts.getParameter (pid::clipDrive)->setValueNotifyingHost (6.0f / 24.0f);   // off-curve
+
+    {
+        const MacroEngine::ScopedRestore guard (proc.getMacroEngine());
+
+        // Stand in for the restore's own notifications arming the mapping…
+        proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.9f);
+        // …and for the drain timer firing before the restore has finished.
+        proc.getMacroEngine().flushPendingMapping();
+
+        check (juce::exactlyEqual (proc.apvts.getRawParameterValue (pid::clipDrive)->load(), 6.0f),
+               "macro: a drain inside a restore scope does not rewrite the managed set");
+    }
+
+    // Leaving the scope drops the armed mapping rather than deferring it: the
+    // restore's values stand until the next real gesture.
+    proc.getMacroEngine().flushPendingMapping();
+    check (juce::exactlyEqual (proc.apvts.getRawParameterValue (pid::clipDrive)->load(), 6.0f),
+           "macro: the scope drops the armed mapping on exit, it does not queue it");
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +585,7 @@ int main (int argc, char** argv)
         testMacroDefaultIsFixedPoint();
         testAbSlotsAndTiers();
         testMacroRestoreDoesNotClobber();
+        testDrainInsideRestoreIsSuppressed();
         testAbRawExact();
         testFrozenSlotRoundTrip();
         testAbToleranceRules();

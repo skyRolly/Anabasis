@@ -35,6 +35,51 @@ in `POSTMORTEMS.md`**, and its number is never reused.
 
 ## Open issues
 
+## KI-003 — A host that restores state off the message thread is only partly defended against
+
+**Severity:** Low
+**Status:** Mitigated (macro layer), Confirmed (the wider path)
+**Affects:** all platforms, VST3/AU — hosts that call `setStateInformation` on
+a thread other than the message thread
+
+VST3 does not promise which thread `IComponent::setState` arrives on, and JUCE
+passes it straight through to `setStateInformation`. On such a host the restore
+runs concurrently with the message thread.
+
+The **macro layer is now safe** on that path: `MacroEngine::ScopedRestore` is
+held across the whole restore body, so the 30 ms drain timer cannot apply a
+macro mapping mid-restore and rewrite the nine managed parameters from the
+curves. Before that, only a trailing `abortPendingMapping()` guarded it, which
+held solely while the restore out-raced the timer.
+
+What is **not** covered: `apvts.replaceState()` itself mutates a `ValueTree`
+that the editor may be reading on the message thread, and no atomic in the
+accepted set orders those two. Closing that is a thread-model decision — the
+synchronisers `THREADING_POLICY.md` admits are "the listed atomics + the SPSC
+ring", so introducing a lock or a restore-marshalling path is an Architecture
+Review Gate item and an AI-agent **Hard Stop**, not a patch. There is also a
+residual check-then-act window of a few instructions in the guard itself (the
+drain can read `restoreDepth == 0` immediately before the restore raises it);
+it is nanoseconds against the microseconds the unguarded code exposed, and it
+closes only with the same thread-model decision.
+
+**Workaround:** none required on the hosts tested so far — no case of an
+off-message-thread restore has been observed against this plugin. The entry
+exists because the assumption is load-bearing and undocumented elsewhere.
+**Cause:** the state-restore thread is a host contract, not a plugin choice;
+`THREADING_POLICY.md` names the audio and message threads and does not state
+which one restores state.
+
+Evidence [Partially Verified]:
+- Source: `src/MacroEngine.h` (`ScopedRestore`), `src/PluginProcessor.cpp`
+  (`setStateInformation`, `switchToSlot`, `applyPresetFile`)
+- Test:   `AnabasisStateTests` `testDrainInsideRestoreIsSuppressed` — models the
+  mid-restore drain single-threaded; the uncovered `replaceState` race is not
+  reproducible headlessly
+- Commit: P1 skeleton, thread-safety pass
+
+---
+
 ## KI-002 — Loudness Comp and Delta monitoring do nothing in the P1 skeleton
 
 **Severity:** Low

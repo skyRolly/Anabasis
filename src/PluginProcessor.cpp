@@ -202,6 +202,10 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     newIndex = anabasis::clampAbSlotIndex (newIndex);
     if (newIndex == activeSlot)
         return;
+    // An A/B restore is not a macro gesture (§5.3) — held across the whole
+    // swap, not dropped after it, so a drain cannot land between the macro
+    // values arriving and the abort.
+    const MacroEngine::ScopedRestore guard (*macroEngine);
     // P1 form: plain swap on the message thread. TODO(P2): route through the
     // §2.8 forced duck (requestDuck() BEFORE the swap) once the transition
     // layer exists — a bulk swap without it is a click-free-invariant hole
@@ -210,17 +214,18 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     applySlotToLive (storedSlot);
     storedSlot = std::move (newlyStored);
     activeSlot = newIndex;
-    macroEngine->abortPendingMapping();   // an A/B restore is not a macro gesture (§5.3)
 }
 
 bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
 {
+    const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
+
     juce::StringArray mask;
     if (! presetManager->applyPreset (file, mask))
-        return false;
+        return false;                     // the guard still runs: a partial
+                                          // apply arms the listeners too
     liveDetachMask = mask;
     livePresetName = file.getFileNameWithoutExtension();
-    macroEngine->abortPendingMapping();   // a preset apply is not a macro gesture (§5.3)
     return true;
 }
 
@@ -273,6 +278,13 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // schemaVersion 1 is the only generation; missing → treated as 1
     // (structural-tolerance read rules, §4.4).
 
+    // §5.3 again, and this is the path that needs the SCOPE rather than a
+    // trailing abort: VST3 does not promise `setStateInformation` arrives on
+    // the message thread, so the 30 ms drain timer can fire in the middle of
+    // the restore below. See KNOWN_ISSUES KI-003 for what this does and does
+    // not cover.
+    const MacroEngine::ScopedRestore guard (*macroEngine);
+
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".
     if (const auto params = root.getChildWithName ("ANABASIS"); params.isValid())
@@ -313,7 +325,6 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         }
     }
 
-    macroEngine->abortPendingMapping();   // a session restore is not a macro gesture (§5.3)
     updateLatency();   // int_ latency inputs may have changed with the session
 }
 

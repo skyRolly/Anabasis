@@ -60,24 +60,63 @@ public:
     // as a side effect of landing the macro values, which would otherwise
     // queue a mapping pass that rewrites the nine managed parameters from the
     // curves — clobbering the exact off-curve values the restore just placed
-    // and breaking raw-exact restoration (ADR-0007). Restores call this to
-    // drop any mapping the notifications armed.
-    void abortPendingMapping()
+    // and breaking raw-exact restoration (ADR-0007).
+    //
+    // Hold one of these across the WHOLE restore body. Dropping the armed
+    // mapping at the end (what the restore paths used to do) is only
+    // sufficient while the restore itself runs on the message thread: the
+    // listeners fire during the restore, and if the 30 ms drain timer runs
+    // between the arming and the drop — which it can whenever a host calls
+    // `setStateInformation` off the message thread, as VST3 permits — the
+    // mapping is applied MID-restore and no later abort can take it back.
+    // The scope suppresses the drain for its whole lifetime and drops the
+    // flag on the way out, so the guarantee no longer depends on the restore
+    // out-racing the timer.
+    //
+    // It is also the ONLY way to reach the abort (`abortPendingMapping` is
+    // private): a new restore path cannot forget the step, because there is
+    // no API that performs a restore without it.
+    class ScopedRestore
     {
-        cancelPendingUpdate();
-        mappingPending.store (false, std::memory_order_relaxed);
-    }
+    public:
+        explicit ScopedRestore (MacroEngine& e) noexcept : engine (e)
+        {
+            engine.restoreDepth.fetch_add (1, std::memory_order_relaxed);
+        }
+
+        ~ScopedRestore()
+        {
+            // Abort BEFORE the decrement, never after: between the two the
+            // drain is still suppressed, so no window exists in which the
+            // flag is armed and the guard is already down.
+            engine.abortPendingMapping();
+            engine.restoreDepth.fetch_sub (1, std::memory_order_relaxed);
+        }
+
+    private:
+        MacroEngine& engine;
+        JUCE_DECLARE_NON_COPYABLE (ScopedRestore)
+    };
 
     // Deterministic flush for the headless tests (no message loop runs there):
-    // applies a pending mapping now, on the calling (message) thread.
+    // applies a pending mapping now, on the calling (message) thread. Goes
+    // through the same guard as the timer, so a test that flushes inside a
+    // ScopedRestore models what the timer would really do there.
     void flushPendingMapping();
 
 private:
     void parameterChanged (const juce::String&, float) override;   // any thread → flag only
     void handleAsyncUpdate() override;                             // message thread only
     void timerCallback() override;                                 // message thread only
+    void drainPendingMapping();                                    // message thread only
     void applyMapping();
     void setParam (const char* paramID, float denormalisedValue);
+
+    void abortPendingMapping()
+    {
+        cancelPendingUpdate();
+        mappingPending.store (false, std::memory_order_relaxed);
+    }
 
     juce::AudioProcessorValueTreeState& apvts;
     bool applying = false;
@@ -90,6 +129,14 @@ private:
     // REALTIME_AUDIO_POLICY hard-red-line violation. The audio thread now only
     // stores a flag; the message thread posts or drains it.
     std::atomic<bool> mappingPending { false };
+
+    // Nesting depth of the ScopedRestore guards, not a bool: a restore path
+    // may call another (a preset apply inside a session load), and a bool
+    // would let the inner scope's exit re-open the window for the rest of the
+    // outer one. Written from the restoring thread, read from the message
+    // thread; relaxed for the same reason as `mappingPending` — it gates a
+    // message-thread action and carries no payload.
+    std::atomic<int> restoreDepth { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MacroEngine)
 };
