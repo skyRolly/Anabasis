@@ -3,9 +3,10 @@
 **Priority: 3.** System Policy — the system-level DSP invariants for Anabasis. These must hold
 across releases.
 
-Derived from `docs/DEVELOPMENT_BRIEF.md` §3, §4, §6 and §10. **No compliance evidence exists
-yet** (no `src/`): each invariant below states what the code must satisfy and names the test that
-will guard it. Evidence citations are added as the modules land (constraint C7).
+Derived from `docs/DEVELOPMENT_BRIEF.md` §3, §4, §6 and §10. The P1 skeleton supplies the first
+compliance evidence — invariants 7, 9 and 13 are guarded by live tests and 2, 4 and 8 by their P1
+forms (see the invariant→test map below). The rest name the test that will guard them once their
+stage exists; evidence citations are added as the modules land (constraint C7).
 
 ## Invariants (binding)
 
@@ -167,18 +168,18 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | Invariant | Guarding test | Status |
 |---|---|---|
 | 1 chain order | chain-order / transfer-order test | TODO (P2) |
-| 2 latency exactness | `testReportedLatencyMatchesImpulse` | TODO (P2) |
+| 2 latency exactness | `testReportedLatencyMatchesImpulse` | **partial (P1)** — impulse lands at the constant allowance for every lookahead value; the OS × lookahead matrix arrives with oversampling at P2 |
 | 3 true peak ≥ 4× | true-peak accuracy test | TODO (P3) |
-| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | TODO (P2) |
+| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P1)** — sample-level hostile sweep is live; the ≤ 0.1 dBTP matrix needs the true-peak tap (P2/P3) |
 | 5 oversampling scope | latency-matrix + aliasing measurement | TODO (P2) |
 | 6 ADAA | aliasing measurement (dB, recorded) | TODO (P2) |
-| 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | TODO (P1) |
-| 8 click-free transitions | per-path click tests | TODO (P2) |
-| 9 no NaN/Inf/denormals | `testNoBadSamples` | TODO (P1) |
+| 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
+| 8 click-free transitions | per-path click tests | **partial (P1)** — the ceiling and lookahead smoothing paths are pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`); the duck-routed rewires and the bulk swaps need the §2.8 transition layer (P2) |
+| 9 no NaN/Inf/denormals | `testNoBadSamples` | **live (P1)** |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender` | TODO (P3) |
 | 11 metering accuracy | EBU R128 vectors + ISP signals | TODO (P3) |
 | 12 dither placement/default | dither default + placement test | TODO (P2) |
-| 13 format-agnostic core | build-level: `AnabasisDSP` links without the wrapper | TODO (P1) |
+| 13 format-agnostic core | build-level: `AnabasisDSP` links without the wrapper | **live (P1)** — the `AnabasisTests` target compiles the core with no wrapper and no GUI |
 
 ## Enforcement
 

@@ -354,6 +354,108 @@ static void testPresetContract()
 }
 
 // ---------------------------------------------------------------------------
+// §4.4 structural tolerance: a VALID root that OMITS a child means "that
+// child's fields are at their defaults", not "keep whatever the previous
+// session left live". Both children are checked against an already-dirtied
+// processor, so the old early-return behaviour (leave the live values alone)
+// fails here rather than silently producing a chimera of two sessions.
+static void testMissingChildrenReadAsDefaults()
+{
+    auto rootOfPristineSession = []
+    {
+        AnabasisAudioProcessor pristine;
+        juce::MemoryBlock mb;
+        pristine.getStateInformation (mb);
+        const auto xml = juce::AudioProcessor::getXmlFromBinary (mb.getData(), (int) mb.getSize());
+        return xml != nullptr ? juce::ValueTree::fromXml (*xml) : juce::ValueTree();
+    };
+    auto dirty = [] (AnabasisAudioProcessor& p)
+    {
+        p.apvts.getParameter (pid::inputGain)->setValueNotifyingHost (0.9f);
+        p.internalState.state().setProperty (iid::oversample,  3,    nullptr);
+        p.internalState.state().setProperty (iid::ceilingLock, true, nullptr);
+    };
+    auto apply = [] (AnabasisAudioProcessor& p, const juce::ValueTree& root)
+    {
+        juce::MemoryBlock mb;
+        if (const auto xml = root.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, mb);
+        p.setStateInformation (mb.getData(), (int) mb.getSize());
+    };
+
+    // The reference is a pristine processor's LIVE value, not getDefaultValue():
+    // the default slot restores through the raw path, so this is the byte-exact
+    // value the read rule is required to land on.
+    const float defaultInputGain = AnabasisAudioProcessor().apvts
+                                       .getParameter (pid::inputGain)->getValue();
+
+    {   // ANABASIS_INTERNAL absent → the int_ fields reset, parameters honoured
+        auto root = rootOfPristineSession();
+        root.removeChild (root.getChildWithName ("ANABASIS_INTERNAL"), nullptr);
+
+        AnabasisAudioProcessor p;
+        dirty (p);
+        apply (p, root);
+        check (p.internalState.oversampleFactor() == anabasis::OversampleFactor::off
+                && ! p.internalState.ceilingLocked(),
+               "readRules: absent ANABASIS_INTERNAL resets the int_ fields to defaults");
+    }
+
+    {   // ANABASIS absent → the parameters reset, int_ fields honoured
+        auto root = rootOfPristineSession();
+        root.removeChild (root.getChildWithName ("ANABASIS"), nullptr);
+        root.getChildWithName ("ANABASIS_INTERNAL").setProperty (iid::oversample, 2, nullptr);
+
+        AnabasisAudioProcessor p;
+        dirty (p);
+        apply (p, root);
+        check (juce::exactlyEqual (p.apvts.getParameter (pid::inputGain)->getValue(),
+                                   defaultInputGain),
+               "readRules: absent ANABASIS resets the parameter surface to defaults");
+        check (p.internalState.oversampleFactor() == anabasis::OversampleFactor::x4,
+               "readRules: absent ANABASIS does not discard the internal child that IS present");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The raw-exact contract needs the normalised round trip to be a FIXED POINT,
+// not merely accurate: save writes raw = getValue(), load feeds it back, and
+// the next save writes getValue() again. Byte-identity therefore requires
+// h(h(x)) == h(x) exactly, where h is one setValue → getValue pass. A taper
+// change that breaks this shows up here — naming the parameter — instead of
+// intermittently reddening testStateRoundTrip on whichever value it was set
+// to. (Note this is NOT h(x) == x: the log tapers are knowingly off by ulps,
+// see the frozen-snapshot note in docs/procedures/TESTING.md.)
+static void testRawRoundTripIsIdempotent()
+{
+    AnabasisAudioProcessor proc;
+    juce::String drifting;
+
+    for (auto* p : proc.getParameters())
+    {
+        auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p);
+        if (rp == nullptr)
+            continue;
+
+        for (const float probe : { 0.0f, 0.017f, 0.25f, 1.0f / 3.0f, 0.5f, 0.63f, 0.9f, 1.0f })
+        {
+            rp->setValueNotifyingHost (probe);
+            const float once = rp->getValue();
+            rp->setValueNotifyingHost (once);
+            const float twice = rp->getValue();
+
+            if (! juce::exactlyEqual (once, twice))
+                drifting << " " << rp->paramID << "@" << juce::String (probe, 3);
+        }
+    }
+
+    check (drifting.isEmpty(),
+           "rawRoundTrip: one save→load→save pass is a fixed point for every parameter");
+    if (drifting.isNotEmpty())
+        std::printf ("      drifting:%s\n", drifting.toRawUTF8());
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -418,6 +520,8 @@ int main (int argc, char** argv)
         testFrozenSlotRoundTrip();
         testAbToleranceRules();
         testPresetContract();
+        testMissingChildrenReadAsDefaults();
+        testRawRoundTripIsIdempotent();
         testCachedParamsMapping();
     }
 

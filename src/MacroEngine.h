@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
+#include <atomic>
 
 // ============================================================================
 //  MacroEngine — the Simple-mode macro→managed-parameter mapper (ADR-0005,
@@ -42,7 +43,8 @@ namespace macro_curves
 }
 
 class MacroEngine : private juce::AudioProcessorValueTreeState::Listener,
-                    private juce::AsyncUpdater
+                    private juce::AsyncUpdater,
+                    private juce::Timer
 {
 public:
     explicit MacroEngine (juce::AudioProcessorValueTreeState& apvtsIn);
@@ -60,20 +62,34 @@ public:
     // curves — clobbering the exact off-curve values the restore just placed
     // and breaking raw-exact restoration (ADR-0007). Restores call this to
     // drop any mapping the notifications armed.
-    void abortPendingMapping() { cancelPendingUpdate(); }
+    void abortPendingMapping()
+    {
+        cancelPendingUpdate();
+        mappingPending.store (false, std::memory_order_relaxed);
+    }
 
     // Deterministic flush for the headless tests (no message loop runs there):
     // applies a pending mapping now, on the calling (message) thread.
-    void flushPendingMapping() { handleUpdateNowIfNeeded(); }
+    void flushPendingMapping();
 
 private:
-    void parameterChanged (const juce::String&, float) override;   // any thread → async hop
+    void parameterChanged (const juce::String&, float) override;   // any thread → flag only
     void handleAsyncUpdate() override;                             // message thread only
+    void timerCallback() override;                                 // message thread only
     void applyMapping();
     void setParam (const char* paramID, float denormalisedValue);
 
     juce::AudioProcessorValueTreeState& apvts;
     bool applying = false;
+
+    // parameterChanged can arrive on the AUDIO thread: APVTS calls its
+    // listeners on whichever thread changed the parameter, and rule 5 makes
+    // `withAutomatable(false)` advisory — a host may automate a macro anyway.
+    // triggerAsyncUpdate() posts to the platform message queue, which takes a
+    // lock (and on some platforms allocates), so calling it from there is a
+    // REALTIME_AUDIO_POLICY hard-red-line violation. The audio thread now only
+    // stores a flag; the message thread posts or drains it.
+    std::atomic<bool> mappingPending { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MacroEngine)
 };

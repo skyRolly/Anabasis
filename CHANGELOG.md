@@ -27,8 +27,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   session state with A/B slots, and a placeholder editor. No EQ/compressor/clipper processing,
   no oversampling, no metering yet — those are P2–P5.
   Evidence Source: commits `91ece13` (skeleton), `e0c24d5` (limiter alignment + state
-  restore fixes) and the smoothing/contract commit that follows them on
-  `claude/anabasis-init-migration-mvbbq9`. [Verified]
+  restore fixes), `79fd781` (control smoothing) and the thread-safety / read-rules commit that
+  follows them on `claude/anabasis-init-migration-mvbbq9`. [Verified]
 
 The first entry will be `[0.1.0]`, cut at the end of P6.
 

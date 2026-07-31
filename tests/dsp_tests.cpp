@@ -181,6 +181,38 @@ static void testControlsPrimedOnPrepare()
 }
 
 // ---------------------------------------------------------------------------
+// The gain smoothers prime too, not just the ceiling and the window. An
+// earlier revision primed only two of the four, so after loading a session
+// with limGain at +18 dB the first 20 ms of audio played up to 18 dB low and
+// slid up — audible at transport start and at the head of a bounce.
+static void testGainsPrimedOnPrepare()
+{
+    anabasis::AnabasisEngine engine;
+    const double sr = 48000.0;
+    const int block = 256;
+    engine.prepare (sr, block, 2);
+
+    anabasis::EngineParameters p;
+    p.limGainDb = 18.0f;                     // as restored from a session
+    const float in = 0.01f;                  // small: 18 dB of it stays far below the ceiling
+    const float expected = in * juce::Decibels::decibelsToGain (18.0f);
+
+    juce::AudioBuffer<float> buf (2, block);
+    std::vector<float> out;
+    for (int b = 0; b < 4; ++b)              // 1024 samples > the 480 delay
+    {
+        for (int n = 0; n < block; ++n) { buf.setSample (0, n, in); buf.setSample (1, n, in); }
+        engine.process (buf, p);
+        for (int n = 0; n < block; ++n) out.push_back (buf.getSample (0, n));
+    }
+
+    // Sample 500 carries input sample 20 — 0.4 ms in. Unprimed the gain would
+    // still be ~1.1x there instead of 7.94x.
+    check (std::abs (out[500] - expected) < 1.0e-4f,
+           "priming: the gain smoothers adopt on the first block, no ramp from unity");
+}
+
+// ---------------------------------------------------------------------------
 // invariant 8 names the lookahead as "the one switchable path with neither a
 // duck nor a latch ... the path most likely to be skipped at P1", requiring
 // its move to be a smooth control signal. The detector tap offset is
@@ -421,6 +453,7 @@ int main()
     testLimiterAlignment();
     testCeilingIsSmoothed();
     testControlsPrimedOnPrepare();
+    testGainsPrimedOnPrepare();
     testLookaheadIsSmoothed();
     testReportedLatencyMatchesImpulse();
     testOutputNeverExceedsCeiling();

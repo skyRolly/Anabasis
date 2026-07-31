@@ -2,10 +2,12 @@
 
 How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; no IDE/Projucer).
 
-> **Status: the build does not exist yet.** There is no `CMakeLists.txt` and no `src/` — those
-> land at P1 (`docs/DEVELOPMENT_BRIEF.md` §11). This document specifies the build contract the P1
-> work must implement, and becomes a description of reality at that point. The Linux dependency
-> setup below is real and usable today.
+> **Status: the build exists** (P1 skeleton, 2026-07-31). `CMakeLists.txt` implements ADR-0008's
+> five-target graph — `AnabasisHardening` + `AnabasisDSP` INTERFACE libraries, the `juce_add_plugin`
+> target, and the `AnabasisTests` / `AnabasisStateTests` console apps — and `src/` carries the
+> wrapper, the GUI skeleton and the DSP core. Everything below is a description of what the tree
+> does, not a specification of what it should do. Verified green on Linux; the Windows and macOS
+> legs are confirmed by CI.
 
 ## Toolchain
 

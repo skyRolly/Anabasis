@@ -35,6 +35,31 @@ in `POSTMORTEMS.md`**, and its number is never reused.
 
 ## Open issues
 
+## KI-002 — Loudness Comp and Delta monitoring do nothing in the P1 skeleton
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** all platforms, all formats (P1 skeleton builds only)
+
+The **Loudness Comp** and **Delta** toggles are carried through the parameter
+surface and the engine boundary but the engine ignores both, so clicking either
+has no audible effect. They are monitoring features that arrive with the
+metering engine at P3 (`DESIGN.md` §2.7 loudness compensation, §2.6 delta
+monitoring); the parameters exist now because the surface freezes at v0.1.0
+(`PARAMETER_COMPATIBILITY_POLICY.md` rule 1) and adding them later would be a
+`kVersion` bump.
+
+**Workaround:** none — the features are not implemented yet, not broken.
+**Cause:** `EngineParameters::loudnessComp` / `deltaMonitor` are populated by
+`CachedParams::toEngine` but never read by `AnabasisEngine::process`.
+
+Evidence [Verified]:
+- Source: `src/dsp/EngineParameters.h` (fields), `src/dsp/AnabasisEngine.cpp` (no reader)
+- Test:   none — there is no behaviour to assert until P3
+- Commit: P1 skeleton
+
+---
+
 ## KI-001 — A/B slot switch is not click-safe in the P1 skeleton
 
 **Severity:** Low

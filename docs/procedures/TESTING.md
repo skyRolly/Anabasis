@@ -3,8 +3,10 @@
 How to run and interpret the validation suite. Acceptance levels and the hard gate are defined in
 `docs/policies/TESTING_POLICY.md`.
 
-> **Status:** no tests exist yet — they land at P1. This document specifies how they are run and
-> structured, so the P1 work implements a known shape rather than inventing one.
+> **Status:** the two suites exist and are green (P1 skeleton, 2026-07-31) — `AnabasisTests`
+> (DSP acceptance) and `AnabasisStateTests` (state / parameter compatibility). Rows in the
+> invariant→test map still marked `TODO (P2+)` are the ones whose DSP does not exist yet; the
+> P1 rows are live. The structure below describes the suites as built.
 
 ## Headless self-tests
 
@@ -17,11 +19,10 @@ scripts/run-tests.sh             # runs BOTH console apps (fail-closed: a missin
 `check` **or a missing binary**. The missing-binary case matters: without it, a build that
 produced nothing would pass the gate silently.
 
-## Documentation structure lint (runs today, pre-P1)
+## Documentation structure lint
 
-Not an audio test, but it is a CI gate and it runs *now*, while the self-tests above still say
-"no tests exist yet" — recorded here because `DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger map
-routes CI-workflow changes through this file:
+Not an audio test, but it is a CI gate — recorded here because
+`DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger map routes CI-workflow changes through this file:
 
 ```bash
 python3 scripts/check-docs.py --self-test   # the checker's own guarantees, ~40 pinned cases
@@ -63,7 +64,10 @@ Compiles the **real** plugin sources into its own console target, so it exercise
 references them) but are never instantiated — the tests run headlessly and open no window.
 
 Planned coverage: serialized-schema shape; the **parameter-registry snapshot**; raw-exact
-save → load → save round-trip (byte-identical); every legacy read path via a frozen fixture;
+save → load → save round-trip (byte-identical) and its fixed-point precondition
+(`testRawRoundTripIsIdempotent`); the §4.4 structural-tolerance read rules — a valid root that omits
+`ANABASIS` or `ANABASIS_INTERNAL` reads as *defaults*, never as "keep the live values"
+(`testMissingChildrenReadAsDefaults`); every legacy read path via a frozen fixture;
 corrupt/foreign-state robustness; user-preset round-trip + exclusion rules; A/B and view-param
 preservation; **`testMacroDefaultIsFixedPoint`** — the macro mapping at the default position must
 equal every managed parameter's declared default (ADR-0005, `MODE_AND_ADAPTATION_POLICY.md`
@@ -82,6 +86,17 @@ AnabasisStateTests --write-snapshot     # ONLY for an INTENTIONAL parameter chan
 Re-freezing to turn a red test green is a compatibility break in disguise
 (`PARAMETER_COMPATIBILITY_POLICY.md`). This test is what automates the "Parameter IDs unchanged"
 release-checklist item.
+
+**Two defaults in the snapshot are knowingly off by ulps, and that is recorded here rather than
+"fixed".** The dump writes `range.convertFrom0to1 (param->getDefaultValue())` — the value that
+survives the *normalised* round trip, which is what a host actually restores — so a log taper's
+`exp(log(x))` shows through: `limRelease` reads **100.000015** (declared 100 ms) and `eqBell2Freq`
+reads **2999.999756** (declared 3000 Hz). The declared defaults in `PluginParameters.cpp` are the
+round numbers; these are their images under the taper, correct to ~1e-7 relative and inaudible.
+Rounding the dump to hide them would make the snapshot stop detecting a real taper change, which is
+the one thing it exists to catch. `testRawRoundTripIsIdempotent` pins the property that actually
+matters — that one save→load→save pass is a *fixed point*, so byte-identity holds — and it, not the
+snapshot, is where a taper change is diagnosed.
 
 ## Writing a test
 

@@ -5,6 +5,7 @@
 #include "LookaheadLimiter.h"
 #include "CeilingClamp.h"
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <atomic>
 
 // ============================================================================
 //  AnabasisEngine — chain owner (ADR-0001: format-agnostic, sees only the
@@ -46,7 +47,8 @@ public:
     // band-limited" requirement for a lookahead move is observable — the
     // output is not, since the wedge and the attack/release asymmetry
     // absorb a tap step.
-    int engagedWindowSamples() const noexcept { return engagedWindow; }
+    int engagedWindowSamples() const noexcept
+    { return engagedWindow.load (std::memory_order_relaxed); }
 
 private:
     static constexpr int kMaxChannels = 2;
@@ -71,7 +73,11 @@ private:
     juce::SmoothedValue<float> ceilingLinear  { 0.8912509f };  // -1 dBTP default
     juce::SmoothedValue<float> windowSamples  { 96.0f };        // engaged lookahead, in samples
     bool smoothersPrimed = false;   // first block after prepare/reset snaps instead of gliding
-    int  engagedWindow   = 96;      // last window handed to the detector (test observable)
+    // Written every sample on the audio thread and readable from anywhere:
+    // THREADING_POLICY requires cross-thread publication to go through an
+    // atomic, and relaxed is the right ordering for a monotonic display/
+    // diagnostic value that carries no payload (same rule as the meters).
+    std::atomic<int> engagedWindow { 96 };
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;

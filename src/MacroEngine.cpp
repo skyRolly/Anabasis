@@ -6,10 +6,15 @@ MacroEngine::MacroEngine (juce::AudioProcessorValueTreeState& apvtsIn) : apvts (
     apvts.addParameterListener (pid::loudness,  this);
     apvts.addParameterListener (pid::character, this);
     apvts.addParameterListener (pid::tone,      this);
+    // Drains a flag set from a thread that may not post messages safely. 30 ms
+    // is well inside the message-thread-rate mapping the macro layer promises
+    // (ADR-0005 §5.2) and costs an atomic load when idle.
+    startTimer (30);
 }
 
 MacroEngine::~MacroEngine()
 {
+    stopTimer();
     cancelPendingUpdate();
     apvts.removeParameterListener (pid::loudness,  this);
     apvts.removeParameterListener (pid::character, this);
@@ -18,15 +23,36 @@ MacroEngine::~MacroEngine()
 
 void MacroEngine::parameterChanged (const juce::String&, float)
 {
-    // May arrive on any thread (rule 5: withAutomatable(false) is advisory).
-    // The async hop is what makes this engine message-thread-only by
-    // construction (ADR-0011) — never map here.
-    triggerAsyncUpdate();
+    // May arrive on ANY thread, including the audio thread (rule 5:
+    // withAutomatable(false) is advisory, so a host can automate a macro).
+    // Never map here — and never post here either: triggerAsyncUpdate() locks
+    // the platform message queue. A relaxed store is the whole audio-thread
+    // cost; the message thread does the rest, so the engine stays
+    // message-thread-only by construction (ADR-0011).
+    mappingPending.store (true, std::memory_order_relaxed);
+
+    if (juce::MessageManager::existsAndIsCurrentThread())
+        triggerAsyncUpdate();     // UI/host edit on the message thread: map promptly
+    // Otherwise the 30 ms timer drains it — no message posted from the caller.
 }
 
 void MacroEngine::handleAsyncUpdate()
 {
-    applyMapping();
+    if (mappingPending.exchange (false, std::memory_order_relaxed))
+        applyMapping();
+}
+
+void MacroEngine::timerCallback()
+{
+    if (mappingPending.exchange (false, std::memory_order_relaxed))
+        applyMapping();
+}
+
+void MacroEngine::flushPendingMapping()
+{
+    cancelPendingUpdate();
+    if (mappingPending.exchange (false, std::memory_order_relaxed))
+        applyMapping();
 }
 
 void MacroEngine::applyMapping()

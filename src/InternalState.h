@@ -42,6 +42,13 @@ public:
     InternalState()
     {
         tree = juce::ValueTree ("ANABASIS_INTERNAL");
+        setDefaults();
+        tree.addListener (this);
+        syncAtomics();
+    }
+
+    void setDefaults()
+    {
         tree.setProperty (iid::oversample,     0,     nullptr);   // ⊕ Off
         tree.setProperty (iid::osPhase,        0,     nullptr);   // ⊕ min-phase
         tree.setProperty (iid::offlineQuality, 0,     nullptr);   // ⊕ Follow
@@ -52,8 +59,6 @@ public:
         tree.setProperty (iid::spectrumOn,     true,  nullptr);
         tree.setProperty (iid::meterTargets,   ~0,    nullptr);
         tree.setProperty (iid::tpMeterOn,      true,  nullptr);
-        tree.addListener (this);
-        syncAtomics();
     }
 
     ~InternalState() override { tree.removeListener (this); }
@@ -76,8 +81,16 @@ public:
 
     void replaceFrom (const juce::ValueTree& incoming)
     {
+        // §4.4 read rules, applied the same way the A/B slot fields are
+        // (PluginProcessor::resetSlotFieldsToDefaults): DEFAULTS FIRST, then
+        // overlay whatever the incoming tree actually carries. Returning early
+        // on a missing child — or leaving absent properties alone — would let
+        // the previous session's oversampling factor, phase mode, offline
+        // quality or ceiling lock survive into a newly loaded one, which is
+        // the "chimera of two sessions" class this schema forbids.
+        setDefaults();
         if (! incoming.isValid() || ! incoming.hasType ("ANABASIS_INTERNAL"))
-            return;                                    // missing → keep defaults
+            return;                                    // missing child → defaults, as above
         for (int i = 0; i < incoming.getNumProperties(); ++i)
         {
             const auto name = incoming.getPropertyName (i);

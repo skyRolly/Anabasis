@@ -37,9 +37,7 @@ void AnabasisEngine::reset() noexcept
     dryRing.clear();
     writePos = 0;
     limiter.reset();
-    inputGain.setCurrentAndTargetValue (inputGain.getTargetValue());
-    pushGain.setCurrentAndTargetValue (pushGain.getTargetValue());
-    smoothersPrimed = false;   // the next block adopts its values without a glide
+    smoothersPrimed = false;   // the next block adopts ALL FOUR values without a glide
 }
 
 void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept
@@ -50,9 +48,8 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         return;
 
     // ---- adopt the snapshot (once per block, ADR-0011) --------------------
-    inputGain.setTargetValue (juce::Decibels::decibelsToGain (p.inputGainDb));
-    pushGain.setTargetValue  (juce::Decibels::decibelsToGain (p.limGainDb));
-
+    const float inputTarget   = juce::Decibels::decibelsToGain (p.inputGainDb);
+    const float pushTarget    = juce::Decibels::decibelsToGain (p.limGainDb);
     const float ceilingTarget = juce::Decibels::decibelsToGain (p.ceilingDbTp);
     const float lookMs        = juce::jlimit ((float) kMinLookaheadMs, (float) kMaxLookaheadMs,
                                               p.lookaheadMs);
@@ -60,15 +57,22 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                                               (float) std::ceil (lookMs * 0.001 * sr));
     if (! smoothersPrimed)
     {
-        // First block after prepare/reset: adopt, do not glide. A ramp from a
-        // stale value here would be an artefact of construction, not a user
-        // move, and it would break the impulse-at-the-allowance test.
+        // First block after prepare/reset: adopt, do not glide. A ramp here is
+        // an artefact of construction, not a user move. ALL FOUR smoothers
+        // prime together — an earlier revision primed only the ceiling and the
+        // window, leaving inputGain/pushGain to ramp from their constructor
+        // unity to the session's values, so the first 20 ms of audio after
+        // loading a session played up to 18 dB low and slid up.
+        inputGain.setCurrentAndTargetValue (inputTarget);
+        pushGain.setCurrentAndTargetValue (pushTarget);
         ceilingLinear.setCurrentAndTargetValue (ceilingTarget);
         windowSamples.setCurrentAndTargetValue (windowTarget);
         smoothersPrimed = true;
     }
     else
     {
+        inputGain.setTargetValue (inputTarget);
+        pushGain.setTargetValue (pushTarget);
         ceilingLinear.setTargetValue (ceilingTarget);
         windowSamples.setTargetValue (windowTarget);
     }
@@ -104,9 +108,17 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // delay stays at the full allowance (ADR-0004). W is the SMOOTHED
         // window, so a lookahead move slides the tap instead of jumping it by
         // hundreds of samples at a block boundary (invariant 8).
+        //
+        // While W glides DOWN the tap advances by more than one sample per
+        // step, so a few samples are never fed to the wedge and get no
+        // pre-emptive attenuation; while it glides UP some are fed twice.
+        // Invariant 4 still holds — CeilingClamp is unconditional and
+        // downstream — so this is the same transient quality cost as the
+        // invariant-9 self-heal below, stated here rather than left for a
+        // reader to assume full coverage during a lookahead move.
         const int w = juce::jlimit (1, delaySamples,
                                     juce::roundToInt (windowSamples.getNextValue()));
-        engagedWindow = w;
+        engagedWindow.store (w, std::memory_order_relaxed);
         const float ceilingNow = ceilingLinear.getNextValue();
 
         int detPos = writePos - (delaySamples - w);

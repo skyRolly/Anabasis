@@ -9,6 +9,43 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton, fourth commit — thread discipline and the structural-tolerance read rules (2026-07-31)
+
+**`MacroEngine::parameterChanged` was an audio-thread hazard.** APVTS delivers parameter-change
+callbacks on whichever thread wrote the value — the audio thread during automation — and the
+listener called `applyMapping()` inline: `setValueNotifyingHost` on nine parameters, `juce::String`
+construction, host notification. It now sets an `std::atomic<bool> mappingPending` and only calls
+`triggerAsyncUpdate()` when `MessageManager::existsAndIsCurrentThread()`; a 30 ms `Timer` drains the
+flag otherwise. `THREADING_POLICY`'s message-thread-only rule for the macro layer (ADR-0005) is
+enforced by construction rather than by convention, and the abort path
+(`abortPendingMapping()`, called on every restore) is mutation-verified.
+
+**All four control smoothers now prime together.** `inputGain` and `pushGain` primed in `prepare()`
+while `ceilingLinear` and `windowSamples` did not, so the first block after `prepare()` glided the
+ceiling and the lookahead up from zero — an audible ramp on the first buffer of every render.
+`testGainsPrimedOnPrepare` pins all four; removing any single prime fails it.
+
+**§4.4 structural tolerance was implemented in one direction only.** A valid `AnabasisRoot` that
+omits `ANABASIS_INTERNAL` returned early, and one that omits `ANABASIS` fell through — both left
+the *previous* session's values live, which is exactly the "chimera of two sessions" the read rules
+forbid. `InternalState::replaceFrom` now applies `setDefaults()` first and overlays what the
+incoming child actually carries, and the wrapper adopts the pristine default slot when `ANABASIS`
+is absent. `testMissingChildrenReadAsDefaults` covers both directions against an already-dirtied
+processor, and both mutants (early return / dropped `else`) fail it.
+
+**The log-taper default drift is now recorded, not silently carried.** `limRelease` (100.000015)
+and `eqBell2Freq` (2999.999756) appear in the frozen registry snapshot as the images of their
+declared defaults under the taper's `exp(log(x))`. `docs/procedures/TESTING.md` states why rounding
+them away would blind the snapshot to a real taper change, and `testRawRoundTripIsIdempotent`
+carries the property byte-identity actually depends on: one save→load→save pass is a **fixed
+point** for every parameter at eight probes across its range. A taper change now fails there,
+naming the parameter, instead of intermittently reddening `testStateRoundTrip`.
+
+Docs synced this pass: `BUILD.md` and `TESTING.md` (status blocks — the suites and the build exist,
+descriptions of what the tree does rather than specifications), `DSP_POLICY.md` (invariant → test
+map rows 2/4/7/8/9/13 marked live or partial), `KNOWN_ISSUES.md` (KI-002: `loudnessComp` and
+`deltaMonitor` are parameter-surface-only at P1).
+
 ### P1 skeleton, third commit — the smoothing rule, and a test that proved itself worthless (2026-07-31)
 
 **The substantive fix: `ceiling` and `lookahead` reached the DSP unsmoothed.** `CODE_STYLE.md`

@@ -273,8 +273,12 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // schemaVersion 1 is the only generation; missing → treated as 1
     // (structural-tolerance read rules, §4.4).
 
+    // Same read rule for the parameter tree: a valid root that omits ANABASIS
+    // means "defaults", not "keep whatever is live".
     if (const auto params = root.getChildWithName ("ANABASIS"); params.isValid())
         adoptParamsTree (params);
+    else
+        adoptParamsTree (defaultSlot.getChildWithName ("ANABASIS"));
     internalState.replaceFrom (root.getChildWithName ("ANABASIS_INTERNAL"));
 
     // Slot fields FIRST go to defaults (the missing-fields read rule), then
