@@ -100,8 +100,11 @@ Restore routing differs by consumer, and this is part of the decision:
 **Presets.** `.anabasis` XML in `<userAppData>/RollyTech/Anabasis/Presets`; snapped denormalised
 values only (no `raw` attribute) — snap-equivalence is the preset contract, raw-exactness is the
 host-session contract; **plus the detach mask**. A preset file with no mask reads as all-clear, by
-the same missing-fields-default rule as the session path; factory presets ship an all-clear mask and
-are compiled-in override tables. Presets carry no frozen trims, no `ANABASIS_INTERNAL`, no A/B
+the same missing-fields-default rule as the session path. Factory presets are compiled-in override
+tables and ship an all-clear mask **wherever the patch is reachable from a single
+`(loudness, character, tone)` triple**; where it is not, the mask records the off-curve parameters
+and the preset is correct, not defective (ADR-0005 owns that rule — this record owns only where the
+mask is *stored*). Presets carry no frozen trims, no `ANABASIS_INTERNAL`, no A/B
 structure — §4.4 enumerates preset content and the trim vector is not in it.
 
 **Not serialized:** the per-slot undo/redo stacks (cap 128, cleared on every session restore).

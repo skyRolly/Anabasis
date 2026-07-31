@@ -47,6 +47,13 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    undo step, so under the obvious `engagedLookahead + OS` model, browsing presets or A/B-comparing
    **during playback** would change host PDC on nearly every step.
 
+   `osLatency` is a function of the **effective** factor, which is not always the one the user
+   selected: at `int_offlineQuality = Force Max` an offline bounce renders at 16×, so the reported
+   figure under `isNonRealtime()` uses the forced factor (ADR-0003/ADR-0004). Reported latency
+   therefore has **three** inputs — `int_oversample`, `int_osPhase` and `int_offlineQuality` — all
+   host-hidden, plus the realtime→offline transition itself; PDC recomputes on all four
+   (ADR-0011).
+
    Latency must never change mid-block: an **oversampling-factor** change is **latched** and
    applied at a reset or a crossfaded boundary. *(Pre-ADR-0004 this sentence also named lookahead;
    a lookahead change no longer alters any reported figure, so it is an ordinary smoothed

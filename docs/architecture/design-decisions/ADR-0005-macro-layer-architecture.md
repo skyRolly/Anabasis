@@ -194,12 +194,11 @@ Four questions, none of them obvious, and each one able to break a different inv
   the next macro gesture re-engages them.
 - **Factory presets are an authoring constraint, not a fact.** A factory patch ships an all-clear
   mask **wherever it is reachable from a single `(loudness, character, tone)` triple**; where it is
-  not, the mask records the off-curve parameters and that is a correct preset, not a defective one.
-  With an all-clear mask a
-  factory patch must be reachable from a single `(loudness, character, tone)` triple. The §5.5
-  curves couple `colourDepth` and `limGain` to one `l`, so a patch like "Tape Glue" (heavy colour,
-  gentle limiting) is not reachable and ships a **non-clear** mask instead. P6 preset authoring
-  checks every patch against the frozen curves rather than assuming curve-consistency.
+  not, the mask records the off-curve parameters, and that preset is correct rather than defective.
+  Unreachable patches are not hypothetical: the §5.5 curves couple `colourDepth` and `limGain`
+  through `l`, so "Tape Glue" (heavy colour, gentle limiting) cannot be produced by any single
+  triple and ships a non-clear mask. P6 preset authoring checks every patch against the frozen
+  curves and records which ones needed a mask, rather than assuming curve-consistency.
 - **The state unit widens.** `{params, presetName, baseline, frozenTrims, detachMask}` is the A/B
   slot *and* the undo step; anything per-slot must be per-undo-step, or undoing a manual edit
   restores the value and strands its detach bit. This ADR depends on ADR-0007 for the schema home

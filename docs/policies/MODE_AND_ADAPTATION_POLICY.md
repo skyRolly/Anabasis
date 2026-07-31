@@ -17,9 +17,13 @@ Advanced-parameter values.
 *Consequence:* a host automating an Advanced parameter and a user turning the Simple knob are
 writing to the same place, and the DSP cannot tell them apart.
 
-Guarded by: `testMacroDefaultIsFixedPoint` — for every managed parameter, the mapping evaluated at
-the default macro position must equal that parameter's declared default, or the first macro gesture
-jumps the factory patch instead of gliding from it (ADR-0005).
+Guarded by: `testMacroDefaultIsFixedPoint` in **`tests/state_tests.cpp` (`AnabasisStateTests`)** —
+for every managed parameter, the mapping evaluated at the default macro position must equal that
+parameter's declared default, or the first macro gesture jumps the factory patch instead of gliding
+from it (ADR-0005). The **binary is named deliberately**: this is a behavioural guard living in the
+state suite because only that target compiles the wrapper sources (ADR-0008), and the DSP core
+cannot see the APVTS or the MacroEngine (ADR-0001). Moving it to `dsp_tests.cpp` does not compile.
+Same for `testModeSwitchIsSoundNeutral` under invariant 2.
 
 ### 2. Switching modes must not change the sound
 

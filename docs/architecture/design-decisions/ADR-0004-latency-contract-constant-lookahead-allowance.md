@@ -122,11 +122,24 @@ non-automatable survive.
 
 5. **PDC update path.** A single `setLatencySamples` call site fed by a const, race-free
    `predictLatency(snapshot)` callable from the message thread (§1.4; precedent
-   `Anamorph:src/PluginProcessor.cpp:88-105` [Verified]). Recomputation is triggered only by
-   `prepare()` and by the `int_oversample` / `int_osPhase` `onChanged` callbacks (§4.3). At
-   `int_offlineQuality = Force Max` an offline bounce renders at 16× and the reported figure during
-   `isNonRealtime()` uses the forced factor (§3.1) — the factor change rides the existing latched
-   switch at render start.
+   `Anamorph:src/PluginProcessor.cpp:88-105` [Verified]). Recomputation is triggered by
+   `prepare()`, by the `onChanged` callbacks of **all three** latency-bearing host-hidden fields —
+   `int_oversample`, `int_osPhase` **and `int_offlineQuality`** (§4.3) — and by
+   **`setNonRealtime()`**. At `int_offlineQuality = Force Max` an offline bounce renders at 16× and
+   the reported figure during `isNonRealtime()` uses the forced factor (§3.1) — the factor change
+   rides the existing latched switch at render start.
+
+   > **Correction, same day (2026-07-31) — a completeness fix, not a change of decision.** An
+   > earlier revision of this item said recomputation is triggered "only by `prepare()` and by the
+   > `int_oversample` / `int_osPhase` `onChanged` callbacks", which contradicted the very next
+   > sentence of the same item: if the reported figure under `isNonRealtime()` uses the forced
+   > factor, then `int_offlineQuality` is a **third** latency input and the realtime→offline
+   > transition is a **fourth** recompute trigger. Left as written, a P1 author following this
+   > record — the highest-authority one for the latency contract — would wire no recompute for a
+   > Force-Max change, and in hosts that do not re-`prepare()` on entering offline render the host
+   > would compensate for the *live* factor while the render ran at 16×, time-shifting the bounce
+   > against the rest of the project. `setNonRealtime()` is named because it is the only callback
+   > guaranteed to fire on that transition. ADR-0011 and `DESIGN.md` §3.3/§4.3 carry the same list.
 
 6. **`lookahead` is non-automatable — for a different reason than before.** It no longer moves PDC, so
    the PDC-spray argument is retired. The surviving reason (§4.2 footnote ³) is that the engaged value
@@ -173,9 +186,9 @@ non-automatable survive.
 
 ## Consequences
 
-- **Bulk swaps can never cross reported latency.** OS factor and phase mode are the only remaining
-  latency sources and both are host-hidden `ANABASIS_INTERNAL` settings that never travel with
-  presets, A/B or undo (§4.3). A preset step, an A/B switch and an undo step are therefore *always*
+- **Bulk swaps can never cross reported latency.** The remaining latency sources are the OS factor,
+  the phase mode **and the offline-render quality**, and all three are host-hidden
+  `ANABASIS_INTERNAL` settings that never travel with presets, A/B or undo (§4.3). A preset step, an A/B switch and an undo step are therefore *always*
   dry-fillable and never touch PDC — which is what makes §7's "copy the Anamorph state machinery
   wholesale" safe here rather than merely convenient.
 - **The forced duck keeps its best masking mode in the workflow that matters.** The Anamorph gate

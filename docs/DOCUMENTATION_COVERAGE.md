@@ -9,6 +9,49 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Second post-sign-off pass — eight fixes, one confirmation
+
+The offline-render PDC gap was fixed in the *wrong two records first*. The previous pass corrected
+ADR-0011 and `DESIGN.md` but missed **ADR-0004**, which is the record that actually owns the
+latency contract and outranks `DESIGN.md` — its decision item 5 still said recomputation is
+triggered "**only** by `prepare()` and by the `int_oversample` / `int_osPhase` `onChanged`
+callbacks", contradicting its own next sentence, and its Consequences repeated "OS factor and phase
+mode are the only remaining latency sources". A P1 author reading the highest-authority record
+would still have shipped the misaligned bounce. Fixed there, and the fourth record with the same
+hole — `DSP_POLICY.md` invariant 2 — now names all three inputs plus the realtime→offline
+transition. The lesson is worth stating: *fixing a cross-record contradiction means fixing every
+record that carries it, starting with the most authoritative*, not the one where it was noticed.
+
+**Two more amendments had landed only on one side.** The release checklist's macro-mapping gate
+still justified itself with "so a recorded macro-automation lane still sounds the same" while
+citing the very invariant that had just been rewritten to say such a lane cannot exist — a gate
+item a reviewer could dismiss as inapplicable, letting a changed curve ship. Re-grounded on recall,
+with an explicit "do not dismiss this on the grounds that no such lane is possible". And ADR-0007
+asserted unconditionally that "factory presets ship an all-clear mask", contradicting ADR-0005's
+conditional rule at equal authority; ADR-0007 now carries the conditional form and an explicit
+scope note (it owns where the mask is *stored*; ADR-0005 owns the rule).
+
+**The verbatim-amendment test, applied to myself.** The previous pass treated an ADR/policy
+*paraphrase* divergence as a defect. The same test showed `DSP_POLICY` invariant 5 carrying a
+substantive clause — the true-peak-estimator exception — that ADR-0003's prescribed block never
+authorised. Resolved by extending the ADR's prescribed text so the enacted policy and the text its
+ADR authorises match verbatim, rather than deleting correct material from the policy.
+
+**Three smaller ones.** ADR-0005's factory-preset bullet still restated the stronger unconditional
+form two sentences after the conditional one — the exact shape the previous pass claimed to have
+collapsed; now one statement. A compressor-justification sentence in `DESIGN.md` had been garbled by
+an earlier edit into "confirmed or refuted by the P2 aliasing measurement *if the null tests say
+otherwise*", which makes the verification contingent on an unrelated test; rewritten with the
+band-limited-gain-signal reason ADR-0003 states cleanly, and with the consequence if it comes out
+otherwise (the compressor moves inside the OS region — an ADR-0003 amendment).
+`MODE_AND_ADAPTATION_POLICY` now names the **binary** alongside `testMacroDefaultIsFixedPoint`, so
+the deliberate placement exception (behavioural guard in the state suite, because only that target
+links the wrapper) is not "fixed" by a later contributor moving it somewhere it cannot compile.
+
+**Confirmed, no change:** the arithmetic and count sweep again — 49 rows / nine non-automatable,
+the fixed-point property, curve maxima inside their ranges, the interpolator group delay, the ten
+`int_` fields, the wireframe meter values, and that the worklog every ADR cites exists.
+
 ### Post-sign-off review pass — thirteen fixes, one confirmation
 
 The sign-off changed what is true; this pass fixed the places that had not caught up, plus one

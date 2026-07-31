@@ -172,8 +172,10 @@ Feed-forward, log-domain envelope, RMS/Peak detector switch, soft knee, ratio 1.
 attack 5–100 ms, release 50–1000 ms + Auto (two-pole program-dependent release), sidechain HPF
 (shared 20–300 Hz detector HPF with the limiter, §3 of the brief), Mix for parallel
 compression. Runs at base rate (its gain signal is band-limited by the 5 ms minimum attack;
-oversampling it is expected to be inaudible for glue ratios ≤4:1 (a perceptual expectation, not a measurement) — confirmed or refuted by the P2 aliasing
-measurement if the null tests say otherwise).
+oversampling it buys nothing audible at glue ratios ≤ 4:1, because the gain signal is band-limited
+by the 5 ms minimum attack. That is a perceptual expectation, not a measurement (C2) — the P2
+aliasing measurement settles it, and if it comes out otherwise the compressor moves inside the
+oversampled region, which is an ADR-0003 amendment).
 
 ### 2.4 Clipper / Saturation
 Continuously variable hard↔soft knee morph with **ADAA** (first-order antiderivative

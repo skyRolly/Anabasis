@@ -13,9 +13,14 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       ID/name/order/range/automation-flag change vs `tests/fixtures/parameter_registry.snapshot`.
 
 - [ ] **Macro mapping unchanged (or migrated)** — the Simple → Advanced mapping curves produce the
-      same Advanced values for the same macro position as the previous release, so a recorded
-      macro-automation lane still sounds the same.
-      Ref: `docs/policies/MODE_AND_ADAPTATION_POLICY.md` invariant 6.
+      same Advanced values for the same macro position as the previous release. The reason is
+      **recall, not automation**: every saved session and preset stores a macro position, so a
+      changed curve makes a user's saved master reload sounding different. (A recorded
+      *macro-automation lane* cannot exist — the macros are non-automatable, and a lane on a
+      managed parameter writes that parameter directly without consulting the mapping. Do not
+      dismiss this item on the grounds that no such lane is possible; it is not what the item
+      protects.)
+      Ref: `docs/policies/MODE_AND_ADAPTATION_POLICY.md` invariant 6; ADR-0005.
 
 - [ ] **Serialization schema verified** — no field removed or semantically changed; additions
       tolerate absence.

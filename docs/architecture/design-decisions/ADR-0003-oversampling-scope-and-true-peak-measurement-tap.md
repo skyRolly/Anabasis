@@ -184,8 +184,21 @@ it at ≥ 4× when the user's factor is Off or 2×**, without double-resampling 
    > **Invariant 5 becomes:** Oversampling wraps the nonlinear stages; linear stages stay at base rate.
    > The region is **Clipper/Saturation → Limiter**. The EQ, the compressor, the **ceiling clamp** —
    > which must sit after the Post-position EQ per invariant 1 — dither and the metering taps all stay
-   > at base rate. **"Oversampling off ⇒ no oversampling latency" now holds unconditionally**, because
-   > the ≥ 4× true-peak path is a measurement tap; the sentence is asserted, no longer assumed.
+   > at base rate, **with one named exception: the true-peak estimator.** Its own rate varies by
+   > setting (item 6: its own 4× interpolator at OS Off, a further ≥ 2× at 2×, and the oversampled
+   > signal read directly at ≥ 4×) so that invariant 3's ≥ 4× requirement holds at every setting.
+   > That is consistent with "metering taps stay at base rate" because the estimator is a
+   > *measurement tap*, not an audio capture point — the capture points for LUFS, spectrum and GR
+   > history are all base-rate. **"Oversampling off ⇒ no oversampling latency" now holds
+   > unconditionally**, because the ≥ 4× true-peak path is a measurement tap; the sentence is
+   > asserted, no longer assumed.
+
+   *(The exception clause was added to this prescribed block on 2026-07-31, the same day, so the
+   enacted policy text and the text this ADR authorises match verbatim. Without it the policy
+   carried a substantive clause its enacting ADR never contained — the same diffing defect this
+   change set corrected between ADR-0002 and invariant 1. The clause states nothing new: it makes
+   item 6's per-setting detector rate explicit where a reader of invariant 5 would otherwise see an
+   apparent contradiction.)*
 
    Invariant 3 is **not** amended — it already says ≥ 4× and BS.1770-4, and this ADR states how that is
    reached. Invariant 2's *other* amendments (dropping lookahead from the latch sentence, re-phrasing
