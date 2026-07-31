@@ -19,7 +19,7 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0005](ADR-0005-macro-layer-architecture.md) | Macro layer: message-thread mapper, non-automatable macros, detach/re-engage coexistence | Accepted | Unverified |
 | [ADR-0006](ADR-0006-ceiling-guarantee.md) | Ceiling guarantee: separate final clamp; monitoring never in the render path | Accepted | Unverified |
 | [ADR-0007](ADR-0007-state-schema-v1.md) | State schema v1: explicit `schemaVersion`, raw-exact sessions, **per-slot adaptive state** | Accepted | Unverified |
-| [ADR-0008](ADR-0008-build-architecture-and-plugin-identity.md) | Build architecture + plugin identity: CMake graph, JUCE 9.0.0 SHA pin, C++20, `RTec`/`Anbs` | Accepted | Partially Verified (pin + identity read from the sibling repo) |
+| [ADR-0008](ADR-0008-build-architecture-and-plugin-identity.md) | Build architecture + plugin identity: CMake graph, JUCE 9.0.0 SHA pin, C++20, `RTec`/`Anbs` | Accepted | Unverified |
 | [ADR-0009](ADR-0009-code-reuse-from-anamorph.md) | Code reuse from Anamorph: copy-and-adapt with provenance, no shared module for v1 | Accepted | Unverified |
 | [ADR-0010](ADR-0010-parameter-surface.md) | Parameter surface: 49 APVTS parameters, exclusion tiers, lockable set | Accepted | Unverified |
 | [ADR-0011](ADR-0011-threading-model.md) | Threading model: two threads, no workers, atomic + SPSC publication | Accepted | Unverified |
@@ -28,6 +28,12 @@ All eleven were authored on **2026-07-31**, the date of the owner's sign-off on 
 (the P0 exit criterion, `DEVELOPMENT_BRIEF.md` §11). They carry `Unverified` confidence by
 construction: Anabasis has no `src/` and no `tests/`, so every runtime claim is a contract the P1+
 code must satisfy, not an observation. Confidence is upgraded per ADR as its code and tests land.
+
+That includes ADR-0008: its JUCE pin and identity codes were read from the **sibling** repository,
+which is evidence about how *Anamorph* builds, not about how Anabasis does. "This pin configures
+and builds here" becomes `Verified` at the first green P1 build and not before
+(`DOCUMENTATION_COVERAGE.md`: never upgrade a confidence level without the evidence that justifies
+it).
 
 **Three of them amended a Policy** (`ADR_POLICY.md` rule 5 — a policy change is enacted by an ADR):
 ADR-0002 and ADR-0004 each carried a **Hard-Stop** amendment to `DSP_POLICY.md` invariant 1 and

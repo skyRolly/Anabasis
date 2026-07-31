@@ -242,9 +242,12 @@ non-automatable survive.
 None yet — P1 onward. Planned: `src/dsp/LookaheadLimiter.{h,cpp}` (fixed 10 ms line, variable
 detector read offset), `src/dsp/AnabasisEngine.{h,cpp}` (latency padding, `predictLatency(snapshot)`,
 latched OS switch, duck/dry-fill), `src/PluginProcessor.{h,cpp}` (single `setLatencySamples` call
-site, PDC recompute on **all four triggers** — `prepare()`, the `onChanged` callbacks of
-`int_oversample` / `int_osPhase` / `int_offlineQuality`, and `setNonRealtime()` — see decision
-item 5), `src/InternalState.h` (`int_oversample`,
+site, PDC recompute on `prepare()` **plus all four latency-input triggers** — the `onChanged`
+callbacks of `int_oversample` / `int_osPhase` / `int_offlineQuality`, and `setNonRealtime()` — see
+decision item 5; `prepare()` is counted separately from the four because it is not a latency
+*input*, it is the host re-establishing the whole model, which is why `DSP_POLICY.md` invariant 2
+says "three inputs … plus the realtime→offline transition itself … recomputes on all four"),
+`src/InternalState.h` (`int_oversample`,
 `int_osPhase`, `int_offlineQuality` + `onChanged`), `src/dsp/EngineParameters.h` (POD snapshot
 carrying `lookahead`), `src/PluginParameters.{h,cpp}` (`pid::lookahead`, row 27, non-automatable),
 `src/dsp/TruePeak.h` (estimator whose group delay sits inside the minimum read offset).

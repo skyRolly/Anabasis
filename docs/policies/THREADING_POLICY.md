@@ -29,7 +29,11 @@ Any path not in this table is a new cross-thread path → Architecture Review Ga
 - No direct access to non-atomic shared state across threads (the only synchronisers are the
   listed atomics + the SPSC ring).
 - **No second producer** on a scope/GR ring, and no reads off the message thread. Reads must be
-  stateless `const` peeks so multiple message-thread read sites remain safe.
+  stateless `const` peeks so multiple message-thread read sites remain safe. (Nuance, **not** an
+  amendment: when an OpenGL context is attached, JUCE paints components on that context rather than
+  the message thread, so the reader is "the thread that paints". ADR-0011 §Consequences records this
+  deliberately without amending the rule — the stateless-peek requirement is what keeps it safe
+  either way — and `docs/architecture/THREAD_MODEL.md` states per repository which context paints.)
 - PDC/latency must be recomputed on the **message thread** via a `const`, race-free predictor —
   never by mutating audio-thread state from the message thread.
 
@@ -43,14 +47,26 @@ Any path not in this table is a new cross-thread path → Architecture Review Ga
 ## Adaptive engine — where it runs
 
 The Simple-mode adaptive engine (`MODE_AND_ADAPTATION_POLICY.md`) is **not** a licence for a
-worker thread. Feature extraction and macro mapping run on the audio thread within the real-time
-budget, or on the message thread reading published values — whichever the P4 design chooses, it
-must be one of the paths above, decided in an ADR before implementation.
+worker thread. This clause previously deferred the placement choice to "an ADR before
+implementation"; that deferral is **discharged by ADR-0011** (Accepted 2026-07-31) and the
+placement is now fixed, not open:
+
+- **Feature extraction and adaptive trim slewing run on the audio thread**, inside the real-time
+  budget (`DESIGN.md` §9's ≤ 0.5 % metering-and-features allocation) — not on a worker, and not on
+  the message thread.
+- **Macro mapping (the MacroEngine) runs on the message thread only**, by construction: the macro
+  parameters are non-automatable (ADR-0005) and the engine consumes macro changes solely through
+  an async message-thread listener.
+
+Implementing either piece on a different thread contradicts an Accepted ADR — a Hard Stop, not a
+design choice.
 
 ## Current model
 
-**TODO (no code yet).** The concrete thread model, with evidence citations, is written at P1 into
-`docs/architecture/THREAD_MODEL.md`. Until then this policy states the permitted shapes only.
+**TODO (no code yet).** The thread inventory, ownership split and cross-thread edges are decided in
+**ADR-0011**; the concrete thread model, with code citations, is written at P1 into
+`docs/architecture/THREAD_MODEL.md` from that ADR. Until that file exists, read ADR-0011 for the
+model and this policy for the permitted shapes.
 
 ## Enforcement
 

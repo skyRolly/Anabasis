@@ -226,6 +226,41 @@ Gate item and an AI-agent Hard Stop, and requires an ADR superseding this one.
   code citations, and `REALTIME_SAFETY_AUDIT.md` (end of P2) audits compliance; neither is
   claimed in advance (C7).
 
+## Policy amendments enacted by this ADR
+
+`ADR_POLICY.md` rule 5 makes an ADR the instrument that changes a Policy, and this change set treats
+an ADR/policy divergence as a defect. The Consequences section above states that
+`THREADING_POLICY.md`'s "Adaptive engine — where it runs" clause "is discharged here"; that
+discharge is carried as a prescribed block, matching the enacted text verbatim.
+
+- **"Adaptive engine — where it runs" stops deferring the placement.** The clause's closing sentence
+  ("Feature extraction and macro mapping run on the audio thread within the real-time budget, or on
+  the message thread reading published values — whichever the P4 design chooses, it must be one of
+  the paths above, decided in an ADR before implementation") is replaced by:
+
+  > This clause previously deferred the placement choice to "an ADR before
+  > implementation"; that deferral is **discharged by ADR-0011** (Accepted 2026-07-31) and the
+  > placement is now fixed, not open:
+  >
+  > - **Feature extraction and adaptive trim slewing run on the audio thread**, inside the real-time
+  >   budget (`DESIGN.md` §9's ≤ 0.5 % metering-and-features allocation) — not on a worker, and not on
+  >   the message thread.
+  > - **Macro mapping (the MacroEngine) runs on the message thread only**, by construction: the macro
+  >   parameters are non-automatable (ADR-0005) and the engine consumes macro changes solely through
+  >   an async message-thread listener.
+  >
+  > Implementing either piece on a different thread contradicts an Accepted ADR — a Hard Stop, not a
+  > design choice.
+
+  The opening sentence ("The Simple-mode adaptive engine … is **not** a licence for a worker
+  thread") is unchanged — this ADR strengthens it rather than replacing it.
+
+**Not amended, deliberately.** The forbidden-access rule "**No second producer** on a scope/GR ring,
+and no reads off the message thread" stays exactly as written. The Consequences section records the
+OpenGL-context nuance and states that no policy amendment is asserted for it; the policy carries a
+non-normative parenthetical pointing here, so a contributor meets the nuance at the rule without the
+rule moving. `docs/architecture/THREAD_MODEL.md` (P1) settles it per repository.
+
 ## Related code
 
 None yet — P1 onward. Planned: `src/PluginProcessor.{h,cpp}` (`processBlock` with

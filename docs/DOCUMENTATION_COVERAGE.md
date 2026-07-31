@@ -9,6 +9,71 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Fourth post-sign-off pass — eight fixes, three confirmations
+
+The theme this pass is **records that still describe a decision as open after it was taken**. Three
+of the eight are that exact shape, and the worst of them sits in a *binding rules* file.
+
+- **`THREADING_POLICY.md` still let a contributor choose where the adaptive engine runs.** Its
+  "Adaptive engine — where it runs" clause deferred the placement to "an ADR before implementation";
+  ADR-0011 took that decision and its Consequences section says in so many words that the clause "is
+  discharged here". A P4 author reading only the policy — the file that is binding from day one —
+  could have implemented a placement the Accepted ADR forbids. The clause now states the decided
+  split: **feature extraction and adaptive trim slewing on the audio thread** inside the ≤ 0.5 %
+  budget, **macro mapping (MacroEngine) on the message thread only**, with either alternative called
+  out as a Hard Stop. §"Current model" gained the ADR-0011 pointer it lacked, so the `TODO (no code
+  yet)` no longer reads as *no model yet*.
+- **`AI_AGENT_POLICY.md` still routed the shared-module question to OQ-005**, which is `Resolved`.
+  ADR-0009 chose copy-and-adapt with provenance headers, no shared module for v1, and a named
+  revisit after v0.1.0 — so an agent proposing a shared module was contradicting an Accepted ADR
+  while believing it was answering an open question. Now points at the ADR and marks the proposal a
+  Hard Stop.
+- **`ADR_INDEX.md` rated ADR-0008 `Partially Verified` on sibling-repo evidence.** The JUCE pin and
+  the identity codes were read out of *Anamorph*, which is evidence about how Anamorph builds, not
+  about how Anabasis does — Anabasis has no `CMakeLists.txt` to verify against. Downgraded to
+  `Unverified` with that reasoning recorded, so the rating no longer borrows another repository's
+  confidence.
+
+**Two count/reference defects in implementation checklists** — the class of defect the previous pass
+named, so they were looked for deliberately.
+
+- **ADR-0004's Related-code line said "all four triggers" and then listed five.** The canonical four
+  are the three host-hidden latency inputs plus the realtime→offline transition (`DSP_POLICY.md`
+  invariant 2 states it that way); `prepare()` is a fifth call site but not a latency *input*. Split
+  and labelled, so the ADR and the policy now count the same things.
+- **`DSP_POLICY.md` invariant 5 carried a dangling `(item 6:` reference** that read as a
+  self-reference to invariant 6 of the same policy rather than to ADR-0003 decision item 6. Fixed in
+  the policy **and** in ADR-0003's prescribed amendment block, so the verbatim ADR↔policy match is
+  preserved.
+
+**Two transcription gaps and one typo.**
+
+- **`TESTING.md`'s true-peak row dropped two of ADR-0003 item 9's axes** — *both phase modes* and the
+  **clamp's tap** as distinct from the limiter's detector. A suite built from the procedure alone
+  would have swept the OS factor and called the invariant covered, which is precisely the vacuous
+  pass the mandated-stimulus table exists to prevent. Both axes restored, with the source narrowed
+  to `ADR-0003 item 9`.
+- **`DESIGN.md` §2.3's compressor sentence** had an unbalanced parenthesis and a stray line break —
+  its third rewrite in as many passes, now closed out.
+
+**One thing the mechanical check turned up that the review did not.** Diffing every ADR-prescribed
+block against the enacted policy text byte-for-byte — rather than reading them — showed ADR-0003's
+invariant 2 and 5 blocks differing from `DSP_POLICY.md` in emphasis and attribution only: the
+policy bolds each invariant's opening sentence as a headline, stamps the dated
+`(ADR-0003, 2026-07-31)` attribution rule 5 requires, and carries ADR-0004's later emphasis on
+`**lookahead allowance**`. No clause differs. Left as it is — forcing byte-identity would make the
+ADR reproduce the policy file's formatting conventions — but ADR-0003 now states the scope of
+"verbatim" explicitly, so the next person to run this diff reads a recorded artefact instead of a
+fresh divergence.
+
+**Confirmed, no change:** the arithmetic and count sweep again (49 rows, nine non-automatable, the
+fixed-point property, curve maxima, interpolator group delay, ten `int_` fields); and
+`HANDOVER.md`'s Blocking-P1 claim against `OPEN_QUESTIONS.md`. **Deliberately not changed:** `THREADING_POLICY.md`'s ring rule ("no reads off
+the message thread") versus ADR-0011 §6.1's OpenGL attachment. ADR-0011 records the tension and
+explicitly declines to amend, deferring it to `THREAD_MODEL.md` at P1 — amending the rule anyway
+would be a policy change with no ADR behind it (`ADR_POLICY.md` rule 5). A non-normative note now
+sits under the rule so a contributor meets the nuance where the rule is, without the rule moving.
+
 ### Third post-sign-off pass — eleven fixes, one confirmation
 
 Two of these are the *third* time the same fact needed propagating, which is itself the finding:

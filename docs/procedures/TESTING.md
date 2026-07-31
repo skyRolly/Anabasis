@@ -37,7 +37,7 @@ alone does not carry the property; these are the cases where the wrong stimulus 
 | Test | Mandated stimulus | Source |
 |---|---|---|
 | `testOutputNeverExceedsCeiling` | Run in **both EQ positions**, and the Post case must include a **+12 dB shelf after the limiter** — the exact signal the clamp placement exists to survive | ADR-0002 |
-| true-peak accuracy (≤ 0.1 dB) | The **whole OS matrix** (Off / 2× / 4× / 8× / 16×), because the estimator's input path differs per setting — its own 4× interpolator, a further ≥ 2×, or the oversampled signal read directly | ADR-0003 |
+| true-peak accuracy (≤ 0.1 dB) | The **whole OS matrix** — Off / 2× / 4× / 8× / 16× **× both phase modes** (minimum / linear) — because the estimator's input path differs per setting: its own 4× interpolator, a further ≥ 2×, or the oversampled signal read directly. It must cover **both taps**: the limiter's detector *and* the ceiling clamp's (ADR-0002), which read at different points in the chain | ADR-0003 item 9 |
 | `testReportedLatencyMatchesImpulse` | The impulse must land at **exactly `maxLookahead + OS` for every lookahead value**, not just at the range ends — the constant-allowance contract is what makes a padding bug a test failure | ADR-0004 |
 | click-free transitions | Must include a **lookahead move** — it is the one switchable path with neither a duck nor a latch (`DSP_POLICY.md` invariant 8) | ADR-0004 |
 

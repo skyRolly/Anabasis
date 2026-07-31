@@ -174,8 +174,7 @@ attack 5–100 ms, release 50–1000 ms + Auto (two-pole program-dependent relea
 compression. Runs at base rate: its gain signal is band-limited by the 5 ms minimum attack, so
 oversampling it buys nothing audible at glue ratios ≤ 4:1. That is a perceptual expectation, not a
 measurement (C2) — the P2 aliasing measurement settles it, and if it comes out otherwise the
-compressor moves inside the
-oversampled region, which is an ADR-0003 amendment).
+compressor moves inside the oversampled region, which is an ADR-0003 amendment.
 
 ### 2.4 Clipper / Saturation
 Continuously variable hard↔soft knee morph with **ADAA** (first-order antiderivative

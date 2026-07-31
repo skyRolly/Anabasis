@@ -185,7 +185,8 @@ it at ≥ 4× when the user's factor is Off or 2×**, without double-resampling 
    > The region is **Clipper/Saturation → Limiter**. The EQ, the compressor, the **ceiling clamp** —
    > which must sit after the Post-position EQ per invariant 1 — dither and the metering taps all stay
    > at base rate, **with one named exception: the true-peak estimator.** Its own rate varies by
-   > setting (item 6: its own 4× interpolator at OS Off, a further ≥ 2× at 2×, and the oversampled
+   > setting (**ADR-0003 decision item 6** — *not* invariant 6 of this policy: its own 4×
+   > interpolator at OS Off, a further ≥ 2× at 2×, and the oversampled
    > signal read directly at ≥ 4×) so that invariant 3's ≥ 4× requirement holds at every setting.
    > That is consistent with "metering taps stay at base rate" because the estimator is a
    > *measurement tap*, not an audio capture point — the capture points for LUFS, spectrum and GR
@@ -199,6 +200,16 @@ it at ≥ 4× when the user's factor is Off or 2×**, without double-resampling 
    change set corrected between ADR-0002 and invariant 1. The clause states nothing new: it makes
    item 6's per-setting detector rate explicit where a reader of invariant 5 would otherwise see an
    apparent contradiction.)*
+
+   *(Scope of "verbatim", recorded 2026-07-31 so a future diff of these two blocks against
+   `DSP_POLICY.md` does not read a formatting artefact as a divergence. The blocks above carry the
+   **wording**; the enacted text additionally carries three things that belong to the policy file's
+   own conventions, not to this decision: the invariant's opening sentence is bolded as a headline
+   like every other invariant's; the amendment is stamped with its dated attribution
+   — `(ADR-0003, 2026-07-31; …)` on invariant 2 and `*(Amended by ADR-0003, 2026-07-31.)*` on
+   invariant 5 — per `ADR_POLICY.md` rule 5; and `**lookahead allowance**`/`*inside*`/`**engaged**`
+   in the invariant-2 paragraph are ADR-0004's later emphasis, disjoint from this ADR as the
+   paragraph below states. No clause differs.)*
 
    Invariant 3 is **not** amended — it already says ≥ 4× and BS.1770-4, and this ADR states how that is
    reached. Invariant 2's *other* amendments (dropping lookahead from the latch sentence, re-phrasing

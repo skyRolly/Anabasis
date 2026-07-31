@@ -93,7 +93,8 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    **Clipper/Saturation → Limiter**. The EQ, the compressor, the **ceiling
    clamp** — which must sit after the Post-position EQ per invariant 1 — dither and the metering
    taps all stay at base rate, **with one named exception: the true-peak estimator.** Its own rate
-   varies by setting (item 6: its own 4× interpolator at OS Off, a further ≥ 2× at 2×, and the
+   varies by setting (**ADR-0003 decision item 6** — *not* invariant 6 of this policy: its own 4×
+   interpolator at OS Off, a further ≥ 2× at 2×, and the
    oversampled signal read directly at ≥ 4×) so that invariant 3's ≥ 4× requirement holds at every
    setting. That is consistent with "metering taps stay at base rate" because the estimator is a
    *measurement tap*, not an audio capture point — the capture points for LUFS, spectrum and GR
