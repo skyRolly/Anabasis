@@ -163,10 +163,11 @@ remaining latency sources, so no APVTS listener needs to drive PDC at all.
 > Force-Max change, and — in hosts that do not re-`prepare` when entering offline render — the host
 > would compensate for the live factor while the render ran at 16×, time-shifting the bounce
 > against the rest of the project. `setNonRealtime()` is named explicitly because it is the only
-> callback guaranteed to fire on that transition. The audio thread's effective latency follows its own latched OS state
-and is never written from the message thread. The engine's dry-fill gate compares the predicted
-figure against the latched one before engaging (`Anamorph:src/dsp/AnamorphEngine.cpp:290-307`
-[Verified]).
+> callback guaranteed to fire on that transition.
+
+The audio thread's effective latency follows its own latched OS state and is never written from the
+message thread. The engine's dry-fill gate compares the predicted figure against the latched one
+before engaging (`Anamorph:src/dsp/AnamorphEngine.cpp:290-307` [Verified]).
 
 **No worker threads, and the two reasons one might be wanted are closed at `prepare()`.** Every
 oversampler instance — every factor in `Off/2×/4×/8×/16×`, both phase modes — is constructed and

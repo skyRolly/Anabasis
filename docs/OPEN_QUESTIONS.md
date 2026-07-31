@@ -29,8 +29,6 @@ terms separately.
 
 ---
 
-
-
 ## OQ-006 — Where does the C++23 canary run, and what does it gate? · `Open`
 
 **Question.** §2.1 requires a **non-blocking** CI canary job building at C++23 on all three
@@ -87,7 +85,6 @@ metadata exists in this repository.
 inferred from Anamorph.
 
 ---
-
 
 ## OQ-011 — What is the macOS deployment target? · `Blocking P1`
 

@@ -172,6 +172,23 @@ non-automatable survive.
      CONSTANT, together with the compatibility reason (presets/A-B/undo all carry `lookahead`) so the
      constant is not read as sloppiness.
 
+   - **(c) Invariant 8's enumeration gains the lookahead.** Prescribed replacement for its opening
+     sentence, and a paragraph appended to it — carried here as a block so the enacted policy text
+     and the text this ADR authorises match verbatim (`ADR_POLICY.md` rule 5; the same standard
+     applied to (a) and (b)):
+
+     > **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
+     > the oversampling factor, the EQ position, **the lookahead**, the mode switch, or a preset load
+     > must produce no click, pop, or level jump.
+     >
+     > **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a
+     > latch** (ADR-0004 made reported latency constant in it, so it is an ordinary smoothed change).
+     > That makes it the path most likely to be skipped at P1. Its click-free mechanism is specific:
+     > the **audio** delay stays fixed at the full 10 ms allowance and the lookahead value moves only
+     > the *detector / gain-computer* alignment — a smooth, band-limited control signal — so no audio
+     > sample is ever skipped or repeated. A per-path click test is owed for it like every other entry
+     > in this list.
+
    Invariant 2's guard is strengthened in the same edit: `testReportedLatencyMatchesImpulse` measures
    across the **oversampling × lookahead matrix**, and the impulse must land at exactly
    `maxLookahead + OS` for *every* lookahead value — so a padding bug is a test failure rather than a
@@ -225,7 +242,9 @@ non-automatable survive.
 None yet — P1 onward. Planned: `src/dsp/LookaheadLimiter.{h,cpp}` (fixed 10 ms line, variable
 detector read offset), `src/dsp/AnabasisEngine.{h,cpp}` (latency padding, `predictLatency(snapshot)`,
 latched OS switch, duck/dry-fill), `src/PluginProcessor.{h,cpp}` (single `setLatencySamples` call
-site, PDC recompute on `int_oversample` / `int_osPhase`), `src/InternalState.h` (`int_oversample`,
+site, PDC recompute on **all four triggers** — `prepare()`, the `onChanged` callbacks of
+`int_oversample` / `int_osPhase` / `int_offlineQuality`, and `setNonRealtime()` — see decision
+item 5), `src/InternalState.h` (`int_oversample`,
 `int_osPhase`, `int_offlineQuality` + `onChanged`), `src/dsp/EngineParameters.h` (POD snapshot
 carrying `lookahead`), `src/PluginParameters.{h,cpp}` (`pid::lookahead`, row 27, non-automatable),
 `src/dsp/TruePeak.h` (estimator whose group delay sits inside the minimum read offset).

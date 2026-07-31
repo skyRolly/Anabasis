@@ -38,7 +38,10 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       Ref: `docs/procedures/TESTING.md`.
 
 - [ ] **Latency reporting verified** — reported PDC matches the actual chain delay across the
-      **lookahead × oversampling** matrix, at both ends of the lookahead range; with oversampling
+      **lookahead × oversampling** matrix. The impulse must land at exactly `maxLookahead + OS` for
+      **every** lookahead value, not merely at the ends of the range — that is what makes a padding
+      bug a test failure rather than a host-sync complaint (ADR-0004; `procedures/TESTING.md`
+      carries the same stimulus). With oversampling
       off, the reported value is exactly the **lookahead allowance** — the constant 10 ms maximum,
       *not* the engaged value (`DSP_POLICY.md` invariant 2, as amended by **ADR-0004**: the engaged
       lookahead is a read offset inside a fixed line, so browsing presets never moves host PDC).

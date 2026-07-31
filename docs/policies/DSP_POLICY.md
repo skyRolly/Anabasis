@@ -90,16 +90,16 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep).
 
 5. **Oversampling wraps the nonlinear stages; linear stages stay at base rate.** The region is
-   **Clipper/Saturation → Limiter** (ADR-0003, 2026-07-31). The EQ, the compressor, the **ceiling
+   **Clipper/Saturation → Limiter**. The EQ, the compressor, the **ceiling
    clamp** — which must sit after the Post-position EQ per invariant 1 — dither and the metering
    taps all stay at base rate, **with one named exception: the true-peak estimator.** Its own rate
-   varies by setting (ADR-0003: its own 4× interpolator at OS Off, a further ≥ 2× at 2×, and the
+   varies by setting (item 6: its own 4× interpolator at OS Off, a further ≥ 2× at 2×, and the
    oversampled signal read directly at ≥ 4×) so that invariant 3's ≥ 4× requirement holds at every
    setting. That is consistent with "metering taps stay at base rate" because the estimator is a
    *measurement tap*, not an audio capture point — the capture points for LUFS, spectrum and GR
    history are all base-rate. **"Oversampling off ⇒ no oversampling latency" now holds
-   unconditionally**, because ADR-0003 settled the ≥ 4× true-peak path as a measurement tap
-   (invariant 2); the sentence is asserted, no longer assumed.
+   unconditionally**, because the ≥ 4× true-peak path is a measurement tap; the sentence is
+   asserted, no longer assumed. *(Amended by ADR-0003, 2026-07-31.)*
    Guarded by: the latency-matrix test + the aliasing measurement.
 
 6. **The soft-clip stage uses antiderivative antialiasing (ADAA)** in addition to global

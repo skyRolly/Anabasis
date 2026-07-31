@@ -171,10 +171,10 @@ release and stereo link.
 Feed-forward, log-domain envelope, RMS/Peak detector switch, soft knee, ratio 1.1–4:1,
 attack 5–100 ms, release 50–1000 ms + Auto (two-pole program-dependent release), sidechain HPF
 (shared 20–300 Hz detector HPF with the limiter, §3 of the brief), Mix for parallel
-compression. Runs at base rate (its gain signal is band-limited by the 5 ms minimum attack;
-oversampling it buys nothing audible at glue ratios ≤ 4:1, because the gain signal is band-limited
-by the 5 ms minimum attack. That is a perceptual expectation, not a measurement (C2) — the P2
-aliasing measurement settles it, and if it comes out otherwise the compressor moves inside the
+compression. Runs at base rate: its gain signal is band-limited by the 5 ms minimum attack, so
+oversampling it buys nothing audible at glue ratios ≤ 4:1. That is a perceptual expectation, not a
+measurement (C2) — the P2 aliasing measurement settles it, and if it comes out otherwise the
+compressor moves inside the
 oversampled region, which is an ADR-0003 amendment).
 
 ### 2.4 Clipper / Saturation
@@ -387,10 +387,15 @@ are computed at `prepare()` from `getLatencyInSamples()` — recorded as measure
 
 - Latency never changes mid-block: OS factor / phase-mode changes are **latched** at reset or
   the silent duck bottom (§2.8).
-- **Lookahead and the OS controls are not automatable** (§4 table): a host cannot spray PDC
-  changes, and the adaptive engine is policy-barred from touching them
-  (`MODE_AND_ADAPTATION_POLICY.md` inv 4). The delay line is sized for 10 ms at prepare, so no
-  lookahead change ever allocates.
+- **No host can drive a latency input.** The three that remain — `int_oversample`,
+  `int_osPhase`, `int_offlineQuality` — are **host-hidden** (§4.3), so they are not in the
+  parameter tree at all. `lookahead` *is* a parameter and is **non-automatable for a different
+  reason**, which this decision changed: it can no longer spray PDC (the reported figure is
+  constant in it), but its engaged value is a **read offset into a live delay line**, so sweeping
+  it at automation rate drags the tap through the buffer and produces pitch/comb artefacts. It is
+  a set-and-leave control (footnote ³; ADR-0004). The adaptive engine is separately barred from
+  all four (`MODE_AND_ADAPTATION_POLICY.md` inv 4). The delay line is sized for 10 ms at prepare,
+  so no lookahead change ever allocates.
 - The dry ring is sized `maxLookahead(10 ms) + maxOsLatency(16×, linear) + maxBlock + 1`.
 
 ### 3.4 OQ-010 — lookahead has NO zero/off position (recommendation)
@@ -402,8 +407,8 @@ OQ-010 trade-off note); (c) the range is a compatibility contract from v0.1.0 �
 re-scales saved sessions (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3), whereas *narrowing* need
 never happen. Row 27's footnote ⁶ states this in the table so the range cannot read as an
 oversight. Consequence: **the plugin always reports non-zero latency** — and under §3.3 that
-figure is the constant 10 ms allowance, not the engaged value, so DSP_POLICY invariant 2 must be
-re-phrased against the *allowance* (ADR-0004, below).
+figure is the constant 10 ms allowance, not the engaged value. **Done:** ADR-0004 re-phrased
+`DSP_POLICY.md` invariant 2 against the *allowance* at sign-off.
 
 ---
 
@@ -946,9 +951,9 @@ matrix, ns/sample + worst-block, median of ≥5 runs, machine recorded — resul
 | ADR | Title | Settles |
 |---|---|---|
 | 0001 | Format-agnostic DSP core via POD `EngineParameters` | §1.1 (inherits Anamorph ADR-0001 pattern) |
-| 0002 | Fixed serial signal chain; EQ Pre/Post as the only mobility; **ceiling clamp always last before dither**. **Must amend `DSP_POLICY.md` invariant 1's chain wording** to state Limiter → EQ(post) → Ceiling — Hard Stop, human review required | §1.2, §2.6 / DSP_POLICY inv 1+4 |
+| 0002 | Fixed serial signal chain; EQ Pre/Post as the only mobility; **ceiling clamp always last before dither**. Carried a **Hard-Stop amendment to `DSP_POLICY.md` invariant 1** (Limiter → EQ(post) → Ceiling) — ratified and **landed at sign-off** | §1.2, §2.6 / DSP_POLICY inv 1+4 |
 | 0003 | Oversampling scope + **true-peak as measurement tap, ≥4× total at every OS setting** + linear-phase & Force-Max modes | §3.1–3.2; closes DSP_POLICY inv 2/5 open point |
-| 0004 | Latency contract: **reported = CONSTANT max-lookahead allowance (10 ms) + OS**, engaged lookahead free inside a fixed line; only OS latches; latency params non-automatable; **no zero-lookahead position**. **Must amend `DSP_POLICY.md` invariant 2** — drop lookahead from the latch sentence and re-phrase its open point against the *allowance* — Hard Stop, human review required | §3.3–3.4; resolves OQ-010 |
+| 0004 | Latency contract: **reported = CONSTANT max-lookahead allowance (10 ms) + OS**, engaged lookahead free inside a fixed line; only OS latches; latency inputs host-hidden and `lookahead` non-automatable; **no zero-lookahead position**. Carried a **Hard-Stop amendment to `DSP_POLICY.md` invariant 2** (latch sentence + allowance phrasing) — ratified and **landed at sign-off** | §3.3–3.4; resolves OQ-010 |
 | 0005 | Macro-layer architecture: message-thread mapper, non-automatable macros, detach/re-engage coexistence, adaptive trims engine-internal | §5; resolves OQ-004 |
 | 0006 | Ceiling guarantee: separate final clamp, ≤0.1 dBTP, monitoring never in render path | §2.6–2.7 |
 | 0007 | State schema v1: explicit `schemaVersion`, raw-exact sessions, snapped presets, global `ADAPTIVE` child for learned targets, and **per-A/B-slot detach mask + frozen trim vector inside each `AB` slot**; **presets carry the detach mask** | §4.4, §5.3 |

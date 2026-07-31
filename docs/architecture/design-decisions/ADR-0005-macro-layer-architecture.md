@@ -174,6 +174,38 @@ Four questions, none of them obvious, and each one able to break a different inv
     the frozen vector serialized per A/B slot via the sentinel-atomic inject pattern
     (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]).
 
+## Policy amendments enacted by this ADR
+
+`ADR_POLICY.md` rule 5 makes an ADR the instrument that changes a Policy, and this change set treats
+an ADR/policy divergence as a defect — so the two `MODE_AND_ADAPTATION_POLICY.md` edits this
+decision requires are carried here as prescribed blocks, matching the enacted text verbatim.
+
+- **Invariant 1 gains a named guard, with its binary.** Appended:
+
+  > Guarded by: `testMacroDefaultIsFixedPoint` in **`tests/state_tests.cpp` (`AnabasisStateTests`)** —
+  > for every managed parameter, the mapping evaluated at the default macro position must equal that
+  > parameter's declared default, or the first macro gesture jumps the factory patch instead of gliding
+  > from it (ADR-0005). The **binary is named deliberately**: this is a behavioural guard living in the
+  > state suite because only that target compiles the wrapper sources (ADR-0008), and the DSP core
+  > cannot see the APVTS or the MacroEngine (ADR-0001). Moving it to `dsp_tests.cpp` does not compile.
+  > Same for `testModeSwitchIsSoundNeutral` under invariant 2.
+
+- **Invariant 4's lookahead bar is re-grounded.** Its clause derived the bar from the latency clause
+  ("…change reported latency — **so** it must not switch the oversampling factor or the lookahead
+  time"). ADR-0004 made a lookahead change move no reported figure, so that derivation lapsed while
+  the bar itself must stand. Prescribed replacement:
+
+  > - change reported latency (`DSP_POLICY.md` invariant 2) — so it must not switch the oversampling
+  >   factor. **It must not move the lookahead either**, and since ADR-0004 that bar no longer follows
+  >   from the latency clause (a lookahead change moves no reported figure): it stands on its own
+  >   ground — the engaged lookahead is a read offset into a live delay line, so slewing it drags the
+  >   tap through the buffer, and adaptation is barred from time-varying delays for the same reason it
+  >   is barred from the oversampling factor,
+
+  Invariants 5 and 6 are also rewritten from "open decision" wording to the settled rules this ADR
+  establishes (coexistence strategy; macro non-automatability) — those are this ADR's own decision
+  text, reproduced in the policy rather than prescribed separately.
+
 ## Consequences
 
 - **One value model.** The Advanced view always shows the numbers the DSP is using; a host

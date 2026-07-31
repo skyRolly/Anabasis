@@ -9,6 +9,57 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Third post-sign-off pass — eleven fixes, one confirmation
+
+Two of these are the *third* time the same fact needed propagating, which is itself the finding:
+**a cross-record correction is not done until every record that carries the claim is fixed, and the
+implementation checklists count as records.**
+
+- **ADR-0004's Related-code list still named two of the four PDC triggers.** Its decision body was
+  corrected last pass and its own correction note explains why the omission would ship a misaligned
+  bounce — but the planned-code section a developer actually works from still read "PDC recompute on
+  `int_oversample` / `int_osPhase`". Now all four.
+- **`DESIGN.md` §3.3's "Remaining rules" bullet still gave the retired PDC-spray reason** for
+  lookahead non-automatability, which footnote ³ and ADR-0004 had already replaced. It was also
+  wrong for the OS controls in a second way: they are **host-hidden**, so "not automatable"
+  understates them — they are not in the parameter tree at all. Rewritten to separate the two cases.
+
+**Two governance gaps where an ADR mandated something without carrying its escape or its
+amendment.**
+
+- **ADR-0008 mandated `GIT_SHALLOW TRUE` + a commit SHA with no caveat.** `DEPENDENCY_POLICY.md`
+  records that pairing as a documented CMake trap whose resolution is *drop `GIT_SHALLOW`, never the
+  SHA* — but an ADR outranks a policy, so an author following the higher record had no sanctioned
+  escape and the first real build could fail to configure with no permitted fix. The caveat and the
+  fallback are now in the ADR itself, with the reason they must live there.
+- **Two policy edits had no prescribed amendment block.** `DSP_POLICY` invariant 8's lookahead entry
+  and `MODE_AND_ADAPTATION_POLICY` invariant 4's re-grounding were substantively authorised by
+  ADR-0004 and ADR-0005 but not carried as verbatim blocks, unlike the invariant 1/2/5 edits — and
+  this change set treats ADR/policy divergence as a defect. Both ADRs now carry prescribed blocks;
+  ADR-0005 gained a *Policy amendments enacted by this ADR* section it was missing entirely.
+
+**A rendering defect with a real consequence.** ADR-0011's same-day correction note ended mid-line
+and the following unquoted lines were absorbed into it by Markdown lazy continuation — so two
+sentences of **binding** contract (which thread owns the latency figure, and the dry-fill gate)
+rendered as part of a historical aside a reader could dismiss. Blockquote closed; a scan of all
+eleven ADRs found no other instance.
+
+**Four smaller ones.** §10's ADR-0002 and ADR-0004 rows still read "**Must amend** … Hard Stop,
+human review required" for amendments that landed at sign-off. §3.4 still framed the invariant 2
+re-phrasing as future work while §3.2 had been switched to a "**Done:**" note for the analogous
+ADR-0003 case. The compressor justification had its reason stated twice in one sentence — the
+previous pass fixed the garbling and left the duplication. Invariant 5 diverged from ADR-0003's
+prescribed text in two cosmetic spots (`ADR-0003:` for `item 6:`, and a re-worded closing clause);
+now verbatim, with the attribution moved outside the quoted block. The release checklist's latency
+item still said "at both ends of the lookahead range" where ADR-0004 requires **every** value —
+a release run following only the checklist would have exercised the weaker property. And the blank
+lines left by excising the three resolved entries were collapsed, since `README` now points at that
+file instead of enumerating entries itself.
+
+**Confirmed, no change:** the arithmetic and count sweep, for the third time — 49 rows / nine
+non-automatable, the fixed-point property, curve maxima inside range, interpolator group delay, the
+ten `int_` fields, wireframe meter values, and the cited worklog's existence.
+
 ### Second post-sign-off pass — eight fixes, one confirmation
 
 The offline-render PDC gap was fixed in the *wrong two records first*. The previous pass corrected

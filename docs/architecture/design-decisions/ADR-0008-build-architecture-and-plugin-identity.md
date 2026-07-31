@@ -190,7 +190,22 @@ pipeline, and its status is reported in each phase summary. C++26 is not a targe
 the **immutable commit SHA `f8f8864172464b9adf9eba6101e1f784838d1597`** — never a branch, never a
 mutable tag *name*. Two cache variables carry it: `ANABASIS_JUCE_VERSION "9.0.0"` (human-readable,
 and the value `README.md` records) and `ANABASIS_JUCE_TAG "f8f8864…"` (the SHA `FetchContent`
-actually uses). If `ANABASIS_JUCE_PATH` is set, a local checkout is `add_subdirectory`'d instead and
+actually uses).
+
+> **`GIT_SHALLOW TRUE` + a commit SHA is a documented CMake trap, and dropping the shallow flag is
+> the sanctioned fix.** CMake's own `ExternalProject`/`FetchContent` documentation says
+> `GIT_SHALLOW` expects `GIT_TAG` to name a **branch or tag**; fetching an arbitrary SHA shallowly
+> works only where the server permits `uploadpack.allowReachableSHA1InWant` (GitHub does today) and
+> CMake is new enough to attempt it. Otherwise the outcome is a silent fallback to a full clone
+> (slow, not wrong) or a hard configure failure against a stricter mirror.
+> **If the combination misbehaves, drop `GIT_SHALLOW`, never the SHA** — the SHA is what makes the
+> dependency immutable and is the whole point of the pin. This is stated *here*, in the decision
+> record, because an ADR outranks `DEPENDENCY_POLICY.md` (`SOURCE_OF_TRUTH.md`): with the mandate
+> recorded and the escape only in the policy, an author following the higher record would read the
+> fallback as forbidden. Verify explicitly when `CMakeLists.txt` lands
+> (`DEPENDENCY_POLICY.md` §Version-lock reasoning).
+
+If `ANABASIS_JUCE_PATH` is set, a local checkout is `add_subdirectory`'d instead and
 no fetch occurs — the escape hatch for offline or network-restricted CI.
 
 **Targets.** Four declared targets, plus the format targets JUCE generates:
