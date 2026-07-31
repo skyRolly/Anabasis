@@ -42,6 +42,13 @@ excluded.
 
 **Action.** Argue and decide in `DESIGN.md`; record as an ADR before P4 implementation.
 
+**Recommendation (2026-07-30, pending sign-off).** Argued in `DESIGN.md` §5.3:
+**macro-latch with re-engage on touch** — returning to Simple moves nothing (invariant 2 holds by
+construction); manually edited parameters are *detached* from the macro and badged; the next
+macro-knob gesture re-engages them through the normal rate-limited glide, which is the "clear
+notice" moment. Carry-over offsets were rejected (history-dependent, untestable mapping;
+compounds with adaptation). Becomes ADR-0005 on sign-off.
+
 ---
 
 ## OQ-005 — Extract a shared `rollytech-ui` module? · `Open`
@@ -60,6 +67,11 @@ available to this project in any case — it would require a coordinated change 
 
 **Action.** Give a recommendation in `DESIGN.md` (§1.2 requires one). Do not extract without
 owner approval.
+
+**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §8: **copy-and-adapt now**, with
+provenance headers pointing at the Anamorph originals; revisit extraction as a product-family
+ADR after Anabasis v0.1.0 ships, when both UI layers are stable enough to see what is actually
+common.
 
 ---
 
@@ -102,6 +114,11 @@ violation and would mislead a mastering decision.
 documented "as of" date, or user-editable), and record the decision plus each value's source in
 `DESIGN.md`. Any number that reaches the UI needs a citable origin.
 
+**Mechanism decided in `DESIGN.md` §2.9 (2026-07-30, pending sign-off).** One compiled table,
+per-value source citation, "as of" date surfaced in the tooltip, not user-editable in v1,
+refreshed each release. The **values themselves remain TODO** — gathered with citations at P5,
+never invented (C2). This entry stays `Open` until those citations exist.
+
 ---
 
 ## OQ-009 — Ownership and support contact · `Open`
@@ -135,6 +152,13 @@ that reason.
 **Action.** Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
 position", say so explicitly in the parameter table so it reads as a decision rather than an
 oversight.
+
+**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §3.4: **no zero/off position** —
+keep 0.5–10 ms exactly. A 0 ms limiter degenerates into a clipper (the chain already has a
+better one); the zero-latency tracking use case is out of this product class; and narrowing
+never breaks sessions while widening later would. Stated in the §4.2 parameter table
+(`lookahead`, row 27, also non-automatable per the latency contract). Becomes part of ADR-0004
+on sign-off; the DESIGN sign-off is the decision event that clears this entry's `Blocking P1`.
 
 ---
 

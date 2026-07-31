@@ -108,9 +108,11 @@ docs/
 
 ## Deliverables named by the brief
 
-`DESIGN.md` (§11 P0), `TEST_REPORT.md` (§10, §12) and the factory preset bank are produced by their
-respective phases and are not scaffolded here — they carry measured content, and an empty shell
-would invite it being filled with estimates (constraint C2).
+**`docs/DESIGN.md` exists (P0, 2026-07-30)** — status `Proposed`, awaiting owner sign-off; its
+research evidence trail is `worklogs/2026-07-30-p0-anamorph-research.md`. `TEST_REPORT.md`
+(§10, §12) and the factory preset bank are produced by their respective phases and are not
+scaffolded — they carry measured content, and an empty shell would invite it being filled with
+estimates (constraint C2).
 
 Evidence [Verified]: the file tree of this repository at the bootstrap commit. Every **[P*n*]**
 row is a *plan*, not a claim about existing files.

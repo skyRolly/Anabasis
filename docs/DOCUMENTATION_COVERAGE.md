@@ -6,7 +6,30 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **tenth review pass** (2026-07-30). Four findings fixed, three
+**Last updated:** for the **P0 design document** (2026-07-30). `docs/DESIGN.md` created —
+status `Proposed`, awaiting owner sign-off (`DEVELOPMENT_BRIEF.md` §11 exit criterion).
+
+The document was produced from a five-domain research pass over the full Anamorph repository
+(source, not just docs — §24 step 1), recorded with file:line evidence in
+`worklogs/2026-07-30-p0-anamorph-research.md`. It contains: the two-layer architecture and
+module inventory; per-stage DSP design; the oversampling/true-peak/latency contract — including
+the **measurement-tap** resolution proposed for `DSP_POLICY.md` invariants 2/5's open point
+(the policy text itself is edited only when ADR-0003 is accepted, per C6); the full
+**48-parameter table** plus the host-hidden state table and serialization schema v1; the macro
+layer and OQ-004 coexistence argument; draft macro curves (explicitly ⊕-marked as tuning
+material, C2); UI wireframes with the family-consistency contract; the OQ-005 recommendation;
+the performance-budget allocation and benchmark commitment; and the proposed 7-ADR set. Every
+value the brief does not specify is marked **⊕ proposed** so sign-off ratifies it explicitly
+rather than absorbing it silently (C7).
+
+Synced in the same unit of work: `OPEN_QUESTIONS.md` (OQ-004/005/008/010 now carry the DESIGN
+recommendations, all *pending sign-off* — none moved to Resolved, since the sign-off is the
+decision event), `HANDOVER.md` (P0 execution done; the one remaining blocker is the sign-off),
+`REPOSITORY_MAP.md`, `README.md` §Project status. Confidence: the design document is a
+*contract proposal* — nothing in it is `Verified` about Anabasis (there is no code); Anamorph
+precedent claims cite file:line and are `Verified` from the research pass.
+
+Prior: for the **tenth review pass** (2026-07-30). Four findings fixed, three
 confirmations. **This is the closing pass of the P0 scaffolding work** — see the note at the end.
 
 **The hex replay recipe works; the trap is next to it.** The review suspected `--random-seed
