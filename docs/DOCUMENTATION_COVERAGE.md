@@ -9,6 +9,73 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Seventh post-sign-off pass — seven fixes, two of them self-inflicted; three declined
+
+**The worst defect in this set was invisible in the source and only existed when rendered**, which
+is a class this audit had not hit before and now checks for mechanically.
+
+- **A blockquote was inserted *inside* the permitted-path table** in `THREADING_POLICY.md` — the
+  OQ-013 gap note added last pass landed after the fourth row. In GFM a table cannot resume after an
+  intervening block, so the last **three** permitted paths (SPSC ring, meter atomics, staleness
+  counters) rendered as a paragraph of pipe-separated text with no header, outside the table their
+  own header governs. The source diff looked entirely reasonable; nothing but rendering shows it.
+  Note moved below the table, immediately after "Any path not in this table is a new cross-thread
+  path → Architecture Review Gate" — which is also where it belongs logically, since the missing
+  edge *is* an instance of that sentence, and where both records already said it was ("under the
+  table"). **A table-integrity check is now part of the validation battery**: every run of `|` lines
+  in every `.md` must have a separator as its second line, so an orphaned fragment fails loudly.
+- **The PDC amendment note miscounted the recompute triggers** — it said "two of the **four**
+  recompute triggers … `prepareToPlay` and `setNonRealtime()`", which puts `prepareToPlay` inside the
+  canonical four and silently displaces one of the three host-hidden latency inputs. This is the
+  *same* miscount a previous pass fixed in ADR-0004's Related-code line, reintroduced by a note
+  written to fix something else. Fixed by **removing the count entirely** rather than correcting it:
+  the sentence now reads "two of the recompute call sites ADR-0004 item 5 mandates". A number that
+  does not appear cannot drift out of step with `DSP_POLICY.md` invariant 2. Applied to the policy,
+  ADR-0011's prescribed block, ADR-0011's prose and this file's own narrative of the last pass.
+
+**One more count, and three residual-reading fixes.**
+
+- **`MODE_AND_ADAPTATION_POLICY.md` announced "Two consequences" and listed three.** The third is the
+  macro-curve freeze — the obligation `RELEASE_COMPATIBILITY_CHECKLIST.md` and
+  `PARAMETER_COMPATIBILITY_POLICY.md` rule 7 both rest on, so a reader checking against the stated
+  count could have treated the one load-bearing bullet as stray. Now "Three".
+- **ADR-0007's Decision body still read as if the trim transport were settled.** The gap is
+  propagated everywhere else, but the bullet said "a sentinel-valued atomic" with the disclaimer
+  trailing as a parenthetical — and since an ADR outranks both `DESIGN.md` and the policy, that
+  singular would have won for anyone reading only the Decision. The disclaimer is now *in* the
+  sentence: the transport is explicitly not fixed by that record, with OQ-013 and the Hard Stop
+  named inline.
+- **ADR-0002 asserted "Nothing else in invariant 1 changes"** while the enacted invariant carries a
+  rationale paragraph and an amended `Guarded by:` line its prescribed block does not. Neither is
+  unauthorised — the rationale restates the ADR's own item-2 argument, the guard change is item 7 —
+  but ADR-0003 already carries a "scope of verbatim" note for exactly this situation and ADR-0002
+  did not. Note added; no text moved.
+- **`README.md` named two of the three P1/distribution blockers** and then deferred to the list of
+  record. The pointer keeps it from drifting, but naming two of three reads as exhaustive. OQ-013
+  added.
+
+**Declined, with reasons.** The ring-read / OpenGL tension (reviewer agrees it is acknowledged, not
+hidden; ADR-0011 defers it to `THREAD_MODEL.md` at P1). ADR-0006's base-rate clip under a dBTP
+tolerance (the ADR states the limitation itself; the property is claimed only for the
+estimate-plus-backstop combination, and `testOutputNeverExceedsCeiling` plus the invariant-11 matrix
+are the gates that would expose it). Invariant 4's wording, which the reviewer notes remains literally
+true and which no record contradicts — re-wording a correct rule to pre-empt a hypothetical future
+edit is how the last two regressions started.
+
+**One item the reviewer raised as a note became a decision worth recording.** `eqPosition` and
+`colourModel` are automatable *and* duck-routed, so a stepped automation lane produces repeated
+~34 ms dips. That is not an invariant-8 violation — the duck **is** the click-free mechanism, and a
+smooth deliberate dip is not a level jump — and it does not make them candidates for the
+non-automatable set, because unlike `lookahead` (a live read offset that cannot be swept at all)
+a stepped rewire is well-behaved at every value it visits; only its *rate* is unmusical. Recorded in
+ADR-0010 as supported-but-audible so P4 does not file it as a defect, with the note that changing
+either flag after v0.1.0 is a `kVersion` bump + ADR.
+
+**Confirmed, no change:** the reviewer's independent re-derivation of the 49-row surface, the nine
+non-automatable flags, the fixed-point property, every curve maximum, the managed-set split by
+driver (7/2/1), Tape Glue's 40 % cap, the interpolator group delay, the wireframe meter arithmetic,
+the ten `int_` fields, and the prescribed-block sweep — all agree with this audit's own figures.
+
 ### Sixth post-sign-off pass — three fixes, one of them self-inflicted; one new open question
 
 **The first item is a defect this audit's own previous pass introduced**, and it is worth recording
@@ -60,7 +127,7 @@ silently removed a second.**
   forbidden-access list and in ADR-0011's Decision ("recomputed **only** on the message thread").
   Neither `prepareToPlay` nor `setNonRealtime()` is a message-thread callback; hosts call them from
   their own setup/processing threads, and ADR-0004 item 5 mandates **both** as recompute triggers.
-  The rule therefore forbade two of the four triggers it required. The substance was never thread
+  The rule therefore forbade two of the call sites it required. The substance was never thread
   identity — it is that the predictor is `const` and race-free, that there is a single
   `setLatencySamples` call site, and that nothing recomputes PDC from `processBlock` — so both
   records now say **off the audio thread, never inside `processBlock`**, enacted as a prescribed

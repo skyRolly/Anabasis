@@ -130,6 +130,21 @@ must therefore behave sanely when written by such a host — for the macros that
 consumes changes through its async message-thread listener and offline-render determinism is not
 promised for that unsupported usage (§5.2).
 
+**Two automatable parameters are duck-routed, and that is supported-but-audible — stated so a P4
+implementer does not file it as a defect** *(note added 2026-07-31, same day)*. `eqPosition` (row 45)
+and `colourModel` (row 23) are `Auto: yes`, but both are genuine discrete **rewires** and are applied
+through the §2.8 asymmetric raised-cosine duck (~6 ms out / ~28 ms in; ADR-0002 item 5 confirms the
+position switch requests a forced duck). A host lane that *steps* either one therefore produces a
+repeated ~34 ms level dip. That is not a violation of `DSP_POLICY.md` invariant 8: the invariant
+requires each transition be free of **clicks, pops and level jumps**, and the duck exists precisely
+to deliver that — a smooth, deliberate dip is the click-free mechanism, not a failure of it. Nor does
+it make these parameters candidates for the non-automatable set: unlike `lookahead`, whose engaged
+value is a live read offset that *cannot* be swept without pitch/comb artefacts, a stepped rewire is
+well-behaved at every value it visits and only its **rate** is unflattering. Sweeping either at
+audio rate is therefore a musical mistake, not an unsafe operation, and the honest response is to
+document it rather than to remove the capability. Changing either to non-automatable after v0.1.0
+would be a `kVersion` bump + ADR (rules 4–5).
+
 **Exclusion tiers** (§4.2), computed by a **single shared predicate** (pattern
 `Anamorph:src/PluginParameters.h:66-88` [Verified]):
 

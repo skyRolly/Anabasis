@@ -92,13 +92,17 @@ copy-to-other, undo push/pop, session restore — carries all five fields or non
 Restore routing differs by consumer, and this is part of the decision:
 - `params` restore through `replaceState` + a synchronous re-assert that prefers `raw`.
 - `frozenTrims` is **audio state**: it restores through the engine-side inject-at-the-duck-bottom
-  path, a sentinel-valued atomic consumed at the forced duck's silent bottom
-  (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified], the `abMatchGain` pattern).
-  *(Scope note, same day 2026-07-31: this record fixes **that the restore is audio state and where
-  it is injected**, which is what it owns. The singular "a sentinel-valued atomic" does **not**
-  settle the transport — the cited precedent carries one float and the trim vector is four scalars
-  (`DESIGN.md` §5.4) — so the mechanism is `OPEN_QUESTIONS.md` **OQ-013**, a Hard Stop until an ADR
-  takes it. Nothing else in this ADR depends on which mechanism wins.)*
+  path — consumed at the forced duck's silent bottom, **by a transport this ADR does not fix**. The
+  `abMatchGain` pattern (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]) is the starting
+  point but not the answer: it moves **one** float and the trim vector is **four** scalars
+  (`DESIGN.md` §5.4), so the mechanism — *N* parallel sentinel scalars with a stated ordering
+  guarantee, or one release/acquire-gated per-slot POD — is `OPEN_QUESTIONS.md` **OQ-013**, a
+  thread-model decision and an AI-agent **Hard Stop** until an ADR takes it. What this record fixes
+  is that the restore is *audio state* and *where* it is injected, which is what it owns; nothing
+  else in this ADR depends on which transport wins. **No P1 code may wire this path.**
+  *(Corrected 2026-07-31, same day: this bullet read "a sentinel-valued atomic", whose singular
+  could be taken as settling the mechanism — and because an ADR outranks both `DESIGN.md` and the
+  policy, that reading would have won over the gap recorded everywhere else.)*
 - `detachMask` restores **on the message thread** with the rest of the slot: its only consumer is
   the MacroEngine (§5.2) and nothing on the audio thread reads it.
 

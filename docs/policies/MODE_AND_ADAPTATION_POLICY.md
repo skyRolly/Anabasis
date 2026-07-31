@@ -104,7 +104,7 @@ automation surface is the *managed Advanced parameters* themselves. A recorded m
 therefore cannot exist, which removes the question of how it would interact with per-parameter
 lanes.
 
-Two consequences that are part of the contract, not implementation detail:
+Three consequences that are part of the contract, not implementation detail:
 
 - `withAutomatable(false)` is **advisory** — some hosts expose the parameter regardless
   (`PARAMETER_COMPATIBILITY_POLICY.md` rule 5). The MacroEngine therefore consumes macro changes

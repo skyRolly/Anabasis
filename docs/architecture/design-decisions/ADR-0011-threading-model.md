@@ -172,7 +172,7 @@ remaining latency sources, so no APVTS listener needs to drive PDC at all.
 > paragraph opened "Latency is recomputed **only** on the message thread", and
 > `THREADING_POLICY.md`'s forbidden-access list said the same. Neither `prepareToPlay` nor
 > `setNonRealtime()` is a message-thread callback — hosts call them from their own setup/processing
-> threads — so two of the four triggers this very paragraph mandates could not be honoured without
+> threads — so two of the call sites this very paragraph mandates could not be honoured without
 > breaking the rule, leaving a P1 author no compliant way to satisfy ADR-0004 item 5. The **substance
 > was never thread-identity**: it is that the predictor is `const` and race-free, that a single
 > `setLatencySamples` call site exists, and that nothing recomputes PDC from `processBlock`. Restated
@@ -324,10 +324,10 @@ discharge is carried as a prescribed block, matching the enacted text verbatim.
   > - PDC/latency must be recomputed **off the audio thread** — never inside `processBlock` — via a
   >   `const`, race-free predictor feeding a single `setLatencySamples` call site, and never by mutating
   >   audio-thread state from the message thread. *(Amended by ADR-0011, 2026-07-31: this rule said "on
-  >   the **message thread**", which is unsatisfiable — two of the four recompute triggers ADR-0004
-  >   item 5 mandates, `prepareToPlay` and `setNonRealtime()`, are host callbacks that JUCE does not
-  >   deliver on the message thread. The substance is unchanged: the predictor is `const` and
-  >   race-free, so the rule never depended on which non-audio thread ran it.)*
+  >   the **message thread**", which is unsatisfiable — `prepareToPlay` and `setNonRealtime()`, two of
+  >   the recompute call sites ADR-0004 item 5 mandates, are host callbacks that JUCE does not deliver
+  >   on the message thread. The substance is unchanged: the predictor is `const` and race-free, so the
+  >   rule never depended on which non-audio thread ran it.)*
 
   This narrows nothing: every property the original protected — const predictor, no races, one call
   site, nothing driven from `processBlock` — is stated explicitly rather than implied by a thread
