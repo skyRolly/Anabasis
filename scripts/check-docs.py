@@ -50,12 +50,18 @@ scoped to what it can actually prove:
     `[t](<path with spaces>)` and percent-encoded paths are all valid.
 
 KNOWN LIMITS, stated rather than implied (constraint C7):
-  * Indentation is stripped before block matching. CommonMark measures indent
-    against the *container's* content column and a line-based lint has no
-    container stack; anchoring at column 0 produced 31 false positives inside
-    numbered ADR items. This trades a few false negatives for no false positives.
-  * Code spans are matched within a single line. A span opened on one line and
-    closed on the next is not tracked.
+  * Indentation is stripped before block matching, and a table row is matched at
+    any indent. CommonMark measures indent against the *container's* content
+    column and a line-based lint has no container stack; anchoring at column 0
+    produced 31 false positives inside numbered ADR items, and GFM's own
+    three-space rule would silently skip any table nested deeper than that.
+    This trades a few false negatives for no false positives.
+  * A fence written *inside* a blockquote (`> ` + backticks) does not open the
+    mask, because `FENCE` does not look through the quote marker. Harmless while
+    the quoted block's own lines stay quoted -- the table and lazy-continuation
+    checks both ignore them -- but a fenced *example* inside a prescribed policy
+    block whose inner lines are not quoted would be examined as if it were
+    structure. No such block exists today.
   * Link existence is checked against the filesystem, so on a case-insensitive
     filesystem (macOS) a case-mismatched path passes here and 404s on GitHub.
     Root-relative destinations (`/docs/x.md`) resolve against the scan root.
@@ -84,7 +90,7 @@ from urllib.parse import unquote
 SEPARATOR = re.compile(r"^\|[\s:|-]+\|$")
 INLINE_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
-TABLE_ROW = re.compile(r"^\s{0,3}\|")
+TABLE_ROW = re.compile(r"^\s*\|")
 SKIP_DIRS = {".git", "build", "node_modules", "JUCE"}
 
 # Blocks that interrupt a paragraph, and therefore are NOT swallowed by a
@@ -235,9 +241,10 @@ def link_destination(raw: str) -> str | None:
 def check_tables(path: Path, lines: list[str], skip: list[bool]) -> list[str]:
     """Every run of pipe-prefixed lines must open with a header + separator pair.
 
-    Up to three columns of indent are allowed (GFM), and tables nested in list
-    items are indented further, so both the row test and the separator test run
-    against the stripped line.
+    Rows are matched at **any** indent, not GFM's three columns: a table nested in
+    a list item sits at its container's content column, which is often deeper, and
+    a check that silently declines to look is the failure this script exists to
+    prevent. The separator test runs against the stripped line for the same reason.
     """
     findings: list[str] = []
     run: list[tuple[int, str]] = []
@@ -355,6 +362,8 @@ def self_test() -> int:
         ("table with no separator row", 1, ["| a | b |", "| c | d |"]),
         ("ordered list not at 1 is absorbed", 1, ["> quote", "2. item"]),
         ("indented table is examined", 1, ["   | a | b |", "   | c | d |"]),
+        ("deeply indented table is examined too", 1,      # GFM's 3-space rule would skip this
+         ["      | a | b |", "      | c | d |"]),
         ("unclosed fence is a finding", 1, ["intro", "```", "rest of the file"]),
         ("broken link is caught", 1, ["[a](scripts/nope.py)"]),
     ]

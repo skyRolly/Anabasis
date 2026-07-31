@@ -190,8 +190,8 @@ non-automatable survive.
      applied to (a) and (b)):
 
      > **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
-     > the oversampling factor, **the oversampling phase mode**, the EQ position, **the lookahead**, the
-     > mode switch, or a preset load must produce no click, pop, or level jump.
+     > the oversampling factor, **the oversampling phase mode**, the EQ position, **the colour model**,
+     > **the lookahead**, the mode switch, or a preset load must produce no click, pop, or level jump.
      >
      > **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a
      > latch** (ADR-0004 made reported latency constant in it, so it is an ordinary smoothed change).
@@ -201,6 +201,19 @@ non-automatable survive.
      > sample is ever skipped or repeated. A per-path click test is owed for it like every other entry
      > in this list.
 
+     > **Second correction, same day (2026-07-31) — the colour model was the last unnamed
+     > duck-routed rewire.** `DESIGN.md` §2.8 lists the genuine discrete rewires that get the
+     > asymmetric raised-cosine duck as "OS factor/phase change, EQ position, **colour model**,
+     > preset/A-B/undo bulk swaps", and ADR-0010's duck-routed note names `colourModel` (row 23)
+     > beside `eqPosition` (row 45) as automatable *and* duck-routed. Every one of those appeared in
+     > this enumeration except the colour model, which appeared **nowhere in `docs/policies/` at
+     > all** — and since invariant 8's guard is "one per switchable path", the enumeration *is* the
+     > list of owed tests. The omission is self-similar to the phase-mode one corrected directly
+     > below, and has the same consequence: the click test least likely to be written is the one no
+     > rule names. Added to the prescribed text and to the enacted invariant. No new obligation is
+     > created — the duck already covers this path by design; what was missing was the test that
+     > proves it.
+     >
      > **Correction, same day (2026-07-31), on the authority of ADR-0003 decision item 9 — a
      > completeness fix.** The enumeration listed the oversampling **factor** but not the **phase
      > mode**, while ADR-0003 item 9 requires that "OS factor and phase each get their own
@@ -264,11 +277,13 @@ non-automatable survive.
 None yet — P1 onward. Planned: `src/dsp/LookaheadLimiter.{h,cpp}` (fixed 10 ms line, variable
 detector read offset), `src/dsp/AnabasisEngine.{h,cpp}` (latency padding, `predictLatency(snapshot)`,
 latched OS switch, duck/dry-fill), `src/PluginProcessor.{h,cpp}` (single `setLatencySamples` call
-site, PDC recompute on `prepare()` **plus all four latency-input triggers** — the `onChanged`
-callbacks of `int_oversample` / `int_osPhase` / `int_offlineQuality`, and `setNonRealtime()` — see
-decision item 5; `prepare()` is counted separately from the four because it is not a latency
-*input*, it is the host re-establishing the whole model, which is why `DSP_POLICY.md` invariant 2
-says "three inputs … plus the realtime→offline transition itself … recomputes on all four"),
+site, PDC recompute on **all four recompute triggers** — the `onChanged` callbacks of the **three
+latency inputs** `int_oversample` / `int_osPhase` / `int_offlineQuality`, plus the
+realtime→offline **transition** via `setNonRealtime()` — **and on `prepare()`**, a fifth call site.
+See decision item 5. The transition is a *trigger*, not an *input*, and `prepare()` is neither: it
+is the host re-establishing the whole model. This is `DSP_POLICY.md` invariant 2's counting
+verbatim — "three inputs … plus the realtime→offline transition itself … recomputes on all four" —
+and `DESIGN.md` §3.3's),
 `src/InternalState.h` (`int_oversample`,
 `int_osPhase`, `int_offlineQuality` + `onChanged`), `src/dsp/EngineParameters.h` (POD snapshot
 carrying `lookahead`), `src/PluginParameters.{h,cpp}` (`pid::lookahead`, row 27, non-automatable),

@@ -9,6 +9,63 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Eleventh post-sign-off pass — one DSP-relevant omission, five precision fixes
+
+**The one with audible consequence: `DSP_POLICY.md` invariant 8 never named the colour model.**
+`DESIGN.md` §2.8 lists the genuine discrete rewires that get the asymmetric raised-cosine duck as
+"OS factor/phase change, EQ position, **colour model**, preset/A-B/undo bulk swaps", and ADR-0010's
+duck-routed note names `colourModel` (row 23) beside `eqPosition` (row 45). Every one of those was
+in invariant 8's enumeration except the colour model — which appeared **nowhere in `docs/policies/`
+at all**. Since the invariant's guard is "one per switchable path", the enumeration *is* the list of
+owed tests, so the click test least likely to be written was the one no rule named. This is the same
+omission shape as the phase mode two passes ago, and ADR-0004's block 8(c) had already stated the
+consequence in as many words. Added to the policy and to the prescribed block together. **No new
+obligation is created** — the duck already covers that path by design; what was missing was the test
+that proves it.
+
+**Four precision fixes, all of them stated numbers or stated reasons that were wrong.** The
+repository treats an unevidenced justification as a defect in its own right, and each of these is
+one:
+
+- **`.gitignore`'s rationale described something the script does not do.** It said
+  `check-docs.py` "leaves this behind when imported (e.g. by its own `--self-test` run)". Running a
+  script as `__main__` writes no bytecode cache; the directory appears when the module is
+  *imported*, which is how ad-hoc verification snippets exercise it. Reason corrected; the entries
+  themselves were always right.
+- **ADR-0004's Related-code line labelled four things "latency-input triggers"** while quoting
+  invariant 2's "three inputs … plus the transition … all four" in the same sentence. The call
+  sites were complete and unambiguous, so nothing would have been miswired — but the label folded
+  the transition into the *inputs*, which `DESIGN.md` §3.3 explicitly separates. Relabelled to the
+  policy's counting: three inputs, plus the transition, plus `prepare()` as a fifth call site.
+- **The coverage figures in the previous entry were 61 lines stale**, having been measured before
+  the final edits to the file they describe. The ratio (~97 %) is the durable claim; the absolute
+  counts move with every edit to the corpus, *including edits to this file*, so they are now
+  re-derived rather than quoted — a number that cannot be kept true should not be written down.
+- **The lint's own KNOWN LIMITS list had gone stale in one entry and was silent on another.** It
+  still claimed "code spans are matched within a single line" after the previous pass made the
+  matching paragraph-wide, and it did not mention that a fence written inside a blockquote does not
+  open the mask. Both corrected — a limits list that overstates coverage is worse than no list.
+
+**One real gap closed, with the measurement to say what it did and did not change.** `check_tables`
+matched pipes at up to three columns of indent (GFM's rule), so a table nested deeper — where a
+container's content column commonly sits — was silently skipped. Widened to any indent, corpus still
+clean. Measured honestly: the corpus contains **10 table rows at 1–3 columns and none at 4+**, so
+this changes nothing today and removes a blind spot for tomorrow. Pinned with a self-test case (30
+now) rather than left as a claim.
+
+**Noted, no change:** the `docs` job is skipped on same-repo PRs (the branch push already ran it for
+that SHA), so it reports as skipped in a PR's checks list, and the `workflow_call` hazard documented
+for `preflight` applies to it verbatim. Both consequences are now written into the job's comment
+block. Nothing gates on this job, so the failure mode is a missing check rather than a green run
+with zero builds.
+
+**Already fixed at HEAD, re-reported against an older SHA:** the phantom fence in this file, the
+unclosed-fence diagnostic, and inline-code-span exclusion — all three landed in the previous commit.
+**Declined, unchanged** (fifth and sixth time for two of them): the ring-read / OpenGL tension;
+ADR-0006's base-rate clip trade. **Confirmed by the reviewer independently:** OQ-013's Hard Stop is
+propagated to every record that names the trim-vector transport, with the precedent citations
+correctly left as statements about Anamorph's code rather than authorisations.
+
 ### Tenth post-sign-off pass — the lint reported clean on a file it had not read
 
 **The finding that matters: `check-docs.py` printed "50 file(s) clean" while skipping 1382 of the
@@ -27,9 +84,11 @@ code — and the second time in three passes for this script specifically. The p
   line number and the run reports it. An unclosed fence is a real rendering defect on its own — the
   rest of the file renders as code on GitHub — so this catches a document bug *and* closes the blind
   spot with one check.
-- **Coverage is now measured, not assumed.** 9951 of 10284 lines are actually examined; the 333
-  exempt lines are inside genuine fenced blocks, and no file is more than half masked. "Clean" now
-  has a denominator behind it.
+- **Coverage is now measured, not assumed.** The exempt lines are inside genuine fenced blocks and
+  no file is more than half masked, so "clean" has a denominator behind it. The *ratio* is the
+  durable claim (~97 %); the absolute counts move with every edit to the corpus — including edits to
+  this file — so they are re-derived rather than quoted here. To reproduce, iterate
+  `markdown_files()` and sum `fence_mask()` over the tree.
 - **A `docs` job runs the lint in CI** (`build.yml`), deliberately outside the `preflight` gate and
   outside every build job's `needs`: it must run in the pre-P1 scaffold, and a prose defect should
   fail the run without skipping a binary. `--self-test` runs first, because a zero exit is not

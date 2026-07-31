@@ -95,7 +95,17 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     # Same rationale as `preflight` below: skip the duplicate same-repo PR event,
-    # keep fork PRs (which the push trigger does not reach).
+    # keep fork PRs (which the push trigger does not reach). Two consequences of
+    # sharing that guard, stated here so neither is discovered later:
+    #   * On a same-repo PR this job reports as SKIPPED in the PR's checks list.
+    #     It can still be made a required status check, but only if the branch
+    #     protection accepts a skipped conclusion as passing -- the lint has
+    #     already run on the branch push for that same SHA.
+    #   * The `workflow_call` hazard documented for `preflight` applies verbatim:
+    #     inside a reusable workflow `github.event_name` reflects the CALLER's
+    #     event, so a future caller invoked on a same-repo pull_request would skip
+    #     this job too. Unlike the build jobs nothing gates on it, so the failure
+    #     mode is a missing check rather than a green run with zero builds.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository
