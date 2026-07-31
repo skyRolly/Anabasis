@@ -170,9 +170,13 @@ shows the view the user left.
 `freeze` stays in **A/B and undo** and is only preset-excluded, because it changes the rendered sound.
 The obligation that makes that safe is discharged by ADR-0007: the **frozen trim vector travels
 per-slot inside the `AB` slot** (StateSet `{params, presetName, baseline, frozenTrims, detachMask}`),
-restored through the sentinel-atomic inject at the forced duck's silent bottom, so switching to a
-frozen slot restores *that slot's* latched trims instead of re-latching whatever the engine holds. A
-global trim vector would make `freeze`-in-A/B unsound and is rejected there.
+restored **at the forced duck's silent bottom** — by a transport OQ-013 has not yet fixed, **not** by
+the singular "sentinel-atomic inject" an earlier revision of this sentence named *(corrected
+2026-07-31, same day: the precedent carries one float, the vector is four scalars, and an ADR
+outranks the policy, so that wording would have licensed the path the OQ-013 Hard Stop blocks)* — so
+switching to a frozen slot restores *that slot's* latched trims instead of re-latching whatever the
+engine holds. What this ADR needs is the **per-slot** property, which holds under either candidate
+transport. A global trim vector would make `freeze`-in-A/B unsound and is rejected there.
 
 **Lockable set = `{ceiling}`** in v1; the mechanism is **generic** (a per-parameter lock consulted by
 preset apply, not a `ceiling` special case). When engaged, preset apply captures and re-asserts the

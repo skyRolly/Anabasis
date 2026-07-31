@@ -19,7 +19,7 @@ Anabasis/
 ├── worklogs/               Session-local investigation records for future agents (NOT architecture
 │                           docs; finalized decisions graduate to ADRs — worklogs are the raw
 │                           evidence trail: measurements, rejected alternatives and why).
-├── scripts/                setup / build / test / pluginval.
+├── scripts/                setup / build / test / pluginval / docs lint.
 ├── packaging/              [P6] Per-platform install notes + installer assets (linux/, windows/, macos/).
 ├── .github/                CI + security tooling: workflows/ (build + validate on 3 OSes with
 │                           retain-then-strip symbol pipeline; CodeQL; MSVC /analyze;
@@ -67,6 +67,7 @@ delta monitoring, feature extraction for the adaptive engine, and a lock-free sc
 | `run-tests.sh` | Runs `AnabasisTests` + `AnabasisStateTests` (fail-closed: a missing binary fails the gate). |
 | `run-pluginval.sh` | pluginval on Linux/macOS (strictness + mode args — `deterministic` \| `randomise`, each ×3; signal-only crash retry). |
 | `run-pluginval.ps1` | pluginval on Windows (same strictness/mode/×3 structure; waits on the GUI-subsystem process for a trustworthy exit code). |
+| `check-docs.py` | Structural lint for the documentation set: GFM table integrity (a block inserted mid-table silently un-tables the rows after it), broken relative links, and blockquote lazy continuation. No arguments = whole repo; exit 1 on any finding. Not wired into CI — there is no docs job yet — so it is run by hand on every documentation-affecting change. |
 
 ## `.github/`
 

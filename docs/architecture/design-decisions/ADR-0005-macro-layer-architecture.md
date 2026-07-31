@@ -171,8 +171,13 @@ Four questions, none of them obvious, and each one able to break a different inv
     adaptation runs, identical Advanced values do not *alone* determine the processing — the
     programme does too. That is the definition of the brief's adaptive engine, and **Freeze restores
     strict value-determinism** by latching the trim vector (bit-repeatable output thereafter), with
-    the frozen vector serialized per A/B slot via the sentinel-atomic inject pattern
-    (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]).
+    the frozen vector **serialized per A/B slot** (ADR-0007). *(Corrected 2026-07-31, same day: this
+    clause named "the sentinel-atomic inject pattern" as the restore transport. That reads as a
+    settled mechanism, and an ADR outranks the policy — so it would have licensed wiring the very
+    path `OPEN_QUESTIONS.md` **OQ-013** blocks. The `abMatchGain` precedent moves one float; the trim
+    vector is four scalars, so the transport is an open thread-model decision and an AI-agent **Hard
+    Stop**. What this item actually needs is only that the vector is per-slot, which is ADR-0007's to
+    fix — the transport it travels by does not affect any claim made here.)*
 
 ## Policy amendments enacted by this ADR
 
@@ -294,8 +299,9 @@ Evidence [Unverified]:
     anti-precedent that makes this ADR necessary.
   - `Anamorph:src/PluginProcessor.cpp:338-421` — host automation folds into the baseline instead of
     counting as a user edit.
-  - `Anamorph:src/PluginProcessor.cpp:485-491` — `abMatchGain` sentinel-atomic inject pattern, reused
-    for the per-slot frozen trim vector.
+  - `Anamorph:src/PluginProcessor.cpp:485-491` — `abMatchGain` sentinel-atomic inject pattern, the
+    **starting point** for the per-slot frozen trim vector: it carries one float where the vector is
+    four scalars, so the transport is OQ-013, not a settled reuse.
   - `Anamorph:src/PluginProcessor.cpp:178-202` and `:33-38,402-421` — single-step gesture/undo
     bracketing of a multi-target commit, reused for Learn.
   - `Anamorph:src/dsp/AnamorphEngine.cpp:58-81` — the 20 ms standard parameter-smoothing constant

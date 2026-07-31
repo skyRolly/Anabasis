@@ -206,7 +206,8 @@ exactly as briefed. Recorded by **ADR-0004**, together with a second decision th
 anticipate: reported latency is the **constant 10 ms lookahead allowance**, not the engaged value,
 so the plugin's PDC no longer moves with the parameter at all. `DSP_POLICY.md` invariant 2 was
 amended accordingly by that ADR — the invariant is now phrased against the *allowance*, and the
-latch sentence names only the oversampling factor.
+latch sentence **drops the lookahead**, leaving the oversampling factor and phase mode (both feed
+`osLatency`, so both stay latched).
 
 ---
 

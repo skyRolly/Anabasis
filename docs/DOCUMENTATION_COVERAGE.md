@@ -9,6 +9,69 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Eighth post-sign-off pass — six fixes, one new script; three declined
+
+**The validation battery is now an artefact, not a habit — and the reviewer was right that it
+wasn't.** Last pass claimed "a table-integrity check is now part of the validation battery", which
+described a capability the repository did not have: no script under `scripts/`, no docs job in
+`.github/workflows/`. That is exactly the unevidenced claim constraint C7 forbids, made by the audit
+file that enforces C7. Fixed by building the thing: **`scripts/check-docs.py`** now runs three
+mechanical checks over every `.md` — GFM table integrity, broken relative links, blockquote lazy
+continuation — each one present because that defect shipped here at least once and was invisible in
+the diff that introduced it. Verified against a fixture containing all three defects (it reports all
+three, exit 1) as well as against the real tree (50 files clean, exit 0); a script that only ever
+returns "clean" proves nothing. It is **not** wired into CI — there is no docs job — and
+`REPOSITORY_MAP.md` says so rather than implying coverage that does not exist. Deliberately *not*
+included: the ADR-prescribed-block ↔ enacted-policy comparison, which is still run by hand, because
+it has documented cosmetic artefacts (headline bolding, dated attributions) and encoding those as an
+allowlist would make the script assert more than it can check.
+
+**Two Accepted ADRs still licensed the path a Hard Stop blocks.** OQ-013's gap was propagated to
+ADR-0007, ADR-0011, `THREADING_POLICY.md`, `HANDOVER.md`, `README.md` and `DESIGN.md` §5.4 — but
+**ADR-0005** item 10 ("the frozen vector serialized per A/B slot via the sentinel-atomic inject
+pattern") and **ADR-0010** ("restored through the sentinel-atomic inject at the forced duck's silent
+bottom") were missed, as was `DESIGN.md` §7. Since an ADR outranks both the policy and `DESIGN.md`,
+a P1 author reading only those two records had an Accepted-ADR licence to wire the exact path the
+Hard Stop forbids — the propagation being *almost* complete is what made it dangerous rather than
+obviously incomplete. All three corrected, each keeping the property its own record actually needs
+(per-slot travel), which holds under either candidate transport.
+
+**Three records still described the latch sentence in its pre-fix form.** `DESIGN.md` §3.3's
+sign-off summary, OQ-010's Decision paragraph and this file's "what the sign-off enacted" all said
+the latch sentence "names only the oversampling factor" — the wording a previous pass corrected in
+the policy and in ADR-0004's prescribed block precisely because latching the factor alone leaves a
+phase switch free to move reported latency mid-block. The decision records (ADR-0004 item 4,
+ADR-0003 item 4, §3.4) were always right; these three are summaries of the amendment, which is what
+a reader checking "what did it change?" lands on. All now say the sentence drops the lookahead and
+names **factor and phase mode**.
+
+**Two clarifications where a reader had no sentence to cite.**
+
+- **`dynTilt` runs at the oversampled rate**, being a sub-block of Clipper/Sat, while invariant 5
+  enumerates "the EQ" as base-rate and grants exactly one exception. The reading was always
+  defensible — invariant 5 enumerates *chain stages*, and "the EQ" is the `eqPosition`-mobile stage,
+  not every filter in the path — but nothing said so. Noted in ADR-0002 item 2, where `dynTilt`'s
+  not-a-stage status is already established, so **no policy text changed** and no new exception was
+  created: `dynTilt` needs none, because the estimator's exception exists for a stage-external tap
+  and `dynTilt` is not one.
+- **`DESIGN.md` §3.3's PDC bullet read as an exhaustive call-site list** while naming only the four
+  latency inputs. Aligned with ADR-0004's phrasing: four inputs, `prepare()` counted separately as
+  the host re-establishing the model. Same shape as the miscounts fixed twice before, caught this
+  time before it became one.
+
+**Declined, unchanged from last pass and for the same reasons:** the ring-read / OpenGL tension
+(acknowledged in ADR-0011, deferred to `THREAD_MODEL.md` at P1); ADR-0006's base-rate clip under a
+dBTP tolerance (the ADR states the limitation itself; the guarantee is claimed only for
+estimate-plus-backstop, and the P2/P3 gates would expose it); and invariant 4's wording, which the
+reviewer again confirms "remains literally true" — re-wording a correct rule against a hypothetical
+future edit is how two of the recent regressions started.
+
+**Confirmed, no change:** the reviewer's independent re-derivation of the 49-row surface, the nine
+non-automatable flags, the fixed-point property, every curve maximum, the 7/2/1 managed-set split,
+Tape Glue's 40 % cap, the interpolator group delay, the wireframe arithmetic and the ten `int_`
+fields; the full prescribed-block sweep; and — now scripted — that the OQ-013 note sits below the
+permitted-path table with all seven rows intact.
+
 ### Seventh post-sign-off pass — seven fixes, two of them self-inflicted; three declined
 
 **The worst defect in this set was invisible in the source and only existed when rendered**, which
@@ -22,8 +85,8 @@ is a class this audit had not hit before and now checks for mechanically.
   Note moved below the table, immediately after "Any path not in this table is a new cross-thread
   path → Architecture Review Gate" — which is also where it belongs logically, since the missing
   edge *is* an instance of that sentence, and where both records already said it was ("under the
-  table"). **A table-integrity check is now part of the validation battery**: every run of `|` lines
-  in every `.md` must have a separator as its second line, so an orphaned fragment fails loudly.
+  table"). A table-integrity check was added to the validation battery in response — see the
+  following pass, where it became an actual script rather than a described habit.
 - **The PDC amendment note miscounted the recompute triggers** — it said "two of the **four**
   recompute triggers … `prepareToPlay` and `setNonRealtime()`", which puts `prepareToPlay` inside the
   canonical four and silently displaces one of the three host-hidden latency inputs. This is the
@@ -450,8 +513,8 @@ repository's authority structure rather than just a status field:
   the pre-amendment text left Post-EQ's placement relative to the clamp unstated, which a literal
   reader could take as EQ-after-clamp, making invariant 4 unsatisfiable. **Invariant 2**
   (ADR-0004): reported latency is now the **constant lookahead allowance + OS**, the latch sentence
-  names only the oversampling factor, and the measurement-tap reading is asserted rather than left
-  open. **Invariants 2 and 5** (ADR-0003): the open point is closed, so "oversampling off ⇒ no
+  drops the lookahead and names the oversampling **factor and phase mode**, and the measurement-tap
+  reading is asserted rather than left open. **Invariants 2 and 5** (ADR-0003): the open point is closed, so "oversampling off ⇒ no
   oversampling latency" is now asserted unconditionally. Both invariant-1 and invariant-2 changes
   were **Hard Stops** — ratified by a human, which is the only thing that clears them.
 - **`MODE_AND_ADAPTATION_POLICY.md`**: invariant 4's bar on adaptation moving the lookahead lost its

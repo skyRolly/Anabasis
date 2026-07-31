@@ -355,7 +355,10 @@ Consequences, all of them intended:
   under `isNonRealtime()` uses the forced factor) — all three are host-hidden
   `ANABASIS_INTERNAL` settings (§4.3), never carried by presets, A/B or undo. PDC therefore
   recomputes on those three `onChanged` callbacks **plus `setNonRealtime()`**, which is the only
-  callback guaranteed to fire on the realtime→offline transition (ADR-0011). So a preset step, A/B switch or undo is *always* dry-fillable and never
+  callback guaranteed to fire on the realtime→offline transition (ADR-0011) — those four are the
+  latency *inputs*; `prepare()` is a further call site, counted separately because it is the host
+  re-establishing the whole model rather than an input changing (ADR-0004 item 5 and its
+  Related-code note). So a preset step, A/B switch or undo is *always* dry-fillable and never
   touches PDC. This is what makes §7's "copy the Anamorph state machinery wholesale" safe here.
 - **Lookahead needs no latch and no duck.** It is a continuous, smoothed read-offset change.
   Only an OS factor/phase change still latches at a reset or the silent duck bottom (§2.8).
@@ -377,8 +380,9 @@ Consequences, all of them intended:
 > (`AI_AGENT_POLICY.md`, `ARCHITECTURE_REVIEW_GATE.md`) — which is the point of surfacing it on
 > paper at P0 rather than discovering it in code at P2. As with §1.2, `DSP_POLICY.md` was left
 > untouched by *this document*. **ADR-0004 carried both amendments and they landed at sign-off**:
-> invariant 2 now states the constant-allowance formula, its latch sentence names only the
-> oversampling factor, and its open point is closed.
+> invariant 2 now states the constant-allowance formula, its latch sentence **drops the lookahead
+> and names the oversampling factor and phase mode** (both are inputs to
+> `osLatency(factor, phaseMode)`), and its open point is closed.
 
 No other stage contributes (EQ is IIR; detector is a tap, §3.2; dither is sample-wise). Values
 are computed at `prepare()` from `getLatencyInSamples()` — recorded as measured numbers in
@@ -907,7 +911,8 @@ restore the parameter without the trim vector it latched. Anything that is per-s
 per-undo-step, because undo is a per-slot stack; per-slot undo stacks (cap 128,
 never serialized); gesture-gated undo coalescing with host automation folded silently;
 preset-load undo bracketing (parse before the bracket opens); `requestDuck()` before every bulk
-swap; per-slot adaptive/Learn memory via the sentinel-atomic inject pattern. Factory presets:
+swap; per-slot adaptive/Learn memory injected at the duck's silent bottom (transport = **OQ-013**,
+a Hard Stop — §5.4). Factory presets:
 ≥12, compiled-in override tables; the brief names five (Transparent Master, Loud Pop, EDM Club,
 Vocal Forward, Tape Glue) — the full list + wording is owner-supplied at P6 (C8, TODO).
 Ceiling lock semantics per §4.2. A/B loudness-matched comparison works out of the box because

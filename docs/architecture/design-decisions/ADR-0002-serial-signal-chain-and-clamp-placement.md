@@ -90,6 +90,17 @@ brief simply did not distinguish the limiter from the clamp when it wrote "after
    (`dynTilt`, row 48) is a sub-block *inside* the Clipper/Sat stage, not a chain stage, so it does
    not change this list (`DESIGN.md` §2.2).
 
+   **What that implies for the sample rate it runs at, stated so a P2 author has a sentence to
+   cite** *(note added 2026-07-31, same day)*: being inside the Clipper/Sat stage puts `dynTilt`
+   inside the oversampled region (ADR-0003), so it runs at the **oversampled** rate. That does not
+   conflict with `DSP_POLICY.md` invariant 5's "the EQ … stays at base rate" — invariant 5
+   enumerates **chain stages**, and "the EQ" there is the `eqPosition`-mobile EQ *stage*, not every
+   filter in the signal path. Invariant 5's named exception (the true-peak estimator) exists because
+   that estimator is a stage-external *tap* running at its own rate; `dynTilt` needs no exception
+   because it is not a stage at all. A one-band shelf that is part of a nonlinear stage belongs at
+   that stage's rate — running it at base rate inside an oversampled block would require rate
+   conversion around a filter whose whole purpose is to shape what the clipper then distorts.
+
 3. **The ceiling clamp is always the last stage before dither, in both EQ positions.** It is a
    structurally separate stage (`CeilingClamp.h`), never folded into the limiter. It runs at base
    rate and sits **outside** the oversampled region (§3.1), because it must be downstream of a
