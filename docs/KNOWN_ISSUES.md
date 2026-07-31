@@ -28,6 +28,31 @@ Evidence [Verified | Partially Verified | Unverified]:
 - Commit: <sha>
 ```
 
+## KI-001 — A/B slot switch is not click-safe in the P1 skeleton
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** all platforms, all formats (P1 skeleton builds only; no UI exposes A/B yet)
+
+Switching A/B slots performs a plain bulk parameter swap with no transition
+handling, so a switch during playback can produce an audible step. The §2.8
+forced-duck transition layer (asymmetric raised-cosine duck requested *before*
+every bulk swap) lands at P2; until then the swap is exactly the click-free-
+invariant hole `DSP_POLICY.md` invariant 8's per-path test will catch.
+
+**Workaround:** none needed in practice — no UI or host path triggers the swap
+in the P1 build; the API exists for the state tests.
+**Cause:** `switchToSlot` applies `applySlotToLive` directly (TODO(P2) marks
+the duck call site).
+
+Evidence [Verified]:
+- Source: `src/PluginProcessor.cpp` (`switchToSlot`)
+- Test:   `AnabasisStateTests` `testAbSlotsAndTiers` (exercises the swap, not its audibility)
+- Commit: P1 skeleton commit (this change)
+
+---
+
+
 Numbering is sequential and permanent: a fixed issue is **removed from the open list and recorded
 in `POSTMORTEMS.md`**, and its number is never reused.
 

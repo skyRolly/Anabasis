@@ -14,7 +14,7 @@ Anabasis/
 ├── README.md               Project façade (scope, status, quick start, docs nav).
 ├── CHANGELOG.md            Version history (Keep a Changelog; evidence-cited). Empty until 0.1.0.
 ├── CLAUDE.md               AI/contributor entry point: mandatory policy pre-read + repo constraints.
-├── src/                    [P1] Source (wrapper + GUI + DSP core).
+├── src/                    Source (wrapper + GUI + DSP core) — P1 skeleton in place.
 ├── tests/                  [P1] Headless self-tests (DSP + state compatibility) and fixtures.
 ├── worklogs/               Session-local investigation records for future agents (NOT architecture
 │                           docs; finalized decisions graduate to ADRs — worklogs are the raw
@@ -32,7 +32,7 @@ Legal/attribution documents (`NOTICE`, `THIRD_PARTY_LICENSES.md`, `EULA.md`, `PR
 against a real dependency tree and a real binary, and inventing them earlier would violate
 constraint C7.
 
-## `src/` — planned layout [P1]
+## `src/` — layout (P1 skeleton in the tree; stages marked P2+ are not yet implemented)
 
 | Path | Responsibility |
 |---|---|

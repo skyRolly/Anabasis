@@ -86,28 +86,6 @@ inferred from Anamorph.
 
 ---
 
-## OQ-011 — What is the macOS deployment target? · `Blocking P1`
-
-**Question.** `build.yml` passes `CMAKE_OSX_DEPLOYMENT_TARGET=10.13` on a universal
-`arm64;x86_64` build. That value is inherited from the sibling product and has never been
-validated for this one.
-
-**Why it needs deciding rather than carrying over.** arm64 macOS starts at **11.0**, so the arm64
-slice's minimum is silently raised (or warned about) by clang/ld regardless of what is requested —
-the number only really governs the x86_64 slice. 10.13 may also sit below JUCE 9's supported floor.
-Either way an unnoticed toolchain warning is precisely what the warning-free-build rule
-(`CODE_STYLE.md`) exists to catch, and the deployment target is a **user-visible support claim**:
-it decides which macOS versions the plugin loads on at all.
-
-**Why not guessed at now.** No build exists, so nothing here can be measured, and JUCE 9's
-documented minimum is not evidence this repository holds (constraint C7).
-
-**Action.** At P1, check JUCE 9's supported macOS minimum, set the value deliberately, and record
-the supported-OS claim in `COMPATIBILITY_MATRIX.md`. The `build.yml` line carries a `TODO(P1)`
-pointing here.
-
----
-
 ## OQ-012 — Should macOS/Windows validate the stripped, signed bytes? · `Open (decide at P6)`
 
 **Question.** Only the **Linux** job validates what users actually receive: its strip step runs
@@ -169,6 +147,18 @@ silently filled in.
 ---
 
 ## Resolved
+
+### OQ-011 — What is the macOS deployment target? · `Resolved 2026-07-31 (P1)`
+
+**Decision.** `CMAKE_OSX_DEPLOYMENT_TARGET=10.13`, kept **deliberately** rather than inherited
+blindly. Evidence: the pinned JUCE 9 tree documents its deployment floor as **macOS 10.11**
+(README §"Minimum System Requirements → Deployment Targets" [Verified from the fetched pin]), so
+10.13 sits above the framework floor; it also matches the sibling product, keeping one support
+claim across the family. The value governs the **x86_64 slice** only — the arm64 slice floors at
+**11.0** by toolchain regardless — so the user-visible claim is: **macOS 10.13+ (Intel), 11.0+
+(Apple Silicon)**. Restated in `COMPATIBILITY_MATRIX.md` when that document lands (P2). The first
+macOS CI run is the warning-free check on the value; the `build.yml` comment carries the decision
+at the point of use.
 
 ### OQ-010 — Does the limiter lookahead get an explicit 0 / off position? · `Resolved 2026-07-31`
 

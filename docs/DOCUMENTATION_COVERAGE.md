@@ -9,6 +9,37 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton lands — the first code, verified by building and running it (2026-07-31)
+
+**What exists now.** `CMakeLists.txt` (ADR-0008's five-target graph, identity frozen, JUCE 9.0.0
+fetched at the pinned SHA — `GIT_SHALLOW TRUE` worked, so the documented fallback was not needed),
+`src/` per DESIGN §1.3's P1 subset, `tests/` with 34 checks, and the frozen
+`tests/fixtures/parameter_registry.snapshot`. Everything below was verified by running it, not by
+inspection: **build warning-free** under the recommended flags, **both suites green**,
+**pluginval L5 green ×3 in both modes** on Linux — the P1 exit criterion, pending the 3-platform
+CI confirmation. **OQ-011 resolved** with evidence read from the pinned JUCE tree (deployment
+floor macOS 10.11 → 10.13 kept deliberately; arm64 floors at 11.0 by toolchain).
+
+**Contracts enforced in code, not prose, from the first commit:** the constant-allowance latency
+model lives in ONE header (`src/dsp/Latency.h`) that both the engine's real delay and the
+wrapper's predictor call, so they cannot drift silently; ADR-0004 item 5's full PDC trigger set is
+wired (`prepareToPlay`, three `int_` onChanged, `setNonRealtime`); the OQ-013 Hard Stop is
+honoured — `frozenTrims` is serialized per slot and *nothing* pushes it toward the engine, with
+the stop restated at the exact code site a P2 author would touch.
+
+**Defects found and fixed during the build loop** (each caught by running something, which is the
+lesson of this whole branch): `scripts/setup-linux.sh` broke as root — `$SUDO VAR=x cmd` puts the
+assignment out of assignment position at parse time, so with `$SUDO` empty it became the command
+name; CI's sudo path never exercised it (green-means-correct again). The registry snapshot
+compared CRLF against LF (`replaceWithText`'s default line endings). And `replaceState` leaked the
+additive `raw` annotations into the live tree, making save→load→save non-byte-identical — the
+annotations are now stripped at the load boundary, which is what makes the round-trip test's
+byte-identity claim true rather than approximately true.
+
+**Known P1 holes, recorded not hidden:** KI-001 (A/B swap runs duck-less until §2.8 lands at P2);
+dither modes inert by construction until P2; EQ/comp/clip stages pass-through. Remaining to close
+P1: Windows/macOS CI runs, `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md`.
+
 ### Seventeenth post-sign-off pass — one fix: indentation was counted in characters, not columns
 
 **One actionable item in the whole review, and it is in the lint again.** `indented_code_mask`

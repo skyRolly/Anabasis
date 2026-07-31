@@ -630,14 +630,14 @@ jobs:
       - name: Install build tools
         run: brew install ninja || true
 
-      # TODO(P1, OQ-011): CMAKE_OSX_DEPLOYMENT_TARGET=10.13 is inherited from the
-      # sibling product and is NOT validated for this one. arm64 macOS starts at
-      # 11.0, so the arm64 slice's minimum is silently raised (or warned about) by
-      # clang/ld and the value really only governs the x86_64 slice; 10.13 may also
-      # sit below JUCE 9's supported floor. Re-check against JUCE 9's documented
-      # minimum at P1 and set it on purpose -- an unnoticed toolchain warning here
-      # is exactly what the warning-free build rule exists to catch. Not guessed at
-      # now (constraint C7).
+      # CMAKE_OSX_DEPLOYMENT_TARGET=10.13 — DELIBERATE (OQ-011, resolved at P1).
+      # JUCE 9's documented deployment floor is macOS 10.11 (pinned tree,
+      # README "Deployment Targets"), so 10.13 sits above it; it matches the
+      # sibling product, keeping one support claim across the family. The value
+      # governs the x86_64 slice; the arm64 slice floors at 11.0 by toolchain
+      # regardless. Supported-OS claim: macOS 10.13+ (Intel), 11.0+ (Apple
+      # Silicon) — restate in COMPATIBILITY_MATRIX.md when that document lands
+      # (P2). The first macOS CI run is the warning-free check on this value.
       #
       # This note lives OUTSIDE the `run:` scalar deliberately. In a YAML folded
       # block (`run: >`) every line is joined into ONE shell line and `#` has no

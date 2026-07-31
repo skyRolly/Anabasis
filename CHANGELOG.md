@@ -18,10 +18,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 
 ## [Unreleased]
 
-Repository bootstrap only — no plugin exists yet, so there is nothing user-visible to record.
-Project scaffolding (governance docs, policies, CI workflows, build scripts) is not a changelog
-entry per `CHANGELOG_POLICY.md` rule 3; it is tracked in `docs/DOCUMENTATION_COVERAGE.md` and
-`docs/HANDOVER.md`.
+### Added
+- **P1 skeleton — the plugin exists** (VST3 / AU-on-macOS / Standalone; JUCE 9.0.0 pinned):
+  the 49-parameter surface of `DESIGN.md` §4.2 (IDs frozen, registry snapshot under
+  `tests/fixtures/`), a pass-through chain with a basic lookahead limiter and the final ceiling
+  clamp, constant reported latency (10 ms lookahead allowance — browsing presets never moves
+  host PDC, ADR-0004), Simple-mode macro knobs mapped by the §5.5 draft curves, schema-v1
+  session state with A/B slots, and a placeholder editor. No EQ/compressor/clipper processing,
+  no oversampling, no metering yet — those are P2–P5. Evidence: the P1 skeleton commit.
 
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
