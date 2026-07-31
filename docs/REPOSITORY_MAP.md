@@ -67,7 +67,7 @@ delta monitoring, feature extraction for the adaptive engine, and a lock-free sc
 | `run-tests.sh` | Runs `AnabasisTests` + `AnabasisStateTests` (fail-closed: a missing binary fails the gate). |
 | `run-pluginval.sh` | pluginval on Linux/macOS (strictness + mode args — `deterministic` \| `randomise`, each ×3; signal-only crash retry). |
 | `run-pluginval.ps1` | pluginval on Windows (same strictness/mode/×3 structure; waits on the GUI-subsystem process for a trustworthy exit code). |
-| `check-docs.py` | Structural lint for the documentation set: GFM table integrity (a block inserted mid-table silently un-tables the rows after it), broken relative links, blockquote lazy continuation, and unclosed code fences (which make the rest of a file render as code *and* exempt it from the other three checks). No arguments = whole repo; `--self-test` exercises the 29 cases that pin both directions; exit 1 on any finding. Run by the **docs** job in `build.yml` on every push, and by hand on documentation-affecting changes. |
+| `check-docs.py` | Structural lint for the documentation set: GFM table integrity (a block inserted mid-table silently un-tables the rows after it), broken relative links, blockquote lazy continuation, and unclosed code fences (which make the rest of a file render as code *and* exempt it from the other three checks). No arguments = whole repo; `--self-test` pins both directions — the shapes that must be reported and the valid markup that must not — and prints the case count it actually ran, so no figure is duplicated here to go stale; exit 1 on any finding. Run by the **docs** job in `build.yml` on every push, and by hand on documentation-affecting changes. |
 
 ## `.github/`
 

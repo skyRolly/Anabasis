@@ -37,9 +37,11 @@ FALSE POSITIVES ARE THE OTHER FAILURE MODE THAT MATTERS. A lint that invents
 findings gets ignored, and the real ones are lost with it -- so each check is
 scoped to what it can actually prove:
 
-  * Fenced code blocks and inline code spans are excluded from checks 1-3. A
-    document that shows table syntax, a link, or quote syntax as an *example* is
-    not making a claim about its own structure.
+  * Fenced code blocks, **indented** code blocks (CommonMark's other form: four
+    or more columns, preceded by a blank line, outside any list container) and
+    inline code spans are all excluded from checks 1-3. A document that shows
+    table syntax, a link, or quote syntax as an *example* is not making a claim
+    about its own structure, in whichever form it shows it.
   * Lazy continuation is only reported where CommonMark applies it: to *paragraph
     continuation text*. A quote ending in a blank `>` has closed its paragraph,
     and a line starting a new block -- heading, fence, list, table row, thematic
@@ -62,9 +64,25 @@ KNOWN LIMITS, stated rather than implied (constraint C7):
     checks both ignore them -- but a fenced *example* inside a prescribed policy
     block whose inner lines are not quoted would be examined as if it were
     structure. No such block exists today.
+  * **Blockquoted tables are not checked at all.** `TABLE_ROW` requires the pipe
+    to be the first non-whitespace character, so the table rows the ADRs carry
+    inside prescribed policy blocks are invisible to check 1. That is deliberate:
+    a prescribed block often quotes a *single* row (ADR-0011's new permitted-path
+    row is one), which has no separator and would be reported as a fragment. The
+    enacted copy of every such table is checked in the policy file itself, so the
+    coverage loss is a duplicate -- but a mid-table intrusion occurring only
+    inside a prescribed block would go unseen.
+  * An indented code block *inside* a list item is not masked, because at that
+    indent a line is far more likely to be a nested table than a code block and
+    the two are indistinguishable without a container stack. Erring toward
+    checking is only safe here because such a block would have to be indented
+    four columns beyond its container's content column, which does not occur in
+    this corpus.
   * Link existence is checked against the filesystem, so on a case-insensitive
     filesystem (macOS) a case-mismatched path passes here and 404s on GitHub.
-    Root-relative destinations (`/docs/x.md`) resolve against the scan root.
+    Root-relative destinations (`/docs/x.md`) resolve against the **repository**
+    root -- the script's own parent's parent -- even when the scan is pointed at
+    a subtree, so `check-docs.py docs/policies` still resolves them repo-wide.
   * Reference-style links (`[t][ref]`) and autolinks are not checked.
 
 Deliberately NOT checked: whether each ADR-prescribed policy block matches the
@@ -210,6 +228,53 @@ def blanked_lines(lines: list[str], fenced: list[bool]) -> list[str]:
     return out
 
 
+LIST_MARKER = re.compile(r"^\s*([-*+]|\d{1,9}[.)])(\s|$)")
+
+
+def indented_code_mask(lines: list[str], fenced: list[bool]) -> list[bool]:
+    """True for lines inside a CommonMark *indented* code block (4+ spaces).
+
+    Fences are not the only way to show an example. A four-space-indented block is
+    code too, and until this existed its contents were examined as if they were
+    document structure -- an illustrated table, link or quote in that form failed
+    the run. That is the false-positive class this script's docstring calls the
+    worst outcome, so it is masked like a fence.
+
+    The detection is deliberately conservative, because a table nested in a list
+    item is *also* indented four or more columns and must stay checked. A run
+    qualifies as code only when CommonMark's own precondition holds -- it is
+    preceded by a blank line, so it cannot be paragraph continuation -- and the
+    nearest preceding non-blank line is at column 0 and is not a list marker. In
+    any list context the indent belongs to the container, not to a code block, and
+    the run stays in scope.
+    """
+    mask = [False] * len(lines)
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        if fenced[i] or not line.strip() or len(line) - len(line.lstrip()) < 4:
+            i += 1
+            continue
+        if i == 0 or lines[i - 1].strip():
+            i += 1                            # no blank line before: not a code block
+            continue
+        k = i - 1
+        while k >= 0 and not lines[k].strip():
+            k -= 1
+        prev = lines[k] if k >= 0 else ""
+        in_list_context = bool(prev.strip()) and (
+            LIST_MARKER.match(prev) or len(prev) - len(prev.lstrip()) > 0
+        )
+        if in_list_context:
+            i += 1
+            continue
+        while i < n and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) >= 4):
+            if lines[i].strip():
+                mask[i] = True
+            i += 1
+    return mask
+
+
 def markdown_files(roots: list[Path]) -> list[Path]:
     out: list[Path] = []
     for root in roots:
@@ -309,7 +374,9 @@ def check_lazy_continuation(path: Path, lines: list[str], skip: list[bool]) -> l
 
 def analyse(path: Path, lines: list[str], root: Path) -> list[str]:
     """Run every check over one document's lines."""
-    skip, unclosed = fence_mask(lines)
+    fenced, unclosed = fence_mask(lines)
+    indented = indented_code_mask(lines, fenced)
+    skip = [f or c for f, c in zip(fenced, indented)]
     text = blanked_lines(lines, skip)
     findings = []
     if unclosed is not None:
@@ -355,6 +422,11 @@ def self_test() -> int:
          ["prose `oversample != Off && (drive > 0.01", "|| isMod)` continues here"]),
         ("titled link resolves", 0, ['[a](scripts/check-docs.py "Title")']),
         ("percent-encoded link resolves", 0, ["[a](scripts/check%2Ddocs.py)"]),
+        ("table in an indented code block", 0, ["Example:", "", "    | A | B |", "    | 1 | 2 |"]),
+        ("link in an indented code block", 0, ["Example:", "", "    [a](nope.md)"]),
+        ("quote in an indented code block", 0, ["Example:", "", "    > quote", "    absorbed"]),
+        ("tilde fence indented four columns", 0,
+         ["Example:", "", "    ~~~", "    | a | b |", "    ~~~"]),
         # --- must fire --------------------------------------------------------
         ("block inserted mid-table", 1,
          ["| A | B |", "|---|---|", "| 1 | 2 |", "> intruder", "| 3 | 4 |"]),
@@ -364,23 +436,32 @@ def self_test() -> int:
         ("indented table is examined", 1, ["   | a | b |", "   | c | d |"]),
         ("deeply indented table is examined too", 1,      # GFM's 3-space rule would skip this
          ["      | a | b |", "      | c | d |"]),
+        ("table nested in a bullet item stays checked", 1,
+         ["- item", "", "      | a | b |", "      | c | d |"]),
+        ("table nested in a numbered item stays checked", 1,
+         ["1. item", "", "      | a | b |", "      | c | d |"]),
+        ("indent with no blank line before it is not code", 1,
+         ["Example:", "    | a | b |", "    | c | d |"]),
         ("unclosed fence is a finding", 1, ["intro", "```", "rest of the file"]),
         ("broken link is caught", 1, ["[a](scripts/nope.py)"]),
     ]
-    failures = 0
+    failures = checked = 0
     for label, expected, lines in cases:
         # Link cases resolve relative to the document, so place it at the repo
         # root -- the same base a real docs file uses for `scripts/...` targets.
         got = len(analyse(root / "x.md", lines, root))
+        checked += 1
         if got != expected:
             failures += 1
             print(f"self-test FAIL: {label}: expected {expected}, got {got}", file=sys.stderr)
 
     # An unclosed fence must be reported, not silently swallow the file.
+    checked += 1
     _, unclosed = fence_mask(["intro", "```", "everything after is masked"])
     if unclosed != 2:
         failures += 1
         print(f"self-test FAIL: unclosed fence reported at {unclosed}, want 2", file=sys.stderr)
+    checked += 1
     _, closed = fence_mask(["```", "code", "```"])
     if closed is not None:
         failures += 1
@@ -394,6 +475,7 @@ def self_test() -> int:
         ("p.md", "p.md"),
     ]:
         got_dest = link_destination(raw)
+        checked += 1
         if got_dest != want:
             failures += 1
             print(
@@ -403,6 +485,7 @@ def self_test() -> int:
 
     for raw, want in [("`a`", "   "), ("x `|` y", "x     y"), ("``a`b`` c", "        c")]:
         got_line = blank_code_spans(raw)
+        checked += 1
         if got_line != want:
             failures += 1
             print(
@@ -410,11 +493,13 @@ def self_test() -> int:
                 file=sys.stderr,
             )
 
-    total = len(cases) + 2 + 5 + 3
+    # Counted as they run, never hand-maintained: the previous literal
+    # (`len(cases) + 2 + 5 + 3`) drifted the moment a case was added, and the
+    # stale figure reached a navigation document before anyone noticed.
     if failures:
-        print(f"\ncheck-docs: {failures} of {total} self-test case(s) failed.", file=sys.stderr)
+        print(f"\ncheck-docs: {failures} of {checked} self-test case(s) failed.", file=sys.stderr)
         return 1
-    print(f"check-docs: self-test passed ({total} cases).")
+    print(f"check-docs: self-test passed ({checked} cases).")
     return 0
 
 

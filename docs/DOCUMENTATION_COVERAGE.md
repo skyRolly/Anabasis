@@ -9,6 +9,57 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Twelfth post-sign-off pass — the widening from last pass had a cost I had not measured
+
+**Last pass widened `check_tables` to match a table row at any indent, and that created a
+false-positive class.** CommonMark has two code-block forms and the mask only knew one: a
+**four-space-indented** block is code too, and its contents were being examined as document
+structure. So an author illustrating table, link or quote syntax in indented form — the ordinary
+alternative to a fence — got a red CI run on a valid document. All three checks were affected;
+reproduced against the committed script before changing anything.
+
+The cause is worth stating plainly, because it is the same error twice in two passes: I widened the
+match to close a *hypothetical* gap (tables nested deeper than three columns) after measuring that
+**zero such tables exist**, and did not measure what the widening let in. A change with no measured
+benefit and an unmeasured cost is not a safe change.
+
+Fixed properly rather than by reverting, because reverting would restore the original blind spot:
+`indented_code_mask()` now masks indented code blocks alongside fences. It is deliberately
+conservative — a run qualifies only when CommonMark's own precondition holds (preceded by a blank
+line, so it cannot be paragraph continuation) **and** the nearest preceding non-blank line is at
+column 0 and is not a list marker. That last clause is what keeps a table nested in a list item —
+also indented four or more columns — in scope. Both directions are pinned: four cases that must now
+stay silent, three that must still fire (bullet-nested table, number-nested table, and an indented
+run with no blank line before it, which is paragraph continuation and not code).
+
+**Measured, not assumed:** the new mask exempts **zero lines** of the current corpus, so it removes
+a future false-positive class without giving up any coverage today. That is the check I failed to
+run last pass.
+
+**The self-test count was a hand-maintained literal, and it had already drifted.**
+`total = len(cases) + 2 + 5 + 3` understates itself the moment an assertion is added to one of the
+three trailing blocks — which is exactly how `REPOSITORY_MAP.md` came to advertise 29 cases against
+a script running 30. The total is now **counted as the assertions execute**, and the figure has been
+removed from `REPOSITORY_MAP.md` and from this file's two references rather than corrected in three
+places: a number duplicated across records is a number that will drift again.
+
+**Two docstring inaccuracies, both overstating what the tool does.** Root-relative destinations were
+documented as resolving "against the scan root"; `main` always passes the repository root, so
+`check-docs.py docs/policies` still resolves them repo-wide — the behaviour is the more useful one
+and the wording was wrong. And two real coverage gaps the reviewer identified were unlisted:
+**blockquoted tables are not checked at all** (deliberately — a prescribed block often quotes a
+single row, which has no separator and would be reported as a fragment; the enacted copy is checked
+in the policy file), and an indented code block *inside* a list item is not masked. Both are now in
+KNOWN LIMITS with their reasons.
+
+**Noted, no change:** the `docs` job reports as skipped on same-repo PRs, so making it a required
+status check works only if branch protection accepts a skipped conclusion as passing — worth
+confirming with whoever configures it. Already stated in the job's comment block. **Declined,
+unchanged:** the ring-read / OpenGL tension. **Confirmed by the reviewer:** invariant 2's "all four"
+is not exclusive and does not contradict `prepare()` being a fifth call site — the earlier defect
+was the opposite shape (an "only by" list omitting a real trigger), so the current wording is the
+safe direction.
+
 ### Eleventh post-sign-off pass — one DSP-relevant omission, five precision fixes
 
 **The one with audible consequence: `DSP_POLICY.md` invariant 8 never named the colour model.**
@@ -50,8 +101,8 @@ one:
 matched pipes at up to three columns of indent (GFM's rule), so a table nested deeper — where a
 container's content column commonly sits — was silently skipped. Widened to any indent, corpus still
 clean. Measured honestly: the corpus contains **10 table rows at 1–3 columns and none at 4+**, so
-this changes nothing today and removes a blind spot for tomorrow. Pinned with a self-test case (30
-now) rather than left as a claim.
+this changes nothing today and removes a blind spot for tomorrow. Pinned with a self-test case
+rather than left as a claim.
 
 **Noted, no change:** the `docs` job is skipped on same-repo PRs (the branch push already ran it for
 that SHA), so it reports as skipped in a PR's checks list, and the `workflow_call` hazard documented
@@ -93,7 +144,7 @@ code — and the second time in three passes for this script specifically. The p
   outside every build job's `needs`: it must run in the pre-P1 scaffold, and a prose defect should
   fail the run without skipping a binary. `--self-test` runs first, because a zero exit is not
   evidence unless the script's own guarantees were exercised in the same run.
-- **`--self-test` grew to 29 cases**, including the shapes this review named.
+- **`--self-test` grew** to cover the shapes this review named.
 
 **Three more false-positive classes in the same script, all reported and all real.** Inline code
 spans were not excluded, so the illustration `` `[t](path "Title")` `` in the previous entry was a
