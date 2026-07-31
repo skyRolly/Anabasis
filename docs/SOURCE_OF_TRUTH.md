@@ -47,10 +47,10 @@ generated document. It sits *outside* the numbered chain:
 document that answers the brief and from which the first ADR batch is spawned. It sits *below*
 the ADRs it produces, at the same rank as descriptive **Architecture** (level 5):
 
-- **Before owner sign-off** it is a `Proposed` document with **no authority at all**. Nothing may
-  be implemented from it, and no other document may cite it as settling a question. Its purpose
-  is to make the decisions reviewable in one place.
-- **After sign-off** it is a *ratified proposal*, not an enforcement document. The decisions in it
+- **Before owner sign-off** it was a `Proposed` document with **no authority at all** — nothing
+  could be implemented from it and no other document could cite it as settling a question. That
+  phase ended on **2026-07-31**.
+- **Since sign-off** it is a *ratified proposal*, not an enforcement document. The decisions in it
   become binding only through the ADRs it names (level 3) and the policies those ADRs amend
   (level 4). Where `DESIGN.md` and an `Accepted` ADR disagree, **the ADR wins** and `DESIGN.md`
   is corrected — the same relationship descriptive Architecture has with ADRs.
@@ -122,12 +122,12 @@ Evidence [Verified]:
 At least one source is mandatory for any historical, design-decision, incident, risk, or
 known-issue claim.
 
-## Current state of the chain (P0)
+## Current state of the chain (P1)
 
 Levels 1, 2 and 5 are **empty** — no `src/`, no `tests/`, no descriptive architecture set exists
-yet. (`docs/DESIGN.md` is the one document that will occupy level 5 **once ratified**; while it
-is `Proposed` it has no authority at all, so level 5 is genuinely empty today. Update this
-paragraph at sign-off — see §"Where `DESIGN.md` sits".) Until P1 lands, any statement about Anabasis's runtime behaviour is `Unverified` by
-construction, and must be written as such rather than asserted. The policies in `docs/policies/`
+yet — **except that `docs/DESIGN.md` now occupies level 5**, having been signed off on
+2026-07-31 (see §"Where `DESIGN.md` sits"). Level 3 is populated: **ADR-0001…0011 are Accepted**.
+Levels 1 and 2 stay empty until P1 lands `src/` and `tests/`, so every statement about Anabasis's
+*runtime* behaviour remains `Unverified` by construction and must be written as such. The policies in `docs/policies/`
 state the invariants the future code **must** satisfy; they carry no compliance evidence yet, and
 every such section is marked `TODO (no code yet)` rather than claimed (constraint C7).

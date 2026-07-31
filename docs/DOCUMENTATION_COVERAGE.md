@@ -6,7 +6,59 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P0 design document** (2026-07-30). `docs/DESIGN.md` created —
+**Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
+P0 closed; eleven ADRs Accepted and registered.
+
+### What the sign-off enacted
+
+The sign-off is the event the last five passes were building toward, and it changed the
+repository's authority structure rather than just a status field:
+
+- **`docs/DESIGN.md` → `Accepted`**, and per `SOURCE_OF_TRUTH.md` it now occupies **level 5**
+  (descriptive Architecture) — outranked by every ADR it spawned, and superseded section by section
+  as P1–P6 land. It is explicitly *not* maintained as a living spec.
+- **ADR-0001…0011 authored, all `Accepted` and dated 2026-07-31**, registered in `ADR_INDEX.md`
+  (`ADR_POLICY.md` rule 1 — an unregistered ADR is invalid). Level 3 of the authority chain is
+  populated for the first time. Confidence is `Unverified` across the set by construction: there is
+  no `src/`, so each is a contract the P1+ code must satisfy, upgraded as its code and tests land.
+- **Three `DSP_POLICY.md` invariants amended, each by its ADR** (rule 5 — a policy changes only
+  through an ADR). **Invariant 1** (ADR-0002): the chain now prints `… Limiter → [EQ (post)] →
+  Ceiling → Dither` and states that the clamp is always last before dither in *both* EQ positions —
+  the pre-amendment text left Post-EQ's placement relative to the clamp unstated, which a literal
+  reader could take as EQ-after-clamp, making invariant 4 unsatisfiable. **Invariant 2**
+  (ADR-0004): reported latency is now the **constant lookahead allowance + OS**, the latch sentence
+  names only the oversampling factor, and the measurement-tap reading is asserted rather than left
+  open. **Invariants 2 and 5** (ADR-0003): the open point is closed, so "oversampling off ⇒ no
+  oversampling latency" is now asserted unconditionally. Both invariant-1 and invariant-2 changes
+  were **Hard Stops** — ratified by a human, which is the only thing that clears them.
+- **`MODE_AND_ADAPTATION_POLICY.md`**: invariant 4's bar on adaptation moving the lookahead lost its
+  original derivation when ADR-0004 removed the latency link; it is now grounded on its own reason
+  (a time-varying read offset drags the tap through the delay line). Invariant 1 gained
+  `testMacroDefaultIsFixedPoint` as its named guard — the correct home for it, since it guards a
+  macro-layer rule rather than a DSP one.
+- **Five open questions Resolved**: OQ-001 and OQ-003 (→ ADR-0008), OQ-004 (→ ADR-0005), OQ-005
+  (→ ADR-0009), OQ-010 (→ ADR-0004). `OPEN_QUESTIONS.md` keeps them in its `Resolved` section with
+  the date and the ADR, per its own never-delete rule.
+- **P0 closed, P1 opened**: `HANDOVER.md` is now a phase-boundary snapshot carrying the
+  `DEVELOPMENT_BRIEF.md` §13 phase summary (changes, next-phase plan, current risks, C++23 canary
+  status), and `CLAUDE.md`, `README.md`, `REPOSITORY_MAP.md` and `SOURCE_OF_TRUTH.md` all moved off
+  "P0, no code until sign-off". The lifecycle policy's phase-completion trigger fired properly this
+  time — the previous pass had correctly identified that it had *not* yet fired.
+
+### Review items handled in the same unit of work
+
+The final review round's two authority defects both **dissolved** once the amendments landed rather
+than needing a workaround: `RELEASE_COMPATIBILITY_CHECKLIST.md`'s latency checkbox now cites the
+amended `DSP_POLICY.md` invariant 2 (not the design document, which had no authority to settle it),
+and OQ-010's claim that the invariant *is* phrased against the allowance became true instead of
+premature. Four smaller items fixed: the audit's ADR count (said nine, is eleven) and its
+test-registration instruction (which contradicted `DESIGN.md` by sending the macro guard to
+`DSP_POLICY`'s map); a duplicated `AB` child in the §4.4 schema listing; footnote ⁶ printed before
+⁵; two unmarked ⊕ defaults in §4.3; and §5.3's inaccurate "ties all nine managed values to one
+`l`" (three of the nine are driven by `character`/`tone` — the curves are jointly coupled to the
+triple, which is what makes "heavy colour + gentle limiting" unreachable).
+
+Prior: for the **P0 design document** (2026-07-30). `docs/DESIGN.md` created —
 status `Proposed`, awaiting owner sign-off (`DEVELOPMENT_BRIEF.md` §11 exit criterion).
 
 The document was produced from a five-domain research pass over the full Anamorph repository
@@ -18,8 +70,9 @@ the **measurement-tap** resolution proposed for `DSP_POLICY.md` invariants 2/5's
 **49-parameter table** plus the host-hidden state table and serialization schema v1; the macro
 layer and OQ-004 coexistence argument; draft macro curves (explicitly ⊕-marked as tuning
 material, C2); UI wireframes with the family-consistency contract; the OQ-005 recommendation;
-the performance-budget allocation and benchmark commitment; and the proposed ADR set (now nine —
-the build/identity and code-reuse records were added in the fourth pass). Every
+the performance-budget allocation and benchmark commitment; and the proposed ADR set — **eleven**
+by the end of the review rounds (0008 build/identity and 0009 code reuse added in the third pass;
+0010 parameter surface and 0011 threading in the fourth). Every
 value the brief does not specify is marked **⊕ proposed** so sign-off ratifies it explicitly
 rather than absorbing it silently (C7).
 
@@ -139,10 +192,11 @@ wireframe frame sizes (940×720 / 940×900) are Anamorph's hard-coded constants,
 pass said Anabasis must replace — they are ⊕-marked, but sign-off ratifies ⊕ values, so the
 reader is now told plainly that ratifying them ratifies the sibling's exact frame and that P5 is
 expected to re-derive them. And the three test names this document introduces
-(`testMacroDefaultIsFixedPoint`, `testModeSwitchIsSoundNeutral`,
-`testReportedLatencyMatchesImpulse`) now carry an explicit obligation to be registered in
-`DSP_POLICY.md`'s invariant→test map and `procedures/TESTING.md` when their suites land — a
-"guarded by" claim naming a test in no map is aspirational.
+now carry an explicit registration obligation — *corrected in the fourth pass*, because two of
+the three were already registered (`testReportedLatencyMatchesImpulse` is row 2 of `DSP_POLICY`'s
+map; `testModeSwitchIsSoundNeutral` is the named guard for `MODE_AND_ADAPTATION_POLICY`
+invariant 2) and the genuinely new one, `testMacroDefaultIsFixedPoint`, guards a **macro-layer**
+rule, so `DSP_POLICY`'s map was the wrong destination for it.
 
 *Confirmations:* the Post-EQ/`DSP_POLICY` wording item was re-reported for the third time and
 remains correctly handled (Hard-Stop blockquote, ADR-0002 obligation, checklist entry). The
@@ -765,7 +819,7 @@ Rows are added as modules land. The planned module set and its responsibilities 
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
-| architecture | `design-decisions/ADR_INDEX.md` only | Skeleton — the descriptive set lands with P1–P2 |
+| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0011 (Accepted 2026-07-31)** | Decisions complete for P0; the *descriptive* set (ARCHITECTURE, LATENCY_MODEL, PARAMETER_REGISTRY, …) lands with P1–P2 |
 | user | — | Deferred to P6 |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
 | root — legal | — | Deferred to P6 (produced against a real dependency tree; copying another project's inventory would be invented evidence) |

@@ -17,6 +17,10 @@ Advanced-parameter values.
 *Consequence:* a host automating an Advanced parameter and a user turning the Simple knob are
 writing to the same place, and the DSP cannot tell them apart.
 
+Guarded by: `testMacroDefaultIsFixedPoint` — for every managed parameter, the mapping evaluated at
+the default macro position must equal that parameter's declared default, or the first macro gesture
+jumps the factory patch instead of gliding from it (ADR-0005).
+
 ### 2. Switching modes must not change the sound
 
 At the instant the user switches Simple ⇄ Advanced, the rendered output is unchanged. Not
@@ -51,7 +55,11 @@ The adaptive layer may move parameters within their declared ranges. It may **no
 
 - exceed or bypass the ceiling clamp (`DSP_POLICY.md` invariant 4),
 - change reported latency (`DSP_POLICY.md` invariant 2) — so it must not switch the oversampling
-  factor or the lookahead time,
+  factor. **It must not move the lookahead either**, and since ADR-0004 that bar no longer follows
+  from the latency clause (a lookahead change moves no reported figure): it stands on its own
+  ground — the engaged lookahead is a read offset into a live delay line, so slewing it drags the
+  tap through the buffer, and adaptation is barred from time-varying delays for the same reason it
+  is barred from the oversampling factor,
 - alter the signal-chain order,
 - write to a parameter the user has locked (§9 parameter lock; **Ceiling is lockable at minimum**).
 

@@ -29,53 +29,7 @@ terms separately.
 
 ---
 
-## OQ-004 — Simple ⇄ Advanced coexistence strategy · `Blocking P4`
 
-**Question.** §5.3 requires a decision: when the user has edited parameters manually in Advanced
-and then returns to Simple, how do macro values and manual values coexist? The brief names two
-candidate directions (macro takes precedence with a clear notice; or offer a "carry over" option)
-and requires the strategy to be **argued in the design document before implementing**.
-
-**Hard constraint regardless of the answer.** Switching modes must not change the sound *at the
-moment of the switch* (`MODE_AND_ADAPTATION_POLICY.md`). Any strategy that fails that is
-excluded.
-
-**Action.** Argue and decide in `DESIGN.md`; record as an ADR before P4 implementation.
-
-**Recommendation (2026-07-30, pending sign-off).** Argued in `DESIGN.md` §5.3:
-**macro-latch with re-engage on touch** — returning to Simple moves nothing (invariant 2 holds by
-construction); manually edited parameters are *detached* from the macro and badged; the next
-macro-knob gesture re-engages them through the normal rate-limited glide, which is the "clear
-notice" moment. Carry-over offsets were rejected (history-dependent, untestable mapping;
-compounds with adaptation). Becomes ADR-0005 on sign-off.
-
----
-
-## OQ-005 — Extract a shared `rollytech-ui` module? · `Open`
-
-**Question.** §1.2 asks for an assessment of whether the shared UI layer (LookAndFeel, About page,
-Settings page, Bypass placement, preset/A-B interaction) is worth extracting into a shared module
-consumed by both products, versus copy-and-adapt.
-
-**Trade-off.** Extraction gives one place to fix brand drift, but couples two release cycles and
-makes any change to Anamorph's UI a change to a *shipped* product — which is an
-`ARCHITECTURE_REVIEW_GATE` item over there. Copy-and-adapt ships faster (the brief explicitly
-prioritises shipping on schedule) at the cost of guaranteed divergence.
-
-**Note.** Anabasis must not modify the Anamorph repository, so extraction is not unilaterally
-available to this project in any case — it would require a coordinated change to both.
-
-**Action.** Give a recommendation in `DESIGN.md` (§1.2 requires one). Do not extract without
-owner approval.
-
-**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §8: **copy-and-adapt now**, with
-provenance headers pointing at the Anamorph originals; revisit extraction as a product-family
-ADR after Anabasis v0.1.0 ships, when both UI layers are stable enough to see what is actually
-common. **Becomes ADR-0009 on sign-off** (`DESIGN.md` §10), whose scope is wider than the UI
-layer — `CLAUDE.md` §3 requires *every* cross-product copy, including the DSP-source adaptations,
-to be ADR-recorded.
-
----
 
 ## OQ-006 — Where does the C++23 canary run, and what does it gate? · `Open`
 
@@ -133,38 +87,6 @@ inferred from Anamorph.
 
 ---
 
-## OQ-010 — Does the limiter lookahead get an explicit 0 / off position? · `Blocking P1`
-
-**Question.** §4.3 specifies the limiter lookahead as **0.5–10 ms** (default ≈ 2 ms). On that
-range the plugin **always reports non-zero latency to the host**; there is no zero-latency
-configuration.
-
-**Why it cannot be deferred.** Parameter ranges are semantic and become contract at the first
-shipped build (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3): widening the range later to add a 0
-position re-scales every saved session's normalised value and is an `ARCHITECTURE_REVIEW_GATE`
-item. It also determines what `DSP_POLICY.md` invariant 2 and the release checklist can assert —
-"with lookahead 0 and oversampling off, reported latency is 0" is not testable on a 0.5–10 ms
-range, so the invariant is phrased against the lookahead **allowance** instead (`DESIGN.md` §3.3
-makes the reported contribution a constant 10 ms, so the figure is not a function of the engaged
-value at all).
-
-**Trade-off.** An off position enables a genuinely zero-latency mode (useful while tracking, and
-in hosts with poor PDC), at the cost of a limiter that cannot catch transients ahead of time — a
-markedly different, and worse, sound. Several mastering limiters deliberately omit it for exactly
-that reason.
-
-**Action.** Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
-position", say so explicitly in the parameter table so it reads as a decision rather than an
-oversight.
-
-**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §3.4: **no zero/off position** —
-keep 0.5–10 ms exactly. A 0 ms limiter degenerates into a clipper (the chain already has a
-better one); the zero-latency tracking use case is out of this product class; and narrowing
-never breaks sessions while widening later would. Stated in the §4.2 parameter table
-(`lookahead`, row 27, footnote ⁶; non-automatable because the engaged value is a read offset into a live delay line, not because it moves PDC — under `DESIGN.md` §3.3 the reported figure is a constant allowance). Becomes part of ADR-0004
-on sign-off; the DESIGN sign-off is the decision event that clears this entry's `Blocking P1`.
-
----
 
 ## OQ-011 — What is the macOS deployment target? · `Blocking P1`
 
@@ -212,6 +134,105 @@ refers to the pluginval **gate**, not to which bytes it sees.
 
 ## Resolved
 
+### OQ-010 — Does the limiter lookahead get an explicit 0 / off position? · `Resolved 2026-07-31`
+
+**Question.** §4.3 specifies the limiter lookahead as **0.5–10 ms** (default ≈ 2 ms). On that
+range the plugin **always reports non-zero latency to the host**; there is no zero-latency
+configuration.
+
+**Why it cannot be deferred.** Parameter ranges are semantic and become contract at the first
+shipped build (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3): widening the range later to add a 0
+position re-scales every saved session's normalised value and is an `ARCHITECTURE_REVIEW_GATE`
+item. It also determines what `DSP_POLICY.md` invariant 2 and the release checklist can assert —
+"with lookahead 0 and oversampling off, reported latency is 0" is not testable on a 0.5–10 ms
+range, so the invariant is phrased against the lookahead **allowance** instead (`DESIGN.md` §3.3
+makes the reported contribution a constant 10 ms, so the figure is not a function of the engaged
+value at all).
+
+**Trade-off.** An off position enables a genuinely zero-latency mode (useful while tracking, and
+in hosts with poor PDC), at the cost of a limiter that cannot catch transients ahead of time — a
+markedly different, and worse, sound. Several mastering limiters deliberately omit it for exactly
+that reason.
+
+**Action.** Decide in `DESIGN.md` before `createAnabasisLayout` exists. If the answer is "no off
+position", say so explicitly in the parameter table so it reads as a decision rather than an
+oversight.
+
+**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §3.4: **no zero/off position** —
+keep 0.5–10 ms exactly. A 0 ms limiter degenerates into a clipper (the chain already has a
+better one); the zero-latency tracking use case is out of this product class; and narrowing
+never breaks sessions while widening later would. Stated in the §4.2 parameter table
+(`lookahead`, row 27, footnote ⁶; non-automatable because the engaged value is a read offset into a live delay line, not because it moves PDC — under `DESIGN.md` §3.3 the reported figure is a constant allowance). Becomes part of ADR-0004
+on sign-off; the DESIGN sign-off is the decision event that clears this entry's `Blocking P1`.
+
+**Decision (owner sign-off, 2026-07-31).** **No zero/off position** — the range stays 0.5–10 ms
+exactly as briefed. Recorded by **ADR-0004**, together with a second decision this entry did not
+anticipate: reported latency is the **constant 10 ms lookahead allowance**, not the engaged value,
+so the plugin's PDC no longer moves with the parameter at all. `DSP_POLICY.md` invariant 2 was
+amended accordingly by that ADR — the invariant is now phrased against the *allowance*, and the
+latch sentence names only the oversampling factor.
+
+---
+
+### OQ-005 — Extract a shared `rollytech-ui` module? · `Resolved 2026-07-31`
+
+**Question.** §1.2 asks for an assessment of whether the shared UI layer (LookAndFeel, About page,
+Settings page, Bypass placement, preset/A-B interaction) is worth extracting into a shared module
+consumed by both products, versus copy-and-adapt.
+
+**Trade-off.** Extraction gives one place to fix brand drift, but couples two release cycles and
+makes any change to Anamorph's UI a change to a *shipped* product — which is an
+`ARCHITECTURE_REVIEW_GATE` item over there. Copy-and-adapt ships faster (the brief explicitly
+prioritises shipping on schedule) at the cost of guaranteed divergence.
+
+**Note.** Anabasis must not modify the Anamorph repository, so extraction is not unilaterally
+available to this project in any case — it would require a coordinated change to both.
+
+**Action.** Give a recommendation in `DESIGN.md` (§1.2 requires one). Do not extract without
+owner approval.
+
+**Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §8: **copy-and-adapt now**, with
+provenance headers pointing at the Anamorph originals; revisit extraction as a product-family
+ADR after Anabasis v0.1.0 ships, when both UI layers are stable enough to see what is actually
+common. **Becomes ADR-0009 on sign-off** (`DESIGN.md` §10), whose scope is wider than the UI
+layer — `CLAUDE.md` §3 requires *every* cross-product copy, including the DSP-source adaptations,
+to be ADR-recorded.
+
+**Decision (owner sign-off, 2026-07-31).** **Copy-and-adapt, no shared module for v1.** Recorded
+by **ADR-0009**, whose scope is deliberately wider than the UI layer: `CLAUDE.md` §3 makes *every*
+cross-product copy ADR-recordable, so the DSP-source adaptations (K-weighting coefficients, the
+Measure+Predict structure, the `ScopeBuffer` ring, the transition taxonomy) are covered too.
+Extraction is revisited as a product-family decision after v0.1.0 ships — that revisit will be a
+new ADR, not a reopening of this entry.
+
+---
+
+### OQ-004 — Simple ⇄ Advanced coexistence strategy · `Resolved 2026-07-31`
+
+**Question.** §5.3 requires a decision: when the user has edited parameters manually in Advanced
+and then returns to Simple, how do macro values and manual values coexist? The brief names two
+candidate directions (macro takes precedence with a clear notice; or offer a "carry over" option)
+and requires the strategy to be **argued in the design document before implementing**.
+
+**Hard constraint regardless of the answer.** Switching modes must not change the sound *at the
+moment of the switch* (`MODE_AND_ADAPTATION_POLICY.md`). Any strategy that fails that is
+excluded.
+
+**Action.** Argue and decide in `DESIGN.md`; record as an ADR before P4 implementation.
+
+**Recommendation (2026-07-30, pending sign-off).** Argued in `DESIGN.md` §5.3:
+**macro-latch with re-engage on touch** — returning to Simple moves nothing (invariant 2 holds by
+construction); manually edited parameters are *detached* from the macro and badged; the next
+macro-knob gesture re-engages them through the normal rate-limited glide, which is the "clear
+notice" moment. Carry-over offsets were rejected (history-dependent, untestable mapping;
+compounds with adaptation). Becomes ADR-0005 on sign-off.
+
+**Decision (owner sign-off, 2026-07-31).** Macro-latch with re-engage on touch, as recommended.
+Recorded by **ADR-0005**, which also fixes the macro-write/manual-edit discriminator (a
+message-thread re-entrancy flag **and** a gesture bracket) that the rule depends on.
+
+---
+
 ### OQ-001 — Which JUCE 9.x point release do we pin? · `Resolved 2026-07-30`
 
 **Question.** §2 requires pinning the newest stable JUCE 9.x point release by its tag's
@@ -228,7 +249,7 @@ engine output bit-identical 8.0.14 → 9.0.0, including reported latencies), so 
 framework revision with evidence behind it rather than an unexercised newer one.
 
 **Recorded in.** `README.md`, `docs/policies/DEPENDENCY_POLICY.md`, `docs/procedures/BUILD.md`,
-`docs/HANDOVER.md`. **Becomes ADR-0008 on sign-off** (`DESIGN.md` §10 — the P0 build-decision ADR this entry's standing obligation names). It must additionally be written into `CMakeLists.txt`
+`docs/HANDOVER.md`. **Recorded by ADR-0008** (Accepted 2026-07-31) — the P0 build-decision ADR this entry's standing obligation named. It must additionally be written into `CMakeLists.txt`
 (`ANABASIS_JUCE_VERSION "9.0.0"` + `ANABASIS_JUCE_TAG "f8f8864…"`) when that file is created at
 P1, and recorded in the P0 build-decision ADR.
 
@@ -271,7 +292,7 @@ vendor code before it can ever have an identity to break. Anamorph pays a one-ti
 for the manufacturer code; there is no comparable exception available here.
 
 **Recorded in.** `docs/procedures/BUILD.md` §Plugin identity. Must be written into
-`CMakeLists.txt` when it is created at P1. **Becomes part of ADR-0008 on sign-off** (`DESIGN.md` §10).
+`CMakeLists.txt` when it is created at P1. **Recorded by ADR-0008** (Accepted 2026-07-31).
 
 **Evidence [Unverified].** No build exists, so "these values register correctly in a host" is
 unproven — it becomes Verified at the first Level-5 check (P1).

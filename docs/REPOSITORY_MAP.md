@@ -90,15 +90,17 @@ a no-op the moment P1 lands.
 docs/
 ├── DEVELOPMENT_BRIEF.md   The owner-supplied product spec (Part I) + the inherited engineering
 │                          standard (Part II). See SOURCE_OF_TRUTH.md §"Where the product brief sits".
-├── DESIGN.md              The P0 design deliverable (brief §11/§24): architecture, the full
-│                          parameter table, macro curves, wireframes, the proposed ADR set.
-│                          Answers to the brief; the ADRs it spawns outrank it once Accepted.
+├── DESIGN.md              The P0 design deliverable (brief §11/§24), SIGNED OFF 2026-07-31:
+│                          architecture, the 49-parameter table, macro curves, wireframes.
+│                          Answers to the brief; the eleven ADRs it spawned now outrank it and
+│                          supersede it section by section as P1-P6 land.
 │                          See SOURCE_OF_TRUTH.md §"Where `DESIGN.md` sits".
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
 │   BRAND_CONSISTENCY_CHECKLIST.md
 ├── user/           [P6] end-user class: USER_MANUAL, INSTALLATION
-├── architecture/   design-decisions/ADR_INDEX.md (+ ADRs). [P1–P2] the descriptive set:
+├── architecture/   design-decisions/ — ADR_INDEX.md + **ADR-0001…0011 (all Accepted**
+│                   **2026-07-31)**. [P1–P2] the descriptive set:
 │                   ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE, DSP_ALGORITHMS,
 │                   THREAD_MODEL, API_REFERENCE, PARAMETER_REGISTRY/REFERENCE,
 │                   SERIALIZATION_REGISTRY, STATE_SERIALIZATION, LATENCY_MODEL,
@@ -112,8 +114,9 @@ docs/
 
 ## Deliverables named by the brief
 
-**`docs/DESIGN.md` exists (P0, 2026-07-30)** — status `Proposed`, awaiting owner sign-off; its
-research evidence trail is `worklogs/2026-07-30-p0-anamorph-research.md`. `TEST_REPORT.md`
+**`docs/DESIGN.md` is signed off (P0 closed 2026-07-31)** — its research evidence trail is
+`worklogs/2026-07-30-p0-anamorph-research.md`, and the decisions it carried are now the eleven
+Accepted ADRs. `TEST_REPORT.md`
 (§10, §12) and the factory preset bank are produced by their respective phases and are not
 scaffolded — they carry measured content, and an empty shell would invite it being filled with
 estimates (constraint C2).

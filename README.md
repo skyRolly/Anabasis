@@ -11,21 +11,21 @@ headless Linux machine, no IDE.
 
 ## Project status
 
-- **Version 0.1.0 (pre-release), phase P0 — research & design.**
-- **No DSP source code exists yet.** This repository carries the governance system, documentation
-  library, build/CI scaffolding, the product brief, and — as of 2026-07-30 — the **P0 design
-  document [`docs/DESIGN.md`](docs/DESIGN.md)** (`Proposed`, awaiting owner sign-off).
-  Implementation starts at P1, after that sign-off (`docs/DEVELOPMENT_BRIEF.md` §11, §24).
+- **Version 0.1.0 (pre-release), phase P1 — skeleton.** P0 closed on 2026-07-31 with the owner's
+  sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the eleven ADRs it authorised are Accepted and
+  registered in
+  [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md).
+- **No DSP source code exists yet** — P1 is where `CMakeLists.txt`, `src/` and `tests/` first
+  appear. What exists is the governance system, the documentation library, the build/CI
+  scaffolding, the product brief, the signed-off design document and its ADR set.
 - **Already decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit
   `f8f8864…`, the same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**). Both must be written into `CMakeLists.txt` at P1 —
   [`docs/procedures/BUILD.md`](docs/procedures/BUILD.md) §Plugin identity.
-- **Still open** — including the JUCE licence tier — tracked in
-  [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) and **not** to be guessed at. The Simple ⇄
-  Advanced coexistence strategy (OQ-004) and the lookahead 0/off question (OQ-010) now carry
-  argued recommendations in `DESIGN.md` (§5.3, §3.4) that the sign-off ratifies or overturns.
-  Resolved entries stay in that file's `Resolved` section; they are decisions, not choices to
-  revisit.
+- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the macOS
+  deployment target (OQ-011, settled at P1 against a real build), and four P2–P6 items — tracked in
+  [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) and **not** to be guessed at. Resolved entries
+  stay in that file's `Resolved` section; they are decisions, not choices to revisit.
 
 ## Planned scope (see `docs/DEVELOPMENT_BRIEF.md` for the full specification)
 
@@ -78,15 +78,18 @@ To build without network (JUCE already on disk):
 The full technical documentation lives in **[`docs/`](docs/)**:
 
 - **Start here:** [`docs/DEVELOPMENT_BRIEF.md`](docs/DEVELOPMENT_BRIEF.md) (the product spec) ·
-  [`docs/DESIGN.md`](docs/DESIGN.md) (**the P0 design deliverable** — architecture, full
-  parameter table, macro curves, wireframes, proposed ADR set) ·
+  [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md)
+  (**the binding decisions** — read before writing code) ·
+  [`docs/DESIGN.md`](docs/DESIGN.md) (the signed-off P0 design: architecture, the 49-parameter
+  table, macro curves, wireframes) ·
   [`docs/SOURCE_OF_TRUTH.md`](docs/SOURCE_OF_TRUTH.md) ·
   [`docs/REPOSITORY_MAP.md`](docs/REPOSITORY_MAP.md) ·
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)
 - **Rules (binding):** [`docs/policies/`](docs/policies/) — real-time audio, threading, DSP,
   mode/adaptation, compatibility, AI-agent, testing, release, dependency, code style
-- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) (ADRs; the descriptive
-  architecture set lands with P1–P2). `DESIGN.md` ranks *below* the ADRs it spawns — see
+- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) — **eleven Accepted
+  ADRs** (ADR-0001…0011, all dated 2026-07-31); the descriptive architecture set lands with P1–P2.
+  `DESIGN.md` ranks *below* the ADRs it spawned and loses to them on any disagreement — see
   `docs/SOURCE_OF_TRUTH.md` §"Where `DESIGN.md` sits"
 - **How-to:** [`docs/procedures/`](docs/procedures/) (build, development, CI/CD, testing, release)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·

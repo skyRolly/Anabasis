@@ -1,16 +1,31 @@
 # DESIGN.md — Anabasis P0 Design Document
 
-**Status: `Proposed` — awaiting owner sign-off (`DEVELOPMENT_BRIEF.md` §11 P0 exit criterion).**
-No DSP code exists or may be written until this document is signed off (brief §24). Sign-off ratifies:
-every value marked **⊕ proposed** below (values the brief does not specify — including range
-tapers) and the parameter **display names** as launch wording (C8; names remain revisable
-afterwards under `PARAMETER_COMPATIBILITY_POLICY.md` rule 2 — see §4.2), the named
-decisions, **including two Hard-Stop items that each require a policy amendment carried by an
-ADR** (§1.2 Post-EQ before the ceiling clamp → ADR-0002; §3.3 constant reported latency →
-ADR-0004), the §5.5 draft curves *as the P4 tuning starting point*, and authorises the
-**eleven**-ADR set in §10 (written as `Accepted`, dated at sign-off — see §10).
-**§11's checklist is the authoritative enumeration** — this paragraph is a summary of it, and on
-any divergence the checklist governs.
+**Status: `Accepted` — signed off by the owner on 2026-07-31.** This closed the P0 exit criterion
+(`DEVELOPMENT_BRIEF.md` §11); P1 implementation is unblocked.
+
+**What the sign-off ratified**, and where each item now lives:
+
+- Every **⊕ proposed** value in this document — the §4.2/§4.3 parameter surface (now frozen at
+  v0.1.0 and recorded by **ADR-0010**), the ⊕ window geometry in §6.2/§6.3, the ⊕ shelf Q in §2.2,
+  and the parameter **display names** as launch wording (still revisable under
+  `PARAMETER_COMPATIBILITY_POLICY.md` rule 2 — only IDs, ranges, defaults and choice orderings
+  freeze).
+- **Both Hard-Stop items**, each of which carried a `DSP_POLICY.md` amendment enacted by its ADR
+  (`ADR_POLICY.md` rule 5): §1.2 Post-EQ sits *before* the ceiling clamp → **ADR-0002** amended
+  invariant 1; §3.3 constant reported latency → **ADR-0004** amended invariant 2. **ADR-0003**
+  additionally closed the open point in invariants 2 and 5.
+- The named decisions: §3.2 measurement tap, §3.4 no-zero-lookahead, §5.2/§5.3 macro architecture
+  and coexistence, §8 copy-and-adapt.
+- The §5.5 macro curves **as the P4 tuning starting point**, not as final values.
+- The **eleven-ADR set** in §10, all authored `Accepted` and dated 2026-07-31, registered in
+  `docs/architecture/design-decisions/ADR_INDEX.md`.
+
+> **This document is now superseded section by section as P1–P6 land**
+> (`SOURCE_OF_TRUTH.md` §"Where `DESIGN.md` sits"). It ranks with descriptive Architecture
+> (level 5) and **loses to any Accepted ADR it disagrees with**. It is not maintained as a living
+> spec: drift between it and shipped behaviour is expected and resolved in favour of the higher
+> source. The ADRs above, plus the descriptive architecture set that lands at P1–P2, are what
+> bind.
 
 Evidence discipline: facts about Anamorph cite its source as `Anamorph:<path>:<lines>`
 `[Verified]` — read during the P0 research pass (evidence trail:
@@ -481,12 +496,12 @@ host-hidden, so neither can spray PDC changes.
 ⁴ *Not* latency-affecting (the detector is a tap, §3.2) — frozen non-automatable as a
 conservative v1 choice; it flips the detector mode, and loosening later is a kVersion bump
 (§11 risk 4).
-⁶ **No zero/off position — a decision, not a gap** (§3.4): a 0 ms limiter degenerates into a
-clipper, which the chain already carries as a better tool, and widening the range later re-scales
-every saved session (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3).
 ⁵ **Not `Clean`** — see §2.4: `Clean` is the null model, so defaulting to it would make the
 Character macro inert in the factory patch. `colourDepth`'s default of 0 keeps the default patch
 bit-identical either way.
+⁶ **No zero/off position — a decision, not a gap** (§3.4): a 0 ms limiter degenerates into a
+clipper, which the chain already carries as a better tool, and widening the range later re-scales
+every saved session (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3).
 
 **Exclusion tiers** (single shared predicate, Anamorph pattern
 `Anamorph:src/PluginParameters.h:66-88` [Verified]): *view tier*
@@ -522,8 +537,8 @@ ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
 | `int_oversample` | OS factor | Off/2×/4×/8×/16× | ⊕ Off |
 | `int_osPhase` | OS phase mode | min-phase / linear-phase | ⊕ min |
 | `int_offlineQuality` | offline render | Follow / Force Max | ⊕ Follow |
-| `int_ceilingLock` | Ceiling preset-lock | bool | off |
-| `int_uiScale` | UI scaling | ⊕ 80/90/100/125/150/175/200 % | 100 |
+| `int_ceilingLock` | Ceiling preset-lock | bool | ⊕ off |
+| `int_uiScale` | UI scaling | ⊕ 80/90/100/125/150/175/200 % | ⊕ 100 |
 | `int_tooltipsOn` | tooltips | bool | ⊕ off |
 | `int_uiAnimations` | UI animation | bool | ⊕ on |
 | `int_spectrumOn` | spectrum overlay | bool | ⊕ on (brief §6 says *dismissible* — visible until dismissed) |
@@ -542,8 +557,7 @@ deviation from Anamorph, which has no version field and detects format generatio
 (`Anamorph:src/PluginProcessor.cpp:535-613` [Verified]); greenfield Anabasis writes the version
 from day one *and* keeps the structural-tolerance read rules (unknown fields ignored, missing
 fields default, indices clamped at the boundary). Children: APVTS tree `ANABASIS` (with the
-additive exact-`raw` attribute per PARAM — Anamorph ADR-0013), `ANABASIS_INTERNAL`, `AB`
-`AB`, and `ADAPTIVE`.
+additive exact-`raw` attribute per PARAM — Anamorph ADR-0013), `ANABASIS_INTERNAL`, `AB` and `ADAPTIVE`.
 
 **`AB` — active index (clamped) plus, per slot: the parameter tree, preset name, baseline, the
 frozen trim vector, and the macro detach mask.** The last two are *per-slot state, not global*,
@@ -658,9 +672,11 @@ When the user edits a managed parameter in Advanced and returns to Simple:
 
    **Factory presets ⊕ ship with an all-clear mask**, which makes them an *authoring constraint*,
    not a fact: a factory patch must be reachable from a single `(loudness, character, tone)`
-   triple, since §5.5 ties all nine managed values to one `l`. Some plausible patches are not —
-   "Tape Glue" (heavy colour, gentle limiting) needs `colourDepth` high and `limGain` low, which
-   the curves couple. Those presets ship a non-clear mask, and that is fine; what is not fine is
+   triple, and §5.5's nine curves are **jointly coupled to that triple** — six to `l`, and
+   `colourDepth` to `character` *and* `l` together. Some plausible patches are unreachable:
+   "Tape Glue" (heavy colour, gentle limiting) needs `colourDepth` high with `limGain` low, but
+   `colourDepth = 100·character·(0.4 + 0.6·l)` caps at 40 % as `l → 0`, so heavy colour *requires*
+   a high `l`, which in turn forces `limGain` up. Those presets ship a non-clear mask, and that is fine; what is not fine is
    assuming curve-consistency without checking. P6 preset authoring checks each patch against the
    frozen curves.
 

@@ -41,7 +41,9 @@ references them) but are never instantiated — the tests run headlessly and ope
 Planned coverage: serialized-schema shape; the **parameter-registry snapshot**; raw-exact
 save → load → save round-trip (byte-identical); every legacy read path via a frozen fixture;
 corrupt/foreign-state robustness; user-preset round-trip + exclusion rules; A/B and view-param
-preservation.
+preservation; **`testMacroDefaultIsFixedPoint`** — the macro mapping at the default position must
+equal every managed parameter's declared default (ADR-0005, `MODE_AND_ADAPTATION_POLICY.md`
+invariant 1); **`testModeSwitchIsSoundNeutral`** (invariant 2).
 
 ### The registry snapshot — how it is used
 
