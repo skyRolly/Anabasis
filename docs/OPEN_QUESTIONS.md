@@ -71,7 +71,9 @@ owner approval.
 **Recommendation (2026-07-30, pending sign-off).** `DESIGN.md` §8: **copy-and-adapt now**, with
 provenance headers pointing at the Anamorph originals; revisit extraction as a product-family
 ADR after Anabasis v0.1.0 ships, when both UI layers are stable enough to see what is actually
-common.
+common. **Becomes ADR-0009 on sign-off** (`DESIGN.md` §10), whose scope is wider than the UI
+layer — `CLAUDE.md` §3 requires *every* cross-product copy, including the DSP-source adaptations,
+to be ADR-recorded.
 
 ---
 
@@ -142,7 +144,9 @@ shipped build (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3): widening the range l
 position re-scales every saved session's normalised value and is an `ARCHITECTURE_REVIEW_GATE`
 item. It also determines what `DSP_POLICY.md` invariant 2 and the release checklist can assert —
 "with lookahead 0 and oversampling off, reported latency is 0" is not testable on a 0.5–10 ms
-range, so the invariant is currently phrased against the engaged lookahead instead.
+range, so the invariant is phrased against the lookahead **allowance** instead (`DESIGN.md` §3.3
+makes the reported contribution a constant 10 ms, so the figure is not a function of the engaged
+value at all).
 
 **Trade-off.** An off position enables a genuinely zero-latency mode (useful while tracking, and
 in hosts with poor PDC), at the cost of a limiter that cannot catch transients ahead of time — a
@@ -157,7 +161,7 @@ oversight.
 keep 0.5–10 ms exactly. A 0 ms limiter degenerates into a clipper (the chain already has a
 better one); the zero-latency tracking use case is out of this product class; and narrowing
 never breaks sessions while widening later would. Stated in the §4.2 parameter table
-(`lookahead`, row 27, also non-automatable per the latency contract). Becomes part of ADR-0004
+(`lookahead`, row 27, footnote ⁶; non-automatable because the engaged value is a read offset into a live delay line, not because it moves PDC — under `DESIGN.md` §3.3 the reported figure is a constant allowance). Becomes part of ADR-0004
 on sign-off; the DESIGN sign-off is the decision event that clears this entry's `Blocking P1`.
 
 ---
@@ -224,7 +228,7 @@ engine output bit-identical 8.0.14 → 9.0.0, including reported latencies), so 
 framework revision with evidence behind it rather than an unexercised newer one.
 
 **Recorded in.** `README.md`, `docs/policies/DEPENDENCY_POLICY.md`, `docs/procedures/BUILD.md`,
-`docs/HANDOVER.md`. It must additionally be written into `CMakeLists.txt`
+`docs/HANDOVER.md`. **Becomes ADR-0008 on sign-off** (`DESIGN.md` §10 — the P0 build-decision ADR this entry's standing obligation names). It must additionally be written into `CMakeLists.txt`
 (`ANABASIS_JUCE_VERSION "9.0.0"` + `ANABASIS_JUCE_TAG "f8f8864…"`) when that file is created at
 P1, and recorded in the P0 build-decision ADR.
 
@@ -267,7 +271,7 @@ vendor code before it can ever have an identity to break. Anamorph pays a one-ti
 for the manufacturer code; there is no comparable exception available here.
 
 **Recorded in.** `docs/procedures/BUILD.md` §Plugin identity. Must be written into
-`CMakeLists.txt` when it is created at P1, and into the P0 build-decision ADR.
+`CMakeLists.txt` when it is created at P1. **Becomes part of ADR-0008 on sign-off** (`DESIGN.md` §10).
 
 **Evidence [Unverified].** No build exists, so "these values register correctly in a host" is
 unproven — it becomes Verified at the first Level-5 check (P1).

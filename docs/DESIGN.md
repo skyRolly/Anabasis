@@ -5,10 +5,12 @@ No DSP code exists or may be written until this document is signed off (brief §
 every value marked **⊕ proposed** below (values the brief does not specify — including range
 tapers) and the parameter **display names** as launch wording (C8; names remain revisable
 afterwards under `PARAMETER_COMPATIBILITY_POLICY.md` rule 2 — see §4.2), the named
-decisions (§3.2 measurement-tap, §3.4 no-zero-lookahead, §5.2 macro architecture, §5.3
-coexistence, §8 copy-and-adapt), the §5.5 draft curves *as the P4 tuning starting point*, and
-promotes the ADR set in §10 from `Proposed` to `Accepted`. The §11 checklist is the complete
-ratification scope.
+decisions, **including two Hard-Stop items that each require a policy amendment carried by an
+ADR** (§1.2 Post-EQ before the ceiling clamp → ADR-0002; §3.3 constant reported latency →
+ADR-0004), the §5.5 draft curves *as the P4 tuning starting point*, and authorises the
+**eleven**-ADR set in §10 (written as `Accepted`, dated at sign-off — see §10).
+**§11's checklist is the authoritative enumeration** — this paragraph is a summary of it, and on
+any divergence the checklist governs.
 
 Evidence discipline: facts about Anamorph cite its source as `Anamorph:<path>:<lines>`
 `[Verified]` — read during the P0 research pass (evidence trail:
@@ -236,8 +238,16 @@ Inherit Anamorph's three-mechanism taxonomy (its ADR-0004 [Verified]): asymmetri
 duck (~6 ms out / ~28 ms in) for genuine discrete rewires (OS factor/phase change, EQ position,
 colour model, preset/A-B/undo bulk swaps — forced-duck atomics requested *before* the swap);
 always-running output crossfades for bypass / loudness-comp / delta toggles (~10 ms, bit-exact
-at the endpoints); smoothed parameters for everything continuous. Lookahead changes are latched
-at the duck bottom because they change reported latency (§3.3).
+at the endpoints); smoothed parameters for everything continuous. Only an OS factor/phase change
+latches at the duck bottom.
+
+**Lookahead left the discrete set when §3.3 made reported latency constant in it — so it needs
+its own click-free story, not just the absence of a duck.** Moving a read tap through a live
+delay line is not inherently click-free: done naively it is a jump discontinuity. The mechanism
+is that the **audio** delay stays fixed at the full 10 ms and the lookahead value moves only the
+*detector/gain-computer* alignment, which is a smooth, band-limited control signal — so no audio
+sample is ever skipped or repeated. This is a switchable path under DSP_POLICY invariant 8 and
+needs its own per-path click test; it is listed with the P1 test obligations in §11.
 
 ### 2.9 Metering engine
 - **LUFS** M/S/I per BS.1770-4 / EBU R128: K-weighting (the exact published coefficients are in
@@ -283,8 +293,9 @@ The BS.1770-4 true-peak estimator (≥4× polyphase FIR interpolator) feeds **on
 gain computer, the ceiling clamp's decision, and the TP meter. The audio that reaches the output
 is never resampled by it. Consequences, and why this reading wins:
 
-- With user oversampling **off**, reported latency is **exactly the engaged lookahead** — the
-  detector's own group delay is absorbed *inside* the lookahead window (design constraint: the
+- With user oversampling **off**, reported latency is **exactly the lookahead allowance** (the
+  constant 10 ms of §3.3) and the detector adds **nothing** to it — the detector's own group
+  delay is absorbed *inside* the lookahead window (design constraint: the
   estimator's base-rate group delay must be ≤ the 0.5 ms minimum lookahead; the BS.1770-4
   Annex 2 48-coefficient, 4-phase interpolator has group delay (48−1)/2 = 23.5 taps at 4× ≈ 5.9
   base samples ≈ 0.12 ms at 48 kHz — design arithmetic, to be verified by the P2 impulse test,
@@ -304,20 +315,60 @@ paragraphs and assert the measurement-tap reading (C6: that edit happens with th
 ### 3.3 Latency model (the contract `testReportedLatencyMatchesImpulse` guards)
 
 ```
-reportedLatency = lookaheadSamples(lookaheadMs, sr)        (always > 0 — see §3.4)
+reportedLatency = maxLookaheadSamples(10 ms, sr)           (CONSTANT — not the engaged value)
                 + osLatency(factor, phaseMode)             (0 when factor = Off)
 ```
 
-No other stage contributes (EQ is IIR; detector is a tap; dither is sample-wise). Values are
-computed at `prepare()` from `getLatencyInSamples()` — recorded as measured numbers in
-`LATENCY_MODEL.md` at P2, not predicted here (C2). Rules:
+**Lookahead contributes its MAXIMUM, always — a decision, not an oversight.** The obvious model
+(`engagedLookahead + OS`) makes reported latency a function of an ordinary sound parameter, and
+`lookahead` is carried by every preset, A/B slot and undo step (it is in neither exclusion tier,
+§4.2). So under that model **browsing presets or A/B-comparing during playback would change host
+PDC on nearly every step** — a re-sync or dropout in the middle of the one workflow a mastering
+plugin exists to support, and the forced duck could not dry-fill across it (Anamorph's dry-fill
+engages only when `predictLatency == latched latency`,
+`Anamorph:src/dsp/AnamorphEngine.cpp:290-307` [Verified]; the P0 research pass flagged exactly
+this as a decision Anabasis owes, `worklogs/2026-07-30-p0-anamorph-research.md`). Instead the
+limiter reads at a **variable offset inside a fixed 10 ms delay line**, and the engine pads the
+difference, so the *engaged* lookahead changes freely while the *reported* figure never moves.
 
-- Latency never changes mid-block: lookahead / OS factor / phase-mode changes are **latched**
-  at reset or the silent duck bottom (§2.8).
+Consequences, all of them intended:
+
+- **Bulk swaps can never cross reported latency.** OS factor/phase are the only remaining
+  latency sources and they are host-hidden `ANABASIS_INTERNAL` settings (§4.3) — never carried by
+  presets, A/B or undo. So a preset step, A/B switch or undo is *always* dry-fillable and never
+  touches PDC. This is what makes §7's "copy the Anamorph state machinery wholesale" safe here.
+- **Lookahead needs no latch and no duck.** It is a continuous, smoothed read-offset change.
+  Only an OS factor/phase change still latches at a reset or the silent duck bottom (§2.8).
+- **The cost is real and is the trade:** at the 2 ms default the plugin reports 10 ms rather
+  than 2 ms — ~8 ms of PDC the user does not "need". For a mastering processor that is cheap
+  (this is not a tracking tool, and §3.4 already declines a zero-latency mode); for anyone who
+  disagrees, the alternative is PDC churn while browsing presets. **On the §11 checklist.**
+- `testReportedLatencyMatchesImpulse` becomes *stronger*: the impulse must land at exactly
+  `maxLookahead + OS` for **every** lookahead value, so a padding bug is a test failure rather
+  than a subtle host-sync complaint.
+
+> **⚠ Hard-Stop item — this changes the reported-latency contract, and two binding sentences of
+> `DSP_POLICY.md` invariant 2 must move with it.** (a) The invariant's body says "an
+> oversampling-factor **or lookahead** change is **latched** and applied at a reset or a
+> crossfaded boundary" — under this decision a lookahead change alters no reported figure, so it
+> is a smoothed read-offset move and only the OS half stays latched. (b) The invariant's open
+> point is phrased against "the engaged lookahead"; it must read *lookahead allowance*.
+> A **reported-latency change is an AI-agent Hard Stop and an `ARCHITECTURE_REVIEW_GATE` item**
+> (`AI_AGENT_POLICY.md`, `ARCHITECTURE_REVIEW_GATE.md`) — which is the point of surfacing it on
+> paper at P0 rather than discovering it in code at P2. As with §1.2, `DSP_POLICY.md` is
+> **deliberately left untouched here**: **ADR-0004 carries both amendments**, and the §11
+> checklist carries the decision as a Hard-Stop line, not a preference.
+
+No other stage contributes (EQ is IIR; detector is a tap, §3.2; dither is sample-wise). Values
+are computed at `prepare()` from `getLatencyInSamples()` — recorded as measured numbers in
+`LATENCY_MODEL.md` at P2, not predicted here (C2). Remaining rules:
+
+- Latency never changes mid-block: OS factor / phase-mode changes are **latched** at reset or
+  the silent duck bottom (§2.8).
 - **Lookahead and the OS controls are not automatable** (§4 table): a host cannot spray PDC
   changes, and the adaptive engine is policy-barred from touching them
-  (`MODE_AND_ADAPTATION_POLICY.md` inv 4). Lookahead's internal delay line is sized for 10 ms at
-  prepare, so knob changes re-latch without allocation.
+  (`MODE_AND_ADAPTATION_POLICY.md` inv 4). The delay line is sized for 10 ms at prepare, so no
+  lookahead change ever allocates.
 - The dry ring is sized `maxLookahead(10 ms) + maxOsLatency(16×, linear) + maxBlock + 1`.
 
 ### 3.4 OQ-010 — lookahead has NO zero/off position (recommendation)
@@ -327,9 +378,10 @@ job; (b) this is a mastering processor — the zero-latency tracking use case be
 different product class, and several mastering limiters omit it deliberately (brief's own
 OQ-010 trade-off note); (c) the range is a compatibility contract from v0.1.0 — widening later
 re-scales saved sessions (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3), whereas *narrowing* need
-never happen. The parameter table states this as a decision so it cannot read as an oversight.
-Consequence: **the plugin always reports non-zero latency**, and DSP_POLICY invariant 2 stays
-phrased against the engaged lookahead.
+never happen. Row 27's footnote ⁶ states this in the table so the range cannot read as an
+oversight. Consequence: **the plugin always reports non-zero latency** — and under §3.3 that
+figure is the constant 10 ms allowance, not the engaged value, so DSP_POLICY invariant 2 must be
+re-phrased against the *allowance* (ADR-0004, below).
 
 ---
 
@@ -385,11 +437,11 @@ what `testNullWithDefaults`'s stimulus level must respect.
 | 20 | `clipShape` | Clip Shape | F | ⊕ 0…1 (hard↔soft) | ⊕ 0.5 | yes | clip |
 | 21 | `clipDrive` | Clip Drive | F | ⊕ 0…24 dB | 0 | yes | clip |
 | 22 | `clipMix` | Clip Mix | F | ⊕ 0…100 % | ⊕ 100 | yes | clip |
-| 23 | `colourModel` | Colour | C | Clean/Tape/Tube/Transistor | ⊕ Tape¹⁰ | yes | clip |
+| 23 | `colourModel` | Colour | C | Clean/Tape/Tube/Transistor | ⊕ Tape⁵ | yes | clip |
 | 24 | `colourBalance` | Odd/Even | F | ⊕ −1…+1 | 0 | yes | clip |
 | 25 | `colourTone` | Colour Tone | F | ⊕ −1…+1 | 0 | yes | clip |
 | 26 | `limGain` | Limiter Gain | F | ⊕ 0…+18 dB | 0 | yes | limiter |
-| 27 | `lookahead` | Lookahead | F | 0.5…10 ms ⊕(log) | 2 | **no**³ | limiter |
+| 27 | `lookahead` | Lookahead | F | 0.5…10 ms ⊕(log)⁶ | 2 | **no**³ | limiter |
 | 28 | `limRelease` | Lim Release | F | 1…1000 ms ⊕(log) | ⊕ 100 | yes | limiter |
 | 29 | `limAutoRelease` | Lim Auto Rel | B | — | ⊕ on | yes | limiter |
 | 30 | `limStyle` | Style | C | Transparent/Punchy/Loud | ⊕ Transparent | yes | limiter |
@@ -420,11 +472,19 @@ parameters are the automation surface. Changing this later is a kVersion-bump + 
 (precedent: Anamorph ADR-0014 exposed params later). Note `withAutomatable(false)` is
 *advisory* — some hosts expose the parameter anyway (`PARAMETER_COMPATIBILITY_POLICY.md`
 rule 5); §5.2 states the consequence and the fallback.
-³ Latency-affecting (§3.3) — never automatable, never touched by adaptation.
+³ **Not** latency-affecting under §3.3 (the reported figure is constant in it) — non-automatable
+for a different, surviving reason: the engaged value *is* a read offset into a live delay line, so
+sweeping it at automation rate drags the tap through the buffer and produces pitch/comb artefacts.
+It is a set-and-leave control. Also never touched by adaptation
+(`MODE_AND_ADAPTATION_POLICY.md` inv 4). OS factor/phase remain latency-affecting *and*
+host-hidden, so neither can spray PDC changes.
 ⁴ *Not* latency-affecting (the detector is a tap, §3.2) — frozen non-automatable as a
 conservative v1 choice; it flips the detector mode, and loosening later is a kVersion bump
 (§11 risk 4).
-¹⁰ **Not `Clean`** — see §2.4: `Clean` is the null model, so defaulting to it would make the
+⁶ **No zero/off position — a decision, not a gap** (§3.4): a 0 ms limiter degenerates into a
+clipper, which the chain already carries as a better tool, and widening the range later re-scales
+every saved session (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3).
+⁵ **Not `Clean`** — see §2.4: `Clean` is the null model, so defaulting to it would make the
 Character macro inert in the factory patch. `colourDepth`'s default of 0 keeps the default patch
 bit-identical either way.
 
@@ -483,11 +543,26 @@ deviation from Anamorph, which has no version field and detects format generatio
 from day one *and* keeps the structural-tolerance read rules (unknown fields ignored, missing
 fields default, indices clamped at the boundary). Children: APVTS tree `ANABASIS` (with the
 additive exact-`raw` attribute per PARAM — Anamorph ADR-0013), `ANABASIS_INTERNAL`, `AB`
-(active + per-slot params/name/baseline as XML strings, index clamped), `ADAPTIVE` (§5.4:
-learned reference targets, frozen trim vector, and the per-parameter macro **detach mask** (§5.3);
-absent = all defaults: nothing learned, nothing frozen, nothing detached). Presets: `.anabasis`
-XML in `<userAppData>/RollyTech/Anabasis/Presets`, snapped-value contract, factory presets as
-compiled-in override tables (all Anamorph patterns [Verified]). The full state-test harness
+`AB`, and `ADAPTIVE`.
+
+**`AB` — active index (clamped) plus, per slot: the parameter tree, preset name, baseline, the
+frozen trim vector, and the macro detach mask.** The last two are *per-slot state, not global*,
+and the schema must give them a home or the obligations that make `freeze`-in-A/B and the detach
+rule safe are unimplementable. A single global trim vector means slot A frozen with trims Tₐ and
+slot B frozen with T_b share one vector, so an A/B switch restores the wrong latched trims and a
+frozen slot stops being bit-repeatable — the property `MODE_AND_ADAPTATION_POLICY.md` invariant 3
+requires. A single global mask means slot A's detached `clipDrive` describes slot B, so the next
+macro gesture re-engages parameters the user never detached *here* and leaves detached ones they
+did. The trim vector restores through the engine-side inject-at-the-duck-bottom path (it is audio
+state); the **mask restores on the message thread** with the rest of the slot, since its only
+consumer is the MacroEngine (§5.2) and nothing on the audio thread reads it.
+
+**`ADAPTIVE` — global, and only what is genuinely global:** the learned reference targets (§5.4).
+Absent = never learned. It holds neither the trim vector nor the mask.
+
+Presets: `.anabasis` XML in `<userAppData>/RollyTech/Anabasis/Presets`, snapped-value contract,
+**plus the detach mask** (§5.3), factory presets as compiled-in override tables (Anamorph
+patterns [Verified]). The full state-test harness
 (registry snapshot with `--write-snapshot` gate, byte-identical round-trip, corrupt/foreign
 robustness, preset round-trip) is reproduced from day one per `DEVELOPMENT_BRIEF.md` §20.3.
 
@@ -558,11 +633,42 @@ When the user edits a managed parameter in Advanced and returns to Simple:
 1. **Nothing moves** (inv 2 — the switch is sound-neutral by construction; there is nothing to
    test *around the switch itself* because no value path exists there, but
    `testModeSwitchIsSoundNeutral` still guards the implementation).
-2. The edited parameters are **detached** from the macro (per-param detach bit, serialized in
-   `ADAPTIVE`'s detach mask, §4.4; **preset-excluded and cleared on preset load** ⊕ — a preset
-   is a whole coherent state, so it re-engages the macro); the Simple view shows an *edited*
-   indicator on the macro knob (exact wording/visual is owner-specified product text — C8,
-   TODO).
+2. The edited parameters are **detached** from the macro (per-param detach bit). The mask is
+   **per-A/B-slot state** (§4.4), so it travels with the slot it describes; the Simple view shows
+   an *edited* indicator on the macro knob (exact wording/visual is owner-specified product text
+   — C8, TODO).
+
+   **Presets carry the mask ⊕** — a reversal of the earlier "preset-excluded, cleared on load".
+   Be precise about *why*, because the obvious argument does not survive its own rules: carrying
+   the mask does **not** change any value trajectory. Rule 3 re-engages every detached parameter
+   on the next macro gesture regardless, and preset apply lands the stored values exactly as saved
+   either way (below). What the mask changes is **what the UI tells the user and what "reset to
+   macro" does**: without it, a preset saved after manual edits reloads with off-curve values
+   silently marked *engaged*, so the Simple view claims the macro describes a sound it does not,
+   and step 4's reset affordance has nothing to reset. Carrying it makes the preset an honest
+   description of the state it captured. That is a smaller claim than "prevents a value jump", and
+   it is the true one.
+
+   **Accepted residue:** an off-curve-but-engaged state is still reachable — host automation
+   writes managed parameters ungesture-d, so it never sets a detach bit (§5.2). A preset saved
+   during such a session stores off-curve values with a clear mask. This is accepted rather than
+   patched: making ungesture-d writes detach would mean automation playback silently detaching
+   parameters, which is worse. The consequence is bounded — the next macro gesture re-engages
+   them, exactly as rule 3 says.
+
+   **Factory presets ⊕ ship with an all-clear mask**, which makes them an *authoring constraint*,
+   not a fact: a factory patch must be reachable from a single `(loudness, character, tone)`
+   triple, since §5.5 ties all nine managed values to one `l`. Some plausible patches are not —
+   "Tape Glue" (heavy colour, gentle limiting) needs `colourDepth` high and `limGain` low, which
+   the curves couple. Those presets ship a non-clear mask, and that is fine; what is not fine is
+   assuming curve-consistency without checking. P6 preset authoring checks each patch against the
+   frozen curves.
+
+   **A preset apply must not be seen as a macro move.** Preset/A-B/undo writes are ungesture-d
+   and are applied inside the MacroEngine's re-entrancy flag (§5.2), so the listener neither
+   detaches anything nor re-maps: the stored managed values land exactly as saved. Without both
+   conditions a preset containing off-curve managed values could not be recalled faithfully at
+   all — the mapper would immediately overwrite them from the restored macro position.
 3. The **next macro-knob gesture re-engages** every detached parameter: targets come from the
    macro curve at the new position, reached through the normal rate-limited glide. Turning the
    one knob *is* the "clear notice" moment — the user is explicitly choosing the macro.
@@ -602,16 +708,17 @@ alternative above. ADR-0005 records this before P4 (OQ-004's deadline).
   engine, and Freeze is the escape hatch that restores strict value-determinism. ADR-0005
   carries this paragraph as its inv-1/6 compliance argument.
 - **Freeze** latches the current trim vector (bit-repeatable output thereafter — the policy's
-  Freeze test); the frozen vector serializes in `ADAPTIVE` so a reloaded session sounds
-  identical.
+  Freeze test); the frozen vector serializes **per A/B slot** (§4.4), so both a session reload
+  and a switch back to a frozen slot reproduce that slot's latched trims exactly.
 - **Learn** (§5.2 of the brief): explicit start → analyse the playing passage (integrated-LUFS
   style accumulation of the feature set) → explicit end fixes the internal reference targets.
   Interaction grammar copies Anamorph's Match/Apply: engage is duck-routed, running feedback is
   an atomic-published readout, the commit is gesture/undo-bracketed as **one** step
   (`Anamorph:src/PluginProcessor.cpp:178-202` [Verified]; multi-target commit bracketing via
   the preset-load undo hook pattern, `Anamorph:src/PluginProcessor.cpp:33-38,402-421`).
-  Learned targets serialize in `ADAPTIVE`; per-A/B-slot memory uses the `abMatchGain` inject
-  pattern (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). Unlike Anamorph's Level
+  Learned targets serialize in the **global** `ADAPTIVE` child (they are a property of the user's
+  material, not of a slot); the **per-slot** frozen trims use the `abMatchGain` sentinel-atomic
+  inject pattern (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). Unlike Anamorph's Level
   Match, Learn's output feeds the *adaptive reference targets*, never the output stage — a
   maximizer must not auto-match its output level to its input.
 
@@ -680,7 +787,7 @@ transform compose (`setScaleFactor` override, `Anamorph:src/PluginEditor.cpp:131
 steps, size persists via `int_uiScale`).
 
 Accessibility (**deliberate delta**): Anamorph has none [Verified — zero handlers in src/].
-Anabasis §8 requires complete parameter/automation names, keyboard operability and a
+Brief §8 requires complete parameter/automation names, keyboard operability and a
 colour-blind-safe metering palette — adopt JUCE accessibility (titles/descriptions on every
 control, focus order, keyboard value entry) from P5, and it goes on the brand checklist as a
 per-item gate.
@@ -689,6 +796,15 @@ OpenGL: follow Anamorph ADR-0011 — attach on macOS/Windows, never on Linux/X11
 use-after-free), CPU path visually identical [Verified].
 
 ### 6.2 Simple view wireframe (940×720 logical ⊕)
+
+**⊕ The two frame sizes are Anamorph's, unexamined.** 940×720 / 940×900 are the sibling
+product's hard-coded constants (`Anamorph:src/PluginEditor.h:295-302` [Verified]), reused here so
+the wireframes have a concrete grid — but a maximizer's content is not a widener's, and the P0
+research pass concluded Anabasis must pick its own base geometry. Ratifying them at sign-off
+ratifies the sibling's exact frame; the honest expectation is that P5 re-derives them from the
+real control inventory. Carry over the *pattern*, not the numbers: Anamorph keeps these constants
+in one place because `paint()` and `resized()` both depend on them, and splitting them is how
+they drift.
 
 All strings in both wireframes — the sub-brand line ("MASTERING MAXIMIZER"), control labels,
 readout formats — are **placeholders** (C8: product wording is owner-supplied; meter values are
@@ -724,9 +840,11 @@ illustrative).
 │ ratio thr    │ shape ▁curve▁     │ gain ceiling 🔒   │ tilt  LS HS           │
 │ atk rel auto │ drive mix         │ lookahead rel auto│ bell1 bell2           │
 │ knee det mix │ model bal tone    │ style link trans  │ (f/g/Q each)          │
+│              │ depth  dyn-tame   │                   │                       │
 │ [GR meter]   │ [live curve]      │ [GR meter] TP[on] │ [response curve]      │
 ├──────────────┴───────────────────┴───────────────────┴───────────────────────┤
-│ SC HPF ◯   input gain ◯   dither [Off|16|24] shaping[ ]   macro: L C T (ro)  │
+│ SC HPF ◯  input gain ◯  dither [Off|16|24] shaping[ ]  [Comp][Delta][Freeze] │
+│ macro (read-only, with detach badges): L ◯  C ◯  T ◯      adaptive Δ overlay  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ metering strip: GR history ▂▄▆ · LUFS M/S/I · TP · PLR · spectrum (dismiss)  │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -741,16 +859,21 @@ Metering: target-line selection + true-peak meter toggle. All bound to `ANABASIS
 FrameClock (vblank-paced, ~125 Hz cap, dt-correct) + static-layer caching + atomic meter
 sources + snapshot repaint gates, copied as-is [Verified `Anamorph:src/gui/FrameClock.h:10-167`,
 `src/gui/LevelMeter.cpp:12-73`]. The UI Animation toggle gates micro-anims/sweeps/reveals but
-never meter ballistics (Anamorph's split) — and per §8, disabling it must not affect function.
-the §8 60 fps target is met by vblank pacing (FrameClock caps at ~125 Hz and follows the
+never meter ballistics (Anamorph's split) — and per brief §8, disabling it must not affect function.
+brief §8's 60 fps target is met by vblank pacing (FrameClock caps at ~125 Hz and follows the
 display's cadence — 60 Hz displays run at 60 fps).
 
 ---
 
 ## 7. Presets, A/B, undo
 
-Copy the Anamorph state machinery wholesale (patterns [Verified], §4.4): StateSet
-{params, presetName, baseline} as the A/B-slot and undo unit; per-slot undo stacks (cap 128,
+Copy the Anamorph state machinery wholesale (patterns [Verified], §4.4), with the slot unit
+**widened by two fields**: StateSet `{params, presetName, baseline, frozenTrims, detachMask}` is
+the A/B-slot **and undo** unit. The widening is not cosmetic — with the narrow unit, undoing a
+manual edit would restore the value and strand its detach bit (the parameter returns to its curve
+value yet stays badged *edited* and out of the macro), and undoing a `freeze` toggle would
+restore the parameter without the trim vector it latched. Anything that is per-slot must also be
+per-undo-step, because undo is a per-slot stack; per-slot undo stacks (cap 128,
 never serialized); gesture-gated undo coalescing with host automation folded silently;
 preset-load undo bracketing (parse before the bracket opens); `requestDuck()` before every bulk
 swap; per-slot adaptive/Learn memory via the sentinel-atomic inject pattern. Factory presets:
@@ -765,11 +888,18 @@ the duck bottom.
 ## 8. OQ-005 — shared `rollytech-ui` module: recommendation = copy-and-adapt now
 Extraction couples two release cycles, requires coordinated changes in a shipped product (an
 Architecture Review Gate item *there*), and Anabasis cannot modify Anamorph in any case
-(CLAUDE.md cross-repo rule). The brief prioritises shipping on schedule (§1.2). Recommendation:
+(CLAUDE.md cross-repo rule). The brief prioritises shipping on schedule (brief §1.2). Recommendation:
 **copy-and-adapt** LookAndFeel/glass/FrameClock/Backdrop/InternalState idioms now, keep the
 copied files' provenance headers pointing at the Anamorph originals, and revisit extraction as a
 product-family ADR after Anabasis v0.1.0 ships — when both products' UI layers are stable enough
-to see what is actually common. Owner decision; recorded in OPEN_QUESTIONS.
+to see what is actually common.
+
+**This decision is recorded by ADR-0009** (§10), not by this section and not by
+`OPEN_QUESTIONS.md`: `CLAUDE.md` §3 requires code reuse across the two products to be recorded in
+an ADR rather than made as an ad-hoc copy, and per `SOURCE_OF_TRUTH.md` a DESIGN decision binds
+only through the ADR that names it. ADR-0009's scope is deliberately wider than this section —
+it covers the DSP-source adaptations too (§2.4, §2.7–2.9), which are the copies most likely to be
+questioned at P2.
 
 ---
 
@@ -793,20 +923,39 @@ matrix, ns/sample + worst-block, median of ≥5 runs, machine recorded — resul
 | 0001 | Format-agnostic DSP core via POD `EngineParameters` | §1.1 (inherits Anamorph ADR-0001 pattern) |
 | 0002 | Fixed serial signal chain; EQ Pre/Post as the only mobility; **ceiling clamp always last before dither**. **Must amend `DSP_POLICY.md` invariant 1's chain wording** to state Limiter → EQ(post) → Ceiling — Hard Stop, human review required | §1.2, §2.6 / DSP_POLICY inv 1+4 |
 | 0003 | Oversampling scope + **true-peak as measurement tap, ≥4× total at every OS setting** + linear-phase & Force-Max modes | §3.1–3.2; closes DSP_POLICY inv 2/5 open point |
-| 0004 | Latency contract: `lookahead + OS`, latched changes, non-automatable latency params, **no zero-lookahead position** | §3.3–3.4; resolves OQ-010 |
+| 0004 | Latency contract: **reported = CONSTANT max-lookahead allowance (10 ms) + OS**, engaged lookahead free inside a fixed line; only OS latches; latency params non-automatable; **no zero-lookahead position**. **Must amend `DSP_POLICY.md` invariant 2** — drop lookahead from the latch sentence and re-phrase its open point against the *allowance* — Hard Stop, human review required | §3.3–3.4; resolves OQ-010 |
 | 0005 | Macro-layer architecture: message-thread mapper, non-automatable macros, detach/re-engage coexistence, adaptive trims engine-internal | §5; resolves OQ-004 |
 | 0006 | Ceiling guarantee: separate final clamp, ≤0.1 dBTP, monitoring never in render path | §2.6–2.7 |
-| 0007 | State schema v1: explicit `schemaVersion`, raw-exact sessions, snapped presets, `ADAPTIVE` child | §4.4 |
+| 0007 | State schema v1: explicit `schemaVersion`, raw-exact sessions, snapped presets, global `ADAPTIVE` child for learned targets, and **per-A/B-slot detach mask + frozen trim vector inside each `AB` slot**; **presets carry the detach mask** | §4.4, §5.3 |
+| 0008 | **Build architecture and plugin identity**: CMake structure (INTERFACE `AnabasisDSP`, hardening target, one shared source list), **JUCE 9.0.0 pinned by commit `f8f8864…`**, **C++20** baseline + the C++23 feature-test-macro strategy, formats VST3 / AU / Standalone, and the frozen identity `RTec` / `Anbs` / `com.rollytech.anabasis` / categories Fx-Dynamics-Mastering | §11 P1, §1.1; **mandatory** — `ADR_POLICY.md` requires an ADR for build architecture *and* format support, and OQ-001's standing obligation names "the P0 build-decision ADR"; closes OQ-001 + OQ-003 |
+| 0009 | **Code reuse from Anamorph — all of it, not just UI**: the GUI idioms (LookAndFeel, glass, FrameClock, Backdrop), the wrapper/state machinery (InternalState, StateSet A/B + undo, PresetManager, raw-exact serialization) **and the DSP-source adaptations** (K-weighting coefficients and the Measure+Predict structure from `LoudnessMatch`, the `ScopeBuffer` SPSC ring, the duck/crossfade transition taxonomy, the `driveTanh` peak-preserving makeup formulation) — copy-and-adapt with provenance headers, **no shared module for v1**; revisit extraction after v0.1.0 | §8, §2.4, §2.7–2.9, §7; **mandatory** — `CLAUDE.md` §3 requires code reuse across the two products to be recorded in an ADR, not an ad-hoc copy; resolves OQ-005 |
+| 0010 | **Parameter surface**: the 49 IDs, types, ranges, defaults and choice orderings; the two **exclusion tiers**; the **lockable set** `{ceiling}`; macro automatability | §4.2–4.3; **mandatory** — `ADR_POLICY.md` requires an ADR for parameter semantics, and `PARAMETER_COMPATIBILITY_POLICY.md` rule 6 makes exclusion lists and the lockable set contract |
+| 0011 | **Threading model**: two threads, no workers; POD snapshot per block; relaxed-atomic + SPSC publication; message-thread-only MacroEngine and PDC updates | §1.4, §5.2; **mandatory** — `ADR_POLICY.md` lists the threading model |
 
-All are written as `Proposed` when this document is approved and move to `Accepted` with the
-sign-off (C1: they cite this document + the worklog as their evidence; code evidence accrues
-from P1). Registered in `docs/architecture/design-decisions/ADR_INDEX.md`; numbering is
+**Authoring order (stated because approval and sign-off are the same event, so a `Proposed`
+phase would otherwise be instantaneous and no ADR would ever be reviewable in that state).**
+The ADRs are **authored directly as `Accepted`, dated at sign-off, as the first P1 task**, each
+citing this document and the P0 worklog as its evidence (C1; code evidence accrues from P1
+onward). They are *not* written speculatively as `Proposed` beforehand: an ADR whose decision has
+not been ratified is exactly the "predefined quota" C1 forbids, and this document already serves
+the reviewable-proposal role. Consequence: until sign-off, `ADR_INDEX.md` stays empty and this
+§10 table is the only record of the intended set — which is why the table names what each ADR
+must settle rather than leaving it to be reconstructed. Registered in
+`docs/architecture/design-decisions/ADR_INDEX.md` as they are written; numbering is
 Anabasis-local, no reserved blocks.
 
 ---
 
 ## 11. Phase mapping, risks, and what sign-off unblocks
 
+- **One genuinely new test name needs a home**: `testMacroDefaultIsFixedPoint` (§5.5). The other
+  two guards this document leans on are already registered —
+  `testReportedLatencyMatchesImpulse` is row 2 of `DSP_POLICY.md`'s invariant→test map and
+  `testModeSwitchIsSoundNeutral` is the named guard for `MODE_AND_ADAPTATION_POLICY.md`
+  invariant 2. The new one guards a **macro-layer** rule, so `DSP_POLICY.md`'s map is the wrong
+  destination: it belongs in `MODE_AND_ADAPTATION_POLICY.md` (with invariant 1) and in
+  `procedures/TESTING.md`, added in the same unit of work as the test itself
+  (`DOCUMENTATION_LIFECYCLE_POLICY.md`'s new/changed-test trigger).
 - **P1 skeleton** (after sign-off): CMake per brief §18 (identity `RTec`/`Anbs`/
   `com.rollytech.anabasis` frozen — OQ-003; JUCE 9.0.0 @ `f8f8864…` — OQ-001; C++20), the §4
   parameter surface + registry snapshot, pass-through chain + basic limiter, state harness,
@@ -819,16 +968,21 @@ Anabasis-local, no reserved blocks.
   Master Plan benchmark (§5.4 of the brief) is the arbiter; budget P4 listening time accordingly
   (execution quality, covered by RISK-004's adaptation-audibility framing). (2) The
   measurement-tap latency argument rests on the detector-delay-≤-min-lookahead constraint —
-  **RISK-008**; verify with the first impulse test at P2 *before* building on it (fallback:
-  pad reported latency by the detector delay — an ADR-0004 amendment and a reported-latency
-  change, so an Architecture Review item). (3) Variable-font licensing (§6.1) needs owner
+  **RISK-008**; verify with the first impulse test at P2. §3.3's constant-allowance decision
+  makes the fallback cheap: a detector delay exceeding the 0.5 ms *minimum engaged* lookahead is
+  absorbed by raising the minimum read offset inside the fixed 10 ms line, so the **reported**
+  figure does not move and no ADR amendment or Architecture Review is triggered. Verify anyway —
+  the accuracy contract (inv 11) is separate from the latency one. (3) Variable-font licensing (§6.1) needs owner
   approval lead time before P5 — **RISK-009**. (4) `dither`/`truePeakMode` non-automatability choices are conservative-frozen — loosening
   later is a kVersion bump.
 
 **Sign-off checklist for the owner**: **the §1.2 Hard-Stop item — Post-EQ sits *before* the
 ceiling clamp, which requires ADR-0002 to amend `DSP_POLICY.md` invariant 1's chain wording** ·
-⊕ values, ranges and tapers in §4.2/§4.3 (frozen at
-v0.1.0), **including the ⊕ `Tape` default colour model — a taste call that decides whether the
+**§3.3 constant reported latency — the plugin reports 10 ms of lookahead allowance even at the
+2 ms default, buying immunity from PDC changes while browsing presets** ·
+**every ⊕ value in the document**, not only the tables — the §4.2/§4.3 surface (frozen at
+v0.1.0), the ⊕ window geometry in §6.2/§6.3 (Anamorph's frame sizes, §6.2), and the ⊕ shelf Q in
+§2.2 — **including the ⊕ `Tape` default colour model — a taste call that decides whether the
 Character macro is audible in the factory patch (§2.4)** · display names as launch wording
 (revisable later, rule 2) · §3.2 measurement-tap · §3.4
 no-zero-lookahead · §5.2/§5.3 macro architecture & coexistence · §5.5 draft curves as the P4

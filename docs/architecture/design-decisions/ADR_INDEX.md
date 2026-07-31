@@ -29,6 +29,16 @@ written when the decision is made and evidenced, and takes whatever number is ne
 - The state-schema shape: versioned root, subtree split, host-hidden session state (§2).
 - The JUCE pin (version + immutable commit SHA) and the C++20 baseline (§2, §2.1 / OQ-001).
 - The plugin identity codes and format set (§2 / OQ-003).
+- **Code reuse from Anamorph** — which first-party GUI, wrapper/state and DSP sources are copied
+  and adapted, and whether a shared module is extracted (`CLAUDE.md` §3 makes this ADR-mandatory;
+  OQ-005).
+- **The parameter surface** — IDs, ranges, defaults, choice orderings, the exclusion tiers and the
+  lockable set (`ADR_POLICY.md` parameter semantics; `PARAMETER_COMPATIBILITY_POLICY.md` rule 6).
+- **The threading model** (`ADR_POLICY.md`).
+
+`docs/DESIGN.md` §10 carries the current mapping of these to ADR numbers 0001–0011. Until
+sign-off that table is the only record — this index stays empty on purpose (an ADR is written
+when its decision is ratified, not before).
 
 ## How to add an ADR
 

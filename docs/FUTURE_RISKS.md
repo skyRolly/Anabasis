@@ -129,16 +129,17 @@ whether to extract a shared UI module is tracked as OQ-005.
 **Trigger:** The first impulse-response latency measurement at P2 (`testReportedLatencyMatchesImpulse`).
 **Why it exists here:** `DESIGN.md` §3.2 resolves `DSP_POLICY.md` invariants 2/5 by making
 true-peak detection a **measurement tap**, which yields "with oversampling off, reported latency
-is exactly the engaged lookahead" — but only while the estimator's group delay fits *inside* the
-0.5 ms minimum lookahead. The design arithmetic (BS.1770-4 Annex 2, 48 coefficients, 4 phases →
+is exactly the lookahead allowance and the detector adds nothing" — but only while the estimator's
+group delay fits *inside* the 0.5 ms **minimum engaged** lookahead. The design arithmetic (BS.1770-4 Annex 2, 48 coefficients, 4 phases →
 (48−1)/2 = 23.5 upsampled ≈ 5.9 base samples ≈ 0.122 ms at 48 kHz) says it fits with room to
 spare, and because lookahead is specified in **milliseconds** the margin holds across sample
 rates. It is nonetheless arithmetic about an unwritten module, not a measurement (C2), and the
 whole latency contract plus ADR-0003/0004 sit on it.
 **Mitigation:** verify with the first impulse test at P2, *before* anything else is built on the
-claim. If the bound fails, the fallback is to pad reported latency by the detector's delay — an
-ADR-0004 amendment and a reported-latency change, i.e. an `ARCHITECTURE_REVIEW_GATE` item, which
-is exactly why this is worth catching at P2 rather than at P6.
+claim. §3.3's constant-allowance decision makes the fallback cheap: the detector's delay is
+absorbed by raising the *minimum engaged* read offset inside the fixed 10 ms line, so the
+**reported** figure never moves and no ADR amendment or Architecture Review is triggered. The
+residual exposure is to the accuracy contract (invariant 11), not the latency one.
 **Owner:** TODO.
 
 ---

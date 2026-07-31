@@ -18,50 +18,143 @@ the **measurement-tap** resolution proposed for `DSP_POLICY.md` invariants 2/5's
 **49-parameter table** plus the host-hidden state table and serialization schema v1; the macro
 layer and OQ-004 coexistence argument; draft macro curves (explicitly ⊕-marked as tuning
 material, C2); UI wireframes with the family-consistency contract; the OQ-005 recommendation;
-the performance-budget allocation and benchmark commitment; and the proposed 7-ADR set. Every
+the performance-budget allocation and benchmark commitment; and the proposed ADR set (now nine —
+the build/identity and code-reuse records were added in the fourth pass). Every
 value the brief does not specify is marked **⊕ proposed** so sign-off ratifies it explicitly
 rather than absorbing it silently (C7).
 
 Synced in the same unit of work: `OPEN_QUESTIONS.md` (OQ-004/005/008/010 now carry the DESIGN
 recommendations, all *pending sign-off* — none moved to Resolved, since the sign-off is the
-decision event), `HANDOVER.md` (P0 execution done; the one remaining blocker is the sign-off),
+decision event), `HANDOVER.md` (all P0 work items delivered; the phase stays open until sign-off),
 `REPOSITORY_MAP.md`, `README.md` §Project status. Confidence: the design document is a
 *contract proposal* — nothing in it is `Verified` about Anabasis (there is no code); Anamorph
 precedent claims cite file:line and are `Verified` from the research pass.
 
-**Review pass on the design document (same day).** Three findings fixed, two confirmations.
+**Fourth review pass on the design document (same day).** Eight review findings fixed, plus
+**seven blockers of my own making** caught by an adversarial verification pass run *before*
+commit — the constant-latency decision below had a blast radius I had not propagated.
 
-*The new document was registered in only one of the four required places.*
-`DOCUMENTATION_LIFECYCLE_POLICY.md`'s add-a-document trigger requires four updates — the
-`REPOSITORY_MAP` **tree entry**, the `SOURCE_OF_TRUTH` **class list**, `README` **§Documentation**,
-and this audit — and only this audit plus a prose note at the bottom of `REPOSITORY_MAP` had been
-done. So the P0 deliverable was invisible to anyone following the standard navigation path, and
-its authority rank was undefined. All four are now correct, and `SOURCE_OF_TRUTH` gained a
-dedicated §"Where `DESIGN.md` sits": no authority before sign-off; ranked with descriptive
-Architecture after it; **superseded section by section** by the ADRs it spawns, which win on any
-disagreement. Getting that rank written down matters more than the index entry — ADR-0001…0007
-will cite this document, and without the rule a reader could not tell which side of a future
-conflict wins.
+### The self-inflicted blockers (verification pass, pre-commit)
 
-*The default patch was not a fixed point of the macro mapping.* The colour-amount curve
-(`character · (0.4 + 0.6·l)`) evaluates to **0** at the default macro position, but its declared
-managed target was `clipMix`, whose default is **100 %** — so the first touch of the big knob
-would have collapsed the clipper blend from fully wet to nearly dry, an unexplained jump in the
-factory patch. Root cause: `clipMix` is a *parallel dry/wet blend* and was the wrong target for a
-*colour amount*. Fixed by giving the colour amount its own parameter — `colourDepth` (row 49,
-⊕ 0…100 %, default ⊕ 0) — and removing `clipMix`/`compMix` from the managed set entirely. The
-general rule the defect exposed is now stated as binding in §5.5: **for every managed parameter,
-`M(0,0,0)` must equal that parameter's declared default**, verified by inspection across all nine
-managed rows and guarded by `testMacroDefaultIsFixedPoint`. A P4 curve revision that breaks it is
-a defect, not a taste choice.
+Making §3.3's latency decision was correct; landing it in one section was not. A three-lens
+verification sweep found the decision half-applied, and the pattern is worth recording because it
+is the failure mode of any change to a *contract*: the new statement was written, the old one was
+left standing in six other places, several of them more binding than the section that changed.
 
-*Freezing display names contradicted a policy that outranks the design document.*
-`PARAMETER_COMPATIBILITY_POLICY.md` rule 2 explicitly permits renaming a user-facing name at any
-time while the ID stays fixed, and the same policy advises decoupling the ID vocabulary from
-display wording *precisely so* copy stays revisable under C8. DESIGN.md said names "freeze in the
-P1 registry snapshot". Softened to the accurate reading: sign-off ratifies the names as **launch
-wording**, IDs/ranges/defaults freeze at v0.1.0, and a later rename is rule 2's normal workflow
-(registry + a `Changed` CHANGELOG entry + a deliberate snapshot re-freeze).
+1. **§3.4 still asserted the old model** ("reported latency … phrased against the engaged
+   lookahead") four paragraphs below the new formula.
+2. **`DSP_POLICY.md` invariant 2's binding body was falsified without being flagged.** Its latch
+   sentence names "an oversampling-factor **or lookahead** change" — under the decision only OS
+   latches. A reported-latency change is an AI-agent **Hard Stop** and an Architecture Review
+   item, and unlike the structurally identical §1.2 case it had no Hard-Stop framing. Now carried
+   as a ⚠ blockquote in §3.3, an amendment obligation on ADR-0004, and a Hard-Stop checklist line.
+3. **The §10 ADR-0004 row still specified the superseded contract** — and per `SOURCE_OF_TRUTH.md`
+   the ADR is the binding artifact, so a P1 author would have written the rejected model into an
+   `Accepted` record that then outranks §3.3.
+4. **`lookahead`'s non-automatability was frozen on a rationale the decision destroyed** ("a host
+   cannot spray PDC changes" — under constant latency it cannot spray anything). The flag is
+   right, the reason was not: it is non-automatable because the engaged value is a *read offset
+   into a live delay line*, so sweeping it at automation rate drags the tap through the buffer.
+5. **The mask move's own precedent was never actually implemented.** The previous pass said the
+   frozen trim vector "travels per-slot", but only §4.2's prose changed — §4.4 still stored one
+   global vector in `ADAPTIVE`, so two frozen slots would have shared it and Freeze would not have
+   been bit-repeatable. Both the trims *and* the mask now live inside each `AB` slot, and the
+   **undo unit was widened to match** (`StateSet {params, presetName, baseline, frozenTrims,
+   detachMask}`) — otherwise undoing an edit restores the value and strands its detach bit.
+6. **The §4.2/§4.3 parameter surface had no ADR at all** — the checklist asked the owner to
+   ratify 49 IDs, both exclusion tiers and the lockable set, and per the authority rule that
+   ratification would have bound nothing. Exactly the defect the ADR-0008/0009 additions fixed one
+   section over. Added **ADR-0010** (parameter surface) and **ADR-0011** (threading model), both
+   mandatory subjects under `ADR_POLICY.md`.
+7. **§2.8 removed the duck from lookahead without replacing its click-free coverage.** Moving a
+   read tap is not inherently click-free. The mechanism is now stated — the *audio* delay stays
+   fixed at 10 ms and only the detector alignment moves — with a per-path click test owed.
+
+Three consequences reached beyond `DESIGN.md` and were corrected as drift (C6):
+`RELEASE_COMPATIBILITY_CHECKLIST.md` had "the reported value is exactly the engaged lookahead" as
+a **release-gate checkbox** a correct build would now fail; RISK-008 and OQ-010 carried the same
+phrasing. `ADR_INDEX.md`'s expected-first-batch list gained the three new subjects.
+
+Two arguments were also found to be *unsound rather than merely stale*, and were rewritten to
+what is actually true. §5.3's case for presets carrying the detach mask claimed it prevents a
+value jump — but rule 3 re-engages detached parameters anyway and preset apply lands stored values
+either way, so the mask changes **no** trajectory; what it changes is what the UI claims and what
+"reset to macro" can do. And "factory presets are curve-consistent by construction" was asserted
+with nothing constructing it: §5.5 ties all nine managed values to one `l`, so a heavy-colour
+gentle-limiting patch is not reachable from a single macro triple. It is an authoring constraint
+checked at P6, not a property. An off-curve-but-engaged residue via ungesture-d automation writes
+is now stated as **accepted** rather than left implicit.
+
+
+*Two decisions the sign-off is asked to approve had no decision record, so they could never
+become binding.* This is the sharpest finding of the four passes, because it is created by a rule
+this very change set added: `SOURCE_OF_TRUTH.md` now says DESIGN decisions "become binding only
+through the ADRs it names". The §10 table named seven, and **two mandatory records were missing**
+— `CLAUDE.md` §3 requires code reuse across the two products to be "recorded in an ADR, not an
+ad-hoc copy" (§8 decides copy-and-adapt *now* and only promised an ADR for the *later* extraction
+question), and `ADR_POLICY.md` requires an ADR for build architecture *and* format support, with
+OQ-001's standing obligation naming "the P0 build-decision ADR" explicitly. Ratifying §8 and the
+JUCE-pin/identity values would have bound nothing. Added **ADR-0008** (build architecture +
+plugin identity: CMake structure, the JUCE SHA pin, C++20 baseline, formats, frozen identity
+codes — closes OQ-001 + OQ-003) and **ADR-0009** (code reuse from Anamorph — closes OQ-005).
+
+*Reported latency was a function of a parameter that presets carry — decided rather than
+documented.* `lookahead` is in neither exclusion tier, so every preset, A/B slot and undo step
+carries one, and reported latency was `engagedLookahead + OS`. Browsing presets or A/B-comparing
+**during playback** would therefore change host PDC on nearly every step, and the forced duck
+could not dry-fill across it (Anamorph's dry-fill engages only when latency is preserved) — a
+dropout in the middle of the one workflow a mastering plugin exists for. The research pass had
+flagged this as a decision Anabasis owed and §7 had copied the machinery "wholesale" without
+taking it. Resolved by making the lookahead contribution **constant at its maximum**: the limiter
+reads at a variable offset inside a fixed 10 ms line, so the engaged value moves freely while the
+reported figure never does. Consequences are stated rather than buried — bulk swaps can now
+*never* cross reported latency (OS is host-hidden and not carried by presets/A-B/undo), lookahead
+needs no latch and no duck, and the price is ~8 ms of PDC nobody asked for at the 2 ms default.
+That price is on the §11 checklist as its own line: it is a genuine trade, not a free win.
+
+*The macro detach mask was global state describing per-slot facts.* It lived in the single
+`ADAPTIVE` child while A/B holds per-slot parameter trees — so slot A's detached `clipDrive`
+would describe slot B, and the next macro gesture would re-engage parameters the user never
+detached in the active slot. Exactly the hazard the previous pass fixed for the frozen trim
+vector, missed one field over. Moved into each `AB` slot. The preset half of the same hole is
+also closed, and in the opposite direction from the earlier draft: presets now **carry** the mask
+(⊕, reversing "cleared on load"), because a preset saved after manual edits stores off-curve
+values, and clearing the mask would mark them engaged so the next macro gesture would jump them —
+the fixed-point defect re-entering through recall. With it stated that preset/A-B/undo writes are
+ungesture-d *and* inside the re-entrancy flag, such a preset is recallable at all: without both,
+the mapper would overwrite the stored managed values from the restored macro position.
+
+*The ADR set's `Proposed` state never actually existed.* The header said sign-off promotes the
+set from `Proposed` to `Accepted`, while §10 said they are written as `Proposed` *when approved* —
+approval and sign-off being the same event, the state was instantaneous and no ADR would ever be
+reviewable in it. Pinned to one order: authored **directly as `Accepted`, dated at sign-off, as
+the first P1 task**, each citing this document and the worklog. Writing them speculatively as
+`Proposed` beforehand is what C1 forbids, and this document already fills the reviewable-proposal
+role — so `ADR_INDEX.md` stays empty until sign-off and the §10 table is the interim record,
+which is why it names what each ADR must settle.
+
+*Three smaller items.* The footnote markers ran ¹ ² ³ ⁴ then jumped to ¹⁰ with no 5–9 anywhere —
+a leftover that would send a P1 transcriber looking for five missing notes; renumbered to ⁵. The
+wireframe frame sizes (940×720 / 940×900) are Anamorph's hard-coded constants, which the research
+pass said Anabasis must replace — they are ⊕-marked, but sign-off ratifies ⊕ values, so the
+reader is now told plainly that ratifying them ratifies the sibling's exact frame and that P5 is
+expected to re-derive them. And the three test names this document introduces
+(`testMacroDefaultIsFixedPoint`, `testModeSwitchIsSoundNeutral`,
+`testReportedLatencyMatchesImpulse`) now carry an explicit obligation to be registered in
+`DSP_POLICY.md`'s invariant→test map and `procedures/TESTING.md` when their suites land — a
+"guarded by" claim naming a test in no map is aspirational.
+
+*Confirmations:* the Post-EQ/`DSP_POLICY` wording item was re-reported for the third time and
+remains correctly handled (Hard-Stop blockquote, ADR-0002 obligation, checklist entry). The
+measurement-tap group-delay arithmetic, the nine managed rows' fixed-point property, every curve
+maximum against its declared range, the wireframe meter values against §2.9's formulas, the 49-row
+count against the §4.2 heading, and every unmarked value against brief §4–§5 were all
+independently re-derived with no discrepancy.
+
+*Housekeeping:* this file's review-pass blocks had drifted out of the newest-first order the rest
+of the file uses (an unlabelled first pass sat above the third and second, with its confirmations
+stranded two passes below its findings). Relabelled and reordered fourth → third → second →
+first.
 
 **Third review pass on the design document (same day).** Six findings fixed, three confirmations.
 
@@ -153,7 +246,42 @@ places, with the note that `SOURCE_OF_TRUTH.md` has no enumerated developer-clas
 the new §"Where `DESIGN.md` sits" is the closest equivalent — and it does more than the trigger
 asks by pinning the authority rank.
 
-*Confirmations (first pass):* the reviewer independently re-derived the BS.1770-4 interpolator group delay
+**First review pass on the design document (same day).** Three findings fixed, two
+confirmations.
+
+*The new document was registered in only one of the four required places.*
+`DOCUMENTATION_LIFECYCLE_POLICY.md`'s add-a-document trigger requires four updates — the
+`REPOSITORY_MAP` **tree entry**, the `SOURCE_OF_TRUTH` **class list**, `README` **§Documentation**,
+and this audit — and only this audit plus a prose note at the bottom of `REPOSITORY_MAP` had been
+done. So the P0 deliverable was invisible to anyone following the standard navigation path, and
+its authority rank was undefined. All four are now correct, and `SOURCE_OF_TRUTH` gained a
+dedicated §"Where `DESIGN.md` sits": no authority before sign-off; ranked with descriptive
+Architecture after it; **superseded section by section** by the ADRs it spawns, which win on any
+disagreement. Getting that rank written down matters more than the index entry — ADR-0001…0007
+will cite this document, and without the rule a reader could not tell which side of a future
+conflict wins.
+
+*The default patch was not a fixed point of the macro mapping.* The colour-amount curve
+(`character · (0.4 + 0.6·l)`) evaluates to **0** at the default macro position, but its declared
+managed target was `clipMix`, whose default is **100 %** — so the first touch of the big knob
+would have collapsed the clipper blend from fully wet to nearly dry, an unexplained jump in the
+factory patch. Root cause: `clipMix` is a *parallel dry/wet blend* and was the wrong target for a
+*colour amount*. Fixed by giving the colour amount its own parameter — `colourDepth` (row 49,
+⊕ 0…100 %, default ⊕ 0) — and removing `clipMix`/`compMix` from the managed set entirely. The
+general rule the defect exposed is now stated as binding in §5.5: **for every managed parameter,
+`M(0,0,0)` must equal that parameter's declared default**, verified by inspection across all nine
+managed rows and guarded by `testMacroDefaultIsFixedPoint`. A P4 curve revision that breaks it is
+a defect, not a taste choice.
+
+*Freezing display names contradicted a policy that outranks the design document.*
+`PARAMETER_COMPATIBILITY_POLICY.md` rule 2 explicitly permits renaming a user-facing name at any
+time while the ID stays fixed, and the same policy advises decoupling the ID vocabulary from
+display wording *precisely so* copy stays revisable under C8. DESIGN.md said names "freeze in the
+P1 registry snapshot". Softened to the accurate reading: sign-off ratifies the names as **launch
+wording**, IDs/ranges/defaults freeze at v0.1.0, and a later rename is rule 2's normal workflow
+(registry + a `Changed` CHANGELOG entry + a deliberate snapshot re-freeze).
+
+*Confirmations:* the reviewer independently re-derived the BS.1770-4 interpolator group delay
 ((48−1)/2 = 23.5 upsampled ≈ 5.9 base samples ≈ 0.122 ms at 48 kHz, inside the 0.5 ms minimum
 lookahead) and confirmed the measurement-tap latency claim is arithmetically sound with the P2
 impulse verification correctly scheduled; and cross-checked every unmarked value in the parameter

@@ -5,9 +5,14 @@ boundary (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.md`). Facts are Verified
 repository; fields with no repository evidence are marked `TODO` rather than invented
 (constraint C7).
 
-Snapshot taken at the **repository bootstrap** — the migration of Anamorph's governance system,
-documentation library, build/CI scaffolding and working conventions into a new, otherwise empty
-Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BRIEF.md`).
+Snapshot **refreshed for the P0 design delivery (2026-07-30)** — `docs/DESIGN.md` now exists as a
+`Proposed` document. **P0 itself remains open**: its exit criterion is owner sign-off, so this is
+a mid-phase refresh, not a phase-boundary update (the phase-completion trigger and its three
+required updates are described in Pending Tasks below).
+
+The repository's starting point was the **bootstrap** — the migration of Anamorph's governance
+system, documentation library, build/CI scaffolding and working conventions into a new, otherwise
+empty Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BRIEF.md`).
 
 ## Operational status
 
