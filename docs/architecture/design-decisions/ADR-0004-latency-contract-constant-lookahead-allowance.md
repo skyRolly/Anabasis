@@ -316,7 +316,7 @@ must satisfy, not a measurement (constraint C2):
   module inventory), §1.4 (message-thread PDC, no allocation at switch time), §7 (bulk swaps through
   the forced duck), §10 (this ADR's scope), §11 (sign-off checklist Hard-Stop line; RISK-008)
 - Research: `worklogs/2026-07-30-p0-anamorph-research.md`
-- Policy amended by this ADR: `docs/policies/DSP_POLICY.md` invariant 2 (`ADR_POLICY.md` rule 5)
+- Policy amended by this ADR: `docs/policies/DSP_POLICY.md` invariants 2 and 8 (`ADR_POLICY.md` rule 5)
 - Precedent [Verified]: `Anamorph:src/dsp/AnamorphEngine.cpp:290-307` — the forced-duck dry-fill
   engages only when `predictLatency == latched latency`; the gate this decision satisfies by
   construction

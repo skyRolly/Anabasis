@@ -120,7 +120,7 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    **the lookahead**, the mode switch, or a **bulk swap — a preset load, an A/B switch, or an undo
    step, three routes through the same forced duck, each owed its own test** — must produce no
    click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
-   ducked.
+   ducked. *(Amended by ADR-0004, 2026-07-31.)*
    Guarded by: the click-free transition tests (one per switchable path).
 
    **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a

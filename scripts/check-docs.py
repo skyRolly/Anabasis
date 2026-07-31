@@ -121,7 +121,9 @@ from urllib.parse import unquote
 # it to open the run, TRAILING pipe optional (`|---|---` is as valid as
 # `|---|---|`), and at least one dash required -- a whitespace-only row like
 # `|   |` is a data row, not a delimiter, and accepting it as one hid a real
-# headerless-table defect behind a false negative.
+# headerless-table defect behind a false negative. Looser than cmark-gfm in one
+# tolerated direction: cells with internal spaces (`|- - -|`) are accepted as
+# delimiters here and rejected there -- a false negative, never a false positive.
 SEPARATOR = re.compile(r"^\|[\s:|-]*-[\s:|-]*$")
 INLINE_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")

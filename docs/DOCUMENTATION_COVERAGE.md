@@ -50,6 +50,25 @@ same-repo-PR skip (documented in the job's comment block; whether branch protect
 it is the owner's call, not a repo edit). **Confirmed by the reviewer:** the numeric sweep again,
 and the lint's own measurements.
 
+**Post-commit adversarial verification caught two residues of this very pass's fix** — three
+read-only agents were run against the edited spots before this entry closed, and two findings
+survived:
+
+- `ADR_INDEX.md`'s row 0004 — the table this pass declared "the registry of record" — described the
+  invariant-8 amendment as gaining the phase mode, lookahead and colour model, *omitting the
+  bulk-swap expansion made in the same pass*. The registry undercounted the amendment it was
+  created to count. Completed.
+- ADR-0004's own evidence line still read "Policy amended by this ADR: … invariant 2", while its
+  block 8(c) amends invariant 8 too — the sibling ADRs' equivalent lines list complete sets. Now
+  "invariants 2 and 8".
+
+Also from that verification: invariant 8 lacked the dated `*(Amended by ADR-0004, 2026-07-31.)*`
+stamp invariants 1/2/5 carry (added — the stamp is appended after the prescribed text, so the
+verbatim prefix match is unaffected), and the delimiter-row pattern is looser than cmark-gfm for
+cells with internal spaces — a false negative in the tolerated direction, now stated beside the
+regex. The lesson stands another round: **an edit that adds to a set must update every record that
+enumerates the set, including the ones created in the same pass.**
+
 ### Thirteenth post-sign-off pass — two stale records, one truncated sentence
 
 **The registry of binding decisions undercounted its own amendments.** `ADR_INDEX.md` said "Three of
