@@ -142,11 +142,14 @@ no atomics and no possibility of interleaving with a user gesture.
 top of the audio-thread consumer: the forced-duck request (set *before* the parameter swap,
 §2.8), Learn start/stop, meter hold reset, and the sentinel-valued per-slot inject atomics that
 deliver a frozen trim vector at the silent duck bottom (§4.4, §5.4 — the `abMatchGain` idiom,
-`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). Host-hidden engine config
+`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). **The trim-vector case is under-specified
+here and is deliberately left so:** the precedent carries one scalar, the vector is four, and the
+transport is `OPEN_QUESTIONS.md` **OQ-013** — a Hard Stop until an ADR settles it. The other three
+commands are single scalars and are fully covered. Host-hidden engine config
 (`int_oversample`, `int_osPhase`, `int_offlineQuality`) crosses through the `InternalState`
 atomic mirror, not through a command.
 
-**PDC.** Latency is recomputed **only** on the message thread, by a `const`, race-free
+**PDC.** Latency is recomputed **never on the audio thread — never inside `processBlock`** — by a `const`, race-free
 `predictLatency(snapshot)` taking the same POD type the engine renders from, feeding a **single**
 `setLatencySamples` call site (`Anamorph:src/PluginProcessor.cpp:88-105` [Verified]). It is
 invoked from `prepareToPlay`, from the `InternalState` change callbacks for **all three**
@@ -164,6 +167,17 @@ remaining latency sources, so no APVTS listener needs to drive PDC at all.
 > would compensate for the live factor while the render ran at 16×, time-shifting the bounce
 > against the rest of the project. `setNonRealtime()` is named explicitly because it is the only
 > callback guaranteed to fire on that transition.
+
+> **Second correction, same day (2026-07-31) — a wording fix that makes the rule satisfiable.** This
+> paragraph opened "Latency is recomputed **only** on the message thread", and
+> `THREADING_POLICY.md`'s forbidden-access list said the same. Neither `prepareToPlay` nor
+> `setNonRealtime()` is a message-thread callback — hosts call them from their own setup/processing
+> threads — so two of the four triggers this very paragraph mandates could not be honoured without
+> breaking the rule, leaving a P1 author no compliant way to satisfy ADR-0004 item 5. The **substance
+> was never thread-identity**: it is that the predictor is `const` and race-free, that a single
+> `setLatencySamples` call site exists, and that nothing recomputes PDC from `processBlock`. Restated
+> as *never on the audio thread* in both records; the mechanism, the trigger list and the call-site
+> rule are unchanged. Enacted as a policy amendment below (`ADR_POLICY.md` rule 5).
 
 The audio thread's effective latency follows its own latched OS state and is never written from the
 message thread. The engine's dry-fill gate compares the predicted figure against the latched one
@@ -186,9 +200,14 @@ Gate item and an AI-agent Hard Stop, and requires an ADR superseding this one.
 
 - `THREADING_POLICY.md`'s permitted-path table is satisfied with **no path outside it**: every
   cross-thread edge above is one of its seven rows — six as originally written, plus the
-  sentinel-valued command row this ADR adds (see *Policy amendments* below; an earlier revision of
-  this sentence claimed compliance against the six original rows while listing an edge none of them
-  described). The policy's "Adaptive engine — where it runs"
+  sentinel-valued single-scalar command row this ADR adds (see *Policy amendments* below; an earlier
+  revision of this sentence claimed compliance against the six original rows while listing an edge
+  none of them described) — **with one edge excepted: the frozen trim vector's restore path, whose
+  mechanism is not settled by any row and is deferred to an ADR under OQ-013.** That exception is
+  stated rather than papered over: an intermediate revision of the new row claimed the trim vector as
+  its use while simultaneously excluding anything wider than one scalar, which is self-refuting and
+  would have left an implementer with either no permitted mechanism or an unordered four-atomic
+  publish. The policy's "Adaptive engine — where it runs"
   clause, which explicitly defers the choice to "an ADR before implementation", is discharged
   here: feature extraction and trim slewing run on the audio thread within the real-time budget
   (§9's ≤0.5% metering-and-features allocation), not on a worker and not on the message thread.
@@ -266,17 +285,53 @@ discharge is carried as a prescribed block, matching the enacted text verbatim.
   the message; the Anamorph precedent this copies is an `atomic<float>` carrying a gain
   (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). Since the policy states "Any path not in
   this table is a new cross-thread path → Architecture Review Gate", the Consequences claim of full
-  compliance was asserting conformance to a row that did not describe the edge. Rather than qualify
-  the claim, this ADR enacts the missing row — the mechanism is real, decided and about to be
-  implemented, so the table should say so before `THREAD_MODEL.md` is generated from this ADR at P1.
-  Appended after the momentary-request row:
+  compliance was asserting conformance to a row that did not describe the edge. This ADR enacts the
+  missing row for the case the `abMatchGain` precedent actually establishes — a **single scalar** —
+  so the table describes it before `THREAD_MODEL.md` is generated from this ADR at P1. The
+  multi-scalar trim-vector case is **not** covered by it and is excepted from the compliance claim;
+  see the correction below and OQ-013. Appended after the momentary-request row:
 
-  > | GUI → Audio (sentinel-valued command **carrying a value**) | one `std::atomic<float>` per slot, an out-of-range **sentinel** meaning "nothing pending" | The `abMatchGain` idiom (ADR-0011): the writer stores the value, the audio thread `exchange`s the sentinel back in, so arrival and payload are one indivisible operation and no second flag can tear against it. One writer, one consumer, one value per slot — a *bounded* set of slots fixed at compile time, never a queue. Used for the frozen trim vector injected at the duck's silent bottom (ADR-0007). Anything unbounded, multi-word, or needing ordering against other state is **not** this row and is a new cross-thread path. |
+  > | GUI → Audio (sentinel-valued command **carrying one scalar**) | one `std::atomic<float>` per slot, an out-of-range **sentinel** meaning "nothing pending" | The `abMatchGain` idiom (ADR-0011): the writer stores the value, the audio thread `exchange`s the sentinel back in, so arrival and payload are one indivisible operation and no second flag can tear against it. One writer, one consumer, **one scalar** per slot — a *bounded* set of slots fixed at compile time, never a queue. Anything unbounded, wider than one lock-free scalar, or needing ordering against other state is **not** this row and is a new cross-thread path. |
 
   The existing momentary-request row gains the clarifying tail "Payload-free: the *arrival* is the
   whole message." so the two rows cannot be confused. The boundary in the new row's last sentence is
   the load-bearing part: it keeps the row from becoming a licence for a general message queue, which
   **is** a thread-model change and an Architecture Review Gate item.
+
+  > **Correction, same day (2026-07-31) — a scope narrowing, and the gap it exposes is left open
+  > rather than closed here.** The row as first drafted said "carrying a value … one value per slot"
+  > and named the **frozen trim vector** as its use, while its own closing sentence excluded anything
+  > "multi-word". Those cannot both hold: the trim vector is four scalars (release, stereo-link,
+  > sidechain-HPF, dynamic-tilt — `DESIGN.md` §5.4, ADR-0005 item 10), so read strictly the restore
+  > path had no permitted mechanism, and read loosely an implementer would publish four independent
+  > atomics with no ordering and consume them half-updated — a permanently half-restored slot, which
+  > defeats the Freeze bit-repeatability `MODE_AND_ADAPTATION_POLICY.md` invariant 3 requires. The
+  > row is therefore narrowed to **one scalar**, which is exactly what the `abMatchGain` precedent
+  > establishes (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified] carries a single gain), and
+  > the trim-vector transport is **not decided here**. ADR-0007's phrase "a sentinel-valued atomic"
+  > is singular and does not settle it either. Choosing between *N* parallel sentinel scalars with a
+  > stated ordering guarantee and a single release/acquire-gated per-slot POD is a thread-model
+  > decision: Architecture Review Gate + ADR + Hard Stop, raised as **OQ-013**. Deciding it inside
+  > this correction would be exactly the invention the gate exists to prevent.
+
+- **The PDC forbidden-access rule is restated so it can be obeyed** *(added 2026-07-31, same day;
+  see the second correction under §Decision "PDC")*. It read "PDC/latency must be recomputed on the
+  **message thread** via a `const`, race-free predictor — never by mutating audio-thread state from
+  the message thread", which no implementation can satisfy: `prepareToPlay` and `setNonRealtime()`
+  are host callbacks not delivered on the message thread, and ADR-0004 item 5 mandates both as
+  recompute triggers. Prescribed replacement:
+
+  > - PDC/latency must be recomputed **off the audio thread** — never inside `processBlock` — via a
+  >   `const`, race-free predictor feeding a single `setLatencySamples` call site, and never by mutating
+  >   audio-thread state from the message thread. *(Amended by ADR-0011, 2026-07-31: this rule said "on
+  >   the **message thread**", which is unsatisfiable — two of the four recompute triggers ADR-0004
+  >   item 5 mandates, `prepareToPlay` and `setNonRealtime()`, are host callbacks that JUCE does not
+  >   deliver on the message thread. The substance is unchanged: the predictor is `const` and
+  >   race-free, so the rule never depended on which non-audio thread ran it.)*
+
+  This narrows nothing: every property the original protected — const predictor, no races, one call
+  site, nothing driven from `processBlock` — is stated explicitly rather than implied by a thread
+  name that was the wrong one.
 
 **Not amended, deliberately.** The forbidden-access rule "**No second producer** on a scope/GR ring,
 and no reads off the message thread" stays exactly as written. The Consequences section records the

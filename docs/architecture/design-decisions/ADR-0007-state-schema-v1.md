@@ -94,6 +94,11 @@ Restore routing differs by consumer, and this is part of the decision:
 - `frozenTrims` is **audio state**: it restores through the engine-side inject-at-the-duck-bottom
   path, a sentinel-valued atomic consumed at the forced duck's silent bottom
   (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified], the `abMatchGain` pattern).
+  *(Scope note, same day 2026-07-31: this record fixes **that the restore is audio state and where
+  it is injected**, which is what it owns. The singular "a sentinel-valued atomic" does **not**
+  settle the transport — the cited precedent carries one float and the trim vector is four scalars
+  (`DESIGN.md` §5.4) — so the mechanism is `OPEN_QUESTIONS.md` **OQ-013**, a Hard Stop until an ADR
+  takes it. Nothing else in this ADR depends on which mechanism wins.)*
 - `detachMask` restores **on the message thread** with the rest of the slot: its only consumer is
   the MacroEngine (§5.2) and nothing on the audio thread reads it.
 

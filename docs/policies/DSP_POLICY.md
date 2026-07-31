@@ -54,11 +54,13 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    host-hidden, plus the realtime→offline transition itself; PDC recomputes on all four
    (ADR-0011).
 
-   Latency must never change mid-block: an **oversampling-factor** change is **latched** and
-   applied at a reset or a crossfaded boundary. *(Pre-ADR-0004 this sentence also named lookahead;
-   a lookahead change no longer alters any reported figure, so it is an ordinary smoothed
-   read-offset move — but it is still a switchable path under invariant 8 and needs its own
-   click-free test.)*
+   Latency must never change mid-block: an **oversampling-factor or phase-mode** change is
+   **latched** and applied at a reset or a crossfaded boundary. Both are named because both are
+   inputs to `osLatency(factor, phaseMode)` — linear-phase FIR stages carry group delay that the
+   minimum-phase path does not — so latching the factor alone would leave a phase switch free to
+   move reported latency mid-block. *(Pre-ADR-0004 this sentence also named lookahead; a lookahead
+   change no longer alters any reported figure, so it is an ordinary smoothed read-offset move — but
+   it is still a switchable path under invariant 8 and needs its own click-free test.)*
 
    **True-peak detection is a measurement tap** (ADR-0003, 2026-07-31; this closes what was an
    open point here). Invariant 3's ≥ 4× requirement is met by an estimator that feeds only the
@@ -114,8 +116,8 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    Guarded by: `testNullWithDefaults`, `testBypassNull`.
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
-   the oversampling factor, the EQ position, **the lookahead**, the mode switch, or a preset load
-   must produce no click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
+   the oversampling factor, **the oversampling phase mode**, the EQ position, **the lookahead**, the
+   mode switch, or a preset load must produce no click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
    ducked.
    Guarded by: the click-free transition tests (one per switchable path).
 

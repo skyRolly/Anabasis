@@ -747,7 +747,9 @@ alternative above. ADR-0005 records this before P4 (OQ-004's deadline).
   the preset-load undo hook pattern, `Anamorph:src/PluginProcessor.cpp:33-38,402-421`).
   Learned targets serialize in the **global** `ADAPTIVE` child (they are a property of the user's
   material, not of a slot); the **per-slot** frozen trims use the `abMatchGain` sentinel-atomic
-  inject pattern (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). Unlike Anamorph's Level
+  inject pattern (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]) — **adapted, not copied:
+  that precedent moves one float and the trim vector is four, so the transport is `OQ-013` and a
+  Hard Stop until an ADR settles it**. Unlike Anamorph's Level
   Match, Learn's output feeds the *adaptive reference targets*, never the output stage — a
   maximizer must not auto-match its output level to its input.
 

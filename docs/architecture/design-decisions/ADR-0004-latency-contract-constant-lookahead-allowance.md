@@ -160,11 +160,23 @@ non-automatable survive.
      **or lookahead** change is **latched** and applied at a reset or a crossfaded boundary". Under
      this decision a lookahead change alters no reported figure, so only the OS half stays latched:
 
-     > Latency must never change mid-block: an **oversampling-factor** change is **latched** and
-     > applied at a reset or a crossfaded boundary. *(Pre-ADR-0004 this sentence also named lookahead;
-     > a lookahead change no longer alters any reported figure, so it is an ordinary smoothed
-     > read-offset move — but it is still a switchable path under invariant 8 and needs its own
-     > click-free test.)*
+     > Latency must never change mid-block: an **oversampling-factor or phase-mode** change is
+     > **latched** and applied at a reset or a crossfaded boundary. Both are named because both are
+     > inputs to `osLatency(factor, phaseMode)` — linear-phase FIR stages carry group delay that the
+     > minimum-phase path does not — so latching the factor alone would leave a phase switch free to
+     > move reported latency mid-block. *(Pre-ADR-0004 this sentence also named lookahead; a lookahead
+     > change no longer alters any reported figure, so it is an ordinary smoothed read-offset move — but
+     > it is still a switchable path under invariant 8 and needs its own click-free test.)*
+
+     > **Correction, same day (2026-07-31) — a completeness fix, not a change of decision.** The
+     > first draft of this replacement named the **oversampling factor alone**: removing "or
+     > lookahead" from the original sentence also dropped the **phase mode**, which the original had
+     > never carried explicitly either. That contradicted this ADR's own decision item 4 ("An OS
+     > factor **or phase-mode** change is latched … so effective latency never changes mid-block"),
+     > ADR-0003 decision item 4 ("A factor **or phase** change is **latched**") and `DESIGN.md`
+     > §3.4 — and because the policy is the binding record, a P1 author following it could have
+     > applied a phase-mode switch immediately, moving reported latency mid-block and desynchronising
+     > the host. Phase mode restored to the prescribed text and to the enacted invariant.
 
    - **(b) The invariant's open point is re-phrased against the lookahead *allowance*.** It was
      written against "the engaged lookahead"; the reported figure is the constant allowance, and the
@@ -178,8 +190,8 @@ non-automatable survive.
      applied to (a) and (b)):
 
      > **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
-     > the oversampling factor, the EQ position, **the lookahead**, the mode switch, or a preset load
-     > must produce no click, pop, or level jump.
+     > the oversampling factor, **the oversampling phase mode**, the EQ position, **the lookahead**, the
+     > mode switch, or a preset load must produce no click, pop, or level jump.
      >
      > **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a
      > latch** (ADR-0004 made reported latency constant in it, so it is an ordinary smoothed change).
@@ -188,6 +200,16 @@ non-automatable survive.
      > the *detector / gain-computer* alignment — a smooth, band-limited control signal — so no audio
      > sample is ever skipped or repeated. A per-path click test is owed for it like every other entry
      > in this list.
+
+     > **Correction, same day (2026-07-31), on the authority of ADR-0003 decision item 9 — a
+     > completeness fix.** The enumeration listed the oversampling **factor** but not the **phase
+     > mode**, while ADR-0003 item 9 requires that "OS factor and phase each get their own
+     > click-free path test". A phase switch swaps IIR half-band stages for FIR ones with different
+     > group delay — it is a discrete switchable path in exactly the sense this invariant covers, and
+     > omitting it from the list is what would have let a P1 author skip its test. Added to the
+     > prescribed text and to the enacted invariant. It is carried in this block rather than a new
+     > one in ADR-0003 because this ADR already prescribes this sentence verbatim, and two ADRs
+     > prescribing the same sentence differently is the divergence the block format exists to prevent.
 
    Invariant 2's guard is strengthened in the same edit: `testReportedLatencyMatchesImpulse` measures
    across the **oversampling × lookahead matrix**, and the impulse must land at exactly

@@ -130,6 +130,44 @@ refers to the pluginval **gate**, not to which bytes it sees.
 
 ---
 
+## OQ-013 — How does the frozen trim vector cross message → audio? · `Blocking P1 (that path only)`
+
+**Question.** ADR-0007 routes `frozenTrims` through "the engine-side inject-at-the-duck-bottom path,
+a sentinel-valued atomic consumed at the forced duck's silent bottom" (the `abMatchGain` pattern).
+That phrase is **singular**, but the vector is **four** scalars — release, stereo-link,
+sidechain-HPF and dynamic-tilt trims (`DESIGN.md` §5.4, ADR-0005 decision item 10). The precedent it
+names carries one float (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). So the mechanism is
+under-specified exactly where it stops being a copy.
+
+**Why it needs deciding rather than inferring.** The two readings differ in correctness, not style:
+
+- **Four independent sentinel scalars.** Fits the permitted-path table's new single-scalar row four
+  times over — but only if the four `exchange`s are guaranteed to be *observed together*. Nothing in
+  the accepted set establishes that ordering. A half-consumed vector is not a transient artefact: the
+  slot stays half-restored, so a frozen A/B slot renders differently from the slot that was saved,
+  defeating the per-slot bit-repeatability `MODE_AND_ADAPTATION_POLICY.md` invariant 3 requires.
+- **One release/acquire-gated per-slot POD.** Publishes the four values into a non-atomic per-slot
+  struct behind a single ordering-carrying flag. Correct by construction, but it is a **new
+  mechanism** — not in the permitted-path table, and not what ADR-0007 says.
+
+Either way the answer changes the thread model, which is an **Architecture Review Gate** item, an
+**AI-agent Hard Stop**, and requires an ADR (`ADR_POLICY.md` rule 5) that also amends
+`THREADING_POLICY.md`'s table. `ADR-0011` §Consequences names this as the one cross-thread edge its
+compliance claim excepts.
+
+**Why not decided now.** Picking the mechanism here would be inventing architecture inside a
+documentation pass — the class of change the gate exists to stop. The evidence needed is not textual:
+it is what the duck's silent-bottom timing actually guarantees about publish-before-consume, which is
+measurable only against real `processBlock` code (constraint C2/C7).
+
+**Action.** Settle it at P1 **before** any code wires the `frozenTrims` restore. Everything else in
+the P1 skeleton — CMake, parameter surface, POD boundary, pass-through chain, latency — is
+independent of it and is not blocked. Until then `THREADING_POLICY.md` carries the gap explicitly
+under the command-path table, so the missing mechanism cannot be read as an oversight and
+silently filled in.
+
+---
+
 ## Resolved
 
 ### OQ-010 — Does the limiter lookahead get an explicit 0 / off position? · `Resolved 2026-07-31`

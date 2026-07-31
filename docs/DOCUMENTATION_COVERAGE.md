@@ -9,6 +9,73 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Sixth post-sign-off pass — three fixes, one of them self-inflicted; one new open question
+
+**The first item is a defect this audit's own previous pass introduced**, and it is worth recording
+as such rather than as a neutral finding. The pass before this one added a seventh row to
+`THREADING_POLICY.md`'s permitted-path table to cover the sentinel-valued command atomic. The row
+said "carrying a value … **one value per slot**", named the **frozen trim vector** as its use, and
+closed by excluding anything "multi-word" — three clauses that cannot all hold, because the trim
+vector is **four** scalars (release, stereo-link, sidechain-HPF, dynamic-tilt — `DESIGN.md` §5.4,
+ADR-0005 item 10). Read strictly the frozen-trim restore had no permitted mechanism at all; read
+loosely, an implementer publishes four independent atomics with no ordering and consumes them
+half-updated — and a half-consumed vector is a **permanently** half-restored slot, so a frozen A/B
+slot renders differently from the slot that was saved, defeating the bit-repeatability
+`MODE_AND_ADAPTATION_POLICY.md` invariant 3 requires of Freeze.
+
+The cause is worth naming because it is the pattern behind most of the recent regressions: the row
+was written to make ADR-0011's "every edge is in the table" claim true, and the claim was allowed to
+drive the rule instead of the other way round. The `abMatchGain` precedent carries **one float**;
+extending it to a vector was an inference, not a reading.
+
+- **Fixed by narrowing, not by inventing.** The row now covers **one scalar**, which is exactly what
+  the precedent establishes. The trim-vector transport is *not decided* — choosing between *N*
+  parallel sentinel scalars with a stated ordering guarantee and a single release/acquire-gated
+  per-slot POD is a thread-model decision (Architecture Review Gate + ADR + Hard Stop). It is raised
+  as **OQ-013**, carried as an explicit gap in `THREADING_POLICY.md` under the table, excepted from
+  ADR-0011's compliance claim, and pointed at from ADR-0007, ADR-0011 §Decision and `DESIGN.md` §5.4
+  so no record reads as if the mechanism were settled. **P1 may not wire that restore path**;
+  nothing else in the P1 skeleton depends on it.
+
+**Two genuine defects in the accepted set, both created by an edit that removed one thing and
+silently removed a second.**
+
+- **`DSP_POLICY.md` invariant 2's latch sentence had lost the phase mode.** ADR-0004's amendment
+  removed "or lookahead" from "an oversampling-factor **or lookahead** change is latched" and left
+  only the factor — but reported latency is `maxLookahead + osLatency(factor, **phaseMode**)`, and
+  linear-phase FIR stages carry group delay the minimum-phase path does not. Every other record has
+  it right (ADR-0004 item 4, ADR-0003 item 4, `DESIGN.md` §3.4 all say "factor **or phase**"); the
+  binding policy did not, so a P1 author following the highest-ranked rule could apply a phase switch
+  immediately and move reported latency mid-block. Restored in the policy **and** in ADR-0004's
+  prescribed block 8(a), which must stay verbatim-identical.
+- **Invariant 8's click-free enumeration was missing the phase mode too**, while ADR-0003 item 9
+  requires "OS factor and phase each get their own click-free path test" — so the test most likely
+  to be skipped was the one the enumeration did not name. Added to the policy and to ADR-0004's
+  block 8(c), carried there rather than in a new ADR-0003 block because two ADRs prescribing the
+  same sentence differently is precisely the divergence the block format prevents.
+
+**One rule that no implementation could have obeyed.**
+
+- **"PDC/latency must be recomputed on the message thread"** — in `THREADING_POLICY.md`'s
+  forbidden-access list and in ADR-0011's Decision ("recomputed **only** on the message thread").
+  Neither `prepareToPlay` nor `setNonRealtime()` is a message-thread callback; hosts call them from
+  their own setup/processing threads, and ADR-0004 item 5 mandates **both** as recompute triggers.
+  The rule therefore forbade two of the four triggers it required. The substance was never thread
+  identity — it is that the predictor is `const` and race-free, that there is a single
+  `setLatencySamples` call site, and that nothing recomputes PDC from `processBlock` — so both
+  records now say **off the audio thread, never inside `processBlock`**, enacted as a prescribed
+  block in ADR-0011. No property the original protected is lost.
+
+**Unchanged, as agreed with the reviewer:** the ring-read / OpenGL-context tension. Explicitly
+acknowledged in ADR-0011, deferred to `THREAD_MODEL.md` at P1.
+
+**Also this pass:** four earlier-reported items were re-checked and found already fixed at HEAD
+(ADR-0004's PDC trigger list and its Consequences sentence, the release checklist's macro-mapping
+rationale, ADR-0007's conditional factory-mask rule, and the PR description's sign-off framing). The
+phrases quoted against them survive in exactly one place — this file's own narrative of the passes
+that fixed them. **No edits were made to any of the four.** Rewriting text that is already correct is
+how several of the recent regressions entered, including the one at the top of this entry.
+
 ### Fifth post-sign-off pass — seven fixes, three confirmations
 
 **The first defect in this set would have failed the first real build**, which is a different class
