@@ -172,11 +172,36 @@ parallel dry/wet blend (default 100% wet) and stays a manual control. Live trans
 visualisation feeds from the same coefficient set the DSP uses (one source of truth for the
 curve).
 
+**`Clean` is the null model, and that makes the factory default a real decision.** Clean means
+*no harmonic shaping at all* — the brief's `Clean ↔ Colour` axis (§5.1) — so with
+`colourModel = Clean`, raising `colourDepth` applies more of nothing and the **Character macro
+is inert**. That is correct behaviour (Clean is the deliberate "no colour whatever the knob
+says" escape) but it is fatal as a *default*: the one-knob product's second control would look
+dead until the user opened Advanced and changed a discrete parameter the macro never touches.
+The factory default model is therefore **⊕ `Tape`** (row 23) — the gentlest of the three
+coloured variants — so Character is audible in the factory patch, while `colourDepth = 0` keeps
+the default patch bit-identical (inv 7) regardless. Which flavour is the default is a taste call
+and is on the §11 checklist.
+
+*The general rule this exposes*, alongside §5.5's fixed-point rule: **a managed target's
+audibility must not be gated by an unmanaged discrete parameter at the factory default.** The
+arithmetic fixed-point rule is necessary but not sufficient — the `clipMix` defect was a value
+mismatch, this one was a value match whose *audible effect* was switched off elsewhere. Both
+belong to the P4 macro review.
+
 ### 2.5 Limiter
 Lookahead 0.5–10 ms (default 2 ms), dual-stage release (fast transient stage + slow program
 stage, 1–1000 ms + Auto), styles Transparent/Punchy/Loud as attack-shaping/envelope presets,
 stereo link 0–100%, transient preservation, detector HPF shared with §2.3. The gain computer
 reads the **true-peak envelope** (§3.2) so the ceiling is dBTP-aware in true-peak mode.
+
+**The ceiling *is* the limiter threshold — that is why there is no separate threshold**
+**parameter.** Brief §4.3 lists "Gain/Threshold, Ceiling"; this design takes the conventional
+maximizer reading, where `limGain` drives signal into a fixed threshold that equals `ceiling`,
+rather than exposing an independent limiter threshold that could sit below the ceiling and make
+"how loud can it get" a two-knob question. Stated explicitly because the table freezes at
+v0.1.0 and *adding* a parameter later is a kVersion bump — the omission is a decision, not a
+gap.
 
 ### 2.6 Ceiling clamp (the product promise)
 A structurally separate final clamp, **always the last stage before dither** — downstream of the
@@ -360,7 +385,7 @@ what `testNullWithDefaults`'s stimulus level must respect.
 | 20 | `clipShape` | Clip Shape | F | ⊕ 0…1 (hard↔soft) | ⊕ 0.5 | yes | clip |
 | 21 | `clipDrive` | Clip Drive | F | ⊕ 0…24 dB | 0 | yes | clip |
 | 22 | `clipMix` | Clip Mix | F | ⊕ 0…100 % | ⊕ 100 | yes | clip |
-| 23 | `colourModel` | Colour | C | Clean/Tape/Tube/Transistor | ⊕ Clean | yes | clip |
+| 23 | `colourModel` | Colour | C | Clean/Tape/Tube/Transistor | ⊕ Tape¹⁰ | yes | clip |
 | 24 | `colourBalance` | Odd/Even | F | ⊕ −1…+1 | 0 | yes | clip |
 | 25 | `colourTone` | Colour Tone | F | ⊕ −1…+1 | 0 | yes | clip |
 | 26 | `limGain` | Limiter Gain | F | ⊕ 0…+18 dB | 0 | yes | limiter |
@@ -399,11 +424,33 @@ rule 5); §5.2 states the consequence and the fallback.
 ⁴ *Not* latency-affecting (the detector is a tap, §3.2) — frozen non-automatable as a
 conservative v1 choice; it flips the detector mode, and loosening later is a kVersion bump
 (§11 risk 4).
+¹⁰ **Not `Clean`** — see §2.4: `Clean` is the null model, so defaulting to it would make the
+Character macro inert in the factory patch. `colourDepth`'s default of 0 keeps the default patch
+bit-identical either way.
 
 **Exclusion tiers** (single shared predicate, Anamorph pattern
-`Anamorph:src/PluginParameters.h:66-88` [Verified]): *view tier* `{bypass, loudnessComp,
-deltaMonitor}` — serialized with the session, excluded from A/B, undo and presets. *Preset-
-excluded* adds `{advancedMode, freeze}`. **Ceiling lock** (§9 of the brief): when
+`Anamorph:src/PluginParameters.h:66-88` [Verified]): *view tier*
+`{bypass, loudnessComp, deltaMonitor, advancedMode}` — serialized with the session, excluded
+from A/B, undo **and** presets. *Preset-excluded* adds `{freeze}`.
+
+Two deliberate departures from the Anamorph precedent, both because the exclusion list is
+contract from v0.1.0 (`PARAMETER_COMPATIBILITY_POLICY.md` rule 6):
+
+- **`advancedMode` is in the view tier, not merely preset-excluded** — Anamorph lets its
+  `advancedMode` travel with A/B and undo. Here that would mean an **A/B compare or an undo step
+  can resize the editor**, which is precisely the editor-resize path footnote ¹ cites as
+  crashing X11 hosts. A/B exists to compare *sound*; switching the view while doing it is at
+  best startling and at worst a host crash. It stays session-serialized, so a reopened session
+  still shows the view you left.
+- **`freeze` stays in A/B and undo** (preset-excluded only) — unlike the others it genuinely
+  affects the rendered sound, and reproducing a slot's sound requires reproducing whether
+  adaptation was latched. The obligation that makes this safe: the **frozen trim vector travels
+  per-slot with `freeze`**, using the per-slot-memory inject pattern of §5.4, so switching to a
+  frozen slot restores *that slot's* latched trims rather than re-latching whatever the engine
+  happens to hold. It is preset-excluded because a preset is a settings document, not a capture
+  of a moment's adaptation.
+
+**Ceiling lock** (§9 of the brief): when
 `int_ceilingLock` is engaged, preset apply captures and re-asserts `ceiling` exactly like a view
 param — lock state itself is host-hidden (below), so browsing presets never moves a locked
 ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
@@ -419,7 +466,7 @@ ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
 | `int_uiScale` | UI scaling | ⊕ 80/90/100/125/150/175/200 % | 100 |
 | `int_tooltipsOn` | tooltips | bool | ⊕ off |
 | `int_uiAnimations` | UI animation | bool | ⊕ on |
-| `int_spectrumOn` | spectrum overlay | bool | ⊕ off |
+| `int_spectrumOn` | spectrum overlay | bool | ⊕ on (brief §6 says *dismissible* — visible until dismissed) |
 | `int_meterTargets` | target-line set | per-platform bitmask | ⊕ all on |
 | `int_tpMeterOn` | TP meter toggle | bool | ⊕ on |
 
@@ -470,6 +517,29 @@ parameters by writing them through the normal parameter interface
   gets the mapping applied at message-thread rate, and offline-render determinism for that
   (unsupported) usage is explicitly not promised. Host automation
   rides the managed Advanced parameters themselves (the automation surface, policy inv 6).
+- **How a macro-originated write is told apart from a manual edit** (this is the mechanism
+  §5.3's detach rule depends on; without it the MacroEngine's own writes would trip the rule and
+  every managed parameter would detach on the first macro gesture — the exact opposite of the
+  re-engage contract). Two conditions, both required for a change to count as a *manual edit*:
+  1. **Not macro-originated.** The MacroEngine raises a re-entrancy flag around its whole write
+     burst; the listener that sets detach bits ignores every change seen while it is raised.
+     Message-thread-only by construction (previous bullet), so the flag needs no atomics and
+     cannot interleave with a user gesture.
+  2. **Gesture-bracketed.** The change arrived inside a `beginChangeGesture`/`endChangeGesture`
+     pair — i.e. a real UI drag or a host-side automation *write* gesture. Ungesture-d writes
+     (automation playback, preset apply, A/B, undo) never detach, matching Anamorph's rule that
+     host automation folds into the baseline rather than becoming an edit
+     (`Anamorph:src/PluginProcessor.cpp:338-421` [Verified]).
+
+  Comparing the incoming value against the expected curve value was **rejected** as the
+  discriminator: it is a float comparison against a value the engine is mid-glide toward, so it
+  misfires on both sides (a manual edit that lands on the curve would not detach; a rounding
+  difference would detach spuriously). The flag is exact and the gesture bracket is the same
+  signal the undo coalescer already needs.
+
+  This also settles the "host writes the macro anyway" case from the previous bullet: such a
+  write is macro-originated, so the flag suppresses detaching, and the managed parameters simply
+  follow — the mapping stays a function of the macro position.
 - The mapping is a **pure function** `managedTargets = M(loudness, character, tone)` (§5.3).
   Writes are rate-limited to control rate; the engine's 20 ms parameter smoothing makes the
   glide click-free.
@@ -742,18 +812,24 @@ Anabasis-local, no reserved blocks.
   parameter surface + registry snapshot, pass-through chain + basic limiter, state harness,
   pluginval L5. OQ-011 (macOS deployment target) is checked and set at P1 as planned.
 - **P2–P6** follow brief §11 unchanged; the §10 ADRs gate their areas.
-- **Top risks**: (1) macro-curve quality is the product — the §5.5 curves are drafts and the
-  Master Plan benchmark (§5.4) is the arbiter; budget P4 listening time accordingly. (2) The
+- **Top risks** — the two that are open dependencies rather than execution quality are
+  **registered in `FUTURE_RISKS.md` now**, not conditionally later, because a risk recorded only
+  inside a document that is superseded section by section (`SOURCE_OF_TRUTH.md`) is a risk that
+  gets lost: (1) macro-curve quality is the product — the §5.5 curves are drafts and the
+  Master Plan benchmark (§5.4 of the brief) is the arbiter; budget P4 listening time accordingly
+  (execution quality, covered by RISK-004's adaptation-audibility framing). (2) The
   measurement-tap latency argument rests on the detector-delay-≤-min-lookahead constraint —
-  verify with the first impulse test at P2 *before* building on it (RISK entry added to
-  FUTURE_RISKS if it fails: fallback is padding reported latency by the detector delay, an
-  ADR-0004 amendment). (3) Variable-font licensing (§6.1) needs owner approval lead time before
-  P5. (4) `dither`/`truePeakMode` non-automatability choices are conservative-frozen — loosening
+  **RISK-008**; verify with the first impulse test at P2 *before* building on it (fallback:
+  pad reported latency by the detector delay — an ADR-0004 amendment and a reported-latency
+  change, so an Architecture Review item). (3) Variable-font licensing (§6.1) needs owner
+  approval lead time before P5 — **RISK-009**. (4) `dither`/`truePeakMode` non-automatability choices are conservative-frozen — loosening
   later is a kVersion bump.
 
 **Sign-off checklist for the owner**: **the §1.2 Hard-Stop item — Post-EQ sits *before* the
 ceiling clamp, which requires ADR-0002 to amend `DSP_POLICY.md` invariant 1's chain wording** ·
 ⊕ values, ranges and tapers in §4.2/§4.3 (frozen at
-v0.1.0) · display names as launch wording (revisable later, rule 2) · §3.2 measurement-tap · §3.4
+v0.1.0), **including the ⊕ `Tape` default colour model — a taste call that decides whether the
+Character macro is audible in the factory patch (§2.4)** · display names as launch wording
+(revisable later, rule 2) · §3.2 measurement-tap · §3.4
 no-zero-lookahead · §5.2/§5.3 macro architecture & coexistence · §5.5 draft curves as the P4
 starting point · §6.1 accent-family + variable-font direction · §8 copy-and-adapt · §10 ADR set.

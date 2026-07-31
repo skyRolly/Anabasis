@@ -63,6 +63,59 @@ P1 registry snapshot". Softened to the accurate reading: sign-off ratifies the n
 wording**, IDs/ranges/defaults freeze at v0.1.0, and a later rename is rule 2's normal workflow
 (registry + a `Changed` CHANGELOG entry + a deliberate snapshot re-freeze).
 
+**Third review pass on the design document (same day).** Six findings fixed, three confirmations.
+
+*The Character macro was inert in the factory patch.* `character` drives exactly one target,
+`colourDepth`, and `colourModel` defaulted to **Clean** — the *null* model, per the brief's own
+`Clean ↔ Colour` framing. Applying more of nothing is nothing, so the one-knob product's
+second-most-prominent control would have looked dead until the user opened Advanced and changed a
+discrete parameter the macro never touches. This is the **same class** as the `clipMix` defect two
+passes ago, one level up: there a managed target's *value* was not a fixed point; here the value
+matched but its *audible effect* was gated by an unmanaged discrete parameter. Fixed by defaulting
+`colourModel` to ⊕ `Tape` (`colourDepth = 0` keeps the default patch bit-identical either way, so
+invariant 7 is untouched), documenting that Clean-makes-Character-inert is deliberate — it is the
+"no colour whatever the knob says" escape — and adding the generalised rule to §2.4: *a managed
+target's audibility must not be gated by an unmanaged discrete parameter at the factory default.*
+Which flavour is the default is a taste call and is now on the §11 checklist.
+
+*`advancedMode` in A/B and undo meant a compare could crash an X11 host.* It sat in the
+preset-excluded tier only, so an A/B switch or an undo step would change the view mode — driving
+exactly the editor resize that the table's own footnote ¹ cites as the Anamorph X11 crash (its
+KI-003). Moved to the **view tier** (excluded from A/B, undo and presets; still session-
+serialized), a deliberate departure from Anamorph, which lets its `advancedMode` travel with A/B.
+`freeze` deliberately stays in A/B and undo — it genuinely affects the sound, so reproducing a
+slot means reproducing whether adaptation was latched — with the obligation that makes that safe
+now stated: **the frozen trim vector travels per-slot with it**.
+
+*The macro-write / manual-edit discriminator was never named.* §5.2 writes managed parameters
+through `setValueNotifyingHost` and §5.3 detaches a parameter when the user edits it — both land
+on the same listener surface. Taken literally the MacroEngine's own writes would trip the detach
+rule and every managed parameter would detach on the first macro gesture, i.e. the exact inverse
+of the re-engage contract. Now pinned as two required conditions: **not macro-originated** (a
+message-thread re-entrancy flag around the write burst) **and gesture-bracketed** (so automation
+playback, preset apply, A/B and undo never detach — Anamorph's rule). Comparing against the
+expected curve value was considered and rejected: it is a float comparison against a value the
+engine is mid-glide toward, so it misfires in both directions.
+
+*Two open dependencies lived only inside a document that gets superseded.* §11 named the
+detector-delay bound and the variable-font licence as risks, deferring the register entry
+conditionally — but `DOCUMENTATION_LIFECYCLE_POLICY.md`'s *new unresolved limitation* trigger
+points at `FUTURE_RISKS.md` for exactly this shape, and `DESIGN.md` is superseded section by
+section, so a risk parked there is a risk that disappears. Registered as **RISK-008** (latency
+contract) and **RISK-009** (font licence), with §11 now citing them.
+
+*Two smaller corrections.* The limiter has no separate threshold parameter because **the ceiling
+*is* the threshold** — the conventional maximizer reading of the brief's "Gain/Threshold, Ceiling"
+— now stated in §2.5 so the omission reads as a decision, since *adding* a parameter later is a
+kVersion bump. And `int_spectrumOn` defaulted to off while the brief calls the spectrum
+"dismissible", which implies visible until dismissed; flipped to ⊕ on.
+
+*Confirmations:* the Post-EQ/DSP_POLICY wording item was re-reported and is already handled — the
+Hard-Stop blockquote in §1.2, the amendment obligation on the ADR-0002 row, and the checklist
+entry are exactly what it asks for. `SOURCE_OF_TRUTH`'s "Levels 1, 2 and 5 are empty" paragraph
+gained a clause about `DESIGN.md` occupying level 5 once ratified, so it does not silently become
+wrong at sign-off. The document-registration check was re-confirmed across all four places.
+
 **Second review pass on the design document (same day).** Three findings fixed, three
 confirmations.
 

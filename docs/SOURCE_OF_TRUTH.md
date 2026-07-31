@@ -125,7 +125,9 @@ known-issue claim.
 ## Current state of the chain (P0)
 
 Levels 1, 2 and 5 are **empty** — no `src/`, no `tests/`, no descriptive architecture set exists
-yet. Until P1 lands, any statement about Anabasis's runtime behaviour is `Unverified` by
+yet. (`docs/DESIGN.md` is the one document that will occupy level 5 **once ratified**; while it
+is `Proposed` it has no authority at all, so level 5 is genuinely empty today. Update this
+paragraph at sign-off — see §"Where `DESIGN.md` sits".) Until P1 lands, any statement about Anabasis's runtime behaviour is `Unverified` by
 construction, and must be written as such rather than asserted. The policies in `docs/policies/`
 state the invariants the future code **must** satisfy; they carry no compliance evidence yet, and
 every such section is marked `TODO (no code yet)` rather than claimed (constraint C7).
