@@ -9,6 +9,57 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Tenth post-sign-off pass — the lint reported clean on a file it had not read
+
+**The finding that matters: `check-docs.py` printed "50 file(s) clean" while skipping 1382 of the
+1401 lines of this file.** Line 20 of the previous entry began, after two spaces of indent, with
+three backticks — prose describing fenced blocks. CommonMark reads that as an opening fence whose
+info string is the rest of the sentence, so (a) half a sentence and the two lines after it rendered
+as a code block on GitHub, and (b) `fence_mask` masked every line from there to EOF. Both status
+tables in this file, every link in it, every blockquote: unchecked, silently, with a green result.
+
+That is strictly worse than having no checker. It is also the third time in this branch that
+*a passing result was mistaken for a correct one* — after `--random-seed 0` and `build.sh`'s exit
+code — and the second time in three passes for this script specifically. The prose defect is fixed
+(the line now reads "triple-backtick fences"), and four changes make the class detectable:
+
+- **An unclosed fence is now a finding**, not a silent exemption. `fence_mask` returns the opener's
+  line number and the run reports it. An unclosed fence is a real rendering defect on its own — the
+  rest of the file renders as code on GitHub — so this catches a document bug *and* closes the blind
+  spot with one check.
+- **Coverage is now measured, not assumed.** 9951 of 10284 lines are actually examined; the 333
+  exempt lines are inside genuine fenced blocks, and no file is more than half masked. "Clean" now
+  has a denominator behind it.
+- **A `docs` job runs the lint in CI** (`build.yml`), deliberately outside the `preflight` gate and
+  outside every build job's `needs`: it must run in the pre-P1 scaffold, and a prose defect should
+  fail the run without skipping a binary. `--self-test` runs first, because a zero exit is not
+  evidence unless the script's own guarantees were exercised in the same run.
+- **`--self-test` grew to 29 cases**, including the shapes this review named.
+
+**Three more false-positive classes in the same script, all reported and all real.** Inline code
+spans were not excluded, so the illustration `` `[t](path "Title")` `` in the previous entry was a
+"broken link" the moment the phantom fence stopped hiding it; a fence closer shorter than its opener
+ended the block early; and `check_tables` only matched pipes at column 0, so every indented table —
+including ADR-0003's detector-rate table and ADR-0007's schema table, exactly the nested tables where
+a mid-table intrusion is hardest to see — was never examined at all.
+
+**Fixing those exposed a fourth, and the corpus run is what caught it.** With indented tables now in
+scope, ADR-0003 line 100 was reported as a table fragment: it begins `|| isMod)` — the continuation
+of a code span opened on the *previous* line (`` `oversample != Off && (drive > 0.01 || isMod)` ``).
+Code spans may wrap across lines within a paragraph, and the blanking was line-local. Fixed at the
+root — spans are now matched over each paragraph and split back with lengths preserved — rather than
+by special-casing the symptom. **This is the method paying off:** the run was not treated as done
+when it exited non-zero on one file; the single finding was chased to a cause, and the cause was a
+real gap rather than a nuisance to suppress.
+
+**Two limits are now stated rather than implied** (C7), because the reviewer was right that the
+docstring claimed more than the code does: link existence is checked against the filesystem, so a
+case-mismatched path passes on macOS and 404s on GitHub; and reference-style links and autolinks are
+not checked. Root-relative (`/docs/x.md`) and percent-encoded destinations now resolve correctly.
+
+**Declined, unchanged** (fourth and fifth time for two of them): the ring-read / OpenGL tension;
+ADR-0006's base-rate clip trade; and invariant 4's wording, again confirmed literally true.
+
 ### Ninth post-sign-off pass — the lint itself was the defect; six fixes, three declined
 
 **Three bugs in `scripts/check-docs.py`, all mine, all shipped last pass.** The script was written to
@@ -17,9 +68,9 @@ it would have failed. It scanned clean only because no current document happens 
 the three paths.
 
 - **No fence tracking.** Every line starting with `|` was treated as a table row, including inside
-  ``` fences — so any document showing table syntax as an *example* would be reported as a broken
-  table. This file and the ADRs are full of quoted markup; the script's own docstring would have
-  tripped it.
+  triple-backtick fences — so any document showing table syntax as an *example* would be reported as
+  a broken table. This file and the ADRs are full of quoted markup; the script's own docstring would
+  have tripped it.
 - **Lazy continuation over-reported.** CommonMark applies it only to *paragraph continuation text*.
   A quote ending in a bare `>` has closed its paragraph, and an ordered list starting at 1
   interrupts one — neither is absorbed, and both were flagged. The interrupter set also mistook
@@ -78,8 +129,9 @@ mechanical checks over every `.md` — GFM table integrity, broken relative link
 continuation — each one present because that defect shipped here at least once and was invisible in
 the diff that introduced it. Verified against a fixture containing all three defects (it reports all
 three, exit 1) as well as against the real tree (50 files clean, exit 0); a script that only ever
-returns "clean" proves nothing. It is **not** wired into CI — there is no docs job — and
-`REPOSITORY_MAP.md` says so rather than implying coverage that does not exist. Deliberately *not*
+returns "clean" proves nothing. *(That verification was still insufficient — see the following pass,
+where the "clean" result turned out to be false.)* It was **not** wired into CI at this point;
+a **docs** job was added the pass after. Deliberately *not*
 included: the ADR-prescribed-block ↔ enacted-policy comparison, which is still run by hand, because
 it has documented cosmetic artefacts (headline bolding, dated attributions) and encoding those as an
 allowlist would make the script assert more than it can check.

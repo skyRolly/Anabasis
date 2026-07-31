@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Structural lint for the Anabasis documentation set.
 
-Three checks, all mechanical and deterministic. Each exists because the defect it
+Four checks, all mechanical and deterministic. Each exists because the defect it
 catches shipped at least once in this repository and was invisible in the source
 diff that introduced it:
 
@@ -10,9 +10,9 @@ diff that introduced it:
      render as pipe-separated text with no header, outside the table their own
      header governs. This happened to THREADING_POLICY.md's permitted-path table:
      three of the seven binding cross-thread rules stopped being rules. A table
-     cannot resume after an intervening block in GFM, so any run of lines
-     starting with `|` whose second line is not a separator (`|---|`) is either
-     an orphaned fragment or a headerless table.
+     cannot resume after an intervening block in GFM, so any run of pipe-prefixed
+     lines whose second line is not a separator (`|---|`) is either an orphaned
+     fragment or a headerless table.
 
   2. RELATIVE LINKS -- a moved or renamed file silently breaks every pointer to
      it. The docs are a navigation system (SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md,
@@ -24,24 +24,45 @@ diff that introduced it:
      happened to ADR-0011: two sentences of binding contract rendered as part of a
      historical correction note, which a reader could reasonably skip.
 
-FALSE POSITIVES ARE THE FAILURE MODE THAT MATTERS. A lint that invents findings
-gets ignored, and then the real ones are lost with it -- so each check is scoped
-to what it can actually prove:
+  4. UNCLOSED FENCE -- an opening code fence with no closer makes the rest of the
+     file render as code on GitHub. It is a real rendering defect on its own, and
+     it is also this script's worst failure mode: an unclosed fence exempts every
+     line after it from checks 1-3. That happened here -- a prose line in
+     DOCUMENTATION_COVERAGE.md began with three backticks, masking 1382 of its
+     1401 lines while the run still printed "clean". A checker that reports
+     success without having read the file is worse than no checker, so an
+     unterminated fence is now a finding rather than a silent exemption.
 
-  * Fenced code blocks are excluded from all three checks. A document that shows
-    table syntax, a link, or quote syntax as an *example* is not making a claim
-    about its own structure. (This file's own docstring would otherwise trip it.)
-  * Lazy continuation is only reported when CommonMark actually applies it: to
-    *paragraph continuation text*. A quote that ends with a blank `>` line has
-    closed its paragraph, and a line that starts a new block -- heading, fence,
-    list, table row, thematic break, HTML -- interrupts rather than continues.
-    `interrupts_paragraph()` encodes those cases, including CommonMark's rule
-    that an ordered list interrupts a paragraph only when it starts at 1.
-  * Link destinations are parsed, not string-sliced: `[t](path "Title")` and
-    `[t](<path with spaces>)` are both valid and neither is a broken link.
+FALSE POSITIVES ARE THE OTHER FAILURE MODE THAT MATTERS. A lint that invents
+findings gets ignored, and the real ones are lost with it -- so each check is
+scoped to what it can actually prove:
 
-Deliberately NOT checked here: whether each ADR-prescribed policy block matches
-the enacted policy text. That comparison is real and is run by hand on every
+  * Fenced code blocks and inline code spans are excluded from checks 1-3. A
+    document that shows table syntax, a link, or quote syntax as an *example* is
+    not making a claim about its own structure.
+  * Lazy continuation is only reported where CommonMark applies it: to *paragraph
+    continuation text*. A quote ending in a blank `>` has closed its paragraph,
+    and a line starting a new block -- heading, fence, list, table row, thematic
+    break, HTML -- interrupts rather than continues. `interrupts_paragraph()`
+    encodes those cases, including CommonMark's rule that an ordered list
+    interrupts a paragraph only when it starts at 1.
+  * Link destinations are parsed, not string-sliced: `[t](path "Title")`,
+    `[t](<path with spaces>)` and percent-encoded paths are all valid.
+
+KNOWN LIMITS, stated rather than implied (constraint C7):
+  * Indentation is stripped before block matching. CommonMark measures indent
+    against the *container's* content column and a line-based lint has no
+    container stack; anchoring at column 0 produced 31 false positives inside
+    numbered ADR items. This trades a few false negatives for no false positives.
+  * Code spans are matched within a single line. A span opened on one line and
+    closed on the next is not tracked.
+  * Link existence is checked against the filesystem, so on a case-insensitive
+    filesystem (macOS) a case-mismatched path passes here and 404s on GitHub.
+    Root-relative destinations (`/docs/x.md`) resolve against the scan root.
+  * Reference-style links (`[t][ref]`) and autolinks are not checked.
+
+Deliberately NOT checked: whether each ADR-prescribed policy block matches the
+enacted policy text. That comparison is real and is run by hand on every
 documentation pass, but it has known cosmetic artefacts -- the policy bolds each
 invariant's opening sentence as a headline and stamps a dated attribution that the
 prescribing ADR does not carry (see ADR-0003's "scope of verbatim" note). Encoding
@@ -49,6 +70,7 @@ those exceptions as an allowlist would make the script assert more than it can
 check, which is the failure mode constraint C7 exists to prevent.
 
 Usage:  scripts/check-docs.py [path ...]     (default: the repository root)
+        scripts/check-docs.py --self-test
 Exit:   0 = clean, 1 = findings printed to stderr.
 """
 
@@ -57,54 +79,129 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 SEPARATOR = re.compile(r"^\|[\s:|-]+\|$")
 INLINE_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+TABLE_ROW = re.compile(r"^\s{0,3}\|")
 SKIP_DIRS = {".git", "build", "node_modules", "JUCE"}
 
 # Blocks that interrupt a paragraph, and therefore are NOT swallowed by a
 # preceding blockquote's lazy continuation (CommonMark 0.31 §4, §5.1, §6.9).
 _INTERRUPTERS = (
-    re.compile(r"^\s{0,3}#{1,6}(\s|$)"),            # ATX heading (space required)
-    re.compile(r"^\s{0,3}(`{3,}|~{3,})"),           # fenced code block
-    re.compile(r"^\s{0,3}([-*_])(\s*\1){2,}\s*$"),  # thematic break
-    re.compile(r"^\s{0,3}>"),                        # another blockquote line
-    re.compile(r"^\s{0,3}[-*+](\s|$)"),              # bullet list item
-    re.compile(r"^\s{0,3}1[.)](\s|$)"),              # ordered list — only "1" interrupts
-    re.compile(r"^\s{0,3}\|"),                       # GFM table row
-    re.compile(r"^\s{0,3}<"),                        # HTML block
-    re.compile(r"^\s{0,3}=+\s*$"),                   # setext underline
+    re.compile(r"^#{1,6}(\s|$)"),            # ATX heading (space required)
+    re.compile(r"^(`{3,}|~{3,})"),           # fenced code block
+    re.compile(r"^([-*_])(\s*\1){2,}\s*$"),  # thematic break
+    re.compile(r"^>"),                        # another blockquote line
+    re.compile(r"^[-*+](\s|$)"),              # bullet list item
+    re.compile(r"^1[.)](\s|$)"),              # ordered list — only "1" interrupts
+    re.compile(r"^\|"),                       # GFM table row
+    re.compile(r"^<"),                        # HTML block
+    re.compile(r"^=+\s*$"),                   # setext underline
 )
 
 
 def interrupts_paragraph(line: str) -> bool:
     """Whether `line` starts a block instead of continuing a paragraph.
 
-    Indentation is stripped before matching. CommonMark measures a block's
-    indent against its *container's* content column, and a line-based lint has
-    no container stack -- inside a numbered ADR item, a bullet sits five columns
-    in and is still a bullet. Anchoring at column 0 flagged ~30 such lines as
-    absorbed when they are not. Stripping trades a few false negatives (a deeply
-    indented line that genuinely is continuation text) for no false positives,
-    which is the correct direction for a lint nobody is obliged to run.
+    Indentation is stripped before matching -- see KNOWN LIMITS in the module
+    docstring for why a line-based lint cannot anchor at column 0.
     """
     return any(rx.match(line.lstrip()) for rx in _INTERRUPTERS)
 
 
-def fence_mask(lines: list[str]) -> list[bool]:
-    """True for every line that is inside (or delimits) a fenced code block."""
-    mask, opener = [False] * len(lines), None
+def blank_code_spans(line: str) -> str:
+    """Replace inline code spans (backticks included) with spaces.
+
+    Column positions and newlines are preserved, so this is safe to run over a
+    whole paragraph and split back into lines. A span is a run of N backticks
+    closed by the next run of exactly N; an unclosed run is left alone, which is
+    what CommonMark does too.
+    """
+    chars, i, n = list(line), 0, len(line)
+    while i < n:
+        if chars[i] != "`":
+            i += 1
+            continue
+        open_end = i
+        while open_end < n and line[open_end] == "`":
+            open_end += 1
+        width, k, closed = open_end - i, open_end, False
+        while k < n:
+            if line[k] != "`":
+                k += 1
+                continue
+            close_end = k
+            while close_end < n and line[close_end] == "`":
+                close_end += 1
+            if close_end - k == width:
+                for x in range(i, close_end):
+                    chars[x] = "\n" if line[x] == "\n" else " "
+                i, closed = close_end, True
+                break
+            k = close_end
+        if not closed:
+            i = open_end
+    return "".join(chars)
+
+
+def fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
+    """(mask, unclosed_opener_line) — True for lines inside or delimiting a fence.
+
+    A closing fence must use the opener's character and be at least as long
+    (CommonMark §4.5), so a shorter run inside a longer block does not end it.
+    The second element is the 1-based line of an opener that was never closed,
+    or None. Callers must report it: silently masking to EOF is how this script
+    once passed a file it had not read.
+    """
+    mask: list[bool] = [False] * len(lines)
+    char: str | None = None
+    width = 0
+    opened_at: int | None = None
     for i, line in enumerate(lines):
         match = FENCE.match(line)
-        if opener is None:
+        if char is None:
             if match:
-                opener, mask[i] = match.group(1)[0], True
+                run = match.group(1)
+                char, width, opened_at, mask[i] = run[0], len(run), i + 1, True
             continue
-        mask[i] = True                      # inside the fence, including its closer
-        if match and match.group(1)[0] == opener:
-            opener = None
-    return mask
+        mask[i] = True                       # inside the fence, including its closer
+        if match:
+            run = match.group(1)
+            if run[0] == char and len(run) >= width:
+                char, width, opened_at = None, 0, None
+    return mask, opened_at
+
+
+def blanked_lines(lines: list[str], fenced: list[bool]) -> list[str]:
+    """Per-line text with inline code spans blanked, matched paragraph-wide.
+
+    A CommonMark code span may wrap across lines within one paragraph -- ADR-0003
+    carries `oversample != Off && (driveDb > 0.01 || isModAlgorithm)` split over
+    two lines, whose continuation begins `||` and was read as a table row. Spans
+    are therefore matched over each run of consecutive non-blank, non-fenced
+    lines and the result is split back, which keeps every line's length and so
+    every reported column. A blank line ends a paragraph and resets the state.
+    """
+    out = list(lines)
+    start: int | None = None
+
+    def flush(lo: int, hi: int) -> None:
+        joined = blank_code_spans("\n".join(lines[lo:hi]))
+        out[lo:hi] = joined.split("\n")
+
+    for i, line in enumerate(lines):
+        if fenced[i] or not line.strip():
+            if start is not None:
+                flush(start, i)
+                start = None
+            continue
+        if start is None:
+            start = i
+    if start is not None:
+        flush(start, len(lines))
+    return out
 
 
 def markdown_files(roots: list[Path]) -> list[Path]:
@@ -123,7 +220,7 @@ def link_destination(raw: str) -> str | None:
     """The path part of a link destination, or None if there is nothing to check.
 
     Handles `<angle-bracketed>` destinations and the optional title that may
-    follow the destination in double quotes, single quotes or parentheses.
+    follow in double quotes, single quotes or parentheses.
     """
     raw = raw.strip()
     if not raw:
@@ -135,9 +232,15 @@ def link_destination(raw: str) -> str | None:
     return dest.strip()
 
 
-def check_tables(path: Path, lines: list[str], fenced: list[bool]) -> list[str]:
-    """Every run of pipe-prefixed lines must open with a header + separator pair."""
-    findings, run = [], []
+def check_tables(path: Path, lines: list[str], skip: list[bool]) -> list[str]:
+    """Every run of pipe-prefixed lines must open with a header + separator pair.
+
+    Up to three columns of indent are allowed (GFM), and tables nested in list
+    items are indented further, so both the row test and the separator test run
+    against the stripped line.
+    """
+    findings: list[str] = []
+    run: list[tuple[int, str]] = []
 
     def close(run: list[tuple[int, str]]) -> None:
         if len(run) < 2 or not SEPARATOR.match(run[1][1].strip()):
@@ -148,7 +251,7 @@ def check_tables(path: Path, lines: list[str], fenced: list[bool]) -> list[str]:
             )
 
     for i, line in enumerate(lines):
-        if line.startswith("|") and not fenced[i]:
+        if not skip[i] and TABLE_ROW.match(line):
             run.append((i + 1, line))
         elif run:
             close(run)
@@ -158,33 +261,35 @@ def check_tables(path: Path, lines: list[str], fenced: list[bool]) -> list[str]:
     return findings
 
 
-def check_links(path: Path, lines: list[str], fenced: list[bool]) -> list[str]:
+def check_links(path: Path, lines: list[str], skip: list[bool], root: Path) -> list[str]:
     findings = []
     for i, line in enumerate(lines):
-        if fenced[i]:
+        if skip[i]:
             continue
         for match in INLINE_LINK.finditer(line):
             dest = link_destination(match.group(1))
             if dest is None:
                 continue
-            target = dest.split("#", 1)[0].strip()
+            target = unquote(dest.split("#", 1)[0].strip())
             if not target or target.startswith(("http://", "https://", "mailto:")):
                 continue
-            if not (path.parent / target).resolve().exists():
+            base = root if target.startswith("/") else path.parent
+            resolved = (base / target.lstrip("/")).resolve()
+            if not resolved.exists():
                 findings.append(f"{path}:{i + 1}: broken relative link -> {target}")
     return findings
 
 
-def check_lazy_continuation(path: Path, lines: list[str], fenced: list[bool]) -> list[str]:
+def check_lazy_continuation(path: Path, lines: list[str], skip: list[bool]) -> list[str]:
     findings = []
     for i in range(len(lines) - 1):
-        if fenced[i] or fenced[i + 1]:
+        if skip[i] or skip[i + 1]:
             continue
         quote = lines[i].lstrip()
         if not quote.startswith(">"):
             continue
         if not quote.lstrip(">").strip():
-            continue                        # blank quote line: the paragraph is closed
+            continue                         # blank quote line: the paragraph is closed
         nxt = lines[i + 1]
         if not nxt.strip() or interrupts_paragraph(nxt):
             continue
@@ -195,35 +300,82 @@ def check_lazy_continuation(path: Path, lines: list[str], fenced: list[bool]) ->
     return findings
 
 
+def analyse(path: Path, lines: list[str], root: Path) -> list[str]:
+    """Run every check over one document's lines."""
+    skip, unclosed = fence_mask(lines)
+    text = blanked_lines(lines, skip)
+    findings = []
+    if unclosed is not None:
+        findings.append(
+            f"{path}:{unclosed}: code fence opened here is never closed -- the rest "
+            f"of the file renders as code, and every check below it is skipped"
+        )
+    findings += check_tables(path, text, skip)
+    findings += check_links(path, text, skip, root)
+    findings += check_lazy_continuation(path, text, skip)
+    return findings
+
+
+def check_file(path: Path, root: Path) -> list[str]:
+    return analyse(path, path.read_text(encoding="utf-8").split("\n"), root)
+
+
 def self_test() -> int:
     """Assert the checks fire on real defects and stay silent on valid markup.
 
-    Every case below is one that actually reached review: the first shipped
-    revision of this script reported all five FP cases as findings. A lint whose
-    only evidence is "it returns clean on our tree" proves nothing -- both
-    directions have to be pinned.
+    Every case below is one that actually reached review: earlier revisions of
+    this script reported the "silent" cases as findings, or missed the "fires"
+    ones. A lint whose only evidence is "it returns clean on our tree" proves
+    nothing -- and on this repository that evidence was itself false, because an
+    unclosed fence had exempted the largest file. Both directions are pinned.
     """
-    doc = Path("x.md")
-    cases: list[tuple[str, int, object, list[str]]] = [
-        ("table syntax inside a fence", 0, check_tables, ["```", "| not a table", "```"]),
-        ("blank quote line ends the paragraph", 0, check_lazy_continuation,
-         ["> quote", ">", "Normal paragraph."]),
-        ("ordered list at 1 interrupts", 0, check_lazy_continuation, ["> quote", "1. item"]),
-        ("quote syntax inside a fence", 0, check_lazy_continuation,
-         ["```", "> quote", "text", "```"]),
-        ("link inside a fence", 0, check_links, ["```", "[a](nope.md)", "```"]),
-        ("block inserted mid-table", 1, check_tables,
+    doc = Path(__file__).resolve()           # a path that exists, for link cases
+    root = doc.parent.parent
+    cases: list[tuple[str, int, list[str]]] = [
+        # --- must stay silent -------------------------------------------------
+        ("table syntax inside a fence", 0, ["```", "| not a table", "```"]),
+        ("blank quote line ends the paragraph", 0, ["> quote", ">", "Normal paragraph."]),
+        ("ordered list at 1 interrupts", 0, ["> quote", "1. item"]),
+        ("quote syntax inside a fence", 0, ["```", "> quote", "text", "```"]),
+        ("link inside a fence", 0, ["```", "[a](nope.md)", "```"]),
+        ("pipe inside an inline code span", 0, ["`| not a table |` prose"]),
+        ("quote marker inside an inline code span", 0,
+         ["prose with `> quote` inline", "next line"]),
+        ("short closer does not end a longer fence", 0,
+         ["````", "```", "| not a table", "````"]),
+        ("link inside an inline code span", 0, ["prose `[t](path \"Title\")` shown as an example"]),
+        ("code span wrapping across lines", 0,     # ADR-0003's `a && (b > 0 || c)` shape
+         ["prose `oversample != Off && (drive > 0.01", "|| isMod)` continues here"]),
+        ("titled link resolves", 0, ['[a](scripts/check-docs.py "Title")']),
+        ("percent-encoded link resolves", 0, ["[a](scripts/check%2Ddocs.py)"]),
+        # --- must fire --------------------------------------------------------
+        ("block inserted mid-table", 1,
          ["| A | B |", "|---|---|", "| 1 | 2 |", "> intruder", "| 3 | 4 |"]),
-        ("genuine lazy continuation", 1, check_lazy_continuation, ["> quote", "absorbed line"]),
-        ("table with no separator row", 1, check_tables, ["| a | b |", "| c | d |"]),
-        ("ordered list not at 1 is absorbed", 1, check_lazy_continuation, ["> quote", "2. item"]),
+        ("genuine lazy continuation", 1, ["> quote", "absorbed line"]),
+        ("table with no separator row", 1, ["| a | b |", "| c | d |"]),
+        ("ordered list not at 1 is absorbed", 1, ["> quote", "2. item"]),
+        ("indented table is examined", 1, ["   | a | b |", "   | c | d |"]),
+        ("unclosed fence is a finding", 1, ["intro", "```", "rest of the file"]),
+        ("broken link is caught", 1, ["[a](scripts/nope.py)"]),
     ]
     failures = 0
-    for label, expected, check, lines in cases:
-        got = len(check(doc, lines, fence_mask(lines)))  # type: ignore[operator]
+    for label, expected, lines in cases:
+        # Link cases resolve relative to the document, so place it at the repo
+        # root -- the same base a real docs file uses for `scripts/...` targets.
+        got = len(analyse(root / "x.md", lines, root))
         if got != expected:
             failures += 1
             print(f"self-test FAIL: {label}: expected {expected}, got {got}", file=sys.stderr)
+
+    # An unclosed fence must be reported, not silently swallow the file.
+    _, unclosed = fence_mask(["intro", "```", "everything after is masked"])
+    if unclosed != 2:
+        failures += 1
+        print(f"self-test FAIL: unclosed fence reported at {unclosed}, want 2", file=sys.stderr)
+    _, closed = fence_mask(["```", "code", "```"])
+    if closed is not None:
+        failures += 1
+        print(f"self-test FAIL: closed fence reported as unclosed at {closed}", file=sys.stderr)
 
     for raw, want in [
         ('docs/DESIGN.md "T"', "docs/DESIGN.md"),   # double-quoted title
@@ -240,10 +392,20 @@ def self_test() -> int:
                 file=sys.stderr,
             )
 
+    for raw, want in [("`a`", "   "), ("x `|` y", "x     y"), ("``a`b`` c", "        c")]:
+        got_line = blank_code_spans(raw)
+        if got_line != want:
+            failures += 1
+            print(
+                f"self-test FAIL: blank_code_spans({raw!r}) -> {got_line!r}, want {want!r}",
+                file=sys.stderr,
+            )
+
+    total = len(cases) + 2 + 5 + 3
     if failures:
-        print(f"\ncheck-docs: {failures} self-test failure(s).", file=sys.stderr)
+        print(f"\ncheck-docs: {failures} of {total} self-test case(s) failed.", file=sys.stderr)
         return 1
-    print(f"check-docs: self-test passed ({len(cases) + 5} cases).")
+    print(f"check-docs: self-test passed ({total} cases).")
     return 0
 
 
@@ -251,7 +413,8 @@ def main(argv: list[str]) -> int:
     if "--self-test" in argv[1:]:
         return self_test()
 
-    roots = [Path(a) for a in argv[1:]] or [Path(__file__).resolve().parent.parent]
+    repo = Path(__file__).resolve().parent.parent
+    roots = [Path(a) for a in argv[1:]] or [repo]
     for root in roots:
         if not root.exists():
             print(f"check-docs: no such path: {root}", file=sys.stderr)
@@ -260,11 +423,7 @@ def main(argv: list[str]) -> int:
     files = markdown_files(roots)
     findings: list[str] = []
     for path in files:
-        lines = path.read_text(encoding="utf-8").split("\n")
-        fenced = fence_mask(lines)
-        findings += check_tables(path, lines, fenced)
-        findings += check_links(path, lines, fenced)
-        findings += check_lazy_continuation(path, lines, fenced)
+        findings += check_file(path, repo)
 
     if findings:
         for finding in findings:

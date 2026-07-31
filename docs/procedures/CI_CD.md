@@ -48,6 +48,15 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **linux** | `ubuntu-latest` | VST3 + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **windows** | `windows-latest` (MSVC, multi-config) | VST3 + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **macos** | `macos-14` (Apple Silicon) | universal VST3 + **AU** + Standalone (+ tests) | both modes ×3 — **blocking** |
+| **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |
+
+The **docs** job is deliberately outside the `preflight` gate and outside every build job's `needs`:
+it must run while the repository is still a pre-P1 scaffold (the phase in which the documentation
+*is* the deliverable), and a prose defect should fail the run without skipping a binary that is
+otherwise fine. `--self-test` runs first because it is the load-bearing half — the checker once
+reported the repository clean while an unclosed fence exempted 1382 lines of the largest document
+from every check, so a zero exit is not evidence unless the script's own guarantees were exercised
+in the same run.
 
 Validation is **uniform and blocking on every platform**: there is no `continue-on-error`, so a
 non-zero pluginval exit fails the job everywhere.

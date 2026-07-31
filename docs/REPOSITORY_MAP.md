@@ -67,13 +67,13 @@ delta monitoring, feature extraction for the adaptive engine, and a lock-free sc
 | `run-tests.sh` | Runs `AnabasisTests` + `AnabasisStateTests` (fail-closed: a missing binary fails the gate). |
 | `run-pluginval.sh` | pluginval on Linux/macOS (strictness + mode args — `deterministic` \| `randomise`, each ×3; signal-only crash retry). |
 | `run-pluginval.ps1` | pluginval on Windows (same strictness/mode/×3 structure; waits on the GUI-subsystem process for a trustworthy exit code). |
-| `check-docs.py` | Structural lint for the documentation set: GFM table integrity (a block inserted mid-table silently un-tables the rows after it), broken relative links, and blockquote lazy continuation. No arguments = whole repo; exit 1 on any finding. Not wired into CI — there is no docs job yet — so it is run by hand on every documentation-affecting change. |
+| `check-docs.py` | Structural lint for the documentation set: GFM table integrity (a block inserted mid-table silently un-tables the rows after it), broken relative links, blockquote lazy continuation, and unclosed code fences (which make the rest of a file render as code *and* exempt it from the other three checks). No arguments = whole repo; `--self-test` exercises the 29 cases that pin both directions; exit 1 on any finding. Run by the **docs** job in `build.yml` on every push, and by hand on documentation-affecting changes. |
 
 ## `.github/`
 
 | Path | Responsibility |
 |---|---|
-| `workflows/build.yml` | 3-OS build + self-tests + pluginval (both modes ×3, **blocking on all three platforms**); retain-then-strip symbol pipeline; fail-closed artifact staging; also callable (`workflow_call`) by a future `release.yml`. Strictness comes from one top-level `env` and escalates by phase. |
+| `workflows/build.yml` | 3-OS build + self-tests + pluginval (both modes ×3, **blocking on all three platforms**); retain-then-strip symbol pipeline; fail-closed artifact staging; also callable (`workflow_call`) by a future `release.yml`. Strictness comes from one top-level `env` and escalates by phase. Also carries the **docs** job (`scripts/check-docs.py`), which runs pre-P1 and gates nothing. |
 | `workflows/codeql.yml` | CodeQL (`c-cpp` manual build + `actions`); alerts scoped to repo-own code (`paths-ignore: build`). |
 | `workflows/msvc.yml` | MSVC `/analyze` → SARIF; JUCE treated as external; path-filtered triggers. |
 | `workflows/dependency-review.yml` | Dependency Review on PRs to `main` (GitHub Actions deps; comment on failure only). |
