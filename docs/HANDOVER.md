@@ -40,10 +40,14 @@ system, documentation library, CI/CD scaffolding and working conventions were mi
 modifying that repository, `CLAUDE.md` §3); the full Anamorph source was read across five domains
 with `file:line` evidence (`worklogs/2026-07-30-p0-anamorph-research.md`); `docs/DESIGN.md` was
 produced, survived four review rounds plus two adversarial verification passes, and was signed off
-on 2026-07-31. Eleven ADRs are Accepted and registered. Three `DSP_POLICY.md` invariants were
-amended by ADR (invariant 1 by ADR-0002, invariant 2 by ADR-0004, and invariants 2/5's open point
-closed by ADR-0003) — two of those were **Hard-Stop** items ratified by the owner, not by a green
-build. Five open questions closed: OQ-001, OQ-003, OQ-004, OQ-005, OQ-010.
+on 2026-07-31. Eleven ADRs are Accepted and registered. Four `DSP_POLICY.md` invariants were
+amended by ADR (invariant 1 by ADR-0002; invariants 2 **and 8** by ADR-0004; invariants 2/5's open
+point closed by ADR-0003) — two of those were **Hard-Stop** items ratified by the owner, not by a
+green build. ADR-0005 and ADR-0011 amended `MODE_AND_ADAPTATION_POLICY.md` /
+`PARAMETER_COMPATIBILITY_POLICY.md` and `THREADING_POLICY.md` respectively — `ADR_INDEX.md`
+carries the five-ADR amendment table, which is the registry of record for "which rules were
+rewritten, by what authority"; this row is a summary of it, not a second count to keep in step.
+Five open questions closed: OQ-001, OQ-003, OQ-004, OQ-005, OQ-010.
 
 **The four decisions that shape everything downstream.** (1) True-peak detection is a
 **measurement tap**, so oversampling-off costs no detector latency. (2) Reported latency is a

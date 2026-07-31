@@ -17,6 +17,21 @@ scripts/run-tests.sh             # runs BOTH console apps (fail-closed: a missin
 `check` **or a missing binary**. The missing-binary case matters: without it, a build that
 produced nothing would pass the gate silently.
 
+## Documentation structure lint (runs today, pre-P1)
+
+Not an audio test, but it is a CI gate and it runs *now*, while the self-tests above still say
+"no tests exist yet" — recorded here because `DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger map
+routes CI-workflow changes through this file:
+
+```bash
+python3 scripts/check-docs.py --self-test   # the checker's own guarantees, ~40 pinned cases
+python3 scripts/check-docs.py               # whole-repo scan; exit 1 on any finding
+```
+
+The `docs` job in `build.yml` runs exactly these two commands on every push, self-test first — a
+clean corpus scan is not evidence unless the script's own guarantees were exercised in the same
+run. What it checks, and the limits of what it can prove, are stated in the script's docstring.
+
 ## Suite structure
 
 ### `tests/dsp_tests.cpp` → `AnabasisTests`

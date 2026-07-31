@@ -9,6 +9,47 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Fourteenth post-sign-off pass — the undercount had siblings, and the bulk swaps were one name for three paths
+
+**The ADR_INDEX undercount fixed last pass existed in two more records, and in a third form.**
+`HANDOVER.md`'s phase summary and this file's own phase-boundary entry both still said "Three
+`DSP_POLICY.md` invariants amended" — the count predates ADR-0004's invariant-8 amendment and was
+never revisited, exactly as the index's "three ADRs" wasn't. Four invariants are amended (1, 2, 5,
+8). Both records now say so, and `HANDOVER.md` explicitly defers to `ADR_INDEX.md`'s five-ADR table
+as the registry of record rather than carrying a second count to keep in step — the lesson of the
+last three counting defects is that a number duplicated across records *will* drift, so the copies
+now name their source.
+
+**Invariant 8's enumeration named one bulk swap out of three.** `DESIGN.md` §2.8 routes
+"preset/A-B/undo bulk swaps" through the same forced duck, but the click-free enumeration said only
+"a preset load" — and the previous correction note's claim that "every one" of §2.8's rewires
+appeared save the colour model overlooked this. Under a guard that reads "one per switchable path",
+the ambiguity decides whether two click tests exist. All three routes are now named in the policy
+and in ADR-0004's prescribed block (byte-identical), with the shared mechanism stated in the same
+breath — the mechanism is one, the tests are three, because what a test exercises is the route into
+the duck (preset apply, A/B restore, undo pop), not the duck itself. A third dated correction note
+owns the previous note's overreach.
+
+**The lint's delimiter-row pattern demanded a trailing pipe GFM does not require.** `|---|---` is
+as valid as `|---|---|`, but `SEPARATOR` rejected it, so a correctly rendered table would have
+failed CI — the false-positive class again, in the fourth of the four checks this time. The same
+pattern also accepted `|   |` (no dash) as a delimiter, a false *negative* hiding a headerless
+table. Both directions fixed in one regex (at least one dash required, trailing pipe optional) and
+both pinned in the self-test; the mixed form (a delimiter row that omits its *leading* pipe under a
+piped header) joins KNOWN LIMITS with the other pipeless shapes.
+
+**Two citation/routing fixes.** ADR-0002's scope note attributed the +12 dB post-limiter shelf
+argument to "item 2", which is the `eqPosition`-mobility item; the argument lives in the Problem
+statement and option A's rejection, and the note now says so. And
+`DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger map routes CI-workflow changes through `TESTING.md`,
+which had never mentioned the `docs` job — it now documents the two commands the job runs and why a
+docs lint is recorded in a testing procedure at all.
+
+**Declined, unchanged:** the ring-read / OpenGL tension (P1, `THREAD_MODEL.md`); the `docs` job's
+same-repo-PR skip (documented in the job's comment block; whether branch protection should require
+it is the owner's call, not a repo edit). **Confirmed by the reviewer:** the numeric sweep again,
+and the lint's own measurements.
+
 ### Thirteenth post-sign-off pass — two stale records, one truncated sentence
 
 **The registry of binding decisions undercounted its own amendments.** `ADR_INDEX.md` said "Three of
@@ -767,7 +808,7 @@ repository's authority structure rather than just a status field:
   (`ADR_POLICY.md` rule 1 — an unregistered ADR is invalid). Level 3 of the authority chain is
   populated for the first time. Confidence is `Unverified` across the set by construction: there is
   no `src/`, so each is a contract the P1+ code must satisfy, upgraded as its code and tests land.
-- **Three `DSP_POLICY.md` invariants amended, each by its ADR** (rule 5 — a policy changes only
+- **Four `DSP_POLICY.md` invariants amended, each by its ADR** (rule 5 — a policy changes only
   through an ADR). **Invariant 1** (ADR-0002): the chain now prints `… Limiter → [EQ (post)] →
   Ceiling → Dither` and states that the clamp is always last before dither in *both* EQ positions —
   the pre-amendment text left Post-EQ's placement relative to the clamp unstated, which a literal
@@ -775,7 +816,10 @@ repository's authority structure rather than just a status field:
   (ADR-0004): reported latency is now the **constant lookahead allowance + OS**, the latch sentence
   drops the lookahead and names the oversampling **factor and phase mode**, and the measurement-tap
   reading is asserted rather than left open. **Invariants 2 and 5** (ADR-0003): the open point is closed, so "oversampling off ⇒ no
-  oversampling latency" is now asserted unconditionally. Both invariant-1 and invariant-2 changes
+  oversampling latency" is now asserted unconditionally. **Invariant 8** (ADR-0004 block 8(c)): the
+  click-free enumeration gains the oversampling phase mode, the colour model, the lookahead and the
+  three named bulk swaps — the enumeration is the list of owed click tests, so an unnamed path is a
+  test nobody writes. Both invariant-1 and invariant-2 changes
   were **Hard Stops** — ratified by a human, which is the only thing that clears them.
 - **`MODE_AND_ADAPTATION_POLICY.md`**: invariant 4's bar on adaptation moving the lookahead lost its
   original derivation when ADR-0004 removed the latency link; it is now grounded on its own reason

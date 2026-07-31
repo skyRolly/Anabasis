@@ -191,7 +191,9 @@ non-automatable survive.
 
      > **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
      > the oversampling factor, **the oversampling phase mode**, the EQ position, **the colour model**,
-     > **the lookahead**, the mode switch, or a preset load must produce no click, pop, or level jump.
+     > **the lookahead**, the mode switch, or a **bulk swap — a preset load, an A/B switch, or an undo
+     > step, three routes through the same forced duck, each owed its own test** — must produce no
+     > click, pop, or level jump.
      >
      > **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a
      > latch** (ADR-0004 made reported latency constant in it, so it is an ordinary smoothed change).
@@ -201,6 +203,19 @@ non-automatable survive.
      > sample is ever skipped or repeated. A per-path click test is owed for it like every other entry
      > in this list.
 
+     > **Third correction, same day (2026-07-31) — the bulk swaps are three paths and the
+     > enumeration named one.** The correction directly below claims that, before the colour model
+     > was added, "every one" of `DESIGN.md` §2.8's duck-routed rewires appeared in this
+     > enumeration. Not quite: §2.8's list ends "preset/A-B/undo bulk swaps", and the enumeration
+     > carried only "a preset load". The three bulk swaps ride the same forced-duck machinery, so a
+     > reader could take the preset load as their representative — or could just as well conclude
+     > that an A/B switch and an undo step are *unowed* tests, and under a guard that reads "one per
+     > switchable path", that ambiguity decides whether two click tests exist. All three are now
+     > named, with the shared mechanism stated in the same breath so nobody re-derives three
+     > mechanisms from three names. The mechanism is one; the tests are three, because what a test
+     > exercises is the *route into* the duck (a preset apply, an A/B restore, an undo pop), not the
+     > duck itself.
+     >
      > **Second correction, same day (2026-07-31) — the colour model was the last unnamed
      > duck-routed rewire.** `DESIGN.md` §2.8 lists the genuine discrete rewires that get the
      > asymmetric raised-cosine duck as "OS factor/phase change, EQ position, **colour model**,

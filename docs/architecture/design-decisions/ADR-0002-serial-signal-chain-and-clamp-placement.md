@@ -136,7 +136,8 @@ brief simply did not distinguish the limiter from the clamp when it wrote "after
    for its two blocks. The clause above is what this item **prescribes verbatim**. The enacted
    invariant additionally carries (i) a **"Why the clamp placement is part of this invariant"**
    rationale paragraph, which states this ADR's own reasoning — the +12 dB post-limiter shelf
-   argument of item 2 — in the policy rather than only here, and (ii) an amended **`Guarded by:`**
+   argument made in the **Problem** statement and in option A's rejection — in the policy rather
+   than only here, and (ii) an amended **`Guarded by:`**
    line naming the both-EQ-positions sweep, which is authorised by **item 7 below**, not by this
    item. Neither adds a rule: the chain block and the sentence above are the whole of the
    contract.)*

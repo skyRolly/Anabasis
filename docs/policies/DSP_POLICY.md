@@ -117,7 +117,9 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
    the oversampling factor, **the oversampling phase mode**, the EQ position, **the colour model**,
-   **the lookahead**, the mode switch, or a preset load must produce no click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
+   **the lookahead**, the mode switch, or a **bulk swap — a preset load, an A/B switch, or an undo
+   step, three routes through the same forced duck, each owed its own test** — must produce no
+   click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
    ducked.
    Guarded by: the click-free transition tests (one per switchable path).
 

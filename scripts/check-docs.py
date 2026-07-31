@@ -67,10 +67,15 @@ KNOWN LIMITS, stated rather than implied (constraint C7):
   * **Tables written without a leading pipe are not checked at all.** GFM accepts
     `A | B` / `---|---`, but `TABLE_ROW` requires the pipe to be the first
     non-whitespace character, so such a table -- including a mid-table intrusion
-    in one -- is invisible to check 1. Matching the pipeless form would mean
-    treating any prose line containing a `|` as a candidate table row, which is
-    the false-positive direction this script refuses. No table in this corpus is
-    written that way; the repository's convention is leading pipes throughout.
+    in one -- is invisible to check 1. The same applies to a single row that
+    omits its leading pipe inside an otherwise piped table (a `---|---` delimiter
+    under a `| A | B |` header breaks the run and misreports the header as a
+    fragment). Matching the pipeless form would mean treating any prose line
+    containing a `|` as a candidate table row, which is the false-positive
+    direction this script refuses. No table in this corpus is written that way;
+    the repository's convention is leading pipes throughout, on every row. A
+    *trailing* pipe, by contrast, is genuinely optional and `SEPARATOR` accepts
+    its absence.
   * **Blockquoted tables are not checked at all.** `TABLE_ROW` requires the pipe
     to be the first non-whitespace character, so the table rows the ADRs carry
     inside prescribed policy blocks are invisible to check 1. That is deliberate:
@@ -112,7 +117,12 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote
 
-SEPARATOR = re.compile(r"^\|[\s:|-]+\|$")
+# GFM's delimiter row: leading pipe guaranteed here because TABLE_ROW required
+# it to open the run, TRAILING pipe optional (`|---|---` is as valid as
+# `|---|---|`), and at least one dash required -- a whitespace-only row like
+# `|   |` is a data row, not a delimiter, and accepting it as one hid a real
+# headerless-table defect behind a false negative.
+SEPARATOR = re.compile(r"^\|[\s:|-]*-[\s:|-]*$")
 INLINE_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 TABLE_ROW = re.compile(r"^\s*\|")
@@ -434,6 +444,10 @@ def self_test() -> int:
         ("quote in an indented code block", 0, ["Example:", "", "    > quote", "    absorbed"]),
         ("tilde fence indented four columns", 0,
          ["Example:", "", "    ~~~", "    | a | b |", "    ~~~"]),
+        ("delimiter row without trailing pipe is valid GFM", 0,
+         ["| A | B |", "|---|---", "| 1 | 2 |"]),
+        ("delimiter row with alignment colons, no trailing pipe", 0,
+         ["| A | B |", "|:---|---:", "| 1 | 2 |"]),
         # --- must fire --------------------------------------------------------
         ("block inserted mid-table", 1,
          ["| A | B |", "|---|---|", "| 1 | 2 |", "> intruder", "| 3 | 4 |"]),
@@ -449,6 +463,8 @@ def self_test() -> int:
          ["1. item", "", "      | a | b |", "      | c | d |"]),
         ("indent with no blank line before it is not code", 1,
          ["Example:", "    | a | b |", "    | c | d |"]),
+        ("whitespace-only row is not a delimiter", 1,
+         ["| a | b |", "|   |", "| 1 | 2 |"]),
         ("unclosed fence is a finding", 1, ["intro", "```", "rest of the file"]),
         ("broken link is caught", 1, ["[a](scripts/nope.py)"]),
     ]
