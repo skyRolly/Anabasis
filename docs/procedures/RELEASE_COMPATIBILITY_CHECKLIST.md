@@ -40,8 +40,8 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       A build that reports the engaged value fails this item. A latency change between releases
       desyncs every saved session's PDC.
       Ref: `docs/architecture/LATENCY_MODEL.md`, `docs/policies/DSP_POLICY.md` invariant 2
-      (which records why "reports 0" is not a checkable state unless lookahead gains an explicit
-      off position).
+      (which records why "reports 0" is **not** a reachable state at all: **ADR-0004** resolved
+      OQ-010 as *no* zero/off lookahead position, and forecloses widening the 0.5–10 ms range).
 
 - [ ] **Ceiling guarantee re-verified** — output never exceeds the ceiling (≤ 0.1 dBTP) under the
       hostile-input sweep, at every supported sample rate and oversampling factor.

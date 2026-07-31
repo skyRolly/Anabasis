@@ -117,8 +117,11 @@ reorganisation, a different Bypass placement.
 **Why it exists here:** the two products deliberately share a frame, an About page, a Settings
 page, a Bypass placement and a preset/A-B interaction model, but the code is (for now) copied
 rather than shared, and Anabasis may not modify Anamorph.
-**Mitigation:** `docs/BRAND_CONSISTENCY_CHECKLIST.md` is a P5 exit criterion checked item by item;
-whether to extract a shared UI module is tracked as OQ-005.
+**Mitigation:** `docs/BRAND_CONSISTENCY_CHECKLIST.md` is a P5 exit criterion checked item by item.
+The shared-module question is **settled, not open**: **ADR-0009** (Accepted 2026-07-31) chose
+copy-and-adapt with provenance headers and no shared module for v1, and schedules the extraction
+revisit as a product-family decision **after v0.1.0 ships** — so this risk is accepted for one
+release, with a named review point rather than an open question (OQ-005 is `Resolved`).
 **Owner:** TODO.
 
 ---

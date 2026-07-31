@@ -94,9 +94,10 @@ in ─ InputGain ─ EQ(pre) ─ Comp ─┤OS region: Clip/Sat ─ Limiter├�
   > the clamp, so this is **ambiguity being resolved, not a reorder being asserted** — and
   > resolving it still touches DSP signal order, an `ARCHITECTURE_REVIEW_GATE` item and an
   > AI-agent **Hard Stop** (`CLAUDE.md`). `ADR_POLICY.md` allows a policy to change only through
-  > an ADR, so `DSP_POLICY.md` is deliberately **left untouched here**: **ADR-0002 carries the
-  > amendment**, and it is called out in the §11 sign-off checklist so a human ratifies the
-  > reading rather than inheriting it from a diagram.
+  > an ADR, so `DSP_POLICY.md` was deliberately left untouched by *this document*. **ADR-0002
+  > carried the amendment and it landed at sign-off**: invariant 1 now prints
+  > `… Limiter → [EQ (post)] → Ceiling → Dither` and states the clamp is last before dither in
+  > both EQ positions.
 - The **dry ring** (input captured post-nothing, read at current reported latency) serves three
   consumers: loudness-matched bypass, delta monitoring, and the loudness-compensation reference.
   Precedent for the always-running chain + output-crossfade bypass:
@@ -324,8 +325,8 @@ is never resampled by it. Consequences, and why this reading wins:
   nonzero OS latency even at "Off", contradicts the brief §7's Off position, and buys nothing
   the ceiling clamp + estimator do not already guarantee within the 0.1 dBTP tolerance.
 
-On acceptance of ADR-0003 (§10), `DSP_POLICY.md` invariants 2 and 5 drop their "open point"
-paragraphs and assert the measurement-tap reading (C6: that edit happens with the ADR, not now).
+**Done:** ADR-0003 was accepted at sign-off and `DSP_POLICY.md` invariants 2 and 5 no longer
+carry an "open point" — both now assert the measurement-tap reading.
 
 ### 3.3 Latency model (the contract `testReportedLatencyMatchesImpulse` guards)
 
@@ -348,9 +349,12 @@ difference, so the *engaged* lookahead changes freely while the *reported* figur
 
 Consequences, all of them intended:
 
-- **Bulk swaps can never cross reported latency.** OS factor/phase are the only remaining
-  latency sources and they are host-hidden `ANABASIS_INTERNAL` settings (§4.3) — never carried by
-  presets, A/B or undo. So a preset step, A/B switch or undo is *always* dry-fillable and never
+- **Bulk swaps can never cross reported latency.** The remaining latency sources are OS
+  factor/phase **and offline-render quality** (`Force Max` renders at 16×, so the reported figure
+  under `isNonRealtime()` uses the forced factor) — all three are host-hidden
+  `ANABASIS_INTERNAL` settings (§4.3), never carried by presets, A/B or undo. PDC therefore
+  recomputes on those three `onChanged` callbacks **plus `setNonRealtime()`**, which is the only
+  callback guaranteed to fire on the realtime→offline transition (ADR-0011). So a preset step, A/B switch or undo is *always* dry-fillable and never
   touches PDC. This is what makes §7's "copy the Anamorph state machinery wholesale" safe here.
 - **Lookahead needs no latch and no duck.** It is a continuous, smoothed read-offset change.
   Only an OS factor/phase change still latches at a reset or the silent duck bottom (§2.8).
@@ -370,9 +374,10 @@ Consequences, all of them intended:
 > point is phrased against "the engaged lookahead"; it must read *lookahead allowance*.
 > A **reported-latency change is an AI-agent Hard Stop and an `ARCHITECTURE_REVIEW_GATE` item**
 > (`AI_AGENT_POLICY.md`, `ARCHITECTURE_REVIEW_GATE.md`) — which is the point of surfacing it on
-> paper at P0 rather than discovering it in code at P2. As with §1.2, `DSP_POLICY.md` is
-> **deliberately left untouched here**: **ADR-0004 carries both amendments**, and the §11
-> checklist carries the decision as a Hard-Stop line, not a preference.
+> paper at P0 rather than discovering it in code at P2. As with §1.2, `DSP_POLICY.md` was left
+> untouched by *this document*. **ADR-0004 carried both amendments and they landed at sign-off**:
+> invariant 2 now states the constant-allowance formula, its latch sentence names only the
+> oversampling factor, and its open point is closed.
 
 No other stage contributes (EQ is IIR; detector is a tap, §3.2; dither is sample-wise). Values
 are computed at `prepare()` from `getLatencyInSamples()` — recorded as measured numbers in
@@ -547,7 +552,8 @@ ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
 
 Rationale: `withAutomatable(false)` does not hide a VST3 parameter in every host — REAPER lists
 them all (`Anamorph:src/InternalState.h:10-29` [Verified]); anything non-musical stays out of
-the tree. OS factor/phase drive the DSP through an atomic mirror + `onChanged` → PDC recompute
+the tree. OS factor/phase **and offline-render quality** drive the DSP through an atomic mirror +
+`onChanged` → PDC recompute
 callback, exactly the Anamorph mechanism. These fields persist with the session (so offline
 renders reproduce) but never participate in A/B, undo, or presets.
 
@@ -670,15 +676,16 @@ When the user edits a managed parameter in Advanced and returns to Simple:
    parameters, which is worse. The consequence is bounded — the next macro gesture re-engages
    them, exactly as rule 3 says.
 
-   **Factory presets ⊕ ship with an all-clear mask**, which makes them an *authoring constraint*,
-   not a fact: a factory patch must be reachable from a single `(loudness, character, tone)`
-   triple, and §5.5's nine curves are **jointly coupled to that triple** — six to `l`, and
-   `colourDepth` to `character` *and* `l` together. Some plausible patches are unreachable:
+   **Factory presets ⊕ ship an all-clear mask *wherever the patch is reachable from a single*
+   `(loudness, character, tone)` *triple*; where it is not, the mask records the off-curve
+   parameters.** That makes curve-consistency an *authoring constraint*, not a property: §5.5's
+   nine curves are **jointly coupled to the triple** — six to `l`, `colourDepth` to `character`
+   *and* `l`, `eqTilt`/`colourTone` to `tone` — so some plausible patches are simply unreachable.
    "Tape Glue" (heavy colour, gentle limiting) needs `colourDepth` high with `limGain` low, but
    `colourDepth = 100·character·(0.4 + 0.6·l)` caps at 40 % as `l → 0`, so heavy colour *requires*
-   a high `l`, which in turn forces `limGain` up. Those presets ship a non-clear mask, and that is fine; what is not fine is
-   assuming curve-consistency without checking. P6 preset authoring checks each patch against the
-   frozen curves.
+   a high `l`, which forces `limGain` up. Such a preset ships a non-clear mask and is correct, not
+   defective. What is not acceptable is assuming curve-consistency without checking: P6 preset
+   authoring checks each patch against the frozen curves and records which ones needed a mask.
 
    **A preset apply must not be seen as a macro move.** Preset/A-B/undo writes are ungesture-d
    and are applied inside the MacroEngine's re-entrancy flag (§5.2), so the listener neither
@@ -932,7 +939,7 @@ matrix, ns/sample + worst-block, median of ≥5 runs, machine recorded — resul
 
 ---
 
-## 10. Proposed initial ADR set (spawned by this document, per brief §16)
+## 10. The ADR set this document spawned (per brief §16) — all Accepted 2026-07-31
 
 | ADR | Title | Settles |
 |---|---|---|
@@ -948,16 +955,15 @@ matrix, ns/sample + worst-block, median of ≥5 runs, machine recorded — resul
 | 0010 | **Parameter surface**: the 49 IDs, types, ranges, defaults and choice orderings; the two **exclusion tiers**; the **lockable set** `{ceiling}`; macro automatability | §4.2–4.3; **mandatory** — `ADR_POLICY.md` requires an ADR for parameter semantics, and `PARAMETER_COMPATIBILITY_POLICY.md` rule 6 makes exclusion lists and the lockable set contract |
 | 0011 | **Threading model**: two threads, no workers; POD snapshot per block; relaxed-atomic + SPSC publication; message-thread-only MacroEngine and PDC updates | §1.4, §5.2; **mandatory** — `ADR_POLICY.md` lists the threading model |
 
-**Authoring order (stated because approval and sign-off are the same event, so a `Proposed`
-phase would otherwise be instantaneous and no ADR would ever be reviewable in that state).**
-The ADRs are **authored directly as `Accepted`, dated at sign-off, as the first P1 task**, each
+**All eleven were authored directly as `Accepted`, dated 2026-07-31, at the sign-off** — each
 citing this document and the P0 worklog as its evidence (C1; code evidence accrues from P1
-onward). They are *not* written speculatively as `Proposed` beforehand: an ADR whose decision has
-not been ratified is exactly the "predefined quota" C1 forbids, and this document already serves
-the reviewable-proposal role. Consequence: until sign-off, `ADR_INDEX.md` stays empty and this
-§10 table is the only record of the intended set — which is why the table names what each ADR
-must settle rather than leaving it to be reconstructed. Registered in
-`docs/architecture/design-decisions/ADR_INDEX.md` as they are written; numbering is
+onward). They were deliberately *not* written speculatively as `Proposed` beforehand: an ADR whose
+decision has not been ratified is exactly the "predefined quota" C1 forbids, and this document
+already served the reviewable-proposal role.
+
+**`docs/architecture/design-decisions/ADR_INDEX.md` is now the registry of record, not this
+table** (`ADR_POLICY.md` rule 1). This table is retained as the map of *what each ADR was asked to
+settle*; where it and an ADR disagree, the ADR wins (`SOURCE_OF_TRUTH.md`). Numbering is
 Anabasis-local, no reserved blocks.
 
 ---

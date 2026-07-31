@@ -9,6 +9,68 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### Post-sign-off review pass — thirteen fixes, one confirmation
+
+The sign-off changed what is true; this pass fixed the places that had not caught up, plus one
+genuine technical gap between two Accepted ADRs.
+
+**The one that would have shipped a defect: offline renders reported the wrong delay.** ADR-0004
+decision item 5 makes `int_offlineQuality = Force Max` render an offline bounce at 16× with the
+reported figure under `isNonRealtime()` using the forced factor — so it is a **third** input to
+reported latency. ADR-0011's PDC section listed only the OS factor and phase as recompute
+triggers, and `DESIGN.md` §4.3 had the same gap. A P1 author following ADR-0011 would have wired
+no recompute for a Force-Max change and, in hosts that do not re-`prepare` on entering offline
+render, the host would compensate for the *live* factor while the render ran at 16× — a bounce
+time-shifted against the rest of the project. Both records now list all three fields **plus
+`setNonRealtime()`**, which is the only callback guaranteed to fire on that transition. ADR-0011
+carries the correction inline as a same-day consistency fix against ADR-0004, not a reversal
+(`ADR_POLICY.md` rule 4 governs reversals; this was an omission).
+
+**A binding rule was justified by a scenario this architecture makes impossible.**
+`MODE_AND_ADAPTATION_POLICY` invariant 6 froze the macro curves on the grounds that changing one
+alters how a recorded automation lane plays back. It does not: the macros are non-automatable, a
+lane on a managed parameter writes that parameter directly, and `M` is evaluated only on a macro
+gesture. A maintainer checking the stated reason would find it false and could conclude the freeze
+does not apply. The real argument is **recall**: every saved session and preset stores a macro
+position, and re-mapping that position through a new curve makes a user's saved master reload
+differently — a `COMPATIBILITY_POLICY` violation on its own terms, independent of
+`PARAMETER_COMPATIBILITY_POLICY` rule 7's automation framing.
+
+**Three ADR-mandated test stimuli were never transcribed.** `TESTING.md` had the test *names* but
+not the stimuli each ADR flagged as load-bearing — and a name without its stimulus passes
+vacuously. Now a table: `testOutputNeverExceedsCeiling` in **both EQ positions** with a +12 dB
+post-limiter shelf (ADR-0002); true-peak accuracy across the **whole OS matrix**, because the
+estimator's input path differs per setting (ADR-0003); the impulse landing at exactly
+`maxLookahead + OS` for **every** lookahead value, and a **lookahead move** among the click-free
+paths (ADR-0004). `DSP_POLICY` invariant 8's enumeration gained lookahead for the same reason —
+it is the one switchable path with neither a duck nor a latch, so it is the one most likely to be
+skipped.
+
+**Two policy/ADR literal divergences.** ADR-0002 quotes its amendment verbatim; the policy had
+paraphrased it, so a reader diffing the two would see an incomplete amendment — the prescribed
+sentence is now used. And invariant 5's "metering taps stay at base rate" appeared to contradict
+ADR-0003's estimator reading oversampled signal at ≥ 4×; the true-peak estimator is now named as
+the explicit exception, with the reason (it is a measurement tap, not an audio capture point).
+
+**Pre-sign-off language still standing in a signed-off document.** `DESIGN.md` still said
+`ADR_INDEX.md` is empty and its §10 table the only record, still headed §10 "Proposed initial ADR
+set", and still promised amendments to `DSP_POLICY` as future work in two Hard-Stop blockquotes —
+all false as of the same change set. The header's drift disclaimer covers divergence from *shipped
+behaviour*, not false claims about current repository contents.
+
+**Four smaller ones.** ADR-0005 said a macro gesture is "nine parameter writes" — the managed set
+splits by driver, so it is seven for `loudness`, two for `tone`, one for `character`. The factory
+preset mask rule said both "all-clear" and "non-clear" four sentences apart; now phrased once,
+conditionally. RISK-007 pointed at OQ-005, which this change set Resolved — re-aimed at ADR-0009
+and its scheduled post-v0.1.0 revisit. `README`'s open-question summary omitted OQ-009; replaced
+with a pointer to the list of record so it cannot drift again. The release checklist's `Ref:` line
+still contemplated lookahead "gaining an explicit off position", which ADR-0004 forecloses.
+
+**Confirmed, no change:** the count and arithmetic sweep — 49 rows with nine non-automatable
+(matching ADR-0010), the fixed-point property across all nine managed parameters, every curve
+maximum inside its declared range, the interpolator group delay inside the minimum lookahead, the
+ten `int_` fields, and the wireframe meter values.
+
 ### What the sign-off enacted
 
 The sign-off is the event the last five passes were building toward, and it changed the

@@ -182,7 +182,7 @@ Four questions, none of them obvious, and each one able to break a different inv
 - **The knob is testable.** Because `M` is pure, the sound at a given macro position is
   history-independent: `testMacroDefaultIsFixedPoint` plus a curve-evaluation test fully describe
   Simple mode. Carry-over offsets would have made this untestable.
-- **A macro gesture is nine parameter writes.** They appear in the host's parameter history and in
+- **A macro gesture is a burst of parameter writes (seven for a `loudness` drag, two for `tone`, one for `character` — the managed set splits by driver, it is not nine every time).** They appear in the host's parameter history and in
   the plugin's undo as one coalesced step per knob drag. Users who want a single automatable
   "performance lane" do not get one in v1; that is the price of option C's rejection, and reversing
   it is a kVersion bump + a superseding ADR.
@@ -192,7 +192,10 @@ Four questions, none of them obvious, and each one able to break a different inv
   produce. This is accepted rather than patched: making ungesture-d writes detach would mean
   automation playback silently detaching parameters, which is worse. The consequence is bounded —
   the next macro gesture re-engages them.
-- **Factory presets are an authoring constraint, not a fact.** They ship an all-clear mask, so a
+- **Factory presets are an authoring constraint, not a fact.** A factory patch ships an all-clear
+  mask **wherever it is reachable from a single `(loudness, character, tone)` triple**; where it is
+  not, the mask records the off-curve parameters and that is a correct preset, not a defective one.
+  With an all-clear mask a
   factory patch must be reachable from a single `(loudness, character, tone)` triple. The §5.5
   curves couple `colourDepth` and `limGain` to one `l`, so a patch like "Tape Glue" (heavy colour,
   gentle limiting) is not reachable and ships a **non-clear** mask instead. P6 preset authoring

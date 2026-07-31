@@ -23,8 +23,9 @@ headless Linux machine, no IDE.
   `com.rollytech.anabasis`**). Both must be written into `CMakeLists.txt` at P1 —
   [`docs/procedures/BUILD.md`](docs/procedures/BUILD.md) §Plugin identity.
 - **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the macOS
-  deployment target (OQ-011, settled at P1 against a real build), and four P2–P6 items — tracked in
-  [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) and **not** to be guessed at. Resolved entries
+  deployment target (OQ-011, settled at P1 against a real build), and **the remaining entries in
+  [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)** — which is the list of record, so this
+  sentence cannot drift out of date. None of them may be guessed at. Resolved entries
   stay in that file's `Resolved` section; they are decisions, not choices to revisit.
 
 ## Planned scope (see `docs/DEVELOPMENT_BRIEF.md` for the full specification)

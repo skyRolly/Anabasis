@@ -149,9 +149,21 @@ atomic mirror, not through a command.
 **PDC.** Latency is recomputed **only** on the message thread, by a `const`, race-free
 `predictLatency(snapshot)` taking the same POD type the engine renders from, feeding a **single**
 `setLatencySamples` call site (`Anamorph:src/PluginProcessor.cpp:88-105` [Verified]). It is
-invoked from `prepareToPlay` and from the `InternalState` change callbacks for the OS
-factor/phase — under ADR-0004 those are the only remaining latency sources, so no APVTS listener
-needs to drive PDC at all. The audio thread's effective latency follows its own latched OS state
+invoked from `prepareToPlay`, from the `InternalState` change callbacks for **all three**
+latency-bearing host-hidden fields — `int_oversample`, `int_osPhase` **and
+`int_offlineQuality`** — and from **`setNonRealtime()`**. Under ADR-0004 those are the only
+remaining latency sources, so no APVTS listener needs to drive PDC at all.
+
+> **Correction, same day (2026-07-31), for consistency with ADR-0004 — not a change of decision.**
+> An earlier revision of this paragraph listed only the OS factor and phase. That contradicted
+> ADR-0004 decision item 5: at `int_offlineQuality = Force Max` an offline bounce renders at 16×
+> and *"the reported figure during `isNonRealtime()` uses the forced factor"*, which makes
+> `int_offlineQuality` a **third** input to reported latency and the realtime→offline transition a
+> **fourth** recompute trigger. Left as written, a P1 author would wire no recompute for a
+> Force-Max change, and — in hosts that do not re-`prepare` when entering offline render — the host
+> would compensate for the live factor while the render ran at 16×, time-shifting the bounce
+> against the rest of the project. `setNonRealtime()` is named explicitly because it is the only
+> callback guaranteed to fire on that transition. The audio thread's effective latency follows its own latched OS state
 and is never written from the message thread. The engine's dry-fill gate compares the predicted
 figure against the latched one before engaging (`Anamorph:src/dsp/AnamorphEngine.cpp:290-307`
 [Verified]).

@@ -25,12 +25,21 @@ Deterministic DSP acceptance checks using a `check(cond, "what")` counter harnes
 every test and exits non-zero on any failure. No test framework, no dependencies.
 
 Planned coverage, one test per `DSP_POLICY.md` invariant (see the invariant → test map there):
-chain order; reported latency == impulse-measured latency across the oversampling × lookahead
-matrix; true-peak accuracy; **output never exceeds the ceiling** under hostile input; oversampling
-scope; ADAA aliasing measurement; null-with-defaults and bypass-null; click-free transitions per
-switchable path; no NaN/Inf/denormals across the feature × oversampling × sample-rate matrix;
-loudness-compensation render neutrality; LUFS against the EBU R128 vectors; dither placement and
-default.
+chain order; reported latency; true-peak accuracy; **output never exceeds the ceiling**;
+oversampling scope; ADAA aliasing measurement; null-with-defaults and bypass-null; click-free
+transitions per switchable path; no NaN/Inf/denormals across the feature × oversampling ×
+sample-rate matrix; loudness-compensation render neutrality; LUFS against the EBU R128 vectors;
+dither placement and default.
+
+**Four of these have a stimulus mandated by an ADR, not left to the implementer.** A test name
+alone does not carry the property; these are the cases where the wrong stimulus passes vacuously:
+
+| Test | Mandated stimulus | Source |
+|---|---|---|
+| `testOutputNeverExceedsCeiling` | Run in **both EQ positions**, and the Post case must include a **+12 dB shelf after the limiter** — the exact signal the clamp placement exists to survive | ADR-0002 |
+| true-peak accuracy (≤ 0.1 dB) | The **whole OS matrix** (Off / 2× / 4× / 8× / 16×), because the estimator's input path differs per setting — its own 4× interpolator, a further ≥ 2×, or the oversampled signal read directly | ADR-0003 |
+| `testReportedLatencyMatchesImpulse` | The impulse must land at **exactly `maxLookahead + OS` for every lookahead value**, not just at the range ends — the constant-allowance contract is what makes a padding bug a test failure | ADR-0004 |
+| click-free transitions | Must include a **lookahead move** — it is the one switchable path with neither a duck nor a latch (`DSP_POLICY.md` invariant 8) | ADR-0004 |
 
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 
@@ -63,6 +72,12 @@ release-checklist item.
 
 Use the existing harness and add the call in `main`. DSP behaviour → `dsp_tests.cpp`;
 state/serialization/preset behaviour → `state_tests.cpp`.
+
+**One documented exception to that split.** `testMacroDefaultIsFixedPoint` and
+`testModeSwitchIsSoundNeutral` are *behavioural* guards but live in `state_tests.cpp`, because only
+`AnabasisStateTests` compiles the wrapper sources (ADR-0008's target graph) and both need the APVTS
+and the MacroEngine, which the DSP core deliberately cannot see (ADR-0001). Placement follows what
+the target can link, not what the test measures — do not "fix" it by moving them.
 
 **Every bug fix ships a regression test** that fails on the old code and passes on the fix
 (`TESTING_POLICY.md` rule 1). A fix without one is not finished.

@@ -17,11 +17,12 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    ```
 
    The EQ position switch (Pre/Post) moves the EQ block **only** between the two defined
-   positions — before the compressor, or after the limiter. No other reordering exists.
+   positions — before the compressor, or after the limiter and **before the ceiling clamp**. The
+   ceiling clamp is **always** the last stage before dither, in both positions. No other
+   reordering exists.
 
-   **The ceiling clamp is ALWAYS the last stage before dither, in both EQ positions.** In the
-   Post position the EQ therefore sits *between* the limiter and the clamp, not after it. This is
-   not a preference: a post-limiter shelf of up to +12 dB re-introduces overshoot, so a clamp
+   **Why the clamp placement is part of this invariant.** It is not a preference: a post-limiter
+   shelf of up to +12 dB re-introduces overshoot, so a clamp
    upstream of it could not satisfy invariant 4, and "the output never exceeds the ceiling" would
    be false in the Post position. Amended by **ADR-0002** (2026-07-31) — the pre-amendment text
    printed the clamp immediately after the limiter and left the Post-EQ's placement relative to it
@@ -84,7 +85,12 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
 5. **Oversampling wraps the nonlinear stages; linear stages stay at base rate.** The region is
    **Clipper/Saturation → Limiter** (ADR-0003, 2026-07-31). The EQ, the compressor, the **ceiling
    clamp** — which must sit after the Post-position EQ per invariant 1 — dither and the metering
-   taps all stay at base rate. **"Oversampling off ⇒ no oversampling latency" now holds
+   taps all stay at base rate, **with one named exception: the true-peak estimator.** Its own rate
+   varies by setting (ADR-0003: its own 4× interpolator at OS Off, a further ≥ 2× at 2×, and the
+   oversampled signal read directly at ≥ 4×) so that invariant 3's ≥ 4× requirement holds at every
+   setting. That is consistent with "metering taps stay at base rate" because the estimator is a
+   *measurement tap*, not an audio capture point — the capture points for LUFS, spectrum and GR
+   history are all base-rate. **"Oversampling off ⇒ no oversampling latency" now holds
    unconditionally**, because ADR-0003 settled the ≥ 4× true-peak path as a measurement tap
    (invariant 2); the sentence is asserted, no longer assumed.
    Guarded by: the latency-matrix test + the aliasing measurement.
@@ -100,10 +106,18 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    Guarded by: `testNullWithDefaults`, `testBypassNull`.
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
-   the oversampling factor, the EQ position, the mode switch, or a preset load must produce no
-   click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
+   the oversampling factor, the EQ position, **the lookahead**, the mode switch, or a preset load
+   must produce no click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
    ducked.
    Guarded by: the click-free transition tests (one per switchable path).
+
+   **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a
+   latch** (ADR-0004 made reported latency constant in it, so it is an ordinary smoothed change).
+   That makes it the path most likely to be skipped at P1. Its click-free mechanism is specific:
+   the **audio** delay stays fixed at the full 10 ms allowance and the lookahead value moves only
+   the *detector / gain-computer* alignment — a smooth, band-limited control signal — so no audio
+   sample is ever skipped or repeated. A per-path click test is owed for it like every other entry
+   in this list.
 
 9. **No NaN / Inf / denormals leave the engine, and the engine self-heals.** Denormal protection
    (FTZ/DAZ) is active for the whole block; a non-finite sample anywhere resets the affected state

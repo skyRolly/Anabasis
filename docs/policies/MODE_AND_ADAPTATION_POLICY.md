@@ -108,9 +108,18 @@ Two consequences that are part of the contract, not implementation detail:
   mapping applied at message-thread rate, and offline-render determinism is explicitly not promised
   for that unsupported usage.
 - Making a macro automatable later is a parameter-surface change: `kVersion` bump + ADR
-  (`PARAMETER_COMPATIBILITY_POLICY.md` rules 4–5). The macro **mapping curves** are likewise
-  semantic from the first shipped build — changing one changes what a recorded automation lane on a
-  managed parameter sounds like (rule 7).
+  (`PARAMETER_COMPATIBILITY_POLICY.md` rules 4–5).
+- The macro **mapping curves are semantic from the first shipped build** — but be precise about
+  why, because the obvious argument is wrong under this architecture. A recorded automation lane
+  on a managed parameter (say `limGain`) writes that parameter **directly** on playback and never
+  consults `M`, so changing a curve does **not** change how that lane sounds. What a curve change
+  *does* break is **recall**: every saved session and preset stores a macro position, and the next
+  macro gesture maps that stored position through the *new* curve — so the same patch produces a
+  different sound, and a user's saved master no longer reloads as they left it. That is a
+  `COMPATIBILITY_POLICY.md` violation on its own terms, independent of
+  `PARAMETER_COMPATIBILITY_POLICY.md` rule 7's automation framing (which is written for the
+  host-visible/automatable macro this product does not have). A post-release curve change is
+  therefore an **Architecture Review Gate** item and needs an ADR.
 
 Recorded in `PARAMETER_REGISTRY.md` when it is written at P1; `DESIGN.md` §4.2 is the interim table
 of record.
