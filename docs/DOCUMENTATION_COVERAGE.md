@@ -63,7 +63,44 @@ P1 registry snapshot". Softened to the accurate reading: sign-off ratifies the n
 wording**, IDs/ranges/defaults freeze at v0.1.0, and a later rename is rule 2's normal workflow
 (registry + a `Changed` CHANGELOG entry + a deliberate snapshot re-freeze).
 
-*Confirmations:* the reviewer independently re-derived the BS.1770-4 interpolator group delay
+**Second review pass on the design document (same day).** Three findings fixed, three
+confirmations.
+
+*The section heading said 48 parameters; the table has 49.* `colourDepth` was added by the fix
+above and the heading was not updated — the one artifact in the document that a P1 implementer
+could have trusted over the rows, on the surface that freezes at v0.1.0. Corrected. (`HANDOVER`
+and this audit already said 49.)
+
+*The Post-EQ position is a Hard-Stop item and was not marked as one.* `DSP_POLICY.md` invariant 1
+prints the chain as `… Limiter → Ceiling → Dither` and says the EQ switch moves the block "after
+the limiter" — it does **not** say where Post-EQ sits *relative to the clamp*. This design reads
+it as Limiter → EQ(post) → Ceiling because the literal-appended alternative makes invariant 4
+unsatisfiable; a reader taking the diagram literally would read it the other way. That is
+ambiguity being resolved, but resolving it still touches DSP signal order — an
+`ARCHITECTURE_REVIEW_GATE` item and an AI-agent Hard Stop. `DSP_POLICY.md` is deliberately **not**
+edited here (`ADR_POLICY.md`: a policy changes only through an ADR); instead the obligation is
+attached to ADR-0002 and raised to the top of the §11 sign-off checklist, so a human ratifies the
+reading rather than inheriting it from a diagram.
+
+*"P0 execution is done" was the wrong claim.* `DOCUMENTATION_LIFECYCLE_POLICY.md` maps
+*complete a phase* to `HANDOVER.md` + `DOCUMENTATION_COVERAGE.md` + the `DEVELOPMENT_BRIEF.md` §13
+phase summary — and the brief's own §11 makes P0's exit criterion the **sign-off**, not the
+delivery. So the trigger has **not** fired and no phase summary is due yet; the earlier wording
+invited the opposite reading. `HANDOVER` now states plainly that P0 is *not* complete, that all
+P0 work items are delivered, and that the phase-completion trigger fires at sign-off — with the
+three required updates named so the next agent does not have to re-derive them.
+
+*Confirmations:* the parameter table's macro fixed-point rule was independently re-verified across
+all nine managed rows (each `M(0,0,0)` equals its declared default) together with every curve
+maximum against its declared range, and all nine managed rows confirmed `Auto: yes` — consistent
+with §5.2's claim that the managed Advanced parameters are the automation surface. The wireframe's
+meter values were re-checked against §2.9's formulas (PLR = −1.02 − (−9.5) = 8.5; Spotify penalty
+= −14 − (−9.5) = −4.5) and match. The document-registration fix was confirmed correct in all four
+places, with the note that `SOURCE_OF_TRUTH.md` has no enumerated developer-class file list, so
+the new §"Where `DESIGN.md` sits" is the closest equivalent — and it does more than the trigger
+asks by pinning the authority rank.
+
+*Confirmations (first pass):* the reviewer independently re-derived the BS.1770-4 interpolator group delay
 ((48−1)/2 = 23.5 upsampled ≈ 5.9 base samples ≈ 0.122 ms at 48 kHz, inside the 0.5 ms minimum
 lookahead) and confirmed the measurement-tap latency claim is arithmetically sound with the P2
 impulse verification correctly scheduled; and cross-checked every unmarked value in the parameter

@@ -64,8 +64,22 @@ in ─ InputGain ─ EQ(pre) ─ Comp ─┤OS region: Clip/Sat ─ Limiter├�
   which is *always* the last stage before dither. This is what makes DSP_POLICY invariant 4
   satisfiable: a post-limiter EQ boost (up to +12 dB shelf) re-introduces overshoot, and the
   clamp must sit downstream of it or the ceiling guarantee is void in the Post position. Brief
-  §4.4's "after the limiter" is satisfied; nothing else reorders (DSP_POLICY invariant 1). The
-  switch is a discrete change routed through the click-free transition layer (§2.8).
+  §4.4's "after the limiter" is satisfied; nothing else reorders. The switch is a discrete change
+  routed through the click-free transition layer (§2.8).
+
+  > **⚠ Hard-Stop item — `DSP_POLICY.md` invariant 1 needs the same wording, and this document
+  > cannot make that edit.** The policy prints the chain as `… Limiter → Ceiling → Dither` and
+  > says the EQ switch moves the block "before the compressor, or after the limiter" — which does
+  > *not* say where Post-EQ sits **relative to the Ceiling clamp**. This design reads it as
+  > Limiter → **EQ(post)** → Ceiling, because the literal-appended alternative
+  > (… → Ceiling → EQ(post)) makes invariant 4 unsatisfiable, and an invariant that cannot hold
+  > is the worse reading. But a reader taking the policy's diagram literally would place it after
+  > the clamp, so this is **ambiguity being resolved, not a reorder being asserted** — and
+  > resolving it still touches DSP signal order, an `ARCHITECTURE_REVIEW_GATE` item and an
+  > AI-agent **Hard Stop** (`CLAUDE.md`). `ADR_POLICY.md` allows a policy to change only through
+  > an ADR, so `DSP_POLICY.md` is deliberately **left untouched here**: **ADR-0002 carries the
+  > amendment**, and it is called out in the §11 sign-off checklist so a human ratifies the
+  > reading rather than inheriting it from a diagram.
 - The **dry ring** (input captured post-nothing, read at current reported latency) serves three
   consumers: loudness-matched bypass, delta monitoring, and the loudness-compensation reference.
   Precedent for the always-running chain + output-crossfade bypass:
@@ -305,7 +319,7 @@ discrete params use the Raw* exact-normalised classes (pluginval state-restorati
 `Anamorph:src/PluginParameters.cpp:11-89`); host-hidden state uses `int_`-prefixed identifiers
 in `ANABASIS_INTERNAL`.
 
-### 4.2 APVTS parameters (48)
+### 4.2 APVTS parameters (49)
 
 Type: F float · C choice · B bool. Auto: host-automatable. Values, ranges and tapers marked
 **⊕** are proposals (the brief does not specify them); unmarked values are the brief's. The
@@ -707,7 +721,7 @@ matrix, ns/sample + worst-block, median of ≥5 runs, machine recorded — resul
 | ADR | Title | Settles |
 |---|---|---|
 | 0001 | Format-agnostic DSP core via POD `EngineParameters` | §1.1 (inherits Anamorph ADR-0001 pattern) |
-| 0002 | Fixed serial signal chain; EQ Pre/Post as the only mobility; **ceiling clamp always last before dither** | §1.2, §2.6 / DSP_POLICY inv 1+4 |
+| 0002 | Fixed serial signal chain; EQ Pre/Post as the only mobility; **ceiling clamp always last before dither**. **Must amend `DSP_POLICY.md` invariant 1's chain wording** to state Limiter → EQ(post) → Ceiling — Hard Stop, human review required | §1.2, §2.6 / DSP_POLICY inv 1+4 |
 | 0003 | Oversampling scope + **true-peak as measurement tap, ≥4× total at every OS setting** + linear-phase & Force-Max modes | §3.1–3.2; closes DSP_POLICY inv 2/5 open point |
 | 0004 | Latency contract: `lookahead + OS`, latched changes, non-automatable latency params, **no zero-lookahead position** | §3.3–3.4; resolves OQ-010 |
 | 0005 | Macro-layer architecture: message-thread mapper, non-automatable macros, detach/re-engage coexistence, adaptive trims engine-internal | §5; resolves OQ-004 |
@@ -737,7 +751,9 @@ Anabasis-local, no reserved blocks.
   P5. (4) `dither`/`truePeakMode` non-automatability choices are conservative-frozen — loosening
   later is a kVersion bump.
 
-**Sign-off checklist for the owner**: ⊕ values, ranges and tapers in §4.2/§4.3 (frozen at
+**Sign-off checklist for the owner**: **the §1.2 Hard-Stop item — Post-EQ sits *before* the
+ceiling clamp, which requires ADR-0002 to amend `DSP_POLICY.md` invariant 1's chain wording** ·
+⊕ values, ranges and tapers in §4.2/§4.3 (frozen at
 v0.1.0) · display names as launch wording (revisable later, rule 2) · §3.2 measurement-tap · §3.4
 no-zero-lookahead · §5.2/§5.3 macro architecture & coexistence · §5.5 draft curves as the P4
 starting point · §6.1 accent-family + variable-font direction · §8 copy-and-adapt · §10 ADR set.
