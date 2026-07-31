@@ -24,8 +24,11 @@ Part I is the product/DSP spec; Part II is the engineering standard inherited fr
 product **Anamorph**. Open decisions live in [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) —
 **do not guess at them**.
 
-**Current phase: P0 (research & design).** No DSP code is written until `DESIGN.md` is signed off
-(`docs/DEVELOPMENT_BRIEF.md` §11, §24).
+**Current phase: P1 (skeleton).** `docs/DESIGN.md` was **signed off 2026-07-31**, closing P0.
+Implementation is unblocked and is governed by the eleven Accepted ADRs in
+[`docs/architecture/design-decisions/`](docs/architecture/design-decisions/ADR_INDEX.md) — read
+`ADR_INDEX.md` before writing code; an ADR outranks `DESIGN.md`, which is now superseded section by
+section as the real architecture set lands. P1 exit criterion: pluginval **L5**.
 
 ---
 

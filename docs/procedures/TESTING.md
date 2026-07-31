@@ -17,6 +17,21 @@ scripts/run-tests.sh             # runs BOTH console apps (fail-closed: a missin
 `check` **or a missing binary**. The missing-binary case matters: without it, a build that
 produced nothing would pass the gate silently.
 
+## Documentation structure lint (runs today, pre-P1)
+
+Not an audio test, but it is a CI gate and it runs *now*, while the self-tests above still say
+"no tests exist yet" — recorded here because `DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger map
+routes CI-workflow changes through this file:
+
+```bash
+python3 scripts/check-docs.py --self-test   # the checker's own guarantees, ~40 pinned cases
+python3 scripts/check-docs.py               # whole-repo scan; exit 1 on any finding
+```
+
+The `docs` job in `build.yml` runs exactly these two commands on every push, self-test first — a
+clean corpus scan is not evidence unless the script's own guarantees were exercised in the same
+run. What it checks, and the limits of what it can prove, are stated in the script's docstring.
+
 ## Suite structure
 
 ### `tests/dsp_tests.cpp` → `AnabasisTests`
@@ -25,12 +40,21 @@ Deterministic DSP acceptance checks using a `check(cond, "what")` counter harnes
 every test and exits non-zero on any failure. No test framework, no dependencies.
 
 Planned coverage, one test per `DSP_POLICY.md` invariant (see the invariant → test map there):
-chain order; reported latency == impulse-measured latency across the oversampling × lookahead
-matrix; true-peak accuracy; **output never exceeds the ceiling** under hostile input; oversampling
-scope; ADAA aliasing measurement; null-with-defaults and bypass-null; click-free transitions per
-switchable path; no NaN/Inf/denormals across the feature × oversampling × sample-rate matrix;
-loudness-compensation render neutrality; LUFS against the EBU R128 vectors; dither placement and
-default.
+chain order; reported latency; true-peak accuracy; **output never exceeds the ceiling**;
+oversampling scope; ADAA aliasing measurement; null-with-defaults and bypass-null; click-free
+transitions per switchable path; no NaN/Inf/denormals across the feature × oversampling ×
+sample-rate matrix; loudness-compensation render neutrality; LUFS against the EBU R128 vectors;
+dither placement and default.
+
+**Four of these have a stimulus mandated by an ADR, not left to the implementer.** A test name
+alone does not carry the property; these are the cases where the wrong stimulus passes vacuously:
+
+| Test | Mandated stimulus | Source |
+|---|---|---|
+| `testOutputNeverExceedsCeiling` | Run in **both EQ positions**, and the Post case must include a **+12 dB shelf after the limiter** — the exact signal the clamp placement exists to survive | ADR-0002 |
+| true-peak accuracy (≤ 0.1 dB) | The **whole OS matrix** — Off / 2× / 4× / 8× / 16× **× both phase modes** (minimum / linear) — because the estimator's input path differs per setting: its own 4× interpolator, a further ≥ 2×, or the oversampled signal read directly. It must cover **both taps**: the limiter's detector *and* the ceiling clamp's (ADR-0002), which read at different points in the chain. The `Off × linear` cell is knowingly degenerate — no filter is instantiated at Off, so phase cannot reach the estimator; keep it (uniform sweep) but do not hunt for a difference there | ADR-0003 item 9 |
+| `testReportedLatencyMatchesImpulse` | The impulse must land at **exactly `maxLookahead + OS` for every lookahead value**, not just at the range ends — the constant-allowance contract is what makes a padding bug a test failure | ADR-0004 |
+| click-free transitions | Must include a **lookahead move** — it is the one switchable path with neither a duck nor a latch (`DSP_POLICY.md` invariant 8) | ADR-0004 |
 
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 
@@ -41,7 +65,9 @@ references them) but are never instantiated — the tests run headlessly and ope
 Planned coverage: serialized-schema shape; the **parameter-registry snapshot**; raw-exact
 save → load → save round-trip (byte-identical); every legacy read path via a frozen fixture;
 corrupt/foreign-state robustness; user-preset round-trip + exclusion rules; A/B and view-param
-preservation.
+preservation; **`testMacroDefaultIsFixedPoint`** — the macro mapping at the default position must
+equal every managed parameter's declared default (ADR-0005, `MODE_AND_ADAPTATION_POLICY.md`
+invariant 1); **`testModeSwitchIsSoundNeutral`** (invariant 2).
 
 ### The registry snapshot — how it is used
 
@@ -61,6 +87,12 @@ release-checklist item.
 
 Use the existing harness and add the call in `main`. DSP behaviour → `dsp_tests.cpp`;
 state/serialization/preset behaviour → `state_tests.cpp`.
+
+**One documented exception to that split.** `testMacroDefaultIsFixedPoint` and
+`testModeSwitchIsSoundNeutral` are *behavioural* guards but live in `state_tests.cpp`, because only
+`AnabasisStateTests` compiles the wrapper sources (ADR-0008's target graph) and both need the APVTS
+and the MacroEngine, which the DSP core deliberately cannot see (ADR-0001). Placement follows what
+the target can link, not what the test measures — do not "fix" it by moving them.
 
 **Every bug fix ships a regression test** that fails on the old code and passes on the fix
 (`TESTING_POLICY.md` rule 1). A fix without one is not finished.

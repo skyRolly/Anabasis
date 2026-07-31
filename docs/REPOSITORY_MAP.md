@@ -19,7 +19,7 @@ Anabasis/
 ├── worklogs/               Session-local investigation records for future agents (NOT architecture
 │                           docs; finalized decisions graduate to ADRs — worklogs are the raw
 │                           evidence trail: measurements, rejected alternatives and why).
-├── scripts/                setup / build / test / pluginval.
+├── scripts/                setup / build / test / pluginval / docs lint.
 ├── packaging/              [P6] Per-platform install notes + installer assets (linux/, windows/, macos/).
 ├── .github/                CI + security tooling: workflows/ (build + validate on 3 OSes with
 │                           retain-then-strip symbol pipeline; CodeQL; MSVC /analyze;
@@ -67,12 +67,13 @@ delta monitoring, feature extraction for the adaptive engine, and a lock-free sc
 | `run-tests.sh` | Runs `AnabasisTests` + `AnabasisStateTests` (fail-closed: a missing binary fails the gate). |
 | `run-pluginval.sh` | pluginval on Linux/macOS (strictness + mode args — `deterministic` \| `randomise`, each ×3; signal-only crash retry). |
 | `run-pluginval.ps1` | pluginval on Windows (same strictness/mode/×3 structure; waits on the GUI-subsystem process for a trustworthy exit code). |
+| `check-docs.py` | Structural lint for the documentation set: GFM table integrity (a block inserted mid-table silently un-tables the rows after it), broken relative links, blockquote lazy continuation, and unclosed code fences (which make the rest of a file render as code *and* exempt it from the other three checks). No arguments = whole repo; `--self-test` pins both directions — the shapes that must be reported and the valid markup that must not — and prints the case count it actually ran, so no figure is duplicated here to go stale; exit 1 on any finding. Run by the **docs** job in `build.yml` on every push, and by hand on documentation-affecting changes. |
 
 ## `.github/`
 
 | Path | Responsibility |
 |---|---|
-| `workflows/build.yml` | 3-OS build + self-tests + pluginval (both modes ×3, **blocking on all three platforms**); retain-then-strip symbol pipeline; fail-closed artifact staging; also callable (`workflow_call`) by a future `release.yml`. Strictness comes from one top-level `env` and escalates by phase. |
+| `workflows/build.yml` | 3-OS build + self-tests + pluginval (both modes ×3, **blocking on all three platforms**); retain-then-strip symbol pipeline; fail-closed artifact staging; also callable (`workflow_call`) by a future `release.yml`. Strictness comes from one top-level `env` and escalates by phase. Also carries the **docs** job (`scripts/check-docs.py`), which runs pre-P1 and gates nothing. |
 | `workflows/codeql.yml` | CodeQL (`c-cpp` manual build + `actions`); alerts scoped to repo-own code (`paths-ignore: build`). |
 | `workflows/msvc.yml` | MSVC `/analyze` → SARIF; JUCE treated as external; path-filtered triggers. |
 | `workflows/dependency-review.yml` | Dependency Review on PRs to `main` (GitHub Actions deps; comment on failure only). |
@@ -81,8 +82,10 @@ delta monitoring, feature extraction for the adaptive engine, and a lock-free sc
 | `ISSUE_TEMPLATE/` | `bug_report.yml` (test-report form) + `config.yml` (doc links). |
 
 All three build/analysis workflows are guarded by a `preflight` job that skips them while
-`CMakeLists.txt` does not exist, so the P0 scaffold does not report a red build. The guard becomes
-a no-op the moment P1 lands.
+`CMakeLists.txt` does not exist, so the P0 scaffold does not report a red build *for code that has
+not been written*. The guard becomes a no-op the moment P1 lands. The **`docs` job** in `build.yml`
+is deliberately outside it and runs on every push — pre-P1 the documentation is the deliverable, so
+it is the one thing that *can* legitimately go red before `src/` exists. It gates no build job.
 
 ## `docs/` — documentation library
 
@@ -90,11 +93,17 @@ a no-op the moment P1 lands.
 docs/
 ├── DEVELOPMENT_BRIEF.md   The owner-supplied product spec (Part I) + the inherited engineering
 │                          standard (Part II). See SOURCE_OF_TRUTH.md §"Where the product brief sits".
+├── DESIGN.md              The P0 design deliverable (brief §11/§24), SIGNED OFF 2026-07-31:
+│                          architecture, the 49-parameter table, macro curves, wireframes.
+│                          Answers to the brief; the eleven ADRs it spawned now outrank it and
+│                          supersede it section by section as P1-P6 land.
+│                          See SOURCE_OF_TRUTH.md §"Where DESIGN.md sits".
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
 │   BRAND_CONSISTENCY_CHECKLIST.md
 ├── user/           [P6] end-user class: USER_MANUAL, INSTALLATION
-├── architecture/   design-decisions/ADR_INDEX.md (+ ADRs). [P1–P2] the descriptive set:
+├── architecture/   design-decisions/ — ADR_INDEX.md + ADR-0001…0011 (all Accepted
+│                   2026-07-31). [P1–P2] the descriptive set:
 │                   ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE, DSP_ALGORITHMS,
 │                   THREAD_MODEL, API_REFERENCE, PARAMETER_REGISTRY/REFERENCE,
 │                   SERIALIZATION_REGISTRY, STATE_SERIALIZATION, LATENCY_MODEL,
@@ -108,9 +117,12 @@ docs/
 
 ## Deliverables named by the brief
 
-`DESIGN.md` (§11 P0), `TEST_REPORT.md` (§10, §12) and the factory preset bank are produced by their
-respective phases and are not scaffolded here — they carry measured content, and an empty shell
-would invite it being filled with estimates (constraint C2).
+**`docs/DESIGN.md` is signed off (P0 closed 2026-07-31)** — its research evidence trail is
+`worklogs/2026-07-30-p0-anamorph-research.md`, and the decisions it carried are now the eleven
+Accepted ADRs. `TEST_REPORT.md`
+(§10, §12) and the factory preset bank are produced by their respective phases and are not
+scaffolded — they carry measured content, and an empty shell would invite it being filled with
+estimates (constraint C2).
 
 Evidence [Verified]: the file tree of this repository at the bootstrap commit. Every **[P*n*]**
 row is a *plan*, not a claim about existing files.

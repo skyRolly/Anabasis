@@ -67,7 +67,11 @@ does **not** clear a Hard Stop — only human review does.
 **Anamorph is a read-only reference.** This project may copy and adapt first-party Anamorph code,
 documentation and CI, but must **never modify the Anamorph repository**. Sharing code between the
 two products (e.g. extracting a common UI module) is a product-family decision recorded in an ADR
-with owner approval — see `docs/OPEN_QUESTIONS.md` OQ-005 — never an ad-hoc edit across repos.
+with owner approval — never an ad-hoc edit across repos. That decision has been taken: **ADR-0009**
+(Accepted 2026-07-31) chose copy-and-adapt with provenance headers and **no shared module for v1**,
+and schedules the extraction revisit for after v0.1.0 ships. Proposing a shared module before that
+point contradicts an Accepted ADR and is a Hard Stop. (OQ-005 is `Resolved` — do not cite it as an
+open question.)
 
 ## Third-party code and assets
 

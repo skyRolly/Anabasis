@@ -23,9 +23,20 @@ Subset of `COMPATIBILITY_POLICY.md`. Governs the host parameter surface and auto
    minimum) — affect recall behaviour, so changing them requires an ADR.
 7. **The macro layer is part of the parameter surface.** If the Simple-mode Loudness/Push knob is
    host-visible, it is a parameter with all the obligations above, *and* its mapping onto the
-   Advanced parameters is itself semantic: changing the mapping curve changes what a recorded
-   automation lane sounds like (`MODE_AND_ADAPTATION_POLICY.md` invariant 6). Macro-curve changes
-   after the first shipped build require an ADR.
+   Advanced parameters is itself semantic. **Macro-curve changes after the first shipped build
+   require an ADR.**
+
+   **The reason is recall, not automation** (ADR-0005, 2026-07-31). This rule was written for a
+   host-visible, automatable macro; under ADR-0005/ADR-0010 the macros are **non-automatable**, so
+   no macro automation lane can exist, and a lane on a *managed* parameter writes that parameter
+   directly without ever consulting the mapping — changing a curve does **not** change how such a
+   lane sounds. What a curve change breaks is **recall**: every saved session and preset stores a
+   macro *position*, and the next macro gesture maps that stored position through the *new* curve,
+   so the same patch produces a different sound and a user's saved master no longer reloads as they
+   left it. That is a `COMPATIBILITY_POLICY.md` violation on its own terms. The obligation is
+   unchanged and applies in full — only its justification is corrected, so that a maintainer who
+   notices the automation argument does not hold cannot conclude the freeze does not apply.
+   `MODE_AND_ADAPTATION_POLICY.md` invariant 6 states the same thing at greater length.
 
 ## Getting it right the first time (pre-0.1.0)
 

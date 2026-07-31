@@ -13,42 +13,71 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
 
    ```
    Input Gain → EQ (pre by default) → Compressor → Clipper + Saturation (colour)
-   → Limiter (lookahead + true peak) → Ceiling → Dither → Output
+   → Limiter (lookahead + true peak) → [EQ (post)] → Ceiling → Dither → Output
    ```
 
    The EQ position switch (Pre/Post) moves the EQ block **only** between the two defined
-   positions — before the compressor, or after the limiter. No other reordering exists.
-   Guarded by: the chain-order test + the transfer-order test.
+   positions — before the compressor, or after the limiter and **before the ceiling clamp**. The
+   ceiling clamp is **always** the last stage before dither, in both positions. No other
+   reordering exists.
+
+   **Why the clamp placement is part of this invariant.** It is not a preference: a post-limiter
+   shelf of up to +12 dB re-introduces overshoot, so a clamp
+   upstream of it could not satisfy invariant 4, and "the output never exceeds the ceiling" would
+   be false in the Post position. Amended by **ADR-0002** (2026-07-31) — the pre-amendment text
+   printed the clamp immediately after the limiter and left the Post-EQ's placement relative to it
+   unstated, which a literal reader could take as EQ-after-clamp.
+   Guarded by: the chain-order test + the transfer-order test + `testOutputNeverExceedsCeiling`
+   run in **both** EQ positions.
    *Any change here is a DSP signal-order change → Architecture Review Gate + ADR + Hard Stop.*
 
 2. **Reported latency is exact and matches the measured latency.** *Every* latency source is
    reported to the host so PDC compensates correctly — reported latency is the sum of whatever
-   actually delays the signal, not a subset chosen for convenience. Latency must never change
-   mid-block: an oversampling-factor or lookahead change is **latched** and applied at a reset or a
-   crossfaded boundary.
+   actually delays the signal, not a subset chosen for convenience.
 
-   **Open point for the P0 oversampling/latency ADR — do not paper over it.** Invariant 3 requires
-   true-peak detection at **≥ 4× regardless of the user's oversampling setting**. Whether that costs
-   latency depends on a design decision that has not been made:
-   - if the detector is a **measurement tap** (the ≥ 4× upsampling feeds only the peak estimator and
-     the ceiling clamp's decision, never the audio that is output), it contributes **no** delay, and
-     with user oversampling off the reported latency is exactly the engaged lookahead;
-   - if the ≥ 4× path is **in the signal path** — in particular with linear-phase/polyphase
-     filtering — it contributes its own delay, and "exactly the lookahead" is then simply false.
+   ```
+   reportedLatency = maxLookaheadSamples(10 ms, sr)   ← CONSTANT, not the engaged value
+                   + osLatency(factor, phaseMode)     ← 0 when the factor is Off
+   ```
 
-   These cannot both be asserted. The ADR must state which one this product implements, and
-   `testReportedLatencyMatchesImpulse` must be written against that statement rather than against a
-   convenient one — an impulse measurement will show the truth regardless of what the policy claims.
+   **The lookahead contributes its MAXIMUM, always** (ADR-0004, 2026-07-31). The limiter reads at
+   a variable offset inside a fixed 10 ms delay line and the engine pads the difference, so the
+   *engaged* lookahead moves freely while the *reported* figure never does. The reason is a
+   compatibility one, not an aesthetic one: `lookahead` is carried by every preset, A/B slot and
+   undo step, so under the obvious `engagedLookahead + OS` model, browsing presets or A/B-comparing
+   **during playback** would change host PDC on nearly every step.
 
-   Note that `DEVELOPMENT_BRIEF.md` §4.3 specifies the limiter lookahead as **0.5–10 ms**, with no
-   zero position — so on that range **the plugin always reports non-zero latency**, and "reports 0"
-   is not a reachable state to test for. Whether lookahead gets an explicit **0 / off** position is
-   a P0 `DESIGN.md` decision with real consequences (it is the only way to offer a zero-latency
-   tracking mode, and adding it later widens a parameter range, which is itself an
-   `ARCHITECTURE_REVIEW_GATE` item under `PARAMETER_COMPATIBILITY_POLICY.md` rule 3). Decide it
-   before the parameter is created, not after.
+   `osLatency` is a function of the **effective** factor, which is not always the one the user
+   selected: at `int_offlineQuality = Force Max` an offline bounce renders at 16×, so the reported
+   figure under `isNonRealtime()` uses the forced factor (ADR-0003/ADR-0004). Reported latency
+   therefore has **three** inputs — `int_oversample`, `int_osPhase` and `int_offlineQuality` — all
+   host-hidden, plus the realtime→offline transition itself; PDC recomputes on all four
+   (ADR-0011).
+
+   Latency must never change mid-block: an **oversampling-factor or phase-mode** change is
+   **latched** and applied at a reset or a crossfaded boundary. Both are named because both are
+   inputs to `osLatency(factor, phaseMode)` — linear-phase FIR stages carry group delay that the
+   minimum-phase path does not — so latching the factor alone would leave a phase switch free to
+   move reported latency mid-block. *(Pre-ADR-0004 this sentence also named lookahead; a lookahead
+   change no longer alters any reported figure, so it is an ordinary smoothed read-offset move — but
+   it is still a switchable path under invariant 8 and needs its own click-free test.)*
+
+   **True-peak detection is a measurement tap** (ADR-0003, 2026-07-31; this closes what was an
+   open point here). Invariant 3's ≥ 4× requirement is met by an estimator that feeds only the
+   peak estimate, the limiter's gain computer and the ceiling clamp's decision — never the audio
+   that is output — so it contributes **no** delay. With user oversampling off, reported latency
+   is therefore exactly the **lookahead allowance**, and the detector adds nothing to it. The
+   design constraint that makes this true is that the estimator's group delay fits *inside* the
+   0.5 ms minimum **engaged** lookahead; it is verified by impulse measurement at P2 and tracked
+   as `FUTURE_RISKS.md` RISK-008 until then.
+
+   `DEVELOPMENT_BRIEF.md` §4.3 specifies the limiter lookahead as **0.5–10 ms**, and ADR-0004
+   ratified **no zero/off position** — so **the plugin always reports non-zero latency** and
+   "reports 0" is not a reachable state to test for.
    Guarded by: `testReportedLatencyMatchesImpulse` (impulse-response measurement across the
-   oversampling × lookahead matrix, including both ends of the lookahead range).
+   oversampling × lookahead matrix — the impulse must land at exactly `maxLookahead + OS` for
+   **every** lookahead value, so a padding bug is a test failure rather than a host-sync
+   complaint).
 
 3. **True-peak detection runs at ≥ 4× oversampling and is BS.1770-4 compliant.** A true-peak
    reading is an inter-sample estimate, not a sample peak; the ceiling is interpreted as dBTP when
@@ -62,12 +91,18 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    This is the product's core promise; weakening it is an Architecture Review Gate item in its own
    right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep).
 
-5. **Oversampling wraps the nonlinear stages; linear stages stay at base rate.** The clipper /
-   saturation stage and the true-peak detector are inside the oversampled region; the EQ and the
-   metering taps that do not need it stay outside. "Oversampling off ⇒ no oversampling latency"
-   holds only under the *measurement-tap* reading of the ≥ 4× true-peak path — see the open point in
-   invariant 2, which the P0 ADR must settle before this sentence can be asserted rather than
-   assumed.
+5. **Oversampling wraps the nonlinear stages; linear stages stay at base rate.** The region is
+   **Clipper/Saturation → Limiter**. The EQ, the compressor, the **ceiling
+   clamp** — which must sit after the Post-position EQ per invariant 1 — dither and the metering
+   taps all stay at base rate, **with one named exception: the true-peak estimator.** Its own rate
+   varies by setting (**ADR-0003 decision item 6** — *not* invariant 6 of this policy: its own 4×
+   interpolator at OS Off, a further ≥ 2× at 2×, and the
+   oversampled signal read directly at ≥ 4×) so that invariant 3's ≥ 4× requirement holds at every
+   setting. That is consistent with "metering taps stay at base rate" because the estimator is a
+   *measurement tap*, not an audio capture point — the capture points for LUFS, spectrum and GR
+   history are all base-rate. **"Oversampling off ⇒ no oversampling latency" now holds
+   unconditionally**, because the ≥ 4× true-peak path is a measurement tap; the sentence is
+   asserted, no longer assumed. *(Amended by ADR-0003, 2026-07-31.)*
    Guarded by: the latency-matrix test + the aliasing measurement.
 
 6. **The soft-clip stage uses antiderivative antialiasing (ADAA)** in addition to global
@@ -81,10 +116,20 @@ will guard it. Evidence citations are added as the modules land (constraint C7).
    Guarded by: `testNullWithDefaults`, `testBypassNull`.
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
-   the oversampling factor, the EQ position, the mode switch, or a preset load must produce no
+   the oversampling factor, **the oversampling phase mode**, the EQ position, **the colour model**,
+   **the lookahead**, the mode switch, or a **bulk swap — a preset load, an A/B switch, or an undo
+   step, three routes through the same forced duck, each owed its own test** — must produce no
    click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
-   ducked.
+   ducked. *(Amended by ADR-0004, 2026-07-31.)*
    Guarded by: the click-free transition tests (one per switchable path).
+
+   **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a
+   latch** (ADR-0004 made reported latency constant in it, so it is an ordinary smoothed change).
+   That makes it the path most likely to be skipped at P1. Its click-free mechanism is specific:
+   the **audio** delay stays fixed at the full 10 ms allowance and the lookahead value moves only
+   the *detector / gain-computer* alignment — a smooth, band-limited control signal — so no audio
+   sample is ever skipped or repeated. A per-path click test is owed for it like every other entry
+   in this list.
 
 9. **No NaN / Inf / denormals leave the engine, and the engine self-heals.** Denormal protection
    (FTZ/DAZ) is active for the whole block; a non-finite sample anywhere resets the affected state

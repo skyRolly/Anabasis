@@ -117,8 +117,48 @@ reorganisation, a different Bypass placement.
 **Why it exists here:** the two products deliberately share a frame, an About page, a Settings
 page, a Bypass placement and a preset/A-B interaction model, but the code is (for now) copied
 rather than shared, and Anabasis may not modify Anamorph.
-**Mitigation:** `docs/BRAND_CONSISTENCY_CHECKLIST.md` is a P5 exit criterion checked item by item;
-whether to extract a shared UI module is tracked as OQ-005.
+**Mitigation:** `docs/BRAND_CONSISTENCY_CHECKLIST.md` is a P5 exit criterion checked item by item.
+The shared-module question is **settled, not open**: **ADR-0009** (Accepted 2026-07-31) chose
+copy-and-adapt with provenance headers and no shared module for v1, and schedules the extraction
+revisit as a product-family decision **after v0.1.0 ships** — so this risk is accepted for one
+release, with a named review point rather than an open question (OQ-005 is `Resolved`).
+**Owner:** TODO.
+
+---
+
+## RISK-008 — The measurement-tap latency contract rests on an unverified detector-delay bound
+
+**Likelihood:** Low **Impact:** High
+**Trigger:** The first impulse-response latency measurement at P2 (`testReportedLatencyMatchesImpulse`).
+**Why it exists here:** `DESIGN.md` §3.2 resolves `DSP_POLICY.md` invariants 2/5 by making
+true-peak detection a **measurement tap**, which yields "with oversampling off, reported latency
+is exactly the lookahead allowance and the detector adds nothing" — but only while the estimator's
+group delay fits *inside* the 0.5 ms **minimum engaged** lookahead. The design arithmetic (BS.1770-4 Annex 2, 48 coefficients, 4 phases →
+(48−1)/2 = 23.5 upsampled ≈ 5.9 base samples ≈ 0.122 ms at 48 kHz) says it fits with room to
+spare, and because lookahead is specified in **milliseconds** the margin holds across sample
+rates. It is nonetheless arithmetic about an unwritten module, not a measurement (C2), and the
+whole latency contract plus ADR-0003/0004 sit on it.
+**Mitigation:** verify with the first impulse test at P2, *before* anything else is built on the
+claim. §3.3's constant-allowance decision makes the fallback cheap: the detector's delay is
+absorbed by raising the *minimum engaged* read offset inside the fixed 10 ms line, so the
+**reported** figure never moves and no ADR amendment or Architecture Review is triggered. The
+residual exposure is to the accuracy contract (invariant 11), not the latency one.
+**Owner:** TODO.
+
+---
+
+## RISK-009 — The variable-font direction depends on a licence that does not exist yet
+
+**Likelihood:** Medium **Impact:** Low
+**Trigger:** P5 UI work reaching typography with no approved font licence.
+**Why it exists here:** `DEVELOPMENT_BRIEF.md` §2 and §8 ask Anabasis to use JUCE 9's variable-font
+support, and `DESIGN.md` §6.1 proposes embedding one variable font — but any third-party asset
+needs its licence stated and owner approval **before** adoption (brief §13), and no font has been
+proposed or cleared. Anamorph offers no precedent: it embeds nothing and uses the platform default
+sans-serif [Verified], which is also the stated fallback.
+**Mitigation:** raise the licence question early enough that P5 is not blocked waiting on it; the
+platform-default path (plus Anamorph's fit-to-width drawing idioms) is a complete fallback, so the
+risk is schedule and brand consistency, not feasibility. Track alongside OQ-002's licence work.
 **Owner:** TODO.
 
 ---

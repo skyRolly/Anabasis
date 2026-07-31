@@ -17,6 +17,14 @@ Advanced-parameter values.
 *Consequence:* a host automating an Advanced parameter and a user turning the Simple knob are
 writing to the same place, and the DSP cannot tell them apart.
 
+Guarded by: `testMacroDefaultIsFixedPoint` in **`tests/state_tests.cpp` (`AnabasisStateTests`)** —
+for every managed parameter, the mapping evaluated at the default macro position must equal that
+parameter's declared default, or the first macro gesture jumps the factory patch instead of gliding
+from it (ADR-0005). The **binary is named deliberately**: this is a behavioural guard living in the
+state suite because only that target compiles the wrapper sources (ADR-0008), and the DSP core
+cannot see the APVTS or the MacroEngine (ADR-0001). Moving it to `dsp_tests.cpp` does not compile.
+Same for `testModeSwitchIsSoundNeutral` under invariant 2.
+
 ### 2. Switching modes must not change the sound
 
 At the instant the user switches Simple ⇄ Advanced, the rendered output is unchanged. Not
@@ -51,26 +59,75 @@ The adaptive layer may move parameters within their declared ranges. It may **no
 
 - exceed or bypass the ceiling clamp (`DSP_POLICY.md` invariant 4),
 - change reported latency (`DSP_POLICY.md` invariant 2) — so it must not switch the oversampling
-  factor or the lookahead time,
+  factor. **It must not move the lookahead either**, and since ADR-0004 that bar no longer follows
+  from the latency clause (a lookahead change moves no reported figure): it stands on its own
+  ground — the engaged lookahead is a read offset into a live delay line, so slewing it drags the
+  tap through the buffer, and adaptation is barred from time-varying delays for the same reason it
+  is barred from the oversampling factor,
 - alter the signal-chain order,
 - write to a parameter the user has locked (§9 parameter lock; **Ceiling is lockable at minimum**).
 
 ### 5. Manual Advanced edits are user intent
 
 If the user edits a parameter manually in Advanced, that edit is not silently discarded when they
-return to Simple. The coexistence strategy — macro-takes-precedence with a clear notice, versus a
-"carry over" option — is **an open decision** (`docs/OPEN_QUESTIONS.md` OQ-004) that must be
-argued in `DESIGN.md` and recorded as an ADR **before** P4 implementation. Whatever is chosen must
-still satisfy invariant 2.
+return to Simple.
+
+**Settled by ADR-0005** (Accepted 2026-07-31; OQ-004 `Resolved`) — **macro-latch with re-engage on
+touch**, which is binding, not a suggestion:
+
+1. Returning to Simple moves nothing (invariant 2 holds by construction — there is no value path
+   at the switch).
+2. Each manually edited managed parameter is **detached** from the macro, tracked by a
+   per-parameter detach mask that is **per-A/B-slot** state and travels with presets (ADR-0007).
+3. The **next macro gesture re-engages every detached parameter** through the normal rate-limited
+   glide. That gesture *is* the "clear notice" the brief asks for — the user is explicitly choosing
+   the macro over their edits.
+4. A "reset to macro" affordance re-engages without moving the macro position.
+
+Carry-over offsets were **rejected**: they make the knob's sound at a given position
+history-dependent, so the mapping stops being a pure function and stops being testable.
+
+Two mechanisms this invariant depends on, both binding: a change counts as a *manual edit* only if
+it is **not macro-originated** (the MacroEngine raises a message-thread re-entrancy flag around its
+own write burst) **and** is **gesture-bracketed** — so automation playback, preset apply, A/B and
+undo never detach anything. And a preset apply must satisfy both conditions, or a preset holding
+off-curve managed values could not be recalled faithfully at all.
 
 ### 6. Automation and recall see the real parameters
 
 Because Simple is a macro layer, host automation, preset recall and A/B compare operate on the
-underlying Advanced parameters. Whether the macro knob is itself host-visible and automatable —
-and if so, how a recorded macro automation lane interacts with recorded per-parameter lanes — is
-part of the parameter surface and therefore governed by `PARAMETER_COMPATIBILITY_POLICY.md`. Decide
-it in `DESIGN.md` and record it in `PARAMETER_REGISTRY.md`; it is a contract from the first
-shipped build.
+underlying Advanced parameters.
+
+**Settled by ADR-0005 and ADR-0010** (Accepted 2026-07-31): the three macro controls (`loudness`,
+`character`, `tone`) are real, host-visible APVTS parameters but are **not automatable**. The
+automation surface is the *managed Advanced parameters* themselves. A recorded macro lane
+therefore cannot exist, which removes the question of how it would interact with per-parameter
+lanes.
+
+Three consequences that are part of the contract, not implementation detail:
+
+- `withAutomatable(false)` is **advisory** — some hosts expose the parameter regardless
+  (`PARAMETER_COMPATIBILITY_POLICY.md` rule 5). The MacroEngine therefore consumes macro changes
+  only through an async **message-thread** listener; a host that automates a macro anyway gets the
+  mapping applied at message-thread rate, and offline-render determinism is explicitly not promised
+  for that unsupported usage.
+- Making a macro automatable later is a parameter-surface change: `kVersion` bump + ADR
+  (`PARAMETER_COMPATIBILITY_POLICY.md` rules 4–5).
+- The macro **mapping curves are semantic from the first shipped build** — but be precise about
+  why, because the obvious argument is wrong under this architecture. A recorded automation lane
+  on a managed parameter (say `limGain`) writes that parameter **directly** on playback and never
+  consults `M`, so changing a curve does **not** change how that lane sounds. What a curve change
+  *does* break is **recall**: every saved session and preset stores a macro position, and the next
+  macro gesture maps that stored position through the *new* curve — so the same patch produces a
+  different sound, and a user's saved master no longer reloads as they left it. That is a
+  `COMPATIBILITY_POLICY.md` violation on its own terms. `PARAMETER_COMPATIBILITY_POLICY.md` rule 7
+  carries the same obligation and, since 2026-07-31, the same reason — its original automation
+  framing was written for the host-visible/automatable macro this product does not have, and was
+  corrected by ADR-0005 rather than left at equal authority to this one. A post-release curve change
+  is therefore an **Architecture Review Gate** item and needs an ADR.
+
+Recorded in `PARAMETER_REGISTRY.md` when it is written at P1; `DESIGN.md` §4.2 is the interim table
+of record.
 
 ## Current implementation
 

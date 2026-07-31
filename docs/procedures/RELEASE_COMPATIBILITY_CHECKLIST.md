@@ -13,9 +13,14 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       ID/name/order/range/automation-flag change vs `tests/fixtures/parameter_registry.snapshot`.
 
 - [ ] **Macro mapping unchanged (or migrated)** — the Simple → Advanced mapping curves produce the
-      same Advanced values for the same macro position as the previous release, so a recorded
-      macro-automation lane still sounds the same.
-      Ref: `docs/policies/MODE_AND_ADAPTATION_POLICY.md` invariant 6.
+      same Advanced values for the same macro position as the previous release. The reason is
+      **recall, not automation**: every saved session and preset stores a macro position, so a
+      changed curve makes a user's saved master reload sounding different. (A recorded
+      *macro-automation lane* cannot exist — the macros are non-automatable, and a lane on a
+      managed parameter writes that parameter directly without consulting the mapping. Do not
+      dismiss this item on the grounds that no such lane is possible; it is not what the item
+      protects.)
+      Ref: `docs/policies/MODE_AND_ADAPTATION_POLICY.md` invariant 6; ADR-0005.
 
 - [ ] **Serialization schema verified** — no field removed or semantically changed; additions
       tolerate absence.
@@ -33,12 +38,18 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       Ref: `docs/procedures/TESTING.md`.
 
 - [ ] **Latency reporting verified** — reported PDC matches the actual chain delay across the
-      **lookahead × oversampling** matrix, at both ends of the lookahead range; with oversampling
-      off, the reported value is exactly the engaged lookahead. A latency change between releases
+      **lookahead × oversampling** matrix. The impulse must land at exactly `maxLookahead + OS` for
+      **every** lookahead value, not merely at the ends of the range — that is what makes a padding
+      bug a test failure rather than a host-sync complaint (ADR-0004; `procedures/TESTING.md`
+      carries the same stimulus). With oversampling
+      off, the reported value is exactly the **lookahead allowance** — the constant 10 ms maximum,
+      *not* the engaged value (`DSP_POLICY.md` invariant 2, as amended by **ADR-0004**: the engaged
+      lookahead is a read offset inside a fixed line, so browsing presets never moves host PDC).
+      A build that reports the engaged value fails this item. A latency change between releases
       desyncs every saved session's PDC.
       Ref: `docs/architecture/LATENCY_MODEL.md`, `docs/policies/DSP_POLICY.md` invariant 2
-      (which records why "reports 0" is not a checkable state unless lookahead gains an explicit
-      off position).
+      (which records why "reports 0" is **not** a reachable state at all: **ADR-0004** resolved
+      OQ-010 as *no* zero/off lookahead position, and forecloses widening the 0.5–10 ms range).
 
 - [ ] **Ceiling guarantee re-verified** — output never exceeds the ceiling (≤ 0.1 dBTP) under the
       hostile-input sweep, at every supported sample rate and oversampling factor.

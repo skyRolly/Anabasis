@@ -18,3 +18,10 @@ _deps/
 .idea/
 *.user
 *.swp
+
+# Python bytecode. Running scripts/check-docs.py as a script does NOT create
+# this — CPython writes no cache for __main__. It appears when the module is
+# imported instead, which is how the checker gets exercised from an ad-hoc
+# verification snippet (importlib against scripts/check-docs.py).
+__pycache__/
+*.py[cod]

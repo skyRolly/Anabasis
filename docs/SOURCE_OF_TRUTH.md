@@ -41,6 +41,29 @@ generated document. It sits *outside* the numbered chain:
   binding versions of those rules are the files in `docs/policies/`; on any conflict the
   policy file wins and the brief's summary is corrected.
 
+## Where `DESIGN.md` sits
+
+`docs/DESIGN.md` is the **P0 design deliverable** (`DEVELOPMENT_BRIEF.md` §11, §24) — the
+document that answers the brief and from which the first ADR batch is spawned. It sits *below*
+the ADRs it produces, at the same rank as descriptive **Architecture** (level 5):
+
+- **Before owner sign-off** it was a `Proposed` document with **no authority at all** — nothing
+  could be implemented from it and no other document could cite it as settling a question. That
+  phase ended on **2026-07-31**.
+- **Since sign-off** it is a *ratified proposal*, not an enforcement document. The decisions in it
+  become binding only through the ADRs it names (level 3) and the policies those ADRs amend
+  (level 4). Where `DESIGN.md` and an `Accepted` ADR disagree, **the ADR wins** and `DESIGN.md`
+  is corrected — the same relationship descriptive Architecture has with ADRs.
+- It is **not evidence** for a claim about implemented behaviour. Once code exists, "what the
+  plugin does" cites source/tests; `DESIGN.md` only ever states what the code was asked to do.
+- Its own evidence base is the P0 research trail in `worklogs/`, which — per the rule below — is
+  raw material, never authority.
+
+The practical consequence: as P1–P6 land, `DESIGN.md` is **superseded section by section** by the
+ADRs plus the descriptive architecture set (`ARCHITECTURE.md`, `LATENCY_MODEL.md`,
+`PARAMETER_REGISTRY.md`, …). It is not deleted, and it is not maintained as a living spec; drift
+between it and shipped behaviour is expected and is resolved in favour of the higher source.
+
 ## Scope: the other three documentation classes
 
 The numbered order above governs the **developer documentation** chain. The other three
@@ -99,10 +122,12 @@ Evidence [Verified]:
 At least one source is mandatory for any historical, design-decision, incident, risk, or
 known-issue claim.
 
-## Current state of the chain (P0)
+## Current state of the chain (P1)
 
 Levels 1, 2 and 5 are **empty** — no `src/`, no `tests/`, no descriptive architecture set exists
-yet. Until P1 lands, any statement about Anabasis's runtime behaviour is `Unverified` by
-construction, and must be written as such rather than asserted. The policies in `docs/policies/`
+yet — **except that `docs/DESIGN.md` now occupies level 5**, having been signed off on
+2026-07-31 (see §"Where `DESIGN.md` sits"). Level 3 is populated: **ADR-0001…0011 are Accepted**.
+Levels 1 and 2 stay empty until P1 lands `src/` and `tests/`, so every statement about Anabasis's
+*runtime* behaviour remains `Unverified` by construction and must be written as such. The policies in `docs/policies/`
 state the invariants the future code **must** satisfy; they carry no compliance evidence yet, and
 every such section is marked `TODO (no code yet)` rather than claimed (constraint C7).
