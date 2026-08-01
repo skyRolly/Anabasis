@@ -51,6 +51,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   a bit-exact null; bypass stays a bit-exact null at every oversampling factor.
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
+- **P3 metering engine (in progress)** — BS.1770-4 LUFS M/S/I with the two-stage gate
+  (calibrated to the standard's compliance vector ≤ 0.1 LU), dBTP max-hold off the shared
+  estimator, PLR, per-block GR published with a 43 s history ring, and the §2.7 monitor layer:
+  loudness-compensated monitoring with loudness-matched bypass (Measure + Predict, monitor-only —
+  the offline render is bit-identical either way) and delta monitoring. The Loudness Comp and
+  Delta toggles now work (KI-002 → POSTMORTEMS INC-002).
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

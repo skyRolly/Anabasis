@@ -7,6 +7,7 @@
 #include "ClipSat.h"
 #include "LookaheadLimiter.h"
 #include "CeilingClamp.h"
+#include "LoudnessMeter.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
@@ -90,6 +91,12 @@ public:
     int engagedWindowSamples() const noexcept
     { return engagedWindow.load (std::memory_order_relaxed); }
 
+    // The block's deepest limiter gain (linear, ≤ 1) — the §2.9 GR meter tap.
+    // Same publication class as engagedWindow: relaxed atomic, monotonic
+    // display data, written once per process() call on the audio thread.
+    float lastBlockMinGain() const noexcept
+    { return grMinLinear.load (std::memory_order_relaxed); }
+
 private:
     void latchOsConfig (int factorIdx, int phaseIdx) noexcept;
     void processChunk (juce::AudioBuffer<float>& buffer, int start, int num,
@@ -124,6 +131,8 @@ private:
     juce::SmoothedValue<float> windowSamples  { 96.0f };        // engaged lookahead, BASE samples
     bool smoothersPrimed = false;
     std::atomic<int> engagedWindow { 96 };
+    std::atomic<float> grMinLinear { 1.0f };
+    float grMinThisCall = 1.0f;
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;
@@ -150,6 +159,26 @@ private:
     int latchedPhaseIdx  = 0;
     int osN = 1, osShift = 0;
     int osLatBase = 0;                // Latency.h table value for the latched config
+
+    // §2.7 loudness-compensated monitoring + delta. MONITOR-ONLY functions
+    // (DSP_POLICY invariant 10): both are inert whenever nonRealtime is set,
+    // so the render is untouched — that is the tested contract, not a hope.
+    // Measure: K-weighted short-term loudness of the delay-aligned dry vs the
+    // processed path (two always-fed LoudnessMeters; the measure FREEZES when
+    // either side's momentary drops under the BS.1770 −70 LUFS absolute gate,
+    // chosen over a dBFS gate because a mastering plugin meets quiet
+    // classical passages). Predict: stateless floor from the deterministic
+    // gain lift (inputGain + limGain + average measured GR), only ever
+    // LOWERING monitor gain — cranking the macro pre-ducks instantly, no
+    // ratchet. Applied = min(measure, predict), smoothed 200 ms, POST-mix so
+    // the bypass leg carries the same compensation (the §2.7 loudness-matched
+    // bypass). Delta = (delay-aligned dry − processed) behind its own
+    // always-running ~10 ms crossfade.
+    LoudnessMeter dryMeter, wetMeter;
+    float compMeasureDb = 0.0f;              // frozen on silence
+    juce::SmoothedValue<float> monitorGain { 1.0f };
+    float deltaMix = 0.0f, deltaStep = 0.0f;
+    bool  deltaTarget = false;
 
     // Dither (§4.5): TPDF at the target LSB, optional first-order noise
     // shaping, deterministic xorshift so an offline render is repeatable.

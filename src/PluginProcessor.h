@@ -7,6 +7,9 @@
 #include "PresetManager.h"
 #include "AbSlotIndex.h"
 #include "dsp/AnabasisEngine.h"
+#include "dsp/LoudnessMeter.h"
+#include "dsp/TruePeak.h"
+#include "dsp/GrHistoryBuffer.h"
 
 // ============================================================================
 //  AnabasisAudioProcessor — wrapper layer (ADR-0001 boundary; ADR-0011
@@ -108,6 +111,27 @@ private:
     juce::StringArray liveDetachMask;
 
     std::atomic<bool> nonRealtimeFlag { false };
+
+public:
+    // -- §2.9 meter publication (THREAD_MODEL: Audio→GUI relaxed atomics,
+    //    one publish per block; readers are the editor's paint sites) -------
+    float meterLufsM()    const noexcept { return pubLufsM.load (std::memory_order_relaxed); }
+    float meterLufsS()    const noexcept { return pubLufsS.load (std::memory_order_relaxed); }
+    float meterLufsI()    const noexcept { return pubLufsI.load (std::memory_order_relaxed); }
+    float meterDbTpMax()  const noexcept { return pubDbTpMax.load (std::memory_order_relaxed); }
+    float meterPlr()      const noexcept { return pubPlr.load (std::memory_order_relaxed); }
+    float meterGrDb()     const noexcept { return pubGrDb.load (std::memory_order_relaxed); }
+    const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
+
+private:
+    anabasis::LoudnessMeter     outputMeter;      // audio-thread state
+    anabasis::TruePeakEstimator tpMeter;          // audio-thread state
+    anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes
+    float dbTpMaxHold = -144.0f;                  // audio-thread session max
+    std::atomic<float> pubLufsM { anabasis::LoudnessMeter::kSilentLufs },
+                       pubLufsS { anabasis::LoudnessMeter::kSilentLufs },
+                       pubLufsI { anabasis::LoudnessMeter::kSilentLufs },
+                       pubDbTpMax { -144.0f }, pubPlr { 0.0f }, pubGrDb { 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnabasisAudioProcessor)
 };

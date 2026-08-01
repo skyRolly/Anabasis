@@ -9,6 +9,25 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P3, publication + monitor commit — meters reach the GUI boundary, KI-002 closes (2026-08-01)
+
+**Meter publication**: the wrapper measures the OUTPUT per block and publishes LUFS M/S/I, dBTP
+max-hold (shared TruePeakEstimator), PLR and GR through relaxed atomics — the THREAD_MODEL meter
+row, now implemented, plus **`GrHistoryBuffer`**: the first Audio→GUI SPSC ring in the tree
+(4096 entries ≈ 43 s at 512/48 k; entry written first, index release-stored after, stateless
+peeks). `testMeterPublication` pins the readings, the PLR identity and the one-entry-per-block
+ring advance.
+
+**§2.7 monitor layer** (KI-002 → INC-002): Measure (K-weighted ST loudness, dry vs processed,
+frozen under the −70 LUFS absolute gate) + Predict (deterministic gain lift, GR-corrected,
+floor-only), min-combined, 200 ms smoothed, applied POST-mix so the bypass leg carries the same
+gain — the loudness-matched bypass falls out of the placement rather than needing machinery.
+Delta behind its own ~10 ms crossfade; a transparent chain's delta is EXACT silence because the
+default path is bit-exact. Invariant 10 is **live**: the offline render is bit-identical with
+either toggle in either position, and the predict floor is pinned by an early-window check the
+measure could not satisfy (short-term needs seconds; the floor acts in one block). Mutants
+killed: comp/delta ignoring nonRealtime, predict floor dropped.
+
 ### P3 opens — the LUFS meter, and a gate half that only mutation could see (2026-08-01)
 
 **`LoudnessMeter`** (src/dsp/LoudnessMeter.h): BS.1770-4 K-weighting (the ADR-0009 pre-warped

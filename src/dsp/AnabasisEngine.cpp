@@ -56,6 +56,10 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     duckInInc  = 1.0f / (float) juce::jmax (1, (int) (0.028 * sampleRate));   // ~28 ms in
 
     limiter.prepare (sampleRate, delaySamples * maxN);   // wedge sized for 16x
+    dryMeter.prepare (sampleRate);
+    wetMeter.prepare (sampleRate);
+    monitorGain.reset (sampleRate, 0.200);
+    deltaStep = bypassStep;                  // same ~10 ms always-running fade
     eq.prepare (sampleRate);
     comp.prepare (sampleRate);
     clip.prepare (sampleRate);
@@ -111,6 +115,11 @@ void AnabasisEngine::reset() noexcept
     duckState = DuckState::idle;
     duckGain  = 1.0f;
     duckPhase = 0.0f;
+    dryMeter.reset();
+    wetMeter.reset();
+    compMeasureDb = 0.0f;
+    monitorGain.setCurrentAndTargetValue (1.0f);
+    deltaMix = deltaTarget ? 1.0f : 0.0f;
     smoothersPrimed = false;          // the next block adopts ALL FOUR values without a glide
 
     // The crossfade is reset state too: landing ON the target is the "no
@@ -236,11 +245,33 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     if (p.bypass != bypassTarget)
         bypassTarget = p.bypass;   // step size is rate-derived, set in prepare()
 
+    // ---- §2.7 monitor functions (inert under nonRealtime — invariant 10) --
+    deltaTarget = p.deltaMonitor && ! p.nonRealtime;
+    const bool compOn = p.loudnessComp && ! p.nonRealtime;
+    {
+        // Measure (frozen while either side is under the absolute gate).
+        const float dryM = dryMeter.momentaryLufs();
+        const float wetM = wetMeter.momentaryLufs();
+        if (dryM > -70.0f && wetM > -70.0f)
+            compMeasureDb = juce::jlimit (-24.0f, 6.0f,
+                                          dryMeter.shortTermLufs() - wetMeter.shortTermLufs());
+        // Predict floor: the deterministic gain lift, GR-corrected by the
+        // measured block average (the P3 form of §2.7's "expected GR"; the P4
+        // adaptive engine refines it). Only ever attenuation.
+        const float grDbNow  = juce::Decibels::gainToDecibels (
+                                   grMinLinear.load (std::memory_order_relaxed), -60.0f);
+        const float predictDb = -juce::jmax (0.0f, p.inputGainDb + p.limGainDb + grDbNow);
+        const float appliedDb = compOn ? juce::jmin (compMeasureDb, predictDb) : 0.0f;
+        monitorGain.setTargetValue (juce::Decibels::decibelsToGain (appliedDb));
+    }
+
     // ---- chunked processing: oversize host blocks degrade to extra chunk
     //      overhead, never to unprocessed audio -----------------------------
+    grMinThisCall = 1.0f;
     for (int start = 0; start < totalSamples; start += maxBlock)
         processChunk (buffer, start, juce::jmin (maxBlock, totalSamples - start),
                       p, eqPre, eqPost);
+    grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
 }
 
 void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int start,
@@ -338,6 +369,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
 
         float gains[kMaxChannels] = { 1.0f, 1.0f };
         limiter.processSample (tapped, nCh, wOs, ceilingNow, gains);
+        grMinThisCall = juce::jmin (grMinThisCall, gains[0], gains[nCh - 1]);
 
         int readPos = writePosOs - delayOs;
         if (readPos < 0)
@@ -409,6 +441,12 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         const float targetMix = bypassTarget ? 1.0f : 0.0f;
         if (bypassMix < targetMix)      bypassMix = juce::jmin (targetMix, bypassMix + bypassStep);
         else if (bypassMix > targetMix) bypassMix = juce::jmax (targetMix, bypassMix - bypassStep);
+        const float deltaTargetMix = deltaTarget ? 1.0f : 0.0f;
+        if (deltaMix < deltaTargetMix)      deltaMix = juce::jmin (deltaTargetMix, deltaMix + deltaStep);
+        else if (deltaMix > deltaTargetMix) deltaMix = juce::jmax (deltaTargetMix, deltaMix - deltaStep);
+        const float monGainNow = monitorGain.getNextValue();
+        float monFrameDry[kMaxChannels] = {};
+        float monFrameWet[kMaxChannels] = {};
 
         for (int ch = 0; ch < nCh; ++ch)
         {
@@ -452,10 +490,28 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             // requires bypass to be a bit-exact delay-aligned null, so the
             // ceiling guarantee is a property of the PROCESSED path.
             const float delayedDry = dryRing.getSample (ch, dryReadPos);
+
+            // §2.7 meters (always fed — toggling comp must not start from a
+            // cold measure) and the delta crossfade (exact endpoints, so the
+            // default path is untouched bit-for-bit).
+            {
+                monFrameDry[ch] = delayedDry;
+                monFrameWet[ch] = processed;
+            }
+            float wetLeg = processed;
+            if (deltaMix >= 1.0f)      wetLeg = delayedDry - processed;
+            else if (deltaMix > 0.0f)  wetLeg = processed
+                                              + ((delayedDry - processed) - processed) * deltaMix;
+
             float out;
-            if (bypassMix <= 0.0f)      out = processed;                        // exact endpoint
+            if (bypassMix <= 0.0f)      out = wetLeg;                           // exact endpoint
             else if (bypassMix >= 1.0f) out = delayedDry;                       // exact endpoint
-            else                        out = processed + (delayedDry - processed) * bypassMix;
+            else                        out = wetLeg + (delayedDry - wetLeg) * bypassMix;
+
+            // §2.7 loudness compensation: POST-mix, so the bypass leg carries
+            // the same gain (loudness-matched bypass). Exact skip at unity.
+            if (! juce::exactlyEqual (monGainNow, 1.0f))
+                out *= monGainNow;
 
             if (! std::isfinite (out))
             {
@@ -464,6 +520,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             }
             buffer.setSample (ch, start + n, out);
         }
+        dryMeter.processFrame (monFrameDry, nCh);
+        wetMeter.processFrame (monFrameWet, nCh);
         if (++dryReadPos >= dryRingSize)
             dryReadPos = 0;
     }

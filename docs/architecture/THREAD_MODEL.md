@@ -30,6 +30,8 @@ it instantiates:
 | `nonRealtime` → latency predictor | `std::atomic<bool> nonRealtimeFlag`, written in `setNonRealtime()` (a host-thread callback), read by the snapshot build and the predictor | atomic mirror (same class as the row above) | `src/PluginProcessor.h:110`, `src/PluginProcessor.cpp:48-51,66,88` |
 | Engaged lookahead window → any reader | `std::atomic<int> engagedWindow`, relaxed, written per sample on the audio thread; payload-free diagnostic (the smoothing test reads it) | Audio → GUI (staleness-hint class: monotonic display/diagnostic data) | `src/dsp/AnabasisEngine.h:84,54-55` |
 | Forced-duck request → engine | `std::atomic<bool> duckRequested`, set by the wrapper before every bulk swap (A/B, preset, session load), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestForcedDuck`), `src/PluginProcessor.cpp` (three call sites) |
+| Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr`, `pubGrDb` — relaxed atomics, ONE publish per block from `processBlock`; plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics | Audio → GUI (meters) | `src/PluginProcessor.h` (meter getters), `src/PluginProcessor.cpp` (the per-block publish) |
+| GR/waveform history → GUI | `GrHistoryBuffer`: 4096-entry power-of-two SPSC ring, entry written FIRST, monotonic index release-stored AFTER, acquire-loaded stateless peeks on the reader side | Audio → GUI (time series, SPSC ring) | `src/dsp/GrHistoryBuffer.h` |
 | Macro listener → message-thread mapper | `std::atomic<bool> mappingPending` set from whichever thread APVTS delivers `parameterChanged` on; drained on the message thread by `AsyncUpdater` (only posted when already on the message thread) + a 30 ms `Timer`; `std::atomic<int> restoreDepth` suppresses the drain across a restore (`ScopedRestore`) | **no row — see OQ-014** | `src/MacroEngine.cpp:28-35,63-66`, `src/MacroEngine.h:92-101,139` |
 
 **The OQ-014 exception, stated rather than papered over.** `mappingPending` and `restoreDepth`
@@ -68,9 +70,8 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
 
 ## Planned edges (not yet in the tree)
 
-- **SPSC rings** (GR history, two spectrum capture points) — P3, one producer/one reader,
-  release-store on the write index once per block, acquiring stateless peeks.
-- **Meter atomics** (LUFS M/S/I, dBTP, PLR, GR) — P3, relaxed, one `publish()` per block.
+- **Spectrum capture rings** (post-input-gain and post-chain, the dual-trace §2.9 overlay) —
+  same ScopeBuffer idiom as the implemented GrHistoryBuffer; land with the P5 spectrum view.
 - **Command atomics** — the forced-duck request is IMPLEMENTED (see the table); Learn start/stop
   and meter hold reset follow at P3/P4, same single-atomic exchange shape.
 - **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism

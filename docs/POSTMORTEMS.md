@@ -54,6 +54,29 @@ Evidence [Verified]:
 - Test:   the four tests above
 - Commit: PR #5, §2.8 transition-layer commit
 
+## INC-002 — KI-002 closed: Loudness Comp and Delta were parameter-surface-only
+
+**Symptom:** The Loudness Comp and Delta toggles existed on the parameter surface from v0.1.0's
+freeze but did nothing — carried through the engine boundary and ignored (KI-002, opened at P1).
+**Root cause:** Monitoring features scheduled for the metering phase; the parameters existed early
+because the surface froze first (PARAMETER_COMPATIBILITY_POLICY rule 1).
+**Fix:** The §2.7 monitor layer in `AnabasisEngine`: Measure (K-weighted short-term loudness of
+delay-aligned dry vs processed, frozen under the BS.1770 −70 LUFS absolute gate) + Predict (the
+deterministic gain lift, GR-corrected, floor-only) combined as min(), smoothed 200 ms, applied
+POST-mix so the bypass leg carries the same compensation — the loudness-matched bypass. Delta =
+(delay-aligned dry − processed) behind its own always-running ~10 ms crossfade. Both are
+MONITOR-ONLY: inert whenever `nonRealtime` is set (DSP_POLICY invariant 10).
+**Prevention:** `testLoudnessCompensationDoesNotAlterRender` (offline render bit-identical with
+comp on vs off; realtime pulled to the dry loudness; the predict floor acts before the measure
+exists) and `testDeltaMonitor` (transparent chain → exact silence; pushed chain → the removed
+material; offline → inert). Mutants killed: comp/delta ignoring nonRealtime, predict floor
+dropped.
+
+Evidence [Verified]:
+- Source: `src/dsp/AnabasisEngine.{h,cpp}` (§2.7 block, stage E)
+- Test:   the two tests above
+- Commit: PR #5, P3 monitor-layer commit
+
 ## Relationship to the other status files
 
 | File | Holds |

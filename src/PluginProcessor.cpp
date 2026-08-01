@@ -42,6 +42,10 @@ bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    outputMeter.prepare (sampleRate);
+    tpMeter.prepare();
+    grHistoryRing.reset();
+    dbTpMaxHold = -144.0f;
     updateLatency();
 }
 
@@ -91,6 +95,38 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         buffer.clear (ch, 0, buffer.getNumSamples());
 
     engine.process (buffer, snapshot);
+
+    // -- §2.9 metering: measure the OUTPUT, publish once per block ----------
+    // (relaxed atomics — monotonic display data, THREAD_MODEL meter row).
+    const int nCh = juce::jmin (buffer.getNumChannels(), 2);
+    const int nSm = buffer.getNumSamples();
+    float blockTp = 0.0f;
+    for (int n = 0; n < nSm; ++n)
+    {
+        float frame[2] = { buffer.getSample (0, n),
+                           nCh > 1 ? buffer.getSample (1, n) : buffer.getSample (0, n) };
+        outputMeter.processFrame (frame, 2);
+        float tp[2];
+        tpMeter.processFrame (frame, 2, tp);
+        blockTp = juce::jmax (blockTp, tp[0], tp[1]);
+    }
+    const float blockTpDb = juce::Decibels::gainToDecibels (blockTp, -144.0f);
+    dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
+
+    const float lufsI = outputMeter.integratedLufs();
+    pubLufsM.store (outputMeter.momentaryLufs(),  std::memory_order_relaxed);
+    pubLufsS.store (outputMeter.shortTermLufs(),  std::memory_order_relaxed);
+    pubLufsI.store (lufsI,                        std::memory_order_relaxed);
+    pubDbTpMax.store (dbTpMaxHold,                std::memory_order_relaxed);
+    // PLR = session true-peak max − integrated loudness (meaningful only once
+    // both exist; 0 until then).
+    pubPlr.store (lufsI > anabasis::LoudnessMeter::kSilentLufs + 1.0f
+                      ? dbTpMaxHold - lufsI : 0.0f,
+                  std::memory_order_relaxed);
+
+    const float grDb = juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f);
+    pubGrDb.store (grDb, std::memory_order_relaxed);
+    grHistoryRing.push (grDb, buffer.getMagnitude (0, nSm));
 }
 
 juce::AudioProcessorEditor* AnabasisAudioProcessor::createEditor()

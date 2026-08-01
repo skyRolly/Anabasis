@@ -647,6 +647,48 @@ static void testAbSwitchRequestsDuck()
 }
 
 // ---------------------------------------------------------------------------
+// §2.9 meter publication: the wrapper measures the OUTPUT and publishes once
+// per block through the THREAD_MODEL meter atomics. A −20 dBFS 997 Hz tone
+// must read −20 LUFS momentary/integrated, ~−20 dBTP (sine ISP ≈ sample peak
+// at 997 Hz), PLR = dbTpMax − lufsI, GR 0; the GR-history ring advances one
+// entry per block with a release-stored index.
+static void testMeterPublication()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    const int blocks = (int) (6.0 * 48000.0 / 512.0);   // 6 s: I-gate warm
+    for (int b = 0; b < blocks; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.1f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 997.0f * (float) (b * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+    check (near (proc.meterLufsM(), -20.0f, 0.3f), "meters: momentary reads the tone's loudness");
+    check (near (proc.meterLufsI(), -20.0f, 0.2f), "meters: integrated agrees");
+    check (near (proc.meterDbTpMax(), -20.0f, 0.2f),
+           "meters: dBTP max-hold reads the sine's true peak");
+    check (near (proc.meterPlr(), proc.meterDbTpMax() - proc.meterLufsI(), 1.0e-4f),
+           "meters: PLR is dbTpMax minus integrated");
+    check (near (proc.meterGrDb(), 0.0f, 0.01f), "meters: no reduction on a -20 dBFS tone");
+
+    const auto& ring = proc.grHistory();
+    check (ring.available() == (int64_t) blocks,
+           "meters: the GR history ring advanced exactly one entry per block");
+    const auto last = ring.peek (ring.available() - 1);
+    check (near (last.peak, 0.1f, 0.01f), "meters: the history entry carries the block peak");
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -711,6 +753,7 @@ int main (int argc, char** argv)
         testAbSlotsAndTiers();
         testMacroRestoreDoesNotClobber();
         testAbSwitchRequestsDuck();
+        testMeterPublication();
         testDrainInsideRestoreIsSuppressed();
         testAbRawExact();
         testFrozenSlotRoundTrip();

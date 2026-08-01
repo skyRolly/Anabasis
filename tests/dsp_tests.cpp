@@ -1799,6 +1799,128 @@ static void testLufsWindows()
 }
 
 // ---------------------------------------------------------------------------
+// inv 10, the named monitoring-honesty test: loudness compensation must not
+// alter the RENDER. With nonRealtime set, the output with loudnessComp on is
+// BIT-IDENTICAL to the output with it off; in realtime the same signal is
+// measurably attenuated toward the dry loudness.
+static void testLoudnessCompensationDoesNotAlterRender()
+{
+    const double sr = 48000.0;
+    auto render = [&] (bool compOn, bool offline) -> std::vector<float>
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.limGainDb    = 12.0f;                 // wet is much louder than dry
+        p.loudnessComp = compOn;
+        p.nonRealtime  = offline;
+        p.truePeakMode = false;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 200; ++b)           // ~2.1 s: measure + smoother settle
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.15f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                  * 500.0f * (float) (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+
+    {   // OFFLINE: bit-identical with comp on vs off — the render is untouched.
+        const auto off = render (false, true), on = render (true, true);
+        bool identical = true;
+        for (size_t n = 0; n < off.size(); ++n)
+            if (! juce::exactlyEqual (off[n], on[n])) { identical = false; break; }
+        check (identical, "inv10: loudnessComp does not alter the offline render, bit for bit");
+    }
+    {   // REALTIME: comp attenuates the monitor toward the dry loudness.
+        const auto off = render (false, false), on = render (true, false);
+        auto tailRmsDb = [] (const std::vector<float>& v)
+        {
+            double s = 0.0; int c = 0;
+            for (size_t n = v.size() - 24000; n < v.size(); ++n) { s += (double) v[n] * v[n]; ++c; }
+            return 20.0 * std::log10 (std::sqrt (s / c));
+        };
+        const double offDb = tailRmsDb (off), onDb = tailRmsDb (on);
+        check (onDb < offDb - 6.0,
+               "inv10: in realtime the monitor is pulled well below the uncompensated level");
+        // ...and toward the DRY level (-16.5 dB RMS input): within a few dB.
+        check (std::abs (onDb - (-16.5)) < 3.5,
+               "inv10: the compensated monitor sits near the dry loudness");
+        // The PREDICT floor acts before the measure can (short-term needs
+        // seconds of data; the 200 ms smoother is the only delay): the first
+        // 300 ms are already pulled down hard.
+        auto earlyRmsDb = [] (const std::vector<float>& v)
+        {
+            double s = 0.0; int c = 0;
+            for (size_t n = 4800; n < 14400; ++n) { s += (double) v[n] * v[n]; ++c; }
+            return 20.0 * std::log10 (std::sqrt (s / c));
+        };
+        check (earlyRmsDb (on) < earlyRmsDb (off) - 4.0,
+               "inv10: the predict floor pre-ducks the monitor before the measure exists");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// §2.7 delta: with a transparent chain the difference signal is exact silence
+// (the default path is bit-exact, so dry-minus-wet cancels perfectly); with
+// processing engaged it is the removed material — nonzero, and inert offline.
+static void testDeltaMonitor()
+{
+    const double sr = 48000.0;
+    auto render = [&] (float pushDb, bool deltaOn, bool offline) -> std::vector<float>
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.limGainDb    = pushDb;
+        p.deltaMonitor = deltaOn;
+        p.nonRealtime  = offline;
+        p.truePeakMode = false;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 500.0f * (float) (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+    auto tailPeak = [] (const std::vector<float>& v)
+    {
+        float pk = 0.0f;
+        for (size_t n = v.size() - 24000; n < v.size(); ++n)
+            pk = juce::jmax (pk, std::abs (v[n]));
+        return pk;
+    };
+
+    check (tailPeak (render (0.0f, true, false)) < 1.0e-6f,
+           "delta: a transparent chain's difference signal is silence");
+    check (tailPeak (render (12.0f, true, false)) > 0.05f,
+           "delta: a pushed chain's difference signal is the removed material");
+    {
+        const auto normal = render (12.0f, false, true), withDelta = render (12.0f, true, true);
+        bool identical = true;
+        for (size_t n = 0; n < normal.size(); ++n)
+            if (! juce::exactlyEqual (normal[n], withDelta[n])) { identical = false; break; }
+        check (identical, "delta: inert in the offline render (monitor path only)");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -2078,6 +2200,8 @@ int main()
     testLufsCalibration();
     testLufsGating();
     testLufsWindows();
+    testLoudnessCompensationDoesNotAlterRender();
+    testDeltaMonitor();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
