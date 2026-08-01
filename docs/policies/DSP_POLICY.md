@@ -162,6 +162,13 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 
 12. **Dither is off by default and is the last stage before output.** It is intended for final
     export only; enabling it must not change gain staging. TPDF, with optional noise shaping.
+    **Scope, stated for the same reason invariant 4's is** (recorded 2026-08-01, PR #5): "last
+    stage" means last on the **programme path**. The §2.7 loudness-compensation gain is applied
+    after it, post-mix, so that a loudness-matched bypass carries the same gain — and it is a
+    monitor-only function, snapped inert under `nonRealtime` (invariant 10), so **no render is
+    affected**: an exported file is on the 2^-15/2^-23 grid exactly. Auditioning with Loudness
+    Comp engaged does scale the dithered signal off that grid in realtime, which is correct — the
+    monitor is not the export.
 
 13. **The DSP core is format-agnostic.** `src/dsp/` depends only on `juce_dsp` /
     `juce_audio_basics` and is driven by a POD parameter snapshot; it never includes the plugin

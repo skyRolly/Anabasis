@@ -176,6 +176,15 @@ public:
             }
 
             // -- 2. colour ---------------------------------------------------
+            // Deliberately NOT kept warm on the skipped branch, unlike the
+            // ADAA memory above and the tame filter below: those two filter
+            // the SIGNAL, so a stale state differences or splices against
+            // real audio. `toneLp`/`dcState` filter the colour RESIDUE `r`,
+            // which is added as `dep * r` — and `dep` reaches nonzero only
+            // through its own 20 ms smoother, so any stale-state transient is
+            // O(dep) at the moment it could be heard, i.e. zero. Warming them
+            // would mean computing the whole colour polynomial on every
+            // skipped sample to feed filters whose output is multiplied by 0.
             if (dep > 0.0f && model != 0)
             {
                 const float oddPart  = model == 3 ? 0.6f * c * c * c + 0.4f * c * c * c * c * c

@@ -231,6 +231,15 @@ public:
         // Style scales release TIME (Loud = half the time), which in the
         // alpha domain is a multiplier ABOVE one — the first draft multiplied
         // alpha by 0.5 and made Loud the slowest style, caught by test.
+        // α·k is an APPROXIMATION of τ/k, exact only as α → 0, so the numbers
+        // recorded in TEST_REPORT are alpha ratios. It is a good one
+        // everywhere reachable: the release floor is 1 ms, α = 1 − e^(−1/48)
+        // = 0.0206 at 48 kHz (smaller at every oversampled rate), and ×2 gives
+        // τ = −1/ln(1 − 0.0412) = 23.8 samples = 0.495 ms against the 0.5 ms
+        // the comment claims — 1 % error, shrinking as the release lengthens.
+        // Re-deriving from onePoleMs(releaseMs / k) would make it exact and
+        // cost nothing per sample; it would also move every measured style
+        // number, so it is a tuning change for the ⊕ pass, not a fix.
         const float relScale = style == 2 ? 2.0f : (style == 1 ? 1.25f : 1.0f);
         const float effPres  = juce::jlimit (0.0f, 1.0f,
                                              preserve * (style == 1 ? 1.5f : 1.0f));

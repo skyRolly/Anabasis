@@ -20,14 +20,16 @@ headless Linux machine, no IDE.
   true-peak lookahead limiter · oversampling to 16× · dither) behind the POD engine boundary on
   the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn, and schema-v1 state
-  with A/B slots — verified by `tests/` (**265 checks** — re-count from the suites' own output when editing,
+  with A/B slots — verified by `tests/` (**272 checks** — re-count from the suites' own output when editing,
   the same rule HANDOVER's status row carries — green on Linux together with pluginval L5 in
   both modes ×3; see [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
 - **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the frozen-trim-vector transport
-  (OQ-013, blocks that one restore path at P1 and nothing else), and **the remaining entries in
+  (OQ-013, blocks that one restore path at P1 and nothing else), **OQ-015** (the P4 learned-target
+  restore is an off-table cross-thread path awaiting the Architecture Review Gate — the code ships
+  and is tested, but the shape is frozen until the owner rules), and **the remaining entries in
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)** — which is the list of record, so this
   sentence cannot drift out of date. None of them may be guessed at. Resolved entries
   stay in that file's `Resolved` section; they are decisions, not choices to revisit.

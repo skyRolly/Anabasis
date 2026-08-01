@@ -94,6 +94,13 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     engine.process (buffer, snapshot);
 
+    // A block the engine short-circuited (no samples, no channels) produced no
+    // render tap values: publishing anyway would re-report the previous
+    // block's peaks and push a duplicate GR-history entry, breaking the
+    // one-entry-per-processed-block property the ring's readers rely on.
+    if (buffer.getNumSamples() <= 0 || buffer.getNumChannels() <= 0)
+        return;
+
     // -- §2.9 metering: publish once per block from the engine's RENDER tap
     // (relaxed atomics — monotonic display data, THREAD_MODEL meter row).
     // NOT from `buffer`: the buffer carries the LISTENING path, which the
@@ -107,6 +114,11 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const float blockTpDb = juce::Decibels::gainToDecibels (engine.lastRenderTpMax(), -144.0f);
     dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
 
+    // integratedLufs() walks the 751-bin histogram twice (~1500 iterations,
+    // bounded and allocation-free) although the figure only moves when a
+    // gating block commits, every 100 ms. Caching it in finishSubBlock would
+    // remove ~99 % of that at 512-sample blocks — a candidate if the P6 CPU
+    // measurement puts metering near DESIGN §9's ≤ 0.5 % allocation.
     const float lufsI = om.integratedLufs();
     pubLufsM.store (om.momentaryLufs(),  std::memory_order_relaxed);
     pubLufsS.store (om.shortTermLufs(),  std::memory_order_relaxed);
@@ -311,13 +323,25 @@ void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     // child is written ONLY once Learn has committed targets. The values are
     // audio-thread-written atomics read here on the message thread — stable
     // after the commit, the same capture pattern as the frozen-trim latch.
-    if (engine.adaptiveForWrapper().hasLearned())
+    //
+    // While a restore is still STAGED (loaded, not yet consumed by a block
+    // top) the engine's answer is one session out of date, so the staged
+    // record is authoritative instead: a host that loads a project and
+    // re-saves it without running audio must not lose — or resurrect — a
+    // learned reference. Once consumed the two agree, so which side is read
+    // stops mattering; a consume racing this read hands back the same values.
+    const bool  restoreStaged = engine.adaptiveRestorePending();
+    const auto& ad            = engine.adaptiveForWrapper();
+    const bool  learnedNow    = restoreStaged ? stagedAdaptiveLearned : ad.hasLearned();
+    if (learnedNow)
     {
         juce::ValueTree adaptive ("ADAPTIVE");
         adaptive.setProperty ("refOnsetRate",
-                              (double) engine.adaptiveForWrapper().publishedRefOnset(), nullptr);
+                              (double) (restoreStaged ? stagedRefOnset : ad.publishedRefOnset()),
+                              nullptr);
         adaptive.setProperty ("refTiltDb",
-                              (double) engine.adaptiveForWrapper().publishedRefTilt(), nullptr);
+                              (double) (restoreStaged ? stagedRefTilt : ad.publishedRefTilt()),
+                              nullptr);
         root.appendChild (adaptive, nullptr);
     }
 
@@ -390,14 +414,24 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // A missing FIELD inside a present child takes its default (§4.4), which
     // here is the factory neutral reference — not var()'s 0.0, which would
     // have the trims chase a reference no programme material can match.
+    // The staged record is mirrored here (message thread) so getStateInformation
+    // can answer correctly before the next block top consumes it.
     if (const auto adaptive = root.getChildWithName ("ADAPTIVE"); adaptive.isValid())
-        engine.restoreLearnedTargets (
-            (float) (double) adaptive.getProperty ("refOnsetRate",
-                                                   anabasis::AdaptiveEngine::kDefaultRefOnset),
-            (float) (double) adaptive.getProperty ("refTiltDb",
-                                                   anabasis::AdaptiveEngine::kDefaultRefTilt));
+    {
+        stagedAdaptiveLearned = true;
+        stagedRefOnset = (float) (double) adaptive.getProperty (
+                             "refOnsetRate", anabasis::AdaptiveEngine::kDefaultRefOnset);
+        stagedRefTilt  = (float) (double) adaptive.getProperty (
+                             "refTiltDb", anabasis::AdaptiveEngine::kDefaultRefTilt);
+        engine.restoreLearnedTargets (stagedRefOnset, stagedRefTilt);
+    }
     else
+    {
+        stagedAdaptiveLearned = false;
+        stagedRefOnset = anabasis::AdaptiveEngine::kDefaultRefOnset;
+        stagedRefTilt  = anabasis::AdaptiveEngine::kDefaultRefTilt;
         engine.restoreNeverLearned();
+    }
 
     // Deliberately the SECOND recompute of this load: replaceFrom's batch
     // already fired one (that is the level testLatencyNotifyIsBatchedAcrossARead

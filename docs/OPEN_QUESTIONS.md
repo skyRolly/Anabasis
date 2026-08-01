@@ -175,6 +175,48 @@ residual check-then-act window are documented in `KNOWN_ISSUES.md` KI-003 and
 Not blocking P1 code (the code ships either way); blocking the **THREAD_MODEL.md** write-up, which
 must state one reading or the other.
 
+## OQ-015 — Does the learned-target restore need a THREADING_POLICY row, and which shape? · `Open (owner call — Hard Stop)`
+
+**Question.** The §5.4 Learn restore (`AnabasisEngine::restoreLearnedTargets`) stages **two floats
+plus a boolean discriminator** and publishes them with a **separate release-stored flag**, consumed
+`exchange(acquire)` at the block top. `THREADING_POLICY.md`'s sentinel row — the closest fit — says
+verbatim: *"Anything unbounded, wider than one lock-free scalar, or needing ordering against other
+state is **not** this row and is a new cross-thread path"*, and the table closes with *"Any path not
+in this table is a new cross-thread path → Architecture Review Gate."* `CLAUDE.md` lists a
+threading-model change as a Hard Stop. **The path was implemented at P4 without that gate** — it was
+built by analogy to the GR ring's release/acquire discipline, which is an Audio→GUI row and does not
+authorise a GUI→Audio record. Raised by external review 2026-08-01; recorded rather than quietly
+kept, and rather than redesigned under review pressure.
+
+**Why it is not simply OQ-013 again.** OQ-013's frozen-trim vector is four coherence-critical
+scalars whose half-restore is *permanently* wrong, and the policy blockquote already forbids wiring
+it. This is two scalars plus an intent bit — the same *shape*, a smaller *stake*. The blockquote's
+reasoning ("choosing between N parallel sentinel scalars with a stated ordering guarantee and a
+single release/acquire-gated per-slot POD is a thread-model decision") is written generically, which
+is exactly why this needs the owner and not an inference.
+
+**The three options, costed.**
+
+- **Ratify as-is.** One small ADR adds a "GUI → Audio (staged record behind a release/acquire flag,
+  bounded, one writer, one consumer)" row and the code stands unchanged. The mechanism is the same
+  release/acquire pair the ring already uses, in the other direction, and it is mutation-verified
+  (`testAdaptiveRestoreLastStagedWins`, `learn/noAudio`). Cheapest, and makes the rule that OQ-013
+  must satisfy explicit rather than implied.
+- **Re-express on the existing table.** `restoreNeverLearned` already fits the payload-free momentary
+  row. The two refs could become two sentinel-valued `atomic<float>` slots — but the pair can then
+  tear across two session loads, leaving one session's onset with another's tilt, which is the
+  permanent-wrong-state the sentinel row's exclusion exists to prevent. Cheap to write, and it
+  trades a documented mechanism for an undocumented tearing window.
+- **Defer the whole restore.** Drop the ADAPTIVE restore to P5 and ship Learn as session-local. No
+  policy question, and a user-visible regression (`docs/CHANGELOG.md`'s P4 entry would lose its
+  round-trip claim).
+
+**State meanwhile.** The code ships and is tested; the deviation is visible, not hidden —
+`docs/architecture/THREAD_MODEL.md` marks both learned-target rows **"no row — see OQ-015"**, the
+same treatment the MacroEngine edge gets under OQ-014. **No further code may extend this shape**
+(more staged fields, a second staged record, or the OQ-013 trim transport) until the question is
+answered.
+
 ## Resolved
 
 ### OQ-011 — What is the macOS deployment target? · `Resolved 2026-07-31 (P1)`

@@ -112,6 +112,16 @@ private:
 
     std::atomic<bool> nonRealtimeFlag { false };
 
+    // Message-thread mirror of the ADAPTIVE record last staged to the engine.
+    // The engine only adopts a staged restore at a block top, so between a
+    // load and the next audio block the engine's own learned state is STALE —
+    // and a host that loads a project and immediately re-saves it (duplicate
+    // track, copy plugin state, save without transport) would otherwise
+    // serialize that stale answer and drop the loaded session's Learn.
+    bool  stagedAdaptiveLearned = false;
+    float stagedRefOnset = anabasis::AdaptiveEngine::kDefaultRefOnset;
+    float stagedRefTilt  = anabasis::AdaptiveEngine::kDefaultRefTilt;
+
 public:
     // -- §2.9 meter publication (THREAD_MODEL: Audio→GUI relaxed atomics,
     //    one publish per block; readers are the editor's paint sites) -------

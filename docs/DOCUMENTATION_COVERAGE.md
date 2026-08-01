@@ -6,10 +6,79 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **third P4 review round of 2026-08-01** (PR #5): the meters moved off
+**Last updated:** for the **fourth P4 review round of 2026-08-01** (PR #5): the load-then-save
+learned-reference loss, the publish-on-a-short-circuited-block duplicate, and **OQ-015** — an
+external review found that the P4 learned-target restore is an off-table cross-thread path that
+never passed the Architecture Review Gate. Previous round: (PR #5): the meters moved off
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Fourth P4 review round — a save that ran before the audio thread, and a threading path that never passed the gate (2026-08-01)
+
+Twelve items: two defects fixed, one **Hard Stop escalated rather than patched**, six
+comment/scope clarifications, three confirmations that needed no action.
+
+**The Hard Stop is the important one.** The §5.4 learned-target restore stages two floats plus a
+discriminator behind a separate release-stored flag. `THREADING_POLICY.md`'s sentinel row excludes
+that shape verbatim — *"anything unbounded, wider than one lock-free scalar, or needing ordering
+against other state is **not** this row"* — and the table closes with *"any path not in this table
+is a new cross-thread path → Architecture Review Gate."* It was built at P4 by analogy to the GR
+ring's release/acquire pair, which is an **Audio→GUI** row and does not authorise a **GUI→Audio**
+record; two rounds of review (including mine) then documented it under invented row names, which
+made it read as authorised. It is now `OPEN_QUESTIONS.md` **OQ-015** with three costed options
+(ratify with a small ADR / re-express as sentinel slots and accept a tearing window / defer the
+restore to P5), both THREAD_MODEL rows are marked **"no row — see OQ-015"** exactly as the
+MacroEngine edge is under OQ-014, and the shape is frozen — no further staged fields, no second
+record, and OQ-013's trim transport still cannot be wired. The code ships meanwhile because it is
+tested and reverting it unreviewed would be a larger unreviewed change than leaving it.
+**Lesson, and it is the one worth keeping from this round:** "it uses the same memory-ordering
+primitives as an approved mechanism" is not the same claim as "it is an approved mechanism", and
+writing a plausible row name into the architecture doc is how the first claim gets mistaken for
+the second. The MacroEngine edge was handled correctly a phase earlier; the pattern existed and
+was not followed.
+
+**Learn was lost by a load-then-save with no audio between.** `setStateInformation` only STAGES
+the ADAPTIVE record; the engine adopts it at the next block top, and `getStateInformation` gated
+the child on the engine's `hasLearned()`. A host that duplicates a track, copies plugin state, or
+opens a project and re-saves without transport therefore serialized the engine's one-session-stale
+answer: the child omitted (Learn silently gone) and, in the mirror case, an old learned child
+resurrected over an un-learned session. The wrapper now mirrors the staged record on the message
+thread and prefers it while `adaptiveRestorePending()` is true; once consumed the two agree, so a
+concurrent consume hands back the same values. The existing round-trip test hid this by running
+two blocks before re-saving — a test that models the *unhurried* path only.
+
+**A short-circuited block still published.** `AnabasisEngine::process` returns early on zero
+samples/channels without touching the render-tap values, and the wrapper published anyway:
+previous-block peaks re-reported, a duplicate GR-history entry pushed, breaking the
+one-entry-per-processed-block property `testMeterPublication` itself asserts. Guarded, with the
+zero-length block now in that test.
+
+**Scope clarifications, all doc/comment-only.** Invariant 12 ("dither is the last stage before
+output") now carries the same scope sentence invariant 4 got last round: last on the PROGRAMME
+path — the §2.7 monitor gain is applied after it, post-mix, and is snapped inert offline, so no
+render leaves the 2^-15/2^-23 grid; auditioning with Comp on does, correctly. `ClipSat`'s colour
+sub-block says why its tone/DC state is deliberately NOT kept warm while skipped (it filters the
+residue, which is multiplied by a `dep` that only leaves zero through a 20 ms smoother — unlike
+the ADAA memory and tame filter beside it, which filter the signal). The Latency-table flag says
+why it is recorded and not self-healing (clamping the engine to the measured value would make it
+disagree with the wrapper's `predictLatencySamples`, manufacturing the desync it prevents). The
+duck request dropped at `! smoothersPrimed` is marked as the one deliberate drop among the four.
+`LoudnessMeter`'s un-normalised stage-2 numerator is marked as BS.1770-4's own, so a future reader
+does not "fix" 0.04 LU into every reading.
+
+**One review claim was arithmetically wrong, checked rather than taken.** The limiter's
+`relScale` multiplies the release alpha while the comment says it scales release TIME; the review
+put the resulting error at "~0.98 ms rather than 0.5 ms" for a 1 ms release. It is not: α = 1 −
+e^(−1/48) = 0.0206 at 48 kHz, ×2 → τ = −1/ln(1 − 0.0412) = 23.8 samples = **0.495 ms**, a 1 %
+error that shrinks as the release lengthens and shrinks again at every oversampled rate. The
+comment now records the exact relationship and that TEST_REPORT's style numbers are alpha ratios;
+no code change, because re-deriving from `onePoleMs(releaseMs / k)` would move every measured
+style number for a 1 % correction — a ⊕ tuning change, not a fix.
+
+Also noted without action: the integrated-LUFS histogram walk (~1500 iterations/block, a P6 CPU-
+budget candidate, now commented at the call site) and the still-missing meter-hold reset (P5
+planned edge). Suites: 185 + 87.
 
 ### Third P4 review round — the meters were watching the monitor, and the limiter's levels were stepping (2026-08-01)
 

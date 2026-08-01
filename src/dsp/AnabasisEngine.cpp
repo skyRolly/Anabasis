@@ -44,6 +44,13 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
             // UNCONDITIONALLY (a jassert alone verifies nothing in the Release
             // builds that ship and that CI tests). The suite asserts the flag;
             // the impulse matrix independently measures the group delay.
+            // NOT self-healing by design: clamping the engine to the measured
+            // value would make the engine's delay disagree with the WRAPPER's
+            // reported figure, which comes from the same const table via
+            // predictLatencySamples - i.e. it would manufacture the desync it
+            // was meant to prevent. The pin is frozen by DEPENDENCY_POLICY and
+            // a bump is an Architecture Review Gate item; this flag exists so
+            // such a bump fails a test rather than shipping quietly.
             const bool tableOk = juce::approximatelyEqual (
                 oversamplers[f][ph]->getLatencyInSamples(),
                 (float) osLatencySamples ((OversampleFactor) (f + 1),
@@ -209,7 +216,12 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         duckGain  = 1.0f;
         // A render that STARTS with an empty pipeline is not a transition:
         // the reported latency is the promise that those samples are absent,
-        // so no hold, and nothing is owed from before the reset.
+        // so no hold, and nothing is owed from before the reset. `duckAsked`
+        // is consumed above and DELIBERATELY discarded here — a request that
+        // arrived before the first block (a setStateInformation ahead of
+        // prepareToPlay, which updateLatency's 48 kHz fallback shows is a
+        // real ordering) has nothing to fade. This is the one dropped request
+        // that is correct; the three that were not are in the branches below.
         bottomHoldSamples = 0;
         duckAskedWhileOut = false;
     }

@@ -180,7 +180,12 @@ private:
             s1a1 = 2.0 * (K * K - 1.0) / a0;
             s1a2 = (1.0 - K / Q + K * K) / a0;
         }
-        // Stage 2: RLB high-pass.
+        // Stage 2: RLB high-pass. The numerator is [1, −2, 1] UN-normalised
+        // against a0 while the denominator is normalised — deliberate, not an
+        // oversight: that is BS.1770-4's own coefficient set, whose ~+0.043 dB
+        // passband offset at 48 kHz is part of the reference filter.
+        // "Fixing" it shifts every LUFS reading by 0.04 LU and breaks the
+        // 997 Hz −3.01 LKFS compliance vector the calibration test pins.
         {
             const double f0 = 38.13547087602444;
             const double Q  = 0.5003270373238773;

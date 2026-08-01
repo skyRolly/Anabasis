@@ -686,6 +686,19 @@ static void testMeterPublication()
            "meters: the GR history ring advanced exactly one entry per block");
     const auto last = ring.peek (ring.available() - 1);
     check (near (last.peak, 0.1f, 0.01f), "meters: the history entry carries the block peak");
+
+    // A block the engine short-circuits produces no render-tap values, so the
+    // publish must be skipped too — otherwise the previous block's peaks are
+    // re-reported and a duplicate entry lands in the ring, breaking exactly
+    // the one-entry-per-block property asserted above.
+    const auto before = ring.available();
+    const float tpBefore = proc.meterDbTpMax();
+    juce::AudioBuffer<float> empty (2, 0);
+    proc.processBlock (empty, midi);
+    check (ring.available() == before,
+           "meters: a zero-length block pushes no history entry");
+    check (juce::exactlyEqual (proc.meterDbTpMax(), tpBefore),
+           "meters: a zero-length block re-publishes nothing");
 }
 
 // ---------------------------------------------------------------------------
@@ -867,6 +880,48 @@ static void testLearnCommitAndAdaptiveRoundTrip()
     check (! restored.adaptiveReadout().hasLearned()
              && std::abs (restored.adaptiveReadout().publishedRefOnset() - refOnset0) < 1.0e-4f,
            "learn: absent ADAPTIVE means never learned — defaults restored");
+
+    // Load → save with NO audio in between. The engine only adopts a staged
+    // restore at a block top, so a host that duplicates a track, copies plugin
+    // state, or saves a freshly opened project without transport would have
+    // serialized the engine's one-session-stale answer: the ADAPTIVE child
+    // omitted entirely (Learn silently lost), and in the mirror case an old
+    // learned child resurrected over an un-learned session.
+    {
+        AnabasisAudioProcessor noAudio;
+        noAudio.prepareToPlay (48000.0, 512);
+        noAudio.setStateInformation (state.getData(), (int) state.getSize());
+        juce::MemoryBlock resaved;
+        noAudio.getStateInformation (resaved);          // deliberately no processBlock
+
+        auto xml = juce::AudioProcessor::getXmlFromBinary (resaved.getData(), (int) resaved.getSize());
+        check (xml != nullptr, "learn/noAudio: the immediate re-save parses");
+        const auto reloaded = juce::ValueTree::fromXml (*xml);
+        const auto child    = reloaded.getChildWithName ("ADAPTIVE");
+        check (child.isValid(),
+               "learn/noAudio: loading and re-saving without audio keeps the ADAPTIVE child");
+        check (std::abs ((float) (double) child.getProperty ("refOnsetRate") - refOnsetLearned)
+                 < 1.0e-4f,
+               "learn/noAudio: ...with the loaded session's references, not the engine's stale ones");
+
+        // Mirror: a LEARNED engine loaded with an un-learned session and
+        // re-saved before the next block must not resurrect the old child.
+        AnabasisAudioProcessor wasLearned;
+        wasLearned.prepareToPlay (48000.0, 512);
+        wasLearned.setStateInformation (state.getData(), (int) state.getSize());
+        for (int b = 0; b < 2; ++b) wasLearned.processBlock (buf, midi);   // adopt it
+        check (wasLearned.adaptiveReadout().hasLearned(), "learn/noAudio: the mirror run did learn");
+        juce::MemoryBlock blank2;
+        AnabasisAudioProcessor().getStateInformation (blank2);
+        wasLearned.setStateInformation (blank2.getData(), (int) blank2.getSize());
+        juce::MemoryBlock afterBlank;
+        wasLearned.getStateInformation (afterBlank);    // again no processBlock
+        auto xml2 = juce::AudioProcessor::getXmlFromBinary (afterBlank.getData(),
+                                                            (int) afterBlank.getSize());
+        check (xml2 != nullptr && ! juce::ValueTree::fromXml (*xml2)
+                                      .getChildWithName ("ADAPTIVE").isValid(),
+               "learn/noAudio: an un-learned session re-saved without audio stays un-learned");
+    }
 
     // A PRESENT child with the values MISSING is the §4.4 read rule's other
     // half: a missing field takes its default, and the default here is the

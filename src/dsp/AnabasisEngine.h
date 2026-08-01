@@ -113,6 +113,14 @@ public:
         adaptivePending.store (true, std::memory_order_release);
     }
 
+    // True while a staged record has not yet been consumed by a block top.
+    // The WRITER side reads this (message thread, same thread that staged it)
+    // to answer "is the engine's learned state still older than the session I
+    // just loaded?" — getStateInformation needs that, because a host can load
+    // and re-save with no audio in between.
+    bool adaptiveRestorePending() const noexcept
+    { return adaptivePending.load (std::memory_order_acquire); }
+
     AdaptiveEngine& adaptiveForWrapper() noexcept { return adaptiveEngine; }
 
     // False if any oversampler the pinned JUCE built disagrees with the
