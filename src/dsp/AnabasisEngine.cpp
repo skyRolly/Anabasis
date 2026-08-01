@@ -41,6 +41,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     bypassStep = 1.0f / (float) juce::jmax (1, (int) (0.010 * sampleRate));
 
     limiter.prepare (sampleRate, delaySamples);
+    eq.prepare (sampleRate);
     reset();
 }
 
@@ -50,6 +51,7 @@ void AnabasisEngine::reset() noexcept
     dryRing.clear();
     writePos = 0;
     limiter.reset();
+    eq.reset();
     smoothersPrimed = false;   // the next block adopts ALL FOUR values without a glide
 
     // The crossfade is reset state too. Leaving a part-way `bypassMix` behind
@@ -106,6 +108,22 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         windowSamples.setTargetValue (windowTarget);
     }
     limiter.setRelease (juce::jmax (1.0f, p.limReleaseMs));
+    eq.setTargets (p);
+
+    // eqPosition is a discrete REWIRE, not a glide (ADR-0010's same-day note):
+    // the biquad history belongs to the stream the EQ was in, so it is cleared
+    // on a move. Two accepted P1-class artefacts until the §2.8 duck routes
+    // this switch: the rewire itself can step, and for the next delaySamples
+    // the ring still drains samples EQ'd at the old position while the new
+    // position also processes them (double/none for ≤10 ms). KI-001 records
+    // the same gap for the A/B swap; both close together when §2.8 lands.
+    if (p.eqPosition != eqPositionNow)
+    {
+        eqPositionNow = p.eqPosition;
+        eq.resetState();
+    }
+    const bool eqPre  = eqPositionNow == 0;
+    const bool eqPost = ! eqPre;
 
     if (p.bypass != bypassTarget)
         bypassTarget = p.bypass;   // step size is rate-derived, set in prepare()
@@ -116,6 +134,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     {
         const float gIn   = inputGain.getNextValue();
         const float gPush = pushGain.getNextValue();
+        eq.tick();   // once per sample, whichever position processes it
 
         for (int ch = 0; ch < numChannels; ++ch)
         {
@@ -123,8 +142,17 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             if (! std::isfinite (in))
                 sawNonFinite = true;
 
-            const float wet = (juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn)
-                            * (juce::exactlyEqual (gPush, 1.0f) ? 1.0f : gPush);
+            // Chain order (ADR-0002): Input Gain → EQ(Pre) → [comp/clip P2] →
+            // limiter push. Pre-EQ is upstream of the wet ring, so the
+            // limiter's detector sees the EQ'd signal — boosting a shelf
+            // drives the limiter, as a mastering chain must.
+            float staged = juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn;
+            if (! std::isfinite (staged))
+                staged = 0.0f;                 // EQ state must never eat a NaN
+            if (eqPre)
+                staged = eq.processSample (ch, staged);
+
+            const float wet = juce::exactlyEqual (gPush, 1.0f) ? staged : staged * gPush;
             wetRing.setSample (ch, writePos, std::isfinite (wet) ? wet : 0.0f);
             dryRing.setSample (ch, writePos, std::isfinite (in)  ? in  : 0.0f);
         }
@@ -179,8 +207,15 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
 
             // gr == 1 multiplies exactly; the clamp passes sub-ceiling samples
             // untouched — together that is inv 7's bit-exact identity path.
-            float processed = clamp.processSample (
-                juce::exactlyEqual (gr, 1.0f) ? delayedWet : delayedWet * gr, ceilingNow);
+            float processed = juce::exactlyEqual (gr, 1.0f) ? delayedWet : delayedWet * gr;
+
+            // Post-position EQ sits AFTER the limiter and BEFORE the clamp —
+            // the placement ADR-0002 exists for: a +12 dB post shelf can push
+            // the limited signal back over the ceiling, and the clamp being
+            // downstream is what keeps invariant 4 unconditional.
+            if (eqPost)
+                processed = eq.processSample (ch, processed);
+            processed = clamp.processSample (processed, ceilingNow);
 
             // P1 dither: Off (the §4.2 default) is a true no-op. The 16/24-bit
             // TPDF stage lands with the metering work at P2 (DESIGN §2.9);

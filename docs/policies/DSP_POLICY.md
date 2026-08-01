@@ -170,11 +170,11 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | 1 chain order | chain-order / transfer-order test | TODO (P2) |
 | 2 latency exactness | `testReportedLatencyMatchesImpulse` | **partial (P1)** — impulse lands at the constant allowance for every lookahead value; the OS × lookahead matrix arrives with oversampling at P2 |
 | 3 true peak ≥ 4× | true-peak accuracy test | TODO (P3) |
-| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P1)** — sample-level hostile sweep is live; the ≤ 0.1 dBTP matrix needs the true-peak tap (P2/P3) |
+| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P2)** — the ADR-0002 mandated stimulus is live: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix still needs the true-peak tap (P2/P3) |
 | 5 oversampling scope | latency-matrix + aliasing measurement | TODO (P2) |
 | 6 ADAA | aliasing measurement (dB, recorded) | TODO (P2) |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
-| 8 click-free transitions | per-path click tests | **partial (P1)** — the ceiling and lookahead smoothing paths are pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`); the duck-routed rewires and the bulk swaps need the §2.8 transition layer (P2) |
+| 8 click-free transitions | per-path click tests | **partial (P2)** — ceiling, lookahead and the eleven EQ controls are pinned smoothed (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the duck-routed rewires (`eqPosition`, `colourModel`) and the bulk swaps need the §2.8 transition layer (P2) |
 | 9 no NaN/Inf/denormals | `testNoBadSamples` | **live (P1)** |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender` | TODO (P3) |
 | 11 metering accuracy | EBU R128 vectors + ISP signals | TODO (P3) |

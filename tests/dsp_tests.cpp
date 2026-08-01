@@ -266,29 +266,176 @@ static void testLookaheadIsSmoothed()
 // hot material pushed +12 dB never exceeds the ceiling after the clamp.
 static void testOutputNeverExceedsCeiling()
 {
-    anabasis::AnabasisEngine engine;
+    // ADR-0002's mandated stimulus (docs/procedures/TESTING.md): BOTH EQ
+    // positions, and the Post case with a +12 dB shelf AFTER the limiter —
+    // the exact signal the clamp placement exists to survive. A clamp wired
+    // upstream of the post EQ passes the Pre case and fails the Post one.
     const double sr = 48000.0;
-    engine.prepare (sr, 512, 2);
-    anabasis::EngineParameters p;
-    p.limGainDb = 12.0f;
-    const float ceilingLin = std::pow (10.0f, p.ceilingDbTp / 20.0f);
-
-    juce::AudioBuffer<float> buf (2, 512);
-    float maxOut = 0.0f;
-    for (int b = 0; b < 100; ++b)
+    for (const int eqPos : { 0, 1 })
     {
-        for (int n = 0; n < 512; ++n)
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.limGainDb          = 12.0f;
+        p.eqPosition         = eqPos;
+        p.eqHighShelfGainDb  = 12.0f;    // in Post position this boosts the LIMITED signal
+        p.eqHighShelfFreqHz  = 1000.0f;  // low corner so the 5 kHz probe sits in the boost
+        const float ceilingLin = std::pow (10.0f, p.ceilingDbTp / 20.0f);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        float maxOut = 0.0f;
+        for (int b = 0; b < 100; ++b)
         {
-            const float v = 0.9f * std::sin (2.0 * juce::MathConstants<double>::pi
-                                             * 97.0 * (b * 512 + n) / sr);
-            buf.setSample (0, n, v);
-            buf.setSample (1, n, v);
+            for (int n = 0; n < 512; ++n)
+            {
+                // Two components so both shelf band and low band are hot.
+                const double t = (b * 512 + n) / sr;
+                const float v = 0.6f * (float) std::sin (2.0 * juce::MathConstants<double>::pi *   97.0 * t)
+                              + 0.6f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 5000.0 * t);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            maxOut = juce::jmax (maxOut, buf.getMagnitude (0, 512));
         }
-        engine.process (buf, p);
-        maxOut = juce::jmax (maxOut, buf.getMagnitude (0, 512));
+        check (maxOut <= ceilingLin * 1.0001f,
+               eqPos == 0 ? "ceiling: never exceeded with Pre EQ"
+                          : "ceiling: never exceeded with a +12 dB shelf AFTER the limiter (Post)");
+        check (maxOut > 0.5f * ceilingLin, "ceiling: the limiter is actually engaged");
     }
-    check (maxOut <= ceilingLin * 1.0001f, "ceiling: sample peak never exceeds the clamp");
-    check (maxOut > 0.5f * ceilingLin,     "ceiling: the limiter is actually engaged");
+}
+
+// ---------------------------------------------------------------------------
+// §2.2 frequency response, measured — a formula transcription error in the
+// RBJ tables shows up here as a wrong magnitude, not as a crash. Sine RMS in
+// the settled tail vs the known input RMS.
+static float eqResponseDb (anabasis::MasteringEQ& eq, const anabasis::EngineParameters& p,
+                           double sr, float freqHz)
+{
+    eq.prepare (sr);          // fresh state per probe; setTargets primes (adopts)
+    eq.setTargets (p);
+    const int total = (int) sr;             // 1 s
+    const int tail  = total / 2;
+    double sumSq = 0.0;
+    for (int n = 0; n < total; ++n)
+    {
+        eq.tick();
+        const float x = std::sin (2.0f * juce::MathConstants<float>::pi * freqHz * (float) n / (float) sr);
+        const float y = eq.processSample (0, x);
+        if (n >= total - tail)
+            sumSq += (double) y * y;
+    }
+    const double rms = std::sqrt (sumSq / tail);
+    return (float) (20.0 * std::log10 (rms / 0.7071067811865476));
+}
+
+static void testEqFrequencyResponse()
+{
+    const double sr = 48000.0;
+    anabasis::MasteringEQ eq;
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+    {   // Bell: +6 dB at 1 kHz, Q 2 — peak at centre, flat far away
+        anabasis::EngineParameters p;
+        p.eqBell1FreqHz = 1000.0f; p.eqBell1GainDb = 6.0f; p.eqBell1Q = 2.0f;
+        check (near (eqResponseDb (eq, p, sr, 1000.0f), 6.0f, 0.2f), "eq: bell gain lands at its centre");
+        check (near (eqResponseDb (eq, p, sr,  100.0f), 0.0f, 0.2f), "eq: bell is flat two decades below");
+        check (near (eqResponseDb (eq, p, sr, 10000.0f), 0.0f, 0.3f), "eq: bell is flat a decade above");
+    }
+    {   // Low shelf: −6 dB at 100 Hz — full cut deep below, flat far above
+        anabasis::EngineParameters p;
+        p.eqLowShelfFreqHz = 100.0f; p.eqLowShelfGainDb = -6.0f;
+        check (near (eqResponseDb (eq, p, sr,   20.0f), -6.0f, 0.4f), "eq: low shelf reaches its gain below the corner");
+        check (near (eqResponseDb (eq, p, sr, 5000.0f),  0.0f, 0.2f), "eq: low shelf is flat far above the corner");
+    }
+    {   // High shelf: +6 dB at 8 kHz
+        anabasis::EngineParameters p;
+        p.eqHighShelfFreqHz = 8000.0f; p.eqHighShelfGainDb = 6.0f;
+        check (near (eqResponseDb (eq, p, sr, 18000.0f), 6.0f, 0.4f), "eq: high shelf reaches its gain above the corner");
+        check (near (eqResponseDb (eq, p, sr,   200.0f), 0.0f, 0.2f), "eq: high shelf is flat far below the corner");
+    }
+    {   // Tilt +3: −3 dB deep low, +3 dB high, ~0 at the 700 Hz pivot.
+        // SIGN IS THE CONTRACT here: positive tilt BRIGHTENS.
+        anabasis::EngineParameters p;
+        p.eqTiltDb = 3.0f;
+        check (near (eqResponseDb (eq, p, sr,    30.0f), -3.0f, 0.5f), "eq: +tilt cuts the lows by the tilt amount");
+        check (near (eqResponseDb (eq, p, sr, 16000.0f),  3.0f, 0.5f), "eq: +tilt boosts the highs by the tilt amount");
+        check (near (eqResponseDb (eq, p, sr,   700.0f),  0.0f, 0.4f), "eq: tilt is ~flat at the 700 Hz pivot");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CODE_STYLE §Real-time discipline for the EQ's own smoothers: a 12 dB shelf
+// jump glides over 20 ms instead of stepping the output in one sample. DC
+// through a low shelf receives the full shelf gain, so the gain trajectory is
+// read directly off the output.
+static void testEqGainIsSmoothed()
+{
+    const double sr = 48000.0;
+    anabasis::MasteringEQ eq;
+    eq.prepare (sr);
+
+    anabasis::EngineParameters p;      // flat
+    eq.setTargets (p);                 // primes at transparent
+
+    float last = 0.0f, maxDelta = 0.0f, out = 0.0f;
+    for (int n = 0; n < 4800; ++n)     // 100 ms: jump at 10 ms, settle after
+    {
+        if (n == 480)
+        {
+            p.eqLowShelfGainDb = 12.0f;
+            p.eqLowShelfFreqHz = 500.0f;
+            eq.setTargets (p);         // primed: this must GLIDE
+        }
+        eq.tick();
+        out = eq.processSample (0, 0.5f);   // DC probe
+        if (n > 480)
+            maxDelta = juce::jmax (maxDelta, std::abs (out - last));
+        last = out;
+    }
+    // 0.5 → ~2.0 over 20 ms at 48 kHz is ~0.002/sample; an unsmoothed jump
+    // puts most of the 1.5 step into one sample.
+    check (maxDelta < 0.02f, "eq: a shelf-gain jump glides, never steps");
+    check (out > 1.8f,       "eq: the glide does arrive at the target gain");
+}
+
+// ---------------------------------------------------------------------------
+// Pre and Post are genuinely different circuits: a low shelf BEFORE the
+// limiter drives it into deeper gain reduction; the same shelf AFTER the
+// limiter boosts an already-limited signal into the clamp. If the position
+// switch does not rewire, these outputs coincide.
+static void testEqPositionsAreDistinct()
+{
+    const double sr = 48000.0;
+    auto renderRms = [&] (int eqPos)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.limGainDb         = 6.0f;
+        p.eqPosition        = eqPos;
+        p.eqLowShelfGainDb  = 12.0f;
+        p.eqLowShelfFreqHz  = 400.0f;
+        juce::AudioBuffer<float> buf (2, 512);
+        double sumSq = 0.0; int counted = 0;
+        for (int b = 0; b < 40; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 100.0f * (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            if (b >= 20)
+                for (int n = 0; n < 512; ++n)
+                { const double s = buf.getSample (0, n); sumSq += s * s; ++counted; }
+        }
+        return std::sqrt (sumSq / counted);
+    };
+
+    const double pre = renderRms (0), post = renderRms (1);
+    check (std::abs (pre - post) > 0.01, "eq: Pre and Post positions produce distinct output");
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +673,9 @@ int main()
     testLookaheadIsSmoothed();
     testReportedLatencyMatchesImpulse();
     testOutputNeverExceedsCeiling();
+    testEqFrequencyResponse();
+    testEqGainIsSmoothed();
+    testEqPositionsAreDistinct();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();

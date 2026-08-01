@@ -53,6 +53,13 @@ in the P1 build; the API exists for the state tests.
 **Cause:** `switchToSlot` applies `applySlotToLive` directly (TODO(P2) marks
 the duck call site).
 
+*Extended 2026-08-01 (P2, EQ landed):* the same §2.8 gap now also covers the
+**`eqPosition` rewire** — a Pre↔Post move clears the EQ state and can step,
+and for ≤ 10 ms the delay line drains samples EQ'd at the old position while
+the new position also runs (double/none processing during the overlap). Same
+severity, same closure: all of these route through the forced duck when §2.8
+lands, in this same phase.
+
 Evidence [Verified]:
 - Source: `src/PluginProcessor.cpp` (`switchToSlot`)
 - Test:   `AnabasisStateTests` `testAbSlotsAndTiers` (exercises the swap, not its audibility)
