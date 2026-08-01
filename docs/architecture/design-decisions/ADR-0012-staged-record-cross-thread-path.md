@@ -85,6 +85,27 @@ transport, but *whether* a restored trim vector should be injected into a runnin
 and what it means for the adaptation state machine — is a separate, still-open product question.
 This ADR removes the mechanism objection from OQ-013; it does not answer OQ-013.
 
+## Known limits of the contract
+
+Both are one-block/one-save effects on references that slew over seconds. They are stated because
+a contract whose edges are unwritten gets read as having none — and because OQ-015 asked for the
+coherence properties to be on the record rather than assumed.
+
+1. **Consume-then-adopt window.** The consumer clears the flag with `exchange` and adopts a few
+   instructions later. A writer-side read landing between the two (condition 5's "taken yet?")
+   sees `false` while the engine still holds pre-adoption values, so a save in that window
+   serializes the older learned state — one save's worth. Closing it means clearing the flag
+   *after* adoption, which trades this for a **lost update**: a record staged between adopt and
+   clear would be erased. The stale-read window is the better trade and is the one taken.
+2. **A second stage during the payload reads.** The consumer exchanges the flag (acquire) and
+   then reads the payload fields with relaxed loads. A `restoreLearnedTargets` landing between
+   those reads can have the engine adopt one session's onset reference with another's tilt. It
+   self-corrects at the next block top — the second call release-stored its flag after its
+   payload, so the following block re-consumes and lands on that record in full — so the torn
+   state lasts one block and affects only slow-slewing reference targets. Widening the payload to
+   a single atomic struct would close it and would cost a lock on any target without a
+   lock-free 12-byte CAS; not worth it at this stake.
+
 ## Consequences
 
 - `THREADING_POLICY.md` gains a permitted-path row and a statement of the six conditions above;

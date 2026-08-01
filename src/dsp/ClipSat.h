@@ -172,6 +172,11 @@ public:
             {
                 // The ADAA memory must track the signal even while skipped, or
                 // the first driven sample differences against a stale value.
+                // It stores the PRE-drive sample while the active branch
+                // stores dry·g — sound only because driveDb is SMOOTHED, so
+                // clipOn flips where g ≈ 1 and the mismatch is O(g−1) ≈ 0.
+                // If drive is ever snapped (a latch boundary, say), store
+                // dry·g here too or the first differenced sample sees a step.
                 adaaPrev[ch] = dry;
             }
 

@@ -73,7 +73,13 @@ public:
     // larger than the prepared maximum are processed in prepared-size chunks,
     // so a host that violates its own declared maximum degrades to extra
     // chunk overhead instead of unprocessed audio.
-    void process (juce::AudioBuffer<float>& buffer, const EngineParameters& params) noexcept;
+    //
+    // Returns FALSE when the call short-circuited (no samples, no channels, or
+    // not prepared) and therefore left every meter tap holding the previous
+    // block's values. The wrapper asks rather than re-deriving the condition:
+    // a re-derivation drifts the moment this early return grows a term, and it
+    // did — the first version of the publish guard missed `ringSizeOs <= 0`.
+    bool process (juce::AudioBuffer<float>& buffer, const EngineParameters& params) noexcept;
 
     int groupDelaySamples() const noexcept { return delaySamples; }
 
@@ -186,6 +192,7 @@ private:
     // gain computer uses reaches the clamp, exactly as before.
     std::vector<float> ceilArr;
     std::vector<int>   wArr;
+    std::vector<float> pushArr;       // limiter push, applied inside the region
 
     juce::SmoothedValue<float> inputGain      { 1.0f };
     juce::SmoothedValue<float> pushGain       { 1.0f };

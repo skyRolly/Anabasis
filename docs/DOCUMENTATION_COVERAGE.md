@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **OQ-015 decision and fifth review round of 2026-08-01** (PR #5):
+**Last updated:** for the **sixth review round of 2026-08-01** (PR #5): the limiter push was
+being applied BEFORE the clipper instead of after it — a real chain-order deviation that made the
+macro's primary push drive the clipper as well. Previous round: (PR #5):
 **ADR-0012** ratifies the GUI→Audio staged record unchanged (owner chose option 1), adding the row
 to `THREADING_POLICY.md`; invariant 7 gains the bypass-null scope sentence. Previous round: (PR #5): the load-then-save
 learned-reference loss, the publish-on-a-short-circuited-block duplicate, and **OQ-015** — an
@@ -15,6 +17,68 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Sixth review round — the push was in the wrong stage, and only a clipper could show it (2026-08-01)
+
+Fourteen items: one real DSP defect, two small structural fixes, ten notes/scope corrections, one
+repeat of a known P5 gap.
+
+**The defect is a chain-order deviation, and it is the kind this project is built to prevent.**
+`limGain` — the limiter's drive, and the macro layer's primary push (`18·l^1.2`, up to +18 dB) —
+was multiplied into the signal in stage A, right after the compressor and BEFORE `processSamplesUp`
+and `ClipSat`. Invariant 1 / ADR-0002 put the limiter after Clip/Sat, DESIGN §2.5 defines `limGain`
+as the gain that drives the limiter's fixed threshold, and **the engine's own header comment**
+states the intended layout verbatim: `OS region: [up ×N] → Clipper/Sat → limiter push → 10 ms
+lookahead line → LookaheadLimiter`. Because ClipSat clips against a fixed unity threshold scaled
+only by `clipDrive`, every dB of push moved the clip point down by a dB: at +18 dB, material 18 dB
+below the intended clip point saturated. On the default Simple-mode path.
+
+**Why five review rounds and 185 checks did not catch it.** The all-defaults null has
+`clipDrive = 0`, and ClipSat skips its whole sub-block at exactly 0 dB drive — so the two gains'
+ORDER is unobservable on every existing null, bypass and latency test. The property needs a test
+where the clipper is doing real work and the two gains are told apart: input gain +12 with push 0
+against input gain 0 with push +12, stimulus low enough that the compressor is inert in both.
+Correct code puts the clipper at 0.05 in one run and 0.20 in the other (h3 at −127 dB against
+−17.7 dB); the buggy code feeds it 0.20 in both and the renders are bit-identical. 110 dB of
+separation, asserted at 20, mutation-verified by restoring the old placement. The fix carries the
+push per base sample in `pushArr` (the `ceilArr`/`wArr` idiom already there) and applies it inside
+the region after `clip.processSample`, with the exact-1 skip that keeps the null bit-exact — all
+187 + 87 checks stayed green through the move, which is what "restructure, then extend" is for.
+
+**Lesson worth keeping:** a stage that is *skipped* at defaults hides the ordering of everything
+around it. When a bypassed-at-defaults stage lands, the tests that must be written are the ones
+that engage it — the null tests get *weaker* at exactly that moment, not stronger.
+
+**Two structural fixes.** `AnabasisEngine::process` now returns `bool` (false = short-circuited),
+and the wrapper's publish guard asks instead of re-deriving the early-return condition — the
+previous round's guard already had drifted, missing `ringSizeOs <= 0`. And stage A clears the
+staging rows above `nCh` so a caller handing fewer channels than `prepare()` was told cannot have
+last block's leftovers filtered through the oversampler (test-only today; `isBusesLayoutSupported`
+enforces stereo).
+
+**ADR-0012 gains a "Known limits" section** rather than leaving the reviewer's two coherence
+observations as folklore: the consume-then-adopt window (a save landing between the flag
+`exchange` and the adoption reads pre-adoption values — one save's worth; closing it trades for a
+lost-update window, so it is not closed) and the one-block torn pair if a second restore lands
+between the flag exchange and the payload loads (self-correcting at the next block top). Both are
+now part of the contract's text, which is where OQ-015 asked for them.
+
+**Scope and comment corrections, no behaviour change.** The §2.9 render tap states its deliberate
+inclusion of the duck (meters report what was EMITTED; the alternative describes audio nobody
+heard) with the cost named. `AdaptiveEngine`'s "structural, not a gate" header now separates the
+three trims that are inert by arithmetic from `scHpf`, whose inertness rests on the detector
+staying below both thresholds — a property of the stimulus, which is why `testNullWithDefaults`
+asserts its own precondition. `commitLearn` records that an empty Learn pass leaves an older
+learned state live with no signal back to the caller (a P5 UI item, not a P4 defect). `ClipSat`'s
+ADAA memory note says why storing the pre-drive sample is sound only while drive is smoothed.
+`switchToSlot` no longer claims the duck covers the whole glide — it covers all but the first
+~6 ms, since the audio thread reads parameters before the flag. `LoudnessMeter` records the
+relative gate's 0.1 LU bin quantisation. TEST_REPORT records what the true-peak estimator's
+5.5-sample group delay costs the shortest lookahead setting (~23 % of a 0.5 ms window) and why it
+is recorded rather than compensated.
+
+Unchanged and repeated from previous rounds: the meter-hold reset stays a P5 planned edge, and the
+integrated-LUFS histogram walk stays a P6 CPU-budget note. Suites: 187 + 87.
 
 ### OQ-015 decided, and the last scope sentence — ADR-0012 (2026-08-01)
 

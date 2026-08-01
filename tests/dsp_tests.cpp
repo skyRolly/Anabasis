@@ -793,6 +793,83 @@ static void testClipAdaaReducesAliasing()
 }
 
 // ---------------------------------------------------------------------------
+// inv 1 / ADR-0002 / DESIGN §2.5: the limiter push drives the LIMITER, not the
+// clipper. It sits after Clip/Sat in the chain, so input gain and limiter push
+// are NOT interchangeable — the clipper's operating point follows the first
+// and is untouched by the second. Two renders reaching the clipper at levels
+// 12 dB apart must therefore differ in harmonic content; if the push were
+// applied upstream (as it was until the P4 review round) the two are bit-
+// identical, because the compressor is inert at both levels and the only
+// difference is which of the two gains carried the signal.
+//
+// The stimulus is chosen so nothing else moves: 0.05 peak with +12 dB of
+// input gain is 0.2, still under the −3 dBFS comp knee bottom in BOTH runs,
+// and the clipper's level compensation leaves both outputs near 0.2 — well
+// below the −1 dBTP ceiling, so the limiter and the clamp stay out of it and
+// what the FFT sees is the clipper alone.
+static void testLimiterPushDoesNotDriveTheClipper()
+{
+    const double sr = 48000.0;
+    const int N = 8192, k = 500;      // 2.93 kHz, bin-aligned; h3 = bin 1500
+
+    auto render = [&] (float inputDb, float pushDb)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.inputGainDb  = inputDb;
+        p.limGainDb    = pushDb;
+        p.clipDriveDb  = 18.0f;       // the clipper is doing real work
+        p.clipMix      = 1.0f;
+        p.truePeakMode = false;
+        p.oversample   = anabasis::OversampleFactor::off;
+
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 30; ++b)  // 15360 samples: allowance + settle + N
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                const float v = 0.05f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                  * (float) k * (float) t / (float) N);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return std::vector<float> (out.begin() + 4096, out.begin() + 4096 + N);
+    };
+
+    juce::dsp::FFT fft (13);
+    auto magDb = [&] (const std::vector<float>& sig, int bin)
+    {
+        std::vector<float> buf (2 * (size_t) N, 0.0f);
+        std::copy (sig.begin(), sig.end(), buf.begin());
+        fft.performRealOnlyForwardTransform (buf.data(), true);
+        const float re = buf[(size_t) (2 * bin)], im = buf[(size_t) (2 * bin + 1)];
+        return 20.0f * std::log10 (juce::jmax (1.0e-12f, std::sqrt (re * re + im * im)));
+    };
+
+    const auto pushed = render (0.0f, 12.0f);   // clipper sees 0.05
+    const auto driven = render (12.0f, 0.0f);   // clipper sees 0.20
+    const float h3Pushed = magDb (pushed, 3 * k) - magDb (pushed, k);
+    const float h3Driven = magDb (driven, 3 * k) - magDb (driven, k);
+
+    // Measured: h3 sits at −127 dB relative in the pushed run (the clipper is
+    // never reached — 0.05 × 7.94 = 0.40, inside the linear region) against
+    // −17.7 dB in the driven run (0.20 × 7.94 = 1.59, hard into the knee).
+    // 110 dB apart; asserted at 20. The level guard is 5 dB, not tighter: the
+    // two runs sit at different points on the clipper's compensation curve
+    // and land 2.7 dB apart, which is the mechanism working, not drift.
+    check (std::abs (magDb (pushed, k) - magDb (driven, k)) < 5.0f,
+           "pushPlacement: both runs land at a comparable output level (like compared with like)");
+    check (h3Driven > h3Pushed + 20.0f,
+           "pushPlacement: limiter push does not drive the clipper — input gain does");
+}
+
+// ---------------------------------------------------------------------------
 // §2.4 colour: Clean is the null model at EVERY depth; depth 0 is exact with
 // every model; balance swings the odd/even ratio; tone tilts the residue.
 static void testColourModelsBalanceAndTone()
@@ -2812,6 +2889,7 @@ int main()
     testClipDriveZeroIsBitExact();
     testClipCurveAndCompensation();
     testClipAdaaReducesAliasing();
+    testLimiterPushDoesNotDriveTheClipper();
     testColourModelsBalanceAndTone();
     testDynamicTame();
     testClipMixZeroIsDry();

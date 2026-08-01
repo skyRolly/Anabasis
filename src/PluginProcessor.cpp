@@ -92,13 +92,12 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
 
-    engine.process (buffer, snapshot);
-
-    // A block the engine short-circuited (no samples, no channels) produced no
-    // render tap values: publishing anyway would re-report the previous
-    // block's peaks and push a duplicate GR-history entry, breaking the
-    // one-entry-per-processed-block property the ring's readers rely on.
-    if (buffer.getNumSamples() <= 0 || buffer.getNumChannels() <= 0)
+    // A block the engine short-circuited produced no render-tap values:
+    // publishing anyway would re-report the previous block's peaks and push a
+    // duplicate GR-history entry, breaking the one-entry-per-processed-block
+    // property the ring's readers rely on. The engine reports the fact rather
+    // than the wrapper re-deriving its early-return condition.
+    if (! engine.process (buffer, snapshot))
         return;
 
     // -- §2.9 metering: publish once per block from the engine's RENDER tap
@@ -263,8 +262,13 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     // swap, not dropped after it, so a drain cannot land between the macro
     // values arriving and the abort.
     const MacroEngine::ScopedRestore guard (*macroEngine);
-    engine.requestForcedDuck();   // §2.8: BEFORE the swap, so the duck's
-                                  // envelope covers the glide the swap starts
+    // §2.8: BEFORE the swap, so the duck's envelope covers the glide the swap
+    // starts — all but its first few ms. The request and the parameter writes
+    // are separate stores, and the audio thread reads the parameters (snapshot
+    // build) before the flag (block top), so a block can adopt the new values
+    // and start the out-leg together: the first ~6 ms of the glide then plays
+    // at decreasing but non-zero gain. Still band-limited, never a step.
+    engine.requestForcedDuck();
     auto newlyStored = saveSlotFromLive();
     applySlotToLive (storedSlot);
     storedSlot = std::move (newlyStored);
@@ -328,8 +332,15 @@ void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     // top) the engine's answer is one session out of date, so the staged
     // record is authoritative instead: a host that loads a project and
     // re-saves it without running audio must not lose — or resurrect — a
-    // learned reference. Once consumed the two agree, so which side is read
-    // stops mattering; a consume racing this read hands back the same values.
+    // learned reference. Once consumed the two agree.
+    //
+    // Residual window, stated exactly rather than claimed away: the consumer
+    // clears the flag with `exchange` and adopts a few instructions LATER, so
+    // a save landing between the two reads `false` here and falls back to the
+    // engine's pre-adoption values. Cost is one save's worth of learned
+    // references; closing it would need the flag cleared after adoption, which
+    // trades this window for a lost-update one (a stage arriving between adopt
+    // and clear would be erased). ADR-0012 §Known limits records the choice.
     const bool  restoreStaged = engine.adaptiveRestorePending();
     const auto& ad            = engine.adaptiveForWrapper();
     const bool  learnedNow    = restoreStaged ? stagedAdaptiveLearned : ad.hasLearned();

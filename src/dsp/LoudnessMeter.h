@@ -105,6 +105,11 @@ public:
             return kSilentLufs;
         const double relThreshold = energyToLufs (sum / (double) count) - 10.0;
         // Pass 2: mean of blocks above the relative threshold.
+        // Bin quantisation, recorded so a future accuracy chase does not re-derive
+        // it: blocks inside the bin that STRADDLES the relative threshold are
+        // dropped wholesale, so the gate is very slightly over-eager and the
+        // reading marginally high. Bounded by the 0.1 LU bin width and one-sided,
+        // inside the ≤ 0.1 LU contract the compliance test asserts with margin.
         const int firstBin = juce::jlimit (0, kBins - 1,
                                            (int) std::ceil ((relThreshold - kBinFloor) / kBinWidth));
         sum = 0.0; count = 0;

@@ -40,6 +40,17 @@ Stimulus: fs/4 sine, unit true peak, phase chosen to place the continuous peak o
 Estimator group delay: 5.5 input samples ≈ 0.115 ms — inside the 0.5 ms minimum engaged
 lookahead with >4× margin (RISK-008).
 
+**What that delay costs the limiter, since the number is easy to read as free.** In true-peak
+mode the wedge is fed the estimate, which describes the signal around n−5.5, while the window
+`wOs` is still derived from the engaged lookahead as though the fed value were the sample playing
+`wOs` steps ahead. The effective pre-emption is therefore ~5.5 base samples SHORTER than the
+lookahead setting: negligible at the 10 ms maximum (0.06 %), but **~23 % at the 0.5 ms minimum**
+(24 samples at 48 kHz). Invariant 4 is unaffected — the clamp is downstream and unconditional —
+so the consequence is that true-peak mode does measurably less of the limiting work at the bottom
+of the lookahead range than at the top, not that anything escapes the ceiling. Recorded here
+rather than compensated: subtracting the group delay from `wOs` would shift the detector tap for
+every non-true-peak configuration too, for a correction smaller than one wedge entry above 2 ms.
+
 ## Reported-latency matrix (invariant 2, ADR-0004) — 2026-08-01, P2
 
 Impulse-peak position vs `predictLatencySamples`, all cells (`testOsLatencyMatrix`):

@@ -26,6 +26,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     staging.setSize (numChans, maxBlock);
     ceilArr.resize ((size_t) maxBlock);
     wArr.resize ((size_t) maxBlock);
+    pushArr.resize ((size_t) maxBlock);
 
     using OS = juce::dsp::Oversampling<float>;
     osTableMatchesJuce = true;
@@ -160,12 +161,12 @@ void AnabasisEngine::reset() noexcept
     bypassMix = bypassTarget ? 1.0f : 0.0f;
 }
 
-void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept
+bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept
 {
     const int totalSamples = buffer.getNumSamples();
     const int numChannels  = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());
     if (totalSamples <= 0 || numChannels <= 0 || ringSizeOs <= 0)
-        return;
+        return false;   // nothing processed — the meter taps hold last block's values
 
     // Channels past the prepared count are left UNTOUCHED - not processed,
     // and deliberately not cleared, because silencing a caller's audio is a
@@ -384,6 +385,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                       p, eqPre, eqPost);
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
     adaptiveEngine.finishBlock (p.freeze);
+    return true;
 }
 
 void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int start,
@@ -431,12 +433,17 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
 
         comp.processSample (staged, nCh);      // stereo-linked, in place
 
+        // The limiter push is NOT applied here: it belongs to the limiter
+        // stage, downstream of Clip/Sat (invariant 1, ADR-0002, DESIGN §2.5 —
+        // "drives signal into a fixed threshold that equals ceiling"). It is
+        // carried per base sample and multiplied in inside the region, after
+        // the clipper. Applying it here made the macro's primary push (up to
+        // +18 dB) drive the CLIPPER as well, moving its clip point down by the
+        // same amount — invisible at defaults, since clipDrive 0 skips the
+        // stage entirely, which is why the null tests never saw it.
+        pushArr[(size_t) n] = gPush;
         for (int ch = 0; ch < nCh; ++ch)
-        {
-            const float wet = juce::exactlyEqual (gPush, 1.0f) ? staged[ch]
-                                                               : staged[ch] * gPush;
-            staging.setSample (ch, n, std::isfinite (wet) ? wet : 0.0f);
-        }
+            staging.setSample (ch, n, std::isfinite (staged[ch]) ? staged[ch] : 0.0f);
         if (++dryWritePos >= dryRingSize)
             dryWritePos = 0;
     }
@@ -445,6 +452,15 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // Region = Clipper/Sat -> lookahead line -> limiter (DSP_POLICY inv 5).
     // At Off the region IS the staging block: no filters, no added latency,
     // and the arithmetic below is bit-identical to the pre-OS engine.
+    // Stage A only wrote channels [0, nCh); the oversampler processes every
+    // PREPARED channel, so a caller handing fewer channels than prepare() was
+    // told would filter last block's leftovers in the rest. They cannot reach
+    // the output (the region loop and stage E both bound at nCh) — this keeps
+    // a future reader from finding garbage there. Stereo in, stereo out is
+    // enforced by isBusesLayoutSupported, so this branch is test-only.
+    for (int ch = nCh; ch < numChans; ++ch)
+        staging.clear (ch, 0, num);
+
     juce::dsp::AudioBlock<float> baseBlock (staging);
     auto stagedBlock = baseBlock.getSubBlock (0, (size_t) num);
     juce::dsp::AudioBlock<float> region = stagedBlock;
@@ -463,6 +479,13 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             frame[ch] = region.getSample ((size_t) ch, (size_t) i);
 
         clip.processSample (frame, nCh);       // Clipper/Sat, inside the region
+
+        // Limiter push, at its documented place in the chain: after Clip/Sat,
+        // before the lookahead line, so the detector and the delayed signal
+        // both carry it. Exact-1 skip keeps the null path untouched.
+        if (const float gPushNow = pushArr[(size_t) b]; ! juce::exactlyEqual (gPushNow, 1.0f))
+            for (int ch = 0; ch < nCh; ++ch)
+                frame[ch] *= gPushNow;
 
         for (int ch = 0; ch < nCh; ++ch)
             wetRing.setSample (ch, writePosOs,
@@ -634,6 +657,17 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             // output meters read THIS, so auditioning Delta or Comp cannot
             // bend the LUFS/dBTP readings or poison the session-cumulative
             // integrated figure and dBTP hold.
+            //
+            // The §2.8 duck IS included (it is already in `processed`), and
+            // that is the deliberate choice: the meters report what the plugin
+            // EMITTED, and during a transition it really did emit a fade. The
+            // alternative — tapping upstream of the duck — would have the
+            // meters describe audio nobody heard. Cost, stated: repeated A/B
+            // switching feeds ~34–45 ms of fade per transition into the
+            // session-cumulative integrated LUFS, a small downward pull. The
+            // −70 LUFS absolute gate discards the silent bottom, so only the
+            // fade legs contribute, and the P5 meter-hold reset is the escape
+            // hatch for a measurement that must not include them.
             float render;
             if (bypassMix <= 0.0f)      render = processed;                     // exact endpoint
             else if (bypassMix >= 1.0f) render = delayedDry;                    // exact endpoint

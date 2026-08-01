@@ -26,12 +26,22 @@
 //  Lookahead and the OS factor are structurally untouchable from here
 //  (inv 4): this class emits only the four values above.
 //
-//  THE NULL SURVIVES BY CONSTRUCTION, not by gating: at the factory defaults
-//  every trim TARGET is inert — release/link/scHpf only matter once the
-//  limiter reduces, and the dynTilt trim feeds a shelf that ClipSat engages
-//  only while clipping activity is nonzero — so trims may move freely on
-//  programme material without invariant 7 noticing. The bit-exact null test
-//  runs with this engine live, which is the proof.
+//  THE NULL SURVIVES BY CONSTRUCTION, not by gating — with one trim's
+//  argument weaker than the other three's, stated rather than averaged over.
+//  release/link/dynTilt multiply a unity gain or a zero-depth shelf: inert as
+//  a matter of ARITHMETIC. scHpf is different in kind — it engages a real
+//  second-order detector high-pass in both the compressor and the limiter, and
+//  its inertness rests on the detector's output never crossing the knee bottom
+//  or the ceiling. The RBJ high-pass at Q=0.707 has unity passband and can
+//  only LOWER a detector level, so the argument holds for any stimulus already
+//  below both thresholds — which is a property of the stimulus, and is why
+//  testNullWithDefaults now asserts its own −3 dBFS precondition.
+//
+//  At the factory defaults every trim TARGET is inert: release/link/scHpf
+//  only matter once the limiter reduces, and dynTilt feeds a shelf ClipSat
+//  engages only while clipping activity is nonzero — so trims may move freely
+//  on programme material without invariant 7 noticing. The bit-exact null
+//  test runs with this engine live, which is the proof.
 //
 //  DETERMINISM (§5.4): trims are a pure slewed function of the features and
 //  the reference targets — same audio + same parameters ⇒ same trims. No
@@ -235,6 +245,13 @@ public:
     void commitLearn() noexcept
     {
         learnActive = false;
+        // learnBlocks counts only blocks that passed the silence gate, so a
+        // start→stop over silence commits NOTHING and leaves an earlier
+        // learned state live — which the next save then serializes. That is
+        // the correct DSP behaviour (an empty pass must not wipe good
+        // references) but it is indistinguishable from success to the caller.
+        // The P5 Learn UI owes a failed/empty-pass readout; there is
+        // deliberately no signal back to the wrapper at P4.
         if (learnBlocks > 0)
         {
             refOnsetRate = (float) (learnOnsSum  / learnBlocks);
