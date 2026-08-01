@@ -24,11 +24,14 @@ Part I is the product/DSP spec; Part II is the engineering standard inherited fr
 product **Anamorph**. Open decisions live in [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) —
 **do not guess at them**.
 
-**Current phase: P1 (skeleton).** `docs/DESIGN.md` was **signed off 2026-07-31**, closing P0.
-Implementation is unblocked and is governed by the twelve Accepted ADRs in
+**Current phase: P1–P4 complete, P5 (GUI) next.** `docs/DESIGN.md` was **signed off 2026-07-31**,
+closing P0; the full §2 chain, the §2.8 transition layer, §2.7/§2.9 metering and the §5.4 adaptive
+engine with Learn are in the tree (P4's one blocked item is the OQ-013 frozen-trim restore).
+Implementation is governed by the twelve Accepted ADRs in
 [`docs/architecture/design-decisions/`](docs/architecture/design-decisions/ADR_INDEX.md) — read
 `ADR_INDEX.md` before writing code; an ADR outranks `DESIGN.md`, which is now superseded section by
-section as the real architecture set lands. P1 exit criterion: pluginval **L5**.
+section as the real architecture set lands. Exit criterion so far: pluginval **L5** (P1); L8 at P5,
+L10 at P6. `docs/HANDOVER.md` carries the status of record.
 
 ---
 

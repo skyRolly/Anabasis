@@ -793,6 +793,55 @@ static void testClipAdaaReducesAliasing()
 }
 
 // ---------------------------------------------------------------------------
+// A realtime→offline flip is a RESET-class event, not an audible transition.
+// With Force Max the flip changes effectiveFactor, so the engine wants a
+// rewire — and the §2.8 duck would write ~45 ms of fade into the HEAD OF THE
+// BOUNCE if the host does not re-prepare first (many do; the contract must not
+// depend on it). The flip therefore adopts directly, exactly like the first
+// block after prepare. Measured: the render is back at full amplitude 1500
+// samples after the flip (the pipeline refill is ~547 samples and the host
+// re-reads PDC across the flip, so that part is honest latency); with the duck
+// it is still inside the held silent bottom there.
+static void testOfflineFlipDoesNotDuckTheRender()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode    = false;
+    p.oversample      = anabasis::OversampleFactor::x2;
+    p.forceMaxOffline = true;          // offline forces 16x → wantIdx changes
+    std::vector<float> out;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 20; ++b)
+    {
+        p.nonRealtime = b >= 10;       // the flip, deliberately with NO re-prepare
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 300.0f * (float) (b * 512 + n) / (float) sr);
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n) out.push_back (buf.getSample (0, n));
+    }
+
+    auto peakOver = [&] (size_t from, size_t count)
+    {
+        float pk = 0.0f;
+        for (size_t k = from; k < juce::jmin (from + count, out.size()); ++k)
+            pk = juce::jmax (pk, std::abs (out[k]));
+        return pk;
+    };
+    const float before = peakOver (9 * 512, 512);          // steady, pre-flip
+    const float after  = peakOver (10 * 512 + 1500, 512);  // past the refill
+
+    check (before > 0.3f, "offlineFlip: the pre-flip render is at full amplitude (baseline)");
+    check (after > 0.9f * before,
+           "offlineFlip: the render is not ducked across a realtime→offline flip");
+}
+
+// ---------------------------------------------------------------------------
 // inv 1 / ADR-0002 / DESIGN §2.5: the limiter push drives the LIMITER, not the
 // clipper. It sits after Clip/Sat in the chain, so input gain and limiter push
 // are NOT interchangeable — the clipper's operating point follows the first
@@ -2890,6 +2939,7 @@ int main()
     testClipCurveAndCompensation();
     testClipAdaaReducesAliasing();
     testLimiterPushDoesNotDriveTheClipper();
+    testOfflineFlipDoesNotDuckTheRender();
     testColourModelsBalanceAndTone();
     testDynamicTame();
     testClipMixZeroIsDry();

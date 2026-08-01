@@ -207,7 +207,18 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                            || (wantIdx >= 0 && wantPh != latchedPhaseIdx)
                            || wantEq != appliedEqPos
                            || wantModel != appliedModel;
-    if (! smoothersPrimed)
+
+    // A realtime↔offline flip is a RESET-class event, not an audible
+    // transition: the host re-reads PDC across it (setNonRealtime is an
+    // ADR-0004 recompute trigger) and, at Force Max, effectiveFactor changes
+    // with it. Ducking there would fade the HEAD OF A BOUNCE — ~45 ms of
+    // envelope written into the rendered file — for a transition no one is
+    // listening to. Adopting directly makes the no-re-prepare path behave
+    // exactly like the re-prepare path most hosts take.
+    const bool offlineFlip = p.nonRealtime != lastNonRealtime;
+    lastNonRealtime = p.nonRealtime;
+
+    if (! smoothersPrimed || offlineFlip)
     {
         if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
             latchOsConfig (wantIdx, wantPh);
@@ -366,8 +377,11 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             compMeasureDb = juce::jlimit (-24.0f, 6.0f,
                                           dryMeter.shortTermLufs() - wetMeter.shortTermLufs());
         // Predict floor: the deterministic gain lift, GR-corrected by the
-        // measured block average (the P3 form of §2.7's "expected GR"; the P4
-        // adaptive engine refines it). Only ever attenuation.
+        // previous block's DEEPEST reduction (grMinLinear is a per-call
+        // minimum, not an average — so the floor is slightly more aggressive
+        // than a mean would make it, which is the safe direction for a
+        // monitor-only attenuation). The P3 form of §2.7's "expected GR"; the
+        // P4 adaptive engine refines it. Only ever attenuation.
         const float grDbNow  = juce::Decibels::gainToDecibels (
                                    grMinLinear.load (std::memory_order_relaxed), -60.0f);
         const float predictDb = -juce::jmax (0.0f, p.inputGainDb + p.limGainDb + grDbNow);

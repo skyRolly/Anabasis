@@ -80,6 +80,14 @@ public:
     // latch boundary on the audio thread. Smoother ramps snap to their
     // targets (SmoothedValue::reset does), which is what a latch/reset
     // boundary means.
+    //
+    // MUST be followed by reset(), and the coupling is load-bearing rather
+    // than tidy: the snap lets `depth` and `driveDb` leave zero in ONE step,
+    // and both skipped-branch arguments below — the cold colour filter states
+    // and the pre-drive ADAA memory — rest on those two leaving zero only
+    // through their 20 ms glide. reset() clears the states the snap would
+    // otherwise expose. `latchOsConfig` always pairs the calls; a future
+    // caller that does not would break both arguments at once.
     void setRate (double newRate) noexcept
     {
         sr = newRate;

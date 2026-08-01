@@ -51,6 +51,18 @@ of the lookahead range than at the top, not that anything escapes the ceiling. R
 rather than compensated: subtracting the group delay from `wOs` would shift the detector tap for
 every non-true-peak configuration too, for a correction smaller than one wedge entry above 2 ms.
 
+## Metering cost, structural — not yet measured (DESIGN §9 ≤ 0.5 %)
+
+Recorded as the starting point for the P6 CPU measurement, which is now the binding open number
+for this subsystem. Per base sample and per channel, stage E runs four meters: `dryMeter`,
+`wetMeter` and `outMeter` (two biquads each, K-weighting) plus `outTp` (3 interpolation phases ×
+12 taps). That is ~6 biquads + ~72 MACs per frame **on top of** the chain, and `integratedLufs()`
+walks 751 bins twice per block at the publish site. None of it allocates or locks, so
+`REALTIME_SAFETY_AUDIT.md`'s claims are unaffected — but the §9 budget is the constraint that is
+still `Unverified`, and the histogram cache (noted at the call site) is the obvious first
+reduction. **Measure before adding another per-sample tap** (the P5 spectrum rings are the next
+candidate).
+
 ## Reported-latency matrix (invariant 2, ADR-0004) — 2026-08-01, P2
 
 Impulse-peak position vs `predictLatencySamples`, all cells (`testOsLatencyMatrix`):

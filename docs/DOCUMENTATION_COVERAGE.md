@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **sixth review round of 2026-08-01** (PR #5): the limiter push was
+**Last updated:** for the **seventh review round of 2026-08-01** (PR #5): a realtime→offline flip
+no longer ducks the head of a bounce, `learnActive` joins `learned` as an atomic, and CLAUDE.md
+stops claiming the project is at P1. Previous round: (PR #5): the limiter push was
 being applied BEFORE the clipper instead of after it — a real chain-order deviation that made the
 macro's primary push drive the clipper as well. Previous round: (PR #5):
 **ADR-0012** ratifies the GUI→Audio staged record unchanged (owner chose option 1), adding the row
@@ -17,6 +19,61 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Seventh review round — a fade at the head of every Force-Max bounce (2026-08-01)
+
+Ten items: two code fixes, seven notes/corrections, one repeat.
+
+**The render-path defect.** `effectiveFactor` depends on `nonRealtime` (Force Max forces 16×), so
+the realtime→offline flip changes `wantIdx` and `rewireWanted` goes true with `smoothersPrimed`
+already set from the realtime session — the engine ducked out, latched, and held
+`bottomHoldSamples` before recovering. A host that calls `setNonRealtime(true)` and renders
+**without an intervening `prepareToPlay`** therefore wrote ~45 ms of fade into the head of the
+bounce. Probed before deciding: the render drops to EXACT silence, so it is reachable through the
+engine's own API contract, not just in theory. A realtime↔offline flip is now treated as the
+reset-class event it is — direct adopt, exactly like the first block after prepare — so the
+no-re-prepare path behaves like the re-prepare path most hosts take. What remains at the flip is
+the pipeline refill, which is honest latency: the host re-reads PDC across the flip
+(`setNonRealtime` is an ADR-0004 recompute trigger) precisely because the factor changed.
+
+**Why the offline tests missed it:** every existing offline test either prepares in the offline
+state or flips `nonRealtime` while the factor is unchanged (`forceMaxOffline` false). The
+combination that breaks — Force Max, a non-16× selection, and a flip with no re-prepare — was
+untested because each ingredient was individually covered. Mutation-verified.
+
+**`learnActive` promoted to an atomic**, joining `learned` from round four. It is written on the
+audio thread and read by `isLearning()`, which the wrapper hands to message-thread callers through
+`adaptiveReadout()`. Nothing polls it today — the P5 Learn indicator will, which is exactly when
+it would have become the same data race that was fixed for `learned` two rounds ago. Fixing the
+second instance of a pattern before its caller exists is cheaper than rediscovering it.
+
+**CLAUDE.md said P1.** The entry point every contributor and agent reads first still declared
+"Current phase: P1 (skeleton)" while README said P1–P4 complete and HANDOVER's status row said P4.
+The previous round edited that very paragraph — for the ADR count — and left the phase line, which
+is the most avoidable kind of drift: touching a sentence is the moment to check the rest of it.
+Now states the phase, the blocked item, and points at HANDOVER as the status of record.
+
+**Corrections where code and comment disagreed.** The §2.7 predict floor is corrected by the
+previous block's DEEPEST reduction (`grMinLinear` is a per-call minimum), not the "block average"
+the comment claimed — the floor is therefore slightly more aggressive than documented, which is
+the safe direction for a monitor-only attenuation, but the text now matches the code. The limiter
+style's alpha-domain approximation names its true worst case: the shortest release at the LOWEST
+engaged rate (1 ms at 44.1 kHz with OS off, 1.3 %), not the 48 kHz figure quoted last round.
+
+**Implicit couplings made explicit.** `ClipSat::setRate` now says it MUST be followed by `reset()`
+and why: the snap it performs would let `depth`/`driveDb` leave zero in one step, and both
+skipped-branch arguments in that file (cold colour filter states, pre-drive ADAA memory) rest on
+those two moving only through their 20 ms glide. `latchOsConfig` pairs the calls; a future caller
+that does not would break both at once.
+
+**Budget note promoted from a comment to TEST_REPORT.** Stage E now runs ~6 biquads + ~72 MACs per
+frame of metering on top of the chain, and DESIGN §9's ≤ 0.5 % allocation is the binding
+`Unverified` number for the subsystem — with an explicit "measure before adding another per-sample
+tap", since the P5 spectrum rings are next. THREAD_MODEL's meter-hold-reset planned edge gained
+its full scope: the session-cumulative holds also survive `setStateInformation` and
+`AudioProcessor::reset()`, which a "GUI reset button" description does not obviously cover.
+
+Suites: 189 + 87.
 
 ### Sixth review round — the push was in the wrong stage, and only a clipper could show it (2026-08-01)
 

@@ -233,10 +233,12 @@ public:
         // alpha by 0.5 and made Loud the slowest style, caught by test.
         // α·k is an APPROXIMATION of τ/k, exact only as α → 0, so the numbers
         // recorded in TEST_REPORT are alpha ratios. It is a good one
-        // everywhere reachable: the release floor is 1 ms, α = 1 − e^(−1/48)
-        // = 0.0206 at 48 kHz (smaller at every oversampled rate), and ×2 gives
-        // τ = −1/ln(1 − 0.0412) = 23.8 samples = 0.495 ms against the 0.5 ms
-        // the comment claims — 1 % error, shrinking as the release lengthens.
+        // everywhere reachable. The error grows with α, so the worst case is
+        // the SHORTEST release at the LOWEST engaged rate — 1 ms at 44.1 kHz
+        // with OS off: α = 1 − e^(−1/44.1) = 0.0225, ×2 gives
+        // τ = −1/ln(1 − 0.0449) = 21.8 samples = 0.494 ms against the claimed
+        // 0.5 ms, a 1.3 % error. It shrinks as the release lengthens and at
+        // every oversampled rate (48 kHz/1 ms is 1.0 %).
         // Re-deriving from onePoleMs(releaseMs / k) would make it exact and
         // cost nothing per sample; it would also move every measured style
         // number, so it is a tuning change for the ⊕ pass, not a fix.

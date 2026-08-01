@@ -90,7 +90,11 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
   same ScopeBuffer idiom as the implemented GrHistoryBuffer; land with the P5 spectrum view.
 - **Command atomics** — the forced-duck request and the P4 Learn start/stop + learned-target
   restore are IMPLEMENTED (see the table); the meter hold reset follows at P5, same
-  single-atomic exchange shape.
+  single-atomic exchange shape. **Its scope is wider than a GUI button:** `dbTpMaxHold` and the
+  integrated-LUFS histogram are session-cumulative and are cleared only by `prepareToPlay`, so
+  they also survive a `setStateInformation` (loading a different session keeps the previous
+  programme's true-peak maximum) and an `AudioProcessor::reset()` — which this processor does not
+  override. Whether a state load should clear them is a P5 decision, not an oversight.
 - **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism
   yet; no code may wire it until its ADR lands. **ADR-0012 settled the transport** (the staged
   record row fits a four-scalar vector); what keeps OQ-013 open is whether a restored vector may

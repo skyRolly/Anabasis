@@ -183,7 +183,7 @@ public:
         pubTiltDb.store (tiltDb, std::memory_order_relaxed);
         pubOnsetRate.store (onsetRate, std::memory_order_relaxed);
 
-        if (learnActive && audible)
+        if (learnActive.load (std::memory_order_relaxed) && audible)
         {
             learnOnsSum  += onsetRate;
             learnTiltSum += tiltDb;
@@ -232,7 +232,7 @@ public:
     //    the block top). Never runs silently: idle unless started.
     void startLearn() noexcept
     {
-        learnActive  = true;
+        learnActive.store (true, std::memory_order_release);
         learnOnsSum  = 0.0;
         learnTiltSum = 0.0;
         learnBlocks  = 0;
@@ -244,7 +244,7 @@ public:
     // auto-match its output level).
     void commitLearn() noexcept
     {
-        learnActive = false;
+        learnActive.store (false, std::memory_order_release);
         // learnBlocks counts only blocks that passed the silence gate, so a
         // start→stop over silence commits NOTHING and leaves an earlier
         // learned state live — which the next save then serializes. That is
@@ -264,7 +264,7 @@ public:
         }
     }
 
-    bool  isLearning() const noexcept    { return learnActive; }
+    bool  isLearning() const noexcept    { return learnActive.load (std::memory_order_acquire); }
     bool  hasLearned() const noexcept    { return learned.load (std::memory_order_acquire); }
 
     // Session restore of learned targets (ADAPTIVE child), audio thread only
@@ -325,7 +325,11 @@ private:
         pubRefTilt.store (refTiltDb,     std::memory_order_relaxed);
     }
 
-    bool   learnActive = false;
+    // Atomic for the same reason `learned` is: the wrapper hands a const
+    // reference to message-thread callers (adaptiveReadout), and the P5 Learn
+    // UI will poll this for its indicator. Audio-thread writers use release,
+    // audio-thread readers relaxed — only the public getter pays for acquire.
+    std::atomic<bool> learnActive { false };
     std::atomic<bool> learned { false };   // written on audio thread, read by getStateInformation
     double learnOnsSum = 0.0, learnTiltSum = 0.0;
     int64_t learnBlocks = 0;

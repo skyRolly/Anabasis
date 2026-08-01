@@ -236,6 +236,7 @@ private:
     //    find the engine still at zero gain.
     int  bottomHoldSamples = 0;
     bool duckAskedWhileOut = false;
+    bool lastNonRealtime   = false;   // realtime↔offline flips adopt directly
 
     // Oversampling: [factorLog2 − 1][phase] — all eight built at prepare().
     std::unique_ptr<juce::dsp::Oversampling<float>> oversamplers[kMaxOsFactorLog2][2];
