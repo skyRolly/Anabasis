@@ -33,7 +33,9 @@ empty Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BR
 ## P4 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The §5.4 adaptive engine: audio-thread feature extraction (crest, spectral tilt,
-transient density — silence-gated), the bounded trim vector (release ±1 oct, link ±0.2, scHpf
+transient density — silence-gated; the trim mapping consumes **transient density and tilt**, with
+crest published for the UI and reserved for a future mapping), the bounded trim vector
+(release ±1 oct, link ±0.2, scHpf
 0…+30 Hz, dynTilt 0…+0.5 dB) slewed at ~2 s with hysteresis and applied to per-block effective
 settings only; Freeze latching the vector to the ulp; Learn (analyse → commit reference targets,
 `ADAPTIVE` child serialization with the absent-=-never-learned read rule). The exit criterion —

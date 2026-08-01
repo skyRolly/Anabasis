@@ -61,8 +61,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
 - **P4 adaptive engine (core)** — audio-thread feature extraction (crest, tilt, transient
-  density) driving the §5.4 bounded trim vector around release / stereo link / sidechain HPF /
-  dynamic tame, second-scale slew with hysteresis, Freeze latching the vector exactly, and the
+  density), of which **transient density and tilt** drive the §5.4 bounded trim vector around
+  release / stereo link / sidechain HPF / dynamic tame (crest is published for the UI and
+  reserved for a future mapping), second-scale slew with hysteresis, Freeze latching the vector
+  exactly, and the
   mode-switch invariant pinned sample-identically (`testModeSwitchIsSoundNeutral`). The trims are
   engine-internal — the host, automation and undo never see them — and the bit-exact null holds
   with adaptation live. Learn (core) is in: analyse → commit fixes the

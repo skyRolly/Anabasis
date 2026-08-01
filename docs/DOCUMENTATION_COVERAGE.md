@@ -2770,7 +2770,7 @@ Rows were added as modules landed. The remaining planned modules (`src/gui/`, P5
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
-| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0011 (Accepted 2026-07-31)**; descriptive set so far: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2) | Decisions complete for P0; remaining descriptive docs (ARCHITECTURE, SIGNAL_FLOW, LATENCY_MODEL, …) land by P6 |
+| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0012** (0001…0011 Accepted 2026-07-31, **ADR-0012** 2026-08-01); descriptive set so far: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2) | Decisions complete for P0; remaining descriptive docs (ARCHITECTURE, SIGNAL_FLOW, LATENCY_MODEL, …) land by P6 |
 | docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
 | user | — | Deferred to P6 |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
