@@ -26,9 +26,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   host PDC, ADR-0004), Simple-mode macro knobs mapped by the §5.5 draft curves, schema-v1
   session state with A/B slots, and a placeholder editor. No EQ/compressor/clipper processing,
   no oversampling, no metering yet — those are P2–P5.
-  Evidence Source: commits `91ece13` (skeleton), `e0c24d5` (limiter alignment + state
-  restore fixes), `79fd781` (control smoothing) and the thread-safety / read-rules commit that
-  follows them on `claude/anabasis-init-migration-mvbbq9`. [Verified]
+  Evidence Source: **PR #4** (`skyRolly/Anabasis`) — commits `91ece13` (skeleton), `e0c24d5`
+  (limiter alignment + state restore fixes), `79fd781` (control smoothing), `d6fa408`
+  (macro mapping off the audio thread, defaults-first read rules) and `0190aee` (LF snapshot
+  pin, restore guard). The PR is the stable citation: it keeps resolving after the branch is
+  deleted at merge, which a branch-relative "the commit that follows" does not
+  (`CHANGELOG_POLICY.md` rule 2). [Verified]
 
 The first entry will be `[0.1.0]`, cut at the end of P6.
 

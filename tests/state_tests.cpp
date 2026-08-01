@@ -487,6 +487,39 @@ static void testMissingChildrenReadAsDefaults()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0004 item 5: a session load re-reports PDC ONCE. `replaceFrom` writes
+// every property twice over (defaults, then the overlay), three of them latency
+// inputs, so an unbatched notification walks the reported figure through the
+// DEFAULT (Off) value up to six times per load. That is invisible while
+// osLatencySamples() returns 0 and becomes a burst of host PDC changes
+// mid-load the moment oversampling lands — the thing the constant allowance
+// exists to prevent.
+static void testLatencyNotifyIsBatchedAcrossARead()
+{
+    InternalState s;
+    int fires = 0;
+    s.onLatencyInputChanged = [&fires] { ++fires; };
+
+    // A single interactive write still reports immediately — the batch must
+    // not turn every latency change into a deferred one.
+    s.state().setProperty (iid::oversample, 2, nullptr);
+    check (fires == 1, "latency: a single int_ write still fires one recompute");
+
+    juce::ValueTree incoming ("ANABASIS_INTERNAL");
+    incoming.setProperty (iid::oversample,     3, nullptr);
+    incoming.setProperty (iid::osPhase,        1, nullptr);
+    incoming.setProperty (iid::offlineQuality, 1, nullptr);
+
+    fires = 0;
+    s.replaceFrom (incoming);
+    check (fires == 1, "latency: a whole session read fires ONE recompute, not one per property");
+    check (s.oversampleFactor() == anabasis::OversampleFactor::x8
+            && s.osPhaseMode() == anabasis::OsPhaseMode::linear
+            && s.forceMaxOffline(),
+           "latency: the batched read still lands every value");
+}
+
+// ---------------------------------------------------------------------------
 // The raw-exact contract needs the normalised round trip to be a FIXED POINT,
 // not merely accurate: save writes raw = getValue(), load feeds it back, and
 // the next save writes getValue() again. Byte-identity therefore requires
@@ -556,6 +589,9 @@ static void testCachedParamsMapping()
     set (pid::stereoLink, 80.0f);
     set (pid::colourDepth, 60.0f);
 
+    check (proc.cachedForTest().allResolved(),
+           "cache: every cached id resolves to a live parameter (a null slot would feed 0)");
+
     anabasis::EngineParameters e;
     proc.cachedForTest().toEngine (e);
 
@@ -591,6 +627,7 @@ int main (int argc, char** argv)
         testAbToleranceRules();
         testPresetContract();
         testMissingChildrenReadAsDefaults();
+        testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();
         testCachedParamsMapping();
     }

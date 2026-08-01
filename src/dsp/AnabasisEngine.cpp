@@ -7,9 +7,22 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
 {
     sr           = sampleRate;
     delaySamples = maxLookaheadSamples (sampleRate);
-    ringSize     = delaySamples + juce::jmax (1, maxBlockSize);   // room past the tap;
-    // the jmax guards a prepareToPlay(sr, 0) host: ringSize == delaySamples would
-    // make readPos == writePos and silently zero the group delay.
+    ringSize     = delaySamples + juce::jmax (1, maxBlockSize);
+    // CORRECTNESS NEEDS ONLY delaySamples + 1, and it is independent of the
+    // block size. process() is a per-SAMPLE circular delay line: each step
+    // writes at writePos and reads at writePos - delaySamples, so the slot read
+    // at step t was written at t - delaySamples and is next overwritten at
+    // t - delaySamples + ringSize — later than the read whenever
+    // ringSize >= delaySamples + 1. A host that delivers MORE samples than it
+    // declared in prepareToPlay therefore cannot lap the tap; nothing here is
+    // block-structured. The `+ maxBlockSize` is slack, not the invariant, and
+    // the jmax guards a prepareToPlay(sr, 0) host, where ringSize ==
+    // delaySamples would make readPos == writePos and silently zero the group
+    // delay. Stated explicitly because the previous wording ("room past the
+    // tap") reads as a block-size dependency and invites a clamp on
+    // numSamples — which would leave the tail of an oversized block
+    // unprocessed, i.e. bypassing the ceiling clamp, to fix a bug that is not
+    // there.
 
     const int chans = juce::jlimit (1, kMaxChannels, numChannels);
     wetRing.setSize (chans, ringSize);
@@ -38,6 +51,13 @@ void AnabasisEngine::reset() noexcept
     writePos = 0;
     limiter.reset();
     smoothersPrimed = false;   // the next block adopts ALL FOUR values without a glide
+
+    // The crossfade is reset state too. Leaving a part-way `bypassMix` behind
+    // meant a re-prepare mid-fade resumed that fade against freshly zeroed
+    // delay lines — the fade position no longer consistent with anything else
+    // the reset just cleared. Landing ON the target is the "no fade in
+    // progress" state; the next block re-reads bypassTarget from the snapshot.
+    bypassMix = bypassTarget ? 1.0f : 0.0f;
 }
 
 void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept
@@ -46,6 +66,15 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const int numChannels = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());
     if (numSamples <= 0 || numChannels <= 0 || ringSize <= 0)
         return;
+
+    // Channels past the prepared count are left UNTOUCHED — not processed, and
+    // deliberately not cleared, because silencing a caller's audio is a worse
+    // failure than passing it through. That makes invariant 4's ceiling
+    // guarantee conditional on prepare() having been told the real channel
+    // count, so the contract is asserted rather than assumed: the wrapper
+    // restricts the plugin to stereo (isBusesLayoutSupported), and the DSP
+    // test target is the other caller of this shared component.
+    jassert (buffer.getNumChannels() <= wetRing.getNumChannels());
 
     // ---- adopt the snapshot (once per block, ADR-0011) --------------------
     const float inputTarget   = juce::Decibels::decibelsToGain (p.inputGainDb);
@@ -180,15 +209,20 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             writePos = 0;
     }
 
-    // Invariant 9 self-heal: a non-finite anywhere resets the limiter so one
-    // bad buffer cannot poison the envelope forever. The reset empties the
-    // sliding window, so for the next W samples the maximum covers fewer than
-    // W+1 values and an over-ceiling peak already inside the delay line is not
-    // pre-empted — it meets the final clamp instead. That is a transient
-    // quality cost, not a contract break: the clamp is unconditional, so
-    // invariant 4 still holds throughout the recovery.
+    // Invariant 9 self-heal: a non-finite anywhere discards the limiter's
+    // sliding window so one bad buffer cannot poison it. For the next W samples
+    // the maximum then covers fewer than W+1 values, and an over-ceiling peak
+    // already inside the delay line is not pre-empted — it meets the final
+    // clamp instead. That is a transient quality cost, not a contract break:
+    // the clamp is unconditional, so invariant 4 still holds throughout.
+    //
+    // resetWindow(), NOT reset(): the full reset also snapped the envelope back
+    // to unity, which is a second and worse effect. Recovering from a heavily
+    // gain-reduced block, the very next sample would jump from (say) 0.3 to 1.0
+    // with no release ramp and the clamp would flat-top it — a click on the one
+    // path whose whole purpose is to degrade gracefully.
     if (sawNonFinite)
-        limiter.reset();
+        limiter.resetWindow();
 }
 
 } // namespace anabasis

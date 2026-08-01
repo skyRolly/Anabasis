@@ -325,6 +325,75 @@ static void testNoBadSamples()
 }
 
 // ---------------------------------------------------------------------------
+// inv 9's self-heal must degrade GRACEFULLY (inv 8). Discarding the sliding
+// window costs pre-emption for W samples — documented and accepted. Snapping
+// the ENVELOPE back to unity is a separate effect and not acceptable: the
+// delay line still holds the loud material the old envelope was holding down,
+// so the recovery hands it to the clamp at full level and flat-tops it.
+// Measured as the count of clamped samples in the block AFTER the self-heal
+// fires; the whole point is that it stays near the steady-state count instead
+// of jumping to "most of the block".
+// The stimulus matters more than the assertion here. Material sitting FAR over
+// the ceiling rides at the ceiling whether it is limited or clipped, so the two
+// behaviours are indistinguishable in the output — an earlier version of this
+// test measured exactly that and passed against the bug. What separates them is
+// a signal that is QUIET under a held-down envelope: a burst drives the gain to
+// ~0.22 and a slow release holds it there, so the quiet tone that follows plays
+// attenuated. Carrying the envelope keeps it attenuated; snapping to unity
+// steps the level back up ~4.5x in one sample — and STAYS there, because the
+// quiet tone never asks for gain reduction again.
+static void testSelfHealDoesNotSnapTheEnvelope()
+{
+    anabasis::AnabasisEngine engine;
+    const double sr = 48000.0;
+    const int block = 512;
+    engine.prepare (sr, block, 2);
+
+    anabasis::EngineParameters p;
+    p.limReleaseMs = 1000.0f;                  // slow: the envelope is still held later
+    juce::AudioBuffer<float> buf (2, block);
+
+    const int burstBlock = 3, poisonBlock = 8;
+    auto rms = [&]
+    {
+        double sum = 0.0;
+        for (int n = 0; n < block; ++n)
+        {
+            const double s = buf.getSample (1, n);
+            sum += s * s;
+        }
+        return std::sqrt (sum / (double) block);
+    };
+
+    double before = 0.0, after = 0.0;
+    for (int b = 0; b < 12; ++b)
+    {
+        for (int n = 0; n < block; ++n)
+        {
+            const float ph = 2.0f * 3.14159265f * 200.0f * (float) (b * block + n) / (float) sr;
+            float v = 0.4f * std::sin (ph);                      // below the ceiling on its own
+            if (b == burstBlock && n >= 100 && n < 130)
+                v = 4.0f;                                        // over-ceiling burst
+            // Poison ONE sample of the LEFT channel; the right channel stays
+            // clean, so the measurement sees the recovery, not the hole.
+            buf.setSample (0, n, (b == poisonBlock && n == 0)
+                                     ? std::numeric_limits<float>::quiet_NaN() : v);
+            buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        if (b == poisonBlock - 1) before = rms();   // held down by the burst
+        if (b == poisonBlock + 1) after  = rms();   // the block after the self-heal
+    }
+
+    // 0.4 amplitude sine = 0.283 RMS unattenuated; held at ~0.22 gain it is
+    // ~0.063. The premise check fails loudly if the burst never engaged.
+    check (before < 0.12,
+           "selfHeal: (test premise) the envelope is still holding the tone down");
+    check (after < before * 1.5,
+           "selfHeal: recovery carries the envelope instead of snapping it to unity");
+}
+
+// ---------------------------------------------------------------------------
 // inv 7 second half: bypass is a delay-aligned bit-exact copy once the §2.8
 // crossfade has settled.
 static void testBypassNull()
@@ -386,7 +455,7 @@ static void testLimiterWindowCoverage()
         const float fed = (t == spikeAt) ? 1.0f : 0.0f;
         const float env = lim.processSample (fed, w, ceilingLin);
         if (t == spikeAt - 1)     envBefore      = env;
-        if (t == spikeAt)         envAtSpikeEnter = env;   // spike enters window: playing sample is t - 0? no: this IS the attack instant
+        if (t == spikeAt)         envAtSpikeEnter = env;   // the attack instant: the spike is now in the window
         if (t == spikeAt + w)     envAtPlay      = env;    // spike is the PLAYING sample now
         if (t == spikeAt + w + 1) envAfter       = env;    // spike has played: release may begin
     }
@@ -458,6 +527,7 @@ int main()
     testReportedLatencyMatchesImpulse();
     testOutputNeverExceedsCeiling();
     testNoBadSamples();
+    testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
 
     std::printf ("%s: %d checks, %d failure(s)\n",

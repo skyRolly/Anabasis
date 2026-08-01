@@ -271,7 +271,25 @@ static_assert (std::size (kCacheOrder) == (size_t) kCachedParamCount,
 void CachedParams::resolve (juce::AudioProcessorValueTreeState& apvts)
 {
     for (size_t i = 0; i < std::size (kCacheOrder); ++i)
+    {
         raw[i] = apvts.getRawParameterValue (kCacheOrder[i]);
+        // A null slot is otherwise SILENT: toEngine's f() substitutes 0.0f, so
+        // a typo or a removed ID lands compRatio = 0 or scHpfFreqHz = 0 in the
+        // snapshot and nothing trips. testCachedParamsMapping checks the fields
+        // it sets; the ones it does not (compAttack, clipMix, limStyle,
+        // truePeakMode, dither…) would pass a null through. The null substitute
+        // stays — it keeps toEngine noexcept and branch-predictable on the audio
+        // thread — but resolving is a message-thread act and is checked here.
+        jassert (raw[i] != nullptr);
+    }
+}
+
+bool CachedParams::allResolved() const noexcept
+{
+    for (auto* p : raw)
+        if (p == nullptr)
+            return false;
+    return true;
 }
 
 void CachedParams::toEngine (anabasis::EngineParameters& out) const noexcept

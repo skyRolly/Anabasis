@@ -34,6 +34,10 @@ namespace anabasis
 class AnabasisEngine
 {
 public:
+    // Explicit because the non-copyable guard below is a user-declared
+    // constructor, which suppresses the implicit default one.
+    AnabasisEngine() = default;
+
     void prepare (double sampleRate, int maxBlockSize, int numChannels);
     void reset() noexcept;
 
@@ -87,6 +91,11 @@ private:
     float bypassMix     = 0.0f;       // 0 = wet, 1 = dry
     float bypassStep    = 0.0f;
     bool  bypassTarget  = false;
+
+    // CODE_STYLE §Structure: owning classes carry the guard. This one owns two
+    // heap ring buffers and the limiter's wedge; an accidental copy would
+    // duplicate them silently instead of failing to compile.
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnabasisEngine)
 };
 
 } // namespace anabasis

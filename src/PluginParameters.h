@@ -104,5 +104,10 @@ struct CachedParams
     // caller's to add — they are not APVTS parameters (§4.3).
     void toEngine (anabasis::EngineParameters& out) const noexcept;
 
+    // True when every id in the cache order resolved to a live parameter. The
+    // release build cannot assert, and a null slot degrades to a 0.0f field
+    // rather than to a failure, so the state suite pins it.
+    bool allResolved() const noexcept;
+
     std::atomic<float>* raw[kCachedParamCount] = {};
 };

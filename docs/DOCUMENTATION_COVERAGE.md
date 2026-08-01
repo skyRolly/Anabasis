@@ -9,6 +9,61 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton, sixth commit — owning-class guards, and a test that measured the wrong thing (2026-07-31)
+
+**The self-heal test passed against its own mutant, and the stimulus was why.** The invariant-9
+recovery called `limiter.reset()`, which empties the sliding window *and* snaps the envelope back
+to unity; the delay line still holds the material the old envelope was holding down, so the
+recovery hands it to the clamp at full level. The first test drove the engine 4× over the ceiling
+and counted clamped samples — but material that far over rides *at* the ceiling whether it is
+limited or clipped, so both variants scored identically (9 / 8 clamped samples). What separates
+them is a signal that is **quiet under a held-down envelope**: a burst drives the gain to ~0.22, a
+slow release holds it there, and the quiet tone that follows plays attenuated. Carrying the
+envelope keeps it attenuated; snapping to unity steps the level up ~4.5× *and stays there*, because
+the quiet tone never asks for gain reduction again. `limiter.resetWindow()` now carries the
+envelope across (sanitising it, since the self-heal is defence in depth and a guard that trusts its
+own reachability argument is not one), and the redesigned test fails on the mutant. The lesson is
+the one this audit keeps recording: a test name does not carry the property, and a stimulus in
+which both behaviours look the same is not a test.
+
+**Owning classes carry the guard now.** `AnabasisEngine` (two heap rings), `LookaheadLimiter` (the
+wedge vectors) and `InternalState` (a `ValueTree` it registers *itself* as a listener on — a copy
+would share the tree unregistered while its destructor deregistered the original) had no
+non-copyable declaration, against `CODE_STYLE.md` §Structure. `AnabasisEngine` and `InternalState`
+take `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR`; `LookaheadLimiter` takes `= delete` instead,
+because the leaf DSP headers are JUCE-free by construction and only `AnabasisEngine` pulls
+`juce_audio_basics`. The macro is a user-declared constructor, so it suppresses the implicit
+default one — both classes needed an explicit `= default` and the build said so immediately.
+
+**A session load re-reported PDC up to six times.** `replaceFrom` writes all ten properties as
+defaults and then overlays the incoming ones; three are latency inputs and each write fired
+`onLatencyInputChanged`, walking the reported figure through the Off value before landing. Invisible
+while `osLatencySamples()` returns 0, a burst of mid-load PDC changes the moment oversampling lands
+— exactly what ADR-0004's constant allowance exists to prevent. A `ScopedLatencyBatch` coalesces the
+read into one notification, fired from the destructor so no early return can skip it.
+`testLatencyNotifyIsBatchedAcrossARead` pins both halves (one fire for a bulk read, still one for a
+single interactive write) and fails unbatched.
+
+**Two review findings were declined, with the reasoning written into the code rather than a reply.**
+The ring is *not* undersized for an oversized block: `process()` is a per-sample circular delay
+line, so `ringSize >= delaySamples + 1` is the whole invariant and the `+ maxBlockSize` is slack.
+The old comment ("room past the tap") read as a block-size dependency and invited a `jmin` on
+`numSamples` — which would leave the tail of an oversized block unprocessed, i.e. bypassing the
+ceiling clamp, to fix a bug that is not there. The comment now states the invariant and names that
+trap. Channels past the prepared count stay untouched rather than cleared (silencing a caller's
+audio is a worse failure than passing it through), so the contract is now asserted at the boundary
+instead of assumed.
+
+Also: `bypassMix` is reset alongside the rings, so a re-prepare mid-fade no longer resumes a fade
+against zeroed delay lines; `CachedParams::resolve` asserts every id resolved and `allResolved()`
+is pinned by the state suite (a null slot silently feeds `0.0f` into its engine field, and only the
+fields a test happens to set would catch it); the stale "34 checks" in `README.md` and
+`HANDOVER.md` is now 84 with the row telling the next editor to re-count; the `[Unreleased]`
+changelog entry cites **PR #4** plus the five SHAs, since a branch-relative "the commit that
+follows" stops resolving when the branch is deleted at merge (`CHANGELOG_POLICY.md` rule 2); and
+`KNOWN_ISSUES.md` entries are `###` under **Open issues**, in ascending KI order, with the
+convention written into the file because the doc lint cannot check heading nesting.
+
 ### P1 skeleton, fifth commit — the Windows-only snapshot red, and the restore guard (2026-07-31)
 
 **The Windows CI red was a line-ending artefact, not a parameter change.** `AnabasisStateTests`

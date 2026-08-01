@@ -42,11 +42,31 @@ public:
         reset();
     }
 
+    // Full reset — window AND envelope. For prepare()/reset(), where the
+    // signal is discontinuous anyway and unity is the correct starting gain.
     void reset() noexcept
+    {
+        resetWindow();
+        envelope = 1.0f;
+    }
+
+    // Window-only reset, for the engine's invariant-9 self-heal MID-STREAM.
+    // Snapping the envelope back to unity there is a separate effect from
+    // emptying the window and a worse one: a block that was 10 dB gain-reduced
+    // would jump to unity with no release ramp, and the ceiling clamp turns
+    // that into hard clipping rather than a recovery — breaking the invariant-8
+    // click-free claim on the one path that is supposed to be a graceful
+    // degradation. The envelope is carried across instead, and only sanitised:
+    // it is provably finite today (the engine sanitises every ring write, so
+    // the detector never feeds a non-finite magnitude), but the self-heal is
+    // defence in depth and a guard that trusts its own reachability argument
+    // is not one.
+    void resetWindow() noexcept
     {
         head = tail = 0;
         writeCount = 0;
-        envelope = 1.0f;
+        if (! std::isfinite (envelope))
+            envelope = 1.0f;
     }
 
     // Release is the only genuinely per-block input: it sets a time constant,
@@ -92,6 +112,18 @@ public:
 
         return envelope;
     }
+
+    // CODE_STYLE §Structure requires the guard on owning classes — this one
+    // owns the two wedge vectors, and a copy would heap-allocate on a class
+    // that sits on the audio path. Spelled with `= delete` rather than
+    // JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR deliberately: the leaf DSP
+    // headers (this one, CeilingClamp, Latency, EngineParameters) are JUCE-free
+    // by construction and only AnabasisEngine — which carries the full macro —
+    // pulls juce_audio_basics. The copy diagnostic is identical; the leak
+    // detector's half is inert for a class that is only ever a value member.
+    LookaheadLimiter (const LookaheadLimiter&)            = delete;
+    LookaheadLimiter& operator= (const LookaheadLimiter&) = delete;
+    LookaheadLimiter()                                    = default;
 
 private:
     size_t next (size_t i) const noexcept { return i + 1 >= wedgeValues.size() ? 0 : i + 1; }

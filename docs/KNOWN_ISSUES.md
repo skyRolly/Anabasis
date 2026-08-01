@@ -11,7 +11,7 @@ materialised belongs in `FUTURE_RISKS.md`; a resolved incident moves to `POSTMOR
 ## Entry format
 
 ```
-## KI-0NN — <one-line summary>
+### KI-0NN — <one-line summary>
 
 **Severity:** Low | Medium | High
 **Status:** Confirmed | Mitigated | Reported upstream (external) | Fix pending re-test
@@ -28,14 +28,64 @@ Evidence [Verified | Partially Verified | Unverified]:
 - Commit: <sha>
 ```
 
-
-
 Numbering is sequential and permanent: a fixed issue is **removed from the open list and recorded
-in `POSTMORTEMS.md`**, and its number is never reused.
+in `POSTMORTEMS.md`**, and its number is never reused. Entries are `###` (nested under
+**Open issues**, not siblings of it) and listed in **ascending** KI order — the same order the
+numbering reads in. `scripts/check-docs.py` checks table integrity, links, blockquotes and fences;
+it does not check heading nesting, so this convention is held by hand.
 
 ## Open issues
 
-## KI-003 — A host that restores state off the message thread is only partly defended against
+### KI-001 — A/B slot switch is not click-safe in the P1 skeleton
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** all platforms, all formats (P1 skeleton builds only; no UI exposes A/B yet)
+
+Switching A/B slots performs a plain bulk parameter swap with no transition
+handling, so a switch during playback can produce an audible step. The §2.8
+forced-duck transition layer (asymmetric raised-cosine duck requested *before*
+every bulk swap) lands at P2; until then the swap is exactly the click-free-
+invariant hole `DSP_POLICY.md` invariant 8's per-path test will catch.
+
+**Workaround:** none needed in practice — no UI or host path triggers the swap
+in the P1 build; the API exists for the state tests.
+**Cause:** `switchToSlot` applies `applySlotToLive` directly (TODO(P2) marks
+the duck call site).
+
+Evidence [Verified]:
+- Source: `src/PluginProcessor.cpp` (`switchToSlot`)
+- Test:   `AnabasisStateTests` `testAbSlotsAndTiers` (exercises the swap, not its audibility)
+- Commit: P1 skeleton commit (this change)
+
+---
+
+### KI-002 — Loudness Comp and Delta monitoring do nothing in the P1 skeleton
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** all platforms, all formats (P1 skeleton builds only)
+
+The **Loudness Comp** and **Delta** toggles are carried through the parameter
+surface and the engine boundary but the engine ignores both, so clicking either
+has no audible effect. They are monitoring features that arrive with the
+metering engine at P3 (`DESIGN.md` §2.7 loudness compensation, §2.6 delta
+monitoring); the parameters exist now because the surface freezes at v0.1.0
+(`PARAMETER_COMPATIBILITY_POLICY.md` rule 1) and adding them later would be a
+`kVersion` bump.
+
+**Workaround:** none — the features are not implemented yet, not broken.
+**Cause:** `EngineParameters::loudnessComp` / `deltaMonitor` are populated by
+`CachedParams::toEngine` but never read by `AnabasisEngine::process`.
+
+Evidence [Verified]:
+- Source: `src/dsp/EngineParameters.h` (fields), `src/dsp/AnabasisEngine.cpp` (no reader)
+- Test:   none — there is no behaviour to assert until P3
+- Commit: P1 skeleton
+
+---
+
+### KI-003 — A host that restores state off the message thread is only partly defended against
 
 **Severity:** Low
 **Status:** Mitigated (macro layer), Confirmed (the wider path)
@@ -77,55 +127,6 @@ Evidence [Partially Verified]:
   mid-restore drain single-threaded; the uncovered `replaceState` race is not
   reproducible headlessly
 - Commit: P1 skeleton, thread-safety pass
-
----
-
-## KI-002 — Loudness Comp and Delta monitoring do nothing in the P1 skeleton
-
-**Severity:** Low
-**Status:** Confirmed
-**Affects:** all platforms, all formats (P1 skeleton builds only)
-
-The **Loudness Comp** and **Delta** toggles are carried through the parameter
-surface and the engine boundary but the engine ignores both, so clicking either
-has no audible effect. They are monitoring features that arrive with the
-metering engine at P3 (`DESIGN.md` §2.7 loudness compensation, §2.6 delta
-monitoring); the parameters exist now because the surface freezes at v0.1.0
-(`PARAMETER_COMPATIBILITY_POLICY.md` rule 1) and adding them later would be a
-`kVersion` bump.
-
-**Workaround:** none — the features are not implemented yet, not broken.
-**Cause:** `EngineParameters::loudnessComp` / `deltaMonitor` are populated by
-`CachedParams::toEngine` but never read by `AnabasisEngine::process`.
-
-Evidence [Verified]:
-- Source: `src/dsp/EngineParameters.h` (fields), `src/dsp/AnabasisEngine.cpp` (no reader)
-- Test:   none — there is no behaviour to assert until P3
-- Commit: P1 skeleton
-
----
-
-## KI-001 — A/B slot switch is not click-safe in the P1 skeleton
-
-**Severity:** Low
-**Status:** Confirmed
-**Affects:** all platforms, all formats (P1 skeleton builds only; no UI exposes A/B yet)
-
-Switching A/B slots performs a plain bulk parameter swap with no transition
-handling, so a switch during playback can produce an audible step. The §2.8
-forced-duck transition layer (asymmetric raised-cosine duck requested *before*
-every bulk swap) lands at P2; until then the swap is exactly the click-free-
-invariant hole `DSP_POLICY.md` invariant 8's per-path test will catch.
-
-**Workaround:** none needed in practice — no UI or host path triggers the swap
-in the P1 build; the API exists for the state tests.
-**Cause:** `switchToSlot` applies `applySlotToLive` directly (TODO(P2) marks
-the duck call site).
-
-Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp` (`switchToSlot`)
-- Test:   `AnabasisStateTests` `testAbSlotsAndTiers` (exercises the swap, not its audibility)
-- Commit: P1 skeleton commit (this change)
 
 ---
 

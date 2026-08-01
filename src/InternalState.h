@@ -88,18 +88,51 @@ public:
         // the previous session's oversampling factor, phase mode, offline
         // quality or ceiling lock survive into a newly loaded one, which is
         // the "chimera of two sessions" class this schema forbids.
+        // The whole read is ONE latency event, not one per property. Without
+        // the batch, setDefaults() writes three latency inputs and the overlay
+        // rewrites them, so `onLatencyInputChanged` — i.e. updateLatency() →
+        // setLatencySamples() — fires up to six times per session load, walking
+        // the reported figure through the DEFAULT (Off) value before landing on
+        // the session's. That is invisible at P1 only because osLatencySamples()
+        // returns 0; once oversampling lands it is a burst of PDC changes
+        // mid-load, which is exactly what ADR-0004's constant allowance exists
+        // to prevent. The atomics still sync per property — they are read per
+        // block and cost nothing.
+        const ScopedLatencyBatch batch (*this);
+
         setDefaults();
-        if (! incoming.isValid() || ! incoming.hasType ("ANABASIS_INTERNAL"))
-            return;                                    // missing child → defaults, as above
-        for (int i = 0; i < incoming.getNumProperties(); ++i)
-        {
-            const auto name = incoming.getPropertyName (i);
-            if (tree.hasProperty (name))               // unknown fields ignored (schema v1 read rules)
-                tree.setProperty (name, incoming.getProperty (name), nullptr);
-        }
+        if (incoming.isValid() && incoming.hasType ("ANABASIS_INTERNAL"))
+            for (int i = 0; i < incoming.getNumProperties(); ++i)
+            {
+                const auto name = incoming.getPropertyName (i);
+                if (tree.hasProperty (name))           // unknown fields ignored (schema v1 read rules)
+                    tree.setProperty (name, incoming.getProperty (name), nullptr);
+            }
+        // …and the single fire happens in ~ScopedLatencyBatch, so an early
+        // return could not skip it. A missing child still lands on defaults.
     }
 
 private:
+    // Coalesces a bulk read's latency notifications into exactly one, fired on
+    // the way out whether or not any latency input actually moved: a session
+    // load re-reports PDC once, which is the ADR-0004 item 5 contract, and the
+    // wrapper's setLatencySamples no-ops when the figure is unchanged.
+    struct ScopedLatencyBatch
+    {
+        explicit ScopedLatencyBatch (InternalState& s) noexcept : owner (s)
+        { owner.batchingLatencyNotify = true; }
+
+        ~ScopedLatencyBatch()
+        {
+            owner.batchingLatencyNotify = false;
+            if (owner.onLatencyInputChanged)
+                owner.onLatencyInputChanged();
+        }
+
+        InternalState& owner;
+        JUCE_DECLARE_NON_COPYABLE (ScopedLatencyBatch)
+    };
+
     void syncAtomics()
     {
         osMirror.store      (juce::jlimit (0, 4, (int) tree.getProperty (iid::oversample)),     std::memory_order_relaxed);
@@ -111,11 +144,21 @@ private:
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier& prop) override
     {
         syncAtomics();
-        if (onLatencyInputChanged
+        if (onLatencyInputChanged && ! batchingLatencyNotify
             && (prop == iid::oversample || prop == iid::osPhase || prop == iid::offlineQuality))
             onLatencyInputChanged();
     }
 
     juce::ValueTree tree;
     std::atomic<int> osMirror { 0 }, phaseMirror { 0 }, offlineMirror { 0 }, lockMirror { 0 };
+
+    // Suppresses the per-property latency callback for the duration of a bulk
+    // write; see replaceFrom.
+    bool batchingLatencyNotify = false;
+
+    // CODE_STYLE §Structure. This class registers ITSELF as a listener on a
+    // tree it owns: a copy would share the tree without being registered,
+    // while its destructor would still call removeListener — deregistering
+    // the original. That is the failure the guard exists to make impossible.
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InternalState)
 };
