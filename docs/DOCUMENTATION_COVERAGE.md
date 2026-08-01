@@ -9,6 +9,36 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P2, clipper and limiter commits — two stimulus-calibration catches in one day (2026-08-01)
+
+**`ClipSat`** landed with the knee-morph ADAA clipper, colour models, the dynamic HF tame and the
+mix — see the commit for the mechanism inventory. The audit-worthy finding was in its ADAA test:
+the first stimulus (5 kHz tone, folded 5th) showed only 4.8 dB of improvement — and that is the
+**theoretically correct** number for ADAA-1 at a 25 kHz source harmonic (≈ |sinc(π·f/fs)|), so a
+6 dB assertion there fails on correct code. The fix was to *calibrate the stimulus, not loosen the
+bound*: at 11.72 kHz the folded 3rd/5th improve by a measured 14.8/10.4 dB, asserted at 6/8. The
+same class recurred in the true-peak test: the "off-grid" ISP phase π/8 put the continuous peak at
+t = 0.75 — exactly ON a 4× interpolation point — and measured −0.002 dB, i.e. it tested nothing;
+φ = 0.3125π puts the peak between points and measures the real −0.171 dB max-reading property.
+Both are the smoothing-test lesson in a new costume: **compute where the property lives before
+asserting on it**.
+
+**`LookaheadLimiter` grew into the §2.5 spec** — per-channel wedges with stereo link, the
+ADR-0003 true-peak estimator as its detector option (12-tap × 4-phase windowed sinc designed at
+prepare, group delay 5.5 samples — RISK-008 materially reduced with measured numbers), transient
+preservation (instant attack at 0, the exactness the wedge tests pin), Transparent/Punchy/Loud as
+constant-presets, the shared sidechain HPF with **floor-as-off semantics** (an exact skip at
+20 Hz, now consistent across both detectors — the compressor was changed to match), and the
+two-pole auto release pinned by the same disjoint-bounds technique as the compressor's. One
+genuine bug was caught by test-first here: the style factor multiplied the release *alpha* by 0.5,
+making Loud the SLOWEST style — the probe run showed Transparent 0.413 vs Loud 0.336 recovered,
+inverted from the contract, fixed to time-domain scaling before commit. Six mutants killed: link
+ignored, tp ignored, styles inert, preserve inert, single-pole auto, HPF inert. The engine tests
+that pin the wedge contract sample-exactly (`testLimiterAlignment`,
+`testControlsPrimedOnPrepare`, self-heal) now pin `truePeakMode=false / transientPreserve=0 /
+limAutoRelease=false` explicitly, with comments naming why each control legitimately blurs what
+those tests measure.
+
 ### P2, first commits — EQ and compressor, and a two-stage test that a mid-speed pole slipped through (2026-08-01)
 
 **P1 closed** (PR #4 merged with 3-OS CI; `THREAD_MODEL.md` + `PARAMETER_REGISTRY.md` written from

@@ -122,9 +122,13 @@ public:
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float x = chans[ch];
-            const float y = hb0 * x + hpfZ1[ch];
-            hpfZ1[ch] = hb1 * x - ha1 * y + hpfZ2[ch];
-            hpfZ2[ch] = hb2 * x - ha2 * y;
+            float y = x;
+            if (hpfOn)
+            {
+                y = hb0 * x + hpfZ1[ch];
+                hpfZ1[ch] = hb1 * x - ha1 * y + hpfZ2[ch];
+                hpfZ2[ch] = hb2 * x - ha2 * y;
+            }
             det = juce::jmax (det, std::abs (y));
         }
         float level = det;
@@ -192,7 +196,15 @@ private:
 
     void recomputeHpf() noexcept
     {
-        // RBJ high-pass, Q = 0.7071 (Butterworth), detector-side.
+        // RBJ high-pass, Q = 0.7071 (Butterworth), detector-side. The RANGE
+        // FLOOR (20 Hz) means NO detector filtering — an exact skip, the same
+        // semantic as the limiter's detector (brief §3 shares one scHpfFreq
+        // between both): a 2nd-order 20 Hz HPF at the floor is musically
+        // indistinguishable from none, and the skip keeps the default
+        // detector byte-exact.
+        hpfOn = hpfFreq.getCurrentValue() > 20.001f;
+        if (! hpfOn)
+            return;
         const float f    = juce::jlimit (10.0f, (float) (0.49 * sr), hpfFreq.getCurrentValue());
         const float w0   = juce::MathConstants<float>::twoPi * f / (float) sr;
         const float cosw = std::cos (w0);
@@ -215,6 +227,7 @@ private:
     // Detector HPF (normalised biquad) + per-channel state.
     float hb0 = 1.0f, hb1 = 0.0f, hb2 = 0.0f, ha1 = 0.0f, ha2 = 0.0f;
     float hpfZ1[kMaxChannels] = {}, hpfZ2[kMaxChannels] = {};
+    bool  hpfOn = false;
 
     float meanSquare = 0.0f, aRms = 0.01f;
 

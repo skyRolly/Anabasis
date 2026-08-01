@@ -17,7 +17,7 @@ headless Linux machine, no IDE.
   [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md).
 - **The P1 skeleton is in the tree**: `CMakeLists.txt` (ADR-0008's five-target graph), `src/`
   (the 49-parameter surface, the POD engine boundary, a pass-through chain with a basic
-  lookahead limiter on the constant 10 ms allowance, schema-v1 state) and `tests/` (131 checks,
+  lookahead limiter on the constant 10 ms allowance, schema-v1 state) and `tests/` (149 checks,
   green on Linux together with pluginval L5 in both modes ×3).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /

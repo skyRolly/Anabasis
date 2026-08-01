@@ -112,6 +112,15 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         windowSamples.setTargetValue (windowTarget);
     }
     limiter.setRelease (juce::jmax (1.0f, p.limReleaseMs));
+    limiter.setAutoRelease (p.limAutoRelease);
+    limiter.setStyle (p.limStyle);
+    limiter.setTransientPreserve (p.transientPreserve);
+    limiter.setStereoLink (p.stereoLink);
+    limiter.setTruePeakMode (p.truePeakMode);
+    limiter.setDetectorHpf (p.scHpfFreqHz);   // per block: detector-side, and the
+    // envelope + wedge are the smoothers downstream of it (rates-not-levels
+    // family); the compressor smooths its copy per sample because its GR
+    // follows the detector directly.
     eq.setTargets (p);
     comp.setPerBlock (p);
     clip.setPerBlock (p);
@@ -198,15 +207,14 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         int detPos = writePos - (delaySamples - w);
         if (detPos < 0)
             detPos += ringSize;
-        float stereoMax = 0.0f;
+        float tapped[kMaxChannels] = {};
         for (int ch = 0; ch < numChannels; ++ch)
-        {
-            const float mag = std::abs (wetRing.getSample (ch, detPos));
-            if (mag > stereoMax)
-                stereoMax = mag;
-        }
+            tapped[ch] = wetRing.getSample (ch, detPos);
 
-        const float gr = limiter.processSample (stereoMax, w, ceilingNow);
+        // Per-channel gains: identical when stereoLink is 1 (the default),
+        // partially independent below it — the limiter owns the link maths.
+        float gains[kMaxChannels] = { 1.0f, 1.0f };
+        limiter.processSample (tapped, numChannels, w, ceilingNow, gains);
 
         int readPos = writePos - delaySamples;
         if (readPos < 0)
@@ -222,8 +230,10 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             const float delayedWet = wetRing.getSample (ch, readPos);
             const float delayedDry = dryRing.getSample (ch, readPos);
 
-            // gr == 1 multiplies exactly; the clamp passes sub-ceiling samples
-            // untouched — together that is inv 7's bit-exact identity path.
+            // gain == 1 multiplies exactly; the clamp passes sub-ceiling
+            // samples untouched — together that is inv 7's bit-exact identity
+            // path.
+            const float gr = gains[ch];
             float processed = juce::exactlyEqual (gr, 1.0f) ? delayedWet : delayedWet * gr;
 
             // Post-position EQ sits AFTER the limiter and BEFORE the clamp —

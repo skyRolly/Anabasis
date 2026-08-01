@@ -169,7 +169,7 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 |---|---|---|
 | 1 chain order | chain-order / transfer-order test | TODO (P2) |
 | 2 latency exactness | `testReportedLatencyMatchesImpulse` | **partial (P1)** — impulse lands at the constant allowance for every lookahead value; the OS × lookahead matrix arrives with oversampling at P2 |
-| 3 true peak ≥ 4× | true-peak accuracy test | TODO (P3) |
+| 3 true peak ≥ 4× | `testTruePeakAccuracy`, `testLimiterTruePeakMode` | **partial (P2)** — the 4× measurement-tap estimator is live in the limiter's detector (grid-aligned ISP −0.004 dB, off-grid −0.171 dB recorded; the ceiling is dBTP-aware in true-peak mode); the full OS-matrix stimulus and the dBTP meter arrive with the oversampler (P2) and metering (P3) |
 | 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P2)** — the ADR-0002 mandated stimulus is live: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix still needs the true-peak tap (P2/P3) |
 | 5 oversampling scope | latency-matrix + aliasing measurement | TODO (P2) |
 | 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |

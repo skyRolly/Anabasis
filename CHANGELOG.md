@@ -38,8 +38,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   (log-domain, soft knee, RMS/Peak, two-pole auto release, sidechain HPF, parallel mix), and the
   §2.4 clipper/saturation (hard↔soft knee morph with first-order ADAA — measured 14.8/10.4 dB
   alias reduction at OS Off — colour models with odd/even balance and tone, the dynamic HF tame,
-  drive with level compensation). All-defaults remains a bit-exact null. Limiter upgrades,
-  oversampling and dither follow in this phase.
+  drive with level compensation), and the §2.5 limiter upgrades (true-peak mode with the 4×
+  ADR-0003 measurement tap — the ceiling is dBTP-aware — stereo link, Transparent/Punchy/Loud
+  styles, transient preservation, two-pole auto release, shared sidechain HPF). All-defaults
+  remains a bit-exact null. Oversampling and dither follow in this phase.
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
 The first entry will be `[0.1.0]`, cut at the end of P6.

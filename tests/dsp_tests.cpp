@@ -164,6 +164,14 @@ static void testControlsPrimedOnPrepare()
 
     anabasis::EngineParameters p;
     p.ceilingDbTp = -12.0f;                 // 0.251 linear, far from the 0.891 default
+    // This test pins the PRIMING of the engine's control smoothers, so the
+    // detector must be memoryless and the attack instant: the true-peak
+    // estimator honestly reports inter-sample overshoot at the 0→0.9 step
+    // edge and the envelope then releases back at the configured rate, which
+    // puts out[500] legitimately below the ceiling — correct limiting, wrong
+    // measurement for THIS property.
+    p.truePeakMode      = false;
+    p.transientPreserve = 0.0f;
     const float target = std::pow (10.0f, p.ceilingDbTp / 20.0f);
 
     juce::AudioBuffer<float> buf (2, block);
@@ -913,6 +921,267 @@ static void testClipMixZeroIsDry()
 }
 
 // ---------------------------------------------------------------------------
+// inv 3 (P2 form): the true-peak estimator against known inter-sample-peak
+// signals. fs/4 at phase pi/4 samples +-0.7071 while the true peak is 1.0
+// (+3.01 dB ISP) and lands EXACTLY on a 4x phase — the canonical grid-aligned
+// vector, asserted at <=0.1 dB. A peak between two 4x points under-reads more;
+// that is a property of every max-reading 4x estimator (BS.1770's own
+// tolerance envelope allows it) — measured and bounded rather than hidden.
+static void testTruePeakAccuracy()
+{
+    auto measureDb = [] (float phase)
+    {
+        anabasis::TruePeakEstimator e;
+        e.prepare();
+        float best = 0.0f;
+        for (int n = 0; n < 2000; ++n)
+        {
+            const float x = std::sin (juce::MathConstants<float>::pi * 0.5f * (float) n + phase);
+            const float fr[2] = { x, x };
+            float out[2];
+            e.processFrame (fr, 2, out);
+            if (n > 50) best = juce::jmax (best, out[0]);
+        }
+        return 20.0f * std::log10 (best);           // the true peak is 0 dB
+    };
+
+    const float grid    = measureDb (juce::MathConstants<float>::pi * 0.25f);
+    // The continuous peak of sin(pi/2*t + phi) sits at t = 1 - 2*phi/pi, so
+    // phi = 0.3125*pi puts it at t = 0.375 — exactly BETWEEN two 4x points
+    // (an earlier phi = pi/8 landed the peak ON the 0.75 grid point and
+    // measured -0.002 dB, i.e. it tested nothing). Measured here: -0.17 dB,
+    // the max-reading 4x property.
+    const float offGrid = measureDb (juce::MathConstants<float>::pi * 0.3125f);
+    const float onSamp  = measureDb (juce::MathConstants<float>::pi * 0.5f);
+    std::printf ("PROBE tp: grid=%+.3f offgrid=%+.3f onsample=%+.3f dB\n", grid, offGrid, onSamp);
+
+    check (std::abs (grid) <= 0.1f,   "truePeak: grid-aligned +3 dB ISP vector reads within 0.1 dB");
+    check (offGrid > -0.6f && offGrid <= 0.1f,
+           "truePeak: off-grid worst case bounded (max-reading 4x property, recorded)");
+    check (std::abs (onSamp) <= 0.1f, "truePeak: an on-sample peak reads exactly");
+}
+
+// ---------------------------------------------------------------------------
+// §2.5: in true-peak mode the CEILING IS dBTP-AWARE — a signal whose sample
+// peaks sit under the ceiling but whose inter-sample peaks exceed it engages
+// the limiter; with the mode off it passes untouched.
+static void testLimiterTruePeakMode()
+{
+    const double sr = 48000.0;
+    auto settledGain = [&] (bool tpOn)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.truePeakMode      = tpOn;
+        p.transientPreserve = 0.0f;
+        p.lookaheadMs       = 2.0f;
+        // fs/4 phase pi/4: sample peak 0.601, TRUE peak 0.85 — ceiling -1 dBTP
+        // (0.891)... needs the ISP peak OVER the ceiling: amp 0.95: samples
+        // 0.672, true peak 0.95 > 0.891.
+        juce::AudioBuffer<float> buf (2, 512);
+        float outPeak = 0.0f;
+        for (int b = 0; b < 20; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                const float v = 0.95f * std::sin (juce::MathConstants<float>::pi * 0.5f * (float) t
+                                                  + juce::MathConstants<float>::pi * 0.25f);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            if (b >= 16) outPeak = juce::jmax (outPeak, buf.getMagnitude (0, 512));
+        }
+        return outPeak;   // sample-domain output peak of the settled signal
+    };
+
+    const float offPeak = settledGain (false);
+    const float onPeak  = settledGain (true);
+    std::printf ("PROBE tpmode: off=%.4f on=%.4f\n", offPeak, onPeak);
+    check (std::abs (offPeak - 0.6717f) < 5.0e-3f,
+           "tpMode off: sample peaks under the ceiling pass untouched");
+    check (onPeak < offPeak * 0.97f,
+           "tpMode on: the same signal is reduced — the ceiling is dBTP-aware");
+}
+
+// ---------------------------------------------------------------------------
+// §2.5 stereo link: at 1 both channels share the worst-case gain; at 0 a loud
+// left channel does not duck a quiet right; between, partially.
+static void testLimiterStereoLink()
+{
+    const double sr = 48000.0;
+    auto gains = [&] (float link)
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setRelease (400.0f);
+        lim.setStereoLink (link);
+        float g[2] = { 1.0f, 1.0f };
+        for (int t = 0; t < 2000; ++t)
+        {
+            const float fed[2] = { 1.0f, 0.1f };   // loud L, quiet R
+            lim.processSample (fed, 2, 96, 0.5f, g);
+        }
+        return std::make_pair (g[0], g[1]);
+    };
+
+    auto [l1, r1] = gains (1.0f);
+    auto [l0, r0] = gains (0.0f);
+    auto [lh, rh] = gains (0.5f);
+    std::printf ("PROBE link: 1->(%.3f,%.3f) 0->(%.3f,%.3f) 0.5->(%.3f,%.3f)\n", l1, r1, l0, r0, lh, rh);
+
+    check (juce::exactlyEqual (l1, r1),        "link 1: both channels share one gain");
+    check (l0 < 0.6f && r0 > 0.95f,            "link 0: the quiet channel is not ducked");
+    check (rh > r1 && rh < r0,                 "link 0.5: partial linking sits between");
+}
+
+// ---------------------------------------------------------------------------
+// §2.5 auto release is dual-stage, pinned with the same disjoint-bounds
+// technique as the compressor's: the deceleration ratio (rec2 < 0.6*rec1)
+// forces a single pole under ~196 ms, the 800 ms tail-hold forces one over
+// ~280 ms — only a genuine two-stage passes both.
+static void testLimiterAutoReleaseIsTwoStage()
+{
+    const double sr = 48000.0;
+    anabasis::LookaheadLimiter lim;
+    lim.prepare (sr, 480);
+    lim.setAutoRelease (true);
+
+    float g[1] = { 1.0f };
+    auto run = [&] (float level, double seconds)
+    {
+        for (int t = 0; t < (int) (seconds * sr); ++t)
+        {
+            const float fed[1] = { level };
+            lim.processSample (fed, 1, 96, 0.5f, g);
+        }
+        return g[0];
+    };
+
+    const float held  = run (2.0f, 0.5);         // 12 dB over: gain 0.25
+    check (held < 0.3f, "limAuto: (premise) the burst drives deep reduction");
+    const float g100  = run (0.01f, 0.1);
+    const float g200  = run (0.01f, 0.1);
+    const float g800  = run (0.01f, 0.6);
+    std::printf ("PROBE limAuto: held=%.3f g100=%.3f g200=%.3f g800=%.3f\n", held, g100, g200, g800);
+
+    const float rec1 = g100 - held, rec2 = g200 - g100;
+    check (rec1 > 0.15f,       "limAuto: the fast stage gives real recovery in 100 ms");
+    check (rec2 < rec1 * 0.6f, "limAuto: recovery decelerates (kills slow single poles)");
+    check (1.0f - g800 > 0.04f, "limAuto: still held at 800 ms (kills fast single poles)");
+}
+
+// ---------------------------------------------------------------------------
+// §2.5 styles are envelope-constant presets: Loud releases fastest,
+// Transparent slowest; Punchy lets more of a hit through at the play instant
+// than Transparent at the same transientPreserve.
+static void testLimiterStyles()
+{
+    const double sr = 48000.0;
+    auto recovered = [&] (int style)
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setRelease (400.0f);
+        lim.setStyle (style);
+        float g[1] = { 1.0f };
+        for (int t = 0; t < 24000; ++t)          // 0.5 s burst
+        { const float fed[1] = { 2.0f }; lim.processSample (fed, 1, 96, 0.5f, g); }
+        for (int t = 0; t < 4800; ++t)           // 100 ms quiet
+        { const float fed[1] = { 0.01f }; lim.processSample (fed, 1, 96, 0.5f, g); }
+        return g[0];
+    };
+    const float trans = recovered (0), loud = recovered (2);
+    std::printf ("PROBE styles: transparent=%.3f loud=%.3f\n", trans, loud);
+    check (loud > trans + 0.05f, "styles: Loud recovers visibly faster than Transparent");
+
+    auto pokeAtPlay = [&] (int style)
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setRelease (400.0f);
+        lim.setStyle (style);
+        lim.setTransientPreserve (0.6f);
+        const int w = 24;                         // 0.5 ms: preserve visibly lags
+        float g[1] = { 1.0f };
+        float atPlay = 1.0f;
+        for (int t = 0; t < 600; ++t)
+        {
+            const float fed[1] = { (t == 400) ? 2.0f : 0.01f };
+            lim.processSample (fed, 1, w, 0.5f, g);
+            if (t == 400 + w) atPlay = g[0];
+        }
+        return atPlay;
+    };
+    const float pokeT = pokeAtPlay (0), pokeP = pokeAtPlay (1);
+    std::printf ("PROBE poke: transparent=%.3f punchy=%.3f needed=0.25\n", pokeT, pokeP);
+    check (pokeP > pokeT * 1.02f, "styles: Punchy lets more of the hit through at the play instant");
+}
+
+// ---------------------------------------------------------------------------
+// §2.5 transient preserve: at 0 the attack is EXACT (state == needed the
+// moment the spike enters the window — the wedge tests rely on it); at 1 the
+// envelope lags so the front of the hit pokes into the clamp.
+static void testLimiterTransientPreserve()
+{
+    const double sr = 48000.0;
+    auto atPlay = [&] (float preserve)
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setRelease (400.0f);
+        lim.setTransientPreserve (preserve);
+        const int w = 24;
+        float g[1] = { 1.0f };
+        float res = 1.0f;
+        for (int t = 0; t < 600; ++t)
+        {
+            const float fed[1] = { (t == 400) ? 2.0f : 0.0f };
+            lim.processSample (fed, 1, w, 0.5f, g);
+            if (t == 400 + w) res = g[0];
+        }
+        return res;
+    };
+    check (juce::exactlyEqual (atPlay (0.0f), 0.25f),
+           "preserve 0: instant attack — the gain IS needed when the hit plays");
+    const float p1 = atPlay (1.0f);
+    std::printf ("PROBE preserve1 atPlay=%.3f\n", p1);
+    check (p1 > 0.3f && p1 < 1.0f,
+           "preserve 1: the envelope deliberately lags into the clamp's territory");
+}
+
+// ---------------------------------------------------------------------------
+// Brief §3: the shared sidechain HPF also serves the limiter detector — a
+// 30 Hz tone over the ceiling ducks hard at the floor (= no filtering) and
+// far less at 300 Hz. The floor is an EXACT skip: the default detector is the
+// tapped sample itself, byte-for-byte.
+static void testLimiterDetectorHpf()
+{
+    const double sr = 48000.0;
+    auto settled = [&] (float hpfHz)
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setRelease (400.0f);
+        lim.setDetectorHpf (hpfHz);
+        float g[2] = { 1.0f, 1.0f };
+        for (int t = 0; t < 48000; ++t)
+        {
+            const float v = 1.0f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 30.0f * (float) t / (float) sr);
+            const float fed[2] = { v, v };
+            lim.processSample (fed, 2, 96, 0.5f, g);
+        }
+        return g[0];
+    };
+    const float atFloor = settled (20.0f), at300 = settled (300.0f);
+    std::printf ("PROBE limHpf: floor=%.3f at300=%.3f\n", atFloor, at300);
+    check (atFloor < 0.6f, "limHpf: at the floor a loud 30 Hz tone ducks hard");
+    check (at300 > atFloor + 0.2f, "limHpf: at 300 Hz the same tone ducks far less");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -971,7 +1240,8 @@ static void testSelfHealDoesNotSnapTheEnvelope()
     engine.prepare (sr, block, 2);
 
     anabasis::EngineParameters p;
-    p.limReleaseMs = 1000.0f;                  // slow: the envelope is still held later
+    p.limReleaseMs   = 1000.0f;                // slow: the envelope is still held later
+    p.limAutoRelease = false;                  // auto's fast pole would defeat that premise
     juce::AudioBuffer<float> buf (2, block);
 
     const int burstBlock = 3, poisonBlock = 8;
@@ -1073,8 +1343,12 @@ static void testLimiterWindowCoverage()
     float envBefore = 1.0f, envAtSpikeEnter = 1.0f, envAtPlay = 1.0f, envAfter = 1.0f;
     for (int t = 0; t < 1200; ++t)
     {
-        const float fed = (t == spikeAt) ? 1.0f : 0.0f;
-        const float env = lim.processSample (fed, w, ceilingLin);
+        // Class defaults keep the P1 semantics exact: HPF off (floor), true
+        // peak off, preserve 0 (instant attack), manual release, link 1.
+        const float fed[1] = { (t == spikeAt) ? 1.0f : 0.0f };
+        float g[1];
+        lim.processSample (fed, 1, w, ceilingLin, g);
+        const float env = g[0];
         if (t == spikeAt - 1)     envBefore      = env;
         if (t == spikeAt)         envAtSpikeEnter = env;   // the attack instant: the spike is now in the window
         if (t == spikeAt + w)     envAtPlay      = env;    // spike is the PLAYING sample now
@@ -1103,6 +1377,14 @@ static void testLimiterAlignment()
     anabasis::EngineParameters p;
     p.lookaheadMs  = 2.0f;                               // W = 96
     p.limReleaseMs = 1000.0f;                            // slow: any early release is visible
+    // This test pins the WEDGE contract sample-exactly, so the three controls
+    // that legitimately blur timing/depth are pinned off: the true-peak
+    // estimate is ~5.5 samples late and can over-read an isolated spike,
+    // transient preserve deliberately lags the attack, and auto release
+    // overrides the slow manual release above. Each has its own test.
+    p.truePeakMode      = false;
+    p.transientPreserve = 0.0f;
+    p.limAutoRelease    = false;
     const int w = 96;
 
     const float steady  = 0.25f;
@@ -1160,6 +1442,13 @@ int main()
     testColourModelsBalanceAndTone();
     testDynamicTame();
     testClipMixZeroIsDry();
+    testTruePeakAccuracy();
+    testLimiterTruePeakMode();
+    testLimiterStereoLink();
+    testLimiterAutoReleaseIsTwoStage();
+    testLimiterStyles();
+    testLimiterTransientPreserve();
+    testLimiterDetectorHpf();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
