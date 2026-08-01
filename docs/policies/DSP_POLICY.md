@@ -168,17 +168,17 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | Invariant | Guarding test | Status |
 |---|---|---|
 | 1 chain order | chain-order / transfer-order test | TODO (P2) |
-| 2 latency exactness | `testReportedLatencyMatchesImpulse` | **partial (P1)** — impulse lands at the constant allowance for every lookahead value; the OS × lookahead matrix arrives with oversampling at P2 |
+| 2 latency exactness | `testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix` | **live (P2)** — the impulse lands at exactly `maxLookahead + osLatency` for every lookahead value AND every factor × phase cell, Force-Max-offline included; linear-phase cells are sample-exact, min-phase cells within 1 sample of the nominal bulk delay (IIR dispersion, documented in the test) |
 | 3 true peak ≥ 4× | `testTruePeakAccuracy`, `testLimiterTruePeakMode` | **partial (P2)** — the 4× measurement-tap estimator is live in the limiter's detector (grid-aligned ISP −0.004 dB, off-grid −0.171 dB recorded; the ceiling is dBTP-aware in true-peak mode); the full OS-matrix stimulus and the dBTP meter arrive with the oversampler (P2) and metering (P3) |
 | 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P2)** — the ADR-0002 mandated stimulus is live: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix still needs the true-peak tap (P2/P3) |
-| 5 oversampling scope | latency-matrix + aliasing measurement | TODO (P2) |
+| 5 oversampling scope | `testOsLatencyMatrix`, `testOsReducesAliasing`, `testCeilingUnderOs`, `testBypassNullUnderOs` | **live (P2)** — the region wraps Clipper/Sat → Limiter; EQ/comp/clamp/dither at base rate; bypass stays bit-exact at every factor; measured: 4× drops the driven-clipper folded 3rd by ~74 dB beyond ADAA alone |
 | 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
 | 8 click-free transitions | per-path click tests | **partial (P2)** — ceiling, lookahead and the eleven EQ controls are pinned smoothed (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the duck-routed rewires (`eqPosition`, `colourModel`) and the bulk swaps need the §2.8 transition layer (P2) |
 | 9 no NaN/Inf/denormals | `testNoBadSamples` | **live (P1)** |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender` | TODO (P3) |
 | 11 metering accuracy | EBU R128 vectors + ISP signals | TODO (P3) |
-| 12 dither placement/default | dither default + placement test | TODO (P2) |
+| 12 dither placement/default | `testDitherModes` + `testNullWithDefaults` | **live (P2)** — Off default is a true no-op (the bit-exact null proves it); 16-bit lands on the 2⁻¹⁵ grid with a randomised LSB; shaping tilts the error spectrum +12.6 dB toward the top of the band; placement after the clamp, processed path only |
 | 13 format-agnostic core | build-level: `AnabasisDSP` links without the wrapper | **live (P1)** — the `AnabasisTests` target compiles the core with no wrapper and no GUI |
 
 ## Enforcement

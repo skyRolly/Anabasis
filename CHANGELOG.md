@@ -40,8 +40,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   alias reduction at OS Off — colour models with odd/even balance and tone, the dynamic HF tame,
   drive with level compensation), and the §2.5 limiter upgrades (true-peak mode with the 4×
   ADR-0003 measurement tap — the ceiling is dBTP-aware — stereo link, Transparent/Punchy/Loud
-  styles, transient preservation, two-pole auto release, shared sidechain HPF). All-defaults
-  remains a bit-exact null. Oversampling and dither follow in this phase.
+  styles, transient preservation, two-pole auto release, shared sidechain HPF), §3
+  oversampling (Off/2×/4×/8×/16× × min/linear phase wrapping Clipper→Limiter, all instances
+  built at prepare, integer-latency mode so reported PDC is exact across the whole matrix,
+  Force-Max offline honoured) and §4.5 dither (TPDF 16/24-bit + first-order noise shaping,
+  deterministic, after the clamp). All-defaults remains a bit-exact null; bypass stays a
+  bit-exact null at every oversampling factor. Remaining in P2: the §2.8 transition layer.
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
 The first entry will be `[0.1.0]`, cut at the end of P6.

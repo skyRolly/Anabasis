@@ -108,6 +108,16 @@ public:
         writeCount = 0;
     }
 
+    // Latched-factor support: alphas are rate-derived; the manual release and
+    // the detector HPF are refreshed by the per-block setters that follow the
+    // latch anyway. No allocation.
+    void setRate (double newRate) noexcept
+    {
+        sr = newRate;
+        aRelFast = onePoleMs (kAutoFastMs);
+        aRelSlow = onePoleMs (kAutoSlowMs);
+    }
+
     // -- per-block settings (rates and modes, not levels — the same rule as
     //    the compressor's time constants: a boundary change cannot step the
     //    output because the envelope is the smoother) ------------------------

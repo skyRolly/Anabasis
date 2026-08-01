@@ -953,7 +953,6 @@ static void testTruePeakAccuracy()
     // the max-reading 4x property.
     const float offGrid = measureDb (juce::MathConstants<float>::pi * 0.3125f);
     const float onSamp  = measureDb (juce::MathConstants<float>::pi * 0.5f);
-    std::printf ("PROBE tp: grid=%+.3f offgrid=%+.3f onsample=%+.3f dB\n", grid, offGrid, onSamp);
 
     check (std::abs (grid) <= 0.1f,   "truePeak: grid-aligned +3 dB ISP vector reads within 0.1 dB");
     check (offGrid > -0.6f && offGrid <= 0.1f,
@@ -998,7 +997,6 @@ static void testLimiterTruePeakMode()
 
     const float offPeak = settledGain (false);
     const float onPeak  = settledGain (true);
-    std::printf ("PROBE tpmode: off=%.4f on=%.4f\n", offPeak, onPeak);
     check (std::abs (offPeak - 0.6717f) < 5.0e-3f,
            "tpMode off: sample peaks under the ceiling pass untouched");
     check (onPeak < offPeak * 0.97f,
@@ -1029,7 +1027,6 @@ static void testLimiterStereoLink()
     auto [l1, r1] = gains (1.0f);
     auto [l0, r0] = gains (0.0f);
     auto [lh, rh] = gains (0.5f);
-    std::printf ("PROBE link: 1->(%.3f,%.3f) 0->(%.3f,%.3f) 0.5->(%.3f,%.3f)\n", l1, r1, l0, r0, lh, rh);
 
     check (juce::exactlyEqual (l1, r1),        "link 1: both channels share one gain");
     check (l0 < 0.6f && r0 > 0.95f,            "link 0: the quiet channel is not ducked");
@@ -1064,7 +1061,6 @@ static void testLimiterAutoReleaseIsTwoStage()
     const float g100  = run (0.01f, 0.1);
     const float g200  = run (0.01f, 0.1);
     const float g800  = run (0.01f, 0.6);
-    std::printf ("PROBE limAuto: held=%.3f g100=%.3f g200=%.3f g800=%.3f\n", held, g100, g200, g800);
 
     const float rec1 = g100 - held, rec2 = g200 - g100;
     check (rec1 > 0.15f,       "limAuto: the fast stage gives real recovery in 100 ms");
@@ -1093,7 +1089,6 @@ static void testLimiterStyles()
         return g[0];
     };
     const float trans = recovered (0), loud = recovered (2);
-    std::printf ("PROBE styles: transparent=%.3f loud=%.3f\n", trans, loud);
     check (loud > trans + 0.05f, "styles: Loud recovers visibly faster than Transparent");
 
     auto pokeAtPlay = [&] (int style)
@@ -1115,7 +1110,6 @@ static void testLimiterStyles()
         return atPlay;
     };
     const float pokeT = pokeAtPlay (0), pokeP = pokeAtPlay (1);
-    std::printf ("PROBE poke: transparent=%.3f punchy=%.3f needed=0.25\n", pokeT, pokeP);
     check (pokeP > pokeT * 1.02f, "styles: Punchy lets more of the hit through at the play instant");
 }
 
@@ -1146,7 +1140,6 @@ static void testLimiterTransientPreserve()
     check (juce::exactlyEqual (atPlay (0.0f), 0.25f),
            "preserve 0: instant attack — the gain IS needed when the hit plays");
     const float p1 = atPlay (1.0f);
-    std::printf ("PROBE preserve1 atPlay=%.3f\n", p1);
     check (p1 > 0.3f && p1 < 1.0f,
            "preserve 1: the envelope deliberately lags into the clamp's territory");
 }
@@ -1176,9 +1169,334 @@ static void testLimiterDetectorHpf()
         return g[0];
     };
     const float atFloor = settled (20.0f), at300 = settled (300.0f);
-    std::printf ("PROBE limHpf: floor=%.3f at300=%.3f\n", atFloor, at300);
     check (atFloor < 0.6f, "limHpf: at the floor a loud 30 Hz tone ducks hard");
     check (at300 > atFloor + 0.2f, "limHpf: at 300 Hz the same tone ducks far less");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0004 / inv 2, the FULL matrix (docs/procedures/TESTING.md mandated
+// stimulus): the impulse must land at exactly maxLookahead + osLatency for
+// EVERY factor x phase, and the predictor must agree — reported == measured
+// across the whole surface, including Force-Max-offline.
+static void testOsLatencyMatrix()
+{
+    const double sr = 48000.0;
+    for (int f = 0; f <= 4; ++f)                 // 0 = Off, 1..4 = 2x..16x
+        for (int ph = 0; ph < 2; ++ph)
+        {
+            anabasis::AnabasisEngine engine;
+            engine.prepare (sr, 512, 2);
+            anabasis::EngineParameters p;
+            p.oversample = (anabasis::OversampleFactor) f;
+            p.osPhase    = (anabasis::OsPhaseMode) ph;
+            p.truePeakMode = false;              // impulse-position measurement
+
+            const int expected = anabasis::predictLatencySamples (p, sr);
+            juce::AudioBuffer<float> buf (2, 512);
+            int peakAt = -1; float peakVal = 0.0f;
+            for (int b = 0; b < 6; ++b)
+            {
+                buf.clear();
+                if (b == 0) { buf.setSample (0, 0, 0.5f); buf.setSample (1, 0, 0.5f); }
+                engine.process (buf, p);
+                for (int n = 0; n < 512; ++n)
+                    if (std::abs (buf.getSample (0, n)) > peakVal)
+                    { peakVal = std::abs (buf.getSample (0, n)); peakAt = b * 512 + n; }
+            }
+            // Linear phase: EXACT — a symmetric FIR's peak is its group
+            // delay, so any deviation is a padding/table bug. Min phase:
+            // ±1 sample — an IIR cascade's group delay is frequency-
+            // dependent BY DESIGN, its impulse peak sits within a sample of
+            // the nominal (integer-compensated) bulk delay the table
+            // reports (measured: exact at 4x, one late at 2x/8x/16x).
+            if (ph == 1 || f == 0)
+                check (peakAt == expected,
+                       "osMatrix: impulse lands at exactly the reported latency (linear)");
+            else
+                check (std::abs (peakAt - expected) <= 1,
+                       "osMatrix: min-phase impulse peak within 1 sample of the nominal delay");
+        }
+
+    {   // Force-Max offline: reported and measured both use the FORCED 16x
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.oversample      = anabasis::OversampleFactor::x2;
+        p.osPhase         = anabasis::OsPhaseMode::linear;
+        p.forceMaxOffline = true;
+        p.nonRealtime     = true;
+        p.truePeakMode    = false;
+        const int expected = anabasis::predictLatencySamples (p, sr);
+        check (expected == anabasis::maxLookaheadSamples (sr)
+                           + anabasis::osLatencySamples (anabasis::OversampleFactor::x16,
+                                                         anabasis::OsPhaseMode::linear, sr),
+               "osMatrix: Force-Max offline predicts with the forced 16x factor");
+        juce::AudioBuffer<float> buf (2, 512);
+        int peakAt = -1; float peakVal = 0.0f;
+        for (int b = 0; b < 6; ++b)
+        {
+            buf.clear();
+            if (b == 0) { buf.setSample (0, 0, 0.5f); buf.setSample (1, 0, 0.5f); }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                if (std::abs (buf.getSample (0, n)) > peakVal)
+                { peakVal = std::abs (buf.getSample (0, n)); peakAt = b * 512 + n; }
+        }
+        check (peakAt == expected, "osMatrix: Force-Max offline measures at the forced factor too");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// inv 7's second half survives oversampling: bypass reads the base-rate dry
+// ring at allowance + osLatency, so it stays a BIT-EXACT null at every
+// factor — the oversampler never touches the dry path.
+static void testBypassNullUnderOs()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.bypass     = true;
+    p.oversample = anabasis::OversampleFactor::x4;
+    p.osPhase    = anabasis::OsPhaseMode::linear;
+    p.limGainDb  = 18.0f;                        // wet path would be loud
+    const int delay = anabasis::predictLatencySamples (p, sr);
+
+    std::vector<float> inL, outL;
+    juce::AudioBuffer<float> buf (2, 512);
+    uint32_t rng = 0xBEEF1234u;
+    for (int b = 0; b < 20; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            rng = rng * 1664525u + 1013904223u;
+            const float v = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.5f;
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+            inL.push_back (v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n)
+            outL.push_back (buf.getSample (0, n));
+    }
+    // Crossfade settles within 10 ms; compare from 2x delay onward.
+    bool exact = true;
+    for (size_t n = (size_t) (2 * delay); n < outL.size(); ++n)
+        if (! juce::exactlyEqual (outL[n], inL[n - (size_t) delay])) { exact = false; break; }
+    check (exact, "osBypass: bypass is a bit-exact null at 4x linear (dry path never oversampled)");
+}
+
+// ---------------------------------------------------------------------------
+// Transparency sanity: defaults + oversampling engaged = the up/down cascade
+// alone. Not bit-exact (filters never are) — the assertion is an error floor,
+// measured and recorded.
+static void testOsTransparency()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.oversample = anabasis::OversampleFactor::x4;
+    p.osPhase    = anabasis::OsPhaseMode::linear;
+    const int delay = anabasis::predictLatencySamples (p, sr);
+
+    std::vector<float> inL, outL;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 40; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                              * 1000.0f * (float) (b * 512 + n) / (float) sr);
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+            inL.push_back (v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n)
+            outL.push_back (buf.getSample (0, n));
+    }
+    double errSq = 0.0, refSq = 0.0;
+    for (size_t n = 10000; n < outL.size(); ++n)
+    {
+        const double e = (double) outL[n] - inL[n - (size_t) delay];
+        errSq += e * e;
+        refSq += (double) inL[n - (size_t) delay] * inL[n - (size_t) delay];
+    }
+    const double errDb = 10.0 * std::log10 (errSq / refSq);
+    check (errDb < -60.0, "osTransparency: 4x linear round trip error under -60 dB on a 1 kHz tone");
+}
+
+// ---------------------------------------------------------------------------
+// inv 4 with the region oversampled: down-filter ringing after the limiter
+// could overshoot, and the clamp is downstream at base rate — so the promise
+// holds at every factor.
+static void testCeilingUnderOs()
+{
+    const double sr = 48000.0;
+    for (int f : { 1, 2 })
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.oversample  = (anabasis::OversampleFactor) f;
+        p.limGainDb   = 12.0f;
+        p.clipDriveDb = 6.0f;
+        const float ceilingLin = std::pow (10.0f, p.ceilingDbTp / 20.0f);
+        juce::AudioBuffer<float> buf (2, 512);
+        float maxOut = 0.0f;
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const double t = (b * 512 + n) / sr;
+                const float v = 0.7f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 97.0 * t)
+                              + 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 4200.0 * t);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            maxOut = juce::jmax (maxOut, buf.getMagnitude (0, 512));
+        }
+        check (maxOut <= ceilingLin * 1.0001f, "osCeiling: the clamp holds with the region oversampled");
+        check (maxOut > 0.5f * ceilingLin,     "osCeiling: the limiter is engaged");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// inv 5's measurement: the SAME driven-clipper stimulus as the ADAA test,
+// with 4x oversampling vs Off — the folded harmonics drop further (numbers
+// recorded per C2).
+static void testOsReducesAliasing()
+{
+    const double sr = 48000.0;
+    const int N = 8192, warm = 2048, k = 2000;
+    auto render = [&] (int factor)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.oversample  = (anabasis::OversampleFactor) factor;
+        p.osPhase     = anabasis::OsPhaseMode::linear;
+        p.clipDriveDb = 12.0f;
+        p.clipShape   = 0.0f;
+        p.ceilingDbTp = 0.0f;                     // keep the clamp out of the picture
+        p.truePeakMode = false;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        int produced = 0;
+        for (int b = 0; produced < warm + N; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                buf.setSample (0, n, 0.35f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * (float) k * (float) t / (float) N));
+                buf.setSample (1, n, buf.getSample (0, n));
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512 && produced < warm + N; ++n, ++produced)
+                if (produced >= warm)
+                    out.push_back (buf.getSample (0, n));
+        }
+        juce::dsp::FFT fft (13);
+        std::vector<float> fbuf (2 * (size_t) N, 0.0f);
+        std::copy (out.begin(), out.end(), fbuf.begin());
+        fft.performRealOnlyForwardTransform (fbuf.data(), true);
+        auto mag = [&] (int bin)
+        {
+            const float re = fbuf[(size_t) (2 * bin)], im = fbuf[(size_t) (2 * bin + 1)];
+            return 20.0f * std::log10 (juce::jmax (1.0e-9f, std::sqrt (re * re + im * im)));
+        };
+        return std::make_pair (mag (N - 3 * k), mag (k));   // folded 3rd, fundamental
+    };
+
+    auto [aliasOff, fundOff] = render (0);
+    auto [alias4x,  fund4x ] = render (2);
+    check (alias4x < aliasOff - 20.0f,
+           "osAliasing: 4x drops the folded 3rd by >20 dB beyond ADAA alone");   // measured 74 dB
+    // The fundamental RISES ~1.3 dB at 4x: ADAA-1's sinc droop at 11.72 kHz
+    // (~0.9 dB at base rate) nearly vanishes at 192 kHz — a real, correct
+    // effect of oversampling the nonlinearity, not an error.
+    check (std::abs (fund4x - fundOff) < 2.5f, "osAliasing: the fundamental is preserved");
+}
+
+// ---------------------------------------------------------------------------
+// §4.5 dither: Off is a true no-op (the null test already proves it); 16-bit
+// lands every sample on the 2^-15 grid with TPDF noise present; shaping
+// pushes the quantisation error's energy toward the top of the band.
+static void testDitherModes()
+{
+    const double sr = 48000.0;
+    auto render = [&] (int mode, bool shaping)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.ditherMode    = mode;
+        p.ditherShaping = shaping;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 20; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                  * 441.0f * (float) (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+
+    {   // 16-bit: on-grid, and genuinely dithered (not just truncated)
+        const auto out = render (1, false);
+        const float q = 3.0517578125e-5f;
+        bool onGrid = true; bool anyOff = false;
+        for (size_t n = 1000; n < out.size(); ++n)
+        {
+            const float k = out[n] / q;
+            if (std::abs (k - std::nearbyint (k)) > 1.0e-3f) onGrid = false;
+            // dithered quantisation differs from PLAIN rounding somewhere:
+            if (! anyOff)
+            {
+                // compare against the undithered input's rounded value
+                // (dither randomises the LSB, so some samples must differ)
+                const float in = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                   * 441.0f * (float) (n - 480) / (float) sr);
+                if (! juce::exactlyEqual (out[n], q * std::nearbyint (in / q)))
+                    anyOff = true;
+            }
+        }
+        check (onGrid, "dither16: every output sample sits on the 2^-15 grid");
+        check (anyOff, "dither16: the LSB is randomised, not plain rounding");
+    }
+    {   // shaping tilts the error spectrum upward
+        auto errSpectrumSplit = [&] (bool shaping)
+        {
+            const auto out = render (2, shaping);
+            const int N = 8192;
+            juce::dsp::FFT fft (13);
+            std::vector<float> fbuf (2 * (size_t) N, 0.0f);
+            // error = out - ideal (delay-aligned input), 24-bit error is tiny:
+            for (int n = 0; n < N; ++n)
+            {
+                const int idx = 1000 + n;
+                const float in = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                   * 441.0f * (float) (idx - 480) / (float) sr);
+                fbuf[(size_t) n] = out[(size_t) idx] - in;
+            }
+            fft.performRealOnlyForwardTransform (fbuf.data(), true);
+            double lo = 0.0, hi = 0.0;
+            for (int bin = 16; bin < N / 8; ++bin)
+            { const float re = fbuf[(size_t)(2*bin)], im = fbuf[(size_t)(2*bin+1)]; lo += re*re + im*im; }
+            for (int bin = 3 * N / 8; bin < N / 2 - 16; ++bin)
+            { const float re = fbuf[(size_t)(2*bin)], im = fbuf[(size_t)(2*bin+1)]; hi += re*re + im*im; }
+            return 10.0 * std::log10 (hi / lo);
+        };
+        const double flat = errSpectrumSplit (false), shaped = errSpectrumSplit (true);
+        check (shaped > flat + 6.0, "ditherShaping: error energy moves to the top of the band");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1449,6 +1767,12 @@ int main()
     testLimiterStyles();
     testLimiterTransientPreserve();
     testLimiterDetectorHpf();
+    testOsLatencyMatrix();
+    testBypassNullUnderOs();
+    testOsTransparency();
+    testCeilingUnderOs();
+    testOsReducesAliasing();
+    testDitherModes();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();

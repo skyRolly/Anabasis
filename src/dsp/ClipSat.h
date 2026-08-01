@@ -75,6 +75,23 @@ public:
         reset();
     }
 
+    // Latched-factor support: the region runs at sr·N and every one-pole here
+    // is rate-derived. Plain float recomputes, no allocation — legal at the
+    // latch boundary on the audio thread. Smoother ramps snap to their
+    // targets (SmoothedValue::reset does), which is what a latch/reset
+    // boundary means.
+    void setRate (double newRate) noexcept
+    {
+        sr = newRate;
+        for (auto* s : smoothers())
+            s->reset (newRate, 0.020);
+        aToneLp  = onePole (2000.0f);
+        aTameLp  = onePole (6000.0f);
+        aDcBlock = onePole (5.0f);
+        aActFast = onePoleMs (5.0f);
+        aActSlow = onePoleMs (150.0f);
+    }
+
     void reset() noexcept
     {
         for (int ch = 0; ch < kMaxChannels; ++ch)

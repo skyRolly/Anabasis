@@ -100,7 +100,7 @@ docs/
 │                          See SOURCE_OF_TRUTH.md §"Where DESIGN.md sits".
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
-│   BRAND_CONSISTENCY_CHECKLIST.md
+│   BRAND_CONSISTENCY_CHECKLIST.md, TEST_REPORT.md (measured data + method, grows per phase)
 ├── user/           [P6] end-user class: USER_MANUAL, INSTALLATION
 ├── architecture/   design-decisions/ — ADR_INDEX.md + ADR-0001…0011 (all Accepted
 │                   2026-07-31). THREAD_MODEL.md (implemented model, from ADR-0011)

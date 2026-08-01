@@ -9,6 +9,37 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P2, oversampling + dither commit — the engine restructure, and TEST_REPORT.md exists (2026-08-01)
+
+**The engine is now staged**: base-rate front (input gain → EQ-Pre → compressor), the ADR-0003
+oversampled region (up ×N → clipper/sat → the 10 ms lookahead line AT the region rate → limiter →
+down ×N), base-rate back (EQ-Post → clamp → dither → bypass). All eight `juce::dsp::Oversampling`
+instances (2×/4×/8×/16× × IIR-min/FIR-linear) are built and `initProcessing`'d at `prepare()`
+per ADR-0011; a runtime factor/phase change latches at a block boundary as a reset-class event
+(KI-001 extended — third member of the §2.8 family). `useIntegerLatency` keeps every
+configuration's group delay a whole base sample, so `Latency.h` now carries the measured table
+(min {4,6,6,6} / lin {49,61,65,67}) and `prepare()` asserts table == `getLatencyInSamples()` per
+instance — a JUCE bump that redesigns either cascade fails loudly twice. Oversize host blocks are
+processed in prepared-size **chunks** — the earlier "correctness needs only delaySamples+1"
+argument no longer holds for a block-structured engine, so the guarantee moved from arithmetic to
+structure. Dither: TPDF 16/24 + first-order shaping, deterministic xorshift (offline renders
+repeat), after the clamp, processed path only.
+
+**Every existing check survived the restructure bit-for-bit** — the null, the wedge alignment,
+the priming, byte-identity — before any new test was added; that ordering (restructure green
+first, then extend) is what kept a 400-line rewrite from being a bug factory.
+
+**`docs/TEST_REPORT.md` now exists** and closes part of the "no measured numbers anywhere" gap:
+aliasing (ADAA −14.8/−10.4 dB; 4× ≈ −74 dB; the +1.3 dB fundamental recovery that looks like a
+bug and is oversampling removing ADAA's sinc droop), true-peak accuracy (−0.004 grid / −0.171
+off-grid), the full latency matrix (linear cells sample-exact; min-phase ±1 with the dispersion
+rationale), transparency (−69 dB), dither shaping (+12.6 dB tilt). Each number is asserted with
+margin by a named test, so the report cannot silently rot.
+
+**One calibration note for the record:** the OS aliasing test's first "fundamental untouched"
+bound (±1 dB) failed on CORRECT code — 4× genuinely raises the fundamental 1.3 dB by removing the
+ADAA droop. Third instance of the same lesson this phase; the bound now names the mechanism.
+
 ### P2, clipper and limiter commits — two stimulus-calibration catches in one day (2026-08-01)
 
 **`ClipSat`** landed with the knee-morph ADAA clipper, colour models, the dynamic HF tame and the
@@ -2134,8 +2165,10 @@ These are **deliberate**, not oversights. Each names what would close it.
 - **Policy compliance sections are `TODO (no code yet)`** in `REALTIME_AUDIO_POLICY`,
   `THREADING_POLICY`, `DSP_POLICY` and `MODE_AND_ADAPTATION_POLICY`. Closed as each phase lands,
   with evidence citations.
-- **No performance or aliasing numbers anywhere** — and none may be written until measured with a
-  recorded machine and methodology (constraint C2). Closed by `TEST_REPORT.md` at P2/P6.
+- **Performance numbers** — none may be written until measured with a recorded machine and
+  methodology (C2). `docs/TEST_REPORT.md` exists since P2 (2026-08-01) and carries the measured
+  aliasing / true-peak / latency-matrix / dither data; CPU and memory budgets remain open until a
+  machine spec is recorded (P2/P6).
 - **No host (DAW) matrix** — requires manual testing. Closed by the P6 DAW smoke tests.
 - **Legal / attribution class absent** — closed at P6 against the actually-pinned JUCE tree.
 - **`docs/user/` absent** — closed at P6.

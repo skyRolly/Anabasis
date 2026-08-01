@@ -30,15 +30,35 @@ inline int maxLookaheadSamples (double sampleRate) noexcept
     return (int) std::ceil (kMaxLookaheadMs * 0.001 * sampleRate);
 }
 
-// P1: no oversampling region exists yet, so every factor's oversampler delay
-// is genuinely zero. When the P2 oversampling lands (ADR-0003), this becomes a
-// pure function of (factor, phaseMode) — per-factor IIR/FIR group delays — and
-// MUST stay free of any signal-dependent term (ADR-0004 item 2).
+// The oversampler's contribution, in BASE samples — a pure function of
+// (factor, phaseMode), no signal-dependent term (ADR-0004 item 2), and
+// INTEGERS by construction: the engine builds every juce::dsp::Oversampling
+// instance with useIntegerLatency = true, whose internal fractional-delay
+// compensator rounds the cascade's group delay up to a whole base sample.
+//
+// The values are getLatencyInSamples() MEASURED against the pinned JUCE tree
+// (f8f8864…) in that mode. A JUCE bump that changes either filter design
+// fails testReportedLatencyMatchesImpulse across the OS matrix — that is
+// RISK-001's tripwire doing its job, not an inconvenience to suppress.
+// prepare() also asserts table == getLatencyInSamples() per instance, so a
+// drift is caught at the first debug run even before the matrix test.
+//
+// Sample-rate note: these are filter group delays in SAMPLES, which is why
+// the function ignores its rate argument; the same cascade at 96 kHz delays
+// the same number of samples (a shorter time — the honest physics).
 inline int osLatencySamples (OversampleFactor factor, OsPhaseMode phase, double sampleRate) noexcept
 {
-    (void) factor; (void) phase; (void) sampleRate;
-    return 0;
+    (void) sampleRate;
+    if (factor == OversampleFactor::off)
+        return 0;
+    static constexpr int kMin[4] = { 4, 6, 6, 6 };       // IIR polyphase + integer-latency pad
+    static constexpr int kLin[4] = { 49, 61, 65, 67 };   // FIR equiripple + integer-latency pad
+    const int idx = (int) factor - 1;                    // x2..x16 → 0..3
+    return phase == OsPhaseMode::minimum ? kMin[idx] : kLin[idx];
 }
+
+// The dry-ring / bypass-alignment headroom the engine must allocate for.
+inline constexpr int kMaxOsLatencySamples = 67;
 
 // The effective factor is not always the selected one: at Force Max an offline
 // bounce renders at 16x, and the reported figure under isNonRealtime() uses
