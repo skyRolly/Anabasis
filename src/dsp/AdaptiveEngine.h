@@ -71,8 +71,9 @@ public:
     {
         sr = sampleRate;
         expectedBlockLen = juce::jmax (1, maxBlockSize);
-        aEnvFast = onePoleMs (5.0f);
-        aEnvSlow = onePoleMs (80.0f);
+        aEnvFast  = onePoleMs (5.0f);
+        aEnvDecay = onePoleMs (30.0f);       // fast envelope must RELEASE before the next hit
+        aEnvSlow  = onePoleMs (500.0f);      // the baseline the hits punch above
         aFeature = onePoleMs (1500.0f);          // ~1.5 s feature integration
         aBand    = onePoleHz (800.0f);           // tilt split
         reset();
@@ -123,11 +124,11 @@ public:
 
         // Onset detector: a fast envelope punching >8 dB above the slow one,
         // with a 50 ms re-arm hold, counts one transient.
-        envFast += (mono - envFast) * (mono > envFast ? aEnvFast : aEnvSlow);
-        envSlow += (mono - envSlow) * aEnvSlow * 0.25f;
+        envFast += (mono - envFast) * (mono > envFast ? aEnvFast : aEnvDecay);
+        envSlow += (mono - envSlow) * aEnvSlow;
         if (onsetHold > 0)
             --onsetHold;
-        else if (envFast > envSlow * 2.51f && envFast > 1.0e-4f)
+        else if (envFast > envSlow * 2.0f && envFast > 1.0e-4f)
         {
             ++blockOnsets;
             onsetHold = (int) (0.050 * sr);
@@ -163,6 +164,13 @@ public:
         pubCrestDb.store (crestDb, std::memory_order_relaxed);
         pubTiltDb.store (tiltDb, std::memory_order_relaxed);
         pubOnsetRate.store (onsetRate, std::memory_order_relaxed);
+
+        if (learnActive && audible)
+        {
+            learnOnsSum  += onsetRate;
+            learnTiltSum += tiltDb;
+            ++learnBlocks;
+        }
 
         blockPeak = 0.0f; blockMs = 0.0; blockLo = 0.0; blockHi = 0.0;
         blockOnsets = 0;
@@ -200,6 +208,62 @@ public:
 
     const Trims& currentTrims() const noexcept { return trims; }
 
+    // -- §5.4 Learn: explicit start → integrated-style accumulation of the
+    //    feature set → explicit commit fixes the reference targets. Audio-
+    //    thread calls (the engine consumes the wrapper's command atomics at
+    //    the block top). Never runs silently: idle unless started.
+    void startLearn() noexcept
+    {
+        learnActive  = true;
+        learnOnsSum  = 0.0;
+        learnTiltSum = 0.0;
+        learnBlocks  = 0;
+    }
+
+    // Commit = the analysed passage becomes the reference: material like it
+    // now trims toward ZERO, which is the whole point (Learn feeds the
+    // reference targets, never the output stage — a maximizer must not
+    // auto-match its output level).
+    void commitLearn() noexcept
+    {
+        learnActive = false;
+        if (learnBlocks > 0)
+        {
+            refOnsetRate = (float) (learnOnsSum  / learnBlocks);
+            refTiltDb    = (float) (learnTiltSum / learnBlocks);
+            learned      = true;
+            publishRefs();
+        }
+    }
+
+    bool  isLearning() const noexcept    { return learnActive; }
+    bool  hasLearned() const noexcept    { return learned; }
+
+    // Session restore of learned targets (ADAPTIVE child): two INDEPENDENT
+    // scalars through the host-hidden-session-state mirror pattern — each is
+    // a self-correcting slow reference, so a torn pair re-slews within
+    // seconds. Deliberately distinct from OQ-013's frozen-trim vector, whose
+    // four members are coherence-critical (half-restored = permanently
+    // wrong); nothing here weakens that Hard Stop.
+    void setLearnedTargets (float onsetRateIn, float tiltDbIn) noexcept
+    {
+        refOnsetRate = onsetRateIn;
+        refTiltDb    = tiltDbIn;
+        learned      = true;
+        publishRefs();
+    }
+
+    void clearLearnedTargets() noexcept   // "absent ADAPTIVE = never learned"
+    {
+        refOnsetRate = kDefaultRefOnset;
+        refTiltDb    = kDefaultRefTilt;
+        learned      = false;
+        publishRefs();
+    }
+
+    float publishedRefOnset() const noexcept { return pubRefOnset.load (std::memory_order_relaxed); }
+    float publishedRefTilt()  const noexcept { return pubRefTilt.load (std::memory_order_relaxed); }
+
     // -- published readouts (relaxed atomics — the meter row): the Advanced
     //    view's delta overlay and the P5 feature display read these ----------
     float publishedCrestDb() const noexcept    { return pubCrestDb.load (std::memory_order_relaxed); }
@@ -227,15 +291,28 @@ private:
     // Neutral reference targets (⊕ draft; Learn re-fixes them at its commit —
     // the values a "typical" master sits near, so the factory state trims
     // toward zero on typical material).
-    float refOnsetRate = 4.0f;   // transients/s
-    float refTiltDb    = -6.0f;  // hi/lo energy ratio of typical programme
+    static constexpr float kDefaultRefOnset = 4.0f;   // transients/s
+    static constexpr float kDefaultRefTilt  = -6.0f;  // hi/lo energy dB of typical programme
+    float refOnsetRate = kDefaultRefOnset;
+    float refTiltDb    = kDefaultRefTilt;
+
+    void publishRefs() noexcept
+    {
+        pubRefOnset.store (refOnsetRate, std::memory_order_relaxed);
+        pubRefTilt.store (refTiltDb,     std::memory_order_relaxed);
+    }
+
+    bool   learnActive = false, learned = false;
+    double learnOnsSum = 0.0, learnTiltSum = 0.0;
+    int64_t learnBlocks = 0;
 
     double sr = 48000.0;
     int    expectedBlockLen = 512;
 
     float bandLp[kMaxChannels] = {};
     float envFast = 0.0f, envSlow = 0.0f;
-    float aEnvFast = 0.01f, aEnvSlow = 0.001f, aFeature = 0.0001f, aBand = 0.1f;
+    float aEnvFast = 0.01f, aEnvDecay = 0.003f, aEnvSlow = 0.001f,
+          aFeature = 0.0001f, aBand = 0.1f;
 
     float  msAvg = 0.0f, peakAvg = 0.0f, loEnergy = 0.0f, hiEnergy = 0.0f, onsetRate = 0.0f;
     int    onsetHold = 0;
@@ -248,6 +325,7 @@ private:
     std::atomic<float> pubCrestDb { 0.0f }, pubTiltDb { 0.0f }, pubOnsetRate { 0.0f };
     std::atomic<float> pubTrimRel { 0.0f }, pubTrimLink { 0.0f },
                        pubTrimHpf { 0.0f }, pubTrimTilt { 0.0f };
+    std::atomic<float> pubRefOnset { kDefaultRefOnset }, pubRefTilt { kDefaultRefTilt };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaptiveEngine)
 };

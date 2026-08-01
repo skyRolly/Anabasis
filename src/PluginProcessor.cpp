@@ -312,10 +312,19 @@ void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     ab.appendChild (activeSlot == 0 ? storedSlot.createCopy() : saveSlotFromLive(), nullptr);
     root.appendChild (ab, nullptr);
 
-    // ADAPTIVE is deliberately NOT written while nothing has been learned:
-    // "absent = never learned" is the §4.4 discriminator, and writing an
-    // empty child from the first shipped session would destroy it (Learn
-    // lands at P4 and starts writing the child when it has targets).
+    // ADAPTIVE: "absent = never learned" is the §4.4 discriminator, so the
+    // child is written ONLY once Learn has committed targets. The values are
+    // audio-thread-written atomics read here on the message thread — stable
+    // after the commit, the same capture pattern as the frozen-trim latch.
+    if (engine.adaptiveForWrapper().hasLearned())
+    {
+        juce::ValueTree adaptive ("ADAPTIVE");
+        adaptive.setProperty ("refOnsetRate",
+                              (double) engine.adaptiveForWrapper().publishedRefOnset(), nullptr);
+        adaptive.setProperty ("refTiltDb",
+                              (double) engine.adaptiveForWrapper().publishedRefTilt(), nullptr);
+        root.appendChild (adaptive, nullptr);
+    }
 
     if (const auto xml = root.createXml())
         copyXmlToBinary (*xml, destData);
@@ -379,6 +388,15 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
                     liveDetachMask.add (mask.getChild (i).getProperty ("id").toString());
         }
     }
+
+    // ADAPTIVE read rules: present → restore the learned targets through the
+    // mirror pattern (consumed at the next block top); absent → never
+    // learned, defaults (§4.4's discriminator).
+    if (const auto adaptive = root.getChildWithName ("ADAPTIVE"); adaptive.isValid())
+        engine.restoreLearnedTargets ((float) (double) adaptive.getProperty ("refOnsetRate"),
+                                      (float) (double) adaptive.getProperty ("refTiltDb"));
+    else
+        engine.restoreNeverLearned();
 
     // Deliberately the SECOND recompute of this load: replaceFrom's batch
     // already fired one (that is the level testLatencyNotifyIsBatchedAcrossARead

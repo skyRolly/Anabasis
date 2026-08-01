@@ -740,6 +740,69 @@ static void testModeSwitchIsSoundNeutral()
 }
 
 // ---------------------------------------------------------------------------
+// §5.4 Learn end to end: analyse a passage → commit → the reference targets
+// move; the session then carries an ADAPTIVE child that restores them; a
+// session WITHOUT the child restores "never learned" (§4.4's discriminator).
+static void testLearnCommitAndAdaptiveRoundTrip()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    const float refOnset0 = proc.adaptiveReadout().publishedRefOnset();
+    check (! proc.adaptiveReadout().hasLearned(), "learn: factory state has never learned");
+
+    proc.startLearn();
+    for (int b = 0; b < 500; ++b)                    // ~5 s of transient-dense material
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                       * 220.0f * (float) t / 48000.0f);
+            if ((t % 4800) < 96) v += 0.6f;          // 10 clicks/s: far off the default ref
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    proc.stopLearn();
+    for (int b = 0; b < 2; ++b) proc.processBlock (buf, midi);   // commit consumed at block top
+
+    check (proc.adaptiveReadout().hasLearned(), "learn: commit latches the learned state");
+    const float refOnsetLearned = proc.adaptiveReadout().publishedRefOnset();
+    check (refOnsetLearned > refOnset0 + 2.0f,
+           "learn: the onset reference moved to the analysed passage's density");
+
+    // Round trip: the ADAPTIVE child restores the targets...
+    juce::MemoryBlock state;
+    proc.getStateInformation (state);
+    AnabasisAudioProcessor restored;
+    restored.prepareToPlay (48000.0, 512);
+    restored.setStateInformation (state.getData(), (int) state.getSize());
+    for (int b = 0; b < 2; ++b) restored.processBlock (buf, midi);   // mirror consumed
+    check (std::abs (restored.adaptiveReadout().publishedRefOnset() - refOnsetLearned) < 1.0e-4f,
+           "learn: the ADAPTIVE child restores the learned targets");
+
+    // ...byte-identity still holds with the child present...
+    juce::MemoryBlock again;
+    restored.getStateInformation (again);
+    check (state == again, "learn: save → load → save stays byte-identical with ADAPTIVE present");
+
+    // ...and a session WITHOUT the child restores never-learned defaults.
+    AnabasisAudioProcessor fresh;
+    fresh.prepareToPlay (48000.0, 512);
+    juce::MemoryBlock blank;
+    AnabasisAudioProcessor().getStateInformation (blank);
+    restored.setStateInformation (blank.getData(), (int) blank.getSize());
+    for (int b = 0; b < 2; ++b) restored.processBlock (buf, midi);
+    check (! restored.adaptiveReadout().hasLearned()
+             && std::abs (restored.adaptiveReadout().publishedRefOnset() - refOnset0) < 1.0e-4f,
+           "learn: absent ADAPTIVE means never learned — defaults restored");
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -806,6 +869,7 @@ int main (int argc, char** argv)
         testAbSwitchRequestsDuck();
         testMeterPublication();
         testModeSwitchIsSoundNeutral();
+        testLearnCommitAndAdaptiveRoundTrip();
         testDrainInsideRestoreIsSuppressed();
         testAbRawExact();
         testFrozenSlotRoundTrip();

@@ -148,8 +148,16 @@ Evidence (all mutation-verified):
 - inv 4: `testTrimBounds` (pathological programme; published vector inside every bound).
 - inv 1/6: `testMacroDefaultIsFixedPoint`, `testMacroRestoreDoesNotClobber` (P1, still green).
 
-Still owed by P4: **Learn** (accumulate → commit reference targets, `ADAPTIVE` serialization) and
-the frozen-trim RESTORE transport — the latter blocked by **OQ-013** (Hard Stop) until its ADR.
+**Learn (core)** is in: explicit start → integrated-style feature accumulation (silence-gated)
+→ explicit commit fixes the reference targets, so the analysed passage becomes the material that
+trims toward zero (`AdaptiveEngine::startLearn/commitLearn`, wrapper command atomics). Learned
+targets serialize in the global `ADAPTIVE` child — written only once learned, "absent = never
+learned" (§4.4) — and restore through the host-hidden-session-state mirror pattern: two
+INDEPENDENT self-correcting scalars, deliberately distinct from OQ-013's coherence-critical
+frozen-trim vector, whose restore transport remains a **Hard Stop** until its ADR. Guarded by
+`testLearnCommitAndAdaptiveRoundTrip` (commit moves the reference; the child restores it
+byte-identically; absent restores never-learned defaults). The Learn UI grammar (duck-routed
+engage, undo bracketing, running readout display) lands with the P5 UI.
 Trim mapping constants are ⊕ drafts, tuned by ear before v0.1.0 like the §5.5 curves.
 
 ## Enforcement

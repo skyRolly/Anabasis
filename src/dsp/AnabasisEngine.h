@@ -84,6 +84,25 @@ public:
     // ONLY at the silent bottom.
     void requestForcedDuck() noexcept { duckRequested.store (true, std::memory_order_relaxed); }
 
+    // §5.4 Learn commands — the same momentary-request row as the duck.
+    void requestLearnStart() noexcept { learnStartReq.store (true, std::memory_order_relaxed); }
+    void requestLearnStop() noexcept  { learnStopReq.store (true, std::memory_order_relaxed); }
+
+    // Learned-target restore (session load, ADAPTIVE child): host-hidden
+    // session state through the mirror pattern — consumed at the block top.
+    void restoreLearnedTargets (float onsetRate, float tiltDb) noexcept
+    {
+        pendingRefOnset.store (onsetRate, std::memory_order_relaxed);
+        pendingRefTilt.store (tiltDb, std::memory_order_relaxed);
+        adaptiveRestorePending.store (true, std::memory_order_relaxed);
+    }
+    void restoreNeverLearned() noexcept
+    {
+        adaptiveClearPending.store (true, std::memory_order_relaxed);
+    }
+
+    AdaptiveEngine& adaptiveForWrapper() noexcept { return adaptiveEngine; }
+
     // The engaged lookahead window in BASE samples, as last handed to the
     // detector. Exposed because it is where invariant 8's "smooth,
     // band-limited" requirement for a lookahead move is observable — the
@@ -148,6 +167,9 @@ private:
     // stages see carries the APPLIED values, so nothing rewires at full gain.
     enum class DuckState { idle, out, bottom, in };
     std::atomic<bool> duckRequested { false };
+    std::atomic<bool> learnStartReq { false }, learnStopReq { false };
+    std::atomic<bool> adaptiveRestorePending { false }, adaptiveClearPending { false };
+    std::atomic<float> pendingRefOnset { 0.0f }, pendingRefTilt { 0.0f };
     DuckState duckState = DuckState::idle;
     float duckGain = 1.0f, duckPhase = 0.0f;
     float duckOutInc = 0.0f, duckInInc = 0.0f;

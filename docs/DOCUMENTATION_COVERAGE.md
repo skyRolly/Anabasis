@@ -9,6 +9,24 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P4, Learn commit — and a silent no-op replace caught by its own test (2026-08-01)
+
+**Learn (core)**: start → silence-gated accumulation of the feature means → commit fixes the
+reference targets (the analysed passage becomes what trims toward zero — Learn feeds the
+references, never the output stage). Targets serialize in the global `ADAPTIVE` child, written
+only once learned; restore rides the host-hidden mirror pattern as two INDEPENDENT self-correcting
+scalars — documented as deliberately distinct from OQ-013's coherence-critical four-vector, whose
+transport stays hard-stopped. `testLearnCommitAndAdaptiveRoundTrip` covers commit, byte-identical
+round trip with the child present, and the absent-child = never-learned read rule.
+
+**Two catches during the increment, both by the test written first:** (1) the wrapper's restore
+edit anchored on a comment an earlier round had rewritten — the python replace silently no-op'd
+and the ADAPTIVE child saved but never restored; the round-trip check failed on exactly that.
+Edits now assert their anchors. (2) The onset detector under-counted dense clicks (the fast
+envelope released at 80 ms and was still elevated when the next hit landed): 1.8/s measured on a
+10/s stimulus. A 30 ms release and a 500 ms symmetric baseline read 8.25/s — and the Learn test's
+"reference moved" premise is what surfaced it.
+
 ### P4 core — adaptation that provably cannot break the null (2026-08-01)
 
 **`AdaptiveEngine`** (src/dsp/AdaptiveEngine.h): block-rate features of the delay-aligned input

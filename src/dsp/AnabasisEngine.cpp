@@ -155,6 +155,17 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const int  wantEq   = p.eqPosition;
     const int  wantModel = juce::jlimit (0, 3, p.colourModel);
     const bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
+
+    // Learn commands + learned-target restore, consumed at the block top.
+    if (adaptiveClearPending.exchange (false, std::memory_order_relaxed))
+        adaptiveEngine.clearLearnedTargets();
+    if (adaptiveRestorePending.exchange (false, std::memory_order_relaxed))
+        adaptiveEngine.setLearnedTargets (pendingRefOnset.load (std::memory_order_relaxed),
+                                          pendingRefTilt.load (std::memory_order_relaxed));
+    if (learnStartReq.exchange (false, std::memory_order_relaxed))
+        adaptiveEngine.startLearn();
+    if (learnStopReq.exchange (false, std::memory_order_relaxed))
+        adaptiveEngine.commitLearn();
     const bool rewireWanted = wantIdx != latchedFactorIdx
                            || (wantIdx >= 0 && wantPh != latchedPhaseIdx)
                            || wantEq != appliedEqPos

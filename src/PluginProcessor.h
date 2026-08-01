@@ -123,6 +123,13 @@ public:
     float meterGrDb()     const noexcept { return pubGrDb.load (std::memory_order_relaxed); }
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
 
+    // §5.4 Learn (message thread → the engine's command atomics; the P5 UI
+    // adds the duck-routed engage + undo bracketing around these).
+    void startLearn() noexcept { engine.requestLearnStart(); }
+    void stopLearn() noexcept  { engine.requestLearnStop(); }
+    const anabasis::AdaptiveEngine& adaptiveReadout() const noexcept
+    { return const_cast<AnabasisAudioProcessor*> (this)->engine.adaptiveForWrapper(); }
+
 private:
     anabasis::LoudnessMeter     outputMeter;      // audio-thread state
     anabasis::TruePeakEstimator tpMeter;          // audio-thread state

@@ -64,7 +64,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   dynamic tame, second-scale slew with hysteresis, Freeze latching the vector exactly, and the
   mode-switch invariant pinned sample-identically (`testModeSwitchIsSoundNeutral`). The trims are
   engine-internal — the host, automation and undo never see them — and the bit-exact null holds
-  with adaptation live. Learn and the OQ-013-gated frozen-trim restore remain.
+  with adaptation live. Learn (core) is in: analyse → commit fixes the
+  reference targets, serialized in the global ADAPTIVE child ("absent = never learned").
+  The OQ-013-gated frozen-trim restore remains the one blocked path.
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
 The first entry will be `[0.1.0]`, cut at the end of P6.
