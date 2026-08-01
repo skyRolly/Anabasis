@@ -82,10 +82,12 @@ design choice.
 
 ## Current model
 
-**TODO (no code yet).** The thread inventory, ownership split and cross-thread edges are decided in
-**ADR-0011**; the concrete thread model, with code citations, is written at P1 into
-`docs/architecture/THREAD_MODEL.md` from that ADR. Until that file exists, read ADR-0011 for the
-model and this policy for the permitted shapes.
+Decided in **ADR-0011**; the concrete implemented model, with code citations, is
+[`docs/architecture/THREAD_MODEL.md`](../architecture/THREAD_MODEL.md) (written at P1 as this
+policy required). Read the ADR for the decision, that file for what the tree actually does, and
+this policy for the permitted shapes. One edge is pending an owner call — the MacroEngine guard
+atomics, `OPEN_QUESTIONS.md` OQ-014 — and is flagged as such there rather than silently claimed
+as a table row.
 
 ## Enforcement
 
