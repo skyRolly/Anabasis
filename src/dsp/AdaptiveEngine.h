@@ -69,8 +69,8 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize)
     {
+        juce::ignoreUnused (maxBlockSize);   // block length is discovered per call
         sr = sampleRate;
-        expectedBlockLen = juce::jmax (1, maxBlockSize);
         aEnvFast  = onePoleMs (5.0f);
         aEnvDecay = onePoleMs (30.0f);       // fast envelope must RELEASE before the next hit
         aEnvSlow  = onePoleMs (500.0f);      // the baseline the hits punch above
@@ -122,8 +122,8 @@ public:
         blockLo  += (double) lo;
         blockHi  += (double) hi;
 
-        // Onset detector: a fast envelope punching >8 dB above the slow one,
-        // with a 50 ms re-arm hold, counts one transient.
+        // Onset detector: a fast envelope punching >6 dB (2.0×) above the
+        // slow one, with a 50 ms re-arm hold, counts one transient.
         envFast += (mono - envFast) * (mono > envFast ? aEnvFast : aEnvDecay);
         envSlow += (mono - envSlow) * aEnvSlow;
         if (onsetHold > 0)
@@ -231,34 +231,37 @@ public:
         {
             refOnsetRate = (float) (learnOnsSum  / learnBlocks);
             refTiltDb    = (float) (learnTiltSum / learnBlocks);
-            learned      = true;
             publishRefs();
+            // Refs first, flag RELEASE-stored after: a reader whose ACQUIRE
+            // load of `learned` sees true is guaranteed to see the refs it
+            // is about to serialize (getStateInformation runs off-thread).
+            learned.store (true, std::memory_order_release);
         }
     }
 
     bool  isLearning() const noexcept    { return learnActive; }
-    bool  hasLearned() const noexcept    { return learned; }
+    bool  hasLearned() const noexcept    { return learned.load (std::memory_order_acquire); }
 
-    // Session restore of learned targets (ADAPTIVE child): two INDEPENDENT
-    // scalars through the host-hidden-session-state mirror pattern — each is
-    // a self-correcting slow reference, so a torn pair re-slews within
-    // seconds. Deliberately distinct from OQ-013's frozen-trim vector, whose
-    // four members are coherence-critical (half-restored = permanently
-    // wrong); nothing here weakens that Hard Stop.
+    // Session restore of learned targets (ADAPTIVE child), audio thread only
+    // (the wrapper stages the pair and the engine consumes it at block top —
+    // the release/acquire flag ordering on that hand-off is in
+    // AnabasisEngine::restoreLearnedTargets). Deliberately distinct from
+    // OQ-013's frozen-trim vector, whose four members are coherence-critical
+    // (half-restored = permanently wrong); nothing here weakens that Hard Stop.
     void setLearnedTargets (float onsetRateIn, float tiltDbIn) noexcept
     {
         refOnsetRate = onsetRateIn;
         refTiltDb    = tiltDbIn;
-        learned      = true;
         publishRefs();
+        learned.store (true, std::memory_order_release);   // refs first — see commitLearn()
     }
 
     void clearLearnedTargets() noexcept   // "absent ADAPTIVE = never learned"
     {
         refOnsetRate = kDefaultRefOnset;
         refTiltDb    = kDefaultRefTilt;
-        learned      = false;
         publishRefs();
+        learned.store (false, std::memory_order_release);
     }
 
     float publishedRefOnset() const noexcept { return pubRefOnset.load (std::memory_order_relaxed); }
@@ -302,12 +305,12 @@ private:
         pubRefTilt.store (refTiltDb,     std::memory_order_relaxed);
     }
 
-    bool   learnActive = false, learned = false;
+    bool   learnActive = false;
+    std::atomic<bool> learned { false };   // written on audio thread, read by getStateInformation
     double learnOnsSum = 0.0, learnTiltSum = 0.0;
     int64_t learnBlocks = 0;
 
     double sr = 48000.0;
-    int    expectedBlockLen = 512;
 
     float bandLp[kMaxChannels] = {};
     float envFast = 0.0f, envSlow = 0.0f;

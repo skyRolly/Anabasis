@@ -259,10 +259,6 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();   // §2.8: BEFORE the swap, so the duck's
                                   // envelope covers the glide the swap starts
-    // P1 form: plain swap on the message thread. TODO(P2): route through the
-    // §2.8 forced duck (requestDuck() BEFORE the swap) once the transition
-    // layer exists — a bulk swap without it is a click-free-invariant hole
-    // that pluginval will not catch but invariant 8's per-path test will.
     auto newlyStored = saveSlotFromLive();
     applySlotToLive (storedSlot);
     storedSlot = std::move (newlyStored);

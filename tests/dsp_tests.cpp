@@ -1660,6 +1660,57 @@ static void testDuckOnWrapperRequest()
 }
 
 // ---------------------------------------------------------------------------
+// §2.8: a duck request that lands DURING the bottom block is not dropped — the
+// bottom is held one more block so the swap that request guards is adopted at
+// zero gain. Run A ducks once; run B issues a second request while the engine
+// sits at the bottom. Run B's next block must be exact silence (bottom held)
+// where run A's is already recovering, and run B must still recover after.
+static void testDuckRequestDuringBottomExtendsBottom()
+{
+    const double sr = 48000.0;
+    auto render = [&] (bool secondRequest) -> std::vector<float>
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.truePeakMode = false;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 30; ++b)
+        {
+            if (b == 10)
+                engine.requestForcedDuck();          // reaches bottom inside block 10 (~6 ms out)
+            if (secondRequest && b == 11)
+                engine.requestForcedDuck();          // consumed at block 11's top: state == bottom
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 300.0f * (float) (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+
+    const auto a = render (false), b = render (true);
+    float aBlk11 = 0.0f, bBlk11 = 0.0f, bTail = 0.0f;
+    for (size_t n = 11 * 512; n < 12 * 512; ++n)
+    {
+        aBlk11 = juce::jmax (aBlk11, std::abs (a[n]));
+        bBlk11 = juce::jmax (bBlk11, std::abs (b[n]));
+    }
+    for (size_t n = b.size() - 2400; n < b.size(); ++n)
+        bTail = juce::jmax (bTail, std::abs (b[n]));
+    check (aBlk11 > 0.01f, "duckBottom: without a second request the recovery leg is already audible");
+    check (juce::exactlyEqual (bBlk11, 0.0f),
+           "duckBottom: a request landing during the bottom holds the NEXT block at exact silence");
+    check (bTail > 0.3f, "duckBottom: and the held duck still recovers afterwards");
+}
+
+// ---------------------------------------------------------------------------
 // inv 11 (P3): LUFS against the standard's own calibration points, synthesised
 // exactly as BS.1770-4 defines them. The compliance sentence in the standard:
 // "if a 0 dB FS 997 Hz sine wave is applied to the left, centre, or right
@@ -1864,6 +1915,46 @@ static void testLoudnessCompensationDoesNotAlterRender()
         };
         check (earlyRmsDb (on) < earlyRmsDb (off) - 4.0,
                "inv10: the predict floor pre-ducks the monitor before the measure exists");
+    }
+    {   // MID-STREAM realtime→offline flip: the monitor state must SNAP inert
+        // (gain 1, delta 0), not slew — from the first offline block the
+        // render is bit-identical between comp on and comp off. The monitor
+        // gain is post-mix and the meters are fed pre-monitor frames, so the
+        // two runs' engine states agree; only the snap can differ.
+        auto renderFlip = [&] (bool compOn) -> std::vector<float>
+        {
+            anabasis::AnabasisEngine engine;
+            engine.prepare (sr, 512, 2);
+            anabasis::EngineParameters p;
+            p.limGainDb    = 12.0f;
+            p.loudnessComp = compOn;
+            p.truePeakMode = false;
+            std::vector<float> out;
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int b = 0; b < 200; ++b)
+            {
+                p.nonRealtime = b >= 100;           // the flip, mid-stream
+                for (int n = 0; n < 512; ++n)
+                {
+                    const float v = 0.15f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                      * 500.0f * (float) (b * 512 + n) / (float) sr);
+                    buf.setSample (0, n, v); buf.setSample (1, n, v);
+                }
+                engine.process (buf, p);
+                for (int n = 0; n < 512; ++n)
+                    out.push_back (buf.getSample (0, n));
+            }
+            return out;
+        };
+        const auto off = renderFlip (false), on = renderFlip (true);
+        bool preDiffers = false, postIdentical = true;
+        for (size_t n = 90 * 512; n < 100 * 512; ++n)
+            if (! juce::exactlyEqual (off[n], on[n])) { preDiffers = true; break; }
+        for (size_t n = 100 * 512; n < off.size(); ++n)
+            if (! juce::exactlyEqual (off[n], on[n])) { postIdentical = false; break; }
+        check (preDiffers, "inv10 flip: before the flip the comp IS acting (the runs differ)");
+        check (postIdentical,
+               "inv10 flip: from the first offline block the render is bit-identical — no residual slew");
     }
 }
 
@@ -2332,6 +2423,7 @@ int main()
     testDuckWrapsDiscreteRewires();
     testDuckWrapsOsLatch();
     testDuckOnWrapperRequest();
+    testDuckRequestDuringBottomExtendsBottom();
     testLufsCalibration();
     testLufsGating();
     testLufsWindows();

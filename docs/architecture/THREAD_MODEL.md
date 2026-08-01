@@ -32,6 +32,9 @@ it instantiates:
 | Forced-duck request → engine | `std::atomic<bool> duckRequested`, set by the wrapper before every bulk swap (A/B, preset, session load), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestForcedDuck`), `src/PluginProcessor.cpp` (three call sites) |
 | Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr`, `pubGrDb` — relaxed atomics, ONE publish per block from `processBlock`; plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics | Audio → GUI (meters) | `src/PluginProcessor.h` (meter getters), `src/PluginProcessor.cpp` (the per-block publish) |
 | GR/waveform history → GUI | `GrHistoryBuffer`: 4096-entry power-of-two SPSC ring, entry written FIRST, monotonic index release-stored AFTER, acquire-loaded stateless peeks on the reader side | Audio → GUI (time series, SPSC ring) | `src/dsp/GrHistoryBuffer.h` |
+| Learn start/stop → engine | `std::atomic<bool> learnStartReq`/`learnStopReq`, set by the wrapper (`startLearn`/`stopLearn`), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestLearnStart/Stop`), `src/dsp/AnabasisEngine.cpp` (block top) |
+| Learned-target restore → engine | `pendingRefOnset`/`pendingRefTilt` stored relaxed FIRST, then `adaptiveRestorePending` **release**-stored; the block top `exchange`s the flag with **acquire**, so a block that sees it reads that call's pair, never a torn one. `adaptiveClearPending` (plain flag, no payload) is the "absent ADAPTIVE" leg | GUI → Audio (momentary request + flag-orders-payload) | `src/dsp/AnabasisEngine.h` (`restoreLearnedTargets`), `src/dsp/AnabasisEngine.cpp` (block top) |
+| Learned state → `getStateInformation` | `AdaptiveEngine::learned` atomic: refs published FIRST, flag **release**-stored; `hasLearned()` **acquire**-loads, so a saver that sees `true` reads the refs that store ordered before it | Audio → GUI (published state, flag-orders-payload) | `src/dsp/AdaptiveEngine.h` (`commitLearn`/`hasLearned`), `src/PluginProcessor.cpp` (`getStateInformation`) |
 | Macro listener → message-thread mapper | `std::atomic<bool> mappingPending` set from whichever thread APVTS delivers `parameterChanged` on; drained on the message thread by `AsyncUpdater` (only posted when already on the message thread) + a 30 ms `Timer`; `std::atomic<int> restoreDepth` suppresses the drain across a restore (`ScopedRestore`) | **no row — see OQ-014** | `src/MacroEngine.cpp:28-35,63-66`, `src/MacroEngine.h:92-101,139` |
 
 **The OQ-014 exception, stated rather than papered over.** `mappingPending` and `restoreDepth`
@@ -72,8 +75,9 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
 
 - **Spectrum capture rings** (post-input-gain and post-chain, the dual-trace §2.9 overlay) —
   same ScopeBuffer idiom as the implemented GrHistoryBuffer; land with the P5 spectrum view.
-- **Command atomics** — the forced-duck request is IMPLEMENTED (see the table); Learn start/stop
-  and meter hold reset follow at P3/P4, same single-atomic exchange shape.
+- **Command atomics** — the forced-duck request and the P4 Learn start/stop + learned-target
+  restore are IMPLEMENTED (see the table); the meter hold reset follows at P5, same
+  single-atomic exchange shape.
 - **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism
   yet; no code may wire it until its ADR lands.
 

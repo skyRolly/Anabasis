@@ -6,8 +6,64 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
-P0 closed; eleven ADRs Accepted and registered.
+**Last updated:** for the **P4 review round of 2026-08-01** (PR #5): the `learned` /
+restore-staging release-acquire fixes, the nonRealtime monitor snap, the duck-bottom hold, and
+this file's own module-coverage table catching up with `src/` (it had still claimed no code
+exists).
+
+### P4 review round — two real races, a dropped duck request, and a coverage table that still denied the code existed (2026-08-01)
+
+A ten-item external review. Six items were real and are fixed; two were accepted and recorded
+rather than fixed; one was already-correct behaviour; one was dismissed by its own reviewer.
+
+**The two memory-ordering findings were correct.** `AdaptiveEngine::learned` was a plain `bool`
+written on the audio thread (`commitLearn`) and read by `getStateInformation` off it — a data
+race in the ISO sense, and a practical one: `hasLearned()` could see `true` before the reference
+targets it guards were visible, serializing a half-written ADAPTIVE child. Same shape on the
+restore path: `restoreLearnedTargets` staged its two payload atomics and its flag ALL relaxed, so
+the consuming block could see the flag without the pair. Both now follow the flag-orders-payload
+discipline the GR ring already used: payload first, flag **release**-stored, consumer
+**acquire**s (`learned.store(true, release)` after `publishRefs()`; `adaptiveRestorePending`
+release-stored, `exchange (false, acquire)` at the block top). The comment that had justified the
+relaxed pair — "each scalar is self-correcting, a torn pair re-slews" — was true of the *trims*
+but not of the *refs a save can immediately re-serialize*, and it is gone. Lesson repeated from
+the P1 rounds: a comment that argues a race is benign is usually describing a different variable
+than the one it annotates.
+
+**The dropped duck request was the subtle one.** A `requestForcedDuck()` landing while the
+engine sat at the silent bottom was consumed at the block top and then ignored — the bottom
+branch unconditionally began recovery, so the bulk swap that request was guarding (arriving in
+the NEXT snapshot) stepped in mid-recovery at audible gain. The fix holds the bottom one more
+block when the flag arrives there. The regression test is a two-run comparison (second request
+during the bottom block → the following block is EXACT silence where the control run is already
+recovering) and was mutation-verified: reverting the hold fails exactly that check.
+
+**Monitor snap on the realtime→offline flip.** Invariant 10's test rendered offline from sample
+zero, so it never saw the flip case: a mid-stream `nonRealtime` flip left `monitorGain` slewing
+200 ms toward unity and the delta fade draining ~10 ms into the render. The §2.7 block now SNAPS
+both (`setCurrentAndTargetValue (1.0f)`, `deltaMix = 0`) the block `nonRealtime` is observed,
+and the extended test asserts the offline tail is bit-identical between comp on and off — while
+also asserting the runs DIFFER before the flip, so the identity check cannot pass vacuously.
+
+**Accepted, not fixed — now KI-004.** The ≤ one-block + ~6 ms window where reported and actual
+latency disagree during a ducked OS switch, and the bypassed-instance step (factor change adopted
+without the duck while fully bypassed), are ADR-0004's deliberate trade. They are now a
+KNOWN_ISSUES entry with the bound (≤ 67 samples) instead of tribal knowledge.
+
+**The coverage lie in this file.** The module-coverage table still read "*(none — `src/` does not
+exist)*" with eight DSP modules and the wrapper in the tree — this audit file failed its own
+update protocol for four phases while its narrative entries stayed current. The table, the
+self-coverage rows (TEST_REPORT, THREAD_MODEL, PARAMETER_REGISTRY, REALTIME_SAFETY_AUDIT), the
+gaps list and README's status block are caught up; THREAD_MODEL gained the three P4 edges
+(Learn commands, restore hand-off, learned flag) its table was missing. Lesson: chronological
+entries do not keep summary tables honest — only touching the table on every round does.
+
+Also in this round: the dry-ring capacity envelope is now a `jassert` at `latchOsConfig` (it
+held by construction; now it trips the moment a Latency.h table entry outgrows the prepare-time
+sizing), the stale "P1 form / TODO(P2)" comments in `switchToSlot` and `PluginProcessor.h` that
+described the opposite of the code are gone, the onset-detector comment says 6 dB (2.0×) as the
+code implements, and `AdaptiveEngine::expectedBlockLen` (written, never read) is removed.
+Suites: 156 + 72. Evidence: PR #5.
 
 ### P4, Learn commit — and a silent no-op replace caught by its own test (2026-08-01)
 
@@ -2224,9 +2280,15 @@ must satisfy rather than compliance it already has (constraint C7).
 
 | Module | Documented in | Coverage | Confidence |
 |---|---|---|---|
-| *(none — `src/` does not exist)* | — | — | — |
+| `src/dsp/AnabasisEngine.{h,cpp}` (staged chain, OS region, §2.8 duck, §2.7 monitor hooks) | `THREAD_MODEL.md`, `REALTIME_SAFETY_AUDIT.md`, `DSP_POLICY.md` invariant map, ADR-0004/0011 | Full | Verified (`tests/dsp_tests.cpp`) |
+| `src/dsp/LookaheadLimiter.h` | `TEST_REPORT.md` (styles/auto-release/TP numbers), `DSP_POLICY.md` inv 8/9 | Full | Verified |
+| `src/dsp/MasteringEQ.h` · `MasteringComp.h` · `ClipSat.h` | `TEST_REPORT.md` (ADAA aliasing, comp two-stage bounds), DEVELOPMENT_BRIEF §2.2–2.4 cross-refs | Full | Verified |
+| `src/dsp/TruePeak.h` · `LoudnessMeter.h` | `TEST_REPORT.md` (BS.1770-4 compliance vector, ISP estimator), ADR-0003 | Full | Verified |
+| `src/dsp/AdaptiveEngine.h` | `MODE_AND_ADAPTATION_POLICY.md` Current implementation, `THREAD_MODEL.md` | Full | Verified |
+| `src/dsp/GrHistoryBuffer.h` · `Latency.h` · `EngineParameters.h` | `THREAD_MODEL.md` (SPSC row), ADR-0004 (latency table) | Full | Verified |
+| `src/PluginProcessor.{h,cpp}` · `PluginParameters.{h,cpp}` (wrapper, APVTS, state, macro layer) | `PARAMETER_REGISTRY.md`, `SERIALIZATION` notes in `THREAD_MODEL.md`, ADR-0005/0006 | Full | Verified (`tests/state_tests.cpp`) |
 
-Rows are added as modules land. The planned module set and its responsibilities are listed in
+Rows were added as modules landed. The remaining planned modules (`src/gui/`, P5) are listed in
 `docs/REPOSITORY_MAP.md` §`src/`; that is a **plan**, not coverage.
 
 ## Documentation-set self-coverage (deliverables present)
@@ -2237,7 +2299,8 @@ Rows are added as modules land. The planned module set and its responsibilities 
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
-| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0011 (Accepted 2026-07-31)** | Decisions complete for P0; the *descriptive* set (ARCHITECTURE, LATENCY_MODEL, PARAMETER_REGISTRY, …) lands with P1–P2 |
+| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0011 (Accepted 2026-07-31)**; descriptive set so far: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2) | Decisions complete for P0; remaining descriptive docs (ARCHITECTURE, SIGNAL_FLOW, LATENCY_MODEL, …) land by P6 |
+| docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
 | user | — | Deferred to P6 |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
 | root — legal | — | Deferred to P6 (produced against a real dependency tree; copying another project's inventory would be invented evidence) |
@@ -2249,10 +2312,11 @@ Rows are added as modules land. The planned module set and its responsibilities 
 
 These are **deliberate**, not oversights. Each names what would close it.
 
-- **No architecture set** — `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`,
-  `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md`,
-  `REALTIME_SAFETY_AUDIT.md`, `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`,
-  `PERFORMANCE_BUDGET.md` all describe code that does not exist. Closed by P1–P2.
+- **Architecture set, partially closed** — `THREAD_MODEL.md` and `PARAMETER_REGISTRY.md` landed
+  with P1, `REALTIME_SAFETY_AUDIT.md` with P2. Still absent: `ARCHITECTURE.md`,
+  `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md`,
+  `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`, `PERFORMANCE_BUDGET.md` — closed by P5–P6 as
+  the code they would describe stabilises.
 - ~~**No ADRs**~~ — **closed 2026-07-31**: ADR-0001…0011 are Accepted and registered. They remain
   `Unverified` in confidence (no `src/`), which is a *different* gap from absence: each is a
   contract the P1+ code must satisfy, and its confidence is upgraded as its code and tests land.

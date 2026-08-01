@@ -88,6 +88,12 @@ void AnabasisEngine::latchOsConfig (int factorIdx, int phaseIdx) noexcept
     osLatBase  = factorIdx < 0 ? 0
                : osLatencySamples ((OversampleFactor) (factorIdx + 1),
                                    (OsPhaseMode) phaseIdx, sr);
+
+    // The dry read trails the write by chunk + delaySamples + osLatBase; the
+    // ring was sized at prepare() with kMaxOsLatencySamples standing in for
+    // osLatBase, so every latch must stay inside that envelope. This trips
+    // the moment a table entry outgrows the Latency.h ceiling.
+    jassert (delaySamples + osLatBase + maxBlock < dryRingSize);
     if (osActive != nullptr)
         osActive->reset();
 
@@ -159,7 +165,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // Learn commands + learned-target restore, consumed at the block top.
     if (adaptiveClearPending.exchange (false, std::memory_order_relaxed))
         adaptiveEngine.clearLearnedTargets();
-    if (adaptiveRestorePending.exchange (false, std::memory_order_relaxed))
+    if (adaptiveRestorePending.exchange (false, std::memory_order_acquire))
         adaptiveEngine.setLearnedTargets (pendingRefOnset.load (std::memory_order_relaxed),
                                           pendingRefTilt.load (std::memory_order_relaxed));
     if (learnStartReq.exchange (false, std::memory_order_relaxed))
@@ -190,8 +196,18 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             eq.resetState();
         }
         appliedModel = wantModel;
-        duckState = DuckState::in;
-        duckPhase = 0.0f;
+        if (duckAsked)
+        {
+            // A fresh request landed during the bottom block. The bulk swap
+            // it guards reaches the snapshot NEXT block, so hold the silent
+            // bottom one more block and adopt it at zero gain too — dropping
+            // the request here would step the new config mid-recovery.
+        }
+        else
+        {
+            duckState = DuckState::in;
+            duckPhase = 0.0f;
+        }
     }
     else if ((rewireWanted || duckAsked) && duckState != DuckState::out)
     {
@@ -276,6 +292,14 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // ---- §2.7 monitor functions (inert under nonRealtime — invariant 10) --
     deltaTarget = p.deltaMonitor && ! p.nonRealtime;
     const bool compOn = p.loudnessComp && ! p.nonRealtime;
+    if (p.nonRealtime)
+    {
+        // SNAP, don't slew: a realtime→offline flip mid-stream must leave no
+        // residual monitor gain or delta fade bleeding into the render — the
+        // offline output has to be bit-identical with the toggles off.
+        monitorGain.setCurrentAndTargetValue (1.0f);
+        deltaMix = 0.0f;
+    }
     {
         // Measure (frozen while either side is under the absolute gate).
         const float dryM = dryMeter.momentaryLufs();

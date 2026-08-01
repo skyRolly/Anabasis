@@ -90,11 +90,14 @@ public:
 
     // Learned-target restore (session load, ADAPTIVE child): host-hidden
     // session state through the mirror pattern — consumed at the block top.
+    // Payload stores first, the flag RELEASE-stored after; the consumer
+    // exchanges the flag with ACQUIRE, so a block that sees the flag is
+    // guaranteed to read THIS call's pair, never a torn one.
     void restoreLearnedTargets (float onsetRate, float tiltDb) noexcept
     {
         pendingRefOnset.store (onsetRate, std::memory_order_relaxed);
         pendingRefTilt.store (tiltDb, std::memory_order_relaxed);
-        adaptiveRestorePending.store (true, std::memory_order_relaxed);
+        adaptiveRestorePending.store (true, std::memory_order_release);
     }
     void restoreNeverLearned() noexcept
     {

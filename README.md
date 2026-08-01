@@ -11,14 +11,17 @@ headless Linux machine, no IDE.
 
 ## Project status
 
-- **Version 0.1.0 (pre-release), phase P1 — skeleton.** P0 closed on 2026-07-31 with the owner's
-  sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the eleven ADRs it authorised are Accepted and
-  registered in
+- **Version 0.1.0 (pre-release), phases P1–P4 complete** (P4 minus the one OQ-013-blocked restore
+  path); **P5 (GUI) is next**. P0 closed on 2026-07-31 with the owner's sign-off of
+  [`docs/DESIGN.md`](docs/DESIGN.md); the eleven ADRs it authorised are Accepted and registered in
   [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md).
-- **The P1 skeleton is in the tree**: `CMakeLists.txt` (ADR-0008's five-target graph), `src/`
-  (the 49-parameter surface, the POD engine boundary, a pass-through chain with a basic
-  lookahead limiter on the constant 10 ms allowance, schema-v1 state) and `tests/` (223 checks,
-  green on Linux together with pluginval L5 in both modes ×3).
+- **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 49-parameter
+  surface, the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
+  true-peak lookahead limiter · oversampling to 16× · dither) behind the POD engine boundary on
+  the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
+  §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn, and schema-v1 state
+  with A/B slots — verified by `tests/` (228 checks, green on Linux together with pluginval L5 in
+  both modes ×3; see [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.

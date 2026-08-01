@@ -82,6 +82,42 @@ Evidence [Partially Verified]:
   reproducible headlessly
 - Commit: P1 skeleton, thread-safety pass
 
+### KI-004 — During an OS-factor switch, reported and actual latency disagree for the duck window
+
+**Severity:** Low
+**Status:** Confirmed (accepted by design — ADR-0004's trade)
+**Affects:** all platforms, all formats — only while an oversampling factor or
+phase change is in flight, and only on the processed path
+
+Changing the OS factor/phase does not rewire immediately: the §2.8 duck fades
+the processed path to silence (~6 ms), executes the rewire at the silent
+bottom on a block boundary, and recovers (~28 ms). Between the parameter
+change and that bottom — at most one host block plus the ~6 ms out-leg — the
+engine still runs the OLD oversampler group delay while the wrapper already
+reports the NEW total to the host. The disagreement is bounded by the
+integer-latency table's span (≤ 67 samples at the extremes, `Latency.h`), and
+the audio inside the window is the duck's fade itself, so nothing audible
+carries the wrong alignment. A related edge: an instance sitting in **full
+bypass** adopts a factor change without the duck (the bypass leg is the
+delay-aligned dry ring, kept bit-exact), so the dry leg's alignment steps by
+the same bounded amount at the block boundary instead of fading through
+silence. Un-bypassing afterwards is already click-free (the ~10 ms crossfade).
+
+**Workaround:** none needed in normal use; for sample-surgical A/B of factor
+settings offline, render each factor separately instead of automating the
+switch mid-render.
+**Cause:** ADR-0004 fixes the *reported* latency per factor and forbids
+mid-block latency changes; the duck trades a ≤ 40 ms alignment window for
+click-free, allocation-free switches on the audio thread.
+
+Evidence [Verified]:
+- Source: `src/dsp/AnabasisEngine.cpp` (block-top duck state machine,
+  `latchOsConfig`), `src/dsp/Latency.h` (`kMaxOsLatencySamples`)
+- Test:   `testDuckWrapsOsLatch` (the window is the duck envelope),
+  `testOsLatencyMatrix` (the bound); the bypassed-instance step is
+  established from the code path, not reproducible as a click headlessly
+- Commit: PR #5, P2 transition layer
+
 ---
 
 ## Standing note for P1 onward

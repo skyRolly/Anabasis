@@ -67,7 +67,7 @@ public:
     InternalState internalState;
 
     int  activeSlotIndex() const noexcept { return activeSlot; }
-    void switchToSlot (int newIndex);   // message thread; P1 form (TODO(P2): §2.8 duck)
+    void switchToSlot (int newIndex);   // message thread; §2.8 duck requested before the swap
 
     // Preset apply goes through here, never through PresetManager directly:
     // the wrapper lands the slot-level fields (name, detach mask) and drops
