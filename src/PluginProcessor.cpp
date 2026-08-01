@@ -44,6 +44,18 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
     grHistoryRing.reset();
     dbTpMaxHold = -144.0f;
+    // Publish the cleared values too, not just the state behind them: without
+    // this the six meter atomics keep the previous session's readings until a
+    // block completes — and indefinitely if the host prepares without ever
+    // processing (a rate change while stopped, a plugin rescan). No reader
+    // exists before P5, which is why this is cheap to do now rather than a
+    // stale-peak bug to find later.
+    pubLufsM.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubLufsS.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubLufsI.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubDbTpMax.store (-144.0f, std::memory_order_relaxed);
+    pubPlr.store (0.0f, std::memory_order_relaxed);
+    pubGrDb.store (0.0f, std::memory_order_relaxed);
     updateLatency();
 }
 
@@ -433,6 +445,15 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // have the trims chase a reference no programme material can match.
     // The staged record is mirrored here (message thread) so getStateInformation
     // can answer correctly before the next block top consumes it.
+    //
+    // INVARIANT: the mirror store and the engine stage must stay PAIRED. This
+    // is the only site that stages an adaptive record today; a future one (a
+    // preset carrying adaptive data, an A/B slot restore once OQ-013 lands)
+    // that calls restoreLearnedTargets/restoreNeverLearned without updating
+    // the mirror would raise `adaptivePending` while the mirror still held the
+    // previous record — and getStateInformation, which prefers the mirror
+    // exactly while that flag is up, would serialize the stale one. Route any
+    // new stager through here, or pair the two stores in a helper first.
     if (const auto adaptive = root.getChildWithName ("ADAPTIVE"); adaptive.isValid())
     {
         const auto onset = (float) (double) adaptive.getProperty (

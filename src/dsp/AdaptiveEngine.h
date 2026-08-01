@@ -110,10 +110,12 @@ public:
         blockPeak = 0.0f; blockMs = 0.0; blockLo = 0.0; blockHi = 0.0;
         blockOnsets = 0; blockFill = 0;
 
-        // An IN-FLIGHT Learn pass does not survive a reset. A reset means a
-        // sample-rate change or a host stop — a discontinuity in the very
-        // material the pass is measuring — and the features themselves are
-        // zeroed two lines above, so continuing to accumulate would commit a
+        // An IN-FLIGHT Learn pass does not survive a reset. A reset reaches
+        // here only through prepare() — a sample-rate or block-size change,
+        // since the processor does not override AudioProcessor::reset() — and
+        // that is a discontinuity in the very material the pass is measuring.
+        // The features themselves are zeroed above, so continuing to
+        // accumulate would commit a
         // reference mixed from before and after it, plus a stretch of
         // re-converging onset rate. The pass is CANCELLED rather than paused:
         // `learnBlocks == 0` makes the next commit a no-op, which is the

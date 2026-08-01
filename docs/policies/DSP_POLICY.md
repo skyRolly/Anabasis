@@ -172,12 +172,20 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 12. **Dither is off by default and is the last stage before output.** It is intended for final
     export only; enabling it must not change gain staging. TPDF, with optional noise shaping.
     **Scope, stated for the same reason invariant 4's is** (recorded 2026-08-01, PR #5): "last
-    stage" means last on the **programme path**. The §2.7 loudness-compensation gain is applied
-    after it, post-mix, so that a loudness-matched bypass carries the same gain — and it is a
-    monitor-only function, snapped inert under `nonRealtime` (invariant 10), so **no render is
-    affected**: an exported file is on the 2^-15/2^-23 grid exactly. Auditioning with Loudness
-    Comp engaged does scale the dithered signal off that grid in realtime, which is correct — the
-    monitor is not the export.
+    stage" means last on the **programme path**, and exactly **two** legs sit downstream of the
+    quantiser:
+    - the **§2.7 loudness-compensation gain**, applied post-mix so a loudness-matched bypass
+      carries the same gain. Monitor-only, snapped inert under `nonRealtime` (invariant 10), so
+      it never reaches a render: auditioning with Loudness Comp engaged does scale the dithered
+      signal off the grid, which is correct — the monitor is not the export.
+    - the **§2.8 bypass crossfade**, which is *not* monitor-only and does run in a render when a
+      host automates `bypass`. Both endpoints are exact branches, so every steady state is on the
+      grid; the ~10 ms ramp between them is a convex combination of the dithered wet leg and the
+      **undithered** dry one, and those samples are off it. Accepted rather than fixed: moving
+      the crossfade upstream of dither would send the dry leg through the quantiser, and
+      **invariant 7 requires bypass to be a bit-exact null**. A bounded off-grid ramp on an
+      audition toggle is the cheaper of the two, and the corrected claim is that a render is on
+      the grid *except* across a bypass toggle — not unconditionally.
 
 13. **The DSP core is format-agnostic.** `src/dsp/` depends only on `juce_dsp` /
     `juce_audio_basics` and is driven by a POD parameter snapshot; it never includes the plugin

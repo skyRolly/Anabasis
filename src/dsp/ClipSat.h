@@ -25,6 +25,18 @@
 //     instead of getting louder — the loudness lives in `limGain`, which the
 //     macro raises alongside. Drive at EXACTLY 0 dB skips the sub-block
 //     entirely: the bit-identity contract (Anamorph driveTanh precedent).
+//     TWO CONSEQUENCES OF ADAA-1 THAT APPLY TO THE WHOLE SIGNAL, not just to
+//     material at the clip point: in the linear region the antiderivative is
+//     0.5a², so the divided difference collapses to (u + u_prev)/2 — a
+//     (1 + z⁻¹)/2 FIR. Any non-zero drive therefore (a) imposes a cos(πf/fs)
+//     droop, ≈2 dB at 10 kHz / 48 kHz base rate — that is the +1.3 dB the
+//     oversampling test measures as a "recovery" (TEST_REPORT), and at OS Off
+//     it is audible on bright material the moment drive leaves zero; and (b)
+//     adds a HALF-SAMPLE group delay that `Latency.h` does not model. The
+//     sub-sample figure is harmless against a 480-sample allowance, but it is
+//     why the impulse-position latency test stays sample-exact only because
+//     `clipDriveDb == 0` on that path — a future test that drives the clipper
+//     must not also assert an exact impulse position.
 //
 //  2. COLOUR — the model's harmonic residue, scaled by `colourDepth`:
 //     out = c + depth·r where r is built from odd (c³, Transistor ⅗c³+⅖c⁵)

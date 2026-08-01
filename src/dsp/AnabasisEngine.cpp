@@ -250,11 +250,19 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // A render that STARTS with an empty pipeline is not a transition:
         // the reported latency is the promise that those samples are absent,
         // so no hold, and nothing is owed from before the reset. `duckAsked`
-        // is consumed above and DELIBERATELY discarded here — a request that
-        // arrived before the first block (a setStateInformation ahead of
-        // prepareToPlay, which updateLatency's 48 kHz fallback shows is a
-        // real ordering) has nothing to fade. This is the one dropped request
-        // that is correct; the three that were not are in the branches below.
+        // is consumed above and DELIBERATELY discarded here, in BOTH cases
+        // this branch now covers:
+        //   • first block after prepare/reset — a request that arrived before
+        //     any audio (a setStateInformation ahead of prepareToPlay, which
+        //     updateLatency's 48 kHz fallback shows is a real ordering) has
+        //     nothing to fade;
+        //   • entering offline — a wrapper bulk swap (A/B, preset, session
+        //     load) landing on the exact block the host flips to non-realtime
+        //     loses its cover and steps at full gain. Bounded to the first
+        //     sample of a render and recorded in KNOWN_ISSUES KI-004, because
+        //     the alternative — carrying a monitor fade into the head of a
+        //     bounce — is worse.
+        // The three requests that must NOT be dropped are handled below.
         bottomHoldSamples = 0;
         duckAskedWhileOut = false;
     }
@@ -719,6 +727,17 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             else                        render = processed + (delayedDry - processed) * bypassMix;
             renderFrame[ch] = std::isfinite (render) ? render : 0.0f;
 
+            // Bypass crossfade. The SECOND leg downstream of dither (the §2.7
+            // monitor gain below is the other), and unlike that one it is not
+            // monitor-only — it runs in a render too. Both endpoints are exact
+            // branches, so a steady state is on the quantisation grid either
+            // way; the ~10 ms ramp between them is a convex combination of a
+            // dithered wet leg and the UNDITHERED dry, so those samples are
+            // not. Scoped in DSP_POLICY invariant 12 rather than fixed: moving
+            // the crossfade upstream of dither would put the dry leg THROUGH
+            // the quantiser, and invariant 7 requires bypass to be a bit-exact
+            // null. A ~10 ms off-grid ramp on an audition toggle is the
+            // cheaper of the two.
             float out;
             if (bypassMix <= 0.0f)      out = wetLeg;                           // exact endpoint
             else if (bypassMix >= 1.0f) out = delayedDry;                       // exact endpoint

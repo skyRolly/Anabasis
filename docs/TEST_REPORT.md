@@ -25,6 +25,12 @@ public `ClipSat::transfer`).
 | 4× linear vs OS Off, f₀ 11.72 kHz | folded 3rd | **≈ −74 dB** (23.0 → −51.0 dBr) | `testOsReducesAliasing` (asserted ≥ 20) |
 | 4× vs Off, same stimulus | fundamental | **+1.3 dB** (61.4 vs 59.8) — oversampling removes ADAA-1's sinc droop at 11.72 kHz; a real effect, not an error | same (asserted < 2.5 dB delta) |
 
+The droop that "recovery" refers to is ADAA-1's `(1 + z⁻¹)/2` divided difference in the curve's
+linear region: **any** non-zero drive low-passes the whole programme (cos(πf/fs), ≈2 dB at 10 kHz
+at a 48 kHz base rate) and adds a half-sample group delay `Latency.h` does not model. Both are
+inherent to first-order ADAA and are stated in the `ClipSat.h` header; the half-sample delay is
+also why the impulse-position latency test stays sample-exact only with `clipDriveDb == 0`.
+
 ## True-peak estimator accuracy (invariant 3, ADR-0003) — 2026-08-01, P2
 
 Estimator: 4-phase × 12-tap windowed-sinc, integer-normalised DC, designed at `prepare()`.

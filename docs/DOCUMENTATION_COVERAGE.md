@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **tenth review round of 2026-08-01** (PR #5): `AdaptiveEngine::reset()`
+**Last updated:** for the **eleventh review round of 2026-08-01** (PR #5): invariant 12's scope
+now names the bypass crossfade as its second post-dither leg (the claim written two rounds ago
+was too absolute), and three comment/scope corrections land with it. Previous round: (PR #5): `AdaptiveEngine::reset()`
 cancels an in-flight Learn pass. Previous round: (PR #5): the direct-adopt branch
 now clears EQ state on a position change (the offline-entry edge made that branch reachable
 mid-stream), the wrapper's staged mirror is atomic, and two reset-lifecycle carry-overs are
@@ -25,6 +27,63 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Eleventh review round — the absolute claim, and two comments that outlived their code (2026-08-01)
+
+Eight items (two of them the same defect reported twice): one scope correction with its code
+comment, two comment-drift fixes, one cheap publication fix, two notes recorded, one stale
+external artefact.
+
+**The invariant-12 scope sentence I wrote two rounds ago was wrong, and it was wrong by being
+absolute.** It said the monitor gain is the only leg downstream of dither and therefore "no render
+is affected: an exported file is on the 2^-15/2^-23 grid exactly". The §2.8 **bypass crossfade**
+is also downstream of dither, and unlike the monitor gain it is not gated on `nonRealtime` — a
+host automating `bypass` inside an offline render emits ~10 ms of samples that are a convex
+combination of the dithered wet leg and the UNDITHERED dry one. Both endpoints take exact
+branches, so every steady state is on the grid; the ramp is not.
+
+**Fixed as a scope correction, not a DSP change, and the reason is invariant 7.** The reviewer's
+first option — move the crossfade upstream of dither — would send the dry leg THROUGH the
+quantiser, and invariant 7 requires bypass to be a bit-exact null. That trade is strictly worse: a
+bounded off-grid ramp on an audition toggle against breaking the null that the bypass test pins.
+The invariant now enumerates both post-dither legs with what each costs, and the crossfade carries
+the same reasoning inline. Lesson: an invariant amended to carve out one exception should be
+checked for OTHER instances of the same shape before the word "no" is written — the carve-out I
+added for the monitor gain read as a survey and was a single case.
+
+**Two comments outlived the code they described**, both from changes I made in earlier rounds:
+- The "one deliberate dropped duck request" note still claimed the first-block path was the only
+  case. Since the offline-flip fix, `enteringOffline` shares that branch, so a bulk swap landing
+  on the flip block is also dropped. Behaviour was already recorded in KI-004; the in-code text
+  now names both cases and points there.
+- MODE_AND_ADAPTATION's new Learn-cancellation sentence said "sample-rate change, host stop".
+  `AdaptiveEngine::reset()` is reachable only through `prepare()` — the processor deliberately
+  does not override `AudioProcessor::reset()`, which THREAD_MODEL states in the same PR — so a
+  transport stop cancels nothing. Narrowed to what is reachable, with the override left as the P5
+  question it belongs to (it also governs the delay-line tails and the meter holds). The code
+  comment carried the same overclaim and is corrected with it.
+
+**One cheap publication fix.** `prepareToPlay` cleared `dbTpMaxHold`, the GR ring and the engine's
+meters but left the six published atomics holding the previous session's readings — until the next
+block completes, and indefinitely if the host prepares without processing (rate change while
+stopped, plugin rescan). No reader exists before P5, which is exactly why it is cheap now and a
+stale-peak bug report later.
+
+**Recorded, not changed:** ADAA-1's `(1 + z⁻¹)/2` divided difference low-passes the WHOLE
+programme whenever drive is non-zero (cos(πf/fs), ≈2 dB at 10 kHz — the same droop the
+oversampling test measures as a +1.3 dB "recovery") and adds a half-sample group delay
+`Latency.h` does not model; the impulse-position test stays sample-exact only because
+`clipDriveDb == 0` on that path. Both now in the ClipSat header and TEST_REPORT. And the staged
+mirror's pairing invariant is stated at its only writer: a future stager that raises
+`adaptivePending` without updating the mirror would have `getStateInformation` serialize the
+stale one. A helper would make that unbreakable; deliberately not refactored this round, since the
+hazard is future and the wrapper's state path is the highest-consequence code in the file.
+
+**External artefact:** the PR description still quoted 223 checks (151 + 72) from an early round.
+The suites' own output is the rule of record and says 195 + 87; the description is corrected to
+match rather than the docs being bent to it.
+
+Suites: 195 + 87 (unchanged — the only behavioural change publishes values no reader consumes).
 
 ### Tenth review round — a reset that cleared the features but not the pass measuring them (2026-08-01)
 
