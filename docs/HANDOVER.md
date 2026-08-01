@@ -20,7 +20,7 @@ empty Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BR
 | Field | Value |
 |---|---|
 | **Current Version** | 0.1.0 (pre-release; `project(Anabasis VERSION 0.1.0)` in `CMakeLists.txt`). `CHANGELOG.md` has no released entry; the P1 skeleton is under `[Unreleased]`. |
-| **Current Phase** | **P4 — Simple adaptive engine, core landed**  (`DEVELOPMENT_BRIEF.md` §11). P0 closed 2026-07-31 (owner sign-off); P1 closed 2026-08-01 (pluginval L5 on 3 OSes via PR #4's CI + the two architecture documents; only the OQ-014 owner call remains open from it, and it blocks documentation, not code). P2 exit criterion — per-module unit tests — is met: every §4 module has mutation-verified unit tests in the 183-check suite. |
+| **Current Phase** | **P4 — Simple adaptive engine, complete except the OQ-013-blocked item**  (`DEVELOPMENT_BRIEF.md` §11). P0 closed 2026-07-31 (owner sign-off); P1 closed 2026-08-01 (pluginval L5 on 3 OSes via PR #4's CI + the two architecture documents; only the OQ-014 owner call remains open from it, and it blocks documentation, not code). P2 exit criterion — per-module unit tests — is met: every §4 module has mutation-verified unit tests in the 183-check suite. |
 | **Branch Strategy** | Feature branch → PR into `main`. CI builds every branch; `main` carries shipped versions. Release tagging convention: annotated `vX.Y.Z`, wired to a `release.yml` at P6. |
 | **Build Status** | **Builds green on Linux** (P1 skeleton, 2026-07-31): `CMakeLists.txt` per ADR-0008 (five targets, JUCE 9.0.0 @ the pinned SHA fetched via FetchContent, C++20, warning-free under the recommended flags), `src/` + `src/dsp/` + `src/gui/` exist. The `preflight` guard now takes its ready=true path, so the full 3-OS matrix runs in CI; Windows/macOS results arrive with the first CI run of this commit. The `docs` job continues to run on every push and gates nothing. |
 | **Test Status** | **223 checks green on Linux**: `AnabasisTests` (151 — null-with-defaults bit-exact, impulse-at-allowance for four lookahead values, ceiling clamp, control/gain priming, limiter window coverage and alignment, smoothing of ceiling and lookahead, hostile-input finiteness, self-heal recovery, bypass null, EQ frequency response/smoothing/positions, the ADR-0002 post-shelf ceiling stimulus, compressor static curve/detectors/mix/two-stage auto release/sidechain HPF, clipper curve/compensation/ADAA aliasing/colour models/dynamic tame, true-peak accuracy, limiter link/styles/preserve/two-stage auto/detector HPF/dBTP mode, the full OS latency matrix, OS aliasing/transparency/bypass/ceiling, dither modes, the §2.8 duck on rewires/latches/requests, LUFS calibration/gating/windows, inv-10 monitoring honesty, delta) plus meter publication and the GR ring in the state suite and `AnabasisStateTests` (72 — registry snapshot vs the frozen fixture, 49/9 counts, raw-exact byte-identical round-trip and its fixed-point precondition, structural-tolerance read rules, batched latency notification, corrupt/foreign no-op, macro fixed point, restore-vs-macro-drain, A/B tier behaviour, preset contract, cache mapping). **pluginval L5 green ×3 in both modes on Linux** — the P1 exit criterion holds locally; 3-platform confirmation is the first CI run. Re-count from the suites' own output when editing this row; it has gone stale once already. |
@@ -29,6 +29,37 @@ empty Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BR
 | **Pending Tasks** | **P1 skeleton steps 1–7 are DONE** (2026-07-31): CMake/ADR-0008, the 49-param surface + frozen snapshot, POD boundary + threading shape, pass-through chain + basic lookahead limiter on the constant allowance, schema-v1 state harness (frozenTrims/detachMask serialized; inject path untouched per OQ-013), the three P1 tests plus latency/ceiling/bypass/fixed-point/robustness, OQ-011 resolved. **P1 closure items:** (a) pluginval L5 on Windows + macOS — confirmed by PR #4's CI run (merged 2026-08-01); (b) `THREAD_MODEL.md` + `PARAMETER_REGISTRY.md` — **written** (2026-08-01, from ADR-0011/ADR-0010 with code citations); (c) KI-001 — recorded. **P1 is closed except the OQ-014 owner call** (MacroEngine guard atomics vs the THREADING_POLICY table — documentation question, blocks nothing in code). **P2 is COMPLETE on Linux** (2026-08-01): EQ, compressor, clipper/ADAA, limiter (true peak/link/styles/preserve/two-stage release), oversampling (full matrix, exact PDC), dither, the §2.8 duck (KI-001 → INC-001), `TEST_REPORT.md` and `REALTIME_SAFETY_AUDIT.md`. Remaining before calling the phase closed: the PR #5 3-OS CI run, and the owner's OQ-014 call. **P3 is COMPLETE on Linux** (2026-08-01): LUFS M/S/I calibrated to the BS.1770 compliance vector ≤ 0.1 LU, dBTP/PLR/GR published through the THREAD_MODEL meter atomics, the GrHistoryBuffer SPSC ring, and the §2.7 monitor layer (KI-002 → INC-002; invariant 10 live). The spectrum capture rings land with their P5 consumer. **Next: P4 Simple adaptive engine** — feature extraction, adaptive trims, Learn, mode-switch neutrality — with one standing constraint: **OQ-013 blocks the frozen-trim inject transport** (Hard Stop; Freeze's restore path needs that ADR before it can be wired). |
 | **Roadmap** | P0 research & design → P1 skeleton (pluginval L5) → P2 DSP core → P3 metering engine → P4 Simple adaptive engine → P5 UI → P6 polish & release (pluginval L10, DAW matrix, docs). `DEVELOPMENT_BRIEF.md` §11. v2 candidates (codec preview, reference matching, dynamic EQ, multiband limiting) are out of scope — leave architectural room only. |
 | **Ownership** | `TODO: no owner/team metadata in the repository. Requires project-owner input (OQ-009).` Company of record: RollyTech. |
+
+## P4 phase summary (`DEVELOPMENT_BRIEF.md` §13)
+
+**Changes.** The §5.4 adaptive engine: audio-thread feature extraction (crest, spectral tilt,
+transient density — silence-gated), the bounded trim vector (release ±1 oct, link ±0.2, scHpf
+0…+30 Hz, dynTilt 0…+0.5 dB) slewed at ~2 s with hysteresis and applied to per-block effective
+settings only; Freeze latching the vector to the ulp; Learn (analyse → commit reference targets,
+`ADAPTIVE` child serialization with the absent-=-never-learned read rule). The exit criterion —
+**switching modes does not change the sound** — is pinned sample-identically by
+`testModeSwitchIsSoundNeutral`. The invariant-7 null runs with adaptation LIVE because every trim
+is inert while its host stage is inert — a structural property, not a gate.
+
+**Blocked, and only ownable by the owner:** the frozen-trim RESTORE transport (message → audio
+injection of the per-slot four-vector at the duck bottom) is **OQ-013**, an Architecture Review
+Gate + ADR + Hard Stop. Until that ADR lands, a session reload or A/B switch back to a frozen
+slot re-latches from the live engine state instead of reproducing the saved vector — the one gap
+between the current build and MODE inv 3's full Freeze story. OQ-014 (MacroEngine guard atomics
+vs the THREADING_POLICY table) also awaits the owner; it blocks documentation, not code.
+
+**Plan for P5 (UI).** Full Simple + Advanced interface against the Anamorph brand system
+(BRAND_CONSISTENCY_CHECKLIST item by item — the phase exit criterion), the visualisers over the
+already-published atomics and rings (meters, GR history, transfer curve from ClipSat::transfer,
+spectrum rings + GUI-side FFT), Settings page, tooltips, the Learn UI grammar (duck-routed
+engage, undo bracketing), trim delta-overlays in Advanced. P5 needs a fresh session with the
+Anamorph GUI sources read end to end — it is visual work with a different evidence standard
+(Level 5: much of it not headlessly verifiable).
+
+**Risks.** The trim/tame/model constants and the §5.5 curves are all ⊕ drafts awaiting the P6
+listening pass — they may move together, and the fixed-point test will catch any curve/default
+divergence mechanically. The onset detector's constants were already re-tuned once when a test
+caught under-counting; treat its numbers as provisional until listening.
 
 ## P3 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
