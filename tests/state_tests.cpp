@@ -600,6 +600,53 @@ static void testRawRoundTripIsIdempotent()
 }
 
 // ---------------------------------------------------------------------------
+// §2.8 wiring, wrapper side: switchToSlot requests the forced duck BEFORE the
+// swap, so a mid-stream A/B compare dips through the silent bottom instead of
+// stepping. (The duck mechanism itself is pinned in the DSP suite; THIS test
+// pins that the wrapper actually asks for it — remove the requestForcedDuck()
+// call and the dip vanishes.)
+static void testAbSwitchRequestsDuck()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto runBlock = [&] (int blockIdx, std::vector<float>& out)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 300.0f * (float) (blockIdx * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+        for (int n = 0; n < 512; ++n)
+            out.push_back (buf.getSample (0, n));
+    };
+
+    std::vector<float> out;
+    for (int b = 0; b < 10; ++b) runBlock (b, out);
+    proc.switchToSlot (1);                       // must request the duck first
+    for (int b = 10; b < 30; ++b) runBlock (b, out);
+
+    float minEnv = 1.0f, tailPeak = 0.0f;
+    for (size_t n = 10 * 512; n < 10 * 512 + 2000; n += 60)
+    {
+        float peak = 0.0f;
+        for (size_t k = n; k < n + 240; ++k)
+            peak = juce::jmax (peak, std::abs (out[k]));
+        minEnv = juce::jmin (minEnv, peak);
+    }
+    for (size_t n = out.size() - 2400; n < out.size(); ++n)
+        tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+
+    check (minEnv < 0.02f,  "abDuck: the A/B switch dips through the silent bottom");
+    check (tailPeak > 0.3f, "abDuck: and the stream recovers");
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -663,6 +710,7 @@ int main (int argc, char** argv)
         testMacroDefaultIsFixedPoint();
         testAbSlotsAndTiers();
         testMacroRestoreDoesNotClobber();
+        testAbSwitchRequestsDuck();
         testDrainInsideRestoreIsSuppressed();
         testAbRawExact();
         testFrozenSlotRoundTrip();

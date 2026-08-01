@@ -1500,6 +1500,165 @@ static void testDitherModes()
 }
 
 // ---------------------------------------------------------------------------
+// §2.8 / DSP_POLICY invariant 8: a discrete rewire is wrapped by the duck —
+// the output dips to silence on the ~6 ms raised cosine, the rewire executes
+// at the bottom, and the ~28 ms recovery leg brings it back. The measured
+// property is SMOOTHNESS: no per-sample step beyond what the signal's own
+// slope plus the duck's slope allow. An unducked eqPosition flip with a
+// +12 dB shelf steps the output by an order of magnitude more.
+static void testDuckWrapsDiscreteRewires()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.eqLowShelfGainDb = 12.0f;
+    p.eqLowShelfFreqHz = 400.0f;
+    p.eqPosition       = 0;
+    p.truePeakMode     = false;
+
+    std::vector<float> out;
+    juce::AudioBuffer<float> buf (2, 512);
+    const int flipAtBlock = 20;
+    for (int b = 0; b < 40; ++b)
+    {
+        if (b == flipAtBlock)
+            p.eqPosition = 1;                       // Pre → Post, a genuine rewire
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 200.0f * (float) (b * 512 + n) / (float) sr);
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n)
+            out.push_back (buf.getSample (0, n));
+    }
+
+    const size_t flipAt = (size_t) flipAtBlock * 512;
+    // (a) smooth: 200 Hz sine at the ducked level moves ≤ ~0.02/sample; the
+    // duck adds ≤ ~0.01; an unducked +12 dB rewire steps several times that.
+    float maxDelta = 0.0f;
+    for (size_t n = flipAt; n < flipAt + 4000; ++n)
+        maxDelta = juce::jmax (maxDelta, std::abs (out[n] - out[n - 1]));
+    check (maxDelta < 0.045f, "duck: the rewire never steps — the envelope is band-limited");
+
+    // (b) the dip exists (the rewire really waited for silence)...
+    float minEnv = 1.0f;
+    for (size_t n = flipAt; n < flipAt + 2000; n += 60)
+    {
+        float peak = 0.0f;
+        for (size_t k = n; k < n + 240 && k < out.size(); ++k)
+            peak = juce::jmax (peak, std::abs (out[k]));
+        minEnv = juce::jmin (minEnv, peak);
+    }
+    check (minEnv < 0.02f, "duck: the output reaches the silent bottom");
+
+    // (c) ...and it recovers.
+    float tailPeak = 0.0f;
+    for (size_t n = out.size() - 2400; n < out.size(); ++n)
+        tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+    check (tailPeak > 0.3f, "duck: the output recovers after the rewire");
+}
+
+// ---------------------------------------------------------------------------
+// The OS factor latch rides the same duck: flipping 0 → 4x mid-stream dips,
+// latches at the bottom (the region state reset happens at zero gain), and
+// recovers at the new factor — finite, at level, and still under the ceiling.
+static void testDuckWrapsOsLatch()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.limGainDb    = 6.0f;
+    p.truePeakMode = false;
+
+    std::vector<float> out;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 40; ++b)
+    {
+        if (b == 20)
+        {
+            p.oversample = anabasis::OversampleFactor::x4;
+            p.osPhase    = anabasis::OsPhaseMode::linear;
+        }
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 500.0f * (float) (b * 512 + n) / (float) sr);
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n)
+            out.push_back (buf.getSample (0, n));
+    }
+
+    float minEnv = 1.0f, tailPeak = 0.0f, maxDelta = 0.0f;
+    for (size_t n = 20 * 512; n < 20 * 512 + 2000; n += 60)
+    {
+        float peak = 0.0f;
+        for (size_t k = n; k < n + 240; ++k)
+            peak = juce::jmax (peak, std::abs (out[k]));
+        minEnv = juce::jmin (minEnv, peak);
+    }
+    for (size_t n = 20 * 512; n < 22 * 512; ++n)
+        maxDelta = juce::jmax (maxDelta, std::abs (out[n] - out[n - 1]));
+    for (size_t n = out.size() - 2400; n < out.size(); ++n)
+        tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+    bool allFinite = true;
+    for (float v : out) if (! std::isfinite (v)) { allFinite = false; break; }
+
+    check (minEnv < 0.02f,   "duckOs: the latch waits for the silent bottom");
+    check (maxDelta < 0.07f, "duckOs: the factor switch never steps the output");
+    check (tailPeak > 0.35f, "duckOs: the stream recovers at the new factor");
+    check (allFinite,        "duckOs: no garbage crosses the latch");
+}
+
+// ---------------------------------------------------------------------------
+// The wrapper's forced-duck request (requestForcedDuck before an A/B swap /
+// preset apply / session load) produces the same envelope with NO discrete
+// engine rewire — the duck is the mask the smoothed bulk glide happens under.
+static void testDuckOnWrapperRequest()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode = false;
+
+    std::vector<float> out;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 30; ++b)
+    {
+        if (b == 10)
+            engine.requestForcedDuck();
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 300.0f * (float) (b * 512 + n) / (float) sr);
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n)
+            out.push_back (buf.getSample (0, n));
+    }
+
+    float minEnv = 1.0f, tailPeak = 0.0f;
+    for (size_t n = 10 * 512; n < 10 * 512 + 2000; n += 60)
+    {
+        float peak = 0.0f;
+        for (size_t k = n; k < n + 240; ++k)
+            peak = juce::jmax (peak, std::abs (out[k]));
+        minEnv = juce::jmin (minEnv, peak);
+    }
+    for (size_t n = out.size() - 2400; n < out.size(); ++n)
+        tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+    check (minEnv < 0.02f,  "duckReq: a wrapper request alone dips to the bottom");
+    check (tailPeak > 0.3f, "duckReq: and recovers on the 28 ms leg");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -1773,6 +1932,9 @@ int main()
     testCeilingUnderOs();
     testOsReducesAliasing();
     testDitherModes();
+    testDuckWrapsDiscreteRewires();
+    testDuckWrapsOsLatch();
+    testDuckOnWrapperRequest();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();

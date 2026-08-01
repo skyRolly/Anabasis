@@ -44,8 +44,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   oversampling (Off/2×/4×/8×/16× × min/linear phase wrapping Clipper→Limiter, all instances
   built at prepare, integer-latency mode so reported PDC is exact across the whole matrix,
   Force-Max offline honoured) and §4.5 dither (TPDF 16/24-bit + first-order noise shaping,
-  deterministic, after the clamp). All-defaults remains a bit-exact null; bypass stays a
-  bit-exact null at every oversampling factor. Remaining in P2: the §2.8 transition layer.
+  deterministic, after the clamp), and the §2.8 click-free transition layer (asymmetric
+  raised-cosine duck ~6 ms out / ~28 ms in: engine rewires — EQ position, colour model, OS
+  factor/phase — execute only at the silent bottom; A/B, preset and session-load bulk swaps
+  request the duck before swapping — closes KI-001 → POSTMORTEMS INC-001). All-defaults remains
+  a bit-exact null; bypass stays a bit-exact null at every oversampling factor.
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
 The first entry will be `[0.1.0]`, cut at the end of P6.

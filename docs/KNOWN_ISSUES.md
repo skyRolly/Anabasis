@@ -36,40 +36,8 @@ it does not check heading nesting, so this convention is held by hand.
 
 ## Open issues
 
-### KI-001 — A/B slot switch is not click-safe in the P1 skeleton
-
-**Severity:** Low
-**Status:** Confirmed
-**Affects:** all platforms, all formats (P1 skeleton builds only; no UI exposes A/B yet)
-
-Switching A/B slots performs a plain bulk parameter swap with no transition
-handling, so a switch during playback can produce an audible step. The §2.8
-forced-duck transition layer (asymmetric raised-cosine duck requested *before*
-every bulk swap) lands at P2; until then the swap is exactly the click-free-
-invariant hole `DSP_POLICY.md` invariant 8's per-path test will catch.
-
-**Workaround:** none needed in practice — no UI or host path triggers the swap
-in the P1 build; the API exists for the state tests.
-**Cause:** `switchToSlot` applies `applySlotToLive` directly (TODO(P2) marks
-the duck call site).
-
-*Extended 2026-08-01 (P2, EQ landed):* the same §2.8 gap now also covers the
-**`eqPosition` rewire** — a Pre↔Post move clears the EQ state and can step,
-and for ≤ 10 ms the delay line drains samples EQ'd at the old position while
-the new position also runs (double/none processing during the overlap).
-*Extended again (P2, oversampling landed):* the **oversampling factor/phase
-latch** is the third member — it is applied at a block boundary as a
-reset-class event (region state cleared, reported latency changes there and
-never mid-block, per ADR-0004), so the switch itself can step. Same severity,
-same closure: all of these route through the forced duck when §2.8 lands, in
-this same phase.
-
-Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp` (`switchToSlot`)
-- Test:   `AnabasisStateTests` `testAbSlotsAndTiers` (exercises the swap, not its audibility)
-- Commit: P1 skeleton commit (this change)
-
----
+*(KI-001 — unducked discrete transitions — is FIXED and recorded as `POSTMORTEMS.md`
+INC-001; its number is never reused.)*
 
 ### KI-002 — Loudness Comp and Delta monitoring do nothing in the P1 skeleton
 

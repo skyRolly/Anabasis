@@ -221,6 +221,8 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     // swap, not dropped after it, so a drain cannot land between the macro
     // values arriving and the abort.
     const MacroEngine::ScopedRestore guard (*macroEngine);
+    engine.requestForcedDuck();   // §2.8: BEFORE the swap, so the duck's
+                                  // envelope covers the glide the swap starts
     // P1 form: plain swap on the message thread. TODO(P2): route through the
     // §2.8 forced duck (requestDuck() BEFORE the swap) once the transition
     // layer exists — a bulk swap without it is a click-free-invariant hole
@@ -234,6 +236,7 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
 bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
 {
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
+    engine.requestForcedDuck();                               // §2.8, as above
 
     juce::StringArray mask;
     if (! presetManager->applyPreset (file, mask))
@@ -299,6 +302,7 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // the restore below. See KNOWN_ISSUES KI-003 for what this does and does
     // not cover.
     const MacroEngine::ScopedRestore guard (*macroEngine);
+    engine.requestForcedDuck();   // §2.8: a session load is the biggest bulk swap of all
 
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".

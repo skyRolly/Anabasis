@@ -9,6 +9,30 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P2, transition-layer commit — the §2.8 duck, and KI-001 becomes INC-001 (2026-08-01)
+
+**The duck exists**: asymmetric raised cosine (~6 ms out / ~28 ms in), advancing per base sample,
+multiplying the PROCESSED path only (downstream of the clamp — a gain ≤ 1 cannot re-exceed the
+ceiling; upstream of dither — the export grid stays intact; never the dry path — bypass stays a
+bit-exact null). Engine-side discrete rewires (`eqPosition`, `colourModel`, OS factor/phase) are
+held in applied-state fields and execute ONLY at the silent bottom at a block boundary — the POD
+the stages see carries the applied values, so nothing rewires at audible gain and OS latency still
+never moves mid-block. Wrapper bulk swaps (A/B, preset apply, session load) call
+`requestForcedDuck()` BEFORE the swap — the first implemented instance of the THREADING_POLICY
+momentary-request row, recorded as such in `THREAD_MODEL.md`. The first block after prepare/reset
+adopts directly: a duck there would dip the head of every render for no transition at all (and
+would have broken the OS latency matrix's fresh-engine timing — noticed at design time, not by a
+red test, for once).
+
+**KI-001 is closed and moved**: `POSTMORTEMS.md` INC-001 carries the mechanism, the fix, and the
+four mutation-verified prevention tests (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`,
+`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck` — the last one pins the WRAPPER wiring and
+fails when the `switchToSlot` request call is removed). DSP_POLICY invariant 8 is now **live**.
+
+**One defect caught in-flight**: the duck-out phase inversion carried a spurious `1−p`, sending a
+fresh duck to the bottom in ONE sample — precisely the step the smoothness test exists to catch,
+and it did, before commit. The inversion's derivation now lives in the comment.
+
 ### P2, oversampling + dither commit — the engine restructure, and TEST_REPORT.md exists (2026-08-01)
 
 **The engine is now staged**: base-rate front (input gain → EQ-Pre → compressor), the ADR-0003

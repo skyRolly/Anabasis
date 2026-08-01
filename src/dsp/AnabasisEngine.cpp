@@ -52,6 +52,8 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // here as well as at the toggle: a host that re-prepares at a new rate
     // mid-fade would otherwise finish that fade at the old rate's step size.
     bypassStep = 1.0f / (float) juce::jmax (1, (int) (0.010 * sampleRate));
+    duckOutInc = 1.0f / (float) juce::jmax (1, (int) (0.006 * sampleRate));   // §2.8: ~6 ms out
+    duckInInc  = 1.0f / (float) juce::jmax (1, (int) (0.028 * sampleRate));   // ~28 ms in
 
     limiter.prepare (sampleRate, delaySamples * maxN);   // wedge sized for 16x
     eq.prepare (sampleRate);
@@ -106,6 +108,9 @@ void AnabasisEngine::reset() noexcept
         osActive->reset();
     for (auto& e : ditherErr) e = 0.0f;
     rngState = 0x9E3779B9u;           // deterministic dither per render
+    duckState = DuckState::idle;
+    duckGain  = 1.0f;
+    duckPhase = 0.0f;
     smoothersPrimed = false;          // the next block adopts ALL FOUR values without a glide
 
     // The crossfade is reset state too: landing ON the target is the "no
@@ -125,12 +130,64 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // worse failure than passing it through. The contract is asserted.
     jassert (buffer.getNumChannels() <= wetRing.getNumChannels());
 
-    // ---- latch the OS config at the block boundary (never mid-block) ------
+    // ---- §2.8: discrete rewires go through the duck ------------------------
+    // Wanted vs APPLIED configuration. On the first block after prepare/reset
+    // the wanted config is adopted directly (a duck there would dip the first
+    // 40 ms of every render for no transition at all — same rule as the
+    // smoother priming). Afterwards, any difference — or a wrapper duck
+    // request — ducks out; the rewire executes at the SILENT BOTTOM, at a
+    // block boundary, so the OS latency still never changes mid-block
+    // (ADR-0004) and no rewire happens at audible gain.
     const auto effF     = effectiveFactor (p);
     const int  wantIdx  = effF == OversampleFactor::off ? -1 : (int) effF - 1;
     const int  wantPh   = (int) p.osPhase;
-    if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
-        latchOsConfig (wantIdx, wantPh);
+    const int  wantEq   = p.eqPosition;
+    const int  wantModel = juce::jlimit (0, 3, p.colourModel);
+    const bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
+    const bool rewireWanted = wantIdx != latchedFactorIdx
+                           || (wantIdx >= 0 && wantPh != latchedPhaseIdx)
+                           || wantEq != appliedEqPos
+                           || wantModel != appliedModel;
+    if (! smoothersPrimed)
+    {
+        if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
+            latchOsConfig (wantIdx, wantPh);
+        appliedEqPos = wantEq;
+        appliedModel = wantModel;
+        duckState = DuckState::idle;
+        duckGain  = 1.0f;
+    }
+    else if (duckState == DuckState::bottom)
+    {
+        // Silent, and a block boundary: execute everything pending.
+        if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
+            latchOsConfig (wantIdx, wantPh);
+        if (wantEq != appliedEqPos)
+        {
+            appliedEqPos = wantEq;
+            eq.resetState();
+        }
+        appliedModel = wantModel;
+        duckState = DuckState::in;
+        duckPhase = 0.0f;
+    }
+    else if ((rewireWanted || duckAsked) && duckState != DuckState::out)
+    {
+        // Enter (or re-enter from recovery) the duck-out leg, CONTINUOUSLY
+        // from the current gain: the out-leg gain is 0.5(1+cos(π·p)), so
+        // p = acos(2g−1)/π IS the out-leg phase (g=1 → p=0, g=0 → p=1). An
+        // earlier revision added a spurious 1−p on top, which sent a fresh
+        // duck straight to the bottom in ONE sample — the exact step the
+        // smoothness test exists to catch, and did.
+        duckState = DuckState::out;
+        duckPhase = std::acos (juce::jlimit (-1.0f, 1.0f, 2.0f * duckGain - 1.0f))
+                    / juce::MathConstants<float>::pi;
+    }
+
+    // The stages see the APPLIED discrete config, not the wanted one.
+    EngineParameters pApplied = p;
+    pApplied.eqPosition  = appliedEqPos;
+    pApplied.colourModel = appliedModel;
 
     // ---- adopt the snapshot (once per block, ADR-0011) ---------------------
     const float inputTarget   = juce::Decibels::decibelsToGain (p.inputGainDb);
@@ -169,19 +226,11 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // that the tap runs its own 4x estimator (8x effective at 2x).
     limiter.setTruePeakMode (p.truePeakMode && osN < 4);
     limiter.setDetectorHpf (p.scHpfFreqHz);
-    eq.setTargets (p);
-    comp.setPerBlock (p);
-    clip.setPerBlock (p);
+    eq.setTargets (pApplied);
+    comp.setPerBlock (pApplied);
+    clip.setPerBlock (pApplied);
 
-    // eqPosition is a discrete REWIRE, not a glide (ADR-0010's same-day
-    // note): state is cleared on a move; a step and <=10 ms of old-position
-    // drain are the accepted KI-001-class artefacts until 2.8 lands.
-    if (p.eqPosition != eqPositionNow)
-    {
-        eqPositionNow = p.eqPosition;
-        eq.resetState();
-    }
-    const bool eqPre  = eqPositionNow == 0;
+    const bool eqPre  = appliedEqPos == 0;
     const bool eqPost = ! eqPre;
 
     if (p.bypass != bypassTarget)
@@ -327,6 +376,35 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         if (eqPost)
             eq.tick();
 
+        // Advance the §2.8 duck once per base sample. Out: gain follows
+        // 0.5(1+cos(pi*phase)) to zero in ~6 ms, then HOLDS at the bottom
+        // until the next block top executes the rewire; in: the ~28 ms
+        // recovery leg. Idle is gain == 1.0 exactly (the null path).
+        if (duckState == DuckState::out)
+        {
+            duckPhase += duckOutInc;
+            if (duckPhase >= 1.0f)
+            {
+                duckPhase = 1.0f;
+                duckGain  = 0.0f;
+                duckState = DuckState::bottom;
+            }
+            else
+                duckGain = 0.5f * (1.0f + std::cos (juce::MathConstants<float>::pi * duckPhase));
+        }
+        else if (duckState == DuckState::in)
+        {
+            duckPhase += duckInInc;
+            if (duckPhase >= 1.0f)
+            {
+                duckPhase = 0.0f;
+                duckGain  = 1.0f;
+                duckState = DuckState::idle;
+            }
+            else
+                duckGain = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::pi * duckPhase));
+        }
+
         // Advance the 2.8 crossfade once per base sample.
         const float targetMix = bypassTarget ? 1.0f : 0.0f;
         if (bypassMix < targetMix)      bypassMix = juce::jmin (targetMix, bypassMix + bypassStep);
@@ -343,6 +421,12 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             if (eqPost)
                 processed = eq.processSample (ch, processed);
             processed = clamp.processSample (processed, ceilingNow);
+
+            // §2.8 duck — PROCESSED path only, downstream of the clamp (a
+            // gain ≤ 1 cannot re-exceed the ceiling), upstream of dither so
+            // the export grid stays intact. Exact-1 branch keeps the null.
+            if (! juce::exactlyEqual (duckGain, 1.0f))
+                processed *= duckGain;
 
             // Dither (4.5): AFTER the clamp (invariant 1/12), processed path
             // only - bypass must stay a bit-exact null. TPDF at +-1 LSB of

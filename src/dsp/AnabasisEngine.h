@@ -33,11 +33,17 @@
 //
 //  Oversampling (ADR-0003/0011): every factor × phase instance is constructed
 //  and initProcessing'd at prepare(); a runtime factor/phase change LATCHES at
-//  the next block boundary — it selects among existing objects, allocates
-//  nothing, and resets the region state (a reset-boundary event; the §2.8
-//  duck will wrap it when the transition layer lands — KI-001 family).
-//  useIntegerLatency keeps every configuration's group delay a whole base
-//  sample, which is what lets the bypass stay a bit-exact integer-delay null.
+//  a block boundary AT THE §2.8 DUCK'S SILENT BOTTOM — it selects among
+//  existing objects, allocates nothing, and resets the region state while the
+//  output gain is zero. useIntegerLatency keeps every configuration's group
+//  delay a whole base sample, which is what lets the bypass stay a bit-exact
+//  integer-delay null.
+//
+//  §2.8 transition layer: asymmetric raised-cosine duck (~6 ms out / ~28 ms
+//  in) for every discrete rewire — eqPosition, colourModel, OS factor/phase,
+//  and wrapper-requested bulk swaps (requestForcedDuck before A/B, preset,
+//  session load). Engine rewires execute only at the silent bottom; wrapper
+//  swaps land as smoothed parameter glides under the duck's envelope.
 //
 //  Bypass is a delay-aligned dry path (base-rate ring, offset = allowance +
 //  osLatency) with a bit-exact-at-the-endpoints crossfade.
@@ -67,6 +73,14 @@ public:
     void process (juce::AudioBuffer<float>& buffer, const EngineParameters& params) noexcept;
 
     int groupDelaySamples() const noexcept { return delaySamples; }
+
+    // §2.8: the forced-duck request — the THREADING_POLICY momentary-request
+    // row (payload-free single atomic, exchange-consumed at the block top).
+    // The wrapper calls this BEFORE every bulk swap (A/B, preset, session
+    // load); the engine also self-requests for its own discrete rewires
+    // (eqPosition, colourModel, OS factor/phase), which additionally apply
+    // ONLY at the silent bottom.
+    void requestForcedDuck() noexcept { duckRequested.store (true, std::memory_order_relaxed); }
 
     // The engaged lookahead window in BASE samples, as last handed to the
     // detector. Exposed because it is where invariant 8's "smooth,
@@ -116,7 +130,18 @@ private:
     MasteringEQ      eq;
     MasteringComp    comp;
     ClipSat          clip;
-    int eqPositionNow = 0;
+
+    // §2.8 transition ducker: asymmetric raised cosine, ~6 ms out / ~28 ms
+    // in. Gain advances per base sample in stage E and multiplies the
+    // PROCESSED path only (bypass stays a bit-exact null). Engine-side
+    // rewires are held in the applied* fields until the bottom; the POD the
+    // stages see carries the APPLIED values, so nothing rewires at full gain.
+    enum class DuckState { idle, out, bottom, in };
+    std::atomic<bool> duckRequested { false };
+    DuckState duckState = DuckState::idle;
+    float duckGain = 1.0f, duckPhase = 0.0f;
+    float duckOutInc = 0.0f, duckInInc = 0.0f;
+    int   appliedEqPos = 0, appliedModel = 1;   // == the POD defaults
 
     // Oversampling: [factorLog2 − 1][phase] — all eight built at prepare().
     std::unique_ptr<juce::dsp::Oversampling<float>> oversamplers[kMaxOsFactorLog2][2];
