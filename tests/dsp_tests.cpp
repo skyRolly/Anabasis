@@ -31,8 +31,16 @@ static void check (bool condition, const char* what)
 
 // ---------------------------------------------------------------------------
 // inv 7: with defaults and no processing engaged, output is a bit-exact
-// delay-aligned copy of the input. Stimulus level respects §4.2's note: below
-// the default ceiling (-1 dBTP) and the comp knee region.
+// delay-aligned copy of the input. THE STIMULUS LEVEL IS LOAD-BEARING, not a
+// convenience: with the adaptive trims live, the null survives because every
+// STAGE is inert, not because the trims are zero — the scHpf trim can switch
+// both detector HPFs on even at factory defaults, and that stays inaudible
+// only while the compressor is below its knee and the limiter below its
+// ceiling. The knee bottom at defaults (threshold 0 dBFS, 6 dB knee) is
+// −3 dBFS ≈ 0.708 linear; the ±0.25 peak here (−12 dBFS) sits well under it
+// AND under the −1 dBTP ceiling. Raise this level past −3 dBFS and the test
+// starts exercising the knee against trim-driven detector filtering — a
+// different (and weaker) claim. The assert below pins the margin.
 static void testNullWithDefaults()
 {
     anabasis::AnabasisEngine engine;
@@ -62,6 +70,12 @@ static void testNullWithDefaults()
         for (int n = 0; n < block; ++n)
             outL.push_back (buf.getSample (0, n));
     }
+
+    // Self-enforcing form of the header's stimulus constraint: peak must stay
+    // under the −3 dBFS knee bottom (see the comment above for why).
+    float stimPeak = 0.0f;
+    for (float v : inL) stimPeak = juce::jmax (stimPeak, std::abs (v));
+    check (stimPeak < 0.708f, "null: the stimulus stays below the comp knee bottom (-3 dBFS)");
 
     bool exact = true;
     for (size_t n = (size_t) delay; n < outL.size(); ++n)
@@ -274,6 +288,12 @@ static void testLookaheadIsSmoothed()
 // ---------------------------------------------------------------------------
 // inv 4 (P1 sample-level form; the dBTP matrix arrives with TruePeak at P2):
 // hot material pushed +12 dB never exceeds the ceiling after the clamp.
+// SCOPE: the programme path only. The two monitor-only audition legs sit
+// outside the invariant by design (DSP_POLICY inv 4's scope note): bypass
+// carries the unclamped dry, and delta plays dry − processed, which can
+// reach ~2× full scale on decorrelated material. Both are inert offline, so
+// no RENDER can exceed the ceiling — this test deliberately runs with both
+// monitor functions off.
 static void testOutputNeverExceedsCeiling()
 {
     // ADR-0002's mandated stimulus (docs/procedures/TESTING.md): BOTH EQ
@@ -1825,10 +1845,28 @@ static void testStaleDetectorStateIsNotReentered()
             const float fr[2] = { v, v };
             lim.processSample (fr, 2, 480, ceiling, g);
         }
-        // 2) turn the path OFF — its state stops advancing from here
+        // 2a) command the path OFF — and KEEP THE LOUD SIGNAL RUNNING while
+        //     the HPF frequency GLIDES to its floor (~960 samples at 20 ms),
+        //     so the biquad state is still charged when the off edge actually
+        //     fires. Feeding silence here instead would let the glide drain
+        //     the state naturally and the missing-clear mutant would survive
+        //     on an empty delay line — the same put-the-property-where-the-
+        //     assertion-looks rule as the crest alignment above. The TP mode
+        //     flips instantly (a bool), so its history freezes at the crest
+        //     regardless; the extra loud samples advance nothing there.
         lim.setTruePeakMode (false);
         lim.setDetectorHpf (20.0f);
-        for (int n = 0; n < 8000; ++n)      // silence: envelope releases to unity
+        for (int n = 4200; n < 4200 + 1100; ++n)
+        {
+            const float v = chargeIt ? 4.0f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                        * 60.0f * (float) n / (float) sr)
+                                     : 0.0f;
+            const float fr[2] = { v, v };
+            lim.processSample (fr, 2, 480, ceiling, g);
+        }
+        // 2b) silence with the path off: the envelope releases to unity, the
+        //     frozen state (if any survived the off edge) keeps its charge.
+        for (int n = 0; n < 8000; ++n)
         {
             const float fr[2] = { 0.0f, 0.0f };
             lim.processSample (fr, 2, 480, ceiling, g);
@@ -1863,6 +1901,127 @@ static void testStaleDetectorStateIsNotReentered()
            "staleDetector: re-enabling true-peak mode does not resurrect the frozen tap history");
     check (hpStale > 0.999f,
            "staleDetector: re-enabling the detector HPF does not ring on its old delay line");
+}
+
+// ---------------------------------------------------------------------------
+// Invariant 8 at the limiter's own control boundary: stereo link, transient
+// preserve and the detector HPF are LEVEL-affecting (link blends the detector
+// level, preserve selects the attack alpha, the HPF moves the detector
+// spectrum), so a per-block step in any of them must glide, not jump. The
+// release/style/autoRelease setters stay unsmoothed by design — there the
+// envelope IS the smoother.
+static void testLimiterControlSmoothing()
+{
+    const double sr = 48000.0;
+
+    {   // LINK: ch0 loud (limiting), ch1 quiet. link 0 → ch1 rides its own
+        // level (gain 1); link 1 → ch1 takes ch0's reduction (~0.55). The
+        // step happens through the DOWNWARD (attack, instant at preserve 0)
+        // direction, so without smoothing the whole 0.44 change lands in ONE
+        // sample; smoothed, the per-sample delta is the 20 ms ramp slope.
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setAutoRelease (false);
+        lim.setRelease (200.0f);
+        lim.setTransientPreserve (0.0f);
+        lim.setTruePeakMode (false);
+        lim.setDetectorHpf (20.0f);
+        lim.setStereoLink (0.0f);
+
+        float g[2] = { 1.0f, 1.0f };
+        const float fr[2] = { 0.9f, 0.1f };            // steady magnitudes
+        for (int n = 0; n < 3000; ++n)
+            lim.processSample (fr, 2, 480, 0.5f, g);
+        const float before = g[1];
+
+        lim.setStereoLink (1.0f);                      // the step under test
+        float maxDelta = 0.0f, prev = g[1];
+        for (int n = 0; n < 3000; ++n)
+        {
+            lim.processSample (fr, 2, 480, 0.5f, g);
+            maxDelta = juce::jmax (maxDelta, std::abs (g[1] - prev));
+            prev = g[1];
+        }
+        check (before > 0.99f,                "limSmooth/link: unlinked quiet channel rides at unity");
+        check (std::abs (g[1] - 0.5f / 0.9f) < 0.01f,
+               "limSmooth/link: the change ARRIVES (fully linked gain — not a frozen control)");
+        check (maxDelta < 0.01f,
+               "limSmooth/link: a full-scale link step glides (unsmoothed = 0.44 in one sample)");
+    }
+
+    {   // PRESERVE: primed at 0 (instant attack), stepped to 1 immediately
+        // before a transient. Smoothed, the transient still meets an ~instant
+        // attack (the glide has only advanced one step); unsmoothed, aAtk
+        // jumps to the 1.5 ms pole at once and the gain walks down slowly.
+        // min gain over the first 8 loud samples: ~0.5 smoothed vs ~0.9
+        // unsmoothed — disjoint by design, not by tolerance.
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setAutoRelease (false);
+        lim.setRelease (200.0f);
+        lim.setStereoLink (1.0f);
+        lim.setTruePeakMode (false);
+        lim.setDetectorHpf (20.0f);
+        lim.setTransientPreserve (0.0f);
+
+        float g[2] = { 1.0f, 1.0f };
+        const float quiet[2] = { 0.0f, 0.0f };
+        for (int n = 0; n < 1000; ++n)
+            lim.processSample (quiet, 2, 480, 0.5f, g);   // primes; envelope at unity
+
+        lim.setTransientPreserve (1.0f);               // the step under test
+        const float loud[2] = { 1.0f, 1.0f };
+        float minGain = 1.0f;
+        for (int n = 0; n < 8; ++n)
+        {
+            lim.processSample (loud, 2, 480, 0.5f, g);
+            minGain = juce::jmin (minGain, g[0]);
+        }
+        check (minGain < 0.65f,
+               "limSmooth/preserve: a step to full preserve cannot blunt the NEXT transient's attack");
+    }
+
+    {   // DETECTOR HPF: 1 kHz content limited with the filter far above it
+        // (3 kHz → detector ~0.1, no limiting), stepped to the floor (off →
+        // detector 0.9 → gain ~0.55). Unsmoothed, the detector level and the
+        // gain jump in one sample; smoothed, the frequency glides and the
+        // gain follows the ramp.
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setAutoRelease (false);
+        lim.setRelease (200.0f);
+        lim.setStereoLink (1.0f);
+        lim.setTransientPreserve (0.0f);
+        lim.setTruePeakMode (false);
+        lim.setDetectorHpf (3000.0f);
+
+        float g[2] = { 1.0f, 1.0f };
+        auto feed = [&] (int from, int count, auto&& each)
+        {
+            for (int n = from; n < from + count; ++n)
+            {
+                const float v = 0.9f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 1000.0f * (float) n / (float) sr);
+                const float fr[2] = { v, v };
+                lim.processSample (fr, 2, 480, 0.5f, g);
+                each();
+            }
+        };
+        feed (0, 3000, []{});
+        const float before = g[0];
+
+        lim.setDetectorHpf (20.0f);                    // the step under test
+        float maxDelta = 0.0f, prev = g[0];
+        feed (3000, 3000, [&]
+        {
+            maxDelta = juce::jmax (maxDelta, std::abs (g[0] - prev));
+            prev = g[0];
+        });
+        check (before > 0.95f,  "limSmooth/hpf: with the HPF above the content there is no limiting");
+        check (g[0] < 0.60f,    "limSmooth/hpf: the change ARRIVES (full detector level engages the limiter)");
+        check (maxDelta < 0.05f,
+               "limSmooth/hpf: an HPF step to the floor glides (unsmoothed = ~0.4 in one sample)");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2677,6 +2836,7 @@ int main()
     testDeltaIsCoveredByTheDuck();
     testAdaptiveRestoreLastStagedWins();
     testStaleDetectorStateIsNotReentered();
+    testLimiterControlSmoothing();
     testLufsCalibration();
     testLufsGating();
     testLufsWindows();

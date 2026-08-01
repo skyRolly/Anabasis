@@ -89,6 +89,14 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    before dither, and holds **under every condition** — any input, any parameter combination, any
    automation rate, any sample rate, during and after every transition. Tolerance ≤ 0.1 dBTP in
    true-peak mode.
+   **Scope: the PROGRAMME path** — the processed signal, and everything an offline render can
+   emit. The two monitor-only audition legs are outside it by the same reading that lets bypass
+   carry the unclamped dry signal (invariant 7): bypass monitoring plays the input as-is, and
+   **delta monitoring** plays `dry − processed`, which on decorrelated material can reach roughly
+   twice full scale. Both are listening-only (inert under `nonRealtime`, invariant 10), so no
+   render can exceed the ceiling; the stated-explicitly rule exists because a reader of the
+   pre-clarification text could take "under every condition" to cover the audition legs too.
+   Recorded 2026-08-01 (PR #5) — a clarification of scope, not a weakening of the promise.
    This is the product's core promise; weakening it is an Architecture Review Gate item in its own
    right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep).
 

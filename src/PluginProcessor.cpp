@@ -42,8 +42,6 @@ bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
-    outputMeter.prepare (sampleRate);
-    tpMeter.prepare();
     grHistoryRing.reset();
     dbTpMaxHold = -144.0f;
     updateLatency();
@@ -96,33 +94,24 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     engine.process (buffer, snapshot);
 
-    // -- §2.9 metering: measure the OUTPUT, publish once per block ----------
+    // -- §2.9 metering: publish once per block from the engine's RENDER tap
     // (relaxed atomics — monotonic display data, THREAD_MODEL meter row).
-    // nCh is the channel count actually PRESENT, not an assumed 2: the layout
-    // check enforces stereo, but a zero-channel buffer would index channel 0
-    // out of bounds, and feeding a mono buffer twice would read +3.01 LU high
-    // (BS.1770 sums both entries at weight 1.0). The engine guards the same
-    // case at its top; this block did not.
-    const int nCh = juce::jmin (buffer.getNumChannels(), 2);
-    const int nSm = buffer.getNumSamples();
-    float blockTp = 0.0f;
-    for (int n = 0; nCh > 0 && n < nSm; ++n)
-    {
-        float frame[2] = { buffer.getSample (0, n),
-                           nCh > 1 ? buffer.getSample (1, n) : 0.0f };
-        outputMeter.processFrame (frame, nCh);
-        float tp[2] = {};
-        tpMeter.processFrame (frame, nCh, tp);
-        blockTp = juce::jmax (blockTp, tp[0], tp[nCh - 1]);
-    }
-    const float blockTpDb = juce::Decibels::gainToDecibels (blockTp, -144.0f);
+    // NOT from `buffer`: the buffer carries the LISTENING path, which the
+    // §2.7 monitor functions alter — metering it made Delta show the
+    // difference signal's loudness, Comp the attenuated level, and both
+    // permanently biased the session-cumulative integrated LUFS and dBTP
+    // hold. The render tap is the programme output (identical to the buffer
+    // whenever the monitor functions are off). Same audio thread, right
+    // after process(): plain reads, no atomics needed on this side.
+    const auto& om = engine.outputLoudness();
+    const float blockTpDb = juce::Decibels::gainToDecibels (engine.lastRenderTpMax(), -144.0f);
     dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
 
-    const float lufsI = outputMeter.integratedLufs();
-    pubLufsM.store (outputMeter.momentaryLufs(),  std::memory_order_relaxed);
-    pubLufsS.store (outputMeter.shortTermLufs(),  std::memory_order_relaxed);
-    pubLufsI.store (lufsI,                        std::memory_order_relaxed);
-    pubDbTpMax.store (dbTpMaxHold,                std::memory_order_relaxed);
+    const float lufsI = om.integratedLufs();
+    pubLufsM.store (om.momentaryLufs(),  std::memory_order_relaxed);
+    pubLufsS.store (om.shortTermLufs(),  std::memory_order_relaxed);
+    pubLufsI.store (lufsI,               std::memory_order_relaxed);
+    pubDbTpMax.store (dbTpMaxHold,       std::memory_order_relaxed);
     // PLR = session true-peak max − integrated loudness (meaningful only once
     // both exist; 0 until then).
     pubPlr.store (lufsI > anabasis::LoudnessMeter::kSilentLufs + 1.0f
@@ -131,7 +120,7 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     const float grDb = juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f);
     pubGrDb.store (grDb, std::memory_order_relaxed);
-    grHistoryRing.push (grDb, buffer.getMagnitude (0, nSm));
+    grHistoryRing.push (grDb, engine.lastRenderPeak());
 }
 
 juce::AudioProcessorEditor* AnabasisAudioProcessor::createEditor()
@@ -273,6 +262,11 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
 bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
 {
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
+    // DELIBERATELY before the apply, and NOT undone on failure: a failed
+    // applyPreset may still have written some parameters (a partial apply),
+    // and those must land under the duck. Moving this after the success check
+    // to save a ~34 ms dip on the failure path would reopen the unducked
+    // bulk-swap hole INC-001 records.
     engine.requestForcedDuck();                               // §2.8, as above
 
     juce::StringArray mask;

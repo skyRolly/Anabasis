@@ -103,6 +103,16 @@ delay-aligned dry ring, kept bit-exact), so the dry leg's alignment steps by
 the same bounded amount at the block boundary instead of fading through
 silence. Un-bypassing afterwards is already click-free (the ~10 ms crossfade).
 
+The same latch boundary also steps two internal CONSUMERS of the dry leg that
+the duck does not cover: the §2.7 dry loudness measure and the §5.4 adaptive
+feature extractor are fed the delay-aligned dry signal, whose read offset
+moves by the same ≤ 67-sample difference when `osLatBase` re-latches. The
+splice can register once as a spurious transient in the onset detector and
+as a sub-millisecond hiccup in a 400 ms loudness window — both absorbed by
+their own smoothing (the trims slew over seconds, the measure gates at
+−70 LUFS), so this is measurement noise at the switch instant, not an
+audible or persistent error.
+
 Related and deliberate, so testers do not report it as a hang: the silent
 bottom is **held until the pipeline refills** after a factor/phase latch —
 the latch empties the 10 ms lookahead line and resets the oversampler, so

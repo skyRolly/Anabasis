@@ -5,9 +5,10 @@ citations, as `THREADING_POLICY.md` requires of P1. This file *describes* the co
 rules stay in the policy and the ADR. When this file and the code disagree, the code is drifting or
 this file is stale — report it (`SOURCE_OF_TRUTH.md`), do not silently pick one.
 
-**Status:** P1 skeleton. The inventory below covers every cross-thread edge that exists in the
-tree today. Rows the ADR plans for P2–P4 (SPSC rings, command atomics, the OQ-013 trim transport)
-are listed as **planned** so their absence is visible rather than implied.
+**Status: P4 (P1–P4 landed).** The inventory below covers every cross-thread edge that exists in
+the tree today, including the P2–P4 additions (the SPSC GR ring, the duck/Learn/restore command
+atomics, the meter publish row). Still-planned rows (the P5 spectrum rings, the OQ-013 trim
+transport) are listed under **Planned edges** so their absence is visible rather than implied.
 
 ## Thread inventory
 
@@ -25,12 +26,12 @@ it instantiates:
 
 | Edge | Mechanism | Table row | Code |
 |---|---|---|---|
-| Parameters → engine | 44 cached `getRawParameterValue` atomics read once per block into the POD snapshot (`CachedParams::toEngine`), never piecemeal | GUI → Audio (automatable params) | `src/PluginParameters.cpp` (`resolve`/`toEngine`), `src/PluginProcessor.cpp:81-88` |
+| Parameters → engine | **45** cached `getRawParameterValue` atomics (`kCachedParamCount` — 44 at P1, +`freeze` at P4) read once per block into the POD snapshot (`CachedParams::toEngine`), never piecemeal | GUI → Audio (automatable params) | `src/PluginParameters.cpp` (`resolve`/`toEngine`), `src/PluginProcessor.cpp` (`processBlock` snapshot build) |
 | Host-hidden config → engine | `InternalState` relaxed atomic mirrors (`osMirror`/`phaseMirror`/`offlineMirror`/`lockMirror`), synced on every tree write, read per block | GUI → Audio (host-hidden session state) | `src/InternalState.h:153`, `syncAtomics()` |
-| `nonRealtime` → latency predictor | `std::atomic<bool> nonRealtimeFlag`, written in `setNonRealtime()` (a host-thread callback), read by the snapshot build and the predictor | atomic mirror (same class as the row above) | `src/PluginProcessor.h:110`, `src/PluginProcessor.cpp:48-51,66,88` |
-| Engaged lookahead window → any reader | `std::atomic<int> engagedWindow`, relaxed, written per sample on the audio thread; payload-free diagnostic (the smoothing test reads it) | Audio → GUI (staleness-hint class: monotonic display/diagnostic data) | `src/dsp/AnabasisEngine.h:84,54-55` |
+| `nonRealtime` → latency predictor | `std::atomic<bool> nonRealtimeFlag`, written in `setNonRealtime()` (a host-thread callback), read by the snapshot build and the predictor | atomic mirror (same class as the row above) | `src/PluginProcessor.h` (`nonRealtimeFlag`), `src/PluginProcessor.cpp` (`setNonRealtime`/`updateLatency`/`processBlock`) |
+| Engaged lookahead window → any reader | `std::atomic<int> engagedWindow`, relaxed, written per sample on the audio thread; payload-free diagnostic (the smoothing test reads it) | Audio → GUI (staleness-hint class: monotonic display/diagnostic data) | `src/dsp/AnabasisEngine.h` (`engagedWindowSamples`; line-number cites here went stale twice — symbols only) |
 | Forced-duck request → engine | `std::atomic<bool> duckRequested`, set by the wrapper before every bulk swap (A/B, preset, session load), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestForcedDuck`), `src/PluginProcessor.cpp` (three call sites) |
-| Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr`, `pubGrDb` — relaxed atomics, ONE publish per block from `processBlock`; plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics | Audio → GUI (meters) | `src/PluginProcessor.h` (meter getters), `src/PluginProcessor.cpp` (the per-block publish) |
+| Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr`, `pubGrDb` — relaxed atomics, ONE publish per block from `processBlock`, **fed from the engine's §2.9 render tap** (the programme path before the monitor-only delta/comp stages — the buffer itself carries the listening path); plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics | Audio → GUI (meters) | `src/PluginProcessor.cpp` (the per-block publish), `src/dsp/AnabasisEngine.h` (`outputLoudness`/`lastRenderTpMax`) |
 | GR/waveform history → GUI | `GrHistoryBuffer`: 4096-entry power-of-two SPSC ring, entry written FIRST, monotonic index release-stored AFTER, acquire-loaded stateless peeks on the reader side | Audio → GUI (time series, SPSC ring) | `src/dsp/GrHistoryBuffer.h` |
 | Learn start/stop → engine | `std::atomic<bool> learnStartReq`/`learnStopReq`, set by the wrapper (`startLearn`/`stopLearn`), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestLearnStart/Stop`), `src/dsp/AnabasisEngine.cpp` (block top) |
 | Learned-target restore → engine | ONE staged record: `pendingLearned` (the learned/never-learned discriminator) + `pendingRefOnset`/`pendingRefTilt` stored relaxed FIRST, then the single `adaptivePending` flag **release**-stored; the block top `exchange`s it with **acquire**, so a block that sees the flag reads that call's whole record, never a torn one, and the LAST restore staged before the block is the one that lands. Two flags with a fixed consumption order could not express last-writer-wins — an un-learned session loaded after a learned one inherited the learned references | GUI → Audio (momentary request + flag-orders-payload) | `src/dsp/AnabasisEngine.h` (`restoreLearnedTargets`), `src/dsp/AnabasisEngine.cpp` (block top) |
@@ -48,8 +49,8 @@ does not pre-empt it. The residual check-then-act window in the guard is recorde
 
 ## PDC
 
-One `setLatencySamples` call site — `updateLatency()` (`src/PluginProcessor.h:84`,
-`src/PluginProcessor.cpp:76`) — fed by the `const` race-free predictor in `src/dsp/Latency.h`,
+One `setLatencySamples` call site — `updateLatency()` (`src/PluginProcessor.h`,
+`src/PluginProcessor.cpp`) — fed by the `const` race-free predictor in `src/dsp/Latency.h`,
 which both the wrapper and the engine call so reported and actual cannot drift. Triggers, per
 ADR-0004 item 5: `prepareToPlay`, the three `int_` latency-input callbacks (coalesced to one fire
 per bulk read by `InternalState::ScopedLatencyBatch`), and `setNonRealtime()`. The last two are
@@ -59,7 +60,7 @@ recomputes PDC from `processBlock`.
 
 ## FTZ/DAZ
 
-`juce::ScopedNoDenormals` at the top of `processBlock` (`src/PluginProcessor.cpp:81`) is the
+`juce::ScopedNoDenormals` at the top of `processBlock` (`src/PluginProcessor.cpp`) is the
 single flush-to-zero mechanism; no module carries its own.
 
 ## Which context paints

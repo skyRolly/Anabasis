@@ -96,9 +96,10 @@ the detector tap), `truePeakMode`, `dither`, `ditherShaping` (conservative v1 fr
 `withAutomatable(false)` is **advisory** (rule 5): hosts may expose them anyway, and each behaves
 sanely when written regardless. Loosening any of these is a kVersion bump + ADR.
 
-Two automatable discrete rewires — `eqPosition` and `colourModel` — will be duck-routed when the
-§2.8 transition layer lands: a stepped automation lane produces a repeated ~34 ms dip, which is
-the click-free mechanism working, not a defect (ADR-0010's same-day note).
+Two automatable discrete rewires — `eqPosition` and `colourModel` — are duck-routed through the
+§2.8 transition layer (landed with P2: the rewire executes at the silent bottom,
+`src/dsp/AnabasisEngine.cpp` block top): a stepped automation lane produces a repeated ~34 ms
+dip, which is the click-free mechanism working, not a defect (ADR-0010's same-day note).
 
 ## The lockable set
 

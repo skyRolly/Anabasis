@@ -689,6 +689,75 @@ static void testMeterPublication()
 }
 
 // ---------------------------------------------------------------------------
+// §2.9 vs §2.7: the meters report the RENDER, not the listening path. With
+// Delta or Loudness Comp engaged the buffer handed to the host is the monitor
+// signal — metering it showed the difference signal's loudness (Delta) or the
+// attenuated level (Comp), and permanently biased the session-cumulative
+// integrated LUFS and dBTP hold. The published readings must be identical
+// whether the monitor functions are on or off, while the audible output
+// plainly differs (the guard that keeps this from passing vacuously).
+static void testMetersReadTheRenderNotTheMonitor()
+{
+    auto run = [] (bool comp, bool delta)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto set = [&] (const char* id, float denorm)
+        {
+            auto* p = proc.apvts.getParameter (id);
+            p->setValueNotifyingHost (p->getNormalisableRange().convertTo0to1 (denorm));
+        };
+        set (pid::limGain, 12.0f);                     // wet well above dry: comp acts
+        if (comp)  set (pid::loudnessComp, 1.0f);
+        if (delta) set (pid::deltaMonitor, 1.0f);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        double tailSq = 0.0;
+        for (int b = 0; b < 200; ++b)                  // ~2.1 s: measure + smoothers settle
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.1f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 150)
+                for (int n = 0; n < 512; ++n)
+                    tailSq += (double) buf.getSample (0, n) * buf.getSample (0, n);
+        }
+        struct R { float lufsS, lufsM, tpMax, plr; double tailRms; };
+        return R { proc.meterLufsS(), proc.meterLufsM(), proc.meterDbTpMax(),
+                   proc.meterPlr(), std::sqrt (tailSq / (50.0 * 512.0)) };
+    };
+
+    const auto plain = run (false, false);
+    const auto comp  = run (true,  false);
+    const auto delta = run (false, true);
+
+    // The render is bit-identical across the three runs, so the published
+    // readings are too — exact, not approximate: same samples, same meters.
+    check (juce::exactlyEqual (plain.lufsS, comp.lufsS)
+             && juce::exactlyEqual (plain.lufsM, comp.lufsM)
+             && juce::exactlyEqual (plain.tpMax, comp.tpMax)
+             && juce::exactlyEqual (plain.plr,  comp.plr),
+           "meters/monitor: loudness comp does not move a single published reading");
+    check (juce::exactlyEqual (plain.lufsS, delta.lufsS)
+             && juce::exactlyEqual (plain.tpMax, delta.tpMax),
+           "meters/monitor: delta does not move the published readings either");
+
+    // Not vacuous: the LISTENING path really was altered in both runs.
+    check (comp.tailRms < plain.tailRms * 0.7,
+           "meters/monitor: comp audibly attenuates the monitor (the runs are not identical)");
+    // Delta's tail is the dry-minus-wet residue (~0.75× here, direction not
+    // guaranteed), so the guard is a relative difference, not an ordering.
+    check (std::abs (delta.tailRms - plain.tailRms) > 0.1 * plain.tailRms,
+           "meters/monitor: delta audibly replaces the monitor with the difference signal");
+}
+
+// ---------------------------------------------------------------------------
 // MODE_AND_ADAPTATION_POLICY invariant 2's named guard: switching Simple ⇄
 // Advanced changes NOTHING about the rendered sound — not approximately,
 // sample-identically. Two processors, identical input and settings; one
@@ -895,6 +964,7 @@ int main (int argc, char** argv)
         testMacroRestoreDoesNotClobber();
         testAbSwitchRequestsDuck();
         testMeterPublication();
+        testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();
         testDrainInsideRestoreIsSuppressed();

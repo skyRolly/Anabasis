@@ -6,10 +6,77 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **second P4 review round of 2026-08-01** (PR #5): the post-latch refill
-hold that closes the OS-switch click, the duck request held through the out-leg, delta brought
-under the duck, one staged restore record replacing two ordered flags, and the stale detector
-state cleared on both re-entry edges.
+**Last updated:** for the **third P4 review round of 2026-08-01** (PR #5): the meters moved off
+the monitor path onto the engine's render tap, the limiter's three level-affecting controls
+(link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
+(45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Third P4 review round — the meters were watching the monitor, and the limiter's levels were stepping (2026-08-01)
+
+Fourteen items: four defects fixed, two accepted-and-recorded, two dismissed-or-confirmed by the
+reviewer's own trace, six doc/comment corrections. Every code fix mutation-verified; six mutants,
+six kills, each by exactly its own test.
+
+**The meters were measuring the wrong signal.** `processBlock` metered the buffer AFTER
+`engine.process()` — but that buffer carries the LISTENING path: §2.7 delta replaces it with
+`dry − processed` and loudness comp multiplies it by the monitor gain. So Delta showed the
+difference signal's LUFS, Comp showed the attenuated level, and — because integrated LUFS is a
+gated histogram over the whole session and the dBTP hold is a session max — a few seconds of
+either permanently biased both, in a loudness maximizer, where the meter is half the product.
+The §2.9 output meters (LUFS M/S/I, dBTP, PLR, GR-history peak) now read a per-sample RENDER tap
+inside the engine: the bypass-mixed programme path with no delta and no monitor gain — exactly
+what an offline render emits, since both monitor functions are inert offline (invariant 10). The
+tap is bit-identical to the buffer whenever the monitor functions are off, so nothing moved on
+the default path. The wrapper's own LoudnessMeter/TruePeakEstimator members are gone; it
+publishes from engine accessors on the same audio thread. The regression test pins EXACT equality
+of every published reading across comp-on/comp-off/delta-on runs, with a listening-path-differs
+guard so it cannot pass vacuously.
+
+**Three limiter controls were stepping.** The per-block-setter header claimed "rates and modes,
+not levels", and for release/style it is true — but `link` blends the detector LEVEL per sample,
+`preserve` selects the attack alpha, and the detector HPF moves the detector spectrum, and all
+three were adopted raw at buffer boundaries: a full-scale link step moved a limited channel's
+gain 0.44 in ONE sample. All three now glide (20 ms SmoothedValue at the engaged rate, primed on
+the first block, snapped at a latch — a silent-bottom event). The HPF re-derives its biquad per
+step while gliding, the same pattern MasteringComp already used for the SAME shared scHpfFreq
+value — the asymmetry between the two consumers of one parameter was the tell. The preserve map's
+discontinuity at exactly 0 (instant attack vs ~0.05 ms for any positive value) is deliberate —
+the wedge-contract tests rely on exactness at 0 — and now says so in place.
+
+**The glide changed what one existing test proved.** The stale-detector test turned the HPF off
+and fed silence; with the off-switch now a ~960-sample glide, the biquad would have DRAINED
+during the glide and the missing-state-clear mutant would have survived on an empty delay line.
+The test now keeps the loud signal running until the off edge actually fires, so the state is
+charged when the clear does or does not happen. Same rule as the crest alignment last round —
+put the property where the assertion looks — arising not from a bad stimulus but from a fix
+changing the timing underneath a good one. Both re-run mutants still die.
+
+**Accepted and recorded.** The latch-boundary step in the delay-aligned dry leg also feeds the
+§2.7 dry measure and the adaptive feature extractor un-ducked — appended to KI-004 with why it
+stays measurement noise (seconds-scale trim slew, −70 LUFS gate). Invariant 4's "under every
+condition" now states its scope explicitly: the PROGRAMME path — delta can reach ~2× full scale
+on decorrelated material by construction, bypass carries unclamped dry, both are audition-only
+and inert offline; recorded in DSP_POLICY as a scope clarification with the ceiling test's
+comment updated to match. The wedge buffer's exactly-at-capacity sizing got the same one-spare-
+slot treatment as the dry ring.
+
+**The doc drift this round was partly self-inflicted and partly systemic.** THREAD_MODEL said 44
+cached atomics the same day the PR made it 45 — the freeze cache append (P4) never touched the
+row. README said 228 checks while HANDOVER said 253: the SECOND round updated HANDOVER and not
+README, one round after the audit claimed README was "caught up" — the claim was true when
+written and stale two commits later. Both now carry the HANDOVER row's own rule ("re-count from
+the suites' output when editing"). PARAMETER_REGISTRY still described §2.8 as unlanded
+("will be duck-routed when the transition layer lands") two rounds after it landed. And
+THREAD_MODEL's `file:line` citations had gone stale twice (`engagedWindow` at :84 → :128), so the
+volatile ones are now symbol-based — a line number in a document is a assertion nobody re-runs.
+
+Also: the null test's stimulus level (−12 dBFS vs the −3 dBFS knee bottom) is now a named
+precondition WITH a self-enforcing check — the reviewer's structural-inertness trace showed the
+bit-exact null with trims live rests on every stage being below its engage point, so the test
+now refuses a stimulus that would quietly change what it proves; the preset-apply duck request
+carries a comment stopping a future "optimisation" from moving it after the success check
+(re-opening INC-001's hole); the meter-hold reset stays a P5 planned edge (the render-tap fix
+removed the amplification that made its absence bite). Suites: 185 + 80.
 
 ### Second P4 review round — the transition layer had a click in it, and the test that should have caught it stopped thirty samples early (2026-08-01)
 

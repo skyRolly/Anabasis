@@ -69,6 +69,8 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     limiter.prepare (sampleRate, delaySamples * maxN);   // wedge sized for 16x
     dryMeter.prepare (sampleRate);
     wetMeter.prepare (sampleRate);
+    outMeter.prepare (sampleRate);
+    outTp.prepare();
     adaptiveEngine.prepare (sampleRate, maxBlock);
     monitorGain.reset (sampleRate, 0.200);
     deltaStep = bypassStep;                  // same ~10 ms always-running fade
@@ -137,6 +139,9 @@ void AnabasisEngine::reset() noexcept
     duckAskedWhileOut = false;
     dryMeter.reset();
     wetMeter.reset();
+    outMeter.reset();
+    outTp.reset();
+    renderTpMaxCall = renderPeakCall = 0.0f;
     adaptiveEngine.reset();
     compMeasureDb = 0.0f;
     monitorGain.setCurrentAndTargetValue (1.0f);
@@ -359,7 +364,9 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
 
     // ---- chunked processing: oversize host blocks degrade to extra chunk
     //      overhead, never to unprocessed audio -----------------------------
-    grMinThisCall = 1.0f;
+    grMinThisCall   = 1.0f;
+    renderTpMaxCall = 0.0f;
+    renderPeakCall  = 0.0f;
     for (int start = 0; start < totalSamples; start += maxBlock)
         processChunk (buffer, start, juce::jmin (maxBlock, totalSamples - start),
                       p, eqPre, eqPost);
@@ -542,6 +549,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         const float monGainNow = monitorGain.getNextValue();
         float monFrameDry[kMaxChannels] = {};
         float monFrameWet[kMaxChannels] = {};
+        float renderFrame[kMaxChannels] = {};
 
         for (int ch = 0; ch < nCh; ++ch)
         {
@@ -608,6 +616,18 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             else if (deltaMix > 0.0f)  wetLeg = processed
                                               + ((dryForDelta - processed) - processed) * deltaMix;
 
+            // §2.9 RENDER tap: the bypass-mixed programme path with NO delta
+            // substitution and NO monitor gain — what an offline render emits
+            // (both monitor functions are inert offline, invariant 10). The
+            // output meters read THIS, so auditioning Delta or Comp cannot
+            // bend the LUFS/dBTP readings or poison the session-cumulative
+            // integrated figure and dBTP hold.
+            float render;
+            if (bypassMix <= 0.0f)      render = processed;                     // exact endpoint
+            else if (bypassMix >= 1.0f) render = delayedDry;                    // exact endpoint
+            else                        render = processed + (delayedDry - processed) * bypassMix;
+            renderFrame[ch] = std::isfinite (render) ? render : 0.0f;
+
             float out;
             if (bypassMix <= 0.0f)      out = wetLeg;                           // exact endpoint
             else if (bypassMix >= 1.0f) out = delayedDry;                       // exact endpoint
@@ -628,6 +648,16 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         dryMeter.processFrame (monFrameDry, nCh);
         wetMeter.processFrame (monFrameWet, nCh);
         adaptiveEngine.pushFrame (monFrameDry, nCh);
+        outMeter.processFrame (renderFrame, nCh);
+        {
+            float tp[kMaxChannels] = {};
+            outTp.processFrame (renderFrame, nCh, tp);
+            for (int ch = 0; ch < nCh; ++ch)
+            {
+                renderTpMaxCall = juce::jmax (renderTpMaxCall, tp[ch]);
+                renderPeakCall  = juce::jmax (renderPeakCall, std::abs (renderFrame[ch]));
+            }
+        }
         if (++dryReadPos >= dryRingSize)
             dryReadPos = 0;
     }

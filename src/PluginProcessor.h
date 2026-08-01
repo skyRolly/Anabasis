@@ -131,8 +131,9 @@ public:
     { return const_cast<AnabasisAudioProcessor*> (this)->engine.adaptiveForWrapper(); }
 
 private:
-    anabasis::LoudnessMeter     outputMeter;      // audio-thread state
-    anabasis::TruePeakEstimator tpMeter;          // audio-thread state
+    // The output LUFS/TP meters live in the ENGINE (its §2.9 render tap) —
+    // only the engine sees the sample before the monitor-only stages touch
+    // it. The wrapper keeps the session max-hold and the publish atomics.
     anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes
     float dbTpMaxHold = -144.0f;                  // audio-thread session max
     std::atomic<float> pubLufsM { anabasis::LoudnessMeter::kSilentLufs },

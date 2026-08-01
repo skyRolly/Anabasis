@@ -2,6 +2,7 @@
 
 #include "TruePeak.h"
 #include <juce_core/juce_core.h>   // the ownership guard macro (CODE_STYLE §Structure)
+#include <juce_audio_basics/juce_audio_basics.h>   // SmoothedValue (the three control glides)
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -61,15 +62,23 @@ public:
     {
         sr = sampleRate;
         maxWindow = maxWindowSamples;
-        // W+1 window entries plus one spare slot so head==tail stays "empty".
+        // W+1 window entries, one slot burned so head==tail stays "empty",
+        // and one spare: at windowSamples == maxWindow the retained set fills
+        // the structure EXACTLY (the same zero-slack coincidence the dry ring
+        // had), held only by the processSample clamp. The spare turns a
+        // future clamp mistake into a wrong window instead of a corrupted
+        // wedge.
         for (int ch = 0; ch < kMaxChannels; ++ch)
         {
-            wedgeValues[ch].assign ((size_t) maxWindowSamples + 2, 0.0f);
-            wedgeIndices[ch].assign ((size_t) maxWindowSamples + 2, 0);
+            wedgeValues[ch].assign ((size_t) maxWindowSamples + 3, 0.0f);
+            wedgeIndices[ch].assign ((size_t) maxWindowSamples + 3, 0);
         }
         truePeak.prepare();
         aRelFast = onePoleMs (kAutoFastMs);
         aRelSlow = onePoleMs (kAutoSlowMs);
+        linkSm.reset (sampleRate, 0.020);
+        preserveSm.reset (sampleRate, 0.020);
+        hpfFreqSm.reset (sampleRate, 0.020);
         reset();
     }
 
@@ -84,6 +93,7 @@ public:
             hpfZ1[ch] = hpfZ2[ch] = 0.0f;
         }
         truePeak.reset();
+        primed = false;   // the next block's setters adopt without a glide
     }
 
     // Window-only reset, for the engine's invariant-9 self-heal MID-STREAM.
@@ -114,18 +124,39 @@ public:
         sr = newRate;
         aRelFast = onePoleMs (kAutoFastMs);
         aRelSlow = onePoleMs (kAutoSlowMs);
+        // reset() SNAPS each smoother to its target — a latch is a silent-
+        // bottom event (the engine ducks around it), so no glide is owed.
+        linkSm.reset (newRate, 0.020);
+        preserveSm.reset (newRate, 0.020);
+        hpfFreqSm.reset (newRate, 0.020);
+        recomputeHpf();
     }
 
-    // -- per-block settings (rates and modes, not levels — the same rule as
-    //    the compressor's time constants: a boundary change cannot step the
-    //    output because the envelope is the smoother) ------------------------
+    // -- per-block settings ---------------------------------------------------
+    // Release/style/autoRelease are rates and modes: a boundary change cannot
+    // step the output because the envelope is the smoother. Link, transient
+    // preserve and the detector HPF are NOT in that class — link blends the
+    // detector LEVEL directly, preserve selects the attack alpha, and the HPF
+    // moves the detector spectrum — so those three glide internally (20 ms at
+    // the engaged rate, invariant 8), primed on the first block like the
+    // engine's own smoothers.
     void setRelease (float releaseMs) noexcept
     { aRelManual = onePoleMs (juce::jmax (1.0f, releaseMs)); }
 
     void setAutoRelease (bool b) noexcept        { autoRelease = b; }
     void setStyle (int s) noexcept               { style = juce::jlimit (0, 2, s); }
-    void setTransientPreserve (float t) noexcept { preserve = juce::jlimit (0.0f, 1.0f, t); }
-    void setStereoLink (float l) noexcept        { link = juce::jlimit (0.0f, 1.0f, l); }
+    void setTransientPreserve (float t) noexcept
+    {
+        t = juce::jlimit (0.0f, 1.0f, t);
+        if (primed) preserveSm.setTargetValue (t);
+        else        preserveSm.setCurrentAndTargetValue (t);
+    }
+    void setStereoLink (float l) noexcept
+    {
+        l = juce::jlimit (0.0f, 1.0f, l);
+        if (primed) linkSm.setTargetValue (l);
+        else        linkSm.setCurrentAndTargetValue (l);
+    }
     void setTruePeakMode (bool b) noexcept
     {
         // The estimator's 12-tap history only advances while the mode is ON
@@ -140,41 +171,36 @@ public:
 
     void setDetectorHpf (float freqHz) noexcept
     {
-        // Range floor = OFF (exact skip), same semantic as the compressor's
-        // detector after this change; a 2nd-order 20 Hz HPF at the floor
-        // would perturb the default detector for no musical effect and cost
-        // the wedge tests their exactness.
-        const bool wasOn = hpfOn;
-        hpfOn = freqHz > 20.001f;
-        if (! hpfOn)
+        // Smoothed like the compressor's copy of the SAME scHpfFreq value:
+        // the coefficients follow the glide per sample in processSample.
+        if (primed)
+            hpfFreqSm.setTargetValue (freqHz);
+        else
         {
-            // Off means off: leaving the biquad's state behind would have an
-            // on→off→on cycle (the adaptive scHpf trim can drive one) re-enter
-            // the filter with a stale delay line and ring on the first samples.
-            if (wasOn)
-                for (int ch = 0; ch < kMaxChannels; ++ch)
-                    hpfZ1[ch] = hpfZ2[ch] = 0.0f;
-            return;
+            hpfFreqSm.setCurrentAndTargetValue (freqHz);
+            recomputeHpf();
         }
-        const float f    = juce::jlimit (20.0f, (float) (0.49 * sr), freqHz);
-        const float w0   = juce::MathConstants<float>::twoPi * f / (float) sr;
-        const float cosw = std::cos (w0);
-        const float alpha = std::sin (w0) / (2.0f * 0.7071068f);
-        const float inv  = 1.0f / (1.0f + alpha);
-        hb0 = ((1.0f + cosw) * 0.5f) * inv;
-        hb1 = (-(1.0f + cosw)) * inv;
-        hb2 = hb0;
-        ha1 = (-2.0f * cosw) * inv;
-        ha2 = (1.0f - alpha) * inv;
     }
 
     // -- per sample: the tapped FRAME in, per-channel gains out --------------
     void processSample (const float* taps, int numChannels, int windowSamples,
                         float ceilingLinear, float* gainsOut) noexcept
     {
+        primed = true;   // from here on, setter changes glide instead of adopting
         const int nCh = juce::jmin (numChannels, kMaxChannels);
         if (windowSamples < 1)          windowSamples = 1;
         if (windowSamples > maxWindow)  windowSamples = maxWindow;
+
+        // Advance the control glides one step (the engaged rate — OS rate
+        // when a factor is latched). The HPF re-derives its coefficients per
+        // step while gliding, exactly as MasteringComp does with this value.
+        const float link     = linkSm.getNextValue();
+        const float preserve = preserveSm.getNextValue();
+        if (hpfFreqSm.isSmoothing())
+        {
+            hpfFreqSm.getNextValue();
+            recomputeHpf();
+        }
 
         // Detector: HPF (optional) → magnitude (sample or true peak).
         float mags[kMaxChannels] = {};
@@ -209,7 +235,12 @@ public:
         const float effPres  = juce::jlimit (0.0f, 1.0f,
                                              preserve * (style == 1 ? 1.5f : 1.0f));
         // preserve² keeps the control gentle at the bottom of its range;
-        // 1.5 ms at full — the poke-through window the clamp absorbs.
+        // 1.5 ms at full — the poke-through window the clamp absorbs. The
+        // map is DELIBERATELY discontinuous at exactly 0 (instant attack vs
+        // ~0.05 ms for any positive value): the wedge-contract tests rely on
+        // the exactness at 0, and the smoothed `preserve` only ever LANDS on
+        // 0 at the end of a glide, so the jump is between a one-sample and a
+        // ~2.4-sample attack — recorded, not chased.
         const float aAtk = effPres <= 0.0f ? 1.0f
                           : onePoleMs (0.05f + 1.45f * effPres * effPres);
 
@@ -269,6 +300,37 @@ private:
     float onePoleMs (float ms) const noexcept
     { return 1.0f - std::exp (-1.0f / (float) (ms * 0.001 * sr)); }
 
+    void recomputeHpf() noexcept
+    {
+        // Range floor = OFF (exact skip), same semantic as the compressor's
+        // detector: a 2nd-order 20 Hz HPF at the floor would perturb the
+        // default detector for no musical effect and cost the wedge tests
+        // their exactness.
+        const float freqHz = hpfFreqSm.getCurrentValue();
+        const bool wasOn = hpfOn;
+        hpfOn = freqHz > 20.001f;
+        if (! hpfOn)
+        {
+            // Off means off: leaving the biquad's state behind would have an
+            // on→off→on cycle (the adaptive scHpf trim can drive one) re-enter
+            // the filter with a stale delay line and ring on the first samples.
+            if (wasOn)
+                for (int ch = 0; ch < kMaxChannels; ++ch)
+                    hpfZ1[ch] = hpfZ2[ch] = 0.0f;
+            return;
+        }
+        const float f    = juce::jlimit (20.0f, (float) (0.49 * sr), freqHz);
+        const float w0   = juce::MathConstants<float>::twoPi * f / (float) sr;
+        const float cosw = std::cos (w0);
+        const float alpha = std::sin (w0) / (2.0f * 0.7071068f);
+        const float inv  = 1.0f / (1.0f + alpha);
+        hb0 = ((1.0f + cosw) * 0.5f) * inv;
+        hb1 = (-(1.0f + cosw)) * inv;
+        hb2 = hb0;
+        ha1 = (-2.0f * cosw) * inv;
+        ha2 = (1.0f - alpha) * inv;
+    }
+
     static constexpr float kAutoFastMs = 40.0f, kAutoSlowMs = 600.0f;
 
     std::vector<float>   wedgeValues[kMaxChannels];
@@ -289,7 +351,8 @@ private:
     double sr           = 48000.0;
     int    maxWindow    = 480;
     float  aRelManual   = 0.01f, aRelFast = 0.01f, aRelSlow = 0.001f;
-    float  preserve     = 0.0f, link = 1.0f;
+    juce::SmoothedValue<float> linkSm { 1.0f }, preserveSm { 0.0f }, hpfFreqSm { 20.0f };
+    bool   primed       = false;
     int    style        = 0;
     bool   autoRelease  = false, tpMode = false;
 

@@ -8,6 +8,7 @@
 #include "LookaheadLimiter.h"
 #include "CeilingClamp.h"
 #include "LoudnessMeter.h"
+#include "TruePeak.h"
 #include "AdaptiveEngine.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
@@ -134,6 +135,22 @@ public:
     float lastBlockMinGain() const noexcept
     { return grMinLinear.load (std::memory_order_relaxed); }
 
+    // -- §2.9 output metering: the RENDER tap ---------------------------------
+    // Fed per sample from the bypass-mixed programme path BEFORE the two
+    // monitor-only stages (§2.7 delta substitution and loudness-comp gain).
+    // The buffer handed back to the host is the LISTENING path; metering that
+    // buffer made the LUFS/dBTP readings follow whatever the user was
+    // auditioning — Delta showed the difference signal's loudness, Comp the
+    // attenuated level — and, because integrated LUFS and the dBTP hold are
+    // session-cumulative, a few seconds of either permanently biased both.
+    // With the monitor functions off the render and listening paths are
+    // bit-identical (exact endpoints), so these read the same as buffer
+    // metering did. Same-thread reads: the wrapper calls these right after
+    // process() on the audio thread, so no atomics are needed.
+    const LoudnessMeter& outputLoudness() const noexcept { return outMeter; }
+    float lastRenderTpMax() const noexcept { return renderTpMaxCall; }   // linear
+    float lastRenderPeak() const noexcept  { return renderPeakCall; }    // plain |x| max
+
 private:
     void latchOsConfig (int factorIdx, int phaseIdx) noexcept;
     void processChunk (juce::AudioBuffer<float>& buffer, int start, int num,
@@ -229,6 +246,13 @@ private:
     // bypass). Delta = (delay-aligned dry − processed) behind its own
     // always-running ~10 ms crossfade.
     LoudnessMeter dryMeter, wetMeter;
+
+    // §2.9 render-tap meters (see the public accessors for why these live in
+    // the engine and not the wrapper: only the engine sees the sample before
+    // the monitor-only stages touch it).
+    LoudnessMeter     outMeter;
+    TruePeakEstimator outTp;
+    float renderTpMaxCall = 0.0f, renderPeakCall = 0.0f;
 public:
     // §5.4 feature/trim readouts for the Advanced-view overlay and tests.
     const AdaptiveEngine& adaptive() const noexcept { return adaptiveEngine; }
