@@ -70,7 +70,22 @@ rounding). First-order noise shaping moves quantisation-error energy upward by *
 (top-quarter vs bottom-quarter band energy ratio, against −0.1 dB unshaped) —
 `testDitherModes`. Off is a true no-op, proven by the bit-exact null.
 
+## LUFS accuracy (invariant 11, BS.1770-4) — 2026-08-01, P3
+
+Synthesised calibration vectors (`testLufsCalibration`/`testLufsGating`, exact-frequency sines):
+
+| Vector | Reads | Bound |
+|---|---|---|
+| 0 dBFS 997 Hz, ONE channel (the standard's compliance sentence) | −3.01 LKFS | ≤ 0.1 LU, 48 kHz AND 44.1 kHz |
+| Same tone, both channels | +3.01 higher | ≤ 0.1 LU |
+| −20 dBFS stereo (linearity) | −20.0 LUFS | ≤ 0.1 LU |
+| −20 programme + trailing silence | −20.0 (absolute gate) | ≤ 0.15 LU |
+| −20 programme + −45 tail | −20.0 (relative gate; ungated would read ≈ −26) | ≤ 0.3 LU |
+| −20 + −38 band + 120 s silence | −20.0 (absolute gate keeps silence out of the relative threshold's base; without it ≈ −24.7) | ≤ 0.3 LU |
+
+The file-based EBU R128 vector sweep (seq-3341 et al.) needs the vector FILES and lands with the
+P3 meter publication work.
+
 ## Not yet measured (do not cite)
 
-CPU/performance budget (P2/P6, needs a recorded machine spec), LUFS accuracy against the EBU R128
-vectors (P3), the dBTP meter against the BS.1770 vector set (P3), listening results (P6).
+CPU/performance budget (P2/P6, needs a recorded machine spec), the file-based EBU R128 vector sweep, the dBTP meter against the BS.1770 vector set (P3), listening results (P6).

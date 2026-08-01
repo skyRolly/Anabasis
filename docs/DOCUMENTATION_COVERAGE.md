@@ -9,6 +9,25 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P3 opens — the LUFS meter, and a gate half that only mutation could see (2026-08-01)
+
+**`LoudnessMeter`** (src/dsp/LoudnessMeter.h): BS.1770-4 K-weighting (the ADR-0009 pre-warped
+biquad design from the sibling's LoudnessMatch, provenance in the header), 100 ms sub-blocks →
+400 ms gating blocks at 75 % overlap, M/S off the sub-block ring, INTEGRATED through the
+fixed-size histogram accumulator (751 × 0.1 LU bins — REALTIME_AUDIO_POLICY's named consequence:
+never a growing container). Calibrated against the standard's own compliance sentence — 0 dBFS
+997 Hz in one channel reads −3.01 LKFS — at 48 AND 44.1 kHz, ≤ 0.1 LU.
+
+**The audit-worthy find: the absolute gate was UNTESTABLE with the obvious stimuli.** The
+dropped-absolute-gate mutant survived both gating tests, because silence lands at the histogram
+floor, below any plausible relative threshold — the relative gate masks the absolute one
+completely on programme-plus-silence material. The absolute gate's only distinct observable is
+its effect on the pass-1 mean that SETS the relative threshold; the killing stimulus needed a
+band placed between the correct threshold (−34.8) and the silence-dragged one (−41.7): 10 s at
+−20 + 20 s at −38 + 120 s of silence reads −20.0 correctly and ≈ −24.7 on the mutant. Fifth
+stimulus-calibration case this project has recorded, and the sharpest: the redundancy between
+two protection mechanisms is itself what hides the loss of one.
+
 ### P2, transition-layer commit — the §2.8 duck, and KI-001 becomes INC-001 (2026-08-01)
 
 **The duck exists**: asymmetric raised cosine (~6 ms out / ~28 ms in), advancing per base sample,

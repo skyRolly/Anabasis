@@ -177,7 +177,7 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
 | 9 no NaN/Inf/denormals | `testNoBadSamples` | **live (P1)** |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender` | TODO (P3) |
-| 11 metering accuracy | EBU R128 vectors + ISP signals | TODO (P3) |
+| 11 metering accuracy | `testLufsCalibration`, `testLufsGating`, `testLufsWindows` | **partial (P3)** — LUFS M/S/I live against the standard's synthesised calibration points (997 Hz compliance vector −3.01 LKFS ≤ 0.1 LU at 48/44.1 kHz; both gate halves isolated by stimulus, incl. the silence-in-the-threshold-base case only mutation testing surfaced); the dBTP meter and the file-based EBU vector sweep remain |
 | 12 dither placement/default | `testDitherModes` + `testNullWithDefaults` | **live (P2)** — Off default is a true no-op (the bit-exact null proves it); 16-bit lands on the 2⁻¹⁵ grid with a randomised LSB; shaping tilts the error spectrum +12.6 dB toward the top of the band; placement after the clamp, processed path only |
 | 13 format-agnostic core | build-level: `AnabasisDSP` links without the wrapper | **live (P1)** — the `AnabasisTests` target compiles the core with no wrapper and no GUI |
 

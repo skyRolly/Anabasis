@@ -10,6 +10,7 @@
 // ============================================================================
 
 #include <AnabasisEngine.h>
+#include <LoudnessMeter.h>
 #include <Latency.h>
 #include <juce_dsp/juce_dsp.h>
 #include <cstdio>
@@ -1659,6 +1660,145 @@ static void testDuckOnWrapperRequest()
 }
 
 // ---------------------------------------------------------------------------
+// inv 11 (P3): LUFS against the standard's own calibration points, synthesised
+// exactly as BS.1770-4 defines them. The compliance sentence in the standard:
+// "if a 0 dB FS 997 Hz sine wave is applied to the left, centre, or right
+// channel input, the indicated loudness will equal −3.01 LKFS" — that single
+// vector pins the K-filter gain, the −0.691 offset and the channel weighting
+// at once. Contract <= 0.1 LU (DESIGN §2.9).
+static float lufsOfSine (float freqHz, float ampL, float ampR, double seconds,
+                         double sr, int which /*0=M 1=S 2=I*/)
+{
+    anabasis::LoudnessMeter m;
+    m.prepare (sr);
+    const int total = (int) (seconds * sr);
+    for (int n = 0; n < total; ++n)
+    {
+        const float s = std::sin (2.0f * juce::MathConstants<float>::pi
+                                  * freqHz * (float) n / (float) sr);
+        const float fr[2] = { ampL * s, ampR * s };
+        m.processFrame (fr, 2);
+    }
+    return which == 0 ? m.momentaryLufs() : which == 1 ? m.shortTermLufs()
+                                                       : m.integratedLufs();
+}
+
+static void testLufsCalibration()
+{
+    const double sr = 48000.0;
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+    check (near (lufsOfSine (997.0f, 1.0f, 0.0f, 5.0, sr, 2), -3.01f, 0.1f),
+           "lufs: 0 dBFS 997 Hz in ONE channel reads -3.01 LKFS (the standard's compliance point)");
+    check (near (lufsOfSine (997.0f, 1.0f, 1.0f, 5.0, sr, 2), 0.0f, 0.1f),
+           "lufs: the same tone in BOTH channels reads +3.01 higher");
+    check (near (lufsOfSine (997.0f, 0.1f, 0.1f, 5.0, sr, 2), -20.0f, 0.1f),
+           "lufs: -20 dBFS stereo tone reads -20 LUFS (linearity)");
+    // K-weighting shape: 100 Hz sits ~ -0.3 dB below 1 kHz on the RLB slope's
+    // tail, 10 kHz ~ +3.6 dB above it on the head shelf — assert the SIGNS
+    // and rough magnitudes so a swapped stage or missing shelf fails.
+    const float at100 = lufsOfSine (100.0f, 1.0f, 1.0f, 5.0, sr, 2);
+    const float at10k = lufsOfSine (10000.0f, 1.0f, 1.0f, 5.0, sr, 2);
+    check (at100 < -0.5f && at100 > -6.0f, "lufs: 100 Hz reads below 1 kHz (RLB high-pass tail)");
+    check (at10k > 3.0f  && at10k < 5.0f,  "lufs: 10 kHz reads ~+4 dB above (head shelf)");
+
+    // 44.1 kHz: the pre-warped design holds off the 48 kHz reference rate.
+    check (near (lufsOfSine (997.0f, 1.0f, 0.0f, 5.0, 44100.0, 2), -3.01f, 0.1f),
+           "lufs: the compliance point holds at 44.1 kHz (pre-warped design)");
+}
+
+// ---------------------------------------------------------------------------
+// The two-stage gate, each half isolated:
+// - absolute: trailing silence must not drag the integrated figure down;
+// - relative: a long quiet tail ABOVE -70 but >10 LU below the programme is
+//   gated out — ungated it would read ~-26, gated it stays at the programme.
+static void testLufsGating()
+{
+    const double sr = 48000.0;
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+    {   // absolute gate: 5 s at -20 then 10 s of silence
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (15.0 * sr); ++n)
+        {
+            const float a = n < (int) (5.0 * sr) ? 0.1f : 0.0f;
+            const float s = a * std::sin (2.0f * juce::MathConstants<float>::pi
+                                          * 997.0f * (float) n / (float) sr);
+            const float fr[2] = { s, s };
+            m.processFrame (fr, 2);
+        }
+        check (near (m.integratedLufs(), -20.0f, 0.15f),
+               "gating: trailing silence is absolutely gated — integrated holds the programme");
+    }
+    {   // relative gate: 10 s at -20 then 30 s at -45 (above absolute, >10 LU below)
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (40.0 * sr); ++n)
+        {
+            const float a = n < (int) (10.0 * sr) ? 0.1f : 0.0056234f;   // -45 dB
+            const float s = a * std::sin (2.0f * juce::MathConstants<float>::pi
+                                          * 997.0f * (float) n / (float) sr);
+            const float fr[2] = { s, s };
+            m.processFrame (fr, 2);
+        }
+        // Ungated mean would be ~ -26; the relative gate holds ~ -20.
+        check (near (m.integratedLufs(), -20.0f, 0.3f),
+               "gating: a -45 LUFS tail is relatively gated out of the integrated figure");
+    }
+    {   // The ABSOLUTE gate's distinct job: keeping silence out of the
+        // relative threshold's BASE. 10 s at -20 + 20 s at -38 + 120 s of
+        // silence. Correct: silence is absolutely gated, pass-1 mean ~ -24.8,
+        // threshold -34.8, the -38 band is gated -> integrated -20. With the
+        // absolute gate removed, ~1200 silence blocks drag the pass-1 mean to
+        // ~ -31.7, the threshold to ~ -41.7, the -38 band survives and the
+        // integrated figure reads ~ -24.7. (Found by mutation: with the first
+        // two stimuli alone, the relative gate masked an absolute-gate
+        // removal completely — silence sits below ANY plausible relative
+        // threshold, so only its effect on the threshold's base is
+        // observable.)
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (150.0 * sr); ++n)
+        {
+            const double t = n / sr;
+            const float a = t < 10.0 ? 0.1f : (t < 30.0 ? 0.0126f : 0.0f);
+            const float s = a * std::sin (2.0f * juce::MathConstants<float>::pi
+                                          * 997.0f * (float) n / (float) sr);
+            const float fr[2] = { s, s };
+            m.processFrame (fr, 2);
+        }
+        check (near (m.integratedLufs(), -20.0f, 0.3f),
+               "gating: silence never enters the relative threshold's base (absolute gate)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Window semantics: M is the newest 400 ms, S the last 3 s — after a level
+// step, M has fully adopted by 500 ms while S still remembers the old level.
+static void testLufsWindows()
+{
+    const double sr = 48000.0;
+    anabasis::LoudnessMeter m;
+    m.prepare (sr);
+    auto run = [&] (float amp, double seconds)
+    {
+        for (int n = 0; n < (int) (seconds * sr); ++n)
+        {
+            const float s = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 997.0f * (float) n / (float) sr);
+            const float fr[2] = { s, s };
+            m.processFrame (fr, 2);
+        }
+    };
+    run (0.01f, 4.0);                       // -40 LUFS for 4 s
+    run (0.1f, 0.5);                        // step to -20, half a second
+    const float mNow = m.momentaryLufs(), sNow = m.shortTermLufs();
+    check (std::abs (mNow - (-20.0f)) < 0.3f, "windows: momentary adopts a step within 500 ms");
+    check (sNow < -23.0f && sNow > -40.0f,    "windows: short-term still remembers the old level");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -1935,6 +2075,9 @@ int main()
     testDuckWrapsDiscreteRewires();
     testDuckWrapsOsLatch();
     testDuckOnWrapperRequest();
+    testLufsCalibration();
+    testLufsGating();
+    testLufsWindows();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
