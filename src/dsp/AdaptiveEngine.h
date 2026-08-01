@@ -109,6 +109,25 @@ public:
         onsetHold = 0;
         blockPeak = 0.0f; blockMs = 0.0; blockLo = 0.0; blockHi = 0.0;
         blockOnsets = 0; blockFill = 0;
+
+        // An IN-FLIGHT Learn pass does not survive a reset. A reset means a
+        // sample-rate change or a host stop — a discontinuity in the very
+        // material the pass is measuring — and the features themselves are
+        // zeroed two lines above, so continuing to accumulate would commit a
+        // reference mixed from before and after it, plus a stretch of
+        // re-converging onset rate. The pass is CANCELLED rather than paused:
+        // `learnBlocks == 0` makes the next commit a no-op, which is the
+        // already-documented empty-pass case (nothing to commit leaves the
+        // existing reference alone).
+        //
+        // NOT cleared: `learned`, `refOnsetRate`, `refTiltDb`. Those are
+        // session state — the answer a previous commit or a session restore
+        // established — and a rate change is not a reason to forget it.
+        learnActive.store (false, std::memory_order_release);
+        learnOnsSum  = 0.0;
+        learnTiltSum = 0.0;
+        learnBlocks  = 0;
+
         publishTrims();
         pubCrestDb.store (0.0f, std::memory_order_relaxed);
         pubTiltDb.store (0.0f, std::memory_order_relaxed);

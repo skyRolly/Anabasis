@@ -6,7 +6,8 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **ninth review round of 2026-08-01** (PR #5): the direct-adopt branch
+**Last updated:** for the **tenth review round of 2026-08-01** (PR #5): `AdaptiveEngine::reset()`
+cancels an in-flight Learn pass. Previous round: (PR #5): the direct-adopt branch
 now clears EQ state on a position change (the offline-entry edge made that branch reachable
 mid-stream), the wrapper's staged mirror is atomic, and two reset-lifecycle carry-overs are
 closed. Previous round: (PR #5): the previous round's
@@ -24,6 +25,32 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Tenth review round — a reset that cleared the features but not the pass measuring them (2026-08-01)
+
+One item, fixed. `AdaptiveEngine::reset()` zeroed the trims, the features and the block
+accumulators but left `learnActive`, `learnOnsSum`, `learnTiltSum` and `learnBlocks` standing.
+`AnabasisEngine::reset()` — and therefore `prepare()` — calls it, so a sample-rate change or host
+stop **during** a Learn pass kept accumulating into the same sums across the discontinuity while
+`onsetRate` restarted from zero. The committed reference was then a mix of pre- and post-reset
+statistics plus a stretch of re-converging onset rate: a wrong answer that looks like a
+successful commit.
+
+The pass is now **cancelled**, not paused: `learnBlocks == 0` makes the next commit a no-op, which
+is the already-documented empty-pass path, so the reference the session already had survives
+untouched. `learned`, `refOnsetRate` and `refTiltDb` are deliberately NOT cleared — they are the
+answer a previous commit or a session restore established, and a rate change is not a reason to
+forget it. The reviewer's framing was right that this needed deciding rather than defaulting:
+"clear everything" would have discarded session state, "clear nothing" is the defect.
+
+Test uses a steady sine — no transients, so a pass that commits lands the onset reference near 0
+against the 4.0 factory default, making "did the cancelled pass commit?" a disjoint question
+rather than a tolerance one. Mutation-verified: removing the four lines fails both checks.
+
+Not touched, per the round's scope: the bypass/dither grid question, the published meters' reset
+lifecycle, a staged-mirror helper refactor, and the zero-length-block guard.
+
+Suites: 195 + 87.
 
 ### Ninth review round — the second-order consequence of making a branch reachable (2026-08-01)
 

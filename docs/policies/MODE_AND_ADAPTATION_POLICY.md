@@ -139,7 +139,11 @@ future mapping) and the bounded trim vector
 hysteresis deadband, applied to the per-block effective settings inside `AnabasisEngine` — never
 parameter writes, never lookahead or the OS factor (inv 4 holds structurally: the class emits
 only the four values). The invariant-7 null survives adaptation BY CONSTRUCTION: every trim is
-inert while its host stage is inert, and the bit-exact null test runs with adaptation live.
+inert while its host stage is inert, and the bit-exact null test runs with adaptation live. A
+`reset()` (sample-rate change, host stop) **cancels an in-flight Learn pass** — the features it
+was measuring are zeroed by the same call, so a commit spanning the discontinuity would mix two
+statistics; `learned` and the reference targets survive, being session state, and the cancelled
+pass leaves them alone (`testResetCancelsAnInFlightLearnPass`).
 
 Evidence (all mutation-verified):
 - inv 2: `testModeSwitchIsSoundNeutral` (state suite) — toggling Simple⇄Advanced mid-stream, at a

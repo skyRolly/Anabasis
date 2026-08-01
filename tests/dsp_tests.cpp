@@ -2694,6 +2694,53 @@ static void testAdaptationConvergesAndHolds()
 // MODE inv 3's Freeze clause: freeze latches the trim vector exactly — the
 // four published values do not move by a single ulp across a PROGRAMME
 // CHANGE that would otherwise re-slew them; unfreezing lets them move again.
+// ---------------------------------------------------------------------------
+// §5.4 Learn vs the reset lifecycle: an IN-FLIGHT pass does not survive a
+// reset (a sample-rate change or host stop is a discontinuity in the material
+// the pass is measuring, and the features are zeroed by the same call), while
+// the session reference a previous commit established DOES.
+//
+// The stimulus is a steady sine: no transients, so a pass that commits lands
+// the onset reference near 0 — far from the 4.0 factory default, which is what
+// makes "did the cancelled pass commit?" a disjoint question rather than a
+// tolerance one.
+static void testResetCancelsAnInFlightLearnPass()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode = false;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto feed = [&] (int blocks, int t0)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 220.0f * (float) (t0 + b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+        }
+    };
+
+    const float ref0 = engine.adaptiveForWrapper().publishedRefOnset();
+    engine.requestLearnStart();
+    feed (40, 0);                      // ~0.4 s accumulated into the pass
+    engine.reset();                    // the discontinuity, mid-pass
+    feed (40, 40 * 512);
+    engine.requestLearnStop();
+    feed (2, 80 * 512);                // the commit is consumed at a block top
+
+    check (! engine.adaptiveForWrapper().hasLearned(),
+           "learnReset: a pass interrupted by reset() does not commit");
+    check (juce::approximatelyEqual (engine.adaptiveForWrapper().publishedRefOnset(), ref0),
+           "learnReset: ...so the reference the session already had is untouched");
+}
+
 static void testFreezeLatchesTrims()
 {
     const double sr = 48000.0;
@@ -3069,6 +3116,7 @@ int main()
     testLoudnessCompensationDoesNotAlterRender();
     testDeltaMonitor();
     testAdaptationConvergesAndHolds();
+    testResetCancelsAnInFlightLearnPass();
     testFreezeLatchesTrims();
     testTrimBounds();
     testNoBadSamples();
