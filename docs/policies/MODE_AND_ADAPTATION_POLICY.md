@@ -131,7 +131,26 @@ of record.
 
 ## Current implementation
 
-**TODO (no code yet).** Populated at P4 with evidence citations.
+**P4 core (2026-08-01).** `src/dsp/AdaptiveEngine.h` — audio-thread feature extraction (crest,
+spectral tilt, transient density, silence-gated at ~−70 dBFS) and the bounded trim vector
+(release ±1 octave, stereo link ±0.2, scHpf 0…+30 Hz, dynTilt 0…+0.5 dB), slewed at ~2 s with a
+hysteresis deadband, applied to the per-block effective settings inside `AnabasisEngine` — never
+parameter writes, never lookahead or the OS factor (inv 4 holds structurally: the class emits
+only the four values). The invariant-7 null survives adaptation BY CONSTRUCTION: every trim is
+inert while its host stage is inert, and the bit-exact null test runs with adaptation live.
+
+Evidence (all mutation-verified):
+- inv 2: `testModeSwitchIsSoundNeutral` (state suite) — toggling Simple⇄Advanced mid-stream, at a
+  macro position and after a manual detach-causing edit, is sample-identical to not toggling.
+- inv 3: `testAdaptationConvergesAndHolds` (converge, then hold with < 0.5 dB residual output
+  modulation on steady programme) and `testFreezeLatchesTrims` (frozen vector does not move by an
+  ulp under a full programme change; unfreezing re-enables motion).
+- inv 4: `testTrimBounds` (pathological programme; published vector inside every bound).
+- inv 1/6: `testMacroDefaultIsFixedPoint`, `testMacroRestoreDoesNotClobber` (P1, still green).
+
+Still owed by P4: **Learn** (accumulate → commit reference targets, `ADAPTIVE` serialization) and
+the frozen-trim RESTORE transport — the latter blocked by **OQ-013** (Hard Stop) until its ADR.
+Trim mapping constants are ⊕ drafts, tuned by ear before v0.1.0 like the §5.5 curves.
 
 ## Enforcement
 

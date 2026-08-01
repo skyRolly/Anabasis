@@ -8,6 +8,7 @@
 #include "LookaheadLimiter.h"
 #include "CeilingClamp.h"
 #include "LoudnessMeter.h"
+#include "AdaptiveEngine.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
@@ -175,6 +176,11 @@ private:
     // bypass). Delta = (delay-aligned dry − processed) behind its own
     // always-running ~10 ms crossfade.
     LoudnessMeter dryMeter, wetMeter;
+public:
+    // §5.4 feature/trim readouts for the Advanced-view overlay and tests.
+    const AdaptiveEngine& adaptive() const noexcept { return adaptiveEngine; }
+private:
+    AdaptiveEngine adaptiveEngine;
     float compMeasureDb = 0.0f;              // frozen on silence
     juce::SmoothedValue<float> monitorGain { 1.0f };
     float deltaMix = 0.0f, deltaStep = 0.0f;

@@ -689,6 +689,57 @@ static void testMeterPublication()
 }
 
 // ---------------------------------------------------------------------------
+// MODE_AND_ADAPTATION_POLICY invariant 2's named guard: switching Simple ⇄
+// Advanced changes NOTHING about the rendered sound — not approximately,
+// sample-identically. Two processors, identical input and settings; one
+// toggles advancedMode repeatedly mid-stream (at macro positions and after a
+// manual Advanced edit), the other never does. Byte-compare the outputs.
+// Structurally the switch cannot reach the DSP (advancedMode is not in the
+// cache order), and this test is what keeps that structural fact true.
+static void testModeSwitchIsSoundNeutral()
+{
+    auto renderWithToggles = [] (bool toggle) -> std::vector<float>
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        // Same non-default context on both: a macro position and a manual
+        // Advanced edit (which detaches limGain from the macro).
+        proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.4f);
+        proc.getMacroEngine().flushPendingMapping();
+        proc.apvts.getParameter (pid::limGain)->setValueNotifyingHost (0.6f);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        std::vector<float> out;
+        for (int b = 0; b < 60; ++b)
+        {
+            if (toggle && b % 7 == 3)
+                proc.apvts.getParameter (pid::advancedMode)
+                    ->setValueNotifyingHost (b % 14 == 3 ? 1.0f : 0.0f);
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 330.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+
+    const auto still = renderWithToggles (false);
+    const auto moved = renderWithToggles (true);
+    bool identical = still.size() == moved.size();
+    for (size_t n = 0; identical && n < still.size(); ++n)
+        if (! juce::exactlyEqual (still[n], moved[n]))
+            identical = false;
+    check (identical, "modeSwitch: Simple/Advanced toggling is sample-identical to not toggling");
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -754,6 +805,7 @@ int main (int argc, char** argv)
         testMacroRestoreDoesNotClobber();
         testAbSwitchRequestsDuck();
         testMeterPublication();
+        testModeSwitchIsSoundNeutral();
         testDrainInsideRestoreIsSuppressed();
         testAbRawExact();
         testFrozenSlotRoundTrip();

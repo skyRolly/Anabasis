@@ -59,6 +59,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Delta toggles now work (KI-002 → POSTMORTEMS INC-002).
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
+- **P4 adaptive engine (core)** — audio-thread feature extraction (crest, tilt, transient
+  density) driving the §5.4 bounded trim vector around release / stereo link / sidechain HPF /
+  dynamic tame, second-scale slew with hysteresis, Freeze latching the vector exactly, and the
+  mode-switch invariant pinned sample-identically (`testModeSwitchIsSoundNeutral`). The trims are
+  engine-internal — the host, automation and undo never see them — and the bit-exact null holds
+  with adaptation live. Learn and the OQ-013-gated frozen-trim restore remain.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

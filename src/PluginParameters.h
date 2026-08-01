@@ -87,13 +87,14 @@ bool isPresetExcludedParam (const juce::String& paramID);
 // ONCE PER BLOCK into the POD snapshot on the audio thread (ADR-0001/0011 —
 // never piecemeal mid-block).
 //
-// 44, not 49: the five macro/view-only parameters (advancedMode, loudness,
-// character, tone, freeze) never reach the engine. The cache order and
+// 45, not 49: the four macro/view-only parameters (advancedMode, loudness,
+// character, tone) never reach the engine — freeze DOES since P4, as the
+// adaptive trim latch. The cache order and
 // toEngine's assignment sequence are coupled POSITIONALLY — inserting one
 // without the other silently shifts every later field — so a static_assert
 // pins the count and `testCachedParamsMapping` pins the field-by-field
 // mapping end to end.
-inline constexpr int kCachedParamCount = 44;
+inline constexpr int kCachedParamCount = 45;
 
 struct CachedParams
 {

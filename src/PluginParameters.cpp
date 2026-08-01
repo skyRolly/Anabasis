@@ -262,6 +262,7 @@ constexpr const char* kCacheOrder[] = {
     pid::eqBell1Freq, pid::eqBell1Gain, pid::eqBell1Q,
     pid::eqBell2Freq, pid::eqBell2Gain, pid::eqBell2Q, pid::eqPosition,
     pid::ceiling, pid::dither, pid::ditherShaping,
+    pid::freeze,
 };
 static_assert (std::size (kCacheOrder) == (size_t) kCachedParamCount,
                "kCacheOrder and CachedParams::raw must stay the same length — the "
@@ -343,4 +344,5 @@ void CachedParams::toEngine (anabasis::EngineParameters& out) const noexcept
     out.ceilingDbTp       = f();
     out.ditherMode        = c();
     out.ditherShaping     = b();
+    out.freeze            = b();
 }

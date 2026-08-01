@@ -58,6 +58,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     limiter.prepare (sampleRate, delaySamples * maxN);   // wedge sized for 16x
     dryMeter.prepare (sampleRate);
     wetMeter.prepare (sampleRate);
+    adaptiveEngine.prepare (sampleRate, maxBlock);
     monitorGain.reset (sampleRate, 0.200);
     deltaStep = bypassStep;                  // same ~10 ms always-running fade
     eq.prepare (sampleRate);
@@ -117,6 +118,7 @@ void AnabasisEngine::reset() noexcept
     duckPhase = 0.0f;
     dryMeter.reset();
     wetMeter.reset();
+    adaptiveEngine.reset();
     compMeasureDb = 0.0f;
     monitorGain.setCurrentAndTargetValue (1.0f);
     deltaMix = deltaTarget ? 1.0f : 0.0f;
@@ -225,16 +227,31 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         windowSamples.setTargetValue (windowTarget);
     }
 
-    limiter.setRelease (juce::jmax (1.0f, p.limReleaseMs));
+    // §5.4 adaptive trims: bounded deltas around the CURRENT values, applied
+    // to the per-block settings only — never parameter writes, never
+    // lookahead or the OS factor (policy inv 4). All four are inert when
+    // their host stages are inert, which is why the bit-exact null test runs
+    // with adaptation LIVE. A ceiling lock is irrelevant here (ceiling is not
+    // a trim member); the §9 lockable set is {ceiling} in v1.
+    {
+        const auto& t = adaptiveEngine.currentTrims();
+        pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f,
+                                              p.limReleaseMs * std::pow (2.0f, t.releaseOctaves));
+        pApplied.stereoLink   = juce::jlimit (0.0f, 1.0f, p.stereoLink + t.stereoLink);
+        pApplied.scHpfFreqHz  = juce::jlimit (20.0f, 300.0f, p.scHpfFreqHz + t.scHpfHz);
+        pApplied.dynTiltDb    = juce::jlimit (0.0f, 2.0f, p.dynTiltDb + t.dynTiltDb);
+    }
+
+    limiter.setRelease (juce::jmax (1.0f, pApplied.limReleaseMs));
     limiter.setAutoRelease (p.limAutoRelease);
     limiter.setStyle (p.limStyle);
     limiter.setTransientPreserve (p.transientPreserve);
-    limiter.setStereoLink (p.stereoLink);
+    limiter.setStereoLink (pApplied.stereoLink);
     // ADR-0003 item 6: at >=4x the region signal is already oversampled enough
     // for inter-sample peaks to be sample-visible - read it directly; below
     // that the tap runs its own 4x estimator (8x effective at 2x).
     limiter.setTruePeakMode (p.truePeakMode && osN < 4);
-    limiter.setDetectorHpf (p.scHpfFreqHz);
+    limiter.setDetectorHpf (pApplied.scHpfFreqHz);
     eq.setTargets (pApplied);
     comp.setPerBlock (pApplied);
     clip.setPerBlock (pApplied);
@@ -272,6 +289,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         processChunk (buffer, start, juce::jmin (maxBlock, totalSamples - start),
                       p, eqPre, eqPost);
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
+    adaptiveEngine.finishBlock (p.freeze);
 }
 
 void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int start,
@@ -522,6 +540,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         }
         dryMeter.processFrame (monFrameDry, nCh);
         wetMeter.processFrame (monFrameWet, nCh);
+        adaptiveEngine.pushFrame (monFrameDry, nCh);
         if (++dryReadPos >= dryRingSize)
             dryReadPos = 0;
     }

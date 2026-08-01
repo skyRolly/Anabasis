@@ -9,6 +9,21 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P4 core — adaptation that provably cannot break the null (2026-08-01)
+
+**`AdaptiveEngine`** (src/dsp/AdaptiveEngine.h): block-rate features of the delay-aligned input
+(crest, spectral tilt via an 800 Hz one-pole split, transient density via a fast/slow envelope
+onset detector with a 50 ms re-arm), silence-gated so a breakdown holds rather than re-slews; the
+four-member trim vector slewed at ~2 s with deadbands, hard-bounded, applied to the per-block
+EFFECTIVE settings only. The load-bearing design fact, stated in the header and proven by the
+suite: **every trim is inert while its host stage is inert**, so the bit-exact null runs with
+adaptation LIVE — no adaptation on/off gate exists to forget. `freeze` now reaches the engine
+(cache slot 45 — an internal cache change, not a surface change; the registry snapshot is
+untouched). Freeze latches the vector exactly (ulp-equality across a programme change, mutation-
+verified), `testModeSwitchIsSoundNeutral` pins invariant 2 sample-identically, and the policy's
+Current-implementation section is populated with the evidence map. OQ-013 still blocks the
+frozen-trim RESTORE; Learn is the remaining P4 item.
+
 ### P3, publication + monitor commit — meters reach the GUI boundary, KI-002 closes (2026-08-01)
 
 **Meter publication**: the wrapper measures the OUTPUT per block and publishes LUFS M/S/I, dBTP

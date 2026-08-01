@@ -1921,6 +1921,141 @@ static void testDeltaMonitor()
 }
 
 // ---------------------------------------------------------------------------
+// MODE inv 3: adaptation converges on steady programme and then HOLDS — the
+// residual block-to-block output modulation attributable to adaptation stays
+// under a stated bound. Programme: a transient-dense pattern (clicks over a
+// tone) so the trims genuinely move first.
+static void testAdaptationConvergesAndHolds()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.limGainDb    = 6.0f;                     // limiting engaged: release trim audible
+    p.truePeakMode = false;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto runBlock = [&] (int b) -> double
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                       * 220.0f * (float) t / (float) sr);
+            if ((t % 12000) < 96) v += 0.6f;   // 4 clicks/s: steady transient density
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        double s = 0.0;
+        for (int n = 0; n < 512; ++n) { const double x = buf.getSample (0, n); s += x * x; }
+        return std::sqrt (s / 512.0);
+    };
+
+    for (int b = 0; b < 800; ++b) runBlock (b);          // ~8.5 s: converge
+    const float relA = engine.adaptive().publishedTrimRelease();
+    double rmsMin = 1.0e9, rmsMax = 0.0;
+    for (int b = 800; b < 1200; ++b)                     // ~4.3 s: hold window
+    {
+        const double r = runBlock (b);
+        // Ignore the click blocks: compare only the steady-tone blocks, so the
+        // programme's own pattern does not masquerade as modulation.
+        if (r < 0.25) { rmsMin = juce::jmin (rmsMin, r); rmsMax = juce::jmax (rmsMax, r); }
+    }
+    const float relB = engine.adaptive().publishedTrimRelease();
+
+    check (std::abs (relB - relA) < 0.02f,
+           "adapt: trims hold once converged on steady programme (hysteresis)");
+    check (20.0 * std::log10 (rmsMax / juce::jmax (rmsMin, 1.0e-9)) < 0.5,
+           "adapt: residual output modulation on steady material is under 0.5 dB");
+}
+
+// ---------------------------------------------------------------------------
+// MODE inv 3's Freeze clause: freeze latches the trim vector exactly — the
+// four published values do not move by a single ulp across a PROGRAMME
+// CHANGE that would otherwise re-slew them; unfreezing lets them move again.
+static void testFreezeLatchesTrims()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode = false;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto feed = [&] (int blocks, float clickAmp)
+    {
+        static int t0 = 0;
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = t0 + n;
+                float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                           * 220.0f * (float) t / (float) sr);
+                if ((t % 6000) < 96) v += clickAmp;
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            t0 += 512;
+            engine.process (buf, p);
+        }
+    };
+
+    feed (400, 0.6f);                                    // adapt on transient-dense material
+    p.freeze = true;
+    feed (4, 0.6f);                                      // latch settles at a block boundary
+    const float r0 = engine.adaptive().publishedTrimRelease();
+    const float l0 = engine.adaptive().publishedTrimLink();
+    const float h0 = engine.adaptive().publishedTrimHpf();
+    const float d0 = engine.adaptive().publishedTrimTilt();
+
+    feed (400, 0.0f);                                    // programme changes completely
+    check (juce::exactlyEqual (engine.adaptive().publishedTrimRelease(), r0)
+            && juce::exactlyEqual (engine.adaptive().publishedTrimLink(), l0)
+            && juce::exactlyEqual (engine.adaptive().publishedTrimHpf(), h0)
+            && juce::exactlyEqual (engine.adaptive().publishedTrimTilt(), d0),
+           "freeze: the latched trim vector does not move by an ulp under new programme");
+
+    p.freeze = false;
+    feed (400, 0.0f);
+    check (! juce::exactlyEqual (engine.adaptive().publishedTrimRelease(), r0),
+           "freeze: unfreezing lets adaptation move again");
+}
+
+// ---------------------------------------------------------------------------
+// MODE inv 4: trims stay inside their declared bounds under pathological
+// programme (maximally bright, transient-dense, loud) — and the published
+// vector is what proves it, since the effective values are clamped inside
+// the engine anyway.
+static void testTrimBounds()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode = false;
+    juce::AudioBuffer<float> buf (2, 512);
+    uint32_t rng = 0x1234u;
+    for (int b = 0; b < 1200; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            rng = rng * 1664525u + 1013904223u;          // bright noise + clicks
+            float v = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.4f;
+            if (((b * 512 + n) % 3000) < 60) v += 0.9f;
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+    }
+    const auto& a = engine.adaptive();
+    check (std::abs (a.publishedTrimRelease()) <= 1.0f, "bounds: release trim within ±1 octave");
+    check (std::abs (a.publishedTrimLink()) <= 0.2f,    "bounds: link trim within ±0.2");
+    check (a.publishedTrimHpf() >= 0.0f && a.publishedTrimHpf() <= 30.0f,
+           "bounds: scHpf trim within 0…+30 Hz");
+    check (a.publishedTrimTilt() >= 0.0f && a.publishedTrimTilt() <= 0.5f,
+           "bounds: dynTilt trim within 0…+0.5 dB");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -2202,6 +2337,9 @@ int main()
     testLufsWindows();
     testLoudnessCompensationDoesNotAlterRender();
     testDeltaMonitor();
+    testAdaptationConvergesAndHolds();
+    testFreezeLatchesTrims();
+    testTrimBounds();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
