@@ -208,17 +208,23 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                            || wantEq != appliedEqPos
                            || wantModel != appliedModel;
 
-    // A realtime↔offline flip is a RESET-class event, not an audible
-    // transition: the host re-reads PDC across it (setNonRealtime is an
-    // ADR-0004 recompute trigger) and, at Force Max, effectiveFactor changes
-    // with it. Ducking there would fade the HEAD OF A BOUNCE — ~45 ms of
+    // ENTERING offline is a RESET-class event, not an audible transition: the
+    // render starts there, the host re-reads PDC across it (setNonRealtime is
+    // an ADR-0004 recompute trigger) and, at Force Max, effectiveFactor
+    // changes with it. Ducking would fade the HEAD OF A BOUNCE — ~45 ms of
     // envelope written into the rendered file — for a transition no one is
     // listening to. Adopting directly makes the no-re-prepare path behave
     // exactly like the re-prepare path most hosts take.
-    const bool offlineFlip = p.nonRealtime != lastNonRealtime;
+    //
+    // The RETURN edge is the opposite case and must NOT share this branch:
+    // offline→realtime lands in live playback, where the same direct adopt
+    // clears the lookahead ring at FULL gain — ~11 ms of silence followed by
+    // an abrupt resumption, which is the click invariant 8 names for exactly
+    // this switch. It goes through the duck like any other factor rewire.
+    const bool enteringOffline = p.nonRealtime && ! lastNonRealtime;
     lastNonRealtime = p.nonRealtime;
 
-    if (! smoothersPrimed || offlineFlip)
+    if (! smoothersPrimed || enteringOffline)
     {
         if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
             latchOsConfig (wantIdx, wantPh);
@@ -497,6 +503,16 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // Limiter push, at its documented place in the chain: after Clip/Sat,
         // before the lookahead line, so the detector and the delayed signal
         // both carry it. Exact-1 skip keeps the null path untouched.
+        //
+        // The value is per BASE sample, held across all osN region samples —
+        // a zero-order hold, i.e. a piecewise-constant modulator rather than
+        // the band-limited per-sample gain it was at base rate. While the
+        // 20 ms glide runs that puts images around multiples of the base rate,
+        // all above the decimation filter's cutoff, so they are removed on the
+        // way down and the steady state is unaffected. Recorded because the
+        // ceilArr/wArr/pushArr idiom is the obvious one to reuse for any
+        // future level-affecting control inside the region, where a slower
+        // glide or a higher factor could put an image under the cutoff.
         if (const float gPushNow = pushArr[(size_t) b]; ! juce::exactlyEqual (gPushNow, 1.0f))
             for (int ch = 0; ch < nCh; ++ch)
                 frame[ch] *= gPushNow;

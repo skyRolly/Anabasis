@@ -842,6 +842,51 @@ static void testOfflineFlipDoesNotDuckTheRender()
 }
 
 // ---------------------------------------------------------------------------
+// ...and the RETURN edge is the opposite case: offline→realtime lands in LIVE
+// playback, where the direct adopt would clear the lookahead ring at full gain
+// (~11 ms of silence, then an abrupt resumption) — the click invariant 8 names
+// for an oversampling-factor switch. That edge must go through the §2.8 duck
+// like any other rewire, so the transition is a fade, never a step.
+static void testReturnFromOfflineIsDucked()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode    = false;
+    p.oversample      = anabasis::OversampleFactor::x2;
+    p.forceMaxOffline = true;
+    std::vector<float> out;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 40; ++b)
+    {
+        p.nonRealtime = b >= 10 && b < 20;      // offline for ten blocks, then back
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 300.0f * (float) (b * 512 + n) / (float) sr);
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n) out.push_back (buf.getSample (0, n));
+    }
+
+    // The return edge is at block 20. A 300 Hz sine at the post-limiter level
+    // moves at most ~0.04 per sample; a resumption from exact silence at full
+    // gain steps by up to the full amplitude in ONE sample. Bound sits between.
+    float maxDelta = 0.0f;
+    for (size_t n = 20 * 512; n < 34 * 512; ++n)
+        maxDelta = juce::jmax (maxDelta, std::abs (out[n] - out[n - 1]));
+    float tailPeak = 0.0f;
+    for (size_t n = out.size() - 2400; n < out.size(); ++n)
+        tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+
+    check (maxDelta < 0.08f,
+           "offlineReturn: coming back from a bounce fades, it does not step");
+    check (tailPeak > 0.3f, "offlineReturn: and playback recovers to full level");
+}
+
+// ---------------------------------------------------------------------------
 // inv 1 / ADR-0002 / DESIGN §2.5: the limiter push drives the LIMITER, not the
 // clipper. It sits after Clip/Sat in the chain, so input gain and limiter push
 // are NOT interchangeable — the clipper's operating point follows the first
@@ -2940,6 +2985,7 @@ int main()
     testClipAdaaReducesAliasing();
     testLimiterPushDoesNotDriveTheClipper();
     testOfflineFlipDoesNotDuckTheRender();
+    testReturnFromOfflineIsDucked();
     testColourModelsBalanceAndTone();
     testDynamicTame();
     testClipMixZeroIsDry();

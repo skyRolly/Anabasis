@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **seventh review round of 2026-08-01** (PR #5): a realtime→offline flip
+**Last updated:** for the **eighth review round of 2026-08-01** (PR #5): the previous round's
+offline-flip fix was direction-agnostic and broke the RETURN edge — fixed, with both directions
+now pinned by their own tests. Previous round: (PR #5): a realtime→offline flip
 no longer ducks the head of a bounce, `learnActive` joins `learned` as an atomic, and CLAUDE.md
 stops claiming the project is at P1. Previous round: (PR #5): the limiter push was
 being applied BEFORE the clipper instead of after it — a real chain-order deviation that made the
@@ -19,6 +21,57 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Eighth review round — the previous round's fix broke the other direction (2026-08-01)
+
+Eight items: one regression fixed (mine, from the round before), one hardening, six
+verifications and repeats needing no change.
+
+**The regression, stated plainly.** Last round's `offlineFlip` flag was written as
+`p.nonRealtime != lastNonRealtime` — direction-agnostic — so the OFFLINE→REALTIME edge took the
+direct-adopt branch too. That edge lands in **live playback**, where direct adopt calls
+`latchOsConfig` (clearing the lookahead ring and resetting the oversampler) at FULL gain: ~11 ms
+of exact silence followed by an abrupt resumption. That is the click DSP_POLICY invariant 8 names
+for precisely this switch — the fix for one edge introduced the defect on the other. It is now
+`p.nonRealtime && ! lastNonRealtime`; the return edge goes through the §2.8 duck like any other
+factor rewire, and both directions have their own test (`testOfflineFlipDoesNotDuckTheRender`,
+`testReturnFromOfflineIsDucked`), each mutation-verified — the second one kills exactly last
+round's expression.
+
+**Why my own testing missed it.** The round-seven test rendered a single flip into offline and
+stopped there; the return edge was never exercised because the *reported bug* was about bounces.
+A test written from the bug report tests the bug report. The symmetric case — flip there and
+back — costs one extra line of loop condition and is now what the offline tests do. Second
+instance this session of a fix whose blast radius was wider than the case that motivated it (the
+first was the limiter-smoothing change silently un-killing the stale-detector mutants), and the
+cheap guard is the same both times: after changing a condition, ask which OTHER inputs reach it.
+
+**Hardening: `currentTrims()` is now private with `AnabasisEngine` a friend.** It returned a
+reference to the plain `Trims` struct that `finishBlock` mutates, sitting in the public surface
+the wrapper hands to message-thread callers through `adaptiveReadout()` — the same shape that
+produced the `learned` and `learnActive` races, two rounds and one round ago respectively. The
+readout surface is now atomics-only **by construction** rather than by convention; the engine
+(the only in-tree caller, on the audio thread) reaches it through the friendship and the P5 UI
+reads `publishedTrim*()` like every other display value. Third instance of this pattern, and the
+first one fixed before a caller existed rather than after.
+
+**Recorded, no change: the push is a zero-order hold inside the region.** Carrying the smoothed
+gain per BASE sample and holding it across all `osN` region samples makes it piecewise-constant
+rather than band-limited, which puts images around multiples of the base rate while the 20 ms
+glide runs. They sit above the decimation cutoff and are removed on the way down, so the steady
+state is unaffected — but the `ceilArr`/`wArr`/`pushArr` idiom is the obvious one to reuse for the
+next level-affecting control inside the region, where a slower glide or a higher factor could put
+an image under the cutoff. Noted at the site rather than left for someone to rediscover.
+
+**Verified by the reviewer, no action:** the ring sizing and detector tap offsets against their
+worst cases (wet ring, dry ring, `wOs ≤ maxWindow`), and the exhaustiveness of duck-request
+consumption across the four block-top branches — the only discarded request being the documented
+first-block path. Repeats already recorded: the metering CPU budget (P6), the session-cumulative
+meter holds surviving state loads (P5, scope now in THREAD_MODEL), and the `bool` return
+conflating three early-return conditions (the header enumerates them; nothing needs to tell them
+apart today).
+
+Suites: 191 + 87.
 
 ### Seventh review round — a fade at the head of every Force-Max bounce (2026-08-01)
 

@@ -224,8 +224,6 @@ public:
         blockFill = 0;
     }
 
-    const Trims& currentTrims() const noexcept { return trims; }
-
     // -- §5.4 Learn: explicit start → integrated-style accumulation of the
     //    feature set → explicit commit fixes the reference targets. Audio-
     //    thread calls (the engine consumes the wrapper's command atomics at
@@ -303,6 +301,17 @@ public:
     float publishedTrimTilt() const noexcept    { return pubTrimTilt.load (std::memory_order_relaxed); }
 
 private:
+    // AUDIO-THREAD ONLY, and private so that is true by construction rather
+    // than by convention: `trims` is a plain struct this class mutates in
+    // finishBlock(), and the wrapper hands a const reference to this whole
+    // object to message-thread callers (adaptiveReadout). Everything public
+    // above is an atomic; a plain-struct getter beside them is the shape that
+    // produced the `learned` and `learnActive` races. The engine — the only
+    // in-tree caller, on the audio thread — reaches it through this friendship;
+    // the P5 UI reads publishedTrim*() like every other display value.
+    friend class AnabasisEngine;
+    const Trims& currentTrims() const noexcept { return trims; }
+
     void publishTrims() noexcept
     {
         pubTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
