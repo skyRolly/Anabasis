@@ -42,6 +42,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
 
     limiter.prepare (sampleRate, delaySamples);
     eq.prepare (sampleRate);
+    comp.prepare (sampleRate);
     reset();
 }
 
@@ -52,6 +53,7 @@ void AnabasisEngine::reset() noexcept
     writePos = 0;
     limiter.reset();
     eq.reset();
+    comp.reset();
     smoothersPrimed = false;   // the next block adopts ALL FOUR values without a glide
 
     // The crossfade is reset state too. Leaving a part-way `bypassMix` behind
@@ -109,6 +111,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     }
     limiter.setRelease (juce::jmax (1.0f, p.limReleaseMs));
     eq.setTargets (p);
+    comp.setPerBlock (p);
 
     // eqPosition is a discrete REWIRE, not a glide (ADR-0010's same-day note):
     // the biquad history belongs to the stream the EQ was in, so it is cleared
@@ -136,25 +139,35 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         const float gPush = pushGain.getNextValue();
         eq.tick();   // once per sample, whichever position processes it
 
+        // Chain order (ADR-0002): Input Gain → EQ(Pre) → Compressor →
+        // [clipper P2] → limiter push. Everything upstream of the wet ring is
+        // what the limiter's detector sees — boosting a shelf or squeezing
+        // with the comp drives the limiter, as a mastering chain must. The
+        // compressor is stereo-LINKED (one gain for all channels), so it
+        // processes the whole frame in place after the per-channel stages.
+        float staged[kMaxChannels] = {};
         for (int ch = 0; ch < numChannels; ++ch)
         {
             const float in = buffer.getSample (ch, n);
             if (! std::isfinite (in))
                 sawNonFinite = true;
 
-            // Chain order (ADR-0002): Input Gain → EQ(Pre) → [comp/clip P2] →
-            // limiter push. Pre-EQ is upstream of the wet ring, so the
-            // limiter's detector sees the EQ'd signal — boosting a shelf
-            // drives the limiter, as a mastering chain must.
-            float staged = juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn;
-            if (! std::isfinite (staged))
-                staged = 0.0f;                 // EQ state must never eat a NaN
+            float s = juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn;
+            if (! std::isfinite (s))
+                s = 0.0f;                      // filter state must never eat a NaN
             if (eqPre)
-                staged = eq.processSample (ch, staged);
+                s = eq.processSample (ch, s);
+            staged[ch] = s;
 
-            const float wet = juce::exactlyEqual (gPush, 1.0f) ? staged : staged * gPush;
+            dryRing.setSample (ch, writePos, std::isfinite (in) ? in : 0.0f);
+        }
+
+        comp.processSample (staged, numChannels);
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float wet = juce::exactlyEqual (gPush, 1.0f) ? staged[ch] : staged[ch] * gPush;
             wetRing.setSample (ch, writePos, std::isfinite (wet) ? wet : 0.0f);
-            dryRing.setSample (ch, writePos, std::isfinite (in)  ? in  : 0.0f);
         }
 
         // Detector tap (the LookaheadLimiter CONTRACT): feed the sample that

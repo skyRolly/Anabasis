@@ -439,6 +439,203 @@ static void testEqPositionsAreDistinct()
 }
 
 // ---------------------------------------------------------------------------
+// §2.3 static curve, measured in the RMS-detector mode where a sine's level
+// is deterministic (RMS = peak − 3.01 dB; the 10 ms integrator barely ripples
+// at 1 kHz). A transcription error in the knee quadratic or the ratio term is
+// a wrong output level here, not a crash.
+static float compOutputRmsDb (const anabasis::EngineParameters& p, float amp, double sr,
+                              anabasis::MasteringComp* grTapOut = nullptr)
+{
+    anabasis::MasteringComp comp;
+    comp.prepare (sr);
+    comp.setPerBlock (p);
+    const int total = (int) sr;          // 1 s, measure the settled second half
+    double sumSq = 0.0; int counted = 0;
+    for (int n = 0; n < total; ++n)
+    {
+        const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                        * 1000.0f * (float) n / (float) sr);
+        float frame[2] = { v, v };
+        comp.processSample (frame, 2);
+        if (n >= total / 2) { sumSq += (double) frame[0] * frame[0]; ++counted; }
+    }
+    juce::ignoreUnused (grTapOut);
+    return (float) (20.0 * std::log10 (std::sqrt (sumSq / counted)));
+}
+
+static void testCompStaticCurve()
+{
+    const double sr = 48000.0;
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+    anabasis::EngineParameters p;
+    p.compThresholdDb = -20.0f;
+    p.compRatio       = 4.0f;
+    p.compKneeDb      = 0.0f;            // hard knee: the pure ratio line
+    p.compAttackMs    = 5.0f;
+    p.compAutoRelease = false;
+    p.compReleaseMs   = 50.0f;
+    p.compDetector    = 0;               // RMS
+    p.compMix         = 100.0f;          // POD carries 0..1 — set below
+
+    // The POD stores mix 0..1 (toEngine divides); tests build the POD directly.
+    p.compMix = 1.0f;
+
+    {   // 7 dB over threshold at 4:1 → 5.25 dB of reduction
+        const float inDb  = -13.01f;                    // amp 0.3162 → RMS −13.01
+        const float outDb = compOutputRmsDb (p, 0.31623f, sr);
+        check (near (outDb, inDb + (7.0f * (0.25f - 1.0f)), 0.5f),
+               "comp: hard-knee ratio line lands where the static curve says");
+    }
+    {   // At exactly threshold with a 12 dB knee: GR = (invR−1)·(W/2)²/2W = −1.125 dB
+        p.compKneeDb = 12.0f;
+        const float outDb = compOutputRmsDb (p, 0.14142f, sr);   // RMS −20.00
+        check (near (outDb, -20.0f - 1.125f, 0.4f),
+               "comp: soft knee applies the quadratic reduction at the threshold");
+        p.compKneeDb = 0.0f;
+    }
+    {   // Below the knee bottom: BIT-EXACT identity (the null path)
+        anabasis::MasteringComp comp;
+        comp.prepare (sr);
+        anabasis::EngineParameters q;
+        q.compThresholdDb = -20.0f; q.compKneeDb = 4.0f; q.compMix = 1.0f;
+        comp.setPerBlock (q);
+        bool exact = true;
+        for (int n = 0; n < 48000; ++n)
+        {
+            const float v = 0.02f * std::sin (0.13f * (float) n);   // ~−34 dB
+            float frame[2] = { v, -v };
+            comp.processSample (frame, 2);
+            if (! juce::exactlyEqual (frame[0], v) || ! juce::exactlyEqual (frame[1], -v))
+            { exact = false; break; }
+        }
+        check (exact, "comp: below the knee the sample passes through bit-exact");
+    }
+}
+
+// ---------------------------------------------------------------------------
+static void testCompDetectorAndMix()
+{
+    const double sr = 48000.0;
+    anabasis::EngineParameters p;
+    p.compThresholdDb = -20.0f; p.compRatio = 4.0f; p.compKneeDb = 0.0f;
+    p.compAttackMs = 5.0f; p.compAutoRelease = false; p.compReleaseMs = 50.0f;
+    p.compMix = 1.0f;
+
+    // Peak reads a sine ~3 dB hotter than RMS → visibly deeper reduction.
+    p.compDetector = 0; const float rmsOut  = compOutputRmsDb (p, 0.31623f, sr);
+    p.compDetector = 1; const float peakOut = compOutputRmsDb (p, 0.31623f, sr);
+    check (peakOut < rmsOut - 1.0f, "comp: Peak detector reduces harder than RMS on a sine");
+
+    // Parallel mix: 50 % sits between dry and wet; 0 % is bit-exact dry.
+    p.compDetector = 0;
+    p.compMix = 0.5f; const float halfOut = compOutputRmsDb (p, 0.31623f, sr);
+    check (halfOut > rmsOut + 0.5f && halfOut < -13.01f - 0.5f,
+           "comp: 50% mix lands between wet and dry");
+
+    {
+        anabasis::MasteringComp comp;
+        comp.prepare (sr);
+        p.compMix = 0.0f;
+        comp.setPerBlock (p);
+        bool exact = true;
+        for (int n = 0; n < 24000; ++n)
+        {
+            const float v = 0.5f * std::sin (0.1309f * (float) n);   // loud: GR engaged
+            float frame[2] = { v, v };
+            comp.processSample (frame, 2);
+            if (! juce::exactlyEqual (frame[0], v)) { exact = false; break; }
+        }
+        check (exact, "comp: 0% mix is bit-exact dry even under heavy reduction");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The §2.3 auto release is TWO-STAGE: after a burst ends, the fast pole gives
+// back most of its half quickly, the slow pole holds its half — so recovery
+// in the first 100 ms strictly exceeds recovery in the following 100 ms, and
+// attack stays fast (near-target within 20 ms). A single-pole mutant with
+// either constant alone fails one half or the other.
+static void testCompAutoReleaseIsTwoStage()
+{
+    const double sr = 48000.0;
+    anabasis::MasteringComp comp;
+    comp.prepare (sr);
+    anabasis::EngineParameters p;
+    p.compThresholdDb = -30.0f; p.compRatio = 4.0f; p.compKneeDb = 0.0f;
+    p.compAttackMs = 5.0f; p.compAutoRelease = true; p.compDetector = 1;   // peak
+    p.compMix = 1.0f;
+    comp.setPerBlock (p);
+
+    auto run = [&] (float amp, int samples)
+    {
+        for (int n = 0; n < samples; ++n)
+        {
+            const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 1000.0f * (float) n / (float) sr);
+            float frame[2] = { v, v };
+            comp.processSample (frame, 2);
+        }
+    };
+
+    run (0.5f, (int) (0.5 * sr));                     // loud: −6 dBFS, 24 dB over
+    const float grHeld = comp.currentGainReductionDb();
+    check (grHeld < -10.0f, "comp: (premise) the burst drives deep reduction");
+
+    run (0.5f, (int) (0.020 * sr));
+    check (std::abs (comp.currentGainReductionDb() - grHeld) < 1.0f,
+           "comp: reduction is stable while the burst continues");
+
+    // The two bounds below are DISJOINT for any single release pole: the
+    // deceleration ratio (rec2 < 0.6·rec1 ⇒ e^(−100 ms/τ) < 0.6) needs
+    // τ < 196 ms, while the 800 ms tail-hold needs τ > 322 ms. Only a real
+    // two-stage release satisfies both — an earlier revision's 200 ms/−0.5 dB
+    // tail bar let a single ~150 ms pole pass, found by mutation.
+    run (0.0001f, (int) (0.100 * sr));                // burst ends
+    const float gr100 = comp.currentGainReductionDb();
+    run (0.0001f, (int) (0.100 * sr));
+    const float gr200 = comp.currentGainReductionDb();
+    run (0.0001f, (int) (0.600 * sr));
+    const float gr800 = comp.currentGainReductionDb();
+
+    const float rec1 = gr100 - grHeld;                // both positive quantities
+    const float rec2 = gr200 - gr100;
+    check (rec1 > 2.0f,        "comp: the fast stage gives real recovery in the first 100 ms");
+    check (rec2 < rec1 * 0.6f, "comp: recovery decelerates (kills every slow single pole)");
+    check (gr800 < -1.5f,      "comp: the slow stage still holds after 800 ms (kills every fast single pole)");
+}
+
+// ---------------------------------------------------------------------------
+// Brief §3: the sidechain HPF exists so LF content does not pump the glue.
+// A 30 Hz tone 20 dB over threshold must compress with the HPF at its floor
+// and go nearly untouched with the HPF at 300 Hz.
+static void testCompSidechainHpf()
+{
+    const double sr = 48000.0;
+    auto grAfter = [&] (float hpfHz)
+    {
+        anabasis::MasteringComp comp;
+        comp.prepare (sr);
+        anabasis::EngineParameters p;
+        p.compThresholdDb = -30.0f; p.compRatio = 4.0f; p.compKneeDb = 0.0f;
+        p.compAttackMs = 5.0f; p.compAutoRelease = false; p.compReleaseMs = 200.0f;
+        p.compDetector = 1; p.compMix = 1.0f; p.scHpfFreqHz = hpfHz;
+        comp.setPerBlock (p);
+        for (int n = 0; n < 48000; ++n)
+        {
+            const float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 30.0f * (float) n / (float) sr);
+            float frame[2] = { v, v };
+            comp.processSample (frame, 2);
+        }
+        return comp.currentGainReductionDb();
+    };
+
+    check (grAfter (20.0f)  < -8.0f, "scHpf: at the floor, a loud 30 Hz tone compresses hard");
+    check (grAfter (300.0f) > -1.5f, "scHpf: at 300 Hz the same tone barely registers");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -676,6 +873,10 @@ int main()
     testEqFrequencyResponse();
     testEqGainIsSmoothed();
     testEqPositionsAreDistinct();
+    testCompStaticCurve();
+    testCompDetectorAndMix();
+    testCompAutoReleaseIsTwoStage();
+    testCompSidechainHpf();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();

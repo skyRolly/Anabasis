@@ -9,6 +9,42 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P2, first commits — EQ and compressor, and a two-stage test that a mid-speed pole slipped through (2026-08-01)
+
+**P1 closed** (PR #4 merged with 3-OS CI; `THREAD_MODEL.md` + `PARAMETER_REGISTRY.md` written from
+ADR-0011/ADR-0010; OQ-014 remains the one open owner call). **P2 opened** on PR #5, per the brief
+§11 module list, in chain order.
+
+**`MasteringEQ`** (src/dsp/MasteringEQ.h): six RBJ sections — the §2.2 complementary tilt pair at
+700 Hz, shelves at fixed Q 0.707, two bells. All-flat is bit-transparent **by structure** (a
+section at exactly 0 dB is skipped; a biquad at 0 dB gain is only approximately identity in float,
+which would break invariant 7's null). Eleven smoothed parameters inside the module; coefficients
+recompute per sample only while a smoother moves. Pre upstream of the wet ring (the limiter
+detector sees the EQ'd signal), Post between limiter and clamp — and
+`testOutputNeverExceedsCeiling` now runs ADR-0002's **mandated stimulus**: both positions, +12 dB
+shelf after the limiter, mutation-verified by moving the clamp upstream of the post EQ. The
+`eqPosition` rewire is a KI-001-class step until §2.8 lands (KI-001 extended). Four EQ mutants
+killed: tilt sign, unsmoothed targets, always-engaged sections, clamp-before-post-EQ.
+
+**`MasteringComp`** (src/dsp/MasteringComp.h): feed-forward log-domain gain computer — per-channel
+detector-side sidechain HPF (20–300 Hz), stereo-linked max detector, RMS (10 ms) / Peak modes,
+soft-knee static curve, ballistics on the GR signal in dB, parallel mix with exact endpoints, and
+the §2.3 **two-pole auto release** (80 ms + 900 ms averaged in dB). Below the knee bottom the
+sample passes bit-exact — the all-defaults null path (threshold 0 dBFS). Five mutants killed:
+knee dropped, RMS mode dropped, HPF dropped, both-poles-slow, both-poles-fast.
+
+**The finding worth the audit entry: the first two-stage-release test was satisfiable by a single
+pole.** Its three assertions (fast initial recovery, deceleration, tail held at −0.5 dB after
+200 ms) all pass for one ~150 ms pole — found because the both-poles-fast mutant survived. The
+fix was to choose bounds that are **provably disjoint for any single exponential**: the
+deceleration ratio (rec₂ < 0.6·rec₁ ⇔ e^(−100ms/τ) < 0.6) forces τ < 196 ms, and the 800 ms
+tail-hold (< −1.5 dB) forces τ > 322 ms — no single τ satisfies both, so only a genuine
+two-stage release passes. Verified in both directions: the real code passes; the fast-pair,
+slow-pair and single-150 ms mutants each fail a named check. Same lesson as the self-heal test
+last commit, sharpened: it is not enough for a test to fail on *the* mutant you tried — the
+assertion set must exclude the whole family of wrong shapes, and back-of-envelope algebra on the
+bounds is how you know it does.
+
 ### P1 skeleton, seventh commit — a review claim falsified by its own regression test (2026-08-01)
 
 **The headline "bug" of this round does not exist on the pinned JUCE, and the proof is now a
