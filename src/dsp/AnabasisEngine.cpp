@@ -753,8 +753,41 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             dryReadPos = 0;
     }
 
-    // Invariant 9 self-heal: discard the limiter's sliding window, carry the
-    // envelope (see resetWindow's comment for why not a full reset).
+    // ---- Invariant 9 self-heal -------------------------------------------
+    // Discard the limiter's sliding window, carry the envelope (resetWindow's
+    // own comment says why a full reset would be worse). The limiter is the
+    // ONLY stage repaired here, and that is a deliberate strategy rather than
+    // an oversight, so state it: the engine PREVENTS contamination at fixed
+    // boundaries and repairs only the one state a prevented sample can still
+    // corrupt structurally.
+    //
+    // THE SANITISATION BOUNDARIES this rests on — every one of them replaces a
+    // non-finite value with 0.0f, so no recursive state downstream can ever
+    // absorb one:
+    //   • stage A, before the EQ:      `if (! isfinite (s)) s = 0.0f`
+    //   • the dry ring write:          `isfinite (in) ? in : 0.0f`
+    //   • the staging write:           `isfinite (staged[ch]) ? … : 0.0f`
+    //   • the wet ring write:          `isfinite (frame[ch]) ? … : 0.0f`
+    //   • the render tap:              `isfinite (render) ? … : 0.0f`
+    //   • the output write:            sets `sawNonFinite` and emits 0.0f
+    // The EQ biquads, the compressor envelope and detector HPF, ClipSat's ADAA
+    // and filter states, the oversampler's own filters and the §2.7/§2.9
+    // meters all sit downstream of one of those, which is why none of them is
+    // reset here: they cannot hold a NaN to begin with. Resetting them would
+    // trade a guaranteed-clean state for an audible discontinuity on a path
+    // whose whole point is graceful degradation.
+    //
+    // WHY THE LIMITER IS THE EXCEPTION: its wedge is index-keyed state, not a
+    // filtered value. A sample that arrives finite but pathological (a
+    // legitimately huge peak, or one written just before a boundary sanitised
+    // its successor) stays the window maximum until its index expires, so the
+    // structure needs explicit repair rather than time. That is what
+    // resetWindow() is for, and why carrying the envelope across it is right.
+    //
+    // RULE FOR FUTURE STAGES, since the chain keeps growing recursive state:
+    // a new stateful stage must EITHER sit downstream of one of the boundaries
+    // above (add one if it does not), OR be added to this recovery. Silently
+    // relying on "the input is probably finite" is neither.
     if (sawNonFinite)
         limiter.resetWindow();
 }
