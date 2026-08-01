@@ -103,6 +103,15 @@ delay-aligned dry ring, kept bit-exact), so the dry leg's alignment steps by
 the same bounded amount at the block boundary instead of fading through
 silence. Un-bypassing afterwards is already click-free (the ~10 ms crossfade).
 
+Related and deliberate, so testers do not report it as a hang: the silent
+bottom is **held until the pipeline refills** after a factor/phase latch —
+the latch empties the 10 ms lookahead line and resets the oversampler, so
+recovering immediately would splice real audio in partway up the fade. A
+factor switch therefore mutes for roughly 45 ms end to end (≈6 ms out, ≈11 ms
+refill rounded up to the block grid, 28 ms in) rather than the ~34 ms of the
+two fade legs alone. Every other transition — A/B, preset, session load, EQ
+position, colour model — does not clear the line and keeps the ~34 ms shape.
+
 **Workaround:** none needed in normal use; for sample-surgical A/B of factor
 settings offline, render each factor separately instead of automating the
 switch mid-render.

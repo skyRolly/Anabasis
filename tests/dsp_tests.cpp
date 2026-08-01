@@ -1216,6 +1216,12 @@ static void testOsLatencyMatrix()
             else
                 check (std::abs (peakAt - expected) <= 1,
                        "osMatrix: min-phase impulse peak within 1 sample of the nominal delay");
+            // The engine's own prepare-time cross-check of the Latency.h table
+            // against what JUCE actually built — recorded unconditionally, so
+            // this catches a pin bump in the Release builds CI runs, where the
+            // jassert beside it compiles away.
+            check (engine.latencyTableMatchesJuce(),
+                   "osMatrix: the Latency.h table equals the pinned JUCE's own reported latency");
         }
 
     {   // Force-Max offline: reported and measured both use the FORCED 16x
@@ -1603,17 +1609,260 @@ static void testDuckWrapsOsLatch()
             peak = juce::jmax (peak, std::abs (out[k]));
         minEnv = juce::jmin (minEnv, peak);
     }
-    for (size_t n = 20 * 512; n < 22 * 512; ++n)
+    // The delta window must span the WHOLE transition, in-leg included. It
+    // used to stop at 22*512 = 11264 while the recovery's first real sample
+    // landed at ~11293 — thirty samples past the last one measured, which is
+    // how a −9 dB splice sat here unnoticed.
+    for (size_t n = 20 * 512; n < 27 * 512; ++n)
         maxDelta = juce::jmax (maxDelta, std::abs (out[n] - out[n - 1]));
     for (size_t n = out.size() - 2400; n < out.size(); ++n)
         tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
     bool allFinite = true;
     for (float v : out) if (! std::isfinite (v)) { allFinite = false; break; }
 
+    // THE refill property, measured where it lives. A latch empties the
+    // lookahead ring and resets the oversampler, so the processed path is
+    // exactly silent for delaySamples + osLatBase (480 + 61) samples
+    // afterwards. Find the first sample that is not exactly zero after the
+    // latch and look at the cycle that follows it: if the in-leg started at
+    // the latch, that audio arrives at duckGain ≈ 0.35 (541 samples into the
+    // 1344-sample ramp) and the cycle peaks near 0.34; if the bottom is held
+    // until the pipeline refills, the ramp is at its own beginning there and
+    // the cycle peaks near 0.01. Disjoint by a factor of ~30.
+    size_t firstAudible = out.size();
+    for (size_t n = 21 * 512; n < out.size(); ++n)
+        if (std::abs (out[n]) > 1.0e-7f) { firstAudible = n; break; }
+    float onsetPeak = 0.0f;
+    for (size_t n = firstAudible; n < juce::jmin (firstAudible + 128, out.size()); ++n)
+        onsetPeak = juce::jmax (onsetPeak, std::abs (out[n]));
+
     check (minEnv < 0.02f,   "duckOs: the latch waits for the silent bottom");
     check (maxDelta < 0.07f, "duckOs: the factor switch never steps the output");
+    check (firstAudible < out.size(),
+           "duckOs: the processed path does come back (the onset check is not vacuous)");
+    check (onsetPeak < 0.05f,
+           "duckOs: the recovery starts from the REFILLED pipeline, not partway up the ramp");
     check (tailPeak > 0.35f, "duckOs: the stream recovers at the new factor");
     check (allFinite,        "duckOs: no garbage crosses the latch");
+}
+
+// ---------------------------------------------------------------------------
+// §2.8: a duck request that lands while the OUT leg is still running must not
+// evaporate — the bulk swap it guards reaches the snapshot a block later and
+// has to find the engine at zero gain. Blocks of 128 samples so the ~6 ms
+// out-leg (288 samples) spans several of them and the request can be consumed
+// in the `out` state at all; at 512 the bottom is always reached in the same
+// block that starts the fade.
+static void testDuckRequestDuringOutIsHeld()
+{
+    const double sr = 48000.0;
+    auto firstAudibleAfter = [&] (bool secondRequest) -> size_t
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 128, 2);
+        anabasis::EngineParameters p;
+        p.truePeakMode = false;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 128);
+        for (int b = 0; b < 60; ++b)
+        {
+            if (b == 10)                       // fade begins at block 10's top
+                engine.requestForcedDuck();
+            if (secondRequest && b == 11)      // consumed at block 11's top: still OUT
+                engine.requestForcedDuck();
+            for (int n = 0; n < 128; ++n)
+            {
+                const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 300.0f * (float) (b * 128 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 128; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        size_t silentAt = out.size();
+        for (size_t n = 10 * 128; n < out.size(); ++n)      // the bottom
+            if (juce::exactlyEqual (out[n], 0.0f)) { silentAt = n; break; }
+        for (size_t n = silentAt; n < out.size(); ++n)      // ...and the recovery
+            if (! juce::exactlyEqual (out[n], 0.0f)) return n;
+        return out.size();
+    };
+
+    const size_t plain = firstAudibleAfter (false), held = firstAudibleAfter (true);
+    check (plain < 60 * 128, "duckOut: the control run recovers (the comparison is not vacuous)");
+    check (held >= plain + 100,
+           "duckOut: a request during the out-leg buys a held bottom block, not nothing");
+}
+
+// ---------------------------------------------------------------------------
+// §2.7/§2.8 together: delta monitoring is a PROCESSED-path function, so the
+// duck must cover it. With a transparent chain the delta output is exact
+// silence; during a transition it must STAY silence. Subtracting a ducked
+// processed term from an unducked dry one did the opposite — the delta leg
+// rose to the full dry signal exactly while the transition was meant to be
+// inaudible, the loudest possible artefact from the layer that exists to
+// prevent them.
+static void testDeltaIsCoveredByTheDuck()
+{
+    const double sr = 48000.0;
+    auto render = [&] (float pushDb, bool duckAt10) -> std::vector<float>
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.deltaMonitor = true;
+        p.limGainDb    = pushDb;
+        p.truePeakMode = false;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 30; ++b)
+        {
+            if (duckAt10 && b == 10)
+                engine.requestForcedDuck();
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 300.0f * (float) (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+
+    const auto transparent = render (0.0f, true);
+    float peakThroughDuck = 0.0f;
+    for (size_t n = 10 * 512; n < 16 * 512; ++n)
+        peakThroughDuck = juce::jmax (peakThroughDuck, std::abs (transparent[n]));
+    check (peakThroughDuck < 1.0e-4f,
+           "delta+duck: the difference signal stays silent through a transition");
+
+    // Guard against a vacuous pass: with the chain actually working, delta is
+    // the removed material and is plainly nonzero.
+    const auto pushed = render (9.0f, false);
+    float peakPushed = 0.0f;
+    for (size_t n = 20 * 512; n < 24 * 512; ++n)
+        peakPushed = juce::jmax (peakPushed, std::abs (pushed[n]));
+    check (peakPushed > 0.05f, "delta+duck: delta is not silent when the chain removes material");
+}
+
+// ---------------------------------------------------------------------------
+// §5.4 restore transport: two session loads between audio blocks must leave
+// the engine holding the LAST one. The earlier two-flag form consumed "forget"
+// before "restore" unconditionally, so an un-learned session loaded after a
+// learned one inherited the learned references — and the next save wrote them
+// back out.
+static void testAdaptiveRestoreLastStagedWins()
+{
+    const double sr = 48000.0;
+    auto runOrder = [&] (bool learnedLast)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, 512);
+        buf.clear();
+        engine.process (buf, p);                        // prime
+        if (learnedLast) { engine.restoreNeverLearned(); engine.restoreLearnedTargets (9.0f, -2.0f); }
+        else             { engine.restoreLearnedTargets (9.0f, -2.0f); engine.restoreNeverLearned(); }
+        engine.process (buf, p);                        // both staged, one block top
+        return std::make_pair (engine.adaptiveForWrapper().hasLearned(),
+                               engine.adaptiveForWrapper().publishedRefOnset());
+    };
+
+    const auto neverLast  = runOrder (false);
+    const auto learnedNow = runOrder (true);
+    check (! neverLast.first
+             && juce::approximatelyEqual (neverLast.second,
+                                          anabasis::AdaptiveEngine::kDefaultRefOnset),
+           "adaptiveRestore: an un-learned session loaded last wins over a learned one");
+    check (learnedNow.first && std::abs (learnedNow.second - 9.0f) < 1.0e-4f,
+           "adaptiveRestore: a learned session loaded last wins over an un-learned one");
+}
+
+// ---------------------------------------------------------------------------
+// Detector state that is not advanced while its path is off must not be
+// re-entered when the path comes back: the true-peak estimator's 12-tap
+// history freezes whenever tpMode is false (the OS factor flips it), and the
+// detector HPF's biquad keeps its delay line when the frequency drops to the
+// range floor (the adaptive scHpf trim can drive that edge). Both are
+// observable as gain reduction on silence, which is impossible from a clean
+// detector.
+static void testStaleDetectorStateIsNotReentered()
+{
+    const double sr = 48000.0;
+    // Differential, so the envelope's own asymptotic approach to unity (it
+    // converges, it does not arrive) cannot be mistaken for the effect: the
+    // SAME sequence is run with the charging passage present and replaced by
+    // silence. Only stale state can separate them.
+    auto minGainOnSilence = [&] (bool useTruePeak, bool chargeIt)
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (sr, 480);
+        lim.setAutoRelease (false);
+        lim.setRelease (1.0f);              // so the envelope releases fast
+        lim.setStereoLink (1.0f);
+        lim.setTransientPreserve (0.0f);
+        lim.setTruePeakMode (useTruePeak);
+        lim.setDetectorHpf (useTruePeak ? 20.0f : 200.0f);
+
+        float g[2] = { 1.0f, 1.0f };
+        const float ceiling = 0.5f;
+        // 1) charge the stale state with a loud passage while the path is ON.
+        //    4200 samples of 60 Hz at 48 kHz is 5.25 periods — the passage
+        //    ends ON THE CREST, so the twelve taps that freeze are all near
+        //    ±4.0. The first draft used 4000 (5.00 periods) and froze the
+        //    history at a zero crossing: both mutants survived, because there
+        //    was nothing in the stale state worth resurrecting. The stimulus
+        //    has to put the property where the assertion looks.
+        for (int n = 0; n < 4200; ++n)
+        {
+            const float v = chargeIt ? 4.0f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                        * 60.0f * (float) n / (float) sr)
+                                     : 0.0f;
+            const float fr[2] = { v, v };
+            lim.processSample (fr, 2, 480, ceiling, g);
+        }
+        // 2) turn the path OFF — its state stops advancing from here
+        lim.setTruePeakMode (false);
+        lim.setDetectorHpf (20.0f);
+        for (int n = 0; n < 8000; ++n)      // silence: envelope releases to unity
+        {
+            const float fr[2] = { 0.0f, 0.0f };
+            lim.processSample (fr, 2, 480, ceiling, g);
+        }
+        // 3) turn it back ON and keep feeding silence: a clean detector sees
+        //    exactly zero, a stale one interpolates/rings the old passage.
+        lim.setTruePeakMode (useTruePeak);
+        lim.setDetectorHpf (useTruePeak ? 20.0f : 200.0f);
+        float minGain = 1.0f;
+        for (int n = 0; n < 600; ++n)
+        {
+            const float fr[2] = { 0.0f, 0.0f };
+            lim.processSample (fr, 2, 480, ceiling, g);
+            minGain = juce::jmin (minGain, g[0], g[1]);
+        }
+        return minGain;
+    };
+
+    const float tpClean = minGainOnSilence (true, false),  tpStale = minGainOnSilence (true, true);
+    const float hpClean = minGainOnSilence (false, false), hpStale = minGainOnSilence (false, true);
+    // Bound reasoning, measured rather than assumed: a never-charged run
+    // returns EXACTLY 1.0, a charged one stalls at 0.99999857 — the one-pole
+    // release's float floor (once (1−env)·a drops below half an ULP near
+    // unity the addition rounds away, so the limiter never returns to bit-
+    // exact unity after any reduction; −0.00001 dB, recorded, not chased).
+    // The defect being tested is nothing like that size: a stale 4.0 tap or a
+    // ringing biquad against a 0.5 ceiling pins the gain near 0.125. 0.999
+    // sits between the two by four orders of magnitude.
+    check (tpClean > 0.9999f && hpClean > 0.9999f,
+           "staleDetector: silence into a never-charged detector is unity gain (the baseline)");
+    check (tpStale > 0.999f,
+           "staleDetector: re-enabling true-peak mode does not resurrect the frozen tap history");
+    check (hpStale > 0.999f,
+           "staleDetector: re-enabling the detector HPF does not ring on its old delay line");
 }
 
 // ---------------------------------------------------------------------------
@@ -2424,6 +2673,10 @@ int main()
     testDuckWrapsOsLatch();
     testDuckOnWrapperRequest();
     testDuckRequestDuringBottomExtendsBottom();
+    testDuckRequestDuringOutIsHeld();
+    testDeltaIsCoveredByTheDuck();
+    testAdaptiveRestoreLastStagedWins();
+    testStaleDetectorStateIsNotReentered();
     testLufsCalibration();
     testLufsGating();
     testLufsWindows();

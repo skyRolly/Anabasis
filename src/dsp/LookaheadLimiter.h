@@ -100,11 +100,9 @@ public:
     void resetWindow() noexcept
     {
         for (int ch = 0; ch < kMaxChannels; ++ch)
-        {
             head[ch] = tail[ch] = 0;
-            for (auto& e : envFast) if (! std::isfinite (e)) e = 1.0f;
-            for (auto& e : envSlow) if (! std::isfinite (e)) e = 1.0f;
-        }
+        for (auto& e : envFast) if (! std::isfinite (e)) e = 1.0f;
+        for (auto& e : envSlow) if (! std::isfinite (e)) e = 1.0f;
         writeCount = 0;
     }
 
@@ -128,7 +126,17 @@ public:
     void setStyle (int s) noexcept               { style = juce::jlimit (0, 2, s); }
     void setTransientPreserve (float t) noexcept { preserve = juce::jlimit (0.0f, 1.0f, t); }
     void setStereoLink (float l) noexcept        { link = juce::jlimit (0.0f, 1.0f, l); }
-    void setTruePeakMode (bool b) noexcept       { tpMode = b; }
+    void setTruePeakMode (bool b) noexcept
+    {
+        // The estimator's 12-tap history only advances while the mode is ON
+        // (processSample skips it otherwise), so re-enabling would interpolate
+        // across samples that are minutes old — bogus peaks, and the gain
+        // reduction they cause. The engine flips this from the OS factor, so
+        // the edge is reachable in normal use; clear the history on it.
+        if (b && ! tpMode)
+            truePeak.reset();
+        tpMode = b;
+    }
 
     void setDetectorHpf (float freqHz) noexcept
     {
@@ -136,9 +144,18 @@ public:
         // detector after this change; a 2nd-order 20 Hz HPF at the floor
         // would perturb the default detector for no musical effect and cost
         // the wedge tests their exactness.
+        const bool wasOn = hpfOn;
         hpfOn = freqHz > 20.001f;
         if (! hpfOn)
+        {
+            // Off means off: leaving the biquad's state behind would have an
+            // on→off→on cycle (the adaptive scHpf trim can drive one) re-enter
+            // the filter with a stale delay line and ring on the first samples.
+            if (wasOn)
+                for (int ch = 0; ch < kMaxChannels; ++ch)
+                    hpfZ1[ch] = hpfZ2[ch] = 0.0f;
             return;
+        }
         const float f    = juce::jlimit (20.0f, (float) (0.49 * sr), freqHz);
         const float w0   = juce::MathConstants<float>::twoPi * f / (float) sr;
         const float cosw = std::cos (w0);

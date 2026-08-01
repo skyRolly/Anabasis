@@ -90,21 +90,35 @@ public:
 
     // Learned-target restore (session load, ADAPTIVE child): host-hidden
     // session state through the mirror pattern — consumed at the block top.
-    // Payload stores first, the flag RELEASE-stored after; the consumer
-    // exchanges the flag with ACQUIRE, so a block that sees the flag is
-    // guaranteed to read THIS call's pair, never a torn one.
+    // ONE staged record — payload (`pendingLearned` discriminator + the two
+    // refs) stored first, the single flag RELEASE-stored after; the consumer
+    // exchanges the flag with ACQUIRE, so a block that sees it reads THIS
+    // call's record, never a torn one. Two independent flags with a fixed
+    // consumption order were the earlier form and had a real defect: two
+    // restores between audio blocks (a learned session, then an un-learned
+    // one) left the LAST loaded session holding the FIRST one's references.
+    // Last writer wins is the only correct rule here, and one flag is how it
+    // is expressed.
     void restoreLearnedTargets (float onsetRate, float tiltDb) noexcept
     {
         pendingRefOnset.store (onsetRate, std::memory_order_relaxed);
         pendingRefTilt.store (tiltDb, std::memory_order_relaxed);
-        adaptiveRestorePending.store (true, std::memory_order_release);
+        pendingLearned.store (true, std::memory_order_relaxed);
+        adaptivePending.store (true, std::memory_order_release);
     }
     void restoreNeverLearned() noexcept
     {
-        adaptiveClearPending.store (true, std::memory_order_relaxed);
+        pendingLearned.store (false, std::memory_order_relaxed);
+        adaptivePending.store (true, std::memory_order_release);
     }
 
     AdaptiveEngine& adaptiveForWrapper() noexcept { return adaptiveEngine; }
+
+    // False if any oversampler the pinned JUCE built disagrees with the
+    // Latency.h table at the last prepare(). Recorded in Release as well as
+    // Debug because the table is load-bearing for both reported PDC and the
+    // dry-ring alignment the bypass null rides on (ADR-0004).
+    bool latencyTableMatchesJuce() const noexcept { return osTableMatchesJuce; }
 
     // The engaged lookahead window in BASE samples, as last handed to the
     // detector. Exposed because it is where invariant 8's "smooth,
@@ -171,12 +185,25 @@ private:
     enum class DuckState { idle, out, bottom, in };
     std::atomic<bool> duckRequested { false };
     std::atomic<bool> learnStartReq { false }, learnStopReq { false };
-    std::atomic<bool> adaptiveRestorePending { false }, adaptiveClearPending { false };
+    std::atomic<bool> adaptivePending { false }, pendingLearned { false };
     std::atomic<float> pendingRefOnset { 0.0f }, pendingRefTilt { 0.0f };
     DuckState duckState = DuckState::idle;
     float duckGain = 1.0f, duckPhase = 0.0f;
     float duckOutInc = 0.0f, duckInInc = 0.0f;
     int   appliedEqPos = 0, appliedModel = 1;   // == the POD defaults
+
+    // Two reasons the silent bottom is held past the block that reaches it:
+    //  • refill — a latch empties the lookahead ring and resets the
+    //    oversampler, so the processed path is EXACTLY silent for
+    //    delaySamples + osLatBase base samples afterwards. Recovering before
+    //    that expires puts the first real sample partway up the 28 ms ramp
+    //    (~0.35 at 4×/48 kHz = a −9 dB step) — the click this layer exists to
+    //    prevent, and the one case where the ramp itself is not the artefact.
+    //  • a duck request that arrived while the out-leg was still running: the
+    //    bulk swap it guards reaches the snapshot a block later, so it must
+    //    find the engine still at zero gain.
+    int  bottomHoldSamples = 0;
+    bool duckAskedWhileOut = false;
 
     // Oversampling: [factorLog2 − 1][phase] — all eight built at prepare().
     std::unique_ptr<juce::dsp::Oversampling<float>> oversamplers[kMaxOsFactorLog2][2];
@@ -185,6 +212,7 @@ private:
     int latchedPhaseIdx  = 0;
     int osN = 1, osShift = 0;
     int osLatBase = 0;                // Latency.h table value for the latched config
+    bool osTableMatchesJuce = true;   // set at prepare(), asserted by the suite
 
     // §2.7 loudness-compensated monitoring + delta. MONITOR-ONLY functions
     // (DSP_POLICY invariant 10): both are inert whenever nonRealtime is set,

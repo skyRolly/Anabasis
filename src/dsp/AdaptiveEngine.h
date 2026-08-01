@@ -57,6 +57,14 @@ class AdaptiveEngine
 public:
     static constexpr int kMaxChannels = 2;
 
+    // Neutral reference targets (⊕ draft; Learn re-fixes them at its commit —
+    // the values a "typical" master sits near, so the factory state trims
+    // toward zero on typical material). PUBLIC because the session restore
+    // needs them as the missing-field defaults for the ADAPTIVE child, and a
+    // second copy of the numbers in the wrapper is a drift waiting to happen.
+    static constexpr float kDefaultRefOnset = 4.0f;   // transients/s
+    static constexpr float kDefaultRefTilt  = -6.0f;  // hi/lo energy dB of typical programme
+
     struct Trims
     {
         float releaseOctaves = 0.0f;   // [-1, +1]
@@ -291,11 +299,6 @@ private:
     float onePoleHz (float hz) const noexcept
     { return 1.0f - std::exp (-juce::MathConstants<float>::twoPi * hz / (float) sr); }
 
-    // Neutral reference targets (⊕ draft; Learn re-fixes them at its commit —
-    // the values a "typical" master sits near, so the factory state trims
-    // toward zero on typical material).
-    static constexpr float kDefaultRefOnset = 4.0f;   // transients/s
-    static constexpr float kDefaultRefTilt  = -6.0f;  // hi/lo energy dB of typical programme
     float refOnsetRate = kDefaultRefOnset;
     float refTiltDb    = kDefaultRefTilt;
 

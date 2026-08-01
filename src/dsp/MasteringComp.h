@@ -202,9 +202,18 @@ private:
         // between both): a 2nd-order 20 Hz HPF at the floor is musically
         // indistinguishable from none, and the skip keeps the default
         // detector byte-exact.
+        const bool wasOn = hpfOn;
         hpfOn = hpfFreq.getCurrentValue() > 20.001f;
         if (! hpfOn)
+        {
+            // Clear on the ON→OFF edge only (this runs per sample while the
+            // frequency smooths): a later on→off→on cycle must re-enter with
+            // an empty delay line, not one holding the old passband.
+            if (wasOn)
+                for (int ch = 0; ch < kMaxChannels; ++ch)
+                    hpfZ1[ch] = hpfZ2[ch] = 0.0f;
             return;
+        }
         const float f    = juce::jlimit (10.0f, (float) (0.49 * sr), hpfFreq.getCurrentValue());
         const float w0   = juce::MathConstants<float>::twoPi * f / (float) sr;
         const float cosw = std::cos (w0);

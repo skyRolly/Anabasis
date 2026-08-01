@@ -6,10 +6,83 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P4 review round of 2026-08-01** (PR #5): the `learned` /
-restore-staging release-acquire fixes, the nonRealtime monitor snap, the duck-bottom hold, and
-this file's own module-coverage table catching up with `src/` (it had still claimed no code
-exists).
+**Last updated:** for the **second P4 review round of 2026-08-01** (PR #5): the post-latch refill
+hold that closes the OS-switch click, the duck request held through the out-leg, delta brought
+under the duck, one staged restore record replacing two ordered flags, and the stale detector
+state cleared on both re-entry edges.
+
+### Second P4 review round — the transition layer had a click in it, and the test that should have caught it stopped thirty samples early (2026-08-01)
+
+Fourteen items. Nine fixed, one accepted and appended to KI-004, one dismissed by its own
+reviewer, three cosmetic/latent and fixed with the rest. Every fix carries a mutation-verified
+test; two of those tests had to be rebuilt after the mutants survived them.
+
+**The headline defect was in the layer that exists to prevent it.** `latchOsConfig` clears the
+lookahead ring and resets the oversampler, so after a factor/phase latch the processed path emits
+EXACT silence for `delaySamples + osLatBase` base samples — 541 at 4×/48 kHz. The bottom branch
+started the 28 ms in-leg on that same block top, so the first real sample arrived 541 samples up a
+1344-sample ramp, at gain ≈ 0.35: a −9 dB step, i.e. a click, on every oversampling change. The
+fix holds the bottom until the refill completes (`bottomHoldSamples`, counted down per processed
+base sample). A factor switch now mutes ~45 ms instead of ~34; that cost is recorded in KI-004
+because it is audible in a different way and testers must not report it as a hang.
+
+**Why the suite did not see it, precisely.** `testDuckWrapsOsLatch` measured its maximum
+sample-to-sample delta over `20*512 … 22*512` = 10240…11263, and the splice landed at ~11293 —
+thirty samples past the last one examined. The window is now the whole transition, and the
+property has a direct assertion rather than a proxy: find the first non-zero sample after the
+latch, peak the cycle that follows it. Held bottom → ~0.01 (the ramp is at its own start);
+unheld → ~0.34. A factor of thirty between the two outcomes, which is what a bound should look
+like.
+
+**Two more dropped-request holes of the same shape.** A `requestForcedDuck()` consumed while the
+OUT leg was still running fell through every branch and vanished (the bottom-state case was
+fixed last round; this was the state before it). It is now remembered in `duckAskedWhileOut` and
+spent as one held bottom block. Reaching it in a test needs 128-sample blocks — at 512 the 288-
+sample out-leg always completes inside the block that starts it, so the `out` state is never
+observed at a block top.
+
+**Delta monitoring was the opposite of ducked.** `wetLeg = delayedDry − processed` subtracted a
+ducked processed term from an unducked dry one, so during a transition the delta output rose to
+the FULL dry signal exactly when the layer was meant to be silent — the loudest possible artefact
+from the click-free mechanism. The dry term now carries the same duck gain (`dryForDelta`), which
+makes the whole difference scale by `duckGain`; the bypass leg keeps the pure `delayedDry`, so
+invariant 7 is untouched. Chosen over moving the duck downstream of the delta mix because that
+would have re-ordered dither against the mix for no additional benefit.
+
+**Last-writer-wins needed one flag, not two.** `adaptiveRestorePending` and `adaptiveClearPending`
+were independent flags consumed in a fixed order (clear, then restore), so two session loads
+between audio blocks — a learned session then an un-learned one — left the LAST loaded session
+holding the FIRST one's references, which the next save then serialized. They are now one staged
+record: a `pendingLearned` discriminator plus the two refs behind a single release-stored flag.
+This retracts the "two INDEPENDENT self-correcting scalars" reasoning in the P4 Learn entry
+below: self-correction was an argument about torn *values*, and it was never an argument about
+*which staged intent* wins.
+
+**Stale detector state on re-entry.** The true-peak estimator's 12-tap history only advances
+while `tpMode` is on (the engine flips it from the OS factor), and the detector HPF kept its
+biquad delay line when the frequency dropped to the range floor (the adaptive scHpf trim can
+drive that edge). Both now clear on their re-entry edge. **The first version of this test proved
+nothing:** its 4000-sample 60 Hz charging passage ended at exactly 5.00 periods, freezing the
+history on a zero crossing, and both mutants survived. 4200 samples (5.25 periods) ends on the
+crest and both mutants die. Third instance of this family in the project — a stimulus that does
+not put the property where the assertion looks is not a weak test, it is a green one that tests
+nothing.
+
+**Measured, not assumed, while setting that test's bound:** the limiter's one-pole release stalls
+at 0.99999857 rather than reaching unity — once `(1−env)·a` falls below half an ULP near 1.0 the
+addition rounds away. Harmless (−0.00001 dB) but it means the engine's `exactlyEqual(gain, 1.0f)`
+fast path never re-arms after the first gain reduction. Recorded here; not chased, because
+snapping it would change gain behaviour to save an exact-compare branch.
+
+Also fixed: the ADAPTIVE child's fields are read with the factory references as their defaults
+(`getProperty` with no default yields `var()` → 0.0, and a session missing them restored a
+reference no material can match — §4.4's rule was applied everywhere else on that path); the
+`Latency.h` cross-check against JUCE's own reported latency is recorded unconditionally and
+asserted by the suite instead of living only in a `jassert` that compiles out of every shipping
+build; the dry ring gets one spare slot (its worst case sat at exactly size−1 — correct, but with
+zero slack); the wrapper's metering block no longer indexes channel 0 unconditionally nor feeds a
+mono buffer twice; `resetWindow`'s sanitise loops moved out of the per-channel loop; the unused
+`fresh` processor left in the Learn round-trip test is gone. Suites: 177 + 76.
 
 ### P4 review round — two real races, a dropped duck request, and a coverage table that still denied the code existed (2026-08-01)
 

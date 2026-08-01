@@ -98,17 +98,22 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     // -- §2.9 metering: measure the OUTPUT, publish once per block ----------
     // (relaxed atomics — monotonic display data, THREAD_MODEL meter row).
+    // nCh is the channel count actually PRESENT, not an assumed 2: the layout
+    // check enforces stereo, but a zero-channel buffer would index channel 0
+    // out of bounds, and feeding a mono buffer twice would read +3.01 LU high
+    // (BS.1770 sums both entries at weight 1.0). The engine guards the same
+    // case at its top; this block did not.
     const int nCh = juce::jmin (buffer.getNumChannels(), 2);
     const int nSm = buffer.getNumSamples();
     float blockTp = 0.0f;
-    for (int n = 0; n < nSm; ++n)
+    for (int n = 0; nCh > 0 && n < nSm; ++n)
     {
         float frame[2] = { buffer.getSample (0, n),
-                           nCh > 1 ? buffer.getSample (1, n) : buffer.getSample (0, n) };
-        outputMeter.processFrame (frame, 2);
-        float tp[2];
-        tpMeter.processFrame (frame, 2, tp);
-        blockTp = juce::jmax (blockTp, tp[0], tp[1]);
+                           nCh > 1 ? buffer.getSample (1, n) : 0.0f };
+        outputMeter.processFrame (frame, nCh);
+        float tp[2] = {};
+        tpMeter.processFrame (frame, nCh, tp);
+        blockTp = juce::jmax (blockTp, tp[0], tp[nCh - 1]);
     }
     const float blockTpDb = juce::Decibels::gainToDecibels (blockTp, -144.0f);
     dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
@@ -388,9 +393,15 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // ADAPTIVE read rules: present → restore the learned targets through the
     // mirror pattern (consumed at the next block top); absent → never
     // learned, defaults (§4.4's discriminator).
+    // A missing FIELD inside a present child takes its default (§4.4), which
+    // here is the factory neutral reference — not var()'s 0.0, which would
+    // have the trims chase a reference no programme material can match.
     if (const auto adaptive = root.getChildWithName ("ADAPTIVE"); adaptive.isValid())
-        engine.restoreLearnedTargets ((float) (double) adaptive.getProperty ("refOnsetRate"),
-                                      (float) (double) adaptive.getProperty ("refTiltDb"));
+        engine.restoreLearnedTargets (
+            (float) (double) adaptive.getProperty ("refOnsetRate",
+                                                   anabasis::AdaptiveEngine::kDefaultRefOnset),
+            (float) (double) adaptive.getProperty ("refTiltDb",
+                                                   anabasis::AdaptiveEngine::kDefaultRefTilt));
     else
         engine.restoreNeverLearned();
 

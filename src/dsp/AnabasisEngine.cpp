@@ -16,13 +16,19 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // allowance + the worst oversampler delay + one chunk.
     const int maxN = 1 << kMaxOsFactorLog2;
     wetRing.setSize (numChans, delaySamples * maxN + maxBlock * maxN + 1);
-    dryRingSize = delaySamples + kMaxOsLatencySamples + maxBlock + 1;
+    // +2, not +1: the read trails the write by num + delaySamples + osLatBase,
+    // which at the worst case (full block, 16× linear) is exactly size − 1 —
+    // correct, but with zero slack, so one grown table entry would have the
+    // oldest read slot land on the slot being written. The spare slot costs
+    // four bytes per channel and removes the coincidence.
+    dryRingSize = delaySamples + kMaxOsLatencySamples + maxBlock + 2;
     dryRing.setSize (numChans, dryRingSize);
     staging.setSize (numChans, maxBlock);
     ceilArr.resize ((size_t) maxBlock);
     wArr.resize ((size_t) maxBlock);
 
     using OS = juce::dsp::Oversampling<float>;
+    osTableMatchesJuce = true;
     for (int f = 0; f < kMaxOsFactorLog2; ++f)
         for (int ph = 0; ph < 2; ++ph)
         {
@@ -33,12 +39,17 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
             oversamplers[f][ph]->initProcessing ((size_t) maxBlock);
 
             // The Latency.h table must equal what the pinned JUCE actually
-            // built - a bump that redesigns either cascade fails here (and in
-            // the matrix impulse test) instead of silently desyncing PDC.
-            jassert (juce::approximatelyEqual (
+            // built - a bump that redesigns either cascade would desync PDC
+            // AND splice the bypass leg, so the check is recorded
+            // UNCONDITIONALLY (a jassert alone verifies nothing in the Release
+            // builds that ship and that CI tests). The suite asserts the flag;
+            // the impulse matrix independently measures the group delay.
+            const bool tableOk = juce::approximatelyEqual (
                 oversamplers[f][ph]->getLatencyInSamples(),
                 (float) osLatencySamples ((OversampleFactor) (f + 1),
-                                          (OsPhaseMode) ph, sampleRate)));
+                                          (OsPhaseMode) ph, sampleRate));
+            osTableMatchesJuce = osTableMatchesJuce && tableOk;
+            jassert (tableOk);
         }
 
     // 20 ms parameter smoothing: long enough to kill zipper noise, short
@@ -93,7 +104,7 @@ void AnabasisEngine::latchOsConfig (int factorIdx, int phaseIdx) noexcept
     // ring was sized at prepare() with kMaxOsLatencySamples standing in for
     // osLatBase, so every latch must stay inside that envelope. This trips
     // the moment a table entry outgrows the Latency.h ceiling.
-    jassert (delaySamples + osLatBase + maxBlock < dryRingSize);
+    jassert (delaySamples + osLatBase + maxBlock < dryRingSize - 1);
     if (osActive != nullptr)
         osActive->reset();
 
@@ -122,6 +133,8 @@ void AnabasisEngine::reset() noexcept
     duckState = DuckState::idle;
     duckGain  = 1.0f;
     duckPhase = 0.0f;
+    bottomHoldSamples = 0;
+    duckAskedWhileOut = false;
     dryMeter.reset();
     wetMeter.reset();
     adaptiveEngine.reset();
@@ -162,12 +175,17 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const int  wantModel = juce::jlimit (0, 3, p.colourModel);
     const bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
 
-    // Learn commands + learned-target restore, consumed at the block top.
-    if (adaptiveClearPending.exchange (false, std::memory_order_relaxed))
-        adaptiveEngine.clearLearnedTargets();
-    if (adaptiveRestorePending.exchange (false, std::memory_order_acquire))
-        adaptiveEngine.setLearnedTargets (pendingRefOnset.load (std::memory_order_relaxed),
-                                          pendingRefTilt.load (std::memory_order_relaxed));
+    // Learn commands + learned-target restore, consumed at the block top. ONE
+    // staged record, so the LAST restore staged before this block wins — see
+    // restoreLearnedTargets() for why two flags could not express that.
+    if (adaptivePending.exchange (false, std::memory_order_acquire))
+    {
+        if (pendingLearned.load (std::memory_order_relaxed))
+            adaptiveEngine.setLearnedTargets (pendingRefOnset.load (std::memory_order_relaxed),
+                                              pendingRefTilt.load (std::memory_order_relaxed));
+        else
+            adaptiveEngine.clearLearnedTargets();
+    }
     if (learnStartReq.exchange (false, std::memory_order_relaxed))
         adaptiveEngine.startLearn();
     if (learnStopReq.exchange (false, std::memory_order_relaxed))
@@ -184,26 +202,40 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         appliedModel = wantModel;
         duckState = DuckState::idle;
         duckGain  = 1.0f;
+        // A render that STARTS with an empty pipeline is not a transition:
+        // the reported latency is the promise that those samples are absent,
+        // so no hold, and nothing is owed from before the reset.
+        bottomHoldSamples = 0;
+        duckAskedWhileOut = false;
     }
     else if (duckState == DuckState::bottom)
     {
         // Silent, and a block boundary: execute everything pending.
         if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
+        {
             latchOsConfig (wantIdx, wantPh);
+            // The latch emptied the lookahead ring and reset the oversampler:
+            // the processed path now emits EXACT silence until both refill.
+            // Hold the bottom that long (the counter runs down per processed
+            // base sample) so the in-leg starts from real audio at zero gain
+            // instead of splicing it in partway up the ramp.
+            bottomHoldSamples = delaySamples + osLatBase;
+        }
         if (wantEq != appliedEqPos)
         {
             appliedEqPos = wantEq;
             eq.resetState();
         }
         appliedModel = wantModel;
-        if (duckAsked)
-        {
-            // A fresh request landed during the bottom block. The bulk swap
-            // it guards reaches the snapshot NEXT block, so hold the silent
-            // bottom one more block and adopt it at zero gain too — dropping
-            // the request here would step the new config mid-recovery.
-        }
-        else
+
+        // A request seen at (or during) the bottom holds it one more block:
+        // the bulk swap it guards reaches the snapshot NEXT block and must be
+        // adopted at zero gain too. Dropping it stepped the new config
+        // mid-recovery — the same defect in the `out` state fed the flag here
+        // through duckAskedWhileOut rather than discarding it.
+        const bool holdForRequest = duckAsked || duckAskedWhileOut;
+        duckAskedWhileOut = false;
+        if (! holdForRequest && bottomHoldSamples <= 0)
         {
             duckState = DuckState::in;
             duckPhase = 0.0f;
@@ -220,6 +252,14 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         duckState = DuckState::out;
         duckPhase = std::acos (juce::jlimit (-1.0f, 1.0f, 2.0f * duckGain - 1.0f))
                     / juce::MathConstants<float>::pi;
+    }
+    else if (duckAsked)
+    {
+        // Only reachable with duckState == out (idle/in are caught above):
+        // the fade is already running, so there is nothing to re-enter — but
+        // the request must not evaporate. Remember it and spend it as one
+        // held bottom block, which is what it was asking for.
+        duckAskedWhileOut = true;
     }
 
     // The stages see the APPLIED discrete config, not the wanted one.
@@ -489,6 +529,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             else
                 duckGain = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::pi * duckPhase));
         }
+        else if (duckState == DuckState::bottom && bottomHoldSamples > 0)
+            --bottomHoldSamples;      // the post-latch refill, counted in processed samples
 
         // Advance the 2.8 crossfade once per base sample.
         const float targetMix = bypassTarget ? 1.0f : 0.0f;
@@ -551,10 +593,20 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 monFrameDry[ch] = delayedDry;
                 monFrameWet[ch] = processed;
             }
+            // The delta leg's dry term carries the SAME duck gain the
+            // processed term already has (processed = duckGain·p), so the
+            // whole difference scales by duckGain and fades to silence with
+            // everything else. Subtracting the FULL dry from a ducked
+            // processed did the opposite: delta rose to the undicked dry
+            // signal exactly when the transition was meant to be silent.
+            // The bypass leg below keeps the pure `delayedDry` — invariant 7
+            // is a property of that leg alone.
+            const float dryForDelta = juce::exactlyEqual (duckGain, 1.0f)
+                                        ? delayedDry : delayedDry * duckGain;
             float wetLeg = processed;
-            if (deltaMix >= 1.0f)      wetLeg = delayedDry - processed;
+            if (deltaMix >= 1.0f)      wetLeg = dryForDelta - processed;
             else if (deltaMix > 0.0f)  wetLeg = processed
-                                              + ((delayedDry - processed) - processed) * deltaMix;
+                                              + ((dryForDelta - processed) - processed) * deltaMix;
 
             float out;
             if (bypassMix <= 0.0f)      out = wetLeg;                           // exact endpoint

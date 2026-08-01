@@ -791,8 +791,6 @@ static void testLearnCommitAndAdaptiveRoundTrip()
     check (state == again, "learn: save → load → save stays byte-identical with ADAPTIVE present");
 
     // ...and a session WITHOUT the child restores never-learned defaults.
-    AnabasisAudioProcessor fresh;
-    fresh.prepareToPlay (48000.0, 512);
     juce::MemoryBlock blank;
     AnabasisAudioProcessor().getStateInformation (blank);
     restored.setStateInformation (blank.getData(), (int) blank.getSize());
@@ -800,6 +798,35 @@ static void testLearnCommitAndAdaptiveRoundTrip()
     check (! restored.adaptiveReadout().hasLearned()
              && std::abs (restored.adaptiveReadout().publishedRefOnset() - refOnset0) < 1.0e-4f,
            "learn: absent ADAPTIVE means never learned — defaults restored");
+
+    // A PRESENT child with the values MISSING is the §4.4 read rule's other
+    // half: a missing field takes its default, and the default here is the
+    // factory neutral reference — not var()'s 0.0, which would leave the
+    // trims chasing a reference no programme material can produce.
+    {
+        auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize());
+        check (xml != nullptr, "learn: the saved session parses back to XML (fixture precondition)");
+        auto root = juce::ValueTree::fromXml (*xml);
+        auto adaptive = root.getChildWithName ("ADAPTIVE");
+        check (adaptive.isValid(), "learn: the learned session really does carry ADAPTIVE");
+        adaptive.removeProperty ("refOnsetRate", nullptr);
+        adaptive.removeProperty ("refTiltDb", nullptr);
+        juce::MemoryBlock stripped;
+        if (const auto out = root.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*out, stripped);
+
+        AnabasisAudioProcessor partial;
+        partial.prepareToPlay (48000.0, 512);
+        partial.setStateInformation (stripped.getData(), (int) stripped.getSize());
+        for (int b = 0; b < 2; ++b) partial.processBlock (buf, midi);
+        check (partial.adaptiveReadout().hasLearned(),
+               "learn: a present ADAPTIVE child still means learned, values or not");
+        check (std::abs (partial.adaptiveReadout().publishedRefOnset()
+                           - anabasis::AdaptiveEngine::kDefaultRefOnset) < 1.0e-4f
+                 && std::abs (partial.adaptiveReadout().publishedRefTilt()
+                           - anabasis::AdaptiveEngine::kDefaultRefTilt) < 1.0e-4f,
+               "learn: missing ADAPTIVE fields fall back to the factory references, not zero");
+    }
 }
 
 // ---------------------------------------------------------------------------
