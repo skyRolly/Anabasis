@@ -1,5 +1,6 @@
 #pragma once
 
+#include <juce_core/juce_core.h>   // the ownership guard macro (CODE_STYLE §Structure)
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -113,17 +114,9 @@ public:
         return envelope;
     }
 
-    // CODE_STYLE §Structure requires the guard on owning classes — this one
-    // owns the two wedge vectors, and a copy would heap-allocate on a class
-    // that sits on the audio path. Spelled with `= delete` rather than
-    // JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR deliberately: the leaf DSP
-    // headers (this one, CeilingClamp, Latency, EngineParameters) are JUCE-free
-    // by construction and only AnabasisEngine — which carries the full macro —
-    // pulls juce_audio_basics. The copy diagnostic is identical; the leak
-    // detector's half is inert for a class that is only ever a value member.
-    LookaheadLimiter (const LookaheadLimiter&)            = delete;
-    LookaheadLimiter& operator= (const LookaheadLimiter&) = delete;
-    LookaheadLimiter()                                    = default;
+    // The macro below user-declares the copy constructor, which suppresses
+    // the implicit default one.
+    LookaheadLimiter() = default;
 
 private:
     size_t next (size_t i) const noexcept { return i + 1 >= wedgeValues.size() ? 0 : i + 1; }
@@ -138,6 +131,13 @@ private:
     int    maxWindow    = 480;
     float  releaseAlpha = 0.01f;
     float  envelope     = 1.0f;
+
+    // CODE_STYLE §Structure: owning classes carry THIS macro, uniformly — an
+    // earlier revision spelled it `= delete` to keep the header JUCE-free, but
+    // no policy asks for that (DSP_POLICY invariant 13 forbids plugin-client/
+    // GUI headers and explicitly permits juce_audio_basics/juce_dsp, and the
+    // macro lives below both in juce_core).
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LookaheadLimiter)
 };
 
 } // namespace anabasis

@@ -67,7 +67,10 @@ Planned coverage: serialized-schema shape; the **parameter-registry snapshot**; 
 save → load → save round-trip (byte-identical) and its fixed-point precondition
 (`testRawRoundTripIsIdempotent`); the §4.4 structural-tolerance read rules — a valid root that omits
 `ANABASIS` or `ANABASIS_INTERNAL` reads as *defaults*, never as "keep the live values"
-(`testMissingChildrenReadAsDefaults`); every legacy read path via a frozen fixture;
+(`testMissingChildrenReadAsDefaults`, which also pins the same rule at **PARAM granularity**: a
+missing individual child resets that one parameter — behaviour supplied by the pinned JUCE's
+reconnection fallback, not by our code, which is exactly why it is pinned); every legacy read path
+via a frozen fixture;
 corrupt/foreign-state robustness; user-preset round-trip + exclusion rules; A/B and view-param
 preservation; **`testMacroDefaultIsFixedPoint`** — the macro mapping at the default position must
 equal every managed parameter's declared default (ADR-0005, `MODE_AND_ADAPTATION_POLICY.md`

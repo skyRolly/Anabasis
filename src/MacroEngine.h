@@ -73,6 +73,14 @@ public:
     // flag on the way out, so the guarantee no longer depends on the restore
     // out-racing the timer.
     //
+    // Known, accepted property: the exit drops WHATEVER is armed — including a
+    // genuine user gesture that flagged microseconds before the restore began.
+    // That gesture's mapping is swallowed, not deferred. Harmless today (the
+    // restore overwrites the managed set anyway, so applying the stale gesture
+    // after it would be the §5.3 clobber this scope exists to prevent), but it
+    // is a swallow by design, restated here so P4's gesture bracketing treats
+    // it as a known property rather than a surprise.
+    //
     // It is also the ONLY way to reach the abort (`abortPendingMapping` is
     // private): a new restore path cannot forget the step, because there is
     // no API that performs a restore without it.

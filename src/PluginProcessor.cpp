@@ -65,6 +65,13 @@ void AnabasisAudioProcessor::updateLatency()
     p.forceMaxOffline = internalState.forceMaxOffline();
     p.nonRealtime     = nonRealtimeFlag.load (std::memory_order_relaxed);
 
+    // The 48 kHz fallback covers calls before the first prepareToPlay (a
+    // setStateInformation or an int_ change can arrive first), so the figure
+    // reported from an unprepared state is a placeholder — 480 samples
+    // regardless of the host's eventual rate. prepareToPlay re-reports with
+    // the real rate before any audio runs, and wrappers set the rate before
+    // calling it, so no host compensates with the placeholder. A future PDC
+    // test must therefore assert the reported value only AFTER a prepare.
     const double sr = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
     setLatencySamples (anabasis::predictLatencySamples (p, sr));
 }
@@ -127,6 +134,14 @@ void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithR
 
 juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
 {
+    // The slot serialises the FULL parameter tree, view-tier entries included;
+    // the "view state never travels with a slot" rule lives entirely on the
+    // apply side (applySlotToLive overwrites those entries from LIVE before
+    // adopting). Consequence for later phases: any path that ever adopts a
+    // slot tree WITHOUT going through applySlotToLive — an undo stack, the
+    // P2 duck-routed swap — silently re-introduces view-tier travel. Route
+    // every slot adoption through applySlotToLive, or move the exclusion here
+    // first.
     juce::ValueTree slot ("SLOT");
     slot.setProperty ("presetName", livePresetName, nullptr);
     slot.appendChild (copyStateWithRaw(), nullptr);
@@ -325,7 +340,12 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         }
     }
 
-    updateLatency();   // int_ latency inputs may have changed with the session
+    // Deliberately the SECOND recompute of this load: replaceFrom's batch
+    // already fired one (that is the level testLatencyNotifyIsBatchedAcrossARead
+    // pins). This one is belt-and-braces for the rest of the restore body, and
+    // costs nothing — setLatencySamples no-ops when the figure is unchanged,
+    // which it is, so the host sees at most one PDC change per load either way.
+    updateLatency();
 }
 
 // ---------------------------------------------------------------------------

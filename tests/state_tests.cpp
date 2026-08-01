@@ -484,6 +484,48 @@ static void testMissingChildrenReadAsDefaults()
         check (p.internalState.oversampleFactor() == anabasis::OversampleFactor::x4,
                "readRules: absent ANABASIS does not discard the internal child that IS present");
     }
+
+    {   // A single PARAM child absent → THAT parameter resets, the rest restore.
+        // This is NOT implemented by our code — it is pinned JUCE behaviour,
+        // and the pin is why the test exists. replaceState's reconnection
+        // (updateParameterConnectionsToChildTrees) appends an id-only child
+        // for the missing parameter; the APVTS hears its own appendChild via
+        // valueTreeChildAdded → setNewState, whose value-property fallback is
+        // getDenormalisedDefaultValue() — so the parameter lands on its
+        // declared default BEFORE flushParameterValuesToValueTree writes that
+        // default back into the child. A review claimed the flush seeds the
+        // child from the previous session's CURRENT value (the chimera one
+        // level below the whole-child cases above); the claim reads plausibly
+        // from the flush alone but is falsified by the childAdded round trip
+        // — and by this test, which was written to fail before any fix and
+        // passed on the unmodified code. It stays as the tripwire that fires
+        // if a JUCE upgrade ever changes the reconnection semantics.
+        auto root = rootOfPristineSession();
+        auto params = root.getChildWithName ("ANABASIS");
+        auto gainNode = params.getChildWithProperty ("id", juce::String (pid::inputGain));
+        check (gainNode.isValid(), "readRules: (premise) the session tree carries the inputGain child");
+        params.removeChild (gainNode, nullptr);
+
+        AnabasisAudioProcessor p;
+        dirty (p);
+        check (! juce::exactlyEqual (p.apvts.getParameter (pid::inputGain)->getValue(),
+                                     defaultInputGain),
+               "readRules: (premise) the dirtied value is off-default, so a keep-live bug is visible");
+        apply (p, root);
+        check (juce::exactlyEqual (p.apvts.getParameter (pid::inputGain)->getValue(),
+                                   defaultInputGain),
+               "readRules: an absent PARAM child resets that parameter, not keeps the live value");
+
+        // …and the reset value must round-trip: the next save carries the
+        // default, not the leftover.
+        juce::MemoryBlock saved;
+        p.getStateInformation (saved);
+        AnabasisAudioProcessor q;
+        q.setStateInformation (saved.getData(), (int) saved.getSize());
+        check (juce::exactlyEqual (q.apvts.getParameter (pid::inputGain)->getValue(),
+                                   defaultInputGain),
+               "readRules: the filled-in default survives the next save/load");
+    }
 }
 
 // ---------------------------------------------------------------------------

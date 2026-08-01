@@ -146,6 +146,35 @@ silently filled in.
 
 ---
 
+## OQ-014 — Do the MacroEngine guard atomics need a THREADING_POLICY table row? · `Open (owner call)`
+
+**Question.** The P1 macro layer carries two payload-free atomics that are not rows in
+`THREADING_POLICY.md`'s permitted-path table: `mappingPending` (any thread → message thread — the
+listener flags, the message-thread drain consumes; `src/MacroEngine.h`) and `restoreDepth`
+(restoring thread → message thread — the `ScopedRestore` guard that keeps the drain from applying a
+mapping mid-restore). The table's rows all point GUI→Audio or Audio→GUI; an any-thread→message
+guard is a direction it does not enumerate, and the policy's own rule is "any path not in this
+table is a new cross-thread path → Architecture Review Gate."
+
+**The two readings.**
+
+- **Already blessed.** ADR-0005/ADR-0011 mandate that the MacroEngine "consumes macro changes solely
+  through an async message-thread listener". `juce::AsyncUpdater` — the accepted mechanism — is
+  itself internally an atomic flag plus a message post; `mappingPending` + the 30 ms drain +
+  `restoreDepth` implement that mandated shape (plus its §5.3 restore exception) rather than adding
+  a new edge. Under this reading the table has a documentation gap, closed by a row added when
+  `docs/architecture/THREAD_MODEL.md` (owed at P1) is written.
+- **Needs the Gate.** The table is deliberately exhaustive, a policy change is enacted only by an
+  ADR (`ADR_POLICY.md` rule 5), and "it is morally an AsyncUpdater" is an inference, not a
+  decision. Under this reading the atomics stand as documented drift until a (small) ADR ratifies
+  them and amends the table.
+
+**Where the state is recorded meanwhile.** The mechanism, its mutation-verified tests, and its
+residual check-then-act window are documented in `KNOWN_ISSUES.md` KI-003 and
+`docs/DOCUMENTATION_COVERAGE.md` (fifth commit entry) — the deviation is visible, not hidden.
+Not blocking P1 code (the code ships either way); blocking the **THREAD_MODEL.md** write-up, which
+must state one reading or the other.
+
 ## Resolved
 
 ### OQ-011 — What is the macOS deployment target? · `Resolved 2026-07-31 (P1)`

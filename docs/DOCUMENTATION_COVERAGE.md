@@ -9,6 +9,50 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton, seventh commit — a review claim falsified by its own regression test (2026-08-01)
+
+**The headline "bug" of this round does not exist on the pinned JUCE, and the proof is now a
+test.** A review asserted that a session tree missing an individual `PARAM` child leaves the
+previous session's value live (`replaceState` re-creating the child "seeded from the parameter's
+CURRENT value"), producing the chimera one level below the whole-child read rules. The mechanism
+reads plausibly from `flushParameterValuesToValueTree` alone — but the test written to fail on it
+**passed on the unmodified code**, and the pinned source explains why: the reconnection appends an
+id-only child to `state`, the APVTS hears its own `appendChild` via `valueTreeChildAdded` →
+`setNewState`, and that call's value-property fallback is `getDenormalisedDefaultValue()` — the
+parameter lands on its declared default *before* the flush writes anything. The test was made
+non-vacuous (a premise check pins that the dirtied value really was off-default) and **kept as the
+tripwire** for a JUCE upgrade changing the reconnection semantics; the fix it was written for was
+**not applied**. That matters beyond this item: the drafted fix (fill gaps from the default tree
+inside `adoptParamsTree`) would have introduced a real regression on the `applySlotToLive` path —
+an A/B slot missing a view-tier child would have clobbered live view state with defaults. The
+review cycle the project keeps warning about ("each fix breeds the next round's bugs") is exactly
+this shape, and test-first is what caught it.
+
+**`LookaheadLimiter` now carries the uniform ownership macro.** The previous round spelled the
+guard `= delete` to keep the header "JUCE-free" — a constraint no policy imposes: `DSP_POLICY.md`
+invariant 13 forbids plugin-client/GUI headers and explicitly permits `juce_audio_basics`/
+`juce_dsp`, beneath both of which sits `juce_core`, where the macro lives. The justification cited
+a rule that does not exist, so the deviation is reverted to the mechanical convention
+(`CODE_STYLE.md` §Structure) the sibling owning classes already follow.
+
+**OQ-014 records the one governance question this round surfaced instead of deciding it.**
+`mappingPending` and `restoreDepth` are payload-free any-thread → message-thread guards — a
+direction `THREADING_POLICY.md`'s permitted-path table does not enumerate, and the policy routes
+any off-table path to the Architecture Review Gate. Whether ADR-0005/0011's "async message-thread
+listener" clause already blesses them (they implement the mandated shape — `juce::AsyncUpdater` is
+itself an atomic flag plus a message post) or whether a small ratifying ADR is owed is an owner
+call, not an agent inference; `OPEN_QUESTIONS.md` OQ-014 states both readings and what each
+implies for the still-owed `THREAD_MODEL.md`.
+
+Comment-only syncs from the informational findings: the second `updateLatency()` in
+`setStateInformation` is labelled as the deliberate, no-op-when-unchanged second recompute (the
+batch fires the first — the "exactly one" the test pins is at the `InternalState` level); the
+`ScopedRestore` header states the accepted swallow of a gesture armed microseconds before a
+restore; `saveSlotFromLive` warns that the view-tier exclusion lives entirely on the apply side, so
+a future path adopting a slot without `applySlotToLive` re-introduces view-tier travel; and
+`updateLatency` documents the 48 kHz placeholder before the first `prepareToPlay`, with the note
+that a future PDC test must assert only after a prepare.
+
 ### P1 skeleton, sixth commit — owning-class guards, and a test that measured the wrong thing (2026-07-31)
 
 **The self-heal test passed against its own mutant, and the stimulus was why.** The invariant-9
