@@ -172,7 +172,7 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | 3 true peak ≥ 4× | true-peak accuracy test | TODO (P3) |
 | 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P2)** — the ADR-0002 mandated stimulus is live: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix still needs the true-peak tap (P2/P3) |
 | 5 oversampling scope | latency-matrix + aliasing measurement | TODO (P2) |
-| 6 ADAA | aliasing measurement (dB, recorded) | TODO (P2) |
+| 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
 | 8 click-free transitions | per-path click tests | **partial (P2)** — ceiling, lookahead and the eleven EQ controls are pinned smoothed (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the duck-routed rewires (`eqPosition`, `colourModel`) and the bulk swaps need the §2.8 transition layer (P2) |
 | 9 no NaN/Inf/denormals | `testNoBadSamples` | **live (P1)** |

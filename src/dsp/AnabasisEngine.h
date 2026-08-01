@@ -4,6 +4,7 @@
 #include "Latency.h"
 #include "MasteringEQ.h"
 #include "MasteringComp.h"
+#include "ClipSat.h"
 #include "LookaheadLimiter.h"
 #include "CeilingClamp.h"
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -89,6 +90,7 @@ private:
     CeilingClamp     clamp;
     MasteringEQ      eq;
     MasteringComp    comp;
+    ClipSat          clip;
     int eqPositionNow = 0;     // 0 Pre, 1 Post — the position the biquad state belongs to
 
     // §2.8 minimal form: linear output crossfade between wet and dry over

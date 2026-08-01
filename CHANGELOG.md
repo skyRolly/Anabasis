@@ -33,6 +33,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   deleted at merge, which a branch-relative "the commit that follows" does not
   (`CHANGELOG_POLICY.md` rule 2). [Verified]
 
+- **P2 DSP core (in progress)** — the chain stages now process audio: the §2.2 EQ (tilt pair,
+  shelves, two bells, Pre/Post with the clamp-last guarantee), the §2.3 glue compressor
+  (log-domain, soft knee, RMS/Peak, two-pole auto release, sidechain HPF, parallel mix), and the
+  §2.4 clipper/saturation (hard↔soft knee morph with first-order ADAA — measured 14.8/10.4 dB
+  alias reduction at OS Off — colour models with odd/even balance and tone, the dynamic HF tame,
+  drive with level compensation). All-defaults remains a bit-exact null. Limiter upgrades,
+  oversampling and dither follow in this phase.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

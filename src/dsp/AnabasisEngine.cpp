@@ -43,6 +43,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     limiter.prepare (sampleRate, delaySamples);
     eq.prepare (sampleRate);
     comp.prepare (sampleRate);
+    clip.prepare (sampleRate);
     reset();
 }
 
@@ -54,6 +55,7 @@ void AnabasisEngine::reset() noexcept
     limiter.reset();
     eq.reset();
     comp.reset();
+    clip.reset();
     smoothersPrimed = false;   // the next block adopts ALL FOUR values without a glide
 
     // The crossfade is reset state too. Leaving a part-way `bypassMix` behind
@@ -112,6 +114,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     limiter.setRelease (juce::jmax (1.0f, p.limReleaseMs));
     eq.setTargets (p);
     comp.setPerBlock (p);
+    clip.setPerBlock (p);
 
     // eqPosition is a discrete REWIRE, not a glide (ADR-0010's same-day note):
     // the biquad history belongs to the stream the EQ was in, so it is cleared
@@ -140,7 +143,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         eq.tick();   // once per sample, whichever position processes it
 
         // Chain order (ADR-0002): Input Gain → EQ(Pre) → Compressor →
-        // [clipper P2] → limiter push. Everything upstream of the wet ring is
+        // Clipper/Saturation → limiter push. Everything upstream of the wet ring is
         // what the limiter's detector sees — boosting a shelf or squeezing
         // with the comp drives the limiter, as a mastering chain must. The
         // compressor is stereo-LINKED (one gain for all channels), so it
@@ -163,6 +166,7 @@ void AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         }
 
         comp.processSample (staged, numChannels);
+        clip.processSample (staged, numChannels);
 
         for (int ch = 0; ch < numChannels; ++ch)
         {

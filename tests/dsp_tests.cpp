@@ -11,6 +11,7 @@
 
 #include <AnabasisEngine.h>
 #include <Latency.h>
+#include <juce_dsp/juce_dsp.h>
 #include <cstdio>
 #include <cmath>
 
@@ -636,6 +637,282 @@ static void testCompSidechainHpf()
 }
 
 // ---------------------------------------------------------------------------
+// §2.4 clipper: drive at exactly 0 dB is bit-identity (the driveTanh-precedent
+// contract) no matter where shape/balance/tone sit, because the sub-block is
+// SKIPPED — ADAA is inherently a half-sample smear even in its linear region,
+// so "0 dB drive ≈ transparent" would be false; only the skip makes it exact.
+static void testClipDriveZeroIsBitExact()
+{
+    anabasis::ClipSat clip;
+    clip.prepare (48000.0);
+    anabasis::EngineParameters p;
+    p.clipDriveDb = 0.0f; p.clipShape = 1.0f; p.colourBalance = -0.7f;
+    p.colourTone = 0.9f;  p.colourDepth = 0.0f; p.dynTiltDb = 0.0f; p.clipMix = 1.0f;
+    clip.setPerBlock (p);
+
+    bool exact = true;
+    for (int n = 0; n < 48000; ++n)
+    {
+        const float v = 0.8f * std::sin (0.29f * (float) n);
+        float frame[2] = { v, -v };
+        clip.processSample (frame, 2);
+        if (! juce::exactlyEqual (frame[0], v) || ! juce::exactlyEqual (frame[1], -v))
+        { exact = false; break; }
+    }
+    check (exact, "clip: 0 dB drive is bit-identity with every other control wild");
+}
+
+// ---------------------------------------------------------------------------
+// Level compensation and the knee morph. y = f(x·g)/g: the linear-region body
+// passes at unity, the flat top sits at 1/g; at a driven peak of exactly 1.0
+// the hard curve does not touch it while the w=1 knee already shapes it to
+// f(1) = 0.75.
+static void testClipCurveAndCompensation()
+{
+    const double sr = 48000.0;
+    auto peakOut = [&] (float amp, float driveDb, float shape)
+    {
+        anabasis::ClipSat clip;
+        clip.prepare (sr);
+        anabasis::EngineParameters p;
+        p.clipDriveDb = driveDb; p.clipShape = shape; p.clipMix = 1.0f;
+        clip.setPerBlock (p);
+        float peak = 0.0f;
+        for (int n = 0; n < 24000; ++n)
+        {
+            const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 200.0f * (float) n / (float) sr);
+            float frame[2] = { v, v };
+            clip.processSample (frame, 2);
+            if (n > 12000) peak = juce::jmax (peak, std::abs (frame[0]));
+        }
+        return peak;
+    };
+
+    const float g12 = std::pow (10.0f, 12.0f / 20.0f);
+    const float flat = peakOut (0.9f, 12.0f, 0.0f);
+    check (std::abs (flat - 1.0f / g12) < 0.01f,      // measured 0.25119 vs 0.25119
+           "clip: hard-driven peak flattens at ceiling/drive (level compensation)");
+
+    const float small = peakOut (0.05f, 12.0f, 0.0f);
+    check (std::abs (small - 0.05f) < 2.0e-3f,        // measured 0.04999
+           "clip: the linear-region body passes at unity gain under drive");
+
+    const float hardAt1 = peakOut (1.0f, 0.001f, 0.0f);   // u peak ~1: hard leaves it
+    const float softAt1 = peakOut (1.0f, 0.001f, 1.0f);   // w=1 knee: f(1)=0.75
+    check (softAt1 < hardAt1 * 0.85f,                 // measured 0.7499 vs 0.9998
+           "clip: the soft knee engages below the hard threshold (shape morph is real)");
+}
+
+// ---------------------------------------------------------------------------
+// inv 6: ADAA measurably reduces aliasing versus the memoryless curve, with
+// the naive reference computed from the SAME public transfer() the DSP uses.
+// STIMULUS CALIBRATION MATTERS: ADAA-1's suppression is ~|sinc(pi*f_src/fs)|
+// of the SOURCE harmonic, so a 5 kHz tone's folded 5th (source 25 kHz) only
+// improves by the measured 4.8 dB — a 6 dB assertion there fails on correct
+// code. A bright tone is both the honest use case and the strong measurement:
+// at f0 = 11.72 kHz (bin 2000 of 8192 @ 48 kHz) the folded 3rd (source
+// 35.2 kHz -> bin 2192) and 5th (source 58.6 kHz -> bin 1808) fold deep.
+// Measured on this stimulus: 14.8 dB and 10.4 dB — asserted at 6/8 dB so a
+// real regression fails while libm-level float variance cannot.
+static void testClipAdaaReducesAliasing()
+{
+    const int N = 8192, warm = 256, k = 2000;
+    const double sr = 48000.0;
+    const float g = std::pow (10.0f, 12.0f / 20.0f);
+
+    anabasis::ClipSat clip;
+    clip.prepare (sr);
+    anabasis::EngineParameters p;
+    p.clipDriveDb = 12.0f; p.clipShape = 0.0f; p.clipMix = 1.0f;
+    clip.setPerBlock (p);
+
+    std::vector<float> adaa (N), naive (N);
+    for (int n = 0; n < warm + N; ++n)
+    {
+        const float x = 0.9f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                         * (float) k * (float) n / (float) N);
+        float frame[2] = { x, x };
+        clip.processSample (frame, 2);
+        if (n >= warm)
+        {
+            adaa[(size_t) (n - warm)]  = frame[0];
+            naive[(size_t) (n - warm)] = anabasis::ClipSat::transfer (x * g, 0.0f) / g;
+        }
+    }
+
+    juce::dsp::FFT fft (13);
+    auto magDb = [&] (const std::vector<float>& sig, int bin)
+    {
+        std::vector<float> buf (2 * (size_t) N, 0.0f);
+        std::copy (sig.begin(), sig.end(), buf.begin());
+        fft.performRealOnlyForwardTransform (buf.data(), true);
+        const float re = buf[(size_t) (2 * bin)], im = buf[(size_t) (2 * bin + 1)];
+        return 20.0f * std::log10 (juce::jmax (1.0e-12f, std::sqrt (re * re + im * im)));
+    };
+
+    const int h3AliasBin = N - 3 * k;    // 35.16 kHz folds to bin 2192
+    const int h5AliasBin = 5 * k - N;    // 58.59 kHz folds to bin 1808
+    const float a3n = magDb (naive, h3AliasBin), a3a = magDb (adaa, h3AliasBin);
+    const float a5n = magDb (naive, h5AliasBin), a5a = magDb (adaa, h5AliasBin);
+    const float f0n = magDb (naive, k),          f0a = magDb (adaa, k);
+
+    check (a3a < a3n - 6.0f,  "adaa: the folded 3rd harmonic drops by >6 dB");
+    check (a5a < a5n - 8.0f,  "adaa: the folded 5th harmonic drops by >8 dB");
+    check (std::abs (f0a - f0n) < 2.0f,
+           "adaa: the fundamental survives (reduction is aliasing, not treble)");
+}
+
+// ---------------------------------------------------------------------------
+// §2.4 colour: Clean is the null model at EVERY depth; depth 0 is exact with
+// every model; balance swings the odd/even ratio; tone tilts the residue.
+static void testColourModelsBalanceAndTone()
+{
+    const double sr = 48000.0;
+    const int N = 8192, warm = 4096, k = 512;   // f0 = 3 kHz exact bin
+
+    auto renderMag = [&] (int model, float depth, float bal, float ton,
+                          int bin) -> float
+    {
+        anabasis::ClipSat clip;
+        clip.prepare (sr);
+        anabasis::EngineParameters p;
+        p.colourModel = model; p.colourDepth = depth; p.colourBalance = bal;
+        p.colourTone = ton; p.clipMix = 1.0f;
+        clip.setPerBlock (p);
+        std::vector<float> out (N);
+        for (int n = 0; n < warm + N; ++n)
+        {
+            const float x = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * (float) k * (float) n / (float) N);
+            float frame[2] = { x, x };
+            clip.processSample (frame, 2);
+            if (n >= warm) out[(size_t) (n - warm)] = frame[0];
+        }
+        juce::dsp::FFT fft (13);
+        std::vector<float> buf (2 * (size_t) N, 0.0f);
+        std::copy (out.begin(), out.end(), buf.begin());
+        fft.performRealOnlyForwardTransform (buf.data(), true);
+        const float re = buf[(size_t) (2 * bin)], im = buf[(size_t) (2 * bin + 1)];
+        return 20.0f * std::log10 (juce::jmax (1.0e-12f, std::sqrt (re * re + im * im)));
+    };
+
+    {   // depth 0 → bit-exact with a coloured model and wild balance/tone
+        anabasis::ClipSat clip;
+        clip.prepare (sr);
+        anabasis::EngineParameters p;
+        p.colourModel = 1; p.colourDepth = 0.0f; p.colourBalance = 1.0f;
+        p.colourTone = -1.0f; p.clipMix = 1.0f;
+        clip.setPerBlock (p);
+        bool exact = true;
+        for (int n = 0; n < 24000; ++n)
+        {
+            const float v = 0.6f * std::sin (0.41f * (float) n);
+            float frame[2] = { v, v };
+            clip.processSample (frame, 2);
+            if (! juce::exactlyEqual (frame[0], v)) { exact = false; break; }
+        }
+        check (exact, "colour: depth 0 is exact identity regardless of model");
+    }
+    {   // Clean at full depth → still exact identity (the null model)
+        anabasis::ClipSat clip;
+        clip.prepare (sr);
+        anabasis::EngineParameters p;
+        p.colourModel = 0; p.colourDepth = 1.0f; p.clipMix = 1.0f;
+        clip.setPerBlock (p);
+        bool exact = true;
+        for (int n = 0; n < 24000; ++n)
+        {
+            const float v = 0.6f * std::sin (0.41f * (float) n);
+            float frame[2] = { v, v };
+            clip.processSample (frame, 2);
+            if (! juce::exactlyEqual (frame[0], v)) { exact = false; break; }
+        }
+        check (exact, "colour: Clean applies more of nothing at every depth");
+    }
+
+    const int h2 = 2 * k, h3 = 3 * k;
+    const float h2AllEven = renderMag (2, 1.0f, -1.0f, 0.0f, h2);
+    const float h3AllEven = renderMag (2, 1.0f, -1.0f, 0.0f, h3);
+    const float h2AllOdd  = renderMag (2, 1.0f,  1.0f, 0.0f, h2);
+    const float h3AllOdd  = renderMag (2, 1.0f,  1.0f, 0.0f, h3);
+    check (h2AllEven > h2AllOdd + 20.0f, "colour: balance -1 keeps the even harmonic only");
+    check (h3AllOdd  > h3AllEven + 20.0f, "colour: balance +1 keeps the odd harmonic only");
+
+    // Tone: the 3rd harmonic of a 3 kHz tone (9 kHz) sits in the HP half of
+    // the 2 kHz split — bright keeps it, dark cuts it.
+    const float h3Bright = renderMag (1, 1.0f, 1.0f,  1.0f, h3);
+    const float h3Dark   = renderMag (1, 1.0f, 1.0f, -1.0f, h3);
+    check (h3Bright > h3Dark + 6.0f,                  // measured 48.4 vs 37.0 dB
+           "colour: tone tilts the residue bright/dark");
+}
+
+// ---------------------------------------------------------------------------
+// §2.2's dynamic HF tame lives in this stage: it cuts up to dynTilt dB above
+// ~6 kHz WHILE the clipper is working, and does exactly nothing when it is
+// not — same output bit-for-bit as dynTilt 0, because harshness that does not
+// exist must not be "tamed".
+static void testDynamicTame()
+{
+    const double sr = 48000.0;
+    auto render = [&] (float amp, float tame) -> std::vector<float>
+    {
+        anabasis::ClipSat clip;
+        clip.prepare (sr);
+        anabasis::EngineParameters p;
+        p.clipDriveDb = 12.0f; p.clipShape = 0.0f; p.dynTiltDb = tame; p.clipMix = 1.0f;
+        clip.setPerBlock (p);
+        std::vector<float> out;
+        out.reserve (48000);
+        for (int n = 0; n < 48000; ++n)
+        {
+            const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 8000.0f * (float) n / (float) sr);
+            float frame[2] = { v, v };
+            clip.processSample (frame, 2);
+            out.push_back (frame[0]);
+        }
+        return out;
+    };
+
+    auto tailRmsDb = [] (const std::vector<float>& v)
+    {
+        double s = 0.0; int c = 0;
+        for (size_t n = v.size() / 2; n < v.size(); ++n) { s += (double) v[n] * v[n]; ++c; }
+        return 20.0 * std::log10 (std::sqrt (s / c));
+    };
+
+    const auto loud0 = render (0.9f, 0.0f), loud2 = render (0.9f, 2.0f);
+    check (tailRmsDb (loud2) < tailRmsDb (loud0) - 0.5,   // measured −13.53 vs −12.96
+           "tame: a clipping 8 kHz tone is cut by the dynamic shelf");
+
+    const auto quiet0 = render (0.05f, 0.0f), quiet2 = render (0.05f, 2.0f);
+    bool identical = true;
+    for (size_t n = 0; n < quiet0.size(); ++n)
+        if (! juce::exactlyEqual (quiet0[n], quiet2[n])) { identical = false; break; }
+    check (identical, "tame: with nothing clipping, dynTilt changes nothing at all");
+}
+
+// ---------------------------------------------------------------------------
+static void testClipMixZeroIsDry()
+{
+    anabasis::ClipSat clip;
+    clip.prepare (48000.0);
+    anabasis::EngineParameters p;
+    p.clipDriveDb = 18.0f; p.colourDepth = 1.0f; p.dynTiltDb = 2.0f; p.clipMix = 0.0f;
+    clip.setPerBlock (p);
+    bool exact = true;
+    for (int n = 0; n < 24000; ++n)
+    {
+        const float v = 0.9f * std::sin (0.37f * (float) n);
+        float frame[2] = { v, v };
+        clip.processSample (frame, 2);
+        if (! juce::exactlyEqual (frame[0], v)) { exact = false; break; }
+    }
+    check (exact, "clip: 0% mix is bit-exact dry under heavy drive and colour");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -877,6 +1154,12 @@ int main()
     testCompDetectorAndMix();
     testCompAutoReleaseIsTwoStage();
     testCompSidechainHpf();
+    testClipDriveZeroIsBitExact();
+    testClipCurveAndCompensation();
+    testClipAdaaReducesAliasing();
+    testColourModelsBalanceAndTone();
+    testDynamicTame();
+    testClipMixZeroIsDry();
     testNoBadSamples();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
