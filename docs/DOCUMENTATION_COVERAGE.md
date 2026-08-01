@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **eighth review round of 2026-08-01** (PR #5): the previous round's
+**Last updated:** for the **ninth review round of 2026-08-01** (PR #5): the direct-adopt branch
+now clears EQ state on a position change (the offline-entry edge made that branch reachable
+mid-stream), the wrapper's staged mirror is atomic, and two reset-lifecycle carry-overs are
+closed. Previous round: (PR #5): the previous round's
 offline-flip fix was direction-agnostic and broke the RETURN edge — fixed, with both directions
 now pinned by their own tests. Previous round: (PR #5): a realtime→offline flip
 no longer ducks the head of a bounce, `learnActive` joins `learned` as an atomic, and CLAUDE.md
@@ -21,6 +24,51 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Ninth review round — the second-order consequence of making a branch reachable (2026-08-01)
+
+Ten items: four fixes, two recorded, four verifications/repeats.
+
+**The EQ state fix is the same class of miss as last round's, one level deeper.** The direct-adopt
+branch assigns `appliedEqPos` without the `eq.resetState()` its silent-bottom twin performs. That
+was harmless for as long as the branch was only reachable immediately after `reset()`, which has
+already cleared the biquads — and round seven made it reachable **mid-stream** by routing the
+offline-entry edge through it. So a bounce started on the exact block the EQ position changes
+began with the other position's filter history, which is the rule `MasteringEQ::resetState`'s own
+comment states. Fixed by pairing the two operations on this branch as well.
+
+The pattern across rounds seven → eight → nine is worth naming: widening a branch's reachability
+is not a local change, because every *omission* inside it that was safe under the old
+precondition becomes a defect under the new one. Round eight caught the branch running in the
+wrong direction; round nine caught what the branch fails to do now that it runs mid-stream. The
+check that would have caught both at once is to re-read the whole branch body against the new
+precondition, not just the condition guarding it.
+
+**Test design, since "no artefact" is hard to assert directly:** the input goes SILENT at the flip
+and Force Max changes the factor, so `latchOsConfig` empties the lookahead ring — everything
+downstream of the region is then fed exact zeros and the Post EQ is the only thing that can
+produce a nonzero sample. Clean state gives exactly 0.0; stale state rings out the charged
+history. Mutation-verified against the missing `resetState`.
+
+**Three smaller closures.** The wrapper's staged ADAPTIVE mirror is now three atomics: writer and
+reader are both nominally the message thread, but KI-003 records that VST3 does not promise which
+thread delivers `setStateInformation`, so a concurrent save could read a half-written mirror —
+it is a new instance of KI-003's own shape, and the entry now says so. `lastNonRealtime` and
+`grMinLinear` are cleared in `reset()`: neither changed behaviour today (the first is shadowed by
+`smoothersPrimed`, the second is one 200 ms-smoothed monitor target), but both made a reset-scoped
+invariant depend on something outside `reset()` — the GR tap in particular carried the previous
+session's last reduction into the first block's §2.7 predict floor.
+
+**Recorded, not fixed:** entering offline abandons an in-flight duck at its current gain (a step
+bounded to the first sample of a render, and the alternative — carrying a monitor fade into a
+bounce — is worse), now in KI-004 with the other flip-window costs.
+
+**Verified by the reviewer, no action:** ring sizing and tap offsets against their worst cases,
+again. Repeats already recorded: the metering CPU budget (P6), the ZOH push idiom (noted at the
+site last round), the session-cumulative meter holds (P5), and the `bool` return conflating three
+early-return conditions.
+
+Suites: 193 + 87.
 
 ### Eighth review round — the previous round's fix broke the other direction (2026-08-01)
 

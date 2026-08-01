@@ -343,15 +343,21 @@ void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     // and clear would be erased). ADR-0012 §Known limits records the choice.
     const bool  restoreStaged = engine.adaptiveRestorePending();
     const auto& ad            = engine.adaptiveForWrapper();
-    const bool  learnedNow    = restoreStaged ? stagedAdaptiveLearned : ad.hasLearned();
+    const bool  learnedNow    = restoreStaged
+                                  ? stagedAdaptiveLearned.load (std::memory_order_relaxed)
+                                  : ad.hasLearned();
     if (learnedNow)
     {
         juce::ValueTree adaptive ("ADAPTIVE");
         adaptive.setProperty ("refOnsetRate",
-                              (double) (restoreStaged ? stagedRefOnset : ad.publishedRefOnset()),
+                              (double) (restoreStaged
+                                            ? stagedRefOnset.load (std::memory_order_relaxed)
+                                            : ad.publishedRefOnset()),
                               nullptr);
         adaptive.setProperty ("refTiltDb",
-                              (double) (restoreStaged ? stagedRefTilt : ad.publishedRefTilt()),
+                              (double) (restoreStaged
+                                            ? stagedRefTilt.load (std::memory_order_relaxed)
+                                            : ad.publishedRefTilt()),
                               nullptr);
         root.appendChild (adaptive, nullptr);
     }
@@ -429,18 +435,22 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // can answer correctly before the next block top consumes it.
     if (const auto adaptive = root.getChildWithName ("ADAPTIVE"); adaptive.isValid())
     {
-        stagedAdaptiveLearned = true;
-        stagedRefOnset = (float) (double) adaptive.getProperty (
-                             "refOnsetRate", anabasis::AdaptiveEngine::kDefaultRefOnset);
-        stagedRefTilt  = (float) (double) adaptive.getProperty (
-                             "refTiltDb", anabasis::AdaptiveEngine::kDefaultRefTilt);
-        engine.restoreLearnedTargets (stagedRefOnset, stagedRefTilt);
+        const auto onset = (float) (double) adaptive.getProperty (
+                               "refOnsetRate", anabasis::AdaptiveEngine::kDefaultRefOnset);
+        const auto tilt  = (float) (double) adaptive.getProperty (
+                               "refTiltDb", anabasis::AdaptiveEngine::kDefaultRefTilt);
+        stagedRefOnset.store (onset, std::memory_order_relaxed);
+        stagedRefTilt.store (tilt, std::memory_order_relaxed);
+        stagedAdaptiveLearned.store (true, std::memory_order_relaxed);
+        engine.restoreLearnedTargets (onset, tilt);
     }
     else
     {
-        stagedAdaptiveLearned = false;
-        stagedRefOnset = anabasis::AdaptiveEngine::kDefaultRefOnset;
-        stagedRefTilt  = anabasis::AdaptiveEngine::kDefaultRefTilt;
+        stagedRefOnset.store (anabasis::AdaptiveEngine::kDefaultRefOnset,
+                              std::memory_order_relaxed);
+        stagedRefTilt.store (anabasis::AdaptiveEngine::kDefaultRefTilt,
+                             std::memory_order_relaxed);
+        stagedAdaptiveLearned.store (false, std::memory_order_relaxed);
         engine.restoreNeverLearned();
     }
 

@@ -112,15 +112,22 @@ private:
 
     std::atomic<bool> nonRealtimeFlag { false };
 
-    // Message-thread mirror of the ADAPTIVE record last staged to the engine.
-    // The engine only adopts a staged restore at a block top, so between a
-    // load and the next audio block the engine's own learned state is STALE —
-    // and a host that loads a project and immediately re-saves it (duplicate
-    // track, copy plugin state, save without transport) would otherwise
-    // serialize that stale answer and drop the loaded session's Learn.
-    bool  stagedAdaptiveLearned = false;
-    float stagedRefOnset = anabasis::AdaptiveEngine::kDefaultRefOnset;
-    float stagedRefTilt  = anabasis::AdaptiveEngine::kDefaultRefTilt;
+    // Mirror of the ADAPTIVE record last staged to the engine. The engine only
+    // adopts a staged restore at a block top, so between a load and the next
+    // audio block the engine's own learned state is STALE — and a host that
+    // loads a project and immediately re-saves it (duplicate track, copy
+    // plugin state, save without transport) would otherwise serialize that
+    // stale answer and drop the loaded session's Learn.
+    //
+    // Atomic, though both writer and reader are nominally the message thread:
+    // VST3 does not promise which thread delivers setStateInformation
+    // (KNOWN_ISSUES KI-003), so a concurrent save could otherwise read a
+    // half-written mirror. Relaxed is enough — the three are independent
+    // scalars whose fallback (the engine's own atomics) is coherent, and
+    // ADR-0012's known-limits section already scopes the record's coherence.
+    std::atomic<bool>  stagedAdaptiveLearned { false };
+    std::atomic<float> stagedRefOnset { anabasis::AdaptiveEngine::kDefaultRefOnset };
+    std::atomic<float> stagedRefTilt  { anabasis::AdaptiveEngine::kDefaultRefTilt };
 
 public:
     // -- §2.9 meter publication (THREAD_MODEL: Audio→GUI relaxed atomics,

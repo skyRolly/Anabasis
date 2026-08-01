@@ -145,6 +145,12 @@ void AnabasisEngine::reset() noexcept
     duckPhase = 0.0f;
     bottomHoldSamples = 0;
     duckAskedWhileOut = false;
+    // Edge detector and meter taps are reset state too, so the invariant is
+    // local to this function instead of leaning on `smoothersPrimed` (the
+    // flip detector) or on the previous session's last block (the GR tap,
+    // which the §2.7 predict floor reads at the NEXT block top).
+    lastNonRealtime = false;
+    grMinLinear.store (1.0f, std::memory_order_relaxed);
     dryMeter.reset();
     wetMeter.reset();
     outMeter.reset();
@@ -228,7 +234,16 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     {
         if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
             latchOsConfig (wantIdx, wantPh);
-        appliedEqPos = wantEq;
+        if (wantEq != appliedEqPos)
+        {
+            // Paired with the position change on THIS branch too, exactly as
+            // at the silent bottom: the biquad history belongs to the stream
+            // the EQ was processing (MasteringEQ::resetState). Harmless while
+            // this branch was only reachable straight after reset() — the
+            // offline-entry edge reaches it mid-stream, with charged state.
+            appliedEqPos = wantEq;
+            eq.resetState();
+        }
         appliedModel = wantModel;
         duckState = DuckState::idle;
         duckGain  = 1.0f;

@@ -67,6 +67,15 @@ drain can read `restoreDepth == 0` immediately before the restore raises it);
 it is nanoseconds against the microseconds the unguarded code exposed, and it
 closes only with the same thread-model decision.
 
+A second member of the same family, recorded rather than left implicit: the
+wrapper mirrors the staged ADAPTIVE record (`stagedAdaptiveLearned`,
+`stagedRefOnset`, `stagedRefTilt`) so a save that lands before the next audio
+block serializes what was loaded. Writer and reader are both nominally the
+message thread, so on a well-behaved host there is no race at all; they are
+**atomics** anyway, because on a host that delivers `setStateInformation` off
+the message thread a concurrent save would otherwise read a half-written
+mirror. ADR-0012's contract covers the engine-side record, not this copy.
+
 **Workaround:** none required on the hosts tested so far — no case of an
 off-message-thread restore has been observed against this plugin. The entry
 exists because the assumption is load-bearing and undocumented elsewhere.
@@ -102,6 +111,16 @@ bypass** adopts a factor change without the duck (the bypass leg is the
 delay-aligned dry ring, kept bit-exact), so the dry leg's alignment steps by
 the same bounded amount at the block boundary instead of fading through
 silence. Un-bypassing afterwards is already click-free (the ~10 ms crossfade).
+
+**Entering offline abandons an in-flight duck.** When `nonRealtime` first goes
+true the engine adopts the new configuration directly (so a bounce does not
+open with a fade — see the note below), which forces the duck to idle at unity.
+If a duck happened to be in flight at that instant — a factor/model rewire, or
+a wrapper bulk swap requested moments earlier — the processed gain steps from
+its current value (as low as 0.0 at the silent bottom) to 1.0 in one sample,
+and the latch may then clear the lookahead ring at full gain. Bounded to the
+first sample of an offline render, and the alternative (carrying a monitor
+fade into a bounce) is worse; recorded so it is not rediscovered as a defect.
 
 The same latch boundary also steps two internal CONSUMERS of the dry leg that
 the duck does not cover: the §2.7 dry loudness measure and the §5.4 adaptive

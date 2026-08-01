@@ -887,6 +887,57 @@ static void testReturnFromOfflineIsDucked()
 }
 
 // ---------------------------------------------------------------------------
+// The direct-adopt branch must clear the EQ's biquad history when the POSITION
+// changes on it, exactly as the silent-bottom branch does — otherwise the new
+// position starts from the other stream's past (MasteringEQ::resetState's own
+// rule). Reachable since the offline-entry edge started using that branch:
+// eqPosition differing on the very block nonRealtime first goes true.
+//
+// Isolation, so the assertion sees only the property: the input goes SILENT at
+// the flip and Force Max changes the factor, so latchOsConfig empties the
+// lookahead ring. Everything downstream of the region is then fed exact zeros
+// and only the Post EQ can produce a nonzero sample — clean state gives
+// exactly 0.0, stale state rings out the charged history.
+static void testOfflineEntryClearsEqStateOnAPositionChange()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = false;
+    p.oversample        = anabasis::OversampleFactor::x2;
+    p.forceMaxOffline   = true;
+    p.eqLowShelfGainDb  = 12.0f;      // charge the biquads hard
+    p.eqLowShelfFreqHz  = 300.0f;
+    p.eqPosition        = 0;          // Pre: the EQ sees the INPUT stream
+
+    std::vector<float> out;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 16; ++b)
+    {
+        const bool afterFlip = b >= 10;
+        if (afterFlip) { p.eqPosition = 1; p.nonRealtime = true; }   // both, same block
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = afterFlip ? 0.0f
+                                      : 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                         * 300.0f * (float) (b * 512 + n) / (float) sr);
+            buf.setSample (0, n, v); buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n) out.push_back (buf.getSample (0, n));
+    }
+
+    float prePeak = 0.0f, postPeak = 0.0f;
+    for (size_t n = 8 * 512; n < 10 * 512; ++n)  prePeak  = juce::jmax (prePeak,  std::abs (out[n]));
+    for (size_t n = 10 * 512; n < out.size(); ++n) postPeak = juce::jmax (postPeak, std::abs (out[n]));
+
+    check (prePeak > 0.3f, "eqFlip: the EQ really was charged before the flip (baseline)");
+    check (postPeak < 1.0e-6f,
+           "eqFlip: a position change on the offline-entry edge starts from a cleared EQ state");
+}
+
+// ---------------------------------------------------------------------------
 // inv 1 / ADR-0002 / DESIGN §2.5: the limiter push drives the LIMITER, not the
 // clipper. It sits after Clip/Sat in the chain, so input gain and limiter push
 // are NOT interchangeable — the clipper's operating point follows the first
@@ -2986,6 +3037,7 @@ int main()
     testLimiterPushDoesNotDriveTheClipper();
     testOfflineFlipDoesNotDuckTheRender();
     testReturnFromOfflineIsDucked();
+    testOfflineEntryClearsEqStateOnAPositionChange();
     testColourModelsBalanceAndTone();
     testDynamicTame();
     testClipMixZeroIsDry();
