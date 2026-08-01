@@ -15,15 +15,14 @@ headless Linux machine, no IDE.
   sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the eleven ADRs it authorised are Accepted and
   registered in
   [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md).
-- **No DSP source code exists yet** — P1 is where `CMakeLists.txt`, `src/` and `tests/` first
-  appear. What exists is the governance system, the documentation library, the build/CI
-  scaffolding, the product brief, the signed-off design document and its ADR set.
-- **Already decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit
-  `f8f8864…`, the same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
-  `com.rollytech.anabasis`**). Both must be written into `CMakeLists.txt` at P1 —
-  [`docs/procedures/BUILD.md`](docs/procedures/BUILD.md) §Plugin identity.
-- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the macOS
-  deployment target (OQ-011, settled at P1 against a real build), the frozen-trim-vector transport
+- **The P1 skeleton is in the tree**: `CMakeLists.txt` (ADR-0008's five-target graph), `src/`
+  (the 49-parameter surface, the POD engine boundary, a pass-through chain with a basic
+  lookahead limiter on the constant 10 ms allowance, schema-v1 state) and `tests/` (88 checks,
+  green on Linux together with pluginval L5 in both modes ×3).
+- **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
+  same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
+  `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
+- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the frozen-trim-vector transport
   (OQ-013, blocks that one restore path at P1 and nothing else), and **the remaining entries in
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)** — which is the list of record, so this
   sentence cannot drift out of date. None of them may be guessed at. Resolved entries

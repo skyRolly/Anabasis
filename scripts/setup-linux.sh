@@ -30,7 +30,12 @@ $SUDO apt-get update -y
 # development headers, not the CLI). GitHub-hosted runners preinstall both, which
 # is exactly why their absence would only ever bite on a fresh machine or a
 # minimal container -- i.e. the case this script exists to cover.
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
+# `env` carries the assignment whether $SUDO is "sudo" or empty (as root).
+# A bare `$SUDO DEBIAN_FRONTEND=... apt-get` breaks in the root case: the
+# assignment is not in assignment position at parse time (the first word is
+# $SUDO), so when $SUDO expands to nothing it becomes the COMMAND NAME.
+# CI always runs the sudo path, which is why this never failed there.
+$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential cmake git ninja-build pkg-config \
     curl unzip \
     libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev \

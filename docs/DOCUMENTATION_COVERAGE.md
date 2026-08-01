@@ -9,6 +9,309 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 **Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
 P0 closed; eleven ADRs Accepted and registered.
 
+### P1 skeleton, seventh commit — a review claim falsified by its own regression test (2026-08-01)
+
+**The headline "bug" of this round does not exist on the pinned JUCE, and the proof is now a
+test.** A review asserted that a session tree missing an individual `PARAM` child leaves the
+previous session's value live (`replaceState` re-creating the child "seeded from the parameter's
+CURRENT value"), producing the chimera one level below the whole-child read rules. The mechanism
+reads plausibly from `flushParameterValuesToValueTree` alone — but the test written to fail on it
+**passed on the unmodified code**, and the pinned source explains why: the reconnection appends an
+id-only child to `state`, the APVTS hears its own `appendChild` via `valueTreeChildAdded` →
+`setNewState`, and that call's value-property fallback is `getDenormalisedDefaultValue()` — the
+parameter lands on its declared default *before* the flush writes anything. The test was made
+non-vacuous (a premise check pins that the dirtied value really was off-default) and **kept as the
+tripwire** for a JUCE upgrade changing the reconnection semantics; the fix it was written for was
+**not applied**. That matters beyond this item: the drafted fix (fill gaps from the default tree
+inside `adoptParamsTree`) would have introduced a real regression on the `applySlotToLive` path —
+an A/B slot missing a view-tier child would have clobbered live view state with defaults. The
+review cycle the project keeps warning about ("each fix breeds the next round's bugs") is exactly
+this shape, and test-first is what caught it.
+
+**`LookaheadLimiter` now carries the uniform ownership macro.** The previous round spelled the
+guard `= delete` to keep the header "JUCE-free" — a constraint no policy imposes: `DSP_POLICY.md`
+invariant 13 forbids plugin-client/GUI headers and explicitly permits `juce_audio_basics`/
+`juce_dsp`, beneath both of which sits `juce_core`, where the macro lives. The justification cited
+a rule that does not exist, so the deviation is reverted to the mechanical convention
+(`CODE_STYLE.md` §Structure) the sibling owning classes already follow.
+
+**OQ-014 records the one governance question this round surfaced instead of deciding it.**
+`mappingPending` and `restoreDepth` are payload-free any-thread → message-thread guards — a
+direction `THREADING_POLICY.md`'s permitted-path table does not enumerate, and the policy routes
+any off-table path to the Architecture Review Gate. Whether ADR-0005/0011's "async message-thread
+listener" clause already blesses them (they implement the mandated shape — `juce::AsyncUpdater` is
+itself an atomic flag plus a message post) or whether a small ratifying ADR is owed is an owner
+call, not an agent inference; `OPEN_QUESTIONS.md` OQ-014 states both readings and what each
+implies for the still-owed `THREAD_MODEL.md`.
+
+Comment-only syncs from the informational findings: the second `updateLatency()` in
+`setStateInformation` is labelled as the deliberate, no-op-when-unchanged second recompute (the
+batch fires the first — the "exactly one" the test pins is at the `InternalState` level); the
+`ScopedRestore` header states the accepted swallow of a gesture armed microseconds before a
+restore; `saveSlotFromLive` warns that the view-tier exclusion lives entirely on the apply side, so
+a future path adopting a slot without `applySlotToLive` re-introduces view-tier travel; and
+`updateLatency` documents the 48 kHz placeholder before the first `prepareToPlay`, with the note
+that a future PDC test must assert only after a prepare.
+
+### P1 skeleton, sixth commit — owning-class guards, and a test that measured the wrong thing (2026-07-31)
+
+**The self-heal test passed against its own mutant, and the stimulus was why.** The invariant-9
+recovery called `limiter.reset()`, which empties the sliding window *and* snaps the envelope back
+to unity; the delay line still holds the material the old envelope was holding down, so the
+recovery hands it to the clamp at full level. The first test drove the engine 4× over the ceiling
+and counted clamped samples — but material that far over rides *at* the ceiling whether it is
+limited or clipped, so both variants scored identically (9 / 8 clamped samples). What separates
+them is a signal that is **quiet under a held-down envelope**: a burst drives the gain to ~0.22, a
+slow release holds it there, and the quiet tone that follows plays attenuated. Carrying the
+envelope keeps it attenuated; snapping to unity steps the level up ~4.5× *and stays there*, because
+the quiet tone never asks for gain reduction again. `limiter.resetWindow()` now carries the
+envelope across (sanitising it, since the self-heal is defence in depth and a guard that trusts its
+own reachability argument is not one), and the redesigned test fails on the mutant. The lesson is
+the one this audit keeps recording: a test name does not carry the property, and a stimulus in
+which both behaviours look the same is not a test.
+
+**Owning classes carry the guard now.** `AnabasisEngine` (two heap rings), `LookaheadLimiter` (the
+wedge vectors) and `InternalState` (a `ValueTree` it registers *itself* as a listener on — a copy
+would share the tree unregistered while its destructor deregistered the original) had no
+non-copyable declaration, against `CODE_STYLE.md` §Structure. `AnabasisEngine` and `InternalState`
+take `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR`; `LookaheadLimiter` takes `= delete` instead,
+because the leaf DSP headers are JUCE-free by construction and only `AnabasisEngine` pulls
+`juce_audio_basics`. The macro is a user-declared constructor, so it suppresses the implicit
+default one — both classes needed an explicit `= default` and the build said so immediately.
+
+**A session load re-reported PDC up to six times.** `replaceFrom` writes all ten properties as
+defaults and then overlays the incoming ones; three are latency inputs and each write fired
+`onLatencyInputChanged`, walking the reported figure through the Off value before landing. Invisible
+while `osLatencySamples()` returns 0, a burst of mid-load PDC changes the moment oversampling lands
+— exactly what ADR-0004's constant allowance exists to prevent. A `ScopedLatencyBatch` coalesces the
+read into one notification, fired from the destructor so no early return can skip it.
+`testLatencyNotifyIsBatchedAcrossARead` pins both halves (one fire for a bulk read, still one for a
+single interactive write) and fails unbatched.
+
+**Two review findings were declined, with the reasoning written into the code rather than a reply.**
+The ring is *not* undersized for an oversized block: `process()` is a per-sample circular delay
+line, so `ringSize >= delaySamples + 1` is the whole invariant and the `+ maxBlockSize` is slack.
+The old comment ("room past the tap") read as a block-size dependency and invited a `jmin` on
+`numSamples` — which would leave the tail of an oversized block unprocessed, i.e. bypassing the
+ceiling clamp, to fix a bug that is not there. The comment now states the invariant and names that
+trap. Channels past the prepared count stay untouched rather than cleared (silencing a caller's
+audio is a worse failure than passing it through), so the contract is now asserted at the boundary
+instead of assumed.
+
+Also: `bypassMix` is reset alongside the rings, so a re-prepare mid-fade no longer resumes a fade
+against zeroed delay lines; `CachedParams::resolve` asserts every id resolved and `allResolved()`
+is pinned by the state suite (a null slot silently feeds `0.0f` into its engine field, and only the
+fields a test happens to set would catch it); the stale "34 checks" in `README.md` and
+`HANDOVER.md` is now 84 with the row telling the next editor to re-count; the `[Unreleased]`
+changelog entry cites **PR #4** plus the five SHAs, since a branch-relative "the commit that
+follows" stops resolving when the branch is deleted at merge (`CHANGELOG_POLICY.md` rule 2); and
+`KNOWN_ISSUES.md` entries are `###` under **Open issues**, in ascending KI order, with the
+convention written into the file because the doc lint cannot check heading nesting.
+
+### P1 skeleton, fifth commit — the Windows-only snapshot red, and the restore guard (2026-07-31)
+
+**The Windows CI red was a line-ending artefact, not a parameter change.** `AnabasisStateTests`
+failed exactly one check on the `windows` leg — the frozen registry snapshot, which reports as a
+Hard Stop — while the Linux and macOS legs were green. Cause: Git for Windows defaults to
+`core.autocrlf=true` on the hosted runners, so `parameter_registry.snapshot` (LF in the index) is
+checked out with CRLF, and the comparison is byte-wise against a dump built with `"\n"`. Confirmed
+by reproducing it locally: CRLF-ifying the fixture reproduces the failure to the check and the
+count (48 checks, 1 failure), and the fix passes with the fixture in either encoding. `.gitattributes`
+now pins `tests/fixtures/*.snapshot` (and `*.sh`) to LF, the comparison normalises line endings —
+and only those — and a mismatch prints the **first differing line with both sides**, because a bare
+`FAIL` on a 49-line byte comparison costs a full CI round to diagnose.
+
+**The macro abort was ordering-dependent, and the ordering is a host's to break.**
+`abortPendingMapping()` at the END of each restore path drops the mapping the restore's own
+notifications armed — but only if the restore finishes before the 30 ms drain timer next fires.
+VST3 does not promise `setStateInformation` arrives on the message thread, and on a host that
+restores off it the timer can apply the mapping *mid-restore*, rewriting the nine managed
+parameters from the curves; no later abort takes that back. `MacroEngine::ScopedRestore` now wraps
+each restore body: the drain is suppressed for the scope's whole lifetime and the flag is dropped
+on the way out (abort **before** the depth decrement, so no window exists where the flag is armed
+and the guard is already down). `abortPendingMapping()` is private — the scope is the only way to
+reach it, so a new restore path cannot forget the step. Depth counter, not a bool, so a nested
+restore's exit cannot re-open the window for the rest of the outer one.
+
+This is **not** a thread-model change: no new thread, no new cross-thread edge (the same
+any-thread → message-thread flag `mappingPending` already is), no new ordering primitive. It
+implements ADR-0005/ADR-0011's "MacroEngine is message-thread-only" and §5.3's "a restore is not a
+macro gesture" without depending on a race outcome. What it does **not** cover — `replaceState`
+mutating a `ValueTree` the editor may be reading, and the few-instruction check-then-act window in
+the guard — needs a synchroniser outside the set `THREADING_POLICY.md` admits, so it is an
+Architecture Review Gate item and is recorded as **KI-003** rather than patched.
+
+`testDrainInsideRestoreIsSuppressed` models the mid-restore drain single-threaded (a flush inside a
+`ScopedRestore` is exactly what the timer would do there); removing the guard fails both of its
+checks.
+
+### P1 skeleton, fourth commit — thread discipline and the structural-tolerance read rules (2026-07-31)
+
+**`MacroEngine::parameterChanged` was an audio-thread hazard.** APVTS delivers parameter-change
+callbacks on whichever thread wrote the value — the audio thread during automation — and the
+listener called `applyMapping()` inline: `setValueNotifyingHost` on nine parameters, `juce::String`
+construction, host notification. It now sets an `std::atomic<bool> mappingPending` and only calls
+`triggerAsyncUpdate()` when `MessageManager::existsAndIsCurrentThread()`; a 30 ms `Timer` drains the
+flag otherwise. `THREADING_POLICY`'s message-thread-only rule for the macro layer (ADR-0005) is
+enforced by construction rather than by convention, and the abort path
+(`abortPendingMapping()`, called on every restore) is mutation-verified.
+
+**All four control smoothers now prime together.** `inputGain` and `pushGain` primed in `prepare()`
+while `ceilingLinear` and `windowSamples` did not, so the first block after `prepare()` glided the
+ceiling and the lookahead up from zero — an audible ramp on the first buffer of every render.
+`testGainsPrimedOnPrepare` pins all four; removing any single prime fails it.
+
+**§4.4 structural tolerance was implemented in one direction only.** A valid `AnabasisRoot` that
+omits `ANABASIS_INTERNAL` returned early, and one that omits `ANABASIS` fell through — both left
+the *previous* session's values live, which is exactly the "chimera of two sessions" the read rules
+forbid. `InternalState::replaceFrom` now applies `setDefaults()` first and overlays what the
+incoming child actually carries, and the wrapper adopts the pristine default slot when `ANABASIS`
+is absent. `testMissingChildrenReadAsDefaults` covers both directions against an already-dirtied
+processor, and both mutants (early return / dropped `else`) fail it.
+
+**The log-taper default drift is now recorded, not silently carried.** `limRelease` (100.000015)
+and `eqBell2Freq` (2999.999756) appear in the frozen registry snapshot as the images of their
+declared defaults under the taper's `exp(log(x))`. `docs/procedures/TESTING.md` states why rounding
+them away would blind the snapshot to a real taper change, and `testRawRoundTripIsIdempotent`
+carries the property byte-identity actually depends on: one save→load→save pass is a **fixed
+point** for every parameter at eight probes across its range. A taper change now fails there,
+naming the parameter, instead of intermittently reddening `testStateRoundTrip`.
+
+Docs synced this pass: `BUILD.md` and `TESTING.md` (status blocks — the suites and the build exist,
+descriptions of what the tree does rather than specifications), `DSP_POLICY.md` (invariant → test
+map rows 2/4/7/8/9/13 marked live or partial), `KNOWN_ISSUES.md` (KI-002: `loudnessComp` and
+`deltaMonitor` are parameter-surface-only at P1).
+
+### P1 skeleton, third commit — the smoothing rule, and a test that proved itself worthless (2026-07-31)
+
+**The substantive fix: `ceiling` and `lookahead` reached the DSP unsmoothed.** `CODE_STYLE.md`
+§Real-time discipline says every parameter that reaches the DSP is smoothed, and `DSP_POLICY.md`
+invariant 8 names *the lookahead* as "the one switchable path with neither a duck nor a latch …
+the path most likely to be skipped at P1", requiring its move to be "a smooth, band-limited control
+signal". Both were adopted per block: a ceiling automation lane stepped the limiter's gain and the
+clamp together, and a lookahead move jumped the detector tap by hundreds of samples at a block
+boundary. Both are now per-sample values from `juce::SmoothedValue` (20 ms), handed down to the
+limiter and the clamp — which also means the clamp uses the **same instantaneous ceiling** the gain
+computer used for that sample, so it stays a backstop rather than a second, differently-timed
+threshold.
+
+**The finding that matters more than the fix.** The first smoothing test passed against
+deliberately unsmoothed code. Two separate reasons, both worth recording:
+
+1. The scan started at `stepAt + 1` — one sample *past* the discontinuity it existed to catch.
+2. After fixing that, the *lookahead* half still passed, and instrumenting it explained why:
+   enlarging the window cannot retroactively add samples the wedge already dropped, and shrinking
+   it only relaxes the gain, which goes through the slow release. **An unsmoothed `W` steps the
+   detector tap without stepping the output** — so the output-watching assertion was measuring a
+   property that does not hold.
+
+The response was not to loosen the threshold but to move the assertion to where the property
+actually lives: the engine now exposes `engagedWindowSamples()` and the test pins the glide itself
+(first block adopts, one block in it is strictly between the two values, it reaches the target, and
+no block moves the tap more than a block's worth). **Five mutants are now caught** — ceiling
+unsmoothed, W unsmoothed, either prime removed, and the detector tap reverted to the write head.
+A test that passes against the bug it was written for is not a test, and mutation is the only thing
+that tells you which kind you have.
+
+**Six smaller items from the same review, all fixed.** `bypassStep` is derived in `prepare()` so
+the ~10 ms figure holds across a sample-rate change mid-fade; `CachedParams` is sized from the real
+count (44, not 49) with a `static_assert`, and `testCachedParamsMapping` pins the *positional*
+coupling between `kCacheOrder` and `toEngine` field by field — a swap of two adjacent lines now
+fails (verified by mutation), where before it would have silently shifted every later field; the
+`CHANGELOG` entry cites its Evidence Source commits per `CHANGELOG_POLICY.md` rule 2; KI-001 moved
+from the format template into `## Open issues`, replacing the "none — no build exists" placeholder
+it was contradicting; `REPOSITORY_MAP.md`'s `[P1]` markers dropped from `CMakeLists.txt` and
+`tests/`; and two stale comments corrected — the schema banner said `activeIndex` where the code
+writes `active`, and the editor banner claimed an unconditional OpenGL include that is in fact
+platform-gated (the *link* is unconditional, the include and the context member are not).
+
+**Two accepted without change, with the reasoning recorded in the code:** bypass carries the
+unclamped dry signal — invariant 7 requires a bit-exact null, so invariant 4's ceiling guarantee is
+a property of the *processed* path, and that reading is now stated at the branch rather than
+inferred; and the invariant-9 self-heal empties the sliding window, so for one window's worth of
+samples a peak already in the delay line meets the clamp instead of being pre-empted — a transient
+quality cost, not a contract break, since the clamp is unconditional. **Declined:** `setNonRealtime`
+being `noexcept` is the base-class signature, and the `updateLatency` call in it is ADR-0004 item
+5's mandated trigger.
+
+After: 71 checks green (29 DSP + 42 state), warning-free, pluginval L5 both modes ×3.
+
+### P1 skeleton, second commit — the adversarial review earned its cost (2026-07-31)
+
+Three read-only agents were run against the fresh skeleton (parameter contract · DSP/latency/
+threading correctness · state schema) before it could reach a human. The parameter surface came
+back clean row-for-row. The other two agents found **2 blockers and 8 real defects** — in code
+whose 34 checks and pluginval L5 were all green, which is the point worth recording: *the suites
+proved the contracts they encoded, and the review found the contracts they didn't.*
+
+- **The limiter's gain computer was misaligned with the audio tap** (blocker, proven by
+  simulation): the sliding window watched the newest inputs — 10 ms ahead of the output regardless
+  of the engaged lookahead — so the envelope attacked early, then *released before the peak
+  played*; peaks reached the clamp under-attenuated (up to +5 dB over at fast release) and were
+  flat-topped. Invisible to the green tests because the clamp masks overshoot at the peak and the
+  null tests use sub-ceiling stimuli. Fixed by feeding the detector from the ring at
+  `writePos − (delay − W)` — the sample that plays W steps from now — with the window widened to
+  W+1 so the playing sample stays covered (the second, off-by-one finding). The corrected contract
+  is now stated ON the class and pinned by `testLimiterWindowCoverage` (unit) and
+  `testLimiterAlignment` (engine-level: the duck may begin no earlier than the engaged lookahead).
+- **Every state restore armed a macro re-map that clobbered the restored values** (blocker):
+  landing the macro parameters notifies their listeners, so session load / A/B switch / preset
+  apply queued a mapping pass that rewrote the nine managed parameters from the curves — exactly
+  the off-curve values a restore exists to bring back. Green in the suite only because no message
+  loop runs there. Fixed at the §5.3 boundary: a restore is not a gesture, so every restore path
+  ends with `abortPendingMapping()`; the suite now flushes deterministically and pins both
+  directions (restore preserves, gesture still maps).
+- **Six more, all fixed and pinned:** A/B slots saved without the `raw` overlay (switching was not
+  raw-exact; log-taper values drifted ulps per round trip); a slot tree carrying `raw` leaked it
+  into the live tree; the ceiling lock was write-then-revert (an audio block between the two writes
+  starts the smoother toward the preset's ceiling — now a skip, no write at all); a root without an
+  `AB` child kept the previous session's trims/mask/name (chimera state on next save — slot fields
+  now reset to defaults first); AB slots were read by child position, so a tolerated unknown child
+  shifted both slots (now collected by type); presets serialised UNSNAPPED mid-step discrete values.
+- **Schema names aligned with ADR-0007 before first ship freezes them:** the AB index property is
+  `active` (not `activeIndex`), and an empty `ADAPTIVE` child is no longer written — "absent =
+  never learned" is the discriminator and writing it from day one would have destroyed it.
+- **Also from the review:** `getBypassParameter()` now routes host bypass through the engine's
+  delay-aligned crossfade; `prepareToPlay(sr, 0)` can no longer zero the group delay; the
+  invariant-9 header comment now says what the code does. Accepted without change, with reasons:
+  the MacroEngine's `triggerAsyncUpdate` on the unsupported automated-macro path, and
+  `int_uiScale`'s value-set enforcement (the editor's job at P5).
+
+After the fixes: 59 checks green (23 DSP + 36 state), warning-free, pluginval L5 both modes ×3.
+ADR-0007's own test obligation — a frozen slot and a non-clear mask in the round-trip fixture —
+is now met rather than vacuously satisfied.
+
+### P1 skeleton lands — the first code, verified by building and running it (2026-07-31)
+
+**What exists now.** `CMakeLists.txt` (ADR-0008's five-target graph, identity frozen, JUCE 9.0.0
+fetched at the pinned SHA — `GIT_SHALLOW TRUE` worked, so the documented fallback was not needed),
+`src/` per DESIGN §1.3's P1 subset, `tests/` with 34 checks, and the frozen
+`tests/fixtures/parameter_registry.snapshot`. Everything below was verified by running it, not by
+inspection: **build warning-free** under the recommended flags, **both suites green**,
+**pluginval L5 green ×3 in both modes** on Linux — the P1 exit criterion, pending the 3-platform
+CI confirmation. **OQ-011 resolved** with evidence read from the pinned JUCE tree (deployment
+floor macOS 10.11 → 10.13 kept deliberately; arm64 floors at 11.0 by toolchain).
+
+**Contracts enforced in code, not prose, from the first commit:** the constant-allowance latency
+model lives in ONE header (`src/dsp/Latency.h`) that both the engine's real delay and the
+wrapper's predictor call, so they cannot drift silently; ADR-0004 item 5's full PDC trigger set is
+wired (`prepareToPlay`, three `int_` onChanged, `setNonRealtime`); the OQ-013 Hard Stop is
+honoured — `frozenTrims` is serialized per slot and *nothing* pushes it toward the engine, with
+the stop restated at the exact code site a P2 author would touch.
+
+**Defects found and fixed during the build loop** (each caught by running something, which is the
+lesson of this whole branch): `scripts/setup-linux.sh` broke as root — `$SUDO VAR=x cmd` puts the
+assignment out of assignment position at parse time, so with `$SUDO` empty it became the command
+name; CI's sudo path never exercised it (green-means-correct again). The registry snapshot
+compared CRLF against LF (`replaceWithText`'s default line endings). And `replaceState` leaked the
+additive `raw` annotations into the live tree, making save→load→save non-byte-identical — the
+annotations are now stripped at the load boundary, which is what makes the round-trip test's
+byte-identity claim true rather than approximately true.
+
+**Known P1 holes, recorded not hidden:** KI-001 (A/B swap runs duck-less until §2.8 lands at P2);
+dither modes inert by construction until P2; EQ/comp/clip stages pass-through. Remaining to close
+P1: Windows/macOS CI runs, `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md`.
+
 ### Seventeenth post-sign-off pass — one fix: indentation was counted in characters, not columns
 
 **One actionable item in the whole review, and it is in the lint again.** `indented_code_mask`
