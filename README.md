@@ -26,10 +26,10 @@ headless Linux machine, no IDE.
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
-- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the frozen-trim-vector transport
-  (OQ-013, blocks that one restore path at P1 and nothing else), **OQ-015** (the P4 learned-target
-  restore is an off-table cross-thread path awaiting the Architecture Review Gate — the code ships
-  and is tested, but the shape is frozen until the owner rules), and **the remaining entries in
+- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the
+  frozen-trim-vector restore (OQ-013 — **ADR-0012 settled its transport**; what stays open is
+  whether a restored vector may be injected into a running engine at all, so the Hard Stop
+  stands), and **the remaining entries in
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)** — which is the list of record, so this
   sentence cannot drift out of date. None of them may be guessed at. Resolved entries
   stay in that file's `Resolved` section; they are decisions, not choices to revisit.
@@ -94,8 +94,9 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)
 - **Rules (binding):** [`docs/policies/`](docs/policies/) — real-time audio, threading, DSP,
   mode/adaptation, compatibility, AI-agent, testing, release, dependency, code style
-- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) — **eleven Accepted
-  ADRs** (ADR-0001…0011, all dated 2026-07-31); the descriptive architecture set lands with P1–P2.
+- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) — **twelve Accepted
+  ADRs**: ADR-0001…0011 (all dated 2026-07-31) plus **ADR-0012** (2026-08-01, the GUI→Audio staged
+  record, ratifying the learned-target restore per OQ-015).
   `DESIGN.md` ranks *below* the ADRs it spawned and loses to them on any disagreement — see
   `docs/SOURCE_OF_TRUTH.md` §"Where `DESIGN.md` sits"
 - **How-to:** [`docs/procedures/`](docs/procedures/) (build, development, CI/CD, testing, release)

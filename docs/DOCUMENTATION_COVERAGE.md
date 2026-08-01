@@ -6,13 +6,53 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **fourth P4 review round of 2026-08-01** (PR #5): the load-then-save
+**Last updated:** for the **OQ-015 decision and fifth review round of 2026-08-01** (PR #5):
+**ADR-0012** ratifies the GUI→Audio staged record unchanged (owner chose option 1), adding the row
+to `THREADING_POLICY.md`; invariant 7 gains the bypass-null scope sentence. Previous round: (PR #5): the load-then-save
 learned-reference loss, the publish-on-a-short-circuited-block duplicate, and **OQ-015** — an
 external review found that the P4 learned-target restore is an off-table cross-thread path that
 never passed the Architecture Review Gate. Previous round: (PR #5): the meters moved off
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### OQ-015 decided, and the last scope sentence — ADR-0012 (2026-08-01)
+
+Two items, both settled without touching a line of DSP.
+
+**The owner took option 1: ratify the implementation.** `ADR-0012` — numbered 0012, not 0015,
+because `ADR_POLICY.md` rule 6 makes the ADR sequence follow the highest existing ADR and the
+question sequence is independent — adds a **GUI → Audio bounded staged record** row to
+`THREADING_POLICY.md` with six mandatory conditions: bounded and fixed at compile time · one
+writer (off the audio thread), one consumer · payload relaxed, then one flag release-stored,
+consumed `exchange(acquire)` **at a block top** · last-writer-wins only, never a queue · the
+writer may acquire-load the flag to test consumption (this is what lets `getStateInformation`
+serialize a staged-but-unconsumed record) · the consumer only adopts. The learned-target restore
+is ratified **unchanged** as the first instance, and `AdaptiveEngine::learned` as its Audio→GUI
+mirror. `THREAD_MODEL.md`'s two rows now cite ADR-0012 instead of "no row — see OQ-015"; the
+sentinel row's exclusion sentence now points at the new row rather than at the Gate.
+
+**What the ADR deliberately did not do**, because ratifying a mechanism is not the same as
+approving every use of it: OQ-013 stays **open**. Its trim vector now has a permitted transport —
+the mechanism objection is gone — but whether a restored vector may be injected into a running
+engine, and what that does to the adaptation state machine, is a product question nobody has
+answered. The Hard Stop stands; only its reason changed, and both OQ-013 and `THREADING_POLICY`'s
+blockquote now say so explicitly rather than leaving a reader to infer that ADR-0012 unblocked it.
+
+**Invariant 7 gets the third scope sentence.** Invariants 4 (ceiling) and 12 (dither last) were
+scoped to the programme path in the previous two rounds; invariant 7's "bypass is a null test"
+was still unqualified while the §2.7 monitor gain is applied POST-mix — deliberately, since that
+is exactly what makes A/B against bypass loudness-matched. So the bypass null is bit-exact with
+the monitor functions off and bit-exact in every render (both are snapped inert offline), and a
+null measured with Loudness Comp engaged is measuring the monitor. Stated, with the three tests
+that guard each half named. That completes the set: every invariant whose text could be read as
+covering an audition-only leg now says which side of the line it sits on.
+
+**Process note worth keeping.** Three consecutive review rounds each found one unqualified
+invariant, in descending order of obviousness. The invariants were written at P0 against a chain
+that had no monitor layer; the monitor layer arrived at P3 and nobody re-read the invariant list
+against it. A new subsystem that sits downstream of the render path is a prompt to re-read every
+invariant, not just the ones it obviously touches.
 
 ### Fourth P4 review round — a save that ran before the audio thread, and a threading path that never passed the gate (2026-08-01)
 

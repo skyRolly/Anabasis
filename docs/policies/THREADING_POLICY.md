@@ -17,7 +17,8 @@ Adding any thread — including a worker for analysis, preset scanning, or meter
 | GUI → Audio (automatable params) | APVTS `std::atomic<float>*` | Read **once per block** into the `EngineParameters` POD; never read piecemeal mid-block. |
 | GUI → Audio (host-hidden session state) | `InternalState` ValueTree + an atomic mirror | Only the values the audio thread actually needs cross (e.g. oversampling factor, phase mode, offline-render quality). |
 | GUI → Audio (momentary / transient requests) | a single `std::atomic<int>` per request | e.g. meter reset, `Learn` start/stop, `Freeze` — consumed with `exchange` on the audio thread. Payload-free: the *arrival* is the whole message. |
-| GUI → Audio (sentinel-valued command **carrying one scalar**) | one `std::atomic<float>` per slot, an out-of-range **sentinel** meaning "nothing pending" | The `abMatchGain` idiom (ADR-0011): the writer stores the value, the audio thread `exchange`s the sentinel back in, so arrival and payload are one indivisible operation and no second flag can tear against it. One writer, one consumer, **one scalar** per slot — a *bounded* set of slots fixed at compile time, never a queue. Anything unbounded, wider than one lock-free scalar, or needing ordering against other state is **not** this row and is a new cross-thread path. |
+| GUI → Audio (sentinel-valued command **carrying one scalar**) | one `std::atomic<float>` per slot, an out-of-range **sentinel** meaning "nothing pending" | The `abMatchGain` idiom (ADR-0011): the writer stores the value, the audio thread `exchange`s the sentinel back in, so arrival and payload are one indivisible operation and no second flag can tear against it. One writer, one consumer, **one scalar** per slot — a *bounded* set of slots fixed at compile time, never a queue. Anything unbounded, wider than one lock-free scalar, or needing ordering against other state is **not** this row — a bounded record of several scalars is the **staged-record** row below (ADR-0012), and anything wider than that is a new cross-thread path. |
+| GUI → Audio (**bounded staged record**) | *N* lock-free scalars + **one** `std::atomic<bool>` flag, `release`-stored after the payload | **ADR-0012.** The payload is stored `relaxed` first, the flag `release`-stored after; the audio thread `exchange`es the flag with `acquire` **at a block top** and only then reads the payload, so the record adopts as a unit. Conditions, all mandatory: *N* fixed at compile time (no allocation, no container, no variable length) · one writer thread (off the audio thread), one consumer · **last-writer-wins only** — an unconsumed record is overwritten, never queued · the writer may `const`-acquire-load the flag to ask "taken yet?" · the consumer does nothing but adopt. Anything queued, multi-writer, unbounded, or consumed mid-block is **not** this row. |
 | Audio → GUI (scope / GR history) | SPSC ring buffer | Exactly **one producer thread and one reader thread**; release/acquire on the write index; the index is published **once per block**, so a reader that acquires it sees a whole committed block. |
 | Audio → GUI (meters: LUFS M/S/I, dBTP, PLR, GR) | published `std::atomic<float>` | Audio writes in a single `publish()`; GUI reads via getters. `memory_order_relaxed` — monotonic display data, no ordering role. |
 | Audio/param → GUI (staleness hints) | `std::atomic<uint32>` generation counters | A monotonic "something changed" hint that lets the GUI skip rebuilding caches. Carries **no payload**, so relaxed is sufficient. |
@@ -34,8 +35,14 @@ Any path not in this table is a new cross-thread path → Architecture Review Ga
 > would defeat the per-slot bit-repeatability `MODE_AND_ADAPTATION_POLICY.md` invariant 3 requires of
 > Freeze. Choosing between *N* parallel sentinel scalars with a stated ordering guarantee and a
 > single release/acquire-gated per-slot POD is a **thread-model decision**: Architecture Review Gate,
-> ADR, and an AI-agent Hard Stop (`OPEN_QUESTIONS.md` OQ-013). Until it is taken, no P1 code may wire
-> that restore path. Per the sentence above, it is by definition a new cross-thread path today.
+> ADR, and an AI-agent Hard Stop (`OPEN_QUESTIONS.md` OQ-013).
+>
+> **Half of that is now decided (ADR-0012, 2026-08-01).** The *mechanism* question is answered: the
+> staged-record row above is the permitted transport, and a four-scalar trim vector fits it. What
+> ADR-0012 deliberately did **not** decide is whether a restored trim vector may be injected into a
+> running engine at all, and what that means for the adaptation state machine — so **OQ-013 stays
+> open and no code may wire that restore path**. The blocker moved from "no mechanism exists" to
+> "the product question is unanswered"; it did not disappear.
 
 ## Forbidden cross-thread access
 

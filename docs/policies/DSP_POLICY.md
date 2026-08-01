@@ -122,7 +122,16 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    processing engaged, output is a bit-exact (delay-aligned) copy of the input: unity input gain,
    flat EQ, compressor below threshold, clipper/saturation at zero drive, limiter below threshold,
    dither off. Bypass is a null test.
-   Guarded by: `testNullWithDefaults`, `testBypassNull`.
+   **Scope, the same carve-out invariants 4 and 12 carry** (recorded 2026-08-01, PR #5): the
+   bypass null is a property of the **programme path** — bit-exact with the §2.7 monitor
+   functions off, and bit-exact in every render, since both are snapped inert under
+   `nonRealtime` (invariant 10). Auditioning with **Loudness Comp** engaged scales the bypass leg
+   too, by design: the monitor gain is applied POST-mix precisely so that A/B-ing against bypass
+   is loudness-matched, which is the feature (§2.7, ADR-0006 "monitoring never in the render
+   path"). A bypass null measured with Loudness Comp on is measuring the monitor, not the
+   invariant.
+   Guarded by: `testNullWithDefaults`, `testBypassNull` (both with the monitor functions off),
+   `testLoudnessCompensationDoesNotAlterRender` (the render-side half).
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
    the oversampling factor, **the oversampling phase mode**, the EQ position, **the colour model**,

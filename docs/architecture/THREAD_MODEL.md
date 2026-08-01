@@ -34,19 +34,21 @@ it instantiates:
 | Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr`, `pubGrDb` — relaxed atomics, ONE publish per block from `processBlock`, **fed from the engine's §2.9 render tap** (the programme path before the monitor-only delta/comp stages — the buffer itself carries the listening path); plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics | Audio → GUI (meters) | `src/PluginProcessor.cpp` (the per-block publish), `src/dsp/AnabasisEngine.h` (`outputLoudness`/`lastRenderTpMax`) |
 | GR/waveform history → GUI | `GrHistoryBuffer`: 4096-entry power-of-two SPSC ring, entry written FIRST, monotonic index release-stored AFTER, acquire-loaded stateless peeks on the reader side | Audio → GUI (time series, SPSC ring) | `src/dsp/GrHistoryBuffer.h` |
 | Learn start/stop → engine | `std::atomic<bool> learnStartReq`/`learnStopReq`, set by the wrapper (`startLearn`/`stopLearn`), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestLearnStart/Stop`), `src/dsp/AnabasisEngine.cpp` (block top) |
-| Learned-target restore → engine | ONE staged record: `pendingLearned` (the learned/never-learned discriminator) + `pendingRefOnset`/`pendingRefTilt` stored relaxed FIRST, then the single `adaptivePending` flag **release**-stored; the block top `exchange`s it with **acquire**, so a block that sees the flag reads that call's whole record, never a torn one, and the LAST restore staged before the block is the one that lands. Two flags with a fixed consumption order could not express last-writer-wins — an un-learned session loaded after a learned one inherited the learned references | **no row — see OQ-015** | `src/dsp/AnabasisEngine.h` (`restoreLearnedTargets`), `src/dsp/AnabasisEngine.cpp` (block top) |
-| Learned state → `getStateInformation` | `AdaptiveEngine::learned` atomic: refs published FIRST, flag **release**-stored; `hasLearned()` **acquire**-loads, so a saver that sees `true` reads the refs that store ordered before it | **no row — see OQ-015** | `src/dsp/AdaptiveEngine.h` (`commitLearn`/`hasLearned`), `src/PluginProcessor.cpp` (`getStateInformation`) |
+| Learned-target restore → engine | ONE staged record: `pendingLearned` (the learned/never-learned discriminator) + `pendingRefOnset`/`pendingRefTilt` stored relaxed FIRST, then the single `adaptivePending` flag **release**-stored; the block top `exchange`s it with **acquire**, so a block that sees the flag reads that call's whole record, never a torn one, and the LAST restore staged before the block is the one that lands. Two flags with a fixed consumption order could not express last-writer-wins — an un-learned session loaded after a learned one inherited the learned references | GUI → Audio (**bounded staged record**, ADR-0012) | `src/dsp/AnabasisEngine.h` (`restoreLearnedTargets`), `src/dsp/AnabasisEngine.cpp` (block top) |
+| Learned state → `getStateInformation` | `AdaptiveEngine::learned` atomic: refs published FIRST, flag **release**-stored; `hasLearned()` **acquire**-loads, so a saver that sees `true` reads the refs that store ordered before it | Audio → GUI (published state read as a unit — the ADR-0012 contract mirrored) | `src/dsp/AdaptiveEngine.h` (`commitLearn`/`hasLearned`), `src/PluginProcessor.cpp` (`getStateInformation`) |
 | Macro listener → message-thread mapper | `std::atomic<bool> mappingPending` set from whichever thread APVTS delivers `parameterChanged` on; drained on the message thread by `AsyncUpdater` (only posted when already on the message thread) + a 30 ms `Timer`; `std::atomic<int> restoreDepth` suppresses the drain across a restore (`ScopedRestore`) | **no row — see OQ-014** | `src/MacroEngine.cpp:28-35,63-66`, `src/MacroEngine.h:92-101,139` |
 
-**The OQ-015 exception, stated rather than papered over.** The two learned-target rows above were
+**How the staged-record row came to exist (ADR-0012).** The two learned-target rows above were
 first written here under invented row names ("momentary request + flag-orders-payload"), which read
-as if the table authorised them. It does not: the restore stages two floats plus a discriminator
-behind a separate release-stored flag, and the sentinel row excludes verbatim anything "wider than
-one lock-free scalar, or needing ordering against other state". The mechanism is the GR ring's
-release/acquire discipline pointed the other way — Audio→GUI authorisation does not carry over to
-GUI→Audio. Ratify it, re-express it on the existing rows, or defer the restore: an owner call,
-costed in `OPEN_QUESTIONS.md` **OQ-015**, and a Hard Stop until it is taken. The code ships and is
-mutation-verified meanwhile; **no further code may extend the shape**.
+as if the permitted-path table authorised them. It did not: the restore stages two floats plus a
+discriminator behind a separate release-stored flag, and the sentinel row excluded verbatim
+anything "wider than one lock-free scalar". The mechanism copied the GR ring's release/acquire
+discipline, and Audio→GUI authorisation does not carry over to GUI→Audio. External review caught
+it (2026-08-01), it was recorded as OQ-015 rather than redesigned under review pressure, and the
+owner ratified the implementation unchanged: **ADR-0012** adds the staged-record row with its six
+mandatory conditions, and the rows above now cite it. The implementation did not change; the
+authorisation did. **OQ-013 remains open** — ADR-0012 gave its trim vector a permitted transport
+but deliberately did not decide whether a restored vector may be injected into a running engine.
 
 **The OQ-014 exception, stated rather than papered over.** `mappingPending` and `restoreDepth`
 point any-thread → message-thread, a direction the table does not enumerate. They implement the
@@ -90,8 +92,9 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
   restore are IMPLEMENTED (see the table); the meter hold reset follows at P5, same
   single-atomic exchange shape.
 - **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism
-  yet; no code may wire it until its ADR lands. OQ-015's answer very likely settles the mechanism
-  question for both, since the learned-target restore is the same shape at a smaller stake.
+  yet; no code may wire it until its ADR lands. **ADR-0012 settled the transport** (the staged
+  record row fits a four-scalar vector); what keeps OQ-013 open is whether a restored vector may
+  be injected into a running engine at all.
 
 ## Verification
 
