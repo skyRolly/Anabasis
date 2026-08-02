@@ -144,8 +144,12 @@ whichever reading the OQ-014 owner call takes. Guarded by `testDetachAndReengage
 The §5.4 Learn UI grammar is likewise live: explicit start/end button, a 5 s minimum pass (the
 ~1.5 s integrated features must outlast their time constant — the P4-recorded debt), a wordless
 empty-pass readout (`warn` flash: the reference did not move), and the running indicator off
-`isLearning()`. Undo bracketing of the commit lands with the P6 undo machinery, which does not
-exist yet; the commit today is not undoable because nothing is.
+`isLearning()`. The undo machinery now exists (§7, 2026-08-02) — and the Learn commit remains
+OUTSIDE it, deliberately: the undo unit is the per-slot StateSet, while the learned references
+are GLOBAL session state (ADR-0007's `ADAPTIVE` child), so bracketing a commit into a per-slot
+stack would let an A/B switch resurrect a superseded reference. Making the commit undoable needs
+either the unit widened or a dedicated mechanism — a product decision for the P6 pass with the
+preset bank, recorded here rather than half-built.
 
 **P4 core (2026-08-01).** `src/dsp/AdaptiveEngine.h` — audio-thread feature extraction (crest,
 spectral tilt, transient density, silence-gated at ~−70 dBFS; the P4 trim mapping consumes

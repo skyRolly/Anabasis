@@ -105,6 +105,15 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addAndMakeVisible (copyButton);
     registerAnimated (copyButton);
 
+    undoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B6));
+    redoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B7));
+    undoButton.onClick = [this] { processor.undo(); refreshPresetDisplay(); };
+    redoButton.onClick = [this] { processor.redo(); refreshPresetDisplay(); };
+    addAndMakeVisible (undoButton);
+    addAndMakeVisible (redoButton);
+    registerAnimated (undoButton);
+    registerAnimated (redoButton);
+
     settingsButton.onClick = [this] { showSettings (true); };
     addAndMakeVisible (settingsButton);
     registerAnimated (settingsButton);
@@ -630,6 +639,9 @@ void AnabasisAudioProcessorEditor::resized()
     advancedToggle.setBounds (r.removeFromRight (66));
     r.removeFromRight (6);
     settingsButton.setBounds (r.removeFromRight (74));
+    r.removeFromRight (6);
+    redoButton.setBounds (r.removeFromRight (30));
+    undoButton.setBounds (r.removeFromRight (30));
     r.removeFromRight (10);
     copyButton.setBounds (r.removeFromRight (46));
     r.removeFromRight (6);
@@ -994,6 +1006,12 @@ void AnabasisAudioProcessorEditor::timerCallback()
         if (text != learnButton.getButtonText())
             learnButton.setButtonText (text);
     }
+
+    // -- undo/redo button states --------------------------------------------
+    if (undoButton.isEnabled() != processor.canUndo())
+        undoButton.setEnabled (processor.canUndo());
+    if (redoButton.isEnabled() != processor.canRedo())
+        redoButton.setEnabled (processor.canRedo());
 
     // -- Advanced panel wells: per-stage GR + curve refreshes ----------------
     if (advanced)

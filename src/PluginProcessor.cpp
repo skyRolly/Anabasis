@@ -54,6 +54,15 @@ static int managedIndexOf (const juce::String& id)
 void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*,
                                                                         int parameterIndex)
 {
+    // §7 undo: the FIRST open gesture snapshots the pre-state the eventual
+    // step will restore. Message thread only — an off-thread gesture (host
+    // UI) skips this and its edit folds silently, the automation rule.
+    if (juce::MessageManager::existsAndIsCurrentThread())
+    {
+        if (openGestureCount++ == 0)
+            gesturePreState = saveSlotFromLive();
+    }
+
     if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (
             getParameters()[parameterIndex]))
     {
@@ -81,6 +90,49 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
             getParameters()[parameterIndex]))
         if (const int m = managedIndexOf (p->getParameterID()); m >= 0)
             managedGestureBits.fetch_and (~(1u << m), std::memory_order_relaxed);
+
+    if (juce::MessageManager::existsAndIsCurrentThread() && openGestureCount > 0)
+    {
+        if (--openGestureCount == 0 && gesturePreState.isValid())
+        {
+            // One step per completed drag, and only if something CHANGED —
+            // an aborted gesture (press, no move) pushes nothing.
+            if (! gesturePreState.isEquivalentTo (saveSlotFromLive()))
+                pushUndoStep (gesturePreState);
+            gesturePreState = {};
+        }
+    }
+}
+
+void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
+{
+    auto& stack = undoStacks[activeSlot];
+    stack.add (preState.createCopy());
+    while (stack.size() > kUndoCap)
+        stack.remove (0);
+    redoStacks[activeSlot].clear();      // a new edit invalidates the redo line
+}
+
+void AnabasisAudioProcessor::undo()
+{
+    auto& stack = undoStacks[activeSlot];
+    if (stack.isEmpty())
+        return;
+    redoStacks[activeSlot].add (saveSlotFromLive());
+    const auto prev = stack.removeAndReturn (stack.size() - 1);
+    const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3: not a gesture
+    applySlotToLive (prev);
+}
+
+void AnabasisAudioProcessor::redo()
+{
+    auto& stack = redoStacks[activeSlot];
+    if (stack.isEmpty())
+        return;
+    undoStacks[activeSlot].add (saveSlotFromLive());
+    const auto next = stack.removeAndReturn (stack.size() - 1);
+    const MacroEngine::ScopedRestore guard (*macroEngine);
+    applySlotToLive (next);
 }
 
 void AnabasisAudioProcessor::parameterChanged (const juce::String& parameterID, float)
@@ -399,6 +451,15 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
 
 bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
 {
+    // §7 preset bracketing: parse BEFORE the bracket opens — an unreadable
+    // file must not cost the user an undo step. A partial apply after a
+    // successful parse still pushes: the pre-state is exactly what undo
+    // should restore in that case.
+    if (! file.existsAsFile()
+        || juce::ValueTree::fromXml (file.loadFileAsString()).isValid() == false)
+        return false;
+    pushUndoStep (saveSlotFromLive());
+
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
     // DELIBERATELY before the apply, and NOT undone on failure: a failed
     // applyPreset may still have written some parameters (a partial apply),
@@ -506,6 +567,15 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // not cover.
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();   // §2.8: a session load is the biggest bulk swap of all
+    // §7: undo stacks are session-local and never serialized — a load starts
+    // a fresh history for both slots.
+    for (int slot = 0; slot < anabasis::kNumAbSlots; ++slot)
+    {
+        undoStacks[slot].clear();
+        redoStacks[slot].clear();
+    }
+    openGestureCount = 0;
+    gesturePreState = {};
     // The P5 decision THREAD_MODEL left open, taken: a state load CLEARS the
     // session-cumulative meter holds. The integrated LUFS and the dBTP hold
     // describe the programme measured so far, and after a load the programme

@@ -104,6 +104,29 @@ public:
     // detach GRAMMAR lives in the wrapper/MacroEngine, never in paint code).
     const juce::StringArray& detachMask() const noexcept { return liveDetachMask; }
 
+    // -- §7 per-slot undo (DESIGN §7; P6) -----------------------------------
+    // The undo UNIT is the five-field SLOT tree — the same StateSet A/B uses
+    // (saveSlotFromLive / applySlotToLive), which is the §7 widening rationale
+    // made mechanical: undoing an edit restores the value AND its detach bit,
+    // and undoing a preset apply restores name + mask with the values.
+    // Coalescing is gesture-gated: the pre-state is snapshotted when the
+    // FIRST gesture opens and pushed when the LAST one closes (if anything
+    // changed), so one drag = one step and host AUTOMATION — ungestured —
+    // folds silently into the current state, exactly as §7 words it. Preset
+    // applies bracket as one step (parse first: a failed parse pushes
+    // nothing). Undo/redo restores run inside ScopedRestore (a restore is
+    // not a gesture) and never duck — every landed value glides through the
+    // engine's own smoothing, and discrete rewires are duck-routed by the
+    // engine regardless of who wrote them. Stacks are per slot, capped at
+    // 128, and NEVER serialized (a session load clears all four).
+    // Message-thread only; off-thread gesture callbacks skip the snapshot,
+    // which degrades to the automation path (folded silently) rather than
+    // touching ValueTrees from a foreign thread.
+    bool canUndo() const noexcept { return ! undoStacks[activeSlot].isEmpty(); }
+    bool canRedo() const noexcept { return ! redoStacks[activeSlot].isEmpty(); }
+    void undo();
+    void redo();
+
     // §5.3 step 4 — "reset to macro": re-engage every detached parameter
     // WITHOUT moving a macro. Message thread.
     void resetToMacro()
@@ -140,6 +163,12 @@ private:
     // Per-slot StateSet = {params, presetName, baseline, frozenTrims,
     // detachMask} (ADR-0007) — all five fields or none on every copy path.
     int activeSlot = 0;
+    juce::Array<juce::ValueTree> undoStacks[anabasis::kNumAbSlots],
+                                 redoStacks[anabasis::kNumAbSlots];
+    juce::ValueTree gesturePreState;     // armed at first gesture-begin
+    int  openGestureCount = 0;
+    void pushUndoStep (juce::ValueTree preState);
+    static constexpr int kUndoCap = 128;
     juce::ValueTree defaultSlot;         // pristine defaults, for the missing-AB read rule
     juce::ValueTree storedSlot;          // the inactive slot's SLOT tree
     juce::String    livePresetName;

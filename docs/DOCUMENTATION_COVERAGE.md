@@ -6,7 +6,13 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P5 closure commit (2026-08-02)** (PR #5): panel wells (clip transfer
+**Last updated:** for the **P6 undo commit (2026-08-02)** (PR #5): the §7 per-slot undo stacks —
+the StateSet slot tree as the undo unit (the widening rationale now mechanical: an undone edit
+reverts value and detach bit together), gesture-gated coalescing with automation folded silently,
+preset applies bracketed with the parse before the bracket, session loads clearing both
+histories, top-bar ↶ ↷. One mutant survived its first pass — pushing an undo step on a FAILED
+parse was invisible to "the stack is unchanged" because canUndo() is a bool, not a count; the
+stimulus now drains the stack first so the check is "still EMPTY". Previous: (PR #5): panel wells (clip transfer
 + EQ response through the DSP's own code; per-stage GR bars answering the recorded which-GR
 question), accessibility names, and the phase documentation — HANDOVER's P5 summary and phase
 row, CLAUDE.md's phase line, the CHANGELOG entry, the brand checklist's status note (human boxes

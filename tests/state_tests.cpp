@@ -702,6 +702,108 @@ static void testMeterPublication()
 }
 
 // ---------------------------------------------------------------------------
+// §7 per-slot undo: the undo unit is the five-field SLOT tree, coalescing is
+// gesture-gated, automation folds silently, a preset apply brackets as one
+// step, stacks are per slot and a session load clears them. The detach-mask
+// assertion is the §7 WIDENING rationale made mechanical: undoing an edit
+// must restore the value AND its detach bit together — with the narrow unit
+// the value returned and stayed badged as edited.
+static void testUndoIsPerSlotGestureCoalescedAndMaskWide()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+    auto* limGain = apvts.getParameter (pid::limGain);
+    auto limGainValue = [&] { return apvts.getRawParameterValue (pid::limGain)->load(); };
+    auto norm = [&] (float v)
+    { return limGain->getNormalisableRange().convertTo0to1 (v); };
+
+    check (! proc.canUndo() && ! proc.canRedo(), "undo: fresh instance has no history");
+
+    // 1. One DRAG = one step, however many changes it contains.
+    const float before = limGainValue();
+    limGain->beginChangeGesture();
+    limGain->setValueNotifyingHost (norm (2.0f));
+    limGain->setValueNotifyingHost (norm (4.0f));
+    limGain->setValueNotifyingHost (norm (6.0f));
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.canUndo(), "undo: a completed gesture pushed a step");
+    proc.undo();
+    check (std::abs (limGainValue() - before) < 1.0e-4f,
+           "undo: one undo unwinds the whole drag");
+    check (proc.canRedo(), "undo: the unwound step is redoable");
+    proc.redo();
+    check (std::abs (limGainValue() - 6.0f) < 1.0e-3f, "undo: redo re-lands the drag");
+
+    // 2. AUTOMATION (ungestured) folds silently — no step of its own: the
+    //    single undo left from step 1 unwinds the drag AND the folded
+    //    automation edit together, leaving no further history.
+    limGain->setValueNotifyingHost (norm (3.0f));
+    proc.undo();
+    check (! proc.canUndo(), "undo: automation pushed no step of its own");
+    proc.redo();
+
+    // 3. The MASK travels with the value (the widening rationale). Start from
+    //    a clean mask (the step-1 drag detached limGain; reset-to-macro is
+    //    the sanctioned clear and pushes no step of its own), then a gestured
+    //    edit detaches again, and ONE undo reverts value and bit together.
+    proc.resetToMacro();
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(), "undo: (premise) mask cleared for the round");
+    limGain->beginChangeGesture();
+    limGain->setValueNotifyingHost (norm (1.5f));
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.detachMask().contains ("limGain"), "undo: (premise) the edit detached");
+    proc.undo();
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(),
+           "undo: the detach bit reverted WITH the value (the widened StateSet)");
+
+    // 4. Stacks are PER SLOT: slot B starts with no history, and returning to
+    //    A finds A's history intact.
+    limGain->beginChangeGesture();
+    limGain->setValueNotifyingHost (norm (5.0f));
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.canUndo(), "undo: (premise) slot A has history");
+    proc.switchToSlot (1);
+    check (! proc.canUndo(), "undo: slot B has its own empty stack");
+    proc.switchToSlot (0);
+    check (proc.canUndo(), "undo: slot A's history survived the round trip");
+
+    // 5. A preset apply is ONE bracketed step; an unreadable file pushes none.
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    auto good = dir.getChildFile ("anabasis_undo_test.anabasis");
+    proc.savePresetFile (good);
+    const float preApply = limGainValue();
+    limGain->beginChangeGesture();
+    limGain->setValueNotifyingHost (norm (9.0f));
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.applyPresetFile (good), "undo: (premise) the preset applies");
+    proc.undo();                                   // unwinds the APPLY, one step
+    check (std::abs (limGainValue() - 9.0f) < 1.0e-3f,
+           "undo: one undo unwinds exactly the preset apply");
+    auto bad = dir.getChildFile ("anabasis_undo_bad.anabasis");
+    bad.replaceWithText ("not xml at all");
+    while (proc.canUndo())                     // drain: the next check needs the
+        proc.undo();                           // stack EMPTY, not merely unchanged
+    check (! proc.applyPresetFile (bad), "undo: (premise) the bad file fails");
+    check (! proc.canUndo(),
+           "undo: a failed parse cost no undo step (parse before the bracket)");
+    good.deleteFile();
+    bad.deleteFile();
+
+    // 6. A session LOAD clears the stacks (never serialized).
+    juce::MemoryBlock state;
+    proc.getStateInformation (state);
+    proc.setStateInformation (state.getData(), (int) state.getSize());
+    check (! proc.canUndo() && ! proc.canRedo(),
+           "undo: a session load starts a fresh history");
+}
+
+// ---------------------------------------------------------------------------
 // §5.3 detach / re-engage — ADR-0005's P5 half, the gesture grammar. The
 // discriminator's three conditions each get the stimulus that isolates them:
 // a GESTURED edit detaches; the SAME edit ungestured (automation) does not;
@@ -1219,6 +1321,7 @@ int main (int argc, char** argv)
         testAbSwitchRequestsDuck();
         testMeterPublication();
     testDetachAndReengageGrammar();
+    testUndoIsPerSlotGestureCoalescedAndMaskWide();
     testMeterResetClearsSessionHolds();
     testGrRingResetEpoch();
         testMetersReadTheRenderNotTheMonitor();

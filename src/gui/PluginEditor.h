@@ -160,6 +160,7 @@ private:
     juce::TextButton   titleButton;            // ghost hit-area over the wordmark → About
     ABControl          abControl;
     juce::TextButton   copyButton { "Copy" };
+    juce::TextButton   undoButton, redoButton;
     juce::TextButton   settingsButton { "Settings" };
     juce::ToggleButton advancedToggle, bypassToggle;
     juce::TextButton   presetPrev, presetNext, presetName;
