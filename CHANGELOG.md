@@ -153,6 +153,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `testMeterResetClearsSessionHolds`,
   `testGrRingResetEpoch`, all halves mutation-verified. [Verified]
 
+- **P5 — the interface exists.** The full Simple and Advanced views in the RollyTech family frame
+  (Anamorph's top bar, Backdrop overlays, glass language and thin-arc controls, with Anabasis's
+  gold/amber accent): the one large Loudness knob with Character / Tone / Ceiling (+lock) and the
+  monitor toggles; the four Advanced zones (Comp · Clip/Colour · Limiter · EQ) over the whole
+  per-stage parameter surface with a live clip transfer curve, an EQ response curve and
+  per-stage GR meters; the loudness panel (LUFS M/S/I, streaming-target lines with the
+  loudness-penalty estimate, dBTP, PLR — click resets the session holds); the scrolling
+  GR/waveform history; the dismissible input/output spectrum overlay; Settings (oversampling,
+  phase, offline quality, UI scale 80–200 %, animation, tooltips, metering options) and About;
+  Learn with a minimum-pass countdown and an empty-pass readout; macro detach badges with
+  reset-to-macro; accessibility names on every control. Editing a macro-managed parameter by
+  hand now detaches it from the macro until the next macro gesture (or reset-to-macro) — restores
+  and automation never detach.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — suites + pluginval L8 ×3 both modes with the
+  editor open under xvfb; GUI appearance itself is Level-5 manual validation. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

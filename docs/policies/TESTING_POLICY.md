@@ -122,5 +122,11 @@ its methodology is not permitted (constraint C2).
 
 ## Current status
 
-**TODO (no code yet).** No test exists; the gate activates at P1. This section is updated with the
-real suite sizes and their evidence as the phases land.
+**P1–P5 in the tree (updated 2026-08-02; this section had read "TODO (no code yet)" since P0 —
+four phases of drift, reported in `DOCUMENTATION_COVERAGE.md` and corrected here as the smallest
+re-syncing edit).** Two suites run on every build: `AnabasisTests` (DSP acceptance, the
+invariant→test map in `DSP_POLICY.md`) and `AnabasisStateTests` (state/compatibility + the
+behavioural macro/mode guards). Counts are read from the suites' own output — the same
+re-count-don't-trust rule `HANDOVER.md` and `README.md` carry — and pluginval runs at the phase
+strictness (8 at P3–P5) in both modes, three consecutive passes, with the editor opening under
+`xvfb` since P5.

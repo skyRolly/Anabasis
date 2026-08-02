@@ -6,7 +6,12 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P5 spectrum commit (2026-08-02)** (PR #5): the last planned edge is
+**Last updated:** for the **P5 closure commit (2026-08-02)** (PR #5): panel wells (clip transfer
++ EQ response through the DSP's own code; per-stage GR bars answering the recorded which-GR
+question), accessibility names, and the phase documentation — HANDOVER's P5 summary and phase
+row, CLAUDE.md's phase line, the CHANGELOG entry, the brand checklist's status note (human boxes
+deliberately untouched — Level 5), and a four-phase drift in TESTING_POLICY's "Current status"
+("TODO (no code yet)" since P0), reported here and corrected as the smallest edit. Previous: (PR #5): the last planned edge is
 implemented — two ScopeBuffer capture rings in the engine (post-input-gain and render taps, one
 release-store per chunk, scratch preallocated in prepare) with the FFT strictly GUI-side; the
 dual-trace SpectrumView takes the Advanced strip's middle share, dismisses to int_spectrumOn and

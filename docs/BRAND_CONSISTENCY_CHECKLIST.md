@@ -7,6 +7,17 @@ RISK-007).
 Anamorph is a **read-only reference** for every check below. Verification means opening the
 Anamorph source/UI and comparing — never editing it.
 
+## P5 status (2026-08-02) — implemented; the human pass is still owed
+
+The P5 UI is in the tree and every item below has its implementation counterpart. The boxes stay
+UNCHECKED deliberately: each is a Level-5 human verification against running builds of both
+plugins (`TESTING_POLICY.md` §20.1), and this file records that pass, not the code's existence.
+Three known candidates for the "deliberate deviation" clause, so the human pass does not
+rediscover them: **Undo/Redo are absent from the top bar** (the per-slot undo machinery is P6
+work with the preset bank — dead buttons were judged worse than the deferral); **the platform
+default sans is used** (no licence-clean variable font was approved by P5 — the DESIGN-authorised
+fallback path, RISK-009); **the accent swatch (gold/amber ⊕)** awaits owner ratification.
+
 ## How to use this
 
 Each item is checked by a human against a running build of both plugins, or against Anamorph's
