@@ -2892,6 +2892,51 @@ static void testTrimBounds()
 }
 
 // ---------------------------------------------------------------------------
+// §2.9 spectrum capture rings (THREAD_MODEL planned edge → implemented at
+// P5): tap 1 is post-input-gain, tap 2 the render, one release-published
+// block per processed chunk. Pinned headlessly: the counts advance exactly
+// once per chunk, and tap 1's content IS the input when inputGain is 0 dB —
+// content equality is what dies if the tap moves (e.g. behind the EQ).
+static void testSpectrumRingsCarryTheTaps()
+{
+    anabasis::AnabasisEngine engine;
+    const int block = 512;
+    engine.prepare (48000.0, block, 2);
+    anabasis::EngineParameters p;
+    juce::AudioBuffer<float> buf (2, block);
+
+    for (int b = 0; b < 4; ++b)
+    {
+        for (int n = 0; n < block; ++n)
+        {
+            const float v = 0.25f * std::sin (0.05f * (float) (b * block + n));
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+    }
+
+    const auto& in = engine.spectrumInRing();
+    check (in.writeCount() == 4 * (uint64_t) block,
+           "spectrum: tap 1 published exactly one block per chunk");
+    check (engine.spectrumOutRing().writeCount() == 4 * (uint64_t) block,
+           "spectrum: tap 2 published exactly one block per chunk");
+
+    // Content: the LAST input block, bit-for-bit (post-input-gain at 0 dB is
+    // the identity, and stage A writes the tap before any filter).
+    std::vector<float> l (block), r (block);
+    check (in.readLatest (l.data(), r.data(), block) == block,
+           "spectrum: tap 1 hands back a full block");
+    bool exact = true;
+    for (int n = 0; n < block; ++n)
+    {
+        const float v = 0.25f * std::sin (0.05f * (float) (3 * block + n));
+        if (! juce::exactlyEqual (l[(size_t) n], v)) { exact = false; break; }
+    }
+    check (exact, "spectrum: tap 1 is the post-input-gain signal, untouched");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -3513,6 +3558,7 @@ int main()
     testStopThenStartInOneBlockKeepsBoth();
     testFreezeLatchesTrims();
     testTrimBounds();
+    testSpectrumRingsCarryTheTaps();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();

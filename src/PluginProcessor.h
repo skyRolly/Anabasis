@@ -200,6 +200,8 @@ public:
     float meterPlr()      const noexcept { return pubPlr.load (std::memory_order_relaxed); }
     float meterGrDb()     const noexcept { return pubGrDb.load (std::memory_order_relaxed); }
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
+    const anabasis::ScopeBuffer& spectrumInRing()  const noexcept { return engine.spectrumInRing(); }
+    const anabasis::ScopeBuffer& spectrumOutRing() const noexcept { return engine.spectrumOutRing(); }
 
     // §2.9 meter-hold reset — the THREADING_POLICY momentary-request row
     // (single atomic, payload-free, consumed with `exchange` at the top of

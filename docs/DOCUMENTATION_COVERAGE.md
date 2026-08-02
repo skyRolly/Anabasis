@@ -6,7 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P5 metering-display commit (2026-08-02)** (PR #5): the §2.9 display
+**Last updated:** for the **P5 spectrum commit (2026-08-02)** (PR #5): the last planned edge is
+implemented — two ScopeBuffer capture rings in the engine (post-input-gain and render taps, one
+release-store per chunk, scratch preallocated in prepare) with the FFT strictly GUI-side; the
+dual-trace SpectrumView takes the Advanced strip's middle share, dismisses to int_spectrumOn and
+returns from Settings; GR widens into the share when it is off. Previous: (PR #5): the §2.9 display
 layer — LoudnessMeterView (M/S/I bars, target lines off the OQ-008 compiled table with the
 "as of" tooltip, penalty rows gated on a valid integrated figure, dBTP in `warn` over the
 ceiling, click = the meter-hold reset request) and GrHistoryView (the first consumer of the GR

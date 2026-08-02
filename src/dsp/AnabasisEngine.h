@@ -10,6 +10,7 @@
 #include "LoudnessMeter.h"
 #include "TruePeak.h"
 #include "AdaptiveEngine.h"
+#include "ScopeBuffer.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
@@ -215,6 +216,13 @@ public:
     // process() on the audio thread, so no atomics are needed.
     const LoudnessMeter& outputLoudness() const noexcept { return outMeter; }
 
+    // §2.9 spectrum capture rings (THREAD_MODEL's planned edge, implemented
+    // at P5 on the SPSC ring row): post-input-gain and post-chain (the render
+    // tap), each published with one release-store per processed chunk. The
+    // GUI-side FFT reads them as stateless peeks; nothing here consumes.
+    const ScopeBuffer& spectrumInRing()  const noexcept { return specInRing; }
+    const ScopeBuffer& spectrumOutRing() const noexcept { return specOutRing; }
+
     // §2.9 meter-hold reset, audio thread (the wrapper consumes the request at
     // the top of processBlock and calls this). Clears ONLY the render meter's
     // session-cumulative half — the integrated histogram. Deliberately not
@@ -254,6 +262,13 @@ private:
     std::vector<float> ceilArr;
     std::vector<int>   wArr;
     std::vector<float> pushArr;       // limiter push, applied inside the region
+
+    // §2.9 spectrum taps: per-chunk staging (filled in stages A and E, pushed
+    // once per chunk with a single release-store each) + the two SPSC rings
+    // the GUI FFTs from. Scratch is sized in prepare(); no audio-thread
+    // allocation.
+    std::vector<float> specInL, specInR, specOutL, specOutR;
+    ScopeBuffer specInRing, specOutRing;
 
     juce::SmoothedValue<float> inputGain      { 1.0f };
     juce::SmoothedValue<float> pushGain       { 1.0f };

@@ -7,6 +7,7 @@
 #include "LookAndFeel.h"
 #include "LoudnessMeterView.h"
 #include "GrHistoryView.h"
+#include "SpectrumView.h"
 
 class AnabasisAudioProcessor;
 
@@ -221,6 +222,8 @@ private:
     // -- §2.9 visualisers (their own FrameClocks; created after the frame) ---
     std::unique_ptr<LoudnessMeterView> meterView;
     std::unique_ptr<GrHistoryView>     grView;
+    std::unique_ptr<SpectrumView>      spectrumView;
+    bool shownSpectrumOn = true;
 
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit
     // end; an empty pass flashes the button in `warn` (wordless readout).
@@ -242,6 +245,7 @@ private:
     juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel;
     juce::ToggleButton animToggle, tooltipsToggle, tpMeterToggle;
     juce::ToggleButton targetSpToggle, targetApToggle, targetYtToggle;
+    juce::ToggleButton spectrumToggle;
 
     // -- Save-preset overlay -------------------------------------------------
     juce::Label      saveTitle;

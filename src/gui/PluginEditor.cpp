@@ -265,10 +265,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     editedDot.onClick = [this] { processor.resetToMacro(); };
     addChildComponent (editedDot);
 
-    meterView = std::make_unique<LoudnessMeterView> (processor);
-    grView    = std::make_unique<GrHistoryView> (processor);
+    meterView    = std::make_unique<LoudnessMeterView> (processor);
+    grView       = std::make_unique<GrHistoryView> (processor);
+    spectrumView = std::make_unique<SpectrumView> (processor);
     addAndMakeVisible (*meterView);
     addAndMakeVisible (*grView);
+    addChildComponent (*spectrumView);   // Advanced strip only; int_spectrumOn gates
 
     // -- overlays ------------------------------------------------------------
     addChildComponent (dimOverlay);
@@ -352,6 +354,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
                          ist.getPropertyAsValue (iid::tooltipsOn, nullptr));
     setupToggleInternal (tpMeterToggle, "True-peak meter", "True-peak meter",
                          ist.getPropertyAsValue (iid::tpMeterOn, nullptr));
+    setupToggleInternal (spectrumToggle, "Spectrum", "Spectrum",
+                         ist.getPropertyAsValue (iid::spectrumOn, nullptr));
     // Target-line selection (§6.4): three bits of int_meterTargets, in the
     // LoudnessMeterView::kTargets order. Platform names are identifiers, not
     // invented prose.
@@ -375,7 +379,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
             registerAnimated (*tog);
         }
     }
-    for (auto* t : { &animToggle, &tooltipsToggle, &tpMeterToggle })
+    for (auto* t : { &animToggle, &tooltipsToggle, &tpMeterToggle, &spectrumToggle })
     {
         removeChildComponent (t);
         settingsBackdrop.addAndMakeVisible (t);
@@ -631,7 +635,7 @@ void AnabasisAudioProcessorEditor::resized()
     aboutBackdrop.panel = getLocalBounds().withSizeKeepingCentre (400, 232);
     aboutLink.setBounds (aboutBackdrop.panel.withTrimmedTop (176).withTrimmedBottom (24)
                              .withSizeKeepingCentre (180, 20));
-    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 366);
+    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 398);
     savePresetBackdrop.panel = getLocalBounds().withSizeKeepingCentre (340, 150);
 
     {
@@ -651,6 +655,7 @@ void AnabasisAudioProcessorEditor::resized()
         animToggle.setBounds (row (26));
         tooltipsToggle.setBounds (row (26));
         tpMeterToggle.setBounds (row (26));
+        spectrumToggle.setBounds (row (26));
         auto tr = row (26);
         targetSpToggle.setBounds (tr.removeFromLeft (110));
         targetApToggle.setBounds (tr.removeFromLeft (130));
@@ -776,11 +781,17 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         place (cell(), macroToneK, macroToneL);
     }
 
-    // §6.3 shared metering strip: GR history left, loudness block right (the
-    // dismissible spectrum takes the middle share when it lands).
+    // §6.3 shared metering strip: GR history left · spectrum middle
+    // (dismissible — GR widens into its share when it is off) · loudness
+    // block right.
     auto strip = juce::Rectangle<int> (0, kBarH + kPanelRowH + kUtilityH + kMacroRowH,
                                        getWidth(), kMeterRowH).reduced (8, 6);
     meterView->setBounds (strip.removeFromRight (300));
+    const bool spectrumOn = (bool) processor.internalState.state()
+                                .getProperty (iid::spectrumOn, true);
+    spectrumView->setVisible (spectrumOn);
+    if (spectrumOn)
+        spectrumView->setBounds (strip.removeFromRight (strip.getWidth() / 2));
     grView->setBounds (strip);
 
     juce::ignoreUnused (body);
@@ -821,6 +832,7 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     outLufsCaption.setBounds (toggles.removeFromRight (70));
 
     // §6.2 wells: the right meter panel and the bottom GR strip.
+    spectrumView->setVisible (false);    // §6.2: the Simple strip is GR-only
     meterView->setBounds (juce::Rectangle<int> (getWidth() - 300, kBarH + 8,
                                                 292, kSimpleH - kBarH - 128 - 16));
     grView->setBounds (juce::Rectangle<int> (0, kSimpleH - 120, getWidth(), 120)
@@ -956,6 +968,18 @@ void AnabasisAudioProcessorEditor::timerCallback()
                                    nowMs < emptyFlashUntilMs ? colours::warn : colours::text);
         if (text != learnButton.getButtonText())
             learnButton.setButtonText (text);
+    }
+
+    // -- spectrum visibility follows int_spectrumOn (dismiss / Settings) -----
+    {
+        const bool on = (bool) processor.internalState.state()
+                            .getProperty (iid::spectrumOn, true);
+        if (on != shownSpectrumOn)
+        {
+            shownSpectrumOn = on;
+            resized();                       // the strip re-partitions
+            repaint();
+        }
     }
 
     // -- §5.3 badges: repaint when the mask changes, show the edited dot -----

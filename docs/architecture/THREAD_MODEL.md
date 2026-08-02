@@ -86,8 +86,13 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
 
 ## Planned edges (not yet in the tree)
 
-- **Spectrum capture rings** (post-input-gain and post-chain, the dual-trace §2.9 overlay) —
-  same ScopeBuffer idiom as the implemented GrHistoryBuffer; land with the P5 spectrum view.
+- **Spectrum capture rings — IMPLEMENTED (P5, 2026-08-02)**: two `anabasis::ScopeBuffer`
+  instances in the engine (post-input-gain and post-chain/render taps), each filled into
+  preallocated scratch during stages A/E and published with ONE release-store per processed
+  chunk — the SPSC ring row, same discipline as `GrHistoryBuffer`. The FFT runs GUI-side
+  (`SpectrumView`), reading stateless `readLatest` peeks; nothing on the audio thread windows,
+  transforms or allocates. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
+  tap-content equality).
 - **Command atomics — the meter-hold reset is now IMPLEMENTED (P5, 2026-08-02)**, joining the
   forced-duck request and the Learn command on the momentary-request row:
   `AnabasisAudioProcessor::requestMeterReset()` → `meterResetPending`, consumed with `exchange`

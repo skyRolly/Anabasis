@@ -35,6 +35,10 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     ceilArr.resize ((size_t) maxBlock);
     wArr.resize ((size_t) maxBlock);
     pushArr.resize ((size_t) maxBlock);
+    specInL.resize ((size_t) maxBlock);
+    specInR.resize ((size_t) maxBlock);
+    specOutL.resize ((size_t) maxBlock);
+    specOutR.resize ((size_t) maxBlock);
 
     using OS = juce::dsp::Oversampling<float>;
     osTableMatchesJuce = true;
@@ -571,6 +575,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             float s = juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn;
             if (! std::isfinite (s))
                 s = 0.0f;                      // filter state must never eat a NaN
+            // §2.9 spectrum tap 1: post-InputGain, pre-everything-else.
+            (ch == 0 ? specInL : specInR)[(size_t) n] = s;
             if (eqPre)
                 s = eq.processSample (ch, s);
             if (! std::isfinite (s))
@@ -925,6 +931,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             else if (bypassMix >= 1.0f) render = delayedDry;                    // exact endpoint
             else                        render = processed + (delayedDry - processed) * bypassMix;
             renderFrame[ch] = std::isfinite (render) ? render : 0.0f;
+            // §2.9 spectrum tap 2: post-chain — the same render the meters read.
+            (ch == 0 ? specOutL : specOutR)[(size_t) n] = renderFrame[ch];
 
             // Bypass crossfade. The SECOND leg downstream of dither (the §2.7
             // monitor gain below is the other), and unlike that one it is not
@@ -970,6 +978,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         if (++dryReadPos >= dryRingSize)
             dryReadPos = 0;
     }
+
+    // §2.9 spectrum publication: one release-store per ring per chunk (the
+    // SPSC ring row's once-per-block index rule; a chunk IS the processed
+    // block from the ring's viewpoint). Mono sources duplicate L into R via
+    // the stage loops above writing only ch 0 — harmless for a stereo-only
+    // plugin (isBusesLayoutSupported pins 2×2).
+    specInRing.pushBlock (specInL.data(), nCh > 1 ? specInR.data() : specInL.data(), num);
+    specOutRing.pushBlock (specOutL.data(), nCh > 1 ? specOutR.data() : specOutL.data(), num);
 
     // ---- Invariant 9 self-heal -------------------------------------------
     // TWO failure modes, repaired separately, because they are not the same
