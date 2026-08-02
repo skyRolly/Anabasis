@@ -104,6 +104,19 @@ coherence properties to be on the record rather than assumed.
    commit is dropped. Same few-instruction window, same trade — closing it means reading the code
    before clearing the flag, which converts a stale read into a lost update. Recorded here because
    the Learn path relies on composition and limit 1's wording assumed a writer that only overwrites.
+   **Amended 2026-08-02: the Learn path no longer uses this row.** The limit above is real, but
+   the two-store publication it rests on has a second consequence in the OTHER direction, found by
+   review: a consumer whose `exchange` lands *between* the writer's payload store and its flag
+   store runs the already-visible new code and then has the flag re-raised behind it, so the same
+   command is delivered twice. A repeated `commitThenStart` commits the pass its own first
+   delivery started one block earlier — a reference measured from a single block, then serialized.
+   The fix was not a wider mechanism but a narrower one: the Learn payload is two bits, so the code
+   and the flag became one atomic word (`kLearnNone` = nothing pending) and the edge moved to the
+   single-lock-free-scalar row. **This ADR's contract is unchanged** — it still governs the
+   learned-target restore, which has a real payload — and condition 5 still describes how the Learn
+   writer composes. Recorded here because the limit above was written as if it were the only
+   consequence of publishing a record in two stores.
+
 3. **A second stage during the payload reads.** The consumer exchanges the flag (acquire) and
    then reads the payload fields with relaxed loads. A `restoreLearnedTargets` landing between
    those reads can have the engine adopt one session's onset reference with another's tilt. It

@@ -167,6 +167,13 @@ public:
     // because the fallback is unity rather than a non-finite value. Clearing
     // the wedge here as well would cost the pre-emption of every entry in it
     // for a fault that expires on its own.
+    //
+    // In TRUE-PEAK mode add the estimator's filter length: a NaN sample also
+    // enters `truePeak`'s 12-tap history and makes its output NaN for kTaps
+    // frames, so the un-limited stretch is one window PLUS 12 region samples.
+    // Not cleared here for the same reason — an FIR history flushes itself,
+    // and `truePeak.reset()` on this path would discard real inter-sample
+    // information to save twelve samples of a stretch the clamp already holds.
     void sanitiseDetectorState() noexcept
     {
         for (int ch = 0; ch < kMaxChannels; ++ch)

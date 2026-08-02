@@ -1106,6 +1106,7 @@ static void testColourModelsBalanceAndTone()
 static void testDynamicTame()
 {
     const double sr = 48000.0;
+    float quietEnv = -1.0f;
     auto render = [&] (float amp, float tame) -> std::vector<float>
     {
         anabasis::ClipSat clip;
@@ -1123,6 +1124,7 @@ static void testDynamicTame()
             clip.processSample (frame, 2);
             out.push_back (frame[0]);
         }
+        quietEnv = clip.activityEnvelope();
         return out;
     };
 
@@ -1142,6 +1144,19 @@ static void testDynamicTame()
     for (size_t n = 0; n < quiet0.size(); ++n)
         if (! juce::exactlyEqual (quiet0[n], quiet2[n])) { identical = false; break; }
     check (identical, "tame: with nothing clipping, dynTilt changes nothing at all");
+    // MECHANICAL, not consequential. The §5.4 dynTilt trim reaches its +0.5 dB
+    // clamp at factory defaults with the features un-converged, so the
+    // invariant-7 bit-exact null does NOT hold by the trim being zero — it
+    // holds because this envelope is exactly 0.0f while nothing clips, which
+    // keeps `tameGainDb` at 0 and the whole branch skipped. That is a state
+    // invariant in ClipSat.h that AdaptiveEngine.h depends on, so seeding or
+    // flooring the detector would break the null from a file that never
+    // mentions adaptation. Both headers warn about it; this asserts it. Note a
+    // SMALL non-zero value would not fail the null above (the branch needs
+    // `tameGainDb < -0.01f`), which is exactly why the check is on the zero
+    // rather than on the null.
+    check (juce::exactlyEqual (quietEnv, 0.0f),
+           "tame: the activity envelope is bit-zero while nothing clips (invariant 7's third leg)");
 }
 
 // ---------------------------------------------------------------------------

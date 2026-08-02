@@ -91,19 +91,33 @@ public:
     // ONLY at the silent bottom.
     void requestForcedDuck() noexcept { duckRequested.store (true, std::memory_order_relaxed); }
 
-    // §5.4 Learn commands — ONE staged record (ADR-0012's row), not two flags.
+    // §5.4 Learn commands — ONE atomic word, not two flags and not a record.
     // Two independent flags consumed in a fixed order cannot express what the
     // user did: a stop followed by a start inside one block left `startLearn`
     // running first, which zeroed the accumulator the stop was about to commit,
     // and then `commitLearn` no-opped on `learnBlocks == 0` — the finished pass
-    // never committed AND the new one never began. The same shape, and the same
-    // fix, as the learned-target restore below.
+    // never committed AND the new one never began.
+    //
+    // A code PLUS a flag cannot either, and that was the second version of this
+    // path (a staged record, ADR-0012's row): the writer published `code` and
+    // then `pending` as two stores, so a consumer whose `exchange` landed
+    // BETWEEN them ran the already-visible new code and left the writer to
+    // re-raise `pending` behind it — the same command delivered twice. For a
+    // bare commit that is harmless (it re-commits identical values), but a
+    // commitThenStart delivered twice commits the pass its own first delivery
+    // started ONE BLOCK earlier: `learnBlocks == 1`, so the saved reference is
+    // measured from a single block of audio and then serialized. The payload
+    // is two bits wide, so there is nothing to stage — the code IS the flag,
+    // `kLearnNone` means nothing pending, and one store cannot be split. That
+    // moves this edge from ADR-0012's staged-record row to the single
+    // lock-free scalar row it always fitted (THREADING_POLICY), which is a
+    // NARROWING: no new mechanism, one fewer window.
     //
     // The ordering information lives on the WRITER's thread, so that is where
     // the pair is composed: a start arriving on top of an unconsumed commit
     // becomes ONE commitThenStart command, and every other sequence degrades to
-    // last-writer-wins. Reading back the pending flag to compose is ADR-0012
-    // condition 5.
+    // last-writer-wins. Reading the word back to compose is ADR-0012
+    // condition 5, unchanged.
     //
     // TWO NARROW RESIDUALS, stated rather than implied by "last-writer-wins"
     // (both need two commands inside one ~10 ms block; both are in ADR-0012's
@@ -114,21 +128,23 @@ public:
     //    user's two clicks described. (With nothing running it is the
     //    documented empty-pass no-op, which is the only case the first
     //    version of this comment covered.)
-    //  • the consumer clears the flag a few instructions before it reads the
-    //    code, so a start landing in that window sees `pending == false`,
-    //    composes as a bare start, and the outstanding commit is dropped.
+    //  • the consumer clears the word a few instructions before it acts on it,
+    //    so a start landing in that window reads `kLearnNone`, composes as a
+    //    bare start, and the outstanding commit is dropped. This is the
+    //    OPPOSITE direction of the re-delivery above, and it is the one that
+    //    survives: closing it means reading the code before clearing it, which
+    //    trades a dropped command for a duplicated one.
     void requestLearnStart() noexcept
     {
-        const bool commitOutstanding = learnCmdPending.load (std::memory_order_acquire)
-                                    && learnCmdCode.load (std::memory_order_relaxed) != kLearnStart;
-        learnCmdCode.store (commitOutstanding ? kLearnCommitThenStart : kLearnStart,
-                            std::memory_order_relaxed);
-        learnCmdPending.store (true, std::memory_order_release);
+        const int outstanding = learnCmd.load (std::memory_order_acquire);
+        const bool commitOutstanding = outstanding == kLearnCommit
+                                    || outstanding == kLearnCommitThenStart;
+        learnCmd.store (commitOutstanding ? kLearnCommitThenStart : kLearnStart,
+                        std::memory_order_release);
     }
     void requestLearnStop() noexcept
     {
-        learnCmdCode.store (kLearnCommit, std::memory_order_relaxed);
-        learnCmdPending.store (true, std::memory_order_release);
+        learnCmd.store (kLearnCommit, std::memory_order_release);
     }
 
     // Learned-target restore (session load, ADAPTIVE child): host-hidden
@@ -252,9 +268,11 @@ private:
     // stages see carries the APPLIED values, so nothing rewires at full gain.
     enum class DuckState { idle, out, bottom, in };
     std::atomic<bool> duckRequested { false };
-    static constexpr int kLearnStart = 0, kLearnCommit = 1, kLearnCommitThenStart = 2;
-    std::atomic<bool> learnCmdPending { false };
-    std::atomic<int>  learnCmdCode { kLearnStart };
+    // kLearnNone is the "nothing pending" value, which is what lets the code
+    // and the flag be the same word — see requestLearnStart above.
+    static constexpr int kLearnNone = 0, kLearnStart = 1, kLearnCommit = 2,
+                         kLearnCommitThenStart = 3;
+    std::atomic<int> learnCmd { kLearnNone };
     std::atomic<bool> adaptivePending { false }, pendingLearned { false };
     std::atomic<float> pendingRefOnset { 0.0f }, pendingRefTilt { 0.0f };
     DuckState duckState = DuckState::idle;

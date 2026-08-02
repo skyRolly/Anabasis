@@ -124,6 +124,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, one stimulus per stage (Nyquist at full
   scale for the extractor, the bypass leg for the meter), each mutation-verified. [Verified]
 
+- **A double Learn press can no longer save a reference measured from one block.** The Learn
+  command was published as a code plus a separate "pending" flag, so an engine that picked the
+  command up between those two writes could have it re-raised behind it and carry it out twice —
+  and a "finish and start again" press carried out twice finishes the pass it just started, one
+  block old. The command is now a single value the engine takes whole.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `AnabasisEngine::learnCmd`; the interleaving
+  itself is not headlessly reproducible, and `testStopThenStartInOneBlockKeepsBoth` pins the
+  composed semantics across the change. [Partially Verified]
+
 - **A Learn analysis that measured through an extreme sample is no longer saved as the reference.**
   Ending a Learn pass on the block after such a sample stored a broken measurement as the learned
   reference, which froze Simple-mode adaptation for good — every trim is derived from that

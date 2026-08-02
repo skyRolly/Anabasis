@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **twenty-second review round of 2026-08-02** (PR #5): three documentation
+**Last updated:** for the **twenty-third review round of 2026-08-02** (PR #5): the Learn command
+was a code plus a flag, which a consumer could take between the writer's two stores and then have
+re-raised behind it — the same command twice, and a repeated commitThenStart commits a pass one
+block old. Two bits need no record: the code IS the flag now. Previous round: (PR #5): three documentation
 drifts corrected (a changelog stimulus count, HANDOVER's phase header, a missing separator), the
 forced-duck request added to what `reset()` clears, and two ⊕-draft/P5 questions recorded where
 the code that raises them lives. Previous round: (PR #5): the per-block
@@ -53,6 +56,45 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Twenty-third review round — the fix was a narrower mechanism, not a wider one (2026-08-02)
+
+Nine items: one defect fixed, one warning made mechanical, one comment completed, three repeats,
+three verifications that agree with the code.
+
+**A staged record with a two-bit payload was the wrong shape, and the second window proves it.**
+ADR-0012's Known limits described one consequence of publishing code-then-flag: a composing writer
+that reads the flag back between the consumer's `exchange` and its use drops an outstanding
+commit. The review found the same window in the other direction — a consumer whose `exchange`
+lands between the writer's two stores runs the already-visible new code, and the writer's following
+`store(pending, true)` re-delivers it. A repeated bare commit is harmless; a repeated
+`commitThenStart` calls `commitLearn()` on the pass its own first delivery started one block
+earlier, so `learnBlocks == 1` and the saved reference is measured from a single block of audio
+and then serialized into the project.
+
+**The fix removes a mechanism rather than adding one.** The payload is two bits, so there is
+nothing to stage: `learnCmd` is one atomic word with `kLearnNone` meaning nothing pending, and one
+store cannot be split. The edge moves from ADR-0012's staged-record row to the single-lock-free-
+scalar row it always fitted — a narrowing, no new path, one fewer window. ADR-0012 keeps its
+contract (the learned-target restore has a real payload) and gains the amendment; `THREAD_MODEL.md`
+carries the new row text. The surviving residual is the opposite direction, and closing it would
+trade a dropped command for a duplicated one — which is the trade this round just refused in the
+other direction. **The race is not headlessly reproducible**, like KI-003's: what the suite pins
+is that the composed semantics still hold (`testStopThenStartInOneBlockKeepsBoth`).
+
+**A warning became a tripwire.** Invariant 7's third leg — the bit-exact null holding because
+`ClipSat::activityEnv` is exactly `0.0f` while nothing clips — was carried by comments in two
+files and by nothing executable. `activityEnvelope()` is now public for the test that asserts the
+zero directly. Verified the way it should be: a mutant that floors the envelope at `1e-9` passes
+the null test (the tame branch needs `tameGainDb < -0.01f`, so a tiny value changes no sample) and
+fails the new check. That is exactly the failure the comments feared, and it is now mechanical.
+
+**Three verifications, and one of them extended a comment.** The reviewer re-traced the limiter's
+detector recovery and agreed with last round's comment, then found what it did not cover: in
+true-peak mode a NaN also enters the estimator's 12-tap FIR history, so the un-limited stretch is
+one window PLUS `kTaps` region samples. Added. The other two — the loudness-compensation measure
+being only marginally perturbed by the duck, and the three-way render equality being structural
+rather than incidental — confirm existing comments and needed no change.
 
 ### Twenty-second review round — the round with no defects in it (2026-08-02)
 

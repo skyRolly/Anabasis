@@ -149,6 +149,15 @@ public:
             activityEnv = 0.0f;
     }
 
+    // The invariant-7 TRIPWIRE, and the reason it is public: the bit-exact null
+    // rests on this being EXACTLY 0.0f while nothing clips (see the tame branch
+    // below), which is a state property of THIS file that `AdaptiveEngine`'s
+    // dynTilt trim depends on from another one. A test can assert the zero
+    // directly instead of hoping a null test notices the consequence — seeding
+    // or flooring the detector would otherwise break the null from code that
+    // never mentions adaptation.
+    float activityEnvelope() const noexcept { return activityEnv; }
+
     void setPerBlock (const EngineParameters& p) noexcept
     {
         auto set = [this] (juce::SmoothedValue<float>& s, float v) noexcept
