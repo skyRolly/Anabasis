@@ -123,6 +123,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, one stimulus per stage (Nyquist at full
   scale for the extractor, the bypass leg for the meter), each mutation-verified. [Verified]
 
+- **A Learn analysis that measured through an extreme sample is no longer saved as the reference.**
+  Ending a Learn pass on the block after such a sample stored a broken measurement as the learned
+  reference, which froze Simple-mode adaptation for good — every trim is derived from that
+  reference — and was then written into the project file, so reloading did not clear it. The
+  commit now refuses a measurement that overflowed, with the same outcome as an empty pass (the
+  previous reference stays), and a restore that carries one reads as never-learned.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
+  `testALearnPassThatOverflowedIsNotCommitted`, both writers mutation-verified. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **nineteenth review round of 2026-08-02** (PR #5): the two stages that
+**Last updated:** for the **twentieth review round of 2026-08-02** (PR #5): the previous round's
+Learn cancellation runs later in the block than the Learn COMMIT is consumed, so a ruined pass
+could still be saved as the reference — refused at the writer instead. Previous round: (PR #5): the two stages that
 emit no audio — the BS.1770 meters and the §5.4 feature extractor — overflow on a legal float and
 fail silently, so they are now repaired per block like the limiter's detector. Previous round: (PR #5): the invariant-9
 recovery had one more hole, and it was in the sentence that justified leaving stage E without a
@@ -45,6 +47,38 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Twentieth review round — the guard was right, and ran too late (2026-08-02)
+
+Three items: one defect fixed, two repeats already recorded (one of which the review itself
+classes as not-a-defect).
+
+**The previous round added exactly the right guard in exactly the wrong place.** `sanitiseState()`
+cancels a Learn pass whose sums went non-finite, so that `commitLearn()` cannot store one — but it
+runs late in `process()`, while the staged Learn command is consumed at the block TOP. A commit
+landing on the block after an overflow therefore gets in first: `refTiltDb` becomes NaN,
+`publishRefs()` publishes it, `learned` goes true. From there the damage is permanent (every trim
+target derives from the reference, and both `jlimit` and the hysteresis `|tgt − state| > deadband`
+pass NaN through untouched, so the vector never moves again) and persistent (`hasLearned()` true
+means the next save writes it into the session's `ADAPTIVE` child). Reproduced before fixing:
+both assertions of the new test fail on the tree as it stood.
+
+**Fixed at the writer, not by reordering the calls.** Moving `sanitiseState()` above the Learn
+consume would work today and would be a fact about call order that nothing enforces — the same
+class of argument as the reachability claim that put the Post-EQ hole in. `commitLearn()` now
+refuses a non-finite measurement outright, with the outcome the empty pass already has (previous
+reference stays, nothing published, `learned` not raised). `setLearnedTargets()` — the other
+writer, reached by a session restore — gets the same check, so a file written by a build that did
+commit one reads as never-learned rather than re-poisoning a healthy engine.
+
+**The stimulus is the constant huge block, not the Nyquist one.** The extractor's Learn
+accumulation is inside `if (learnActive && audible)`, and `audible` is `ms > 1e-7` — false for the
+NaN that Nyquist-at-full-scale produces, true for the `inf` a constant block produces. The
+previous round's stimulus, reused here, would have tested nothing.
+
+**A warning caught by the build, not by review.** The first version of the test compared trims
+with `!=`; `-Wfloat-equal` is on, and the project's gate treats warnings as findings. Replaced
+with `juce::exactlyEqual`, the idiom the rest of the tree uses.
 
 ### Nineteenth review round — the failures that are invisible because they are not audio (2026-08-02)
 

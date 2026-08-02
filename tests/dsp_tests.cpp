@@ -3039,6 +3039,78 @@ static void testExtremeLevelDoesNotSilencePermanently()
 // then fail SILENTLY — the readings are wrong, every gate that compares them
 // is false, and nothing in the engine notices. They are repaired once per
 // block rather than on the recovery flag, and this test is what says so.
+// ---------------------------------------------------------------------------
+// inv 9 meets §5.4 Learn: a pass whose measurement overflowed must not become
+// the saved reference. The damage would be permanent AND persistent — every
+// trim target is derived from `refTiltDb`, `jlimit` returns NaN for a NaN
+// input, the hysteresis `|tgt − state| > deadband` is false for NaN, so the
+// vector never moves again; and `hasLearned()` is true, so the next save writes
+// the value into the session's ADAPTIVE child.
+static void testALearnPassThatOverflowedIsNotCommitted()
+{
+    const double sr = 48000.0;
+    const int block = 512;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    juce::AudioBuffer<float> buf (2, block);
+
+    auto feed = [&] (int blocks, int t0)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < block; ++n)
+            {
+                const float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 220.0f * (float) (t0 + b * block + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+        }
+    };
+
+    feed (20, 0);
+    engine.requestLearnStart();
+    feed (40, 20 * block);                          // a real pass, sums finite
+
+    // One astronomical block WHILE the pass runs. Constant, not alternating:
+    // the mean square must stay above the silence gate for the accumulation to
+    // happen at all, and `ms = inf` passes it while `ms = NaN` would not. The
+    // band energies both overflow, so `tiltDb` is inf/inf = NaN and the sum
+    // takes it.
+    const float huge = 0.5f * std::numeric_limits<float>::max();
+    for (int n = 0; n < block; ++n) { buf.setSample (0, n, huge); buf.setSample (1, n, huge); }
+    engine.process (buf, p);
+
+    engine.requestLearnStop();                      // commit, consumed next block top
+    feed (1, 61 * block);
+
+    check (std::isfinite (engine.adaptive().publishedRefTilt())
+               && std::isfinite (engine.adaptive().publishedRefOnset()),
+           "learnOverflow: the saved reference is a number");
+
+    // …and adaptation is still alive: the trims must MOVE again, which they
+    // cannot do at all once a reference is NaN.
+    const float tiltTrimBefore = engine.adaptive().publishedTrimTilt();
+    const float hpfTrimBefore  = engine.adaptive().publishedTrimHpf();
+    feed (120, 62 * block);
+    check (! juce::exactlyEqual (engine.adaptive().publishedTrimTilt(), tiltTrimBefore)
+               || ! juce::exactlyEqual (engine.adaptive().publishedTrimHpf(), hpfTrimBefore),
+           "learnOverflow: the trim vector still adapts after the ruined pass");
+
+    // The other writer of the references: a RESTORE. Same rule, because a
+    // session written by a build that did commit a NaN (or an edited file)
+    // would otherwise re-poison a healthy engine on load.
+    engine.restoreLearnedTargets (std::numeric_limits<float>::quiet_NaN(),
+                                  std::numeric_limits<float>::quiet_NaN());
+    feed (1, 190 * block);                          // block top consumes it
+    check (! engine.adaptiveForWrapper().hasLearned(),
+           "learnOverflow: a non-finite restore reads as never-learned");
+    check (std::isfinite (engine.adaptive().publishedRefTilt())
+               && std::isfinite (engine.adaptive().publishedRefOnset()),
+           "learnOverflow: and leaves the references usable");
+}
+
 static void testExtremeLevelDoesNotBreakTheMetersOrAdaptation()
 {
     const double sr = 48000.0;
@@ -3397,6 +3469,7 @@ int main()
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();
+    testALearnPassThatOverflowedIsNotCommitted();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
 

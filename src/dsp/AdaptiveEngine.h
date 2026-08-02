@@ -352,13 +352,32 @@ public:
         // deliberately no signal back to the wrapper at P4.
         if (learnBlocks > 0)
         {
-            refOnsetRate = (float) (learnOnsSum  / learnBlocks);
-            refTiltDb    = (float) (learnTiltSum / learnBlocks);
-            publishRefs();
-            // Refs first, flag RELEASE-stored after: a reader whose ACQUIRE
-            // load of `learned` sees true is guaranteed to see the refs it
-            // is about to serialize (getStateInformation runs off-thread).
-            learned.store (true, std::memory_order_release);
+            const float ons  = (float) (learnOnsSum  / learnBlocks);
+            const float tilt = (float) (learnTiltSum / learnBlocks);
+            // A pass that measured through an overflow is REFUSED here rather
+            // than repaired later, and the check lives at the writer for a
+            // reason: sanitiseState() cancels such a pass, but it runs later in
+            // the same block than the staged Learn command is consumed, so a
+            // commit landing on the block AFTER the overflow gets in first.
+            // Making the commit safe regardless of call order is the fix; the
+            // ordering is not something a future edit should have to preserve.
+            // Refusing means the same outcome as the empty pass above — the
+            // existing references stay, nothing is published, `learned` is not
+            // raised — which matters because a committed NaN reference would be
+            // PERMANENT (every trim target derives from it, and `jlimit` and
+            // the hysteresis both pass NaN through untouched) and PERSISTENT
+            // (`hasLearned()` true means the next save writes it into the
+            // session's ADAPTIVE child).
+            if (std::isfinite (ons) && std::isfinite (tilt))
+            {
+                refOnsetRate = ons;
+                refTiltDb    = tilt;
+                publishRefs();
+                // Refs first, flag RELEASE-stored after: a reader whose ACQUIRE
+                // load of `learned` sees true is guaranteed to see the refs it
+                // is about to serialize (getStateInformation runs off-thread).
+                learned.store (true, std::memory_order_release);
+            }
         }
     }
 
@@ -373,6 +392,16 @@ public:
     // (half-restored = permanently wrong); nothing here weakens that Hard Stop.
     void setLearnedTargets (float onsetRateIn, float tiltDbIn) noexcept
     {
+        // The other writer of the references, and the other way a non-finite
+        // one could get in: a session file written by a build that did commit
+        // one (or an edited file). COMPATIBILITY_POLICY's read rule — a value
+        // that cannot be read is the default — applied to a value that can be
+        // read and cannot be used.
+        if (! std::isfinite (onsetRateIn) || ! std::isfinite (tiltDbIn))
+        {
+            clearLearnedTargets();
+            return;
+        }
         refOnsetRate = onsetRateIn;
         refTiltDb    = tiltDbIn;
         publishRefs();
