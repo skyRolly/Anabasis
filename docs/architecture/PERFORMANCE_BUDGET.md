@@ -4,10 +4,24 @@ The DESIGN §9 budget and its measurements. Target (brief §10): **≈5 % of one
 at 48 kHz stereo 4× OS**. The ⊕ allocation below is DESIGN §9's draft; per-stage attribution
 needs a profiler pass and is NOT claimed by the whole-engine numbers here.
 
-## ⊕ Draft allocation (DESIGN §9 — targets, not measurements)
+## Allocation (DESIGN §9 targets), now with measured standalone costs
 
-OS resampling ≤1.5 % · limiter + TP detection ≤1.5 % · clipper/ADAA ≤0.8 % · compressor ≤0.3 % ·
-EQ ≤0.3 % · metering + features ≤0.5 % · headroom ≥0.1 %.
+Measured 2026-08-02 with the `AnabasisBench` per-stage section (same machine/method as the
+matrix below; each module standalone at 48 kHz base rate in its working configuration, median of
+5×1 s runs). **Standalone cost is not in-chain attribution** — cache locality and inlining differ
+inside the running engine, and the region stages (clipper, limiter) execute at the OS rate — so
+the whole-engine matrix stays the budget authority; this table answers "is any single stage out
+of line with its allocation", and none is:
+
+| Stage | §9 allocation | measured standalone (48 kHz) | verdict |
+|---|---|---|---|
+| EQ (six sections engaged) | ≤0.3 % | 0.16 % | inside |
+| Compressor (RMS + HPF) | ≤0.3 % | 0.15 % | inside |
+| Clipper/ADAA + colour + tame | ≤0.8 % | 0.21 % (×OS rate in-chain) | inside |
+| Limiter + TP detector | ≤1.5 % | 0.44 % (×OS rate in-chain) | inside |
+| Metering + features | ≤0.5 % | 0.18 % for one meter + TP + adaptive; the chain runs three meters — still ≈0.5 % worst case | inside (at the line) |
+| OS resampling | ≤1.5 % | not separable standalone — the matrix difference (4× working − Off working ≈ 1.5 %) BUNDLES the region stages' rate multiplication, so this row is bounded, not isolated | inside by the bundle bound |
+| Headroom | ≥0.1 % | the budget case totals 3.0 % of the ≈5 % target | ample |
 
 ## Measured (2026-08-02) — whole engine, `AnabasisBench`
 
@@ -69,9 +83,8 @@ ns/sample × SR / 10⁷. `working` = the §5.5 macro at loudness ≈ 50 with EQ 
 - 16× is the deliberate quality extreme, not the budget case: 9.2 % at 48 kHz, 20.2 % at
   96 kHz/512/working. Usable, and honest to state.
 - The defaults column is the null path: ≈1–1.3 % at 48 kHz — the bit-exact identity chain plus
-  metering/features, which bounds the "metering + features" allocation from above at well under
-  its 0.5 %… only jointly with the pass-through chain; the per-stage split needs the profiler
-  pass this document does not claim.
+  metering/features. The per-stage table above supersedes the earlier "unclaimed" note: every
+  allocation row now has a measured standalone figure under it.
 - Worst-block figures include scheduler noise (a 64-sample block stamped at 1.8 ms on a shared
   Xeon is a preemption, not DSP) — treat the median column as the load-bearing one.
 

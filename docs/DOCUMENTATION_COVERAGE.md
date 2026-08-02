@@ -6,7 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P6 factory-preset commit (2026-08-02)** (PR #5): the compiled-in
+**Last updated:** for the **P6 per-stage bench commit (2026-08-02)** (PR #5): the §9 allocation
+table moves from ⊕ targets to measured-against-target — every stage standalone under its
+allocation, with the honest caveats stated in place (standalone ≠ in-chain attribution; the OS
+row is bounded by the matrix difference, which bundles the region stages' rate multiplication).
+Previous: (PR #5): the compiled-in
 override tables (defaults + intents through the shared lock/exclusion core; empty mask; one undo
 step; the five brief-named presets as ⊕ drafts), the FACTORY menu section with the ‹ › ring, and
 the dirty marker. Mutation pass: defaults-first, the lock skip, index-validated-before-the-

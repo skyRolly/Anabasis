@@ -127,4 +127,6 @@ CPU/performance budget (P2/P6, needs a recorded machine spec), the file-based EB
 Budget case **48 kHz · 512 · 4× OS · working state: 3.0 % of one core** (Intel Xeon @ 2.10 GHz,
 gcc 13.3.0, Release; median ns/sample of the timed `process()` region, 5×1 s runs) against the
 brief-§10 target of ≈5 % on a modern desktop core. Null path ≈1.3 %; the 16× quality extreme
-9.2 % (48 kHz) / 20.2 % (96 kHz). Machine + method travel with every quote (C2).
+9.2 % (48 kHz) / 20.2 % (96 kHz). Machine + method travel with every quote (C2). Per-stage standalone costs (same bench): EQ
+0.16 % · comp 0.15 % · clip 0.21 % · limiter+TP 0.44 % · metering+features 0.18 % — every §9
+allocation row measured inside its budget.
