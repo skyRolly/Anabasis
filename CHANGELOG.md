@@ -97,6 +97,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) — the oversampler case of the same test, now at
   `FLT_MAX` (the level the polyphase filters overflow at), mutation-verified. [Verified]
 
+- **…and with the EQ in the Post position, where the same silence survived two rounds of fixing.**
+  The Post EQ sits after the limiter but before the ceiling clamp, and the limiter's *attack* — not
+  the ceiling — is what bounds its input: at a short lookahead setting the gain has only fallen to
+  ~0.29 by the time an extreme peak plays, and a fully boosted EQ multiplies by ~3.4, so the
+  biquad overflows and the plugin goes silent for the rest of the session. Stage E now has the two
+  boundaries it was missing (the decimation filters' output and the Post EQ's own), so both stages
+  are repaired like the others. Separately, the limiter's detector high-pass is now checked once
+  per block rather than on the recovery flag: its corruption produces no non-finite output at all
+  (a `NaN` level compares false against the ceiling), so the limiter would have passed everything
+  at unity gain for ever without anything to notice.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — the Post-position case of the same test,
+  calibrated against the limiter attack and mutation-verified. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

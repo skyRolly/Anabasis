@@ -113,19 +113,6 @@ public:
             head[ch] = tail[ch] = 0;
         for (auto& e : envFast) if (! std::isfinite (e)) e = 1.0f;
         for (auto& e : envSlow) if (! std::isfinite (e)) e = 1.0f;
-        // The detector high-pass is the other recursive state on this path and
-        // needs the same treatment: it is fed `tapped[]` from the wet ring,
-        // which the engine keeps FINITE but not bounded, and |b1| ≈ 2 means a
-        // ring sample past ~FLT_MAX/2 overflows the biquad. Once that happens
-        // the filter feeds itself and every later `det` is NaN, which no window
-        // reset repairs. Cleared as a pair per channel, for the same reason the
-        // EQ's are. Defence in depth like the envelope sanitisation above: no
-        // stimulus in the suite reaches it, because the compressor's identical
-        // sidechain filter sits upstream on the same parameter and poisons
-        // first, which is an argument about today's chain, not a guarantee.
-        for (int ch = 0; ch < kMaxChannels; ++ch)
-            if (! std::isfinite (hpfZ1[ch]) || ! std::isfinite (hpfZ2[ch]))
-                hpfZ1[ch] = hpfZ2[ch] = 0.0f;
         writeCount = 0;
     }
 
@@ -155,6 +142,26 @@ public:
     // engine's own smoothers.
     void setRelease (float releaseMs) noexcept
     { aRelManual = onePoleMs (juce::jmax (1.0f, releaseMs)); }
+
+    // Called once per block by the engine, NOT from the invariant-9 recovery:
+    // this is the one piece of state on the limiter's path whose corruption
+    // produces no non-finite OUTPUT to detect. It is fed `tapped[]` from the
+    // wet ring, which the engine keeps finite but not bounded, and |b1| ≈ 2
+    // means a ring sample past ~FLT_MAX/2 overflows the biquad; from there
+    // `det` is NaN, so is every wedge value, and `peak > ceilingLinear` is
+    // false for NaN — `needed` stays 1.0f and the limiter passes everything at
+    // unity for ever while looking perfectly healthy. Cleared as a pair per
+    // channel, for the same reason the EQ's states are. Costs two comparisons
+    // per block. The engine's compressor happens to carry an identical filter
+    // on the same parameter upstream and would usually poison first, which is
+    // an argument about today's chain, not a guarantee, and is exactly the
+    // shape of argument that put the Post EQ hole in this file's sibling.
+    void sanitiseDetectorState() noexcept
+    {
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            if (! std::isfinite (hpfZ1[ch]) || ! std::isfinite (hpfZ2[ch]))
+                hpfZ1[ch] = hpfZ2[ch] = 0.0f;
+    }
 
     void setAutoRelease (bool b) noexcept        { autoRelease = b; }
     void setStyle (int s) noexcept               { style = juce::jlimit (0, 2, s); }

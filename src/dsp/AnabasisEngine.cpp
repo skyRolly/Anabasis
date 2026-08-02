@@ -408,6 +408,15 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // that the tap runs its own 4x estimator (8x effective at 2x).
     limiter.setTruePeakMode (p.truePeakMode && osN < 4);
     limiter.setDetectorHpf (pApplied.scHpfFreqHz);
+    // Per block, not on the invariant-9 flag: a poisoned detector high-pass
+    // produces NO flag to hang a repair on. `det` goes NaN, every wedge value
+    // goes NaN, and `peak > ceilingLinear` is FALSE for NaN — so `needed`
+    // stays 1.0f and the limiter emits unity gain for ever, with finite output
+    // and nothing to notice. That is the failure mode a maximizer can least
+    // afford (the CeilingClamp then hard-clips what the limiter should have
+    // caught), so the state is checked where it costs a comparison per block
+    // instead of relying on the compressor's identical filter poisoning first.
+    limiter.sanitiseDetectorState();
     eq.setTargets (pApplied);
     comp.setPerBlock (pApplied);
     clip.setPerBlock (pApplied);
@@ -756,13 +765,47 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         for (int ch = 0; ch < nCh; ++ch)
         {
             float processed = staging.getSample (ch, n);
+            if (! std::isfinite (processed))
+            {
+                // Only reachable with oversampling ON: stage A's write to
+                // `staging` is sanitised, so at OS Off this value is finite by
+                // construction. With the region active this is what came out
+                // of processSamplesDown — the DECIMATION half of the same
+                // polyphase filters the region read guards, and the same
+                // recursive IIR on the default path. Attributed to the
+                // oversampler for that reason, so the reset below repairs it.
+                processed               = 0.0f;
+                stageGeneratedNonFinite = true;
+                regionInputNonFinite    = true;
+            }
 
             // Post-position EQ sits AFTER the limiter and BEFORE the clamp -
             // the placement ADR-0002 exists for: a +12 dB post shelf can push
             // the limited signal back over the ceiling, and the clamp being
             // downstream is what keeps invariant 4 unconditional.
             if (eqPost)
+            {
                 processed = eq.processSample (ch, processed);
+                if (! std::isfinite (processed))
+                {
+                    // The Post EQ CAN overflow, and the previous claim that it
+                    // could not was wrong in a way worth keeping written down:
+                    // the argument was "its input is the limited signal,
+                    // bounded by the ceiling". The limiter's ATTACK is what
+                    // bounds it, and at a short lookahead the envelope only
+                    // reaches ~0.29 by the time the peak plays (0.4 ms attack
+                    // at the default transientPreserve, ~5 samples of window
+                    // at 0.1 ms). A fully boosted EQ multiplies by ~3.4, and
+                    // 0.29 × 3.4 > 1 — measured, permanently silent, and now a
+                    // case in testExtremeLevelDoesNotSilencePermanently.
+                    // CeilingClamp cannot stand in for this boundary either:
+                    // it maps +inf to the ceiling (so the sample looks fine)
+                    // and passes NaN straight through, and it is downstream of
+                    // the EQ's own poisoned history in any case.
+                    processed               = 0.0f;
+                    stageGeneratedNonFinite = true;
+                }
+            }
             processed = clamp.processSample (processed, ceilingNow);
 
             // §2.8 duck — PROCESSED path only, downstream of the clamp (a
@@ -899,6 +942,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     //   • the staging write:           the compressor's own output
     //   • the region read:             protects ClipSat
     //   • the wet ring write:          ClipSat's own output
+    //   • the staging read in stage E: the decimation filters' own output
+    //   • stage E, after the EQ:       the Post position's own output
     //   • the render tap:              `isfinite (render) ? … : 0.0f`
     //   • the output write:            sets `sawNonFinite` and emits 0.0f
     // A boundary bounds PROPAGATION and nothing else. It does not protect the
@@ -927,8 +972,6 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // structure needs explicit repair rather than time — on EITHER flag. That
     // is what resetWindow() is for, and why carrying the envelope across it is
     // right (a snap to unity is the louder bug — see the test of that name).
-    // Stage E needs no boundary of its own: its input is the limited signal,
-    // bounded by the ceiling (invariant 4), so eqPost cannot overflow.
     //
     // RULE FOR FUTURE STAGES, since the chain keeps growing recursive state:
     // a new stateful stage must sit downstream of a boundary (add one if it

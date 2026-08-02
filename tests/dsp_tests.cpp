@@ -3003,6 +3003,26 @@ static void testExtremeLevelDoesNotSilencePermanently()
              p.colourDepth = 1.0f;
          });
 
+    // POST position. Calibrated, because the obvious stimulus does NOT reach
+    // the bug: the limiter's attack is what bounds stage E's input, so at the
+    // default 2 ms lookahead the envelope is down to ~0.008 by the time the
+    // peak plays and no legal EQ boost gets the product back over FLT_MAX. At
+    // 0.1 ms of lookahead the envelope only reaches ~0.29 in the ~5 samples it
+    // has, and a fully boosted EQ multiplies by ~3.4. The peak detector keeps
+    // the compressor's RMS square from collapsing the level first.
+    run ("an EQ biquad overflows in the POST position", std::numeric_limits<float>::max(),
+         [] (anabasis::EngineParameters& p)
+         {
+             p.eqPosition   = 1;                 // after the limiter, before the clamp
+             p.lookaheadMs  = 0.1f;
+             p.compDetector = 1;
+             p.eqTiltDb          = 3.0f;
+             p.eqLowShelfGainDb  = 12.0f;
+             p.eqHighShelfGainDb = 12.0f;
+             p.eqBell1GainDb     = 12.0f;
+             p.eqBell2GainDb     = 12.0f;
+         });
+
     run ("the oversampler's filters overflow", std::numeric_limits<float>::max(),
          [] (anabasis::EngineParameters& p)
          {

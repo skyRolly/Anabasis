@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **seventeenth review round of 2026-08-02** (PR #5): one of the four
+**Last updated:** for the **eighteenth review round of 2026-08-02** (PR #5): the invariant-9
+recovery had one more hole, and it was in the sentence that justified leaving stage E without a
+boundary — the Post EQ can overflow, and did, permanently. Previous round: (PR #5): one of the four
 §5.4 trims is inert in the factory state — the release trim lands on a parameter the limiter reads
 only in manual mode — recorded as **OQ-016** rather than wired, because making it audible changes
 the default sound. Previous round: (PR #5): the previous round's
@@ -41,6 +43,45 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Eighteenth review round — the hole was in the sentence that said there was no hole (2026-08-02)
+
+Six items: two defects fixed, one flag-coverage gap closed with them, three repeats left alone.
+
+**The stage-E boundary I removed two rounds ago was load-bearing.** It was dropped on this
+argument: *"Stage E needs no boundary of its own: its input is the limited signal, bounded by the
+ceiling (invariant 4), so eqPost cannot overflow."* Wrong twice. The `CeilingClamp` runs **after**
+the Post EQ — that is what ADR-0002 exists for — so it bounds the EQ's output, not its input. And
+what actually bounds stage E's input is the limiter's **attack**, not the ceiling: at the default
+2 ms lookahead the envelope is down to ~0.008 by the time an extreme peak plays, which is why the
+first stimulus found nothing, but at 0.1 ms it has only ~5 samples and reaches ~0.29 — and a fully
+boosted EQ multiplies by ~3.4. Measured with the engine instrumented: `postEqIn = 9.9e37`,
+`out = 3.4e38`, 402494 non-finite samples, output `0.000000` for ever after.
+
+**Two boundaries, not one.** The staging read at the top of stage E is the other missing one: with
+oversampling on it carries `processSamplesDown`'s output, the decimation half of the same polyphase
+filters the region read already guards, so a non-finite value there is attributed to the
+oversampler and repairs it. That closes the flag-coverage asymmetry the same review flagged
+separately — `regionInputNonFinite` covered the up-sampler only.
+
+**The limiter's detector high-pass needed the opposite treatment.** Its corruption produces no
+non-finite output to detect: `det` goes NaN, every wedge value goes NaN, and `peak > ceiling` is
+**false** for NaN, so `needed` stays 1.0f and the limiter emits unity gain for ever — finite,
+silent, and invisible to every boundary in the engine. A repair hung on a flag cannot fire for a
+fault that raises no flag, so the state is checked unconditionally once per block instead. The
+sanitisation added to `resetWindow()` last round moved there rather than being duplicated.
+
+**Stimulus calibration was the whole difficulty, again.** The obvious Post-position test — a
++12 dB shelf at the default lookahead — passes against the bug, because the limiter really does
+bound stage E's input under normal settings. The case only exists at a short lookahead, with the
+peak detector (the RMS square collapses the level first) and every EQ band boosted. A test written
+from the review's description alone would have gone green and closed the item.
+
+**Lesson, and it is the same one twice.** Round fifteen removed a guard because a reachability
+argument said the case could not happen; round sixteen found the recovery incomplete for a stage
+the invariant text itself named. Both times the defect was inside carefully argued prose. The rule
+this branch now carries in `DSP_POLICY.md`: a reachability argument is not a boundary — it is a
+claim about today's chain, and it belongs in a comment next to a check, not instead of one.
 
 ### Seventeenth review round — an adaptive behaviour that is computed, published, latched and silent (2026-08-02)
 
