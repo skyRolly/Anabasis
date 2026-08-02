@@ -69,6 +69,11 @@ public:
     int  activeSlotIndex() const noexcept { return activeSlot; }
     void switchToSlot (int newIndex);   // message thread; §2.8 duck requested before the swap
 
+    // Top-bar Copy (§6.1): the INACTIVE slot becomes a snapshot of the live
+    // state. No duck and no engine involvement — nothing audible changes, the
+    // copy lands where the next A/B switch will read it.
+    void copySlotToOther() { storedSlot = saveSlotFromLive(); }
+
     // Preset apply goes through here, never through PresetManager directly:
     // the wrapper lands the slot-level fields (name, detach mask) and drops
     // the restore-armed macro mapping (§5.3: a restore is not a gesture).
@@ -78,6 +83,23 @@ public:
     // the engine's delay-aligned crossfade path instead of the wrapper's
     // zero-latency processBlockBypassed fallback.
     juce::AudioProcessorParameter* getBypassParameter() const override;
+
+    // -- P5 editor accessors (message thread) -------------------------------
+    // The preset browser shows the live name; save routes through the wrapper
+    // for the same reason applyPresetFile does — the slot-level fields (name,
+    // detach mask) belong to the wrapper, not to PresetManager's file I/O.
+    const juce::String& currentPresetName() const noexcept { return livePresetName; }
+    bool savePresetFile (const juce::File& file)
+    {
+        if (! presetManager->savePreset (file, liveDetachMask))
+            return false;
+        livePresetName = file.getFileNameWithoutExtension();
+        return true;
+    }
+    // Read-only view of the §5.3 detach mask, for the Advanced macro row's
+    // badges and the Simple view's "edited" indicator (display only — the
+    // detach GRAMMAR lives in the wrapper/MacroEngine, never in paint code).
+    const juce::StringArray& detachMask() const noexcept { return liveDetachMask; }
 
     MacroEngine& getMacroEngine() noexcept { return *macroEngine; }
     const CachedParams& cachedForTest() const noexcept { return cached; }
