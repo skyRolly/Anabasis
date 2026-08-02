@@ -6,7 +6,14 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P6 per-stage bench commit (2026-08-02)** (PR #5): the §9 allocation
+**Last updated:** for the **Windows-CI stack fix (2026-08-02)** (PR #5): the spectrum commit's
+two ScopeBuffers carried 2 × 128 KB of INLINE arrays inside every engine, and the state suite
+builds processors on the stack — three coexisting in one test ≈ 1.2 MB against Windows' 1 MB
+default (Linux's 8 MB hid it), and the crash ate its own fully-buffered CI output, which is why
+the log showed exit 1 and nothing else. Storage moved to the heap (constructed off the audio
+thread; the push path still never allocates — the one functional delta from the Anamorph copy,
+recorded in the provenance header), and both suites now run UNBUFFERED stdout so no future crash
+can hide its position again. Previous: (PR #5): the §9 allocation
 table moves from ⊕ targets to measured-against-target — every stage standalone under its
 allocation, with the honest caveats stated in place (standalone ≠ in-chain attribution; the OS
 row is bounded by the matrix difference, which bundles the region stages' rate multiplication).

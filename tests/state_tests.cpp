@@ -1360,6 +1360,10 @@ static void testCachedParamsMapping()
 
 int main (int argc, char** argv)
 {
+    // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
+    // used to eat every line printed before it — a failing run showed exit 1
+    // and nothing else. Costs nothing measurable at this output volume.
+    setvbuf (stdout, nullptr, _IONBF, 0);
     juce::ScopedJuceInitialiser_GUI juceInit;
     const bool writeSnapshot = argc > 1 && juce::String (argv[1]) == "--write-snapshot";
 

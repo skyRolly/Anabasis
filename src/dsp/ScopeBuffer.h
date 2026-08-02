@@ -5,7 +5,7 @@
 // THREAD_MODEL planned edge, now implemented on the SPSC ring row.
 
 #include <atomic>
-#include <array>
+#include <vector>
 #include <cstdint>
 #include <cstring>
 
@@ -28,7 +28,17 @@ public:
     static constexpr int capacity = 1 << 14; // 16384 stereo frames
     static constexpr int mask     = capacity - 1;
 
-    ScopeBuffer() { write.store (0, std::memory_order_relaxed); }
+    // Adapted beyond the namespace (the provenance header's one functional
+    // delta): storage lives on the HEAP, not inline in the object. Anamorph
+    // holds one ScopeBuffer; Anabasis's engine holds two, and 2 × 128 KB of
+    // inline arrays ride along with EVERY engine — including the processors
+    // the state suite builds on the STACK, where Windows' 1 MB default
+    // overflowed (the Linux 8 MB default hid it; the crash ate its own
+    // buffered output, which is why CI showed exit 1 and nothing else).
+    // Allocation happens HERE, at construction on a non-audio thread; the
+    // audio-thread push path still never allocates.
+    ScopeBuffer() : left ((size_t) capacity, 0.0f), right ((size_t) capacity, 0.0f)
+    { write.store (0, std::memory_order_relaxed); }
 
     // --- audio thread ----------------------------------------------------
     // Writes a whole block and publishes it with ONE release-store on the
@@ -92,8 +102,7 @@ public:
     }
 
 private:
-    std::array<float, capacity> left  {};
-    std::array<float, capacity> right {};
+    std::vector<float> left, right;
     std::atomic<uint64_t>       write { 0 };
 };
 

@@ -3500,6 +3500,11 @@ static void testLimiterAlignment()
 
 int main()
 {
+    // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
+    // used to eat every line printed before it — a failing run showed exit 1
+    // and nothing else. Costs nothing measurable at this output volume.
+    setvbuf (stdout, nullptr, _IONBF, 0);
+
     testNullWithDefaults();
     testLimiterWindowCoverage();
     testLimiterAlignment();
