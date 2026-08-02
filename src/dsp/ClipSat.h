@@ -37,6 +37,14 @@
 //     why the impulse-position latency test stays sample-exact only because
 //     `clipDriveDb == 0` on that path — a future test that drives the clipper
 //     must not also assert an exact impulse position.
+//     AND (c) the swap from identity to that FIR is DISCONTINUOUS at the
+//     engage edge — a half-sample delay and the droop arrive in one sample,
+//     by an amount proportional to the signal's SLEW rather than to the
+//     drive, so smoothing `driveDb` does not soften it (the note further down
+//     about `adaaPrev` covers only the memory VALUE, not the transfer). That
+//     is KNOWN_ISSUES **KI-005**, deferred: joining the two trajectories
+//     needs a time-based engage ramp, not a drive-keyed blend, which the
+//     knee-at-unity-gain test rightly rejects.
 //
 //  2. COLOUR — the model's harmonic residue, scaled by `colourDepth`:
 //     out = c + depth·r where r is built from odd (c³, Transistor ⅗c³+⅖c⁵)
@@ -245,6 +253,12 @@ public:
         }
         else
         {
+            // `activityEnv` being EXACTLY 0.0f here is load-bearing beyond this
+            // stage: the §5.4 dynTilt trim reaches its +0.5 dB clamp with the
+            // features un-converged, so the bit-exact null (invariant 7) rests
+            // on `tameGainDb` staying 0 — which it does only while the envelope
+            // is bit-zero. Seeding this detector non-zero, or flooring it,
+            // breaks that null from a file that never mentions it.
             for (int ch = 0; ch < nCh; ++ch)
                 tameLp[ch] += (wet[ch] - tameLp[ch]) * aTameLp;       // keep state warm
         }

@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **eleventh review round of 2026-08-01** (PR #5): invariant 12's scope
+**Last updated:** for the **twelfth review round of 2026-08-01** (PR #5): the clipper's engage
+edge is a confirmed defect recorded as **KI-005** after a fix attempt was tried and reverted, plus
+seven scope/comment corrections. Previous round: (PR #5): invariant 12's scope
 now names the bypass crossfade as its second post-dither leg (the claim written two rounds ago
 was too absolute), and three comment/scope corrections land with it. Previous round: (PR #5): `AdaptiveEngine::reset()`
 cancels an in-flight Learn pass. Previous round: (PR #5): the direct-adopt branch
@@ -27,6 +29,73 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Twelfth review round — a fix attempted, measured, and reverted (2026-08-01)
+
+Ten items: one confirmed defect recorded rather than patched, seven notes/corrections, two
+verifications.
+
+**The defect: leaving 0 dB clip drive steps the transfer.** The sub-block is skipped exactly at
+0 dB (the bit-identity contract); one sample later the ADAA-1 branch runs, and in the curve's
+linear region its divided difference is `(u + u_prev)/2` — so the stage swaps *identity* for a
+`(1 + z⁻¹)/2` FIR in one sample. The reviewer's key observation is the one that matters: the step
+is proportional to the signal's **slew**, not to the drive, so smoothing `driveDb` cannot shrink
+it, and the existing header note about `adaaPrev` covers only the memory VALUE, not the transfer.
+Confirmed against the arithmetic; it is an invariant-8 violation on a reachable knob move.
+
+**A fix was written, tested, and reverted — the reason is worth more than the patch.** Blending
+the ADAA output toward dry over the first 0.5 dB of drive makes the engage continuous and keeps
+the exact-zero skip intact. It also broke `testClipCurveAndCompensation`, which deliberately uses
+**0.001 dB drive with a unity-amplitude signal** to isolate the knee shape: at that setting the
+clipper must shape (the signal reaches the knee on its own), and a drive-keyed blend removes
+precisely that. The blend conflates "how hard we drive" with "how far into the engage we are" —
+they are different axes, and the test was right. A correct fix needs a TIME-based engage ramp
+(~20 ms) that keeps the ADAA branch running while it fades out, primed like the other smoothers,
+landing on exactly 0/1 so the bit-identity skip survives: new state, a changed skip condition, and
+its own coverage. That is ⊕ tuning-pass work, not a review-round patch, so the tree was restored
+byte-for-byte and the defect is **KI-005** with the failed approach recorded in it.
+
+**This is the round's real lesson, and it is the standing instruction working as intended.** Nine
+rounds of this PR have shown the pattern: rounds 7→8→9 were each a defect introduced by the
+previous round's fix. Attempting this one anyway — with an existing test as the tripwire — cost
+one build and left no residue. Reverting on a broken test rather than tuning the constant around
+it is the difference between recording a known issue and shipping the tenth consequential change.
+
+**Two figures reconciled.** The true-peak estimator's worst-case reporting lag is **6** input
+samples, not the 5.5 quoted in four places: the nominal FIR group delay is (12−1)/2 = 5.5, but each
+call returns the maximum over `x[n−6]` and the interpolated points at n−5.75/−5.5/−5.25, so the
+oldest sample an estimate can describe is n−6 — which is the number a lookahead-margin argument
+must use. `TruePeak.h`, `LookaheadLimiter.h`, TEST_REPORT and RISK-008 now agree, and the
+"~23 % of a 0.5 ms window" figure becomes ~25 %.
+
+**Invariant 4 gains its third leg.** Dither runs after the clamp by ADR-0002's explicit order, and
+TPDF rounding can put a sample ~1.5 LSB above the ceiling — 0.004 dB at 16-bit and the lowest
+ceiling, two orders inside the invariant's own ≤ 0.1 dBTP tolerance, and zero with dither off
+(which is the configuration its test runs in). The strict reading of "never exceeds" would
+otherwise be falsified by the stage the ADR deliberately puts there.
+
+**Load-bearing facts written where they are load-bearing.** The `ceilArr` zero-order hold is not
+merely tolerated: the region's gain computer and stage E's clamp must use the SAME instantaneous
+ceiling, which is exactly `CeilingClamp`'s "backstop, never a second differently-timed threshold"
+contract — interpolating it across the region would break that, so the comment now says "do not
+improve it". `activityEnv` being bit-zero is load-bearing from a file that never mentions the
+adaptive engine: the dynTilt trim reaches its +0.5 dB clamp with features un-converged, so the
+null rests on the tame branch never being taken — a THIRD inertness mechanism, distinct from the
+arithmetic one (release/link) and the detector-threshold one (scHpf), and the AdaptiveEngine
+header no longer lumps it in with the first.
+
+**Also recorded:** the scHpf trim's steady-state trade (a detector high-pass under-reports
+low-frequency peaks, so bass transients reach the clamp instead of the limiter — the failure mode
+changes from limiting to clipping, inside the declared bound and therefore intended); the
+Learn-commit direction's mirror gap (a stop with no further audio leaves the pass uncommitted, and
+unlike the restore direction it is NOT mirror-fixable — the sums live on the audio thread, so the
+P5 Learn grammar owes an acknowledged commit); the GR ring's reset rewinding its monotonic index
+and bulk-clearing against a `const` peek, folded into the same P5 reader-contract decision as the
+meter holds; and the confirmation that the latency-table tripwire holds because one
+`FetchContent_MakeAvailable(JUCE)` feeds every target, so the suite verifies the revision the
+release ships.
+
+Suites: 195 + 87 (unchanged — nothing behavioural landed this round).
 
 ### Eleventh review round — the absolute claim, and two comments that outlived their code (2026-08-01)
 

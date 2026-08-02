@@ -28,8 +28,8 @@
 //
 //  THE NULL SURVIVES BY CONSTRUCTION, not by gating — with one trim's
 //  argument weaker than the other three's, stated rather than averaged over.
-//  release/link/dynTilt multiply a unity gain or a zero-depth shelf: inert as
-//  a matter of ARITHMETIC. scHpf is different in kind — it engages a real
+//  release and link only shape an envelope that never leaves 1.0: inert as a
+//  matter of ARITHMETIC. scHpf is different in kind — it engages a real
 //  second-order detector high-pass in both the compressor and the limiter, and
 //  its inertness rests on the detector's output never crossing the knee bottom
 //  or the ceiling. The RBJ high-pass at Q=0.707 has unity passband and can
@@ -37,11 +37,19 @@
 //  below both thresholds — which is a property of the stimulus, and is why
 //  testNullWithDefaults now asserts its own −3 dBFS precondition.
 //
-//  At the factory defaults every trim TARGET is inert: release/link/scHpf
-//  only matter once the limiter reduces, and dynTilt feeds a shelf ClipSat
-//  engages only while clipping activity is nonzero — so trims may move freely
-//  on programme material without invariant 7 noticing. The bit-exact null
-//  test runs with this engine live, which is the proof.
+//  dynTilt is a THIRD mechanism again, and the weakest to state loosely: its
+//  target does NOT sit at zero — with the features un-converged
+//  (loEnergy == hiEnergy at init ⇒ tiltDb 0 against kDefaultRefTilt −6) it
+//  goes straight to its +0.5 dB clamp. The null holds because ClipSat's
+//  `activityEnv` starts at EXACTLY 0.0f and its update keeps it bit-zero
+//  while nothing clips, so the tame branch is never taken. That is a state
+//  argument, not a coefficient one: seeding the activity detector non-zero,
+//  or giving it a floor, would break invariant 7 without touching this file.
+//
+//  So: trims may move freely on programme material without invariant 7
+//  noticing, by three different arguments. The bit-exact null test runs with
+//  this engine live, which is the proof — and the three mechanisms are why it
+//  is a proof of something, rather than a coincidence.
 //
 //  DETERMINISM (§5.4): trims are a pure slewed function of the features and
 //  the reference targets — same audio + same parameters ⇒ same trims. No
@@ -114,9 +122,9 @@ public:
         // here only through prepare() — a sample-rate or block-size change,
         // since the processor does not override AudioProcessor::reset() — and
         // that is a discontinuity in the very material the pass is measuring.
-        // The features themselves are zeroed above, so continuing to
-        // accumulate would commit a
-        // reference mixed from before and after it, plus a stretch of
+        // The features themselves are zeroed above, so continuing to accumulate
+        // would commit a reference mixed from before and after it, plus a
+        // stretch of
         // re-converging onset rate. The pass is CANCELLED rather than paused:
         // `learnBlocks == 0` makes the next commit a no-op, which is the
         // already-documented empty-pass case (nothing to commit leaves the

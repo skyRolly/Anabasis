@@ -13,13 +13,16 @@
 //  the compliance evidence (C2).
 //
 //  MEASUREMENT TAP ONLY, never in the audio path (ADR-0003): it feeds the
-//  limiter's gain computer (and later the dBTP meter). Group delay =
-//  (kTaps−1)/2 = 5.5 input samples — the number RISK-008 tracks: it must fit
-//  inside the 0.5 ms minimum engaged lookahead (24 samples at 48 kHz), and
-//  5.5 < 24 with margin. The estimate returned at step n describes the signal
-//  around n − 5.5, so a limiter fed from it attacks ~5.5 samples less early
-//  and holds ~5.5 samples longer — both inside the wedge window, neither
-//  affecting invariant 4 (the clamp is downstream and unconditional).
+//  limiter's gain computer (and later the dBTP meter). REPORTING LAG = **6**
+//  input samples, and that is the number RISK-008 tracks. The FIR's nominal
+//  group delay is (kTaps−1)/2 = 5.5, but the estimate returned at step n is a
+//  MAXIMUM over x[n−6] (the `best` seed) and the three interpolated points at
+//  n−5.75 / n−5.5 / n−5.25 — so the oldest sample it can be describing is
+//  n−6, which is the figure a lookahead-margin argument has to use. It must
+//  fit inside the 0.5 ms minimum engaged lookahead (24 samples at 48 kHz):
+//  6 < 24, with margin. A limiter fed from it attacks up to 6 samples less
+//  early and holds up to 6 samples longer — both inside the wedge window,
+//  neither affecting invariant 4 (the clamp is downstream and unconditional).
 //
 //  Per call, the estimate covers |x[n−6]| plus the three interpolated points
 //  in (n−6, n−5); consecutive calls therefore cover every sample and every

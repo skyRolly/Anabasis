@@ -143,6 +143,13 @@ public:
     // §5.4 Learn (message thread → the engine's command atomics; the P5 UI
     // adds the duck-routed engage + undo bracketing around these).
     void startLearn() noexcept { engine.requestLearnStart(); }
+    // NOTE: the commit runs at the next block top, so a stop with no further
+    // audio leaves the pass uncommitted and getStateInformation writes no
+    // ADAPTIVE child — the mirror image of the load-then-save case the staged
+    // mirror below fixes, and NOT fixable the same way: the sums live on the
+    // audio thread, so there is nothing for the message thread to mirror. The
+    // P5 Learn grammar owes an acknowledged commit (the UI cannot offer "save"
+    // until the engine has confirmed), which is where this closes.
     void stopLearn() noexcept  { engine.requestLearnStop(); }
     const anabasis::AdaptiveEngine& adaptiveReadout() const noexcept
     { return const_cast<AnabasisAudioProcessor*> (this)->engine.adaptiveForWrapper(); }

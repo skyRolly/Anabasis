@@ -130,8 +130,9 @@ release, with a named review point rather than an open question (OQ-005 is `Reso
 
 > **Materially reduced (2026-08-01, P2 limiter commit).** The estimator exists
 > (`src/dsp/TruePeak.h`): 4 phases × **12 taps** designed at `prepare()` (not the Annex-2
-> 48-coefficient table this entry's arithmetic assumed), group delay (12−1)/2 = **5.5 input
-> samples ≈ 0.115 ms** — inside the 0.5 ms minimum engaged lookahead (24 samples at 48 kHz) with
+> 48-coefficient table this entry's arithmetic assumed), nominal group delay (12−1)/2 = 5.5 and a
+> worst-case reporting lag of **6 input
+> samples ≈ 0.125 ms** — inside the 0.5 ms minimum engaged lookahead (24 samples at 48 kHz) with
 > 4× margin, and *independent of sample rate in samples* while the minimum window scales up with
 > rate, so the margin only grows. `testReportedLatencyMatchesImpulse` passes with the estimator
 > live in the default path (the impulse still lands at exactly the constant allowance — the tap

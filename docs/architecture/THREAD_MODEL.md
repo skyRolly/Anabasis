@@ -94,7 +94,13 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
   integrated-LUFS histogram are session-cumulative and are cleared only by `prepareToPlay`, so
   they also survive a `setStateInformation` (loading a different session keeps the previous
   programme's true-peak maximum) and an `AudioProcessor::reset()` — which this processor does not
-  override. Whether a state load should clear them is a P5 decision, not an oversight.
+  override. Whether a state load should clear them is a P5 decision, not an oversight. The same
+  decision covers `GrHistoryBuffer::reset()`, which today **rewinds** the ring's monotonic write
+  index to 0 and bulk-clears all 4096 entries: a reader holding a cached `available()` would see
+  the index go backwards, and the bulk clear is a host-thread write against a `const` peek that
+  the SPSC row does not cover (it scopes the audio-thread producer). Inert with no reader before
+  P5 — and the reader contract is what decides whether the index stays monotonic across a reset
+  or gains a generation counter, so it is designed there rather than guessed at now.
 - **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism
   yet; no code may wire it until its ADR lands. **ADR-0012 settled the transport** (the staged
   record row fits a four-scalar vector); what keeps OQ-013 open is whether a restored vector may

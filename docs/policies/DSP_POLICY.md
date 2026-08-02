@@ -96,6 +96,14 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    twice full scale. Both are listening-only (inert under `nonRealtime`, invariant 10), so no
    render can exceed the ceiling; the stated-explicitly rule exists because a reader of the
    pre-clarification text could take "under every condition" to cover the audition legs too.
+   A third leg is render-visible and belongs in the same paragraph: **dither runs after the
+   clamp** (ADR-0002 fixes that order — "ceiling clamp always last before dither"), and TPDF
+   quantisation can round up by ≤ 0.5 LSB plus the ≤ 1 LSB dither offset, so an emitted sample
+   can sit ~1.5 LSB above the ceiling. At 16-bit that is 4.6e-5 linear — **0.004 dB** at the
+   lowest (−20 dB) ceiling, two orders inside the ≤ 0.1 dBTP tolerance this invariant already
+   states, and zero with dither off (the default, and the configuration
+   `testOutputNeverExceedsCeiling` runs in). Named because the strict reading of "never exceeds"
+   would otherwise be falsified by the very stage the ADR puts there deliberately.
    Recorded 2026-08-01 (PR #5) — a clarification of scope, not a weakening of the promise.
    This is the product's core promise; weakening it is an Architecture Review Gate item in its own
    right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep).

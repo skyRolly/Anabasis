@@ -51,7 +51,12 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
             // predictLatencySamples - i.e. it would manufacture the desync it
             // was meant to prevent. The pin is frozen by DEPENDENCY_POLICY and
             // a bump is an Architecture Review Gate item; this flag exists so
-            // such a bump fails a test rather than shipping quietly.
+            // such a bump fails a test rather than shipping quietly. The tripwire
+            // holds because there is ONE `FetchContent_MakeAvailable(JUCE)` in
+            // the whole build: the plugin, AnabasisTests and AnabasisStateTests
+            // all link the `juce::` targets from that single tree, so the
+            // revision the suite verifies is by construction the revision the
+            // release artefacts ship (CMakeLists.txt).
             const bool tableOk = juce::approximatelyEqual (
                 oversamplers[f][ph]->getLatencyInSamples(),
                 (float) osLatencySamples ((OversampleFactor) (f + 1),
@@ -363,6 +368,15 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f,
                                               p.limReleaseMs * std::pow (2.0f, t.releaseOctaves));
         pApplied.stereoLink   = juce::jlimit (0.0f, 1.0f, p.stereoLink + t.stereoLink);
+        // The scHpf trim is the one that changes a DETECTOR rather than a
+        // gain: pushing the shared sidechain HPF off its 20 Hz exact-skip
+        // floor engages a second-order high-pass in BOTH detectors, so
+        // low-frequency peaks are under-reported and bass transients reach the
+        // unconditional CeilingClamp instead of being limited. Invariant 4
+        // still holds — but the failure mode becomes hard clipping rather than
+        // limiting, on exactly the material a maximizer sees most. Inside the
+        // declared bound and therefore intended; recorded because it is a
+        // steady-state trade, not a transition artefact.
         pApplied.scHpfFreqHz  = juce::jlimit (20.0f, 300.0f, p.scHpfFreqHz + t.scHpfHz);
         pApplied.dynTiltDb    = juce::jlimit (0.0f, 2.0f, p.dynTiltDb + t.dynTiltDb);
     }
@@ -536,6 +550,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // ceilArr/wArr/pushArr idiom is the obvious one to reuse for any
         // future level-affecting control inside the region, where a slower
         // glide or a higher factor could put an image under the cutoff.
+        //
+        // For `ceilArr` the same hold is LOAD-BEARING, not a cost: the region's
+        // gain computer and stage E's CeilingClamp must use the SAME
+        // instantaneous ceiling, which is what CeilingClamp's header promises
+        // ("a backstop, never a second differently-timed threshold"). The
+        // clamp runs at base rate on the decimated signal, so interpolating
+        // `ceilArr` across the region would give the two a different threshold
+        // per sample and break that contract. Do not "improve" it.
         if (const float gPushNow = pushArr[(size_t) b]; ! juce::exactlyEqual (gPushNow, 1.0f))
             for (int ch = 0; ch < nCh; ++ch)
                 frame[ch] *= gPushNow;

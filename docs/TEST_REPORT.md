@@ -43,14 +43,17 @@ Stimulus: fs/4 sine, unit true peak, phase chosen to place the continuous peak o
 | On-sample peak | **+0.000 dB** | ≤ 0.1 dB |
 | Off-grid worst case (peak midway between 4× points) | **−0.171 dB** | bounded (−0.6, 0.1] — the inherent max-reading 4× property; BS.1770's own tolerance envelope admits it |
 
-Estimator group delay: 5.5 input samples ≈ 0.115 ms — inside the 0.5 ms minimum engaged
-lookahead with >4× margin (RISK-008).
+Estimator reporting lag: **6 input samples** ≈ 0.125 ms — inside the 0.5 ms minimum engaged
+lookahead with 4× margin (RISK-008). The FIR's nominal group delay is (12−1)/2 = 5.5, but each
+call returns the MAXIMUM over `x[n−6]` and the interpolated points at n−5.75/−5.5/−5.25, so the
+oldest sample an estimate can describe is n−6 — that is the figure the margin argument must use,
+and the one this file, `TruePeak.h` and RISK-008 now all quote.
 
 **What that delay costs the limiter, since the number is easy to read as free.** In true-peak
-mode the wedge is fed the estimate, which describes the signal around n−5.5, while the window
+mode the wedge is fed the estimate, whose oldest covered sample is n−6, while the window
 `wOs` is still derived from the engaged lookahead as though the fed value were the sample playing
-`wOs` steps ahead. The effective pre-emption is therefore ~5.5 base samples SHORTER than the
-lookahead setting: negligible at the 10 ms maximum (0.06 %), but **~23 % at the 0.5 ms minimum**
+`wOs` steps ahead. The effective pre-emption is therefore up to 6 base samples SHORTER than the
+lookahead setting: negligible at the 10 ms maximum (0.06 %), but **~25 % at the 0.5 ms minimum**
 (24 samples at 48 kHz). Invariant 4 is unaffected — the clamp is downstream and unconditional —
 so the consequence is that true-peak mode does measurably less of the limiting work at the bottom
 of the lookahead range than at the top, not that anything escapes the ceiling. Recorded here

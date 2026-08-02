@@ -158,6 +158,50 @@ Evidence [Verified]:
 
 ---
 
+### KI-005 — Moving Clip Drive off exactly 0 dB steps the transfer by half a sample
+
+**Severity:** Low
+**Status:** Confirmed (fix deferred — needs a designed engage crossfade, see below)
+**Affects:** all platforms, all formats — a direct `clipDrive` move (or a
+Character-macro move that carries it) across the 0 dB boundary during playback
+
+The clipper's sub-block is skipped **exactly** at 0 dB drive, which is the
+bit-identity contract. One sample later, with the drive smoother barely off
+zero, the ADAA-1 branch runs — and in the curve's linear region its divided
+difference is `(u + u_prev)/2`, i.e. a `(1 + z⁻¹)/2` FIR. The stage therefore
+swaps *identity* for *a half-sample delay plus a cos(πf/fs) droop* in one
+sample. Both trajectories are individually smooth; the join between them is
+not, and the step is proportional to the signal's **slew**, not to the drive
+amount, so smoothing `driveDb` does not shrink it. An 8 kHz tone loses ~1.2 dB
+and shifts ~12° at that instant; on broadband programme the artefact is one
+sample at roughly half the local sample-to-sample difference. The same happens
+in reverse when drive returns to exactly 0.
+
+Not exposed on the bulk-swap paths — A/B, preset and session loads are covered
+by the §2.8 duck. The reachable case is a knob or automation move.
+
+**Workaround:** automate `clipDrive` from a small non-zero value rather than
+from exactly 0, or make the move while the transport is stopped.
+**Cause:** the exact-zero skip is a change of transfer, not of gain, so the
+two branches cannot be joined by a gain crossfade keyed on drive. A correct
+fix needs a time-based engage ramp (~20 ms) that keeps the ADAA branch running
+while it fades out, primed like the other smoothers so a render does not open
+mid-fade, and landing on exactly 0/1 so the bit-identity skip is preserved.
+**A drive-keyed blend was tried and rejected** during the review round that
+found this: it removes shaping the clipper legitimately owes at tiny drive
+with a loud signal (the knee at unity gain), which `testClipCurveAndCompensation`
+pins deliberately. The ramp belongs with the ⊕ tuning pass, where it can be
+built with its own coverage rather than patched around an existing test.
+
+Evidence [Verified]:
+- Source: `src/dsp/ClipSat.h` (`clipOn` exact-zero test, the ADAA branch)
+- Test:   none yet — the property needs the curvature-based measurement
+  described in the header note; a max-delta test does NOT catch it (the engage
+  sample's first difference is *smaller* than the signal's own)
+- Commit: PR #5, recorded 2026-08-01
+
+---
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

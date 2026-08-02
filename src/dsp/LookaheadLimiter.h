@@ -23,7 +23,7 @@
 //  the RANGE FLOOR (20 Hz) means NO detector filtering — an exact skip, so
 //  the default detector is the sample itself, byte-for-byte) → magnitude:
 //  |x|, or the ADR-0003 true-peak estimate in true-peak mode (the ceiling is
-//  then dBTP-aware; the estimate runs ~5.5 samples late, inside the minimum
+//  then dBTP-aware; the estimate runs up to 6 samples late, inside the minimum
 //  window — see TruePeak.h) → stereo link: level = link·max(all) +
 //  (1−link)·own → per-channel monotonic-wedge sliding maximum → gain
 //  computer.
