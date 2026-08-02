@@ -140,6 +140,17 @@ public:
     float meterGrDb()     const noexcept { return pubGrDb.load (std::memory_order_relaxed); }
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
 
+    // §2.9 meter-hold reset — the THREADING_POLICY momentary-request row
+    // (single atomic, payload-free, consumed with `exchange` at the top of
+    // processBlock), the shape THREAD_MODEL reserved for it at P3. Clears the
+    // session-cumulative display state ONLY: the integrated-LUFS histogram
+    // (engine render meter) and the wrapper's dBTP max-hold; PLR follows by
+    // derivation. Two callers: the P5 meter panel's reset affordance, and
+    // setStateInformation — the P5 decision THREAD_MODEL left open is taken
+    // there: loading a session clears the previous programme's holds.
+    void requestMeterReset() noexcept
+    { meterResetPending.store (true, std::memory_order_relaxed); }
+
     // §5.4 Learn (message thread → the engine's command atomics; the P5 UI
     // adds the duck-routed engage + undo bracketing around these).
     void startLearn() noexcept { engine.requestLearnStart(); }
@@ -160,6 +171,7 @@ private:
     // it. The wrapper keeps the session max-hold and the publish atomics.
     anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes
     float dbTpMaxHold = -144.0f;                  // audio-thread session max
+    std::atomic<bool> meterResetPending { false };
     std::atomic<float> pubLufsM { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsS { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsI { anabasis::LoudnessMeter::kSilentLufs },

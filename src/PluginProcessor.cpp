@@ -94,6 +94,20 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 {
     juce::ScopedNoDenormals noDenormals;   // the single FTZ/DAZ mechanism (§1.4)
 
+    // §2.9 meter-hold reset, consumed BEFORE the engine runs so this block's
+    // measurement starts clean, and the cleared values are published HERE
+    // rather than left to the post-process publish: a short-circuited block
+    // (zero-length) returns before that publish, and the reset must not sit
+    // invisible until real audio arrives. Same publish set as prepareToPlay.
+    if (meterResetPending.exchange (false, std::memory_order_relaxed))
+    {
+        engine.resetMeterHolds();
+        dbTpMaxHold = -144.0f;
+        pubLufsI.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+        pubDbTpMax.store (-144.0f, std::memory_order_relaxed);
+        pubPlr.store (0.0f, std::memory_order_relaxed);
+    }
+
     // Build the POD snapshot ONCE per block (ADR-0001/ADR-0011).
     cached.toEngine (snapshot);
     snapshot.oversample      = internalState.oversampleFactor();
@@ -409,6 +423,14 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // not cover.
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();   // §2.8: a session load is the biggest bulk swap of all
+    // The P5 decision THREAD_MODEL left open, taken: a state load CLEARS the
+    // session-cumulative meter holds. The integrated LUFS and the dBTP hold
+    // describe the programme measured so far, and after a load the programme
+    // is a different session's — keeping the old maximum "will read as a bug
+    // the first time a meter is visible" (the reviewer's words, and correct).
+    // Staged through the same momentary-request row as the GUI button, so the
+    // clear lands at a block top like every other cross-thread command.
+    requestMeterReset();
 
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".

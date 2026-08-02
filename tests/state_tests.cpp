@@ -702,6 +702,98 @@ static void testMeterPublication()
 }
 
 // ---------------------------------------------------------------------------
+// §2.9 meter-hold reset (the P5 planned edge, now implemented): the request
+// clears the SESSION-CUMULATIVE display state — integrated LUFS and the dBTP
+// max-hold — at the next block top, and nothing else. The rolling windows
+// keep running (momentary recovers by itself), the §2.7 compensation is
+// untouched, and a state LOAD stages the same request, which is the answer to
+// THREAD_MODEL's "whether a state load should clear them" question.
+static void testMeterResetClearsSessionHolds()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto feedTone = [&] (float amp, int blocks, int t0)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                * 997.0f * (float) (t0 + b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+
+    const int warm = (int) (6.0 * 48000.0 / 512.0);
+    feedTone (0.5f, warm, 0);                          // ~-9 dBFS: loud programme
+    check (proc.meterLufsI() > -20.0f, "meterReset: (premise) integrated reads the loud tone");
+    check (proc.meterDbTpMax() > -8.0f, "meterReset: (premise) the dBTP hold is high");
+
+    // DRAIN before resetting: the lookahead line holds ~10 ms of the loud
+    // tone, and a reset consumed while that tail is still in flight is
+    // immediately re-raised by it — correct meter behaviour (in-flight audio
+    // IS programme), wrong stimulus for asserting "post-reset material only".
+    feedTone (0.005f, 8, warm * 512);
+    proc.requestMeterReset();
+    feedTone (0.005f, warm, (warm + 8) * 512);         // ~-49 dBFS
+    check (proc.meterDbTpMax() < -40.0f,
+           "meterReset: the dBTP hold describes only post-reset material");
+    check (proc.meterLufsI() < -40.0f,
+           "meterReset: the integrated histogram was cleared");
+    check (proc.meterLufsM() < -40.0f && proc.meterLufsM() > -70.0f,
+           "meterReset: the rolling windows kept measuring (not blanked)");
+
+    // A state LOAD stages the same request. Save the (quiet) state, feed loud
+    // audio to re-raise the holds, load it back: the holds must clear again.
+    juce::MemoryBlock state;
+    proc.getStateInformation (state);
+    feedTone (0.5f, warm, 2 * warm * 512);
+    check (proc.meterDbTpMax() > -8.0f, "meterReset: (premise) holds re-raised before the load");
+    feedTone (0.005f, 8, 3 * warm * 512);              // drain the loud tail first
+    proc.setStateInformation (state.getData(), (int) state.getSize());
+    feedTone (0.005f, 20, (3 * warm + 8) * 512);
+    check (proc.meterDbTpMax() < -40.0f,
+           "meterReset: a session load cleared the previous programme's holds");
+}
+
+// ---------------------------------------------------------------------------
+// The GR ring's reset-epoch contract (the other half of the same planned
+// edge): the write index MAY rewind across a reset; the epoch is odd while
+// the host-thread clear is in flight and even when stable, and it moves by
+// exactly 2 per reset — which is what lets a reader detect both "my batch
+// raced a clear" (odd, or changed underneath the batch) and "the index
+// rewound while I was not looking" (epoch differs from my anchor).
+static void testGrRingResetEpoch()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    const auto& ring = proc.grHistory();
+
+    const auto e0 = ring.resetEpoch();
+    check ((e0 & 1u) == 0u, "grEpoch: stable state is even");
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    buf.clear();
+    for (int b = 0; b < 8; ++b)
+        proc.processBlock (buf, midi);
+    check (ring.available() == 8, "grEpoch: (premise) entries pushed");
+    check (ring.resetEpoch() == e0, "grEpoch: pushing does not move the epoch");
+
+    proc.prepareToPlay (48000.0, 512);                 // reaches GrHistoryBuffer::reset()
+    check (ring.resetEpoch() == e0 + 2, "grEpoch: one reset moves the epoch by exactly 2");
+    check ((ring.resetEpoch() & 1u) == 0u, "grEpoch: and lands even");
+    check (ring.available() == 0,
+           "grEpoch: the index rewound — which is why the epoch must exist");
+}
+
+// ---------------------------------------------------------------------------
 // §2.9 vs §2.7: the meters report the RENDER, not the listening path. With
 // Delta or Loudness Comp engaged the buffer handed to the host is the monitor
 // signal — metering it showed the difference signal's loudness (Delta) or the
@@ -1019,6 +1111,8 @@ int main (int argc, char** argv)
         testMacroRestoreDoesNotClobber();
         testAbSwitchRequestsDuck();
         testMeterPublication();
+    testMeterResetClearsSessionHolds();
+    testGrRingResetEpoch();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();

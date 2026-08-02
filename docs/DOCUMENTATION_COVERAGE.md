@@ -6,7 +6,12 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **twenty-third review round of 2026-08-02** (PR #5): the Learn command
+**Last updated:** for the **P5 opening commit (2026-08-02)** (PR #5): the two planned edges
+THREAD_MODEL reserved for P5 are implemented and their open decisions taken — the meter-hold
+reset (momentary-request row; a state load stages it; `resetIntegrated` watermarks the
+gating-block assembly so a straddling block cannot pin the relative gate at the old programme's
+loudness) and the GR ring's reset epoch (index may rewind; readers discard a batch that raced a
+clear). `AudioProcessor::reset()` stays un-overridden, now as a recorded decision. Previous round: (PR #5): the Learn command
 was a code plus a flag, which a consumer could take between the writer's two stores and then have
 re-raised behind it — the same command twice, and a repeated commitThenStart commits a pass one
 block old. Two bits need no record: the code IS the flag now. Previous round: (PR #5): three documentation
@@ -56,6 +61,34 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### P5 opens — the planned edges are settled before any pixel is drawn (2026-08-02)
+
+P5's first commit contains no GUI: it takes the decisions the GUI code would otherwise have made
+implicitly. THREAD_MODEL's planned-edge section reserved two edges for P5 and named the open
+questions; both are now implemented rows with their decisions recorded where the reservation was.
+
+**The meter-hold reset produced one real DSP finding before any button exists.** The obvious
+`resetIntegrated` — clear the histogram, keep the rolling windows — fails its own test: gating
+blocks are assembled from the last four 100 ms sub-blocks, so the first block committed after a
+reset straddles up to 300 ms of pre-reset material. A reset issued during loud playback puts one
+loud straddling block into the fresh histogram, and the −10 LU relative gate then excludes every
+quieter block measured after it — the "reset" figure reads the OLD programme's loudness for the
+rest of the session. The watermark (only gating blocks whose four sub-blocks all post-date the
+reset may enter) is the fix, and the stimulus that found it is the one the test keeps: reset
+between a loud and a quiet passage, which is exactly how the escape hatch will be used.
+
+**Both open decisions are taken, in the documents that were holding them.** A state load clears
+the holds (staged through the same momentary-request row, so it lands at a block top like every
+other command). `AudioProcessor::reset()` stays un-overridden — a transport stop must not cancel
+a Learn pass (invariant 3's explicit start/end would silently become "within one play") or a
+mastering measurement, and the tail it would flush is ≤ 10 ms.
+
+**The GR ring's reader contract is the seqlock the planned edge predicted.** The index may
+rewind across a reset; a `resetGuard` epoch brackets the host-thread bulk clear (odd = in
+flight), and a reader that samples it before and after a batch of peeks discards a racing batch
+and re-anchors. One display frame dropped at worst, on an event that already blanks the
+programme.
 
 ### Twenty-third review round — the fix was a narrower mechanism, not a wider one (2026-08-02)
 

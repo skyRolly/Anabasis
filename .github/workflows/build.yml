@@ -27,7 +27,7 @@ permissions:
 # justified in the PR.
 # ---------------------------------------------------------------------------
 env:
-  ANABASIS_PLUGINVAL_STRICTNESS: 5
+  ANABASIS_PLUGINVAL_STRICTNESS: 8
 
 # Every push builds the FULL set of formats on all three desktop OSes so beta
 # testers can install on any platform:

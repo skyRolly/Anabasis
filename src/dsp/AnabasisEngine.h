@@ -214,6 +214,15 @@ public:
     // metering did. Same-thread reads: the wrapper calls these right after
     // process() on the audio thread, so no atomics are needed.
     const LoudnessMeter& outputLoudness() const noexcept { return outMeter; }
+
+    // §2.9 meter-hold reset, audio thread (the wrapper consumes the request at
+    // the top of processBlock and calls this). Clears ONLY the render meter's
+    // session-cumulative half — the integrated histogram. Deliberately not
+    // touched: the §2.7 dry/wet meters (they feed the loudness COMPENSATION,
+    // a monitor function — clearing them would bounce the monitor gain, which
+    // is not what a meter-reset button means) and the GR ring (a rolling ~43 s
+    // window that clears itself; the wrapper owns it in any case).
+    void resetMeterHolds() noexcept { outMeter.resetIntegrated(); }
     float lastRenderTpMax() const noexcept { return renderTpMaxCall; }   // linear
     float lastRenderPeak() const noexcept  { return renderPeakCall; }    // plain |x| max
 

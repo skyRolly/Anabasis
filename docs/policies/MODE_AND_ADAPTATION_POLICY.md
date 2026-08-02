@@ -151,9 +151,14 @@ by the same call, so a commit spanning the discontinuity would mix two statistic
 the reference targets survive, being session state, and the cancelled pass leaves them alone
 (`testResetCancelsAnInFlightLearnPass`). **Which host actions reach that reset:**
 `prepareToPlay` only — a sample-rate or block-size change. The processor deliberately does not
-override `juce::AudioProcessor::reset()` (`THREAD_MODEL.md`), so a transport stop that calls it
-without re-preparing cancels nothing; whether to override it is a P5 question that also governs
-the delay-line tails and the published meter holds, and is not decided here.
+override `juce::AudioProcessor::reset()`, so a transport stop that calls it without re-preparing
+cancels nothing — **decided at P5 (2026-08-02), no longer open**: a stop/start must not cancel an
+in-flight Learn pass (invariant 3 makes Learn an explicit start/explicit end, and a host calling
+`reset()` on every transport stop would turn that into "Learn survives only within one play"),
+must not clear the session-cumulative integrated LUFS / dBTP holds (a mastering measurement spans
+transport stops by design — the P5 meter-reset request is the deliberate way to clear them), and
+would flush only a ≤ 10 ms + OS tail that is inaudible as stale content. A host that needs a full
+flush re-prepares, which reaches everything through `prepareToPlay`.
 
 Evidence (all mutation-verified):
 - inv 2: `testModeSwitchIsSoundNeutral` (state suite) — toggling Simple⇄Advanced mid-stream, at a

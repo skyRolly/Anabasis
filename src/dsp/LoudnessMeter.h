@@ -62,6 +62,7 @@ public:
         }
         subCount = 0;
         subFill  = 0;
+        integratedFrom = 0;
         for (auto& s : subRing) s = 0.0;
         for (auto& c : histCount) c = 0;
         for (auto& s : histSum) s = 0.0;
@@ -99,6 +100,30 @@ public:
             if (! std::isfinite (subAccum[ch]))
                 subAccum[ch] = 0.0;
         }
+    }
+
+    // The SESSION-CUMULATIVE half only: the gated histogram and its block
+    // count, i.e. what integratedLufs() reads. The sliding windows keep
+    // running — momentary and short-term are rolling measurements with
+    // nothing session-scoped in them, and clearing them would blank the
+    // display for 3 s to answer a request about the integrated figure.
+    // Called from the audio thread (the P5 meter-reset request lands at the
+    // top of processBlock): bounded stores, no allocation.
+    void resetIntegrated() noexcept
+    {
+        for (auto& c : histCount) c = 0;
+        for (auto& s : histSum) s = 0.0;
+        totalGatedBlocks = 0;
+        // The watermark is the half that is easy to miss: gating blocks are
+        // assembled from the last FOUR 100 ms sub-blocks, so the first ones
+        // committed after this call straddle up to 300 ms of PRE-reset
+        // material. Without the watermark, a reset issued during loud
+        // playback puts one loud straddling block into the fresh histogram —
+        // and the −10 LU relative gate then excludes every quieter block
+        // measured after it, so the "reset" integrated figure reads the OLD
+        // programme's loudness for the rest of the session. Only gating
+        // blocks whose four sub-blocks all post-date the reset may enter.
+        integratedFrom = subCount + 4;
     }
 
     // One frame (all channels of one sample step).
@@ -179,7 +204,7 @@ private:
 
         // A gating block exists once four sub-blocks have accumulated; its
         // mean square is the mean of the last four sub-block means.
-        if (subCount >= 4)
+        if (subCount >= 4 && subCount >= integratedFrom)
         {
             double z = 0.0;
             for (int k = 0; k < 4; ++k)
@@ -276,6 +301,7 @@ private:
     int64_t subCount = 0;
 
     // The fixed-size integrated-gating accumulator.
+    int64_t integratedFrom = 0;   // resetIntegrated watermark (see there)
     int32_t histCount[kBins] = {};
     double  histSum[kBins] = {};
     int64_t totalGatedBlocks = 0;

@@ -88,19 +88,31 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
 
 - **Spectrum capture rings** (post-input-gain and post-chain, the dual-trace §2.9 overlay) —
   same ScopeBuffer idiom as the implemented GrHistoryBuffer; land with the P5 spectrum view.
-- **Command atomics** — the forced-duck request and the P4 Learn start/stop + learned-target
-  restore are IMPLEMENTED (see the table); the meter hold reset follows at P5, same
-  single-atomic exchange shape. **Its scope is wider than a GUI button:** `dbTpMaxHold` and the
-  integrated-LUFS histogram are session-cumulative and are cleared only by `prepareToPlay`, so
-  they also survive a `setStateInformation` (loading a different session keeps the previous
-  programme's true-peak maximum) and an `AudioProcessor::reset()` — which this processor does not
-  override. Whether a state load should clear them is a P5 decision, not an oversight. The same
-  decision covers `GrHistoryBuffer::reset()`, which today **rewinds** the ring's monotonic write
-  index to 0 and bulk-clears all 4096 entries: a reader holding a cached `available()` would see
-  the index go backwards, and the bulk clear is a host-thread write against a `const` peek that
-  the SPSC row does not cover (it scopes the audio-thread producer). Inert with no reader before
-  P5 — and the reader contract is what decides whether the index stays monotonic across a reset
-  or gains a generation counter, so it is designed there rather than guessed at now.
+- **Command atomics — the meter-hold reset is now IMPLEMENTED (P5, 2026-08-02)**, joining the
+  forced-duck request and the Learn command on the momentary-request row:
+  `AnabasisAudioProcessor::requestMeterReset()` → `meterResetPending`, consumed with `exchange`
+  at the top of `processBlock`, clearing the session-cumulative display state only — the
+  integrated-LUFS histogram (via `LoudnessMeter::resetIntegrated`, which also WATERMARKS the
+  gating-block assembly so a block straddling pre-reset material cannot enter the fresh
+  histogram and pin the relative gate at the old programme's loudness) and the wrapper's
+  `dbTpMaxHold`; PLR follows by derivation, the rolling M/S windows keep running, and the §2.7
+  compensation meters are untouched (they are a monitor function, not a display). The two P5
+  decisions this edge was holding are TAKEN: **a state load clears the holds**
+  (`setStateInformation` stages the same request, so the clear lands at a block top), and
+  **`AudioProcessor::reset()` stays un-overridden** — a transport stop must not clear a
+  mastering measurement, an in-flight Learn pass must survive a stop/start (MODE inv 3's
+  explicit start/end), and the ≤ 10 ms tail a reset would flush is inaudible; hosts that need a
+  flush re-prepare, which reaches everything. Guarded by `testMeterResetClearsSessionHolds`
+  (all four halves mutation-verified).
+- **GrHistoryBuffer reset epoch — the reader contract, decided here as promised (P5,
+  2026-08-02)**: the write index is monotonic BETWEEN resets and MAY REWIND across one;
+  `reset()` brackets its host-thread bulk clear with two `release` increments of a
+  `resetGuard` epoch (odd = clear in flight), and a reader samples `resetEpoch()` before and
+  after a batch of `peek`s — odd or changed means the batch raced a reset and is discarded,
+  and the reader re-anchors its cursor to the fresh `available()`, dropping at worst one
+  display frame on an event (re-prepare) that already blanks the programme. Readers never
+  cache `available()` across an epoch change; within one epoch the SPSC row's contract is
+  unchanged. Guarded by `testGrRingResetEpoch`.
 - **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism
   yet; no code may wire it until its ADR lands. **ADR-0012 settled the transport** (the staged
   record row fits a four-scalar vector); what keeps OQ-013 open is whether a restored vector may

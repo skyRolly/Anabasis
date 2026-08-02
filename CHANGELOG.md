@@ -142,6 +142,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
   `testALearnPassThatOverflowedIsNotCommitted`, both writers mutation-verified. [Verified]
 
+- **P5 groundwork — meter holds now reset on demand and on session load.** The integrated-LUFS
+  figure and the true-peak max-hold are session-cumulative by design; until now only re-preparing
+  the plugin cleared them, so loading a different project kept the previous programme's true-peak
+  maximum on the meter. A reset request (wired to the P5 meter panel) clears both at the next
+  audio block, and loading a session issues it automatically. Resetting during playback measures
+  only post-reset material — a reset cannot be pinned at the old programme's loudness by a
+  measurement window that straddles it. A transport stop still clears nothing: stop/start must
+  not cancel a Learn pass or a mastering measurement (that decision is now recorded, not open).
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `testMeterResetClearsSessionHolds`,
+  `testGrRingResetEpoch`, all halves mutation-verified. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---
