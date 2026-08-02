@@ -161,8 +161,17 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    (FTZ/DAZ) is active for the whole block; a non-finite sample anywhere resets the affected state
    rather than propagating. Filter cutoffs are Nyquist-clamped; automation cannot drive a
    coefficient out of range.
+   **"Self-heals" is a recovery guarantee, not only a containment one.** Substituting `0.0f` at a
+   boundary protects everything DOWNSTREAM of it and nothing else, so it is only half the
+   invariant: a stage that overflowed on a legal float (a biquad's gain, a squared detector level,
+   a fifth-power colour term, a polyphase filter) keeps the NaN in its own state, and a boundary
+   that silently substitutes turns that into permanent silence with no signal that anything
+   happened. Therefore every substituting boundary also RECORDS the substitution, and the stages
+   that can generate one are reset on that record. A stage added to the chain must satisfy both
+   halves — see the invariant 9 block in `AnabasisEngine::processChunk`.
    Guarded by: `testNoBadSamples` across the algorithm × oversampling × sample-rate matrix,
-   including silence and hostile automation.
+   including silence and hostile automation; `testExtremeLevelDoesNotSilencePermanently` for the
+   recovery half; `testSelfHealDoesNotSnapTheEnvelope` for the manner of the recovery.
 
 10. **Loudness-compensated monitoring and loudness-matched bypass are honest** (§3). The
     compensation is a measurement-driven gain applied to the *monitoring* path; it must never
@@ -215,7 +224,7 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
 | 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
-| 9 no NaN/Inf/denormals | `testNoBadSamples` | **live (P1)** |
+| 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testSelfHealDoesNotSnapTheEnvelope` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad, RMS detector square, colour c⁵, oversampler filters — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted) |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor` | **live (P3)** — offline render bit-identical with comp on/off and with delta on/off; realtime monitor pulled to the dry loudness with the predict floor acting before the measure exists (all mutation-verified) |
 | 11 metering accuracy | `testLufsCalibration`, `testLufsGating`, `testLufsWindows` | **partial (P3)** — LUFS M/S/I live against the standard's synthesised calibration points (997 Hz compliance vector −3.01 LKFS ≤ 0.1 LU at 48/44.1 kHz; both gate halves isolated by stimulus, incl. the silence-in-the-threshold-base case only mutation testing surfaced); the dBTP meter and the file-based EBU vector sweep remain |
 | 12 dither placement/default | `testDitherModes` + `testNullWithDefaults` | **live (P2)** — Off default is a true no-op (the bit-exact null proves it); 16-bit lands on the 2⁻¹⁵ grid with a randomised LSB; shaping tilts the error spectrum +12.6 dB toward the top of the band; placement after the clamp, processed path only |

@@ -184,6 +184,20 @@ public:
                 const float u1 = adaaPrev[ch];
                 adaaPrev[ch] = u;
                 const float du = u - u1;
+                // The ADAA branch threshold is ABSOLUTE, not relative to the
+                // sample: |du| ≤ 1e-4 falls back to the memoryless curve at
+                // the midpoint. That is ~-80 dBFS of per-sample DIFFERENCE,
+                // which a low-frequency tone crosses at any level (a 20 Hz
+                // sine at full scale steps ~2.6e-3 per sample at 48 kHz, but
+                // ~0 at its crest), so the fallback is a normal occurrence
+                // near stationary points rather than a small-signal special
+                // case. It is correct there — the divided difference is
+                // numerically worthless once du approaches float epsilon
+                // against u — and the two expressions agree to first order,
+                // so the seam is not a discontinuity. Recorded because the
+                // constant looks like a small-signal gate and is not one: it
+                // sits near the -69 dB transparency figure only by
+                // coincidence of scale.
                 float shaped;
                 if (std::abs (du) > 1.0e-4f)
                     shaped = (antiderivative (u, w) - antiderivative (u1, w)) / du;

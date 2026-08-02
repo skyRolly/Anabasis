@@ -112,6 +112,16 @@ delay-aligned dry ring, kept bit-exact), so the dry leg's alignment steps by
 the same bounded amount at the block boundary instead of fading through
 silence. Un-bypassing afterwards is already click-free (the ~10 ms crossfade).
 
+**The silent bottom is quantised to the host block grid.** The duck leaves the bottom only at a
+block top (`process()` evaluates the state machine once per block), while the post-latch refill
+counter `bottomHoldSamples` runs down per PROCESSED sample inside the block. A hold that expires
+mid-block therefore waits for the next block top before the ~28 ms in-leg starts, so the audible
+silence is the ~6 ms out-leg plus the refill plus **up to one host block** — ≈ 43 ms of that at a
+2048-sample block, 48 kHz. The bound above ("at most one host block plus the ~6 ms out-leg")
+describes the LATENCY disagreement; this is the separate cost in silence, on the same grid.
+Accepted for the same reason: leaving the bottom mid-block means running the rewire off a block
+boundary, which is what the duck exists to avoid.
+
 **Entering offline abandons an in-flight duck.** When `nonRealtime` first goes
 true the engine adopts the new configuration directly (so a bounce does not
 open with a fade — see the note below), which forces the duck to idle at unity.

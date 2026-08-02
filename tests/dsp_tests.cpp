@@ -2910,6 +2910,110 @@ static void testNoBadSamples()
 }
 
 // ---------------------------------------------------------------------------
+// inv 9, the other half: a FINITE input can still make a stage produce a
+// non-finite value, and the boundaries that substitute 0.0f do not clean the
+// STATE that produced it. Every stage below overflows on a legal float and
+// then holds NaN for ever — the engine went permanently silent until the host
+// re-prepared it, which is not "graceful degradation" by any reading.
+//
+// The stimulus is per stage because each overflows on a different quantity,
+// and a case only reaches its stage if the ones before it do NOT overflow:
+//   • EQ    — biquad gain: b0·x goes infinite once |x| is within a few dB of
+//             FLT_MAX, and every later stage then sees the inf
+//   • comp  — the RMS detector SQUARES its input, so ~1.8e19 is its ceiling;
+//             level = inf makes the GR target -inf and the next sample's
+//             -inf + inf a NaN the envelope keeps
+//   • clip  — the Transistor colour model's c⁵ term, so ~5e7. Drive must stay
+//             at 0: the clipper's own transfer function BOUNDS its output, so
+//             a driven clipper protects the colour polynomial from this
+//   • OS     — the polyphase filters carry gain, so a huge-but-finite staged
+//             sample comes out of processSamplesUp infinite. Needs the PEAK
+//             detector, or the compressor squares first and collapses the
+//             level before it reaches the region
+// Each case dies against exactly one element of the fix being reverted (the
+// matching reset, or the boundary that records the substitution), which is why
+// all four are here rather than one representative case.
+static void testExtremeLevelDoesNotSilencePermanently()
+{
+    const double sr = 48000.0;
+    const int block = 512;
+
+    auto run = [&] (const char* what, float hugeValue, auto&& configure)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        anabasis::EngineParameters p;
+        configure (p);
+        juce::AudioBuffer<float> buf (2, block);
+
+        auto tone = [&] (int b)
+        {
+            for (int n = 0; n < block; ++n)
+            {
+                const float ph = 2.0f * 3.14159265f * 220.0f * (float) (b * block + n) / (float) sr;
+                const float v = 0.2f * std::sin (ph);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+        };
+        auto rms = [&]
+        {
+            double sum = 0.0;
+            for (int n = 0; n < block; ++n)
+            {
+                const double s = buf.getSample (0, n);
+                sum += s * s;
+            }
+            return std::sqrt (sum / (double) block);
+        };
+
+        for (int b = 0; b < 6; ++b) { tone (b); engine.process (buf, p); }
+        const double healthy = rms();
+
+        for (int n = 0; n < block; ++n)              // one block, finite, absurd
+        {
+            buf.setSample (0, n, hugeValue);
+            buf.setSample (1, n, hugeValue);
+        }
+        engine.process (buf, p);
+
+        double after = 0.0;
+        for (int b = 7; b < 207; ++b) { tone (b); engine.process (buf, p); after = rms(); }
+
+        // Recovery, not equality: the block really happened, so the adaptive
+        // trims and the limiter envelope legitimately moved. Permanent silence
+        // reads 0.0 exactly, so the two are nowhere near each other.
+        check (healthy > 0.05,
+               (juce::String ("extremeLevel: (test premise) ") + what
+                    + " runs at level before the event").toRawUTF8());
+        check (after > 0.25 * healthy,
+               (juce::String ("extremeLevel: recovers after ") + what).toRawUTF8());
+    };
+
+    run ("an EQ biquad overflows", 0.5f * std::numeric_limits<float>::max(),
+         [] (anabasis::EngineParameters& p) { p.eqHighShelfGainDb = 12.0f; });
+
+    run ("the compressor's RMS detector overflows", 1.0e20f,
+         [] (anabasis::EngineParameters& p) { p.compDetector = 0; });
+
+    run ("the clipper's colour polynomial overflows", 1.0e10f,
+         [] (anabasis::EngineParameters& p)
+         {
+             p.colourModel = 3;                      // Transistor: the c⁵ term
+             p.colourDepth = 1.0f;
+         });
+
+    run ("the oversampler's filters overflow", 0.5f * std::numeric_limits<float>::max(),
+         [] (anabasis::EngineParameters& p)
+         {
+             p.oversample   = anabasis::OversampleFactor::x4;
+             p.compDetector = 1;                     // peak: no square to overflow first
+             p.colourModel  = 3;
+             p.colourDepth  = 1.0f;
+         });
+}
+
+// ---------------------------------------------------------------------------
 // inv 9's self-heal must degrade GRACEFULLY (inv 8). Discarding the sliding
 // window costs pre-emption for W samples — documented and accepted. Snapping
 // the ENVELOPE back to unity is a separate effect and not acceptable: the
@@ -3174,6 +3278,7 @@ int main()
     testFreezeLatchesTrims();
     testTrimBounds();
     testNoBadSamples();
+    testExtremeLevelDoesNotSilencePermanently();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
 

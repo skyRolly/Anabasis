@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **fourteenth review round of 2026-08-01** (PR #5): the ADR index still
+**Last updated:** for the **fifteenth review round of 2026-08-01** (PR #5): a finite input could
+make a gain-carrying stage overflow, and the boundary that swallowed the resulting NaN left the
+stage holding it — the plugin went silent until it was re-prepared. The boundaries now record
+what they substitute and the affected stage is cleared. Previous round: (PR #5): the ADR index still
 told readers the project had no `src/` and no `tests/`, and the eleven sign-off ADRs still read
 `Unverified (no src/ yet)`. Documentation only. Previous round: (PR #5): the Learn commands
 join the restore on ADR-0012's staged-record row — two flags in a fixed order lost BOTH commands
@@ -33,6 +36,61 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Fifteenth review round — the boundary protected everything except the stage that broke (2026-08-01)
+
+Eleven items: one real defect fixed with a four-stimulus regression test, two documentation
+corrections, eight already recorded in earlier rounds.
+
+**The defect falsifies a comment written three rounds ago.** That round added the invariant 9
+self-heal rationale: the limiter is the only stage repaired because *"the EQ biquads, the
+compressor envelope and detector HPF, ClipSat's ADAA and filter states … all sit downstream of
+one of those [sanitisation boundaries], which is why none of them is reset here: they cannot hold
+a NaN to begin with."* The reviewer read the code instead of the comment and found stage A
+sanitises **before** the EQ and only re-checks **after** the compressor, so the post-EQ value
+reaches `comp.processSample` unchecked — and the same shape exists in the region, where
+`ClipSat::processSample` consumes `region.getSample()` directly.
+
+**Confirmed by measurement before anything was changed.** One block of `0.5 × FLT_MAX` with a
++12 dB shelf engaged, then ordinary programme material: output RMS `0.000000` for every subsequent
+block, for ever. The mechanism is the one the review described — the EQ biquad overflows, the
+compressor's `levelDb` goes infinite, its GR target goes to `-inf`, and the next sample's
+`-inf + inf` is a NaN the envelope keeps.
+
+**The load-bearing half of the fix is not the one the review asked for.** Adding the two missing
+boundaries CONTAINS the contamination but does not remove it: the stage that overflowed still
+holds the NaN, so the boundary keeps substituting `0.0f` and the silence is just as permanent. The
+real hole is that a substituting boundary was **silent** — a NaN generated inside the chain was
+swallowed with nothing set, so the existing self-heal never fired. The boundaries now record
+(`stageGeneratedNonFinite`), and the three stages that can poison themselves are reset on that
+record. Non-finite INPUT still costs no state: it is zeroed before the EQ, so it cannot set the
+flag, and `testSelfHealDoesNotSnapTheEnvelope` — which poisons one input sample — is byte-for-byte
+unaffected.
+
+**Four stimuli, because each stage overflows on a different quantity and shields the next.** The
+EQ needs `|x|` within a few dB of `FLT_MAX`; the compressor's RMS detector squares, so ~1.8e19 is
+its ceiling; the colour model's `c⁵` term needs ~5e7 **and** drive at zero, because a driven
+clipper's transfer function bounds its own output and protects the polynomial; the oversampler's
+filters need the peak detector, or the compressor squares first and collapses the level before the
+region sees it. Each case dies against exactly one element of the fix being reverted — three
+resets and two recording boundaries, verified one at a time.
+
+**The two containment boundaries are kept although no single mutant kills them.** They are what
+confines an EQ overflow to the EQ: with the post-EQ boundary present, case 1 recovers on
+`eq.resetState()` alone; with it removed, `comp.reset()` becomes load-bearing for a fault the
+compressor did not cause. That is a property of a mutant PAIR rather than of one output, so it is
+recorded here and in the code comment rather than asserted by a test that cannot see it.
+
+**A guard was also removed.** The first draft sanitised after the ceiling clamp in stage E too.
+Stage E's input is the limited signal, bounded by the ceiling under invariant 4, so `eqPost`
+cannot overflow and the branch is unreachable — it went back out rather than shipping as a
+per-sample cost with no reachable case. Unreachable defensive code is a claim about the chain that
+nothing checks.
+
+**Lesson.** "Sanitised at the boundary" describes what a value does, not what a stage holds. Every
+boundary in this engine was written as a *propagation* control and then read, in a comment, as a
+*state* guarantee — including by the author of that comment. The two are only the same for stages
+whose arithmetic cannot overflow, which is none of them.
 
 ### Fourteenth review round — the decision index was still describing an empty repository (2026-08-01)
 

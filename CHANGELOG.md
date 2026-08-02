@@ -72,6 +72,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   The OQ-013-gated frozen-trim restore remains the one blocked path.
   Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
 
+### Fixed
+- **An extreme input level could silence the plugin permanently.** A finite but astronomical
+  sample (the kind a broken upstream plugin emits, not one a DAW produces) could overflow a stage
+  that carries gain — an EQ biquad, the compressor's squaring RMS detector, the clipper's colour
+  polynomial, the oversampler's filters — and the stage then held a NaN for ever. The engine's
+  boundaries substituted `0.0f` for the non-finite value on the way out, so the output was silence
+  and nothing signalled that anything had happened: only re-opening the session (or any host
+  action that re-prepared the plugin) brought the sound back. Those boundaries now record the
+  substitution and the affected stage's filter state is cleared, so the engine recovers by itself
+  within the block. A hostile input buffer is unchanged: non-finite input is still zeroed before
+  any state sees it, at no cost.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
+  `testExtremeLevelDoesNotSilencePermanently`, four stimuli, each mutation-verified against the
+  matching half of the fix. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

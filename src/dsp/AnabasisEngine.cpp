@@ -468,6 +468,13 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     const int nCh = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());
     bool sawNonFinite = false;
 
+    // Set only where a value that ENTERED a stage finite comes out non-finite,
+    // i.e. where the chain generated the contamination itself rather than
+    // receiving it. Non-finite INPUT is zeroed before any state sees it, so it
+    // never sets this; overflow inside a recursive stage does, and that stage
+    // then holds a NaN no boundary can wash out. See the invariant 9 block.
+    bool stageGeneratedNonFinite = false;
+
     // ======== Stage A - base rate: input gain -> EQ(Pre) -> compressor =====
     // Also fills the per-base-sample control arrays the region indexes, so
     // the SAME instantaneous ceiling the gain computer uses reaches the
@@ -499,6 +506,16 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 s = 0.0f;                      // filter state must never eat a NaN
             if (eqPre)
                 s = eq.processSample (ch, s);
+            if (! std::isfinite (s))
+            {
+                // The EQ overflowed on a finite-but-astronomical sample (its
+                // biquads carry gain). Without this the post-EQ value reached
+                // the compressor unchecked: |x| = inf makes `levelDb` inf and
+                // the GR envelope -inf, and the NEXT sample's -inf + inf is a
+                // NaN the envelope keeps for ever — permanent silence.
+                s = 0.0f;
+                stageGeneratedNonFinite = true;
+            }
             staged[ch] = s;
 
             dryRing.setSample (ch, dryWritePos, std::isfinite (in) ? in : 0.0f);
@@ -516,7 +533,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // stage entirely, which is why the null tests never saw it.
         pushArr[(size_t) n] = gPush;
         for (int ch = 0; ch < nCh; ++ch)
-            staging.setSample (ch, n, std::isfinite (staged[ch]) ? staged[ch] : 0.0f);
+        {
+            if (! std::isfinite (staged[ch]))
+            {
+                staged[ch] = 0.0f;             // the compressor's own arithmetic
+                stageGeneratedNonFinite = true;
+            }
+            staging.setSample (ch, n, staged[ch]);
+        }
         if (++dryWritePos >= dryRingSize)
             dryWritePos = 0;
     }
@@ -549,7 +573,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
 
         float frame[kMaxChannels] = {};
         for (int ch = 0; ch < nCh; ++ch)
+        {
             frame[ch] = region.getSample ((size_t) ch, (size_t) i);
+            if (! std::isfinite (frame[ch]))
+            {
+                frame[ch] = 0.0f;              // the oversampler's own filters
+                stageGeneratedNonFinite = true;
+            }
+        }
 
         clip.processSample (frame, nCh);       // Clipper/Sat, inside the region
 
@@ -579,8 +610,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 frame[ch] *= gPushNow;
 
         for (int ch = 0; ch < nCh; ++ch)
-            wetRing.setSample (ch, writePosOs,
-                               std::isfinite (frame[ch]) ? frame[ch] : 0.0f);
+        {
+            if (! std::isfinite (frame[ch]))
+            {
+                frame[ch] = 0.0f;              // ClipSat's own polynomial/ADAA
+                stageGeneratedNonFinite = true;
+            }
+            wetRing.setSample (ch, writePosOs, frame[ch]);
+        }
 
         // Detector tap (the LookaheadLimiter CONTRACT): feed the sample that
         // plays W steps from now - written (delayOs - wOs) steps ago. W is
@@ -811,42 +848,59 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     }
 
     // ---- Invariant 9 self-heal -------------------------------------------
-    // Discard the limiter's sliding window, carry the envelope (resetWindow's
-    // own comment says why a full reset would be worse). The limiter is the
-    // ONLY stage repaired here, and that is a deliberate strategy rather than
-    // an oversight, so state it: the engine PREVENTS contamination at fixed
-    // boundaries and repairs only the one state a prevented sample can still
-    // corrupt structurally.
+    // TWO failure modes, repaired separately, because they are not the same
+    // failure: contamination that ARRIVES (a non-finite input sample) and
+    // contamination the chain GENERATES (a finite sample a stage overflows on).
     //
-    // THE SANITISATION BOUNDARIES this rests on — every one of them replaces a
-    // non-finite value with 0.0f, so no recursive state downstream can ever
-    // absorb one:
+    // THE SANITISATION BOUNDARIES — each replaces a non-finite value with
+    // 0.0f, so no recursive state DOWNSTREAM of one absorbs it:
     //   • stage A, before the EQ:      `if (! isfinite (s)) s = 0.0f`
+    //   • stage A, after the EQ:       protects the compressor
     //   • the dry ring write:          `isfinite (in) ? in : 0.0f`
-    //   • the staging write:           `isfinite (staged[ch]) ? … : 0.0f`
-    //   • the wet ring write:          `isfinite (frame[ch]) ? … : 0.0f`
+    //   • the staging write:           the compressor's own output
+    //   • the region read:             protects ClipSat
+    //   • the wet ring write:          ClipSat's own output
     //   • the render tap:              `isfinite (render) ? … : 0.0f`
     //   • the output write:            sets `sawNonFinite` and emits 0.0f
-    // The EQ biquads, the compressor envelope and detector HPF, ClipSat's ADAA
-    // and filter states, the oversampler's own filters and the §2.7/§2.9
-    // meters all sit downstream of one of those, which is why none of them is
-    // reset here: they cannot hold a NaN to begin with. Resetting them would
-    // trade a guaranteed-clean state for an audible discontinuity on a path
-    // whose whole point is graceful degradation.
+    // A boundary bounds PROPAGATION and nothing else. It does not protect the
+    // stage that produced the value, and every stage here can produce one from
+    // a perfectly legal float: the EQ biquads carry gain, the compressor's RMS
+    // detector squares, ClipSat's colour model raises to the fifth power, the
+    // oversampler's polyphase filters carry gain. Each then holds a NaN for
+    // ever — the boundary keeps emitting 0.0f, which reads to a user as the
+    // plugin having gone silent permanently. So the boundaries that substitute
+    // also RECORD (`stageGeneratedNonFinite`), and the stages that can poison
+    // themselves are reset. Non-finite INPUT is zeroed before the EQ, so it
+    // never triggers this: a hostile host buffer still costs no state.
     //
-    // WHY THE LIMITER IS THE EXCEPTION: its wedge is index-keyed state, not a
+    // WHY THE LIMITER IS SEPARATE: its wedge is index-keyed state, not a
     // filtered value. A sample that arrives finite but pathological (a
     // legitimately huge peak, or one written just before a boundary sanitised
     // its successor) stays the window maximum until its index expires, so the
-    // structure needs explicit repair rather than time. That is what
-    // resetWindow() is for, and why carrying the envelope across it is right.
+    // structure needs explicit repair rather than time — on EITHER flag. That
+    // is what resetWindow() is for, and why carrying the envelope across it is
+    // right (a snap to unity is the louder bug — see the test of that name).
+    // Stage E needs no boundary of its own: its input is the limited signal,
+    // bounded by the ceiling (invariant 4), so eqPost cannot overflow.
     //
     // RULE FOR FUTURE STAGES, since the chain keeps growing recursive state:
-    // a new stateful stage must EITHER sit downstream of one of the boundaries
-    // above (add one if it does not), OR be added to this recovery. Silently
-    // relying on "the input is probably finite" is neither.
-    if (sawNonFinite)
+    // a new stateful stage must sit downstream of a boundary (add one if it
+    // does not) AND, if any finite input can make it produce a non-finite
+    // value, be added to the reset below. The first alone was the bug this
+    // pair of blocks fixes; "the input is probably finite" is neither.
+    if (sawNonFinite || stageGeneratedNonFinite)
         limiter.resetWindow();
+    if (stageGeneratedNonFinite)
+    {
+        // Cheap, and only on a block that already lost audio: clearing the
+        // filter histories costs a discontinuity the boundaries have already
+        // made silent. The smoothed CONTROLS are untouched (resetState for the
+        // EQ), or re-primed on the next setPerBlock at values they are already
+        // sitting on, so nothing steps.
+        eq.resetState();
+        comp.reset();
+        clip.reset();
+    }
 }
 
 } // namespace anabasis
