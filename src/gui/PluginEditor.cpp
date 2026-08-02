@@ -265,6 +265,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     editedDot.onClick = [this] { processor.resetToMacro(); };
     addChildComponent (editedDot);
 
+    meterView = std::make_unique<LoudnessMeterView> (processor);
+    grView    = std::make_unique<GrHistoryView> (processor);
+    addAndMakeVisible (*meterView);
+    addAndMakeVisible (*grView);
+
     // -- overlays ------------------------------------------------------------
     addChildComponent (dimOverlay);
     dimOverlay.setInterceptsMouseClicks (false, false);
@@ -347,6 +352,29 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
                          ist.getPropertyAsValue (iid::tooltipsOn, nullptr));
     setupToggleInternal (tpMeterToggle, "True-peak meter", "True-peak meter",
                          ist.getPropertyAsValue (iid::tpMeterOn, nullptr));
+    // Target-line selection (§6.4): three bits of int_meterTargets, in the
+    // LoudnessMeterView::kTargets order. Platform names are identifiers, not
+    // invented prose.
+    {
+        const char* names[] = { "Spotify", "Apple Music", "YouTube" };
+        juce::ToggleButton* bits[] = { &targetSpToggle, &targetApToggle, &targetYtToggle };
+        const int mask = (int) ist.getProperty (iid::meterTargets, ~0);
+        for (int t = 0; t < 3; ++t)
+        {
+            auto* tog = bits[t];
+            tog->setButtonText (names[t]);
+            tog->setToggleState ((mask & (1 << t)) != 0, juce::dontSendNotification);
+            tog->onStateChange = [this, t, tog]
+            {
+                auto& tree = processor.internalState.state();
+                int m2 = (int) tree.getProperty (iid::meterTargets, ~0);
+                m2 = tog->getToggleState() ? (m2 | (1 << t)) : (m2 & ~(1 << t));
+                tree.setProperty (iid::meterTargets, m2, nullptr);
+            };
+            settingsBackdrop.addAndMakeVisible (*tog);
+            registerAnimated (*tog);
+        }
+    }
     for (auto* t : { &animToggle, &tooltipsToggle, &tpMeterToggle })
     {
         removeChildComponent (t);
@@ -603,7 +631,7 @@ void AnabasisAudioProcessorEditor::resized()
     aboutBackdrop.panel = getLocalBounds().withSizeKeepingCentre (400, 232);
     aboutLink.setBounds (aboutBackdrop.panel.withTrimmedTop (176).withTrimmedBottom (24)
                              .withSizeKeepingCentre (180, 20));
-    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 330);
+    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 366);
     savePresetBackdrop.panel = getLocalBounds().withSizeKeepingCentre (340, 150);
 
     {
@@ -623,6 +651,10 @@ void AnabasisAudioProcessorEditor::resized()
         animToggle.setBounds (row (26));
         tooltipsToggle.setBounds (row (26));
         tpMeterToggle.setBounds (row (26));
+        auto tr = row (26);
+        targetSpToggle.setBounds (tr.removeFromLeft (110));
+        targetApToggle.setBounds (tr.removeFromLeft (130));
+        targetYtToggle.setBounds (tr);
     }
     {
         auto sp = savePresetBackdrop.panel.reduced (20, 16);
@@ -744,6 +776,13 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         place (cell(), macroToneK, macroToneL);
     }
 
+    // §6.3 shared metering strip: GR history left, loudness block right (the
+    // dismissible spectrum takes the middle share when it lands).
+    auto strip = juce::Rectangle<int> (0, kBarH + kPanelRowH + kUtilityH + kMacroRowH,
+                                       getWidth(), kMeterRowH).reduced (8, 6);
+    meterView->setBounds (strip.removeFromRight (300));
+    grView->setBounds (strip);
+
     juce::ignoreUnused (body);
 }
 
@@ -780,6 +819,12 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     learnButton.setBounds (toggles.removeFromLeft (78).reduced (0, 2));
     outLufsValue.setBounds (toggles.removeFromRight (72));
     outLufsCaption.setBounds (toggles.removeFromRight (70));
+
+    // §6.2 wells: the right meter panel and the bottom GR strip.
+    meterView->setBounds (juce::Rectangle<int> (getWidth() - 300, kBarH + 8,
+                                                292, kSimpleH - kBarH - 128 - 16));
+    grView->setBounds (juce::Rectangle<int> (0, kSimpleH - 120, getWidth(), 120)
+                           .reduced (8, 6));
 }
 
 // ============================================================================

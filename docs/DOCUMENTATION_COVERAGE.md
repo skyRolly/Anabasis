@@ -6,7 +6,13 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P5 Simple-view + gesture-grammar commit (2026-08-02)** (PR #5):
+**Last updated:** for the **P5 metering-display commit (2026-08-02)** (PR #5): the §2.9 display
+layer — LoudnessMeterView (M/S/I bars, target lines off the OQ-008 compiled table with the
+"as of" tooltip, penalty rows gated on a valid integrated figure, dBTP in `warn` over the
+ceiling, click = the meter-hold reset request) and GrHistoryView (the first consumer of the GR
+ring, reading under the epoch contract decided at the P5 opening — odd/moved epoch discards the
+frame). OQ-008's values are gathered and cited; club/CD stays absent rather than invented.
+Previous: (PR #5):
 ADR-0005's deferred half is wired and Verified — the §5.3 detach discriminator (three conditions,
 each killed by its own mutant, including the two mid-gesture overlap cases), the mapping skip,
 re-engage-on-gesture and reset-to-macro; the §6.2 Simple view (big knob, macro row, ceiling

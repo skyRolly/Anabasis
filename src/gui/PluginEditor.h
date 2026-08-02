@@ -5,6 +5,8 @@
  #include <juce_opengl/juce_opengl.h>
 #endif
 #include "LookAndFeel.h"
+#include "LoudnessMeterView.h"
+#include "GrHistoryView.h"
 
 class AnabasisAudioProcessor;
 
@@ -216,6 +218,10 @@ private:
     };
     EditedDot editedDot;
 
+    // -- §2.9 visualisers (their own FrameClocks; created after the frame) ---
+    std::unique_ptr<LoudnessMeterView> meterView;
+    std::unique_ptr<GrHistoryView>     grView;
+
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit
     // end; an empty pass flashes the button in `warn` (wordless readout).
     double learnStartedMs   = 0.0;
@@ -235,6 +241,7 @@ private:
     juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox;
     juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel;
     juce::ToggleButton animToggle, tooltipsToggle, tpMeterToggle;
+    juce::ToggleButton targetSpToggle, targetApToggle, targetYtToggle;
 
     // -- Save-preset overlay -------------------------------------------------
     juce::Label      saveTitle;

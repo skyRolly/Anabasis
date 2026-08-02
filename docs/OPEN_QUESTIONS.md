@@ -70,9 +70,19 @@ documented "as of" date, or user-editable), and record the decision plus each va
 
 **Mechanism ratified at the 2026-07-31 sign-off** (`DESIGN.md` §2.9): one compiled table,
 per-value source citation, "as of" date surfaced in the tooltip, not user-editable in v1,
-refreshed each release. The **values themselves remain TODO** — gathered with citations at P5,
-never invented (C2). This entry therefore stays `Open`: what is undecided is the numbers, not how
-they are carried.
+refreshed each release.
+
+**Values gathered at P5 (2026-08-02), as the mechanism required.** The compiled table
+(`src/gui/LoudnessMeterView.h`) carries: **Spotify −14 LUFS** (Normal mode; Loud −11 / Quiet −19),
+**Apple Music −16 LUFS** (Sound Check), **YouTube −14 LUFS** — cross-confirmed against
+soundplate.com's streaming-loudness table and trackgleam.com's target guide, both current as of
+2026-07/08, and surfaced in the panel tooltip with the "as of" date. **What keeps this entry
+`Open`:** (1) release-time verification against the FIRST-party pages (Spotify for Artists /
+Apple Sound Check / YouTube help) is the per-release refresh the mechanism prescribes — secondary
+cross-confirmation was accepted at P5 to avoid shipping an empty panel, and the tooltip's date
+makes staleness visible; (2) **club/CD has no published normalization target** — that line from
+the brief's list needs an owner-specified reference level or a decision to drop it, and it is
+deliberately absent from the table rather than invented.
 
 ---
 

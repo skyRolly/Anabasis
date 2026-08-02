@@ -131,7 +131,9 @@ set(ANABASIS_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MacroEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PresetManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/PluginEditor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LookAndFeel.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LookAndFeel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LoudnessMeterView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/GrHistoryView.cpp)
 
 target_sources(Anabasis PRIVATE ${ANABASIS_PLUGIN_SOURCES})
 target_include_directories(Anabasis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
