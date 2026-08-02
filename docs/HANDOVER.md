@@ -5,11 +5,13 @@ boundary (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.md`). Facts are Verified
 repository; fields with no repository evidence are marked `TODO` rather than invented
 (constraint C7).
 
-Snapshot taken at the **P0 → P1 phase boundary (2026-07-31)**. `docs/DESIGN.md` was signed off by
-the owner on that date, closing P0's exit criterion (`DEVELOPMENT_BRIEF.md` §11), and the eleven
-ADRs it authorised are Accepted and registered. This is a phase-boundary update, so all three
-`DOCUMENTATION_LIFECYCLE_POLICY.md` phase-completion targets are covered: this file, the coverage
-audit, and the §13 phase summary (below).
+Snapshot taken at the **P4 → P5 phase boundary (2026-08-02)**, and carrying every boundary before
+it: the file opened at **P0 → P1 (2026-07-31)**, when `docs/DESIGN.md` was signed off and the
+eleven ADRs it authorised were Accepted and registered, and the P2/P3/P4 phase summaries below
+were added at their own boundaries rather than replacing it. The status table is the row of
+record for the CURRENT phase; the summaries are history and are not rewritten. This is a
+phase-boundary update, so all three `DOCUMENTATION_LIFECYCLE_POLICY.md` phase-completion targets
+are covered: this file, the coverage audit, and the §13 phase summary (below).
 
 The repository's starting point was the **bootstrap** — the migration of Anamorph's governance
 system, documentation library, build/CI scaffolding and working conventions into a new, otherwise

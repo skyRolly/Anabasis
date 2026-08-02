@@ -84,8 +84,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   within the block. A hostile input buffer is unchanged: non-finite input is still zeroed before
   any state sees it, at no cost.
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
-  `testExtremeLevelDoesNotSilencePermanently`, four stimuli, each mutation-verified against the
-  matching half of the fix. [Verified]
+  `testExtremeLevelDoesNotSilencePermanently`, **five** stimuli (counted from the test's own
+  `run(...)` cases, not from an earlier entry — the Post-EQ case was added a round later), each
+  mutation-verified against the matching half of the fix. [Verified]
 
 - **…including with oversampling on, where the recovery was incomplete.** The first fix repaired
   the engine's own stages but not the oversampler, whose default (minimum-phase) filters are

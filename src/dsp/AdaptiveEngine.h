@@ -313,6 +313,20 @@ public:
                                                   (refOnsetRate - onsetRate) * 0.15f);
             target.stereoLink     = juce::jlimit (-0.2f, 0.2f,
                                                   (onsetRate - refOnsetRate) * 0.03f);
+            // ⊕ DRAFT CONSTANT, and the one with the most headroom to be
+            // wrong: 6 Hz per dB against a −6 dB reference saturates at the
+            // +30 Hz bound as soon as the measured split is ~5 dB darker than
+            // the reference, and the split is a FIRST-ORDER 800 Hz one-pole,
+            // which leaks enough HF into `bandLp` to bias `tiltDb` low on real
+            // masters. A pinned trim moves the shared sidechain HPF to 50 Hz in
+            // BOTH detectors, whose consequence the engine records at the
+            // application site (bass transients reach the CeilingClamp instead
+            // of the limiter). Inside the declared bound, so `testTrimBounds`
+            // passes and `testAdaptationConvergesAndHolds` passes — neither
+            // asks whether the trim converged toward zero or onto a RAIL. The
+            // P6 listening pass owes that check on representative programme,
+            // against measured `tiltDb` figures rather than the draft
+            // reference.
             target.scHpfHz        = juce::jlimit (0.0f, 30.0f,
                                                   (refTiltDb - tiltDb) * 6.0f);
             target.dynTiltDb      = juce::jlimit (0.0f, 0.5f,

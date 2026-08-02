@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **twenty-first review round of 2026-08-02** (PR #5): the per-block
+**Last updated:** for the **twenty-second review round of 2026-08-02** (PR #5): three documentation
+drifts corrected (a changelog stimulus count, HANDOVER's phase header, a missing separator), the
+forced-duck request added to what `reset()` clears, and two ⊕-draft/P5 questions recorded where
+the code that raises them lives. Previous round: (PR #5): the per-block
 repairs moved ahead of every consumer that reads what they repair, the oversampler latency table
 is now bound to its headroom constant by a `static_assert` rather than a Debug-only `jassert`, and
 the meter's ring guard came back — with the stimulus that can tell it is there. Previous round: (PR #5): the previous round's
@@ -50,6 +53,39 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Twenty-second review round — the round with no defects in it (2026-08-02)
+
+Six items, and the review classes five of them as not-defects itself. Nothing changed about what
+the plugin computes.
+
+**Three documentation drifts, all of the same kind: a number or a sentence that no test reads.**
+The changelog said the extreme-level test carries four stimuli; it carries five (the Post-EQ case
+landed a round later). `HANDOVER.md`'s preamble still opened "Snapshot taken at the P0 → P1 phase
+boundary" above a status table reading P4 and three later phase summaries. `KNOWN_ISSUES.md` lost
+one `---` between KI-003 and KI-004. The changelog entry now says where its count comes from — the
+test's own `run(...)` cases — because "five" is as re-derivable as "four" was.
+
+**The forced-duck request joins what `reset()` clears.** Behaviour is unchanged and no mutant can
+kill the line: the first block after a reset takes the `! smoothersPrimed` branch, which already
+discards the request. The line is there so that discard is not load-bearing for a fact stated in
+another branch — and the comment says exactly that, rather than dressing it as a guard. What it
+does not fix is recorded in KI-004: a swap made while the transport is stopped leaves the request
+standing, and ~34 ms of fade plays over the head of the next take. Ageing it needs a time base the
+audio thread does not have, so it is a P5 wrapper question.
+
+**Two ⊕ drafts recorded next to the constants rather than in a backlog.** The tilt→scHpf mapping
+saturates at its +30 Hz bound as soon as the measured split is ~5 dB darker than the −6 dB
+reference, and the split is a first-order 800 Hz one-pole that biases the measurement low on real
+programme — so the trim can converge onto a RAIL while `testTrimBounds` (membership) and
+`testAdaptationConvergesAndHolds` (convergence) both pass. The P6 listening pass owes a check that
+the vector sits away from every bound on representative material. That check cannot be written
+before the constants are tuned, which is why it is a comment at the mapping and not a test today.
+
+**Nothing was done about the limiter's wedge item**, because it is the reviewer confirming the
+comment written last round by tracing the code — the recovery bound, the reason domination cannot
+remove a NaN entry, and what holds invariant 4 meanwhile all match. An independent trace agreeing
+with a comment is the outcome the comment was written for.
 
 ### Twenty-first review round — ordering, a Release-only assert, and a guard that came back (2026-08-02)
 

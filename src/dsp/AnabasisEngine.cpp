@@ -158,6 +158,20 @@ void AnabasisEngine::reset() noexcept
     duckPhase = 0.0f;
     bottomHoldSamples = 0;
     duckAskedWhileOut = false;
+    // The PENDING request goes too, and the reason is completeness of the
+    // state class rather than a behaviour change: the first block after a
+    // reset takes the `! smoothersPrimed` branch, which already discards it.
+    // Leaving it set would make that discard load-bearing for a fact stated in
+    // another branch — the shape of argument this file has had to correct
+    // repeatedly. What this does NOT fix, because the engine has no clock: a
+    // request raised while the host has stopped calling processBlock WITHOUT
+    // re-preparing (a transport stop in a host that suspends the plugin)
+    // survives, and its ~6 ms out / ~28 ms in leg plays over the head of the
+    // next take instead of over the swap it was guarding. Bounded to ~34 ms
+    // and audible only as a fade-in; ageing it needs a time base the audio
+    // thread does not have, so it is a P5 wrapper question (releaseResources
+    // and suspendProcessing both see the transition the engine cannot).
+    duckRequested.store (false, std::memory_order_relaxed);
     // Edge detector and meter taps are reset state too, so the invariant is
     // local to this function instead of leaning on `smoothersPrimed` (the
     // flip detector) or on the previous session's last block (the GR tap,

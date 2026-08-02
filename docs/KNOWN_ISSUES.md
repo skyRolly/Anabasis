@@ -91,6 +91,8 @@ Evidence [Partially Verified]:
   reproducible headlessly
 - Commit: P1 skeleton, thread-safety pass
 
+---
+
 ### KI-004 — During an OS-factor switch, reported and actual latency disagree for the duck window
 
 **Severity:** Low
@@ -121,6 +123,17 @@ silence is the ~6 ms out-leg plus the refill plus **up to one host block** — �
 describes the LATENCY disagreement; this is the separate cost in silence, on the same grid.
 Accepted for the same reason: leaving the bottom mid-block means running the rewire off a block
 boundary, which is what the duck exists to avoid.
+
+**A request raised while the host is not processing is spent on the next playback.** The forced
+duck is a sticky flag consumed at a block top, and the engine has no clock: a swap made while the
+transport is stopped (in a host that suspends the plugin without re-preparing it) leaves the
+request standing, and its ~6 ms out / ~28 ms in leg then plays over the head of the next take
+instead of over the swap it was guarding. Bounded to ~34 ms and audible only as a fade-in — the
+swap itself was never heard, which is why this is a surprise rather than an artefact. A reset
+clears it (`prepareToPlay` reaches `reset()`), so the case that survives is specifically the
+stopped transport. Ageing the request needs a time base the audio thread does not have; the
+wrapper sees the transitions the engine cannot (`releaseResources`, `suspendProcessing`), so it
+is recorded here as a P5 wrapper question rather than patched in the DSP.
 
 **Entering offline abandons an in-flight duck.** When `nonRealtime` first goes
 true the engine adopts the new configuration directly (so a bounce does not
