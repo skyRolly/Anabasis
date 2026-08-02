@@ -138,6 +138,33 @@ public:
         return x;
     }
 
+    // §6.3 response curve: the magnitude of the CURRENT coefficient set at
+    // one frequency — the same normalised biquads the audio runs, evaluated
+    // rather than re-derived, so the curve the panel draws cannot drift from
+    // the filter the signal meets (§2.4's one-source-of-truth rule for the
+    // clip curve, applied to the EQ). Const read of coefficients; the GUI
+    // calls it on its own scratch instance, never the audio thread's.
+    float magnitudeDbAt (float freqHz) const noexcept
+    {
+        const double w  = 2.0 * juce::MathConstants<double>::pi
+                        * (double) freqHz / sr;
+        const double c1 = std::cos (w), c2 = std::cos (2.0 * w);
+        double magSq = 1.0;
+        for (const auto& sec : sections)
+        {
+            if (! sec.engaged)
+                continue;
+            const double b0 = sec.b0, b1 = sec.b1, b2 = sec.b2,
+                         a1 = sec.a1, a2 = sec.a2;
+            const double num = b0 * b0 + b1 * b1 + b2 * b2
+                             + 2.0 * (b0 * b1 + b1 * b2) * c1 + 2.0 * b0 * b2 * c2;
+            const double den = 1.0 + a1 * a1 + a2 * a2
+                             + 2.0 * (a1 + a1 * a2) * c1 + 2.0 * a2 * c2;
+            magSq *= num / juce::jmax (1.0e-12, den);
+        }
+        return (float) (10.0 * std::log10 (juce::jmax (1.0e-12, magSq)));
+    }
+
     // True when every section is skipped — the all-flat structural null.
     bool isTransparent() const noexcept
     {

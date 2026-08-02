@@ -8,6 +8,7 @@
 #include "LoudnessMeterView.h"
 #include "GrHistoryView.h"
 #include "SpectrumView.h"
+#include "CurveView.h"
 
 class AnabasisAudioProcessor;
 
@@ -223,6 +224,8 @@ private:
     std::unique_ptr<LoudnessMeterView> meterView;
     std::unique_ptr<GrHistoryView>     grView;
     std::unique_ptr<SpectrumView>      spectrumView;
+    std::unique_ptr<CurveView>         clipCurve, eqCurve;
+    GrMiniMeter compGrMeter, limGrMeter;
     bool shownSpectrumOn = true;
 
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit

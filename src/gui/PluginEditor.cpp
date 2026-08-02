@@ -268,6 +268,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     meterView    = std::make_unique<LoudnessMeterView> (processor);
     grView       = std::make_unique<GrHistoryView> (processor);
     spectrumView = std::make_unique<SpectrumView> (processor);
+    clipCurve = std::make_unique<CurveView> (processor, CurveView::Mode::clipTransfer);
+    eqCurve   = std::make_unique<CurveView> (processor, CurveView::Mode::eqResponse);
+    addChildComponent (*clipCurve);
+    addChildComponent (*eqCurve);
+    addChildComponent (compGrMeter);
+    addChildComponent (limGrMeter);
     addAndMakeVisible (*meterView);
     addAndMakeVisible (*grView);
     addChildComponent (*spectrumView);   // Advanced strip only; int_spectrumOn gates
@@ -461,6 +467,11 @@ void AnabasisAudioProcessorEditor::setupRotary (juce::Slider& s, juce::Label& l,
     l.setFont (juce::Font (juce::FontOptions (11.5f)));
     addAndMakeVisible (l);
     registerAnimated (s);
+    // Accessibility (brief §8, the deliberate delta from Anamorph): every
+    // control carries its registry name as title/description, so a screen
+    // reader announces the same wording the automation lane shows.
+    s.setTitle (name);
+    s.setDescription (name);
 }
 
 void AnabasisAudioProcessorEditor::attachSlider (juce::Slider& s, const char* id)
@@ -494,6 +505,7 @@ void AnabasisAudioProcessorEditor::setupCombo (juce::ComboBox& box, const char* 
     addAndMakeVisible (box);
     comboAtts.add (new ComboBoxAttachment (processor.apvts, id, box));
     registerAnimated (box);
+    box.setTitle (tip);
 }
 
 void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const char* id,
@@ -504,6 +516,7 @@ void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const cha
     addAndMakeVisible (t);
     buttonAtts.add (new ButtonAttachment (processor.apvts, id, t));
     registerAnimated (t);
+    t.setTitle (tip.isNotEmpty() ? tip : text);
 }
 
 void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
@@ -710,6 +723,8 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         auto row = a.removeFromTop (26);
         compAutoToggle.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 2));
         detectorBox.setBounds (row.reduced (2, 2));
+        a.removeFromTop (8);
+        compGrMeter.setBounds (a.removeFromTop (14));   // [GR meter] — this stage's own
     }
     {   // CLIP / COLOUR
         auto a = panel (1);
@@ -720,6 +735,8 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         placeRow (row, { { &dynTiltK, &dynTiltL } });
         auto boxRow = a.removeFromTop (26);
         modelBox.setBounds (boxRow.reduced (2, 2));
+        a.removeFromTop (6);
+        clipCurve->setBounds (a.removeFromTop (juce::jmax (40, a.getHeight())));  // [live curve]
     }
     {   // LIMITER
         auto a = panel (2);
@@ -730,6 +747,8 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         limAutoToggle.setBounds (row.removeFromLeft (56).reduced (2, 2));
         tpToggle.setBounds (row.removeFromLeft (48).reduced (2, 2));
         styleBox.setBounds (row.reduced (2, 2));
+        a.removeFromTop (8);
+        limGrMeter.setBounds (a.removeFromTop (14));    // [GR meter] — this stage's own
     }
     {   // EQ (the densest panel: three-across rows, smaller cells)
         auto a = panel (3);
@@ -739,6 +758,8 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         placeRow (a, { { &hsFreqK, &hsFreqL }, { &hsGainK, &hsGainL }, { &b1FreqK, &b1FreqL } }, 78);
         placeRow (a, { { &b1GainK, &b1GainL }, { &b1QK, &b1QL }, { &b2FreqK, &b2FreqL } }, 78);
         placeRow (a, { { &b2GainK, &b2GainL }, { &b2QK, &b2QL } }, 78);
+        a.removeFromTop (4);
+        eqCurve->setBounds (a);                         // [response curve]
     }
 
     // Utility row: input gain + SC HPF + dither cluster + monitor toggles.
@@ -870,6 +891,10 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
     for (auto* c : advOnly)
         c->setVisible (adv);
 
+    for (juce::Component* c : { (juce::Component*) clipCurve.get(), (juce::Component*) eqCurve.get(),
+                                (juce::Component*) &compGrMeter, (juce::Component*) &limGrMeter })
+        c->setVisible (adv);
+
     juce::Component* simpleOnly[] = {
         &bigLoudnessK, &bigLoudnessL, &simpleCharacterK, &simpleCharacterL,
         &simpleToneK, &simpleToneL, &simpleCeilingK, &simpleCeilingL,
@@ -968,6 +993,15 @@ void AnabasisAudioProcessorEditor::timerCallback()
                                    nowMs < emptyFlashUntilMs ? colours::warn : colours::text);
         if (text != learnButton.getButtonText())
             learnButton.setButtonText (text);
+    }
+
+    // -- Advanced panel wells: per-stage GR + curve refreshes ----------------
+    if (advanced)
+    {
+        compGrMeter.setGrDb (processor.meterCompGrDb());
+        limGrMeter.setGrDb (processor.meterGrDb());
+        clipCurve->refresh();
+        eqCurve->refresh();
     }
 
     // -- spectrum visibility follows int_spectrumOn (dismiss / Settings) -----

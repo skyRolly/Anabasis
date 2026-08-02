@@ -202,6 +202,13 @@ public:
     float lastBlockMinGain() const noexcept
     { return grMinLinear.load (std::memory_order_relaxed); }
 
+    // Per-stage GR for the P5 panel meters — the answer to the recorded
+    // "which reduction is the meter showing" question: the COMP panel shows
+    // this, the LIMITER panel shows lastBlockMinGain()'s dB, and neither
+    // pretends to be chain reduction. Relaxed atomic, published per block.
+    float lastCompGrDb() const noexcept
+    { return compGrDb.load (std::memory_order_relaxed); }
+
     // -- §2.9 output metering: the RENDER tap ---------------------------------
     // Fed per sample from the bypass-mixed programme path BEFORE the two
     // monitor-only stages (§2.7 delta substitution and loudness-comp gain).
@@ -277,6 +284,7 @@ private:
     bool smoothersPrimed = false;
     std::atomic<int> engagedWindow { 96 };
     std::atomic<float> grMinLinear { 1.0f };
+    std::atomic<float> compGrDb { 0.0f };
     float grMinThisCall = 1.0f;
 
     LookaheadLimiter limiter;

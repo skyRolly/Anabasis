@@ -134,7 +134,8 @@ set(ANABASIS_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LookAndFeel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LoudnessMeterView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/GrHistoryView.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/SpectrumView.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/SpectrumView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CurveView.cpp)
 
 target_sources(Anabasis PRIVATE ${ANABASIS_PLUGIN_SOURCES})
 target_include_directories(Anabasis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

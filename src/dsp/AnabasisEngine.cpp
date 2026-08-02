@@ -182,6 +182,7 @@ void AnabasisEngine::reset() noexcept
     // which the §2.7 predict floor reads at the NEXT block top).
     lastNonRealtime = false;
     grMinLinear.store (1.0f, std::memory_order_relaxed);
+    compGrDb.store (0.0f, std::memory_order_relaxed);
     dryMeter.reset();
     wetMeter.reset();
     outMeter.reset();
@@ -522,6 +523,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         processChunk (buffer, start, juce::jmin (maxBlock, totalSamples - start),
                       p, eqPre, eqPost);
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
+    compGrDb.store (comp.currentGainReductionDb(), std::memory_order_relaxed);
     adaptiveEngine.finishBlock (p.freeze);
     return true;
 }

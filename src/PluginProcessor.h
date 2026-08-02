@@ -199,6 +199,7 @@ public:
     float meterDbTpMax()  const noexcept { return pubDbTpMax.load (std::memory_order_relaxed); }
     float meterPlr()      const noexcept { return pubPlr.load (std::memory_order_relaxed); }
     float meterGrDb()     const noexcept { return pubGrDb.load (std::memory_order_relaxed); }
+    float meterCompGrDb() const noexcept { return engine.lastCompGrDb(); }   // per-stage (P5 panels)
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
     const anabasis::ScopeBuffer& spectrumInRing()  const noexcept { return engine.spectrumInRing(); }
     const anabasis::ScopeBuffer& spectrumOutRing() const noexcept { return engine.spectrumOutRing(); }
