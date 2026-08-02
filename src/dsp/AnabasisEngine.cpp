@@ -475,6 +475,12 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // then holds a NaN no boundary can wash out. See the invariant 9 block.
     bool stageGeneratedNonFinite = false;
 
+    // The same, narrowed to the ONE stage whose state cannot be inspected or
+    // repaired value by value: the oversampler is JUCE's, so the only repair
+    // available is a full reset, and a full reset is a discontinuity that must
+    // not fire for a fault another stage caused.
+    bool regionInputNonFinite = false;
+
     // ======== Stage A - base rate: input gain -> EQ(Pre) -> compressor =====
     // Also fills the per-base-sample control arrays the region indexes, so
     // the SAME instantaneous ceiling the gain computer uses reaches the
@@ -579,6 +585,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             {
                 frame[ch] = 0.0f;              // the oversampler's own filters
                 stageGeneratedNonFinite = true;
+                regionInputNonFinite    = true;
             }
         }
 
@@ -623,6 +630,19 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // plays W steps from now - written (delayOs - wOs) steps ago. W is
         // the SMOOTHED window scaled to the region rate, so a lookahead move
         // slides the tap instead of jumping it (invariant 8).
+        //
+        // While that glide runs the tap advances by more or less than one
+        // sample per step, so the sequence handed to the detector has a
+        // duplicated or skipped sample in it. For the peak wedge that is the
+        // documented coverage cost of a moving window. It also reaches the
+        // detector HIGH-PASS, which is recursive and therefore sees a
+        // discontinuous input rather than a resampled one: a bounded spectral
+        // error in the DETECTOR for the ~20 ms of the move, on a filter whose
+        // only job is to keep sub-bass out of the gain computer. Invariant 4
+        // is untouched (the clamp is downstream and unconditional). Recorded
+        // rather than fixed: reading the ring at a fractional position would
+        // put an interpolator in the detector path to remove an error smaller
+        // than the window change that caused it.
         int detPos = writePosOs - (delayOs - wOs);
         if (detPos < 0)
             detPos += ringSizeOs;
@@ -632,6 +652,15 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
 
         float gains[kMaxChannels] = { 1.0f, 1.0f };
         limiter.processSample (tapped, nCh, wOs, ceilingNow, gains);
+        // GR TAP SCOPE, since the name does not say it: this is the LIMITER's
+        // reduction, not the chain's. `MasteringComp::currentGainReductionDb()`
+        // exists and is read only by the tests, so the published `pubGrDb`, the
+        // GR history ring and the §2.7 predict floor
+        // (`inputGainDb + limGainDb + grDbNow`) all describe the limiter alone
+        // — the floor therefore UNDER-estimates the lift whenever the
+        // compressor is doing the work, and `min(measure, predict)` hides that
+        // once the measure converges. A P5 item (the meter legend has to say
+        // which reduction it is showing) rather than a defect today.
         grMinThisCall = juce::jmin (grMinThisCall, gains[0], gains[nCh - 1]);
 
         int readPos = writePosOs - delayOs;
@@ -870,8 +899,16 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // ever — the boundary keeps emitting 0.0f, which reads to a user as the
     // plugin having gone silent permanently. So the boundaries that substitute
     // also RECORD (`stageGeneratedNonFinite`), and the stages that can poison
-    // themselves are reset. Non-finite INPUT is zeroed before the EQ, so it
+    // themselves are repaired. Non-finite INPUT is zeroed before the EQ, so it
     // never triggers this: a hostile host buffer still costs no state.
+    //
+    // REPAIR IS VALUE-LEVEL, not a reset, everywhere it can be: `sanitiseState`
+    // clears the members that are actually non-finite and carries the rest, so
+    // a poisoned detector filter does not cost the compressor its gain-reduction
+    // envelope. The oversampler is the one stage that cannot be repaired that
+    // way (JUCE's state, and its default path is recursive), so it gets a full
+    // reset — and only on the flag that means the oversampler itself produced
+    // the value, never on another stage's fault.
     //
     // WHY THE LIMITER IS SEPARATE: its wedge is index-keyed state, not a
     // filtered value. A sample that arrives finite but pathological (a
@@ -892,14 +929,29 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         limiter.resetWindow();
     if (stageGeneratedNonFinite)
     {
-        // Cheap, and only on a block that already lost audio: clearing the
-        // filter histories costs a discontinuity the boundaries have already
-        // made silent. The smoothed CONTROLS are untouched (resetState for the
-        // EQ), or re-primed on the next setPerBlock at values they are already
-        // sitting on, so nothing steps.
-        eq.resetState();
-        comp.reset();
-        clip.reset();
+        // SANITISE, do not reset: each of these clears the state that is
+        // actually non-finite and carries the rest, which is the same rule
+        // resetWindow() follows for the limiter (discard the wedge, carry the
+        // envelope). A blanket reset would snap the compressor's gain-reduction
+        // envelope to unity on a fault its detector filter caused, which is the
+        // exact effect the limiter path exists to avoid. The smoothed CONTROLS
+        // are untouched throughout — nothing is un-primed, so nothing steps.
+        eq.sanitiseState();
+        comp.sanitiseState();
+        clip.sanitiseState();
+    }
+    if (regionInputNonFinite && osActive != nullptr)
+    {
+        // The oversampler is the exception to the rule above, twice over: its
+        // state is JUCE's and cannot be repaired value by value, and the
+        // DEFAULT min-phase path is polyphase IIR — allpass sections that feed
+        // themselves, so one infinite state makes every later region sample
+        // non-finite and the boundary above turns that into permanent silence.
+        // (The linear-phase path is FIR and flushes itself in a few samples;
+        // the reset is harmless there and the branch is not worth splitting.)
+        // reset() clears the stage buffers only — no allocation, no latency
+        // change — and is the same call latchOsConfig makes on this thread.
+        osActive->reset();
     }
 }
 

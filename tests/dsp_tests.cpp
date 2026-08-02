@@ -3003,7 +3003,7 @@ static void testExtremeLevelDoesNotSilencePermanently()
              p.colourDepth = 1.0f;
          });
 
-    run ("the oversampler's filters overflow", 0.5f * std::numeric_limits<float>::max(),
+    run ("the oversampler's filters overflow", std::numeric_limits<float>::max(),
          [] (anabasis::EngineParameters& p)
          {
              p.oversample   = anabasis::OversampleFactor::x4;

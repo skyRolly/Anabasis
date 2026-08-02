@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **fifteenth review round of 2026-08-01** (PR #5): a finite input could
+**Last updated:** for the **sixteenth review round of 2026-08-02** (PR #5): the previous round's
+recovery covered the engine's own stages but not the oversampler, whose default path is a
+recursive IIR — so the same permanent silence survived at every oversampling factor. Previous round: (PR #5): a finite input could
 make a gain-carrying stage overflow, and the boundary that swallowed the resulting NaN left the
 stage holding it — the plugin went silent until it was re-prepared. The boundaries now record
 what they substitute and the affected stage is cleared. Previous round: (PR #5): the ADR index still
@@ -36,6 +38,59 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Sixteenth review round — the recovery covered every stage the engine owns (2026-08-02)
+
+Ten items: two defects fixed, one seed corrected, four comment/scope corrections, three already
+recorded and left alone.
+
+**The previous round's fix was incomplete in exactly the way its own text advertised.** The
+rewritten invariant 9 names "a polyphase filter" among the stages that can generate a non-finite
+value from a legal float, and the region-read boundary sets the flag for precisely that case — but
+the repair block cleared `eq`, `comp` and `clip` and never touched the oversampler. Measured: at
+`FLT_MAX` with x4 or x16 **minimum-phase** oversampling the plugin is silent for ever; the same
+stimulus on the **linear-phase** path recovers by itself. That is the difference between an IIR
+allpass chain, which feeds its own poisoned state, and an FIR, which flushes in a few samples.
+`osActive->reset()` now runs on a separate flag set only by the region boundary — a full reset is
+a discontinuity and must not fire for a fault another stage caused.
+
+**A fix from the last round was itself a regression, and the review caught it.** `comp.reset()`
+zeroes the gain-reduction envelope, so a block that tripped the recovery resumed at unity with no
+release ramp — the exact effect `LookaheadLimiter::resetWindow` exists to avoid, argued at length
+in its own comment. Replaced by `sanitiseState()` on the EQ, the compressor and the clipper:
+clear the members that are actually non-finite, carry the rest. The envelope is cleared only when
+it is itself NaN, which is the one case where there is nothing to carry. `primed` is no longer
+disturbed either, so the smoothers no longer snap.
+
+**Defence in depth where no stimulus reaches.** The limiter's detector high-pass is recursive and
+fed from the wet ring, which the engine keeps finite but not bounded; `|b1| ≈ 2` means a ring
+sample past ~`FLT_MAX/2` overflows it, and `resetWindow` sanitised the envelopes but not the
+biquad. No probe in the suite reaches it — the compressor's identical sidechain filter sits
+upstream on the same parameter and poisons first — so this is stated as an argument about today's
+chain rather than a guarantee, and the two lines went in anyway.
+
+**One measurement that looked like a defect and was not.** With the colour model at full depth, an
+input around 3e7 leaves the output pinned at the ceiling for ≈2.8 s afterwards. Nothing is
+poisoned: the colour DC blocker is a 5 Hz one-pole, and 87 time constants of decay from 1e35 is
+exactly that long. Recorded because the first probe ran a 2.1 s tail and reported it as permanent.
+
+**A seed that published a physically impossible number.** `AdaptiveEngine::reset` seeded
+`msAvg = peakAvg = 1e-6`, but crest is `20·log10(peakAvg / sqrt(msAvg))` — two quantities a square
+apart — so the published crest started at −60 dB and took seconds to climb out. Nothing consumes
+crest today, so this is a P5 readout fix, one line, with the seeds now a square apart.
+
+**Three enumerations corrected in place.** Invariant 12 said "exactly two legs sit downstream of
+the quantiser" and there are three — the delta substitution subtracts the undithered dry from the
+dithered processed signal. The GR tap is the limiter's alone, which the published meter, the
+history ring and the §2.7 predict floor all inherit. The detector high-pass sees a
+non-contiguous sample stream while the lookahead glides, the same class of cost the wedge already
+records.
+
+**Lesson.** Both defects this round were in the previous round's fix, and both were findable from
+its own documentation: the invariant text named the polyphase filter the code forgot, and the
+limiter's comment argued against the reset the new code performed. A fix that ships with a
+carefully written rationale should be re-read against that rationale before it is called done —
+the rationale is the most precise specification of the fix that exists.
 
 ### Fifteenth review round — the boundary protected everything except the stage that broke (2026-08-01)
 

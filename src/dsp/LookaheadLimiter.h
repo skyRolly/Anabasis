@@ -113,6 +113,19 @@ public:
             head[ch] = tail[ch] = 0;
         for (auto& e : envFast) if (! std::isfinite (e)) e = 1.0f;
         for (auto& e : envSlow) if (! std::isfinite (e)) e = 1.0f;
+        // The detector high-pass is the other recursive state on this path and
+        // needs the same treatment: it is fed `tapped[]` from the wet ring,
+        // which the engine keeps FINITE but not bounded, and |b1| ≈ 2 means a
+        // ring sample past ~FLT_MAX/2 overflows the biquad. Once that happens
+        // the filter feeds itself and every later `det` is NaN, which no window
+        // reset repairs. Cleared as a pair per channel, for the same reason the
+        // EQ's are. Defence in depth like the envelope sanitisation above: no
+        // stimulus in the suite reaches it, because the compressor's identical
+        // sidechain filter sits upstream on the same parameter and poisons
+        // first, which is an argument about today's chain, not a guarantee.
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            if (! std::isfinite (hpfZ1[ch]) || ! std::isfinite (hpfZ2[ch]))
+                hpfZ1[ch] = hpfZ2[ch] = 0.0f;
         writeCount = 0;
     }
 

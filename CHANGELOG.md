@@ -87,6 +87,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testExtremeLevelDoesNotSilencePermanently`, four stimuli, each mutation-verified against the
   matching half of the fix. [Verified]
 
+- **…including with oversampling on, where the recovery was incomplete.** The first fix repaired
+  the engine's own stages but not the oversampler, whose default (minimum-phase) filters are
+  recursive: one infinite state fed itself and every later sample stayed non-finite, so an extreme
+  input still silenced the plugin permanently at any oversampling factor. The oversampler is now
+  reset when it is the stage that produced the value. The repair of the other stages also stopped
+  being a blanket reset — it clears only the values that are actually non-finite, so recovering
+  from a poisoned detector filter no longer snaps the compressor's gain reduction to unity.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — the oversampler case of the same test, now at
+  `FLT_MAX` (the level the polyphase filters overflow at), mutation-verified. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

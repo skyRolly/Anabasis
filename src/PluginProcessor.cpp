@@ -280,6 +280,11 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     // build) before the flag (block top), so a block can adopt the new values
     // and start the out-leg together: the first ~6 ms of the glide then plays
     // at decreasing but non-zero gain. Still band-limited, never a step.
+    // Note the two halves of a swap therefore land at different times: the
+    // smoothed parameters glide from that first block, while the discrete
+    // rewires the same swap carries (eqPosition, colourModel, OS factor) wait
+    // for the silent bottom, which is the whole point of the duck. Only the
+    // smoothed half is exposed, and only for the out-leg's first samples.
     engine.requestForcedDuck();
     auto newlyStored = saveSlotFromLive();
     applySlotToLive (storedSlot);

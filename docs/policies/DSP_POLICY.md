@@ -167,8 +167,14 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    a fifth-power colour term, a polyphase filter) keeps the NaN in its own state, and a boundary
    that silently substitutes turns that into permanent silence with no signal that anything
    happened. Therefore every substituting boundary also RECORDS the substitution, and the stages
-   that can generate one are reset on that record. A stage added to the chain must satisfy both
-   halves — see the invariant 9 block in `AnabasisEngine::processChunk`.
+   that can generate one are REPAIRED on that record. Repair is value-level wherever the state is
+   ours (`sanitiseState` clears the members that are non-finite and carries the rest, so a
+   poisoned detector filter does not also cost the compressor its gain-reduction envelope — the
+   rule `LookaheadLimiter::resetWindow` already followed); the oversampler is the exception,
+   because its state is JUCE's and its default path is a polyphase **IIR** that feeds itself, so
+   it takes a full `reset()` and only on the boundary that means the oversampler itself produced
+   the value. A stage added to the chain must satisfy both halves — see the invariant 9 block in
+   `AnabasisEngine::processChunk`.
    Guarded by: `testNoBadSamples` across the algorithm × oversampling × sample-rate matrix,
    including silence and hostile automation; `testExtremeLevelDoesNotSilencePermanently` for the
    recovery half; `testSelfHealDoesNotSnapTheEnvelope` for the manner of the recovery.
@@ -189,8 +195,8 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 12. **Dither is off by default and is the last stage before output.** It is intended for final
     export only; enabling it must not change gain staging. TPDF, with optional noise shaping.
     **Scope, stated for the same reason invariant 4's is** (recorded 2026-08-01, PR #5): "last
-    stage" means last on the **programme path**, and exactly **two** legs sit downstream of the
-    quantiser:
+    stage" means last on the **programme path**, and **three** legs sit downstream of the
+    quantiser (the count was corrected from two on 2026-08-02 — the delta leg was missed):
     - the **§2.7 loudness-compensation gain**, applied post-mix so a loudness-matched bypass
       carries the same gain. Monitor-only, snapped inert under `nonRealtime` (invariant 10), so
       it never reaches a render: auditioning with Loudness Comp engaged does scale the dithered
@@ -203,6 +209,11 @@ stage exists; evidence citations are added as the modules land (constraint C7).
       **invariant 7 requires bypass to be a bit-exact null**. A bounded off-grid ramp on an
       audition toggle is the cheaper of the two, and the corrected claim is that a render is on
       the grid *except* across a bypass toggle — not unconditionally.
+    - the **§2.9 delta substitution**, `wetLeg = dryForDelta − processed`: it subtracts the
+      undithered delay-aligned dry signal from the dithered processed one, so an audition with
+      Delta engaged is off the grid too. Monitor-only and snapped inert under `nonRealtime`, so
+      like the compensation gain it never reaches a render — which is why the substance of the
+      invariant is unchanged and only the enumeration was wrong.
 
 13. **The DSP core is format-agnostic.** `src/dsp/` depends only on `juce_dsp` /
     `juce_audio_basics` and is driven by a POD parameter snapshot; it never includes the plugin
@@ -224,7 +235,7 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
 | 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
-| 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testSelfHealDoesNotSnapTheEnvelope` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad, RMS detector square, colour c⁵, oversampler filters — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted) |
+| 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testSelfHealDoesNotSnapTheEnvelope` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad, RMS detector square, colour c⁵, polyphase IIR — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted) |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor` | **live (P3)** — offline render bit-identical with comp on/off and with delta on/off; realtime monitor pulled to the dry loudness with the predict floor acting before the measure exists (all mutation-verified) |
 | 11 metering accuracy | `testLufsCalibration`, `testLufsGating`, `testLufsWindows` | **partial (P3)** — LUFS M/S/I live against the standard's synthesised calibration points (997 Hz compliance vector −3.01 LKFS ≤ 0.1 LU at 48/44.1 kHz; both gate halves isolated by stimulus, incl. the silence-in-the-threshold-base case only mutation testing surfaced); the dBTP meter and the file-based EBU vector sweep remain |
 | 12 dither placement/default | `testDitherModes` + `testNullWithDefaults` | **live (P2)** — Off default is a true no-op (the bit-exact null proves it); 16-bit lands on the 2⁻¹⁵ grid with a randomised LSB; shaping tilts the error spectrum +12.6 dB toward the top of the band; placement after the clamp, processed path only |

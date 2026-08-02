@@ -131,6 +131,24 @@ public:
         primed = false;
     }
 
+    // Invariant 9 recovery. `activityEnv` is included and the bit-zero rule
+    // below still holds: it is only touched when it is ALREADY non-finite, and
+    // the value it is set to is exactly 0.0f, which is the state the null path
+    // needs. `primed` is deliberately not disturbed — the smoothers are mid-
+    // glide on values the user chose, and un-priming would snap them.
+    void sanitiseState() noexcept
+    {
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+        {
+            if (! std::isfinite (adaaPrev[ch])) adaaPrev[ch] = 0.0f;
+            if (! std::isfinite (toneLp[ch]))   toneLp[ch]   = 0.0f;
+            if (! std::isfinite (dcState[ch]))  dcState[ch]  = 0.0f;
+            if (! std::isfinite (tameLp[ch]))   tameLp[ch]   = 0.0f;
+        }
+        if (! std::isfinite (activityEnv))
+            activityEnv = 0.0f;
+    }
+
     void setPerBlock (const EngineParameters& p) noexcept
     {
         auto set = [this] (juce::SmoothedValue<float>& s, float v) noexcept

@@ -70,6 +70,25 @@ public:
         primed = false;
     }
 
+    // Invariant 9 recovery — the counterpart of LookaheadLimiter::resetWindow:
+    // repair what is poisoned, CARRY what is not. The GR envelope is the state
+    // whose snap to unity is audible (a block held 10 dB down would jump with
+    // no release ramp — the same argument the limiter's own comment makes), so
+    // it is only cleared when it is itself non-finite, which is the one case
+    // where there is nothing to carry. `meanSquare` and the detector biquad go
+    // independently: they poison on their own (the RMS path SQUARES, so ~1.8e19
+    // is enough) without the envelope having seen anything.
+    void sanitiseState() noexcept
+    {
+        if (! std::isfinite (grFastDb) || ! std::isfinite (grSlowDb))
+            grFastDb = grSlowDb = 0.0f;          // paired: the auto path averages them
+        if (! std::isfinite (meanSquare))
+            meanSquare = 0.0f;
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            if (! std::isfinite (hpfZ1[ch]) || ! std::isfinite (hpfZ2[ch]))
+                hpfZ1[ch] = hpfZ2[ch] = 0.0f;
+    }
+
     // Once per block, from the POD snapshot.
     void setPerBlock (const EngineParameters& p) noexcept
     {

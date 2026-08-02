@@ -68,6 +68,21 @@ public:
             sec.clearState();
     }
 
+    // Invariant 9 recovery (AnabasisEngine's self-heal block): repair only the
+    // history that is actually poisoned. A biquad section that overflowed on a
+    // finite-but-astronomical sample holds inf/NaN and would filter every later
+    // sample into one; a section that did not is carrying real signal history
+    // and clearing it would be a discontinuity for nothing. Per (section,
+    // channel): both states go, or neither — they are one filter's memory, and
+    // half-clearing is a state no signal produced.
+    void sanitiseState() noexcept
+    {
+        for (auto& sec : sections)
+            for (int ch = 0; ch < kMaxChannels; ++ch)
+                if (! std::isfinite (sec.z1[ch]) || ! std::isfinite (sec.z2[ch]))
+                    sec.z1[ch] = sec.z2[ch] = 0.0f;
+    }
+
     // Once per block, from the POD snapshot (ADR-0011: never piecemeal).
     void setTargets (const EngineParameters& p) noexcept
     {

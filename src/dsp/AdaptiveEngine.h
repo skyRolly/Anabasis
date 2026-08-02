@@ -111,7 +111,14 @@ public:
         for (int ch = 0; ch < kMaxChannels; ++ch)
             bandLp[ch] = 0.0f;
         envFast = envSlow = 0.0f;
-        msAvg = peakAvg = 1.0e-6f;
+        // Seeded so the PUBLISHED crest starts at 0 dB, not at a physically
+        // impossible one: crest is 20·log10(peakAvg / sqrt(msAvg)), so the two
+        // seeds must be a square apart to mean "no measurement yet". Seeding
+        // both at 1e-6 read as -60 dB until the 1.5 s integrator climbed out
+        // of it — invisible today (nothing consumes crest; the trims use onset
+        // rate and tilt) and a wrong number on the P5 readout tomorrow.
+        msAvg   = 1.0e-12f;
+        peakAvg = 1.0e-6f;
         loEnergy = hiEnergy = 1.0e-9f;
         onsetRate = 0.0f;
         onsetHold = 0;
