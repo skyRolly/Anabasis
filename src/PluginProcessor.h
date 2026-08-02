@@ -81,6 +81,7 @@ public:
     // the wrapper lands the slot-level fields (name, detach mask) and drops
     // the restore-armed macro mapping (§5.3: a restore is not a gesture).
     bool applyPresetFile (const juce::File& file);
+    bool applyFactoryPreset (int index);   // same bracket/duck/restore semantics
 
     // Host-side bypass routes through our own `bypass` parameter, so it takes
     // the engine's delay-aligned crossfade path instead of the wrapper's
@@ -92,11 +93,24 @@ public:
     // for the same reason applyPresetFile does — the slot-level fields (name,
     // detach mask) belong to the wrapper, not to PresetManager's file I/O.
     const juce::String& currentPresetName() const noexcept { return livePresetName; }
+
+    // Preset dirty marker (Anamorph grammar): the live slot differs from the
+    // state the named preset landed. Message thread; the compare is a full
+    // slot-tree equivalence, so callers poll it at display rate, not per
+    // frame. No preset loaded = never dirty (there is nothing to differ from).
+    bool presetDirty() const
+    {
+        if (livePresetName.isEmpty() || ! presetBaseline.isValid())
+            return false;
+        return ! presetBaseline.isEquivalentTo (
+                   const_cast<AnabasisAudioProcessor*> (this)->saveSlotFromLive());
+    }
     bool savePresetFile (const juce::File& file)
     {
         if (! presetManager->savePreset (file, liveDetachMask))
             return false;
         livePresetName = file.getFileNameWithoutExtension();
+        presetBaseline = saveSlotFromLive();   // a just-saved preset is clean
         return true;
     }
     // Read-only view of the §5.3 detach mask, for the Advanced macro row's
@@ -166,6 +180,7 @@ private:
     juce::Array<juce::ValueTree> undoStacks[anabasis::kNumAbSlots],
                                  redoStacks[anabasis::kNumAbSlots];
     juce::ValueTree gesturePreState;     // armed at first gesture-begin
+    juce::ValueTree presetBaseline;      // the state the named preset landed
     int  openGestureCount = 0;
     void pushUndoStep (juce::ValueTree preState);
     static constexpr int kUndoCap = 128;

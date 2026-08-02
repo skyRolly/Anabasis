@@ -449,6 +449,26 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     activeSlot = newIndex;
 }
 
+bool AnabasisAudioProcessor::applyFactoryPreset (int index)
+{
+    int count = 0;
+    if (index < 0 || index >= (PresetManager::factoryPresets (count), count))
+        return false;                          // validated BEFORE the undo bracket
+    pushUndoStep (saveSlotFromLive());
+
+    const MacroEngine::ScopedRestore guard (*macroEngine);
+    engine.requestForcedDuck();                // §2.8: a preset is a bulk swap
+
+    juce::StringArray mask;
+    if (! presetManager->applyFactoryPreset (index, mask))
+        return false;
+    liveDetachMask = mask;
+    liveBaseline   = {};                       // defaults-based: no macro baseline survives
+    livePresetName = PresetManager::factoryPresets (count)[index].name;
+    presetBaseline = saveSlotFromLive();       // dirty marker datum
+    return true;
+}
+
 bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
 {
     // §7 preset bracketing: parse BEFORE the bracket opens — an unreadable
@@ -474,6 +494,7 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
                                           // apply arms the listeners too
     liveDetachMask = mask;
     livePresetName = file.getFileNameWithoutExtension();
+    presetBaseline = saveSlotFromLive();       // dirty marker datum
     return true;
 }
 

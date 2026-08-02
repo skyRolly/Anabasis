@@ -702,6 +702,60 @@ static void testMeterPublication()
 }
 
 // ---------------------------------------------------------------------------
+// §7 factory presets: compiled-in override tables — defaults first, then the
+// intents — through the SAME lock/exclusion semantics as file presets, with
+// an empty detach mask (nothing loads pre-detached), one undo step, and the
+// dirty marker clean right after an apply and set by the next edit.
+static void testFactoryPresets()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+
+    int count = 0;
+    const auto* table = PresetManager::factoryPresets (count);
+    check (count == 5, "factory: the five brief-named presets are compiled in");
+
+    // Apply EDM Club (index 2): macros land, style lands, ceiling lands.
+    check (proc.applyFactoryPreset (2), "factory: apply succeeds");
+    check (proc.currentPresetName() == juce::String (table[2].name),
+           "factory: the preset name is the table's");
+    check (std::abs (apvts.getRawParameterValue (pid::loudness)->load() - 80.0f) < 0.5f,
+           "factory: the loudness macro landed");
+    check (std::abs (apvts.getRawParameterValue (pid::ceiling)->load() - (-0.5f)) < 0.01f,
+           "factory: the ceiling override landed");
+    check (proc.detachMask().isEmpty(), "factory: nothing loads pre-detached");
+    check (! proc.presetDirty(), "factory: clean right after the apply");
+    check (proc.canUndo(), "factory: the apply is one undoable step");
+
+    // An override table is DEFAULTS + intents: a stray value from before the
+    // apply must not survive into a preset that does not name it.
+    auto* knee = apvts.getParameter (pid::compKnee);
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (1.0f));
+    check (proc.presetDirty(), "factory: an edit sets the dirty marker");
+    check (proc.applyFactoryPreset (0), "factory: (premise) second apply");
+    const float kneeAfter = apvts.getRawParameterValue (pid::compKnee)->load();
+    auto* kneeParam = apvts.getParameter (pid::compKnee);
+    const float kneeDefault = kneeParam->getNormalisableRange().convertFrom0to1 (
+                                  kneeParam->getDefaultValue());
+    check (std::abs (kneeAfter - kneeDefault) < 0.01f,
+           "factory: an unnamed parameter returns to its default (defaults + intents)");
+
+    // Ceiling lock: browsing factory presets never moves a locked ceiling.
+    auto* ceiling = apvts.getParameter (pid::ceiling);
+    ceiling->setValueNotifyingHost (ceiling->getNormalisableRange().convertTo0to1 (-6.0f));
+    proc.internalState.state().setProperty (iid::ceilingLock, true, nullptr);
+    check (proc.applyFactoryPreset (2), "factory: (premise) locked apply");
+    check (std::abs (apvts.getRawParameterValue (pid::ceiling)->load() - (-6.0f)) < 0.01f,
+           "factory: a locked ceiling is never written by a factory preset");
+    proc.internalState.state().setProperty (iid::ceilingLock, false, nullptr);
+
+    // An out-of-range index is refused before the undo bracket.
+    while (proc.canUndo()) proc.undo();
+    check (! proc.applyFactoryPreset (99), "factory: (premise) bad index refused");
+    check (! proc.canUndo(), "factory: a refused index cost no undo step");
+}
+
+// ---------------------------------------------------------------------------
 // §7 per-slot undo: the undo unit is the five-field SLOT tree, coalescing is
 // gesture-gated, automation folds silently, a preset apply brackets as one
 // step, stacks are per slot and a session load clears them. The detach-mask
@@ -776,7 +830,6 @@ static void testUndoIsPerSlotGestureCoalescedAndMaskWide()
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory);
     auto good = dir.getChildFile ("anabasis_undo_test.anabasis");
     proc.savePresetFile (good);
-    const float preApply = limGainValue();
     limGain->beginChangeGesture();
     limGain->setValueNotifyingHost (norm (9.0f));
     limGain->endChangeGesture();
@@ -1322,6 +1375,7 @@ int main (int argc, char** argv)
         testMeterPublication();
     testDetachAndReengageGrammar();
     testUndoIsPerSlotGestureCoalescedAndMaskWide();
+    testFactoryPresets();
     testMeterResetClearsSessionHolds();
     testGrRingResetEpoch();
         testMetersReadTheRenderNotTheMonitor();

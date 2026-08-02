@@ -279,6 +279,8 @@ private:
     bool  tooltipsOn = false;
     float hostScale  = 1.0f;
     juce::String presetShownName;
+    bool shownDirty = false;
+    int  dirtyPollDivider = 0;
 
 #if JUCE_MAC || JUCE_WINDOWS
     juce::OpenGLContext glContext;

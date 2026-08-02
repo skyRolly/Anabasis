@@ -6,7 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P6 bench commit (2026-08-02)** (PR #5): `AnabasisBench` (OFF by
+**Last updated:** for the **P6 factory-preset commit (2026-08-02)** (PR #5): the compiled-in
+override tables (defaults + intents through the shared lock/exclusion core; empty mask; one undo
+step; the five brief-named presets as ⊕ drafts), the FACTORY menu section with the ‹ › ring, and
+the dirty marker. Mutation pass: defaults-first, the lock skip, index-validated-before-the-
+bracket, and the empty-mask contract each die against their own assertion. Previous: (PR #5): `AnabasisBench` (OFF by
 default, `-DANABASIS_BUILD_BENCH=ON`) implements the DESIGN §9 procedure — SR × block × OS × mode
 matrix, median ns/sample of the timed region over 5×1 s runs, worst block, machine recorded —
 and `docs/architecture/PERFORMANCE_BUDGET.md` now exists with the measured table: the budget case

@@ -129,18 +129,29 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     presetName.setComponentID ("presetname");
     auto stepPreset = [this] (int dir)
     {
-        auto dir_ = PresetManager::userPresetDirectory();
-        auto files = dir_.findChildFiles (juce::File::findFiles, false, "*.anabasis");
+        // One ordered list: FACTORY first, then the user files — ‹ › walks it
+        // as a ring, matching the menu's presentation.
+        int factoryCount = 0;
+        const auto* factory = PresetManager::factoryPresets (factoryCount);
+        auto files = PresetManager::userPresetDirectory()
+                         .findChildFiles (juce::File::findFiles, false, "*.anabasis");
         files.sort();
-        if (files.isEmpty())
+        const int total = factoryCount + files.size();
+        if (total == 0)
             return;
         int idx = -1;
-        for (int i = 0; i < files.size(); ++i)
-            if (files.getReference (i).getFileNameWithoutExtension() == processor.currentPresetName())
-                { idx = i; break; }
-        idx = (idx < 0 ? (dir > 0 ? 0 : files.size() - 1)
-                       : (idx + dir + files.size()) % files.size());
-        processor.applyPresetFile (files.getReference (idx));
+        for (int i = 0; i < factoryCount; ++i)
+            if (processor.currentPresetName() == factory[i].name) { idx = i; break; }
+        if (idx < 0)
+            for (int i = 0; i < files.size(); ++i)
+                if (files.getReference (i).getFileNameWithoutExtension()
+                        == processor.currentPresetName())
+                    { idx = factoryCount + i; break; }
+        idx = (idx < 0 ? (dir > 0 ? 0 : total - 1) : (idx + dir + total) % total);
+        if (idx < factoryCount)
+            processor.applyFactoryPreset (idx);
+        else
+            processor.applyPresetFile (files.getReference (idx - factoryCount));
         refreshPresetDisplay();
     };
     presetPrev.onClick = [stepPreset] { stepPreset (-1); };
@@ -1053,10 +1064,18 @@ void AnabasisAudioProcessorEditor::refreshPresetDisplay()
     auto name = processor.currentPresetName();
     if (name.isEmpty())
         name = "Preset";               // §6.2 wireframe placeholder (C8: owner wording TODO)
-    if (name != presetShownName)
+    // The dirty compare is a full slot-tree equivalence — throttle it to
+    // every 8th tick (~3 Hz) and reuse the last answer between.
+    if (++dirtyPollDivider >= 8)
     {
-        presetShownName = name;
-        presetName.setButtonText (name);
+        dirtyPollDivider = 0;
+        shownDirty = processor.presetDirty();
+    }
+    const auto shown = shownDirty ? name + " *" : name;
+    if (shown != presetShownName)
+    {
+        presetShownName = shown;
+        presetName.setButtonText (shown);
     }
 }
 
@@ -1068,6 +1087,12 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
 
     juce::PopupMenu m;
     m.setLookAndFeel (&lnf);
+    int factoryCount = 0;
+    const auto* factory = PresetManager::factoryPresets (factoryCount);
+    m.addSectionHeader ("FACTORY");
+    for (int i = 0; i < factoryCount; ++i)
+        m.addItem (20001 + i, factory[i].name, true,
+                   processor.currentPresetName() == factory[i].name);
     if (! files.isEmpty())
     {
         m.addSectionHeader ("USER");
@@ -1089,6 +1114,7 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             if (r == 0) return;
             if (r == 10001) { showSavePreset (true); return; }
             if (r == 10002) { showLoadPreset(); return; }
+            if (r >= 20001) { processor.applyFactoryPreset (r - 20001); refreshPresetDisplay(); return; }
             if (r - 1 < files.size())
             {
                 processor.applyPresetFile (files.getReference (r - 1));

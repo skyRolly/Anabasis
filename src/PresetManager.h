@@ -33,6 +33,24 @@ public:
     bool savePreset (const juce::File& file, const juce::StringArray& detachMask) const;
     bool applyPreset (const juce::File& file, juce::StringArray& detachMaskOut);
 
+    // -- factory presets (DESIGN §7: compiled-in override tables) ------------
+    // The five names come VERBATIM from the brief (§9 names them — they are
+    // owner wording, not invented); the VALUES are ⊕ drafts with the same
+    // status as the §5.5 macro curves: tuned by ear at the P6 listening pass,
+    // frozen before v0.1.0. The ≥12-preset bank and any further wording stay
+    // owner-supplied (C8, OQ). A factory preset expresses itself through the
+    // MACROS plus non-managed parameters wherever possible, so nothing loads
+    // pre-detached; the mask it carries is empty.
+    struct FactoryPreset
+    {
+        const char* name;
+        struct Override { const char* id; float value; };
+        const Override* overrides;
+        int numOverrides;
+    };
+    static const FactoryPreset* factoryPresets (int& countOut);
+    bool applyFactoryPreset (int index, juce::StringArray& detachMaskOut);
+
 private:
     juce::AudioProcessorValueTreeState& apvts;
     InternalState& internal;

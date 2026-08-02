@@ -169,6 +169,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) — suites + pluginval L8 ×3 both modes with the
   editor open under xvfb; GUI appearance itself is Level-5 manual validation. [Verified]
 
+- **P6 (in progress) — undo, factory presets, and the measured budget.** Per-slot undo/redo in
+  the top bar (one drag = one step; automation never pollutes the history; undoing an edit also
+  restores its macro-detach state; preset applies undo as one step). Five factory presets from
+  the brief's list (Transparent Master, Loud Pop, EDM Club, Vocal Forward, Tape Glue — settings
+  are drafts until the listening pass) in a FACTORY menu section, with the preset name showing a
+  dirty mark once the state is edited. A locked ceiling is never moved by any preset. The
+  performance budget is now measured, not asserted: the 48 kHz / 4× working case runs at 3 % of
+  one core on the recorded machine (`docs/architecture/PERFORMANCE_BUDGET.md`), and pluginval
+  passes at strictness 10 locally in both modes.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `testUndoIsPerSlotGestureCoalescedAndMaskWide`,
+  `testFactoryPresets`, `AnabasisBench`. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---
