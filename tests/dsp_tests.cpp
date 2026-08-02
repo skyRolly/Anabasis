@@ -2704,6 +2704,59 @@ static void testAdaptationConvergesAndHolds()
 // the onset reference near 0 — far from the 4.0 factory default, which is what
 // makes "did the cancelled pass commit?" a disjoint question rather than a
 // tolerance one.
+// ---------------------------------------------------------------------------
+// §5.4 Learn commands are ONE staged record, so a stop and a start issued
+// inside the same audio block both survive. Two flags consumed in a fixed
+// order could not: `startLearn` ran first and zeroed the accumulator the stop
+// was about to commit, then `commitLearn` no-opped on learnBlocks == 0 — the
+// finished pass was lost AND the new one never began.
+//
+// Steady sine again (no transients ⇒ a committed onset reference lands near 0
+// against the 4.0 factory default), so "did the first pass commit?" is a
+// disjoint question rather than a tolerance one.
+static void testStopThenStartInOneBlockKeepsBoth()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode = false;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto feed = [&] (int blocks, int t0)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 220.0f * (float) (t0 + b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+        }
+    };
+
+    check (! engine.adaptiveForWrapper().hasLearned(), "learnCmd: nothing learned yet (baseline)");
+    engine.requestLearnStart();
+    feed (60, 0);                       // ~0.6 s accumulated
+
+    engine.requestLearnStop();          // both issued between two blocks…
+    engine.requestLearnStart();         // …stop first, then start
+    feed (1, 60 * 512);                 // one block consumes the composed command
+
+    // hasLearned() IS the "accumulator survived" property, not a proxy for it:
+    // commitLearn only latches when learnBlocks > 0, so it can be true only if
+    // the pass was still intact when the commit ran. (An earlier draft also
+    // asserted the reference had MOVED off its 4.0 default — brittle, because
+    // a steady sine's own startup transient leaves the onset feature near that
+    // value by coincidence. The weaker-looking check is the exact one.)
+    check (engine.adaptiveForWrapper().hasLearned(),
+           "learnCmd: the stopped pass commits even when a restart lands in the same block");
+    check (engine.adaptiveForWrapper().isLearning(),
+           "learnCmd: ...and the restart is running, not swallowed by the commit");
+}
+
 static void testResetCancelsAnInFlightLearnPass()
 {
     const double sr = 48000.0;
@@ -3117,6 +3170,7 @@ int main()
     testDeltaMonitor();
     testAdaptationConvergesAndHolds();
     testResetCancelsAnInFlightLearnPass();
+    testStopThenStartInOneBlockKeepsBoth();
     testFreezeLatchesTrims();
     testTrimBounds();
     testNoBadSamples();

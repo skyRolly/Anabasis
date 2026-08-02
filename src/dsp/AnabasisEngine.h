@@ -92,8 +92,33 @@ public:
     void requestForcedDuck() noexcept { duckRequested.store (true, std::memory_order_relaxed); }
 
     // §5.4 Learn commands — the same momentary-request row as the duck.
-    void requestLearnStart() noexcept { learnStartReq.store (true, std::memory_order_relaxed); }
-    void requestLearnStop() noexcept  { learnStopReq.store (true, std::memory_order_relaxed); }
+    // §5.4 Learn commands — ONE staged record (ADR-0012's row), not two flags.
+    // Two independent flags consumed in a fixed order cannot express what the
+    // user did: a stop followed by a start inside one block left `startLearn`
+    // running first, which zeroed the accumulator the stop was about to commit,
+    // and then `commitLearn` no-opped on `learnBlocks == 0` — the finished pass
+    // never committed AND the new one never began. The same shape, and the same
+    // fix, as the learned-target restore below.
+    //
+    // The ordering information lives on the WRITER's thread, so that is where
+    // the pair is composed: a start arriving on top of an unconsumed commit
+    // becomes ONE commitThenStart command, and every other sequence degrades to
+    // last-writer-wins (a commit with nothing accumulated is the documented
+    // empty-pass no-op, so an overwritten start costs nothing). Reading back
+    // the pending flag to compose is ADR-0012 condition 5.
+    void requestLearnStart() noexcept
+    {
+        const bool commitOutstanding = learnCmdPending.load (std::memory_order_acquire)
+                                    && learnCmdCode.load (std::memory_order_relaxed) != kLearnStart;
+        learnCmdCode.store (commitOutstanding ? kLearnCommitThenStart : kLearnStart,
+                            std::memory_order_relaxed);
+        learnCmdPending.store (true, std::memory_order_release);
+    }
+    void requestLearnStop() noexcept
+    {
+        learnCmdCode.store (kLearnCommit, std::memory_order_relaxed);
+        learnCmdPending.store (true, std::memory_order_release);
+    }
 
     // Learned-target restore (session load, ADAPTIVE child): host-hidden
     // session state through the mirror pattern — consumed at the block top.
@@ -216,7 +241,9 @@ private:
     // stages see carries the APPLIED values, so nothing rewires at full gain.
     enum class DuckState { idle, out, bottom, in };
     std::atomic<bool> duckRequested { false };
-    std::atomic<bool> learnStartReq { false }, learnStopReq { false };
+    static constexpr int kLearnStart = 0, kLearnCommit = 1, kLearnCommitThenStart = 2;
+    std::atomic<bool> learnCmdPending { false };
+    std::atomic<int>  learnCmdCode { kLearnStart };
     std::atomic<bool> adaptivePending { false }, pendingLearned { false };
     std::atomic<float> pendingRefOnset { 0.0f }, pendingRefTilt { 0.0f };
     DuckState duckState = DuckState::idle;

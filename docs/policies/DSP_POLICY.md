@@ -207,7 +207,7 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 
 | Invariant | Guarding test | Status |
 |---|---|---|
-| 1 chain order | chain-order / transfer-order test | TODO (P2) |
+| 1 chain order | `testLimiterPushDoesNotDriveTheClipper` (the push sits after Clip/Sat), `testEqPositionsAreDistinct` + `testOutputNeverExceedsCeiling` in BOTH EQ positions (the clamp is last before dither) | **live** (P2) |
 | 2 latency exactness | `testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix` | **live (P2)** — the impulse lands at exactly `maxLookahead + osLatency` for every lookahead value AND every factor × phase cell, Force-Max-offline included; linear-phase cells are sample-exact, min-phase cells within 1 sample of the nominal bulk delay (IIR dispersion, documented in the test) |
 | 3 true peak ≥ 4× | `testTruePeakAccuracy`, `testLimiterTruePeakMode` | **partial (P2)** — the 4× measurement-tap estimator is live in the limiter's detector (grid-aligned ISP −0.004 dB, off-grid −0.171 dB recorded; the ceiling is dBTP-aware in true-peak mode); the full OS-matrix stimulus and the dBTP meter arrive with the oversampler (P2) and metering (P3) |
 | 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P2)** — the ADR-0002 mandated stimulus is live: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix still needs the true-peak tap (P2/P3) |

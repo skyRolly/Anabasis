@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **twelfth review round of 2026-08-01** (PR #5): the clipper's engage
+**Last updated:** for the **thirteenth review round of 2026-08-01** (PR #5): the Learn commands
+join the restore on ADR-0012's staged-record row — two flags in a fixed order lost BOTH commands
+when a stop and a start fell in the same block. Previous round: (PR #5): the clipper's engage
 edge is a confirmed defect recorded as **KI-005** after a fix attempt was tried and reverted, plus
 seven scope/comment corrections. Previous round: (PR #5): invariant 12's scope
 now names the bypass crossfade as its second post-dither leg (the claim written two rounds ago
@@ -29,6 +31,52 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Thirteenth review round — the same two-flag defect, in the path that was left behind (2026-08-01)
+
+Nine items: one defect fixed, two doc drifts corrected, six already handled in the previous two
+rounds (KI-005, the GR-ring index, the Learn-commit mirror gap, the verified duck/rings, the
+dynTilt third mechanism, the ceiling ZOH).
+
+**The defect is the one this PR already fixed once, in the path that was not touched.** Learn
+start/stop were two independent flags consumed in a fixed order: `learnStartReq` then
+`learnStopReq`. A stop followed by a start inside one audio block left both flags up, so
+`startLearn()` ran first — zeroing the accumulator the stop was about to commit — and
+`commitLearn()` then no-opped on `learnBlocks == 0`. **Both commands were lost**: the finished
+pass never committed and the new one never began, with nothing to tell the user. The adaptive
+restore had exactly this shape and was rewritten as a staged record three rounds ago; the Learn
+commands were left in the older form because nobody re-read the neighbouring code when the class
+of defect was identified.
+
+**Fixed on ADR-0012's row, which already authorises it** — no new mechanism, no gate item: one
+`learnCmdCode` payload behind one release-stored `learnCmdPending` flag, acquire-exchanged at the
+block top. The one thing a staged record cannot carry is ORDER, and that information exists only
+on the writer's thread, so the composition happens there: a start arriving on top of an unconsumed
+commit becomes a single **commitThenStart**. Everything else degrades to last-writer-wins, which
+is correct because a commit with nothing accumulated is the documented empty-pass no-op — so
+start→stop in one block ends with nothing running and nothing spuriously committed, which is what
+the user asked for. ADR-0012 condition 5 (the writer may read the flag back) is exactly what
+makes the composition legal.
+
+**Two test-craft notes from this round, both worth keeping.** The first draft asserted that the
+committed onset reference had MOVED off its 4.0 factory default — and it failed, because a steady
+sine's own startup transient (envFast rising faster than envSlow) leaves the onset feature near
+that value by coincidence. The replacement asserts `hasLearned()`, which is not a weaker proxy but
+the exact property: `commitLearn` latches only when `learnBlocks > 0`, so it can be true only if
+the accumulator survived. And a python edit removing the now-unused `ref0` line hit the FIRST of
+two identical lines — the one belonging to the neighbouring Learn test — which the compiler caught
+immediately. Both are instances of the same discipline this file keeps recording: assert the
+property, not a correlate of it; and anchor an edit on something unique.
+
+**Doc drift, both introduced by this PR and both in files it edited.** DSP_POLICY's invariant→test
+map still had row 1 (chain order) at `TODO (P2)` while this PR's headline defect — the limiter
+push applied before Clip/Sat — was fixed and pinned; the row now cites
+`testLimiterPushDoesNotDriveTheClipper` plus the two EQ-position tests and reads **live**.
+REPOSITORY_MAP still advertised `ADR-0001…0011` although ADR-0012 landed in the same PR that
+rewrote the lines immediately below it. Both are the "touched the paragraph, missed the sentence"
+pattern the CLAUDE.md entry-point drift already illustrated two rounds ago.
+
+Suites: 198 + 87.
 
 ### Twelfth review round — a fix attempted, measured, and reverted (2026-08-01)
 

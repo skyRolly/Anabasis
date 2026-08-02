@@ -210,10 +210,17 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         else
             adaptiveEngine.clearLearnedTargets();
     }
-    if (learnStartReq.exchange (false, std::memory_order_relaxed))
-        adaptiveEngine.startLearn();
-    if (learnStopReq.exchange (false, std::memory_order_relaxed))
-        adaptiveEngine.commitLearn();
+    // Learn: ONE staged command, so the pair the writer composed arrives whole.
+    // Commit BEFORE start within a composed command — the reverse order is the
+    // defect this replaced (startLearn zeroes the accumulator commitLearn needs).
+    if (learnCmdPending.exchange (false, std::memory_order_acquire))
+    {
+        const int cmd = learnCmdCode.load (std::memory_order_relaxed);
+        if (cmd != kLearnStart)
+            adaptiveEngine.commitLearn();
+        if (cmd != kLearnCommit)
+            adaptiveEngine.startLearn();
+    }
     const bool rewireWanted = wantIdx != latchedFactorIdx
                            || (wantIdx >= 0 && wantPh != latchedPhaseIdx)
                            || wantEq != appliedEqPos
