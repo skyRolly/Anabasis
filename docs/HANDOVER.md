@@ -68,6 +68,14 @@ test: undoing a detaching edit restores the value AND its detach bit together
 stimulus recalibration where "the stack is unchanged" had to become "the stack is EMPTY" before
 the parse-first mutant would die).
 
+**P6 progress, continued (2026-08-02).** `AnabasisBench` (DESIGN §9's procedure, OFF by default)
+is in with `docs/architecture/PERFORMANCE_BUDGET.md`: the budget case — 48 kHz · 512 · 4× ·
+working — measures **3.0 % of one core** on a 2.1 GHz Xeon against the ≈5 %-of-a-desktop-core
+target; 16× reads 9.2 % (48 k) / 20.2 % (96 k) as the stated quality extreme. Whole-engine
+numbers; the per-stage ⊕ allocation stays unclaimed pending a profiler pass. **pluginval L10
+passed locally ×3 in BOTH modes** — the P6 bar holds on Linux; CI stays at 8 until the phase
+formally turns.
+
 **Next phase plan (P6, remainder).** Factory preset bank (owner wording) + dirty
 marker; pluginval L10 ×3 platforms; DAW matrix + automation/state smoke tests; performance
 measurement against DESIGN §9's ⊕ budget (bench target + TEST_REPORT/PERFORMANCE_BUDGET);

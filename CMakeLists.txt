@@ -31,6 +31,7 @@ endif()
 
 # --- Options (all ANABASIS_*, ADR-0008 §Options) ----------------------------
 option(ANABASIS_BUILD_TESTS      "Build the AnabasisTests + AnabasisStateTests console apps" ON)
+option(ANABASIS_BUILD_BENCH      "Build the AnabasisBench performance target (DESIGN §9; OFF by default)" OFF)
 option(ANABASIS_BUILD_STANDALONE "Build the Standalone format" ON)
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
@@ -184,6 +185,25 @@ if(ANABASIS_BUILD_TESTS)
             AnabasisHardening
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
+
+    # -- AnabasisBench: the DESIGN §9 measurement procedure. OFF by default —
+    #    a benchmark that always builds gets run casually and quoted without
+    #    its machine, which is the C2 failure the budget doc guards against.
+    if(ANABASIS_BUILD_BENCH)
+        juce_add_console_app(AnabasisBench PRODUCT_NAME "AnabasisBench")
+        target_sources(AnabasisBench PRIVATE tests/bench.cpp)
+        target_compile_definitions(AnabasisBench PUBLIC
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_STANDALONE_APPLICATION=1)
+        target_link_libraries(AnabasisBench
+            PRIVATE
+                AnabasisDSP
+            PUBLIC
+                AnabasisHardening
+                juce::juce_recommended_config_flags
+                juce::juce_recommended_warning_flags)
+    endif()
 
     # -- AnabasisStateTests: state / parameter-compatibility. Compiles
     #    tests/state_tests.cpp plus the shared wrapper/GUI source list to

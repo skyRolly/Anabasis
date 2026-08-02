@@ -121,3 +121,10 @@ P3 meter publication work.
 ## Not yet measured (do not cite)
 
 CPU/performance budget (P2/P6, needs a recorded machine spec), the file-based EBU R128 vector sweep, the dBTP meter against the BS.1770 vector set (P3), listening results (P6).
+
+## Performance (2026-08-02, `AnabasisBench` — full matrix in `docs/architecture/PERFORMANCE_BUDGET.md`)
+
+Budget case **48 kHz · 512 · 4× OS · working state: 3.0 % of one core** (Intel Xeon @ 2.10 GHz,
+gcc 13.3.0, Release; median ns/sample of the timed `process()` region, 5×1 s runs) against the
+brief-§10 target of ≈5 % on a modern desktop core. Null path ≈1.3 %; the 16× quality extreme
+9.2 % (48 kHz) / 20.2 % (96 kHz). Machine + method travel with every quote (C2).
