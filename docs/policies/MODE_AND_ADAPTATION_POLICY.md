@@ -138,7 +138,13 @@ future mapping) and the bounded trim vector
 (release ±1 octave, stereo link ±0.2, scHpf 0…+30 Hz, dynTilt 0…+0.5 dB), slewed at ~2 s with a
 hysteresis deadband, applied to the per-block effective settings inside `AnabasisEngine` — never
 parameter writes, never lookahead or the OS factor (inv 4 holds structurally: the class emits
-only the four values). The invariant-7 null survives adaptation BY CONSTRUCTION: every trim is
+only the four values). **Three of the four are audible in the factory state.** The release trim
+lands on `limReleaseMs`, which the limiter consumes only in **manual** release mode; with
+`limAutoRelease` on (the default) the two auto poles are fixed constants and the trim, while
+computed, published, overlaid and latched, changes nothing about the sound. That is the "inert
+while its host stage is inert" rule doing what it says, and it is also not obviously what §5.4
+intends — the question of whether the trim should scale the auto poles is **OQ-016**, an owner
+call, deliberately not answered in code. The invariant-7 null survives adaptation BY CONSTRUCTION: every trim is
 inert while its host stage is inert, and the bit-exact null test runs with adaptation live. An
 engine `reset()` **cancels an in-flight Learn pass** — the features it was measuring are zeroed
 by the same call, so a commit spanning the discontinuity would mix two statistics; `learned` and

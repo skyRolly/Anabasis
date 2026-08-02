@@ -372,6 +372,16 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // a trim member); the §9 lockable set is {ceiling} in v1.
     {
         const auto& t = adaptiveEngine.currentTrims();
+        // SCOPE OF THE RELEASE TRIM, stated because the parameter name hides
+        // it: this lands on `limReleaseMs`, which LookaheadLimiter reads ONLY
+        // in manual-release mode. `limAutoRelease` defaults to ON and its two
+        // envelopes step with the fixed kAutoFastMs/kAutoSlowMs constants, so
+        // at factory defaults this trim is computed, published, overlaid and
+        // latched — and inaudible. That is consistent with the rule stated
+        // above (a trim is inert while its host stage is inert) and it is not
+        // obviously what §5.4 intends, which is why the choice is OQ-016 and
+        // not a silent edit here: making it audible means scaling the auto
+        // poles, and that changes the default sound.
         pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f,
                                               p.limReleaseMs * std::pow (2.0f, t.releaseOctaves));
         pApplied.stereoLink   = juce::jlimit (0.0f, 1.0f, p.stereoLink + t.stereoLink);
@@ -797,7 +807,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             // processed term already has (processed = duckGain·p), so the
             // whole difference scales by duckGain and fades to silence with
             // everything else. Subtracting the FULL dry from a ducked
-            // processed did the opposite: delta rose to the undicked dry
+            // processed did the opposite: delta rose to the unducked dry
             // signal exactly when the transition was meant to be silent.
             // The bypass leg below keeps the pure `delayedDry` — invariant 7
             // is a property of that leg alone.

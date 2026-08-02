@@ -175,6 +175,13 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    it takes a full `reset()` and only on the boundary that means the oversampler itself produced
    the value. A stage added to the chain must satisfy both halves — see the invariant 9 block in
    `AnabasisEngine::processChunk`.
+   **"Self-heals" is not "recovers instantly", and the difference is stated so it is not read as
+   one:** the repair runs at the END of the chunk that detected the contamination, so that whole
+   chunk has already been processed with the poisoned state and its output is the boundaries'
+   `0.0f`. The lookahead ring then holds up to `delayOs` of those zeroed samples, which read out
+   over the following ~10 ms. Recovery is therefore **one chunk plus the lookahead line**, not one
+   sample — a bounded silence on a signal that was already unusable, which is what graceful
+   degradation means here.
    Guarded by: `testNoBadSamples` across the algorithm × oversampling × sample-rate matrix,
    including silence and hostile automation; `testExtremeLevelDoesNotSilencePermanently` for the
    recovery half; `testSelfHealDoesNotSnapTheEnvelope` for the manner of the recovery.

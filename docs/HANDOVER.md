@@ -37,7 +37,11 @@ transient density — silence-gated; the trim mapping consumes **transient densi
 crest published for the UI and reserved for a future mapping), the bounded trim vector
 (release ±1 oct, link ±0.2, scHpf
 0…+30 Hz, dynTilt 0…+0.5 dB) slewed at ~2 s with hysteresis and applied to per-block effective
-settings only; Freeze latching the vector to the ulp; Learn (analyse → commit reference targets,
+settings only — **three of the four are audible in the factory state**: the release trim lands on
+`limReleaseMs`, which the limiter reads only in manual-release mode, so with auto release (the
+default) it is computed, published, overlaid and latched but silent, which is **OQ-016**, an owner
+call rather than a code edit because the alternative changes the default sound; Freeze latching the
+vector to the ulp; Learn (analyse → commit reference targets,
 `ADAPTIVE` child serialization with the absent-=-never-learned read rule). The exit criterion —
 **switching modes does not change the sound** — is pinned sample-identically by
 `testModeSwitchIsSoundNeutral`. The invariant-7 null runs with adaptation LIVE because every trim

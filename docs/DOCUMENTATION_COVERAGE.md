@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **sixteenth review round of 2026-08-02** (PR #5): the previous round's
+**Last updated:** for the **seventeenth review round of 2026-08-02** (PR #5): one of the four
+§5.4 trims is inert in the factory state — the release trim lands on a parameter the limiter reads
+only in manual mode — recorded as **OQ-016** rather than wired, because making it audible changes
+the default sound. Previous round: (PR #5): the previous round's
 recovery covered the engine's own stages but not the oversampler, whose default path is a
 recursive IIR — so the same permanent silence survived at every oversampling factor. Previous round: (PR #5): a finite input could
 make a gain-carrying stage overflow, and the boundary that swallowed the resulting NaN left the
@@ -38,6 +41,49 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Seventeenth review round — an adaptive behaviour that is computed, published, latched and silent (2026-08-02)
+
+Eleven items: one product question raised rather than answered, four documentation/comment
+corrections, six repeats of items already recorded (three of them verbatim from the previous
+round, against comments this branch already carries).
+
+**The one substantive finding is a question, not a bug.** `LookaheadLimiter::setRelease` writes
+`aRelManual`, which `processSample` reads only in the `else` branch of `if (autoRelease)`; the auto
+path steps its two envelopes with fixed 40 ms / 600 ms constants. `limAutoRelease` defaults to on.
+So the §5.4 release trim is computed, slewed, published, displayed as an overlay, latched by Freeze
+and serialized — and inaudible at factory defaults, while the other three trims reach their stages.
+
+**Why it was not simply wired.** Both readings are backed by documents this repository is governed
+by. `DESIGN.md` §5.4 defines trims as deltas "around the current parameter values" and
+`MODE_AND_ADAPTATION_POLICY.md` states that every trim "is inert while its host stage is inert" —
+the property the invariant-7 null rests on — so an inert trim on an unused parameter is that rule
+working. Against that, a release trim that cannot open up on sparse material is not delivering what
+§5.4 exists for. Making it audible means scaling the two auto poles, which changes **what the
+plugin sounds like at factory defaults**: a product decision, and `CLAUDE.md`'s standing rule is
+that open decisions go to `OPEN_QUESTIONS.md` rather than being guessed at. **OQ-016**, with the
+recommendation stated and the scope now written into the policy's "Current implementation"
+section, `HANDOVER.md`'s P4 summary and the application site itself.
+
+**Three corrections that are one sentence each.** Invariant 9 now says what "self-heals" costs —
+the repair runs at the end of the chunk, so recovery is one chunk plus the lookahead line, not one
+sample. `setTruePeakMode`'s history clear now states its own cost: ~12 region samples that
+under-report, against an unbounded over-report if the stale window were kept. And a typo in the
+delta-leg duck comment ("undicked") is fixed, in the sentence that is the load-bearing explanation
+for why `dryForDelta` carries the duck gain.
+
+**Six repeats, and what that says.** The clipper's engage edge (KI-005), the dynTilt trim sitting
+at its clamp, the GR tap being the limiter's alone, the detector high-pass during a lookahead
+glide, the bulk swap's two halves, the GR ring's rewinding index — all six are already recorded,
+four of them in comments this branch added in the previous two rounds, and the ring's "generation
+counter or never rewind" choice is already written into `THREAD_MODEL.md`'s planned edges. A review
+reading a slightly older tree will re-raise what it cannot see; the answer is to check the current
+file before re-fixing, which is why nothing was touched for those six.
+
+**The check-count item was the reviewer reading the PR description, not the tree.** README and
+HANDOVER both say 293 (206 + 87), which is what the suites print; the description said 282. The
+description is what was stale, and it is the one place the "re-count from the output" rule does not
+enforce itself, so it is updated with the push rather than left to drift again.
 
 ### Sixteenth review round — the recovery covered every stage the engine owns (2026-08-02)
 

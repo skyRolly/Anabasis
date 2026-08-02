@@ -177,6 +177,12 @@ public:
         // across samples that are minutes old — bogus peaks, and the gain
         // reduction they cause. The engine flips this from the OS factor, so
         // the edge is reachable in normal use; clear the history on it.
+        // The cost of clearing, stated: the first ~12 region samples after the
+        // edge interpolate against a zeroed history and therefore UNDER-report
+        // the true peak. Bounded to the filter length, and the alternative —
+        // interpolating across a stale window — over-reports by an unbounded
+        // amount. Invariant 4 is unaffected either way: the CeilingClamp is
+        // downstream, unconditional, and does not consult the estimator.
         if (b && ! tpMode)
             truePeak.reset();
         tpMode = b;
