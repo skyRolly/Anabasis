@@ -23,9 +23,14 @@ Every allocation in the DSP tree happens in `prepare()` or a function only `prep
 
 | Site | When |
 |---|---|
-| `wetRing/dryRing/staging.setSize`, `ceilArr/wArr.resize` | `AnabasisEngine::prepare` (`src/dsp/AnabasisEngine.cpp:18-23`) |
-| eight `std::make_unique<juce::dsp::Oversampling>` + `initProcessing` | `prepare` (`:29-34`) |
-| wedge `assign` ×2 channels, sized for 16× | `LookaheadLimiter::prepare` (`src/dsp/LookaheadLimiter.h:67-68`) |
+| `wetRing/dryRing/staging.setSize`, `ceilArr/wArr/pushArr.resize` | `AnabasisEngine::prepare` (`src/dsp/AnabasisEngine.cpp`) |
+| eight `std::make_unique<juce::dsp::Oversampling>` + `initProcessing` | the same `prepare`, its `for (f, ph)` loop |
+| wedge `assign` ×2 channels, sized for 16× | `LookaheadLimiter::prepare` (`src/dsp/LookaheadLimiter.h`) |
+
+Citations here are **symbol-based on purpose**: the first version of this table carried line
+ranges, and every one of them had drifted by the time it was next read (`pushArr` did not even
+exist yet). `THREAD_MODEL.md` learned the same lesson and states it — a line number in a document
+is an assertion nobody re-runs.
 
 The audio-thread paths perform **zero** allocation: `latchOsConfig` is selection among existing
 objects plus plain-float recomputation (`setRate` on the limiter and clipper recompute one-pole

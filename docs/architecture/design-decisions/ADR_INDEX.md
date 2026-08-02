@@ -12,17 +12,17 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 
 | ID | Title | Status | Evidence confidence |
 |---|---|---|---|
-| [ADR-0001](ADR-0001-format-agnostic-dsp-core.md) | Format-agnostic DSP core via a POD `EngineParameters` snapshot | Accepted | Unverified (no `src/` yet) |
-| [ADR-0002](ADR-0002-serial-signal-chain-and-clamp-placement.md) | Fixed serial signal chain; EQ Pre/Post the only mobility; **ceiling clamp always last before dither** | Accepted | Unverified |
-| [ADR-0003](ADR-0003-oversampling-scope-and-true-peak-measurement-tap.md) | Oversampling wraps Clip/Sat + Limiter; **true peak is a measurement tap** at >= 4x total | Accepted | Unverified |
-| [ADR-0004](ADR-0004-latency-contract-constant-lookahead-allowance.md) | Latency contract: reported = **constant max-lookahead allowance** + OS; no zero-lookahead position | Accepted | Unverified |
-| [ADR-0005](ADR-0005-macro-layer-architecture.md) | Macro layer: message-thread mapper, non-automatable macros, detach/re-engage coexistence | Accepted | Unverified |
-| [ADR-0006](ADR-0006-ceiling-guarantee.md) | Ceiling guarantee: separate final clamp; monitoring never in the render path | Accepted | Unverified |
-| [ADR-0007](ADR-0007-state-schema-v1.md) | State schema v1: explicit `schemaVersion`, raw-exact sessions, **per-slot adaptive state** | Accepted | Unverified |
-| [ADR-0008](ADR-0008-build-architecture-and-plugin-identity.md) | Build architecture + plugin identity: CMake graph, JUCE 9.0.0 SHA pin, C++20, `RTec`/`Anbs` | Accepted | Unverified |
-| [ADR-0009](ADR-0009-code-reuse-from-anamorph.md) | Code reuse from Anamorph: copy-and-adapt with provenance, no shared module for v1 | Accepted | Unverified |
-| [ADR-0010](ADR-0010-parameter-surface.md) | Parameter surface: 49 APVTS parameters, exclusion tiers, lockable set | Accepted | Unverified |
-| [ADR-0011](ADR-0011-threading-model.md) | Threading model: two threads, no workers, atomic + SPSC publication | Accepted | Unverified |
+| [ADR-0001](ADR-0001-format-agnostic-dsp-core.md) | Format-agnostic DSP core via a POD `EngineParameters` snapshot | Accepted | Verified — `AnabasisDSP` links only `juce_dsp`/`juce_audio_basics` (CMake) and the whole `AnabasisTests` target builds without a wrapper header |
+| [ADR-0002](ADR-0002-serial-signal-chain-and-clamp-placement.md) | Fixed serial signal chain; EQ Pre/Post the only mobility; **ceiling clamp always last before dither** | Accepted | Verified — `testLimiterPushDoesNotDriveTheClipper`, `testEqPositionsAreDistinct`, `testOutputNeverExceedsCeiling` in both EQ positions |
+| [ADR-0003](ADR-0003-oversampling-scope-and-true-peak-measurement-tap.md) | Oversampling wraps Clip/Sat + Limiter; **true peak is a measurement tap** at >= 4x total | Accepted | Verified — `testTruePeakAccuracy`, `testLimiterTruePeakMode`, and `testOsLatencyMatrix` (the tap adds no delay) |
+| [ADR-0004](ADR-0004-latency-contract-constant-lookahead-allowance.md) | Latency contract: reported = **constant max-lookahead allowance** + OS; no zero-lookahead position | Accepted | Verified — `testReportedLatencyMatchesImpulse` (every lookahead value), `testOsLatencyMatrix` (whole factor × phase matrix incl. Force-Max) |
+| [ADR-0005](ADR-0005-macro-layer-architecture.md) | Macro layer: message-thread mapper, non-automatable macros, detach/re-engage coexistence | Accepted | **Partially Verified** — `testMacroDefaultIsFixedPoint`, `testModeSwitchIsSoundNeutral`, `testDrainInsideRestoreIsSuppressed` pin the mapper and the restore; the detach/re-engage gesture grammar is P5 |
+| [ADR-0006](ADR-0006-ceiling-guarantee.md) | Ceiling guarantee: separate final clamp; monitoring never in the render path | Accepted | Verified — `testOutputNeverExceedsCeiling`, `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor` |
+| [ADR-0007](ADR-0007-state-schema-v1.md) | State schema v1: explicit `schemaVersion`, raw-exact sessions, **per-slot adaptive state** | Accepted | **Partially Verified** — byte-identical round trip, the §4.4 read rules and the ADAPTIVE child are pinned by `AnabasisStateTests`; the FROZEN_TRIMS **inject** half is unwired (OQ-013) |
+| [ADR-0008](ADR-0008-build-architecture-and-plugin-identity.md) | Build architecture + plugin identity: CMake graph, JUCE 9.0.0 SHA pin, C++20, `RTec`/`Anbs` | Accepted | Verified — the five-target graph configures and builds green at the pinned SHA on Linux, pluginval L5 ×3 both modes |
+| [ADR-0009](ADR-0009-code-reuse-from-anamorph.md) | Code reuse from Anamorph: copy-and-adapt with provenance, no shared module for v1 | Accepted | Verified — the one adapted unit (K-weighting, provenance in `LoudnessMeter.h`) reproduces the standard's −3.01 LKFS vector in `testLufsCalibration`; no shared module exists |
+| [ADR-0010](ADR-0010-parameter-surface.md) | Parameter surface: 49 APVTS parameters, exclusion tiers, lockable set | Accepted | Verified — the frozen registry snapshot plus the 49/9 count checks in `AnabasisStateTests` |
+| [ADR-0011](ADR-0011-threading-model.md) | Threading model: two threads, no workers, atomic + SPSC publication | Accepted | **Partially Verified** — every implemented edge is mapped in `THREAD_MODEL.md` and `REALTIME_SAFETY_AUDIT.md` audits the audio thread; the two questions it left open are OQ-014 and the off-thread `replaceState` race (KI-003), and ADR-0012 amends its permitted-path table |
 | [ADR-0012](ADR-0012-staged-record-cross-thread-path.md) | GUI→Audio **bounded staged record** behind a release/acquire flag (ratifies the learned-target restore, OQ-015) | Accepted | Verified |
 
 ADR-0012 was taken on **2026-08-01** (owner decision on OQ-015, during P4) and carries
@@ -31,9 +31,12 @@ already in the tree with mutation-verified tests, which is precisely why ratific
 cheap option. It is the first ADR authored after the sign-off batch.
 
 The first eleven were authored on **2026-07-31**, the date of the owner's sign-off on `docs/DESIGN.md`
-(the P0 exit criterion, `DEVELOPMENT_BRIEF.md` §11). They carry `Unverified` confidence by
-construction: Anabasis has no `src/` and no `tests/`, so every runtime claim is a contract the P1+
-code must satisfy, not an observation. Confidence is upgraded per ADR as its code and tests land.
+(the P0 exit criterion, `DEVELOPMENT_BRIEF.md` §11). They were authored `Unverified` by
+construction — at that date Anabasis had no `src/` and no `tests/`, so every runtime claim was a
+contract the P1+ code had to satisfy rather than an observation. **That is no longer the state:**
+P1–P4 landed the full chain and its two suites, and the confidence column below is upgraded per
+ADR **against a named test**, never wholesale. An ADR reads `Partially Verified` where part of its
+decision is still unwired — the row says which part.
 
 That includes ADR-0008: its JUCE pin and identity codes were read from the **sibling** repository,
 which is evidence about how *Anamorph* builds, not about how Anabasis does. "This pin configures

@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **thirteenth review round of 2026-08-01** (PR #5): the Learn commands
+**Last updated:** for the **fourteenth review round of 2026-08-01** (PR #5): the ADR index still
+told readers the project had no `src/` and no `tests/`, and the eleven sign-off ADRs still read
+`Unverified (no src/ yet)`. Documentation only. Previous round: (PR #5): the Learn commands
 join the restore on ADR-0012's staged-record row — two flags in a fixed order lost BOTH commands
 when a stop and a start fell in the same block. Previous round: (PR #5): the clipper's engage
 edge is a confirmed defect recorded as **KI-005** after a fix attempt was tried and reverted, plus
@@ -31,6 +33,57 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Fourteenth review round — the decision index was still describing an empty repository (2026-08-01)
+
+Eight items, all documentation or comments: three drift corrections, two residuals written into
+the contract that already governs them, three repeats already recorded.
+
+**The index that CLAUDE.md makes mandatory reading was the most wrong document in the tree.**
+`ADR_INDEX.md` still ended its registry paragraph with "Anabasis has no `src/` and no `tests/`, so
+every runtime claim is a contract the P1+ code must satisfy, not an observation", and every
+sign-off ADR still read `Unverified (no src/ yet)` — while `DOCUMENTATION_COVERAGE.md`'s
+module table in the same PR marks the modules those ADRs govern `Full | Verified`. A reader
+following the mandated order (index first, then code) was told the codebase did not exist.
+
+Fixed by doing the assessment rather than flipping a column: each row now carries the **named test
+that discharges it** — ADR-0002 → `testLimiterPushDoesNotDriveTheClipper` + the EQ-position pair,
+ADR-0004 → `testReportedLatencyMatchesImpulse` + `testOsLatencyMatrix`, ADR-0009 → the −3.01 LKFS
+compliance vector, and so on. Three stay **Partially Verified** with the unwired half named:
+ADR-0005 (the detach/re-engage gesture grammar is P5), ADR-0007 (the FROZEN_TRIMS inject is
+OQ-013), ADR-0011 (OQ-014 and the KI-003 `replaceState` race, plus ADR-0012's amendment). The
+same stale reasoning in this file's own gaps list is corrected to match. Upgrading confidence
+without an evidence citation is what the audit rules forbid; upgrading it *with* one was simply
+owed and had been outstanding for four phases.
+
+**Two residuals of last round's Learn fix, both written into the contract that governs them.** The
+reviewer found the composition's own consume-then-read window — a `requestLearnStart()` landing
+between the consumer's `exchange` and its payload read sees `pending == false`, composes a bare
+start, and drops the outstanding commit. That is ADR-0012 Known-limits #1 with a *composing*
+writer, a case limit 1's wording did not cover, so it is now limit #2 in the ADR itself. And my
+justification for collapsing start→stop to a bare commit ("a commit with nothing accumulated is
+the documented empty-pass no-op") was too broad: it holds only when no pass was running. With one
+already running, that collapse commits ITS statistics — a valid reference, not the one the user's
+two clicks described. Both now stated at the site instead of implied by "last-writer-wins".
+
+**A new document re-introduced the pattern the same PR had just retired.** `REALTIME_SAFETY_AUDIT.md`
+shipped with `file:line` citations for the allocation sites, and every one had drifted by the time
+it was next read (`pushArr` did not exist when they were written). Converted to symbol-based
+citations, with the rule stated in the file so the next author does not re-learn it: **a line
+number in a document is an assertion nobody re-runs.** That makes three files that have now
+learned this — THREAD_MODEL, this audit, and the coverage table.
+
+**Recorded, no change:** the §2.7 measure gates on momentary (400 ms) while its value is a
+short-term (3 s) difference — deliberate, not a mismatched window: the gate answers "is there
+programme here", and between 0.4 s and 3 s both short-term readings are the same sentinel so their
+difference is exactly 0 and only the predict floor acts, which is the documented split. The two
+meters advance in lockstep, so one can never be valid while the other is silent.
+
+**Repeats already handled:** the ClipSat engage edge (KI-005 — attempted, measured, reverted), the
+GR-ring index rewind and the Learn-commit-without-audio gap (both in the P5 planned-edge scope),
+and the dynTilt third mechanism (landed two rounds ago in both files).
+
+Suites: 198 + 87, unchanged — nothing behavioural in this round.
 
 ### Thirteenth review round — the same two-flag defect, in the path that was left behind (2026-08-01)
 
@@ -2991,9 +3044,12 @@ These are **deliberate**, not oversights. Each names what would close it.
   `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md`,
   `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`, `PERFORMANCE_BUDGET.md` — closed by P5–P6 as
   the code they would describe stabilises.
-- ~~**No ADRs**~~ — **closed 2026-07-31**: ADR-0001…0011 are Accepted and registered. They remain
-  `Unverified` in confidence (no `src/`), which is a *different* gap from absence: each is a
-  contract the P1+ code must satisfy, and its confidence is upgraded as its code and tests land.
+- ~~**No ADRs**~~ — **closed 2026-07-31**: ADR-0001…0011 are Accepted and registered. They were
+  authored `Unverified` (no `src/` existed then), which is a *different* gap from absence: each is
+  a contract the code must satisfy. **Closed for most of them as of the P1–P4 code**: `ADR_INDEX.md`
+  now carries a per-ADR confidence with the named test that discharges it, and the three still at
+  `Partially Verified` say which half is unwired (ADR-0005's gesture grammar → P5, ADR-0007's
+  FROZEN_TRIMS inject → OQ-013, ADR-0011's OQ-014/KI-003 questions).
   New decisions still follow C1 — evidence-driven, no quota.
 - **Policy compliance sections are `TODO (no code yet)`** in `REALTIME_AUDIO_POLICY`,
   `THREADING_POLICY`, `DSP_POLICY` and `MODE_AND_ADAPTATION_POLICY`. Closed as each phase lands,

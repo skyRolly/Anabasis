@@ -421,6 +421,15 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     }
     {
         // Measure (frozen while either side is under the absolute gate).
+        // The GATE reads momentary (400 ms) while the VALUE is a short-term
+        // (3 s) difference — deliberate, not a mismatch: the gate answers "is
+        // there programme here at all", which momentary decides four times
+        // sooner. Between 0.4 s and 3 s after a prepare both short-term
+        // readings are still kSilentLufs, so their difference is exactly 0 and
+        // only the predict floor acts — which is the documented split (predict
+        // engages in one block, measure needs seconds). The two meters advance
+        // in lockstep on the same frame count, so one can never be valid while
+        // the other returns the −100 sentinel.
         const float dryM = dryMeter.momentaryLufs();
         const float wetM = wetMeter.momentaryLufs();
         if (dryM > -70.0f && wetM > -70.0f)

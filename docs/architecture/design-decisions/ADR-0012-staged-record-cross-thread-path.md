@@ -97,7 +97,14 @@ coherence properties to be on the record rather than assumed.
    serializes the older learned state — one save's worth. Closing it means clearing the flag
    *after* adoption, which trades this for a **lost update**: a record staged between adopt and
    clear would be erased. The stale-read window is the better trade and is the one taken.
-2. **A second stage during the payload reads.** The consumer exchanges the flag (acquire) and
+2. **The same window on a COMPOSING writer** (the §5.4 Learn commands, added 2026-08-01). Where
+   the writer composes by reading the flag back (condition 5), limit 1 has a second consequence: a
+   `requestLearnStart()` landing between the consumer's `exchange` and its payload read observes
+   `pending == false`, composes a bare start instead of commit-then-start, and the outstanding
+   commit is dropped. Same few-instruction window, same trade — closing it means reading the code
+   before clearing the flag, which converts a stale read into a lost update. Recorded here because
+   the Learn path relies on composition and limit 1's wording assumed a writer that only overwrites.
+3. **A second stage during the payload reads.** The consumer exchanges the flag (acquire) and
    then reads the payload fields with relaxed loads. A `restoreLearnedTargets` landing between
    those reads can have the engine adopt one session's onset reference with another's tilt. It
    self-corrects at the next block top — the second call release-stored its flag after its

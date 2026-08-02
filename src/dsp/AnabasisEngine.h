@@ -91,7 +91,6 @@ public:
     // ONLY at the silent bottom.
     void requestForcedDuck() noexcept { duckRequested.store (true, std::memory_order_relaxed); }
 
-    // §5.4 Learn commands — the same momentary-request row as the duck.
     // §5.4 Learn commands — ONE staged record (ADR-0012's row), not two flags.
     // Two independent flags consumed in a fixed order cannot express what the
     // user did: a stop followed by a start inside one block left `startLearn`
@@ -103,9 +102,21 @@ public:
     // The ordering information lives on the WRITER's thread, so that is where
     // the pair is composed: a start arriving on top of an unconsumed commit
     // becomes ONE commitThenStart command, and every other sequence degrades to
-    // last-writer-wins (a commit with nothing accumulated is the documented
-    // empty-pass no-op, so an overwritten start costs nothing). Reading back
-    // the pending flag to compose is ADR-0012 condition 5.
+    // last-writer-wins. Reading back the pending flag to compose is ADR-0012
+    // condition 5.
+    //
+    // TWO NARROW RESIDUALS, stated rather than implied by "last-writer-wins"
+    // (both need two commands inside one ~10 ms block; both are in ADR-0012's
+    // Known limits):
+    //  • start→stop collapses to a bare commit, so if a pass was ALREADY
+    //    running the commit lands on ITS statistics rather than on the
+    //    just-started-and-aborted one. A valid reference, not the one the
+    //    user's two clicks described. (With nothing running it is the
+    //    documented empty-pass no-op, which is the only case the first
+    //    version of this comment covered.)
+    //  • the consumer clears the flag a few instructions before it reads the
+    //    code, so a start landing in that window sees `pending == false`,
+    //    composes as a bare start, and the outstanding commit is dropped.
     void requestLearnStart() noexcept
     {
         const bool commitOutstanding = learnCmdPending.load (std::memory_order_acquire)
