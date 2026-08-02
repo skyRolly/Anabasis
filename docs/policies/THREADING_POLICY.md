@@ -22,27 +22,18 @@ Adding any thread — including a worker for analysis, preset scanning, or meter
 | Audio → GUI (scope / GR history) | SPSC ring buffer | Exactly **one producer thread and one reader thread**; release/acquire on the write index; the index is published **once per block**, so a reader that acquires it sees a whole committed block. |
 | Audio → GUI (meters: LUFS M/S/I, dBTP, PLR, GR) | published `std::atomic<float>` | Audio writes in a single `publish()`; GUI reads via getters. `memory_order_relaxed` — monotonic display data, no ordering role. |
 | Audio/param → GUI (staleness hints) | `std::atomic<uint32>` generation counters | A monotonic "something changed" hint that lets the GUI skip rebuilding caches. Carries **no payload**, so relaxed is sufficient. |
+| Any thread → Message (listener → async drain guard) | one `std::atomic<bool>` pending flag + one `std::atomic<int>` suppression depth | The `juce::AsyncUpdater` shape ADR-0005/ADR-0011 already mandate ("the MacroEngine consumes macro changes solely through an async message-thread listener" — an AsyncUpdater is itself an atomic flag plus a message post), written down as a row per the OQ-014 owner call (2026-08-02, reading 1: documentation gap, not a new mechanism). The flag is set from whichever thread delivers the listener callback and drained **only** on the message thread; the depth guard (`ScopedRestore`) suppresses the drain across a restore. Payload-free — the parameters themselves travel through APVTS. Residual check-then-act window: `KNOWN_ISSUES.md` KI-003. |
 
 Any path not in this table is a new cross-thread path → Architecture Review Gate.
 
-> **One edge is knowingly missing a row: the frozen trim vector.** ADR-0007 routes it through "a
-> sentinel-valued atomic consumed at the forced duck's silent bottom", but the vector is **four**
-> scalars — release, stereo-link, sidechain-HPF and dynamic-tilt trims (`DESIGN.md` §5.4, ADR-0005
-> decision item 10) — and the sentinel-valued row above covers **one**. It must not be forced into
-> that row. Four independent instances of it would restore a slot correctly only if the four
-> `exchange`s are guaranteed to be observed together; nothing in the accepted set establishes that,
-> and a half-consumed vector is a permanently half-restored slot, not a transient artefact — which
-> would defeat the per-slot bit-repeatability `MODE_AND_ADAPTATION_POLICY.md` invariant 3 requires of
-> Freeze. Choosing between *N* parallel sentinel scalars with a stated ordering guarantee and a
-> single release/acquire-gated per-slot POD is a **thread-model decision**: Architecture Review Gate,
-> ADR, and an AI-agent Hard Stop (`OPEN_QUESTIONS.md` OQ-013).
->
-> **Half of that is now decided (ADR-0012, 2026-08-01).** The *mechanism* question is answered: the
-> staged-record row above is the permitted transport, and a four-scalar trim vector fits it. What
-> ADR-0012 deliberately did **not** decide is whether a restored trim vector may be injected into a
-> running engine at all, and what that means for the adaptation state machine — so **OQ-013 stays
-> open and no code may wire that restore path**. The blocker moved from "no mechanism exists" to
-> "the product question is unanswered"; it did not disappear.
+> **The frozen trim vector — formerly this table's one knowingly missing row — is wired
+> (ADR-0014, 2026-08-02, resolving OQ-013).** ADR-0012 settled the transport (a four-scalar
+> record on the staged-record row above, so no half-consumed vector can leave a slot permanently
+> half-restored); ADR-0014 took the product decision ADR-0012 deliberately left open: injection is
+> permitted **only for a freeze-ON adopted surface**, and the vector is applied where every
+> restore-driven discontinuity lands — the §2.8 duck's silent bottom or the unprimed
+> direct-adopt — after which Freeze holds it exactly. The Hard Stop this banner carried is
+> lifted; the history stays in `OPEN_QUESTIONS.md` OQ-013.
 
 ## Forbidden cross-thread access
 
@@ -92,9 +83,8 @@ design choice.
 Decided in **ADR-0011**; the concrete implemented model, with code citations, is
 [`docs/architecture/THREAD_MODEL.md`](../architecture/THREAD_MODEL.md) (written at P1 as this
 policy required). Read the ADR for the decision, that file for what the tree actually does, and
-this policy for the permitted shapes. One edge is pending an owner call — the MacroEngine guard
-atomics, `OPEN_QUESTIONS.md` OQ-014 — and is flagged as such there rather than silently claimed
-as a table row.
+this policy for the permitted shapes. The MacroEngine guard atomics, formerly pending the OQ-014
+owner call, are now the listener-guard row above (reading 1, taken 2026-08-02).
 
 ## Enforcement
 

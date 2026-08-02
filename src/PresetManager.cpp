@@ -111,6 +111,44 @@ namespace
         { pid::loudness, 40.0f }, { pid::character, 0.6f }, { pid::tone, -0.2f },
         { pid::colourModel, 1.0f }, { pid::colourBalance, -0.2f },
     };
+    // ⊕ names 6-12 (2026-08-02, owner-approved under the v0.1.0 blanket
+    // approval — C8 wording owed the fine review, same status as the values):
+    // genre/purpose per brief §9, each the default patch plus a few intents.
+    // Punchy style + high transient preserve: drums stay drums at level.
+    const O kRockPunch[] = {
+        { pid::loudness, 55.0f }, { pid::character, 0.35f }, { pid::tone, 0.1f },
+        { pid::limStyle, 1.0f }, { pid::transientPreserve, 75.0f },
+    };
+    // Low end carried, detector kept off it so the kick does not pump the bus.
+    const O kHipHopLowEnd[] = {
+        { pid::loudness, 65.0f }, { pid::character, 0.3f }, { pid::tone, -0.15f },
+        { pid::eqLowShelfGain, 1.5f }, { pid::scHpfFreq, 60.0f }, { pid::limStyle, 1.0f },
+    };
+    // Tube warmth at moderate level; the macro stays low so dynamics survive.
+    const O kAcousticWarmth[] = {
+        { pid::loudness, 30.0f }, { pid::character, 0.4f }, { pid::tone, -0.1f },
+        { pid::colourModel, 2.0f }, { pid::colourBalance, -0.1f },
+    };
+    // Barely-touched: long lookahead, Transparent style, level lift only.
+    const O kClassicalDynamics[] = {
+        { pid::loudness, 15.0f }, { pid::character, 0.0f }, { pid::tone, 0.0f },
+        { pid::lookahead, 6.0f }, { pid::limStyle, 0.0f },
+    };
+    // Spoken word: HPF under the voice, presence tilt, steady level.
+    const O kPodcastVoice[] = {
+        { pid::loudness, 50.0f }, { pid::character, 0.1f }, { pid::tone, 0.2f },
+        { pid::scHpfFreq, 80.0f }, { pid::eqLowShelfGain, -1.0f },
+    };
+    // Wide programme kept wide: link relaxed, gentle level, soft top.
+    const O kCinematicWide[] = {
+        { pid::loudness, 35.0f }, { pid::character, 0.2f }, { pid::tone, -0.05f },
+        { pid::stereoLink, 60.0f }, { pid::lookahead, 5.0f },
+    };
+    // Deliberate colour-forward crush; Transistor model carries the edge.
+    const O kLoFiCrush[] = {
+        { pid::loudness, 70.0f }, { pid::character, 0.8f }, { pid::tone, -0.3f },
+        { pid::colourModel, 3.0f }, { pid::colourDepth, 80.0f }, { pid::limStyle, 2.0f },
+    };
 
     const PresetManager::FactoryPreset kFactory[] = {
         { "Transparent Master", kTransparentMaster, (int) std::size (kTransparentMaster) },
@@ -118,6 +156,13 @@ namespace
         { "EDM Club",           kEdmClub,           (int) std::size (kEdmClub) },
         { "Vocal Forward",      kVocalForward,      (int) std::size (kVocalForward) },
         { "Tape Glue",          kTapeGlue,          (int) std::size (kTapeGlue) },
+        { "Rock Punch",         kRockPunch,         (int) std::size (kRockPunch) },
+        { "Hip-Hop Low End",    kHipHopLowEnd,      (int) std::size (kHipHopLowEnd) },
+        { "Acoustic Warmth",    kAcousticWarmth,    (int) std::size (kAcousticWarmth) },
+        { "Classical Dynamics", kClassicalDynamics, (int) std::size (kClassicalDynamics) },
+        { "Podcast Voice",      kPodcastVoice,      (int) std::size (kPodcastVoice) },
+        { "Cinematic Wide",     kCinematicWide,     (int) std::size (kCinematicWide) },
+        { "Lo-Fi Crush",        kLoFiCrush,         (int) std::size (kLoFiCrush) },
     };
 } // namespace
 

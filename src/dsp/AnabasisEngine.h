@@ -148,6 +148,24 @@ public:
         learnCmd.store (kLearnCommit, std::memory_order_release);
     }
 
+    // ADR-0014 frozen-trim restore (OQ-013 resolved 2026-08-02, owner-
+    // approved): the four-scalar vector crosses on ADR-0012's staged-record
+    // row — payload relaxed first, one flag release-stored after, consumed
+    // with exchange(acquire) at a block top — and is APPLIED at the §2.8
+    // duck's silent bottom (or the offline direct-adopt), which is where
+    // DESIGN §7 places every restore-driven discontinuity. Only the wrapper
+    // stages one, and only for a freeze-ON slot.
+    void restoreFrozenTrims (float relOct, float link, float hpf, float tilt) noexcept
+    {
+        stagedFrozen[0].store (relOct, std::memory_order_relaxed);
+        stagedFrozen[1].store (link,   std::memory_order_relaxed);
+        stagedFrozen[2].store (hpf,    std::memory_order_relaxed);
+        stagedFrozen[3].store (tilt,   std::memory_order_relaxed);
+        frozenPending.store (true, std::memory_order_release);
+    }
+    bool frozenRestorePending() const noexcept
+    { return frozenPending.load (std::memory_order_acquire); }
+
     // Learned-target restore (session load, ADAPTIVE child): host-hidden
     // session state through the mirror pattern — consumed at the block top.
     // ONE staged record — payload (`pendingLearned` discriminator + the two
@@ -300,6 +318,14 @@ private:
     // stages see carries the APPLIED values, so nothing rewires at full gain.
     enum class DuckState { idle, out, bottom, in };
     std::atomic<bool> duckRequested { false };
+
+    // ADR-0014 staged record + the audio-thread pending copy the duck bottom
+    // applies (consumed at the block top per ADR-0012, applied at the bottom
+    // per DESIGN §7 — two steps, both audio-thread).
+    std::atomic<float> stagedFrozen[4] = { {0.0f}, {0.0f}, {0.0f}, {0.0f} };
+    std::atomic<bool>  frozenPending { false };
+    AdaptiveEngine::Trims pendingFrozenTrims;
+    bool havePendingFrozen = false;
     // kLearnNone is the "nothing pending" value, which is what lets the code
     // and the flag be the same word — see requestLearnStart above.
     static constexpr int kLearnNone = 0, kLearnStart = 1, kLearnCommit = 2,

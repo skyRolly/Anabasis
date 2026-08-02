@@ -181,7 +181,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `testUndoIsPerSlotGestureCoalescedAndMaskWide`,
   `testFactoryPresets`, `AnabasisBench`. [Verified]
 
-The first entry will be `[0.1.0]`, cut at the end of P6.
+- **v0.1.0 completion (2026-08-02, under the owner's blanket approval — every item ⊕ for the
+  post-v0.1.0 fine review).** The adaptive release trim now reaches the AUTO release path
+  (ADR-0013): with auto release on — the factory default — the limiter's two release poles scale
+  by the trim's `2^octaves` factor with their ratio preserved, so all four §5.4 adaptive
+  behaviours are audible at defaults instead of three. **Freeze memory now restores**
+  (ADR-0014): a frozen slot saved and reloaded — session load or A/B switch — reproduces its
+  latched trim vector exactly (applied at the transition duck's silent bottom, so the restore is
+  click-free), instead of re-latching from whatever the engine happened to hold. The factory
+  bank grows from five to the brief's **twelve** presets (adding Rock Punch, Hip-Hop Low End,
+  Acoustic Warmth, Classical Dynamics, Podcast Voice, Cinematic Wide, Lo-Fi Crush — draft values
+  until the listening pass). CI's pluginval gate rises to strictness 10 on all three platforms.
+  Also fixed: the Windows CI state-suite crash (stack overflow from two 128 KB inline capture
+  buffers per engine instance; storage is heap-allocated at construction now, and both test
+  suites print unbuffered so a crash can no longer swallow its own output).
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `testAutoReleaseFollowsTheTrimScale`,
+  `testFrozenTrimRestore` (seven mutants), `testFactoryPresets`; ADR-0013/ADR-0014;
+  OQ-007/OQ-013/OQ-014/OQ-016 → Resolved. [Verified]
+
+The first entry will be `[0.1.0]`, cut when the post-v0.1.0 fine review clears the tag.
 
 ---
 

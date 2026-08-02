@@ -26,10 +26,11 @@
 //  DETACH_MASK }, ADAPTIVE }. Read rules: unknown ignored, missing default,
 //  indices clamped.
 //
-//  OQ-013 HARD STOP: the frozenTrims message→audio inject transport is NOT
-//  decided. The per-slot fields are serialized here (that is ADR-0007's
-//  settled half); no code may wire the audio-side restore until the OQ-013
-//  ADR lands.
+//  OQ-013: RESOLVED by ADR-0014 (2026-08-02, owner-approved) — the per-slot
+//  frozen-trim vector is captured from the published trims at save (Freeze
+//  on), staged to the engine on ADR-0012's record row at restore, and lands
+//  at the §2.8 duck's silent bottom. The Hard Stop this banner carried for
+//  five phases is lifted by that ADR.
 // ============================================================================
 
 class AnabasisAudioProcessor : public juce::AudioProcessor,
@@ -188,7 +189,7 @@ private:
     juce::ValueTree storedSlot;          // the inactive slot's SLOT tree
     juce::String    livePresetName;
     juce::ValueTree liveBaseline;        // BASELINE (absent until a macro gesture, §5.3/P4)
-    juce::ValueTree liveFrozenTrims;     // FROZEN_TRIMS (serialized only — OQ-013 blocks the inject)
+    juce::ValueTree liveFrozenTrims;     // FROZEN_TRIMS (captured at save, staged at restore — ADR-0014)
     juce::StringArray liveDetachMask;
 
     std::atomic<bool> nonRealtimeFlag { false };
@@ -216,8 +217,8 @@ private:
     // rule; VST3 gesture threading is host-defined), so the listener only
     // sets lock-free bits keyed by managed_params index; the message thread
     // drains them into `liveDetachMask` — the same marshalling shape as
-    // MacroEngine's mappingPending (both are the OQ-014 pattern, and OQ-014's
-    // owner call covers this edge under whichever reading it takes).
+    // MacroEngine's mappingPending (both sit on the listener-guard row the
+    // OQ-014 resolution added to THREADING_POLICY, 2026-08-02, reading 1).
     // A gesture that begins on a MACRO re-engages instead: §5.3's "the next
     // macro-knob gesture re-engages ALL detached params".
     void audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int parameterIndex) override;

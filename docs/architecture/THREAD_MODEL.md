@@ -36,7 +36,8 @@ it instantiates:
 | Learn start/stop → engine | ONE atomic word `learnCmd` (none / start / commit / commitThenStart), **release**-stored by the writer and `exchange`-consumed with **acquire** at the block top. The writer COMPOSES on its own thread — a start landing on an unconsumed commit becomes one commitThenStart — because ordering information exists only there; two flags with a fixed consumption order silently discarded both commands when a stop and a start fell in the same block. It was a code+flag staged record until 2026-08-02: publishing a two-store record let a consumer whose `exchange` fell between the stores run the new code and leave the writer to re-raise the flag behind it, delivering the same command twice — a repeated commitThenStart commits a pass one block old. A two-bit payload has nothing to stage, so the code IS the flag | GUI → Audio (**single lock-free scalar**; ADR-0012 §Known limits still governs the composing writer) | `src/dsp/AnabasisEngine.h` (`requestLearnStart/Stop`), `src/dsp/AnabasisEngine.cpp` (block top) |
 | Learned-target restore → engine | ONE staged record: `pendingLearned` (the learned/never-learned discriminator) + `pendingRefOnset`/`pendingRefTilt` stored relaxed FIRST, then the single `adaptivePending` flag **release**-stored; the block top `exchange`s it with **acquire**, so a block that sees the flag reads that call's whole record, never a torn one, and the LAST restore staged before the block is the one that lands. Two flags with a fixed consumption order could not express last-writer-wins — an un-learned session loaded after a learned one inherited the learned references | GUI → Audio (**bounded staged record**, ADR-0012) | `src/dsp/AnabasisEngine.h` (`restoreLearnedTargets`), `src/dsp/AnabasisEngine.cpp` (block top) |
 | Learned state → `getStateInformation` | `AdaptiveEngine::learned` atomic: refs published FIRST, flag **release**-stored; `hasLearned()` **acquire**-loads, so a saver that sees `true` reads the refs that store ordered before it | Audio → GUI (published state read as a unit — the ADR-0012 contract mirrored) | `src/dsp/AdaptiveEngine.h` (`commitLearn`/`hasLearned`), `src/PluginProcessor.cpp` (`getStateInformation`) |
-| Macro listener → message-thread mapper | `std::atomic<bool> mappingPending` set from whichever thread APVTS delivers `parameterChanged` on; drained on the message thread by `AsyncUpdater` (only posted when already on the message thread) + a 30 ms `Timer`; `std::atomic<int> restoreDepth` suppresses the drain across a restore (`ScopedRestore`) | **no row — see OQ-014** | `src/MacroEngine.cpp:28-35,63-66`, `src/MacroEngine.h:92-101,139` |
+| Macro listener → message-thread mapper | `std::atomic<bool> mappingPending` set from whichever thread APVTS delivers `parameterChanged` on; drained on the message thread by `AsyncUpdater` (only posted when already on the message thread) + a 30 ms `Timer`; `std::atomic<int> restoreDepth` suppresses the drain across a restore (`ScopedRestore`) | Any thread → Message (listener → async drain guard; OQ-014 resolved 2026-08-02, reading 1) | `src/MacroEngine.cpp:28-35,63-66`, `src/MacroEngine.h:92-101,139` |
+| Frozen-trim restore → engine | `AnabasisEngine::restoreFrozenTrims`: four scalars stored relaxed FIRST, one `frozenPending` flag **release**-stored after; the block top `exchange`s it with **acquire** into a pending copy, which is APPLIED (via `AdaptiveEngine::injectTrims`, clamped at the boundary) at the §2.8 duck's silent bottom or the unprimed direct-adopt — where every restore-driven discontinuity lands. Staged only by the wrapper, only for a freeze-ON adopted surface; last-writer-wins; the writer acquire-loads `frozenRestorePending()` so a no-audio load→save serialises the loaded copy (`liveFrozenTrims` is the mirror), not the engine's stale published trims | GUI → Audio (**bounded staged record**, ADR-0012 — second instance, ADR-0014) | `src/dsp/AnabasisEngine.h` (`restoreFrozenTrims`), `src/dsp/AnabasisEngine.cpp` (block-top consume + the two application sites), `src/PluginProcessor.cpp` (`saveSlotFromLive` capture, `applySlotToLive` + `setStateInformation` stages) |
 
 **How the staged-record row came to exist (ADR-0012).** The two learned-target rows above were
 first written here under invented row names ("momentary request + flag-orders-payload"), which read
@@ -47,17 +48,17 @@ discipline, and Audio→GUI authorisation does not carry over to GUI→Audio. Ex
 it (2026-08-01), it was recorded as OQ-015 rather than redesigned under review pressure, and the
 owner ratified the implementation unchanged: **ADR-0012** adds the staged-record row with its six
 mandatory conditions, and the rows above now cite it. The implementation did not change; the
-authorisation did. **OQ-013 remains open** — ADR-0012 gave its trim vector a permitted transport
-but deliberately did not decide whether a restored vector may be injected into a running engine.
+authorisation did. **OQ-013 is now closed by ADR-0014 (2026-08-02)** — ADR-0012 gave its trim
+vector a permitted transport, and ADR-0014 took the injection decision it deliberately left open;
+the frozen-trim row above is the wired result.
 
-**The OQ-014 exception, stated rather than papered over.** `mappingPending` and `restoreDepth`
-point any-thread → message-thread, a direction the table does not enumerate. They implement the
-shape ADR-0005/ADR-0011 mandate ("the MacroEngine consumes macro changes solely through an async
+**OQ-014, resolved 2026-08-02 (reading 1).** `mappingPending` and `restoreDepth` point
+any-thread → message-thread, a direction the table did not enumerate. They implement the shape
+ADR-0005/ADR-0011 mandate ("the MacroEngine consumes macro changes solely through an async
 message-thread listener" — `juce::AsyncUpdater` is itself an atomic flag plus a message post), so
-one reading is that the table has a documentation gap; the other is that a small ratifying ADR is
-owed. That is an owner call recorded in `OPEN_QUESTIONS.md` **OQ-014**, and this file deliberately
-does not pre-empt it. The residual check-then-act window in the guard is recorded in
-`KNOWN_ISSUES.md` KI-003.
+the owner call took the documentation-gap reading: `THREADING_POLICY.md` now carries a
+listener-guard row citing those two ADRs as the enacting authority, and no new ADR was owed. The
+residual check-then-act window in the guard remains recorded in `KNOWN_ISSUES.md` KI-003.
 
 ## PDC
 
@@ -118,10 +119,11 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
   display frame on an event (re-prepare) that already blanks the programme. Readers never
   cache `available()` across an epoch change; within one epoch the SPSC row's contract is
   unchanged. Guarded by `testGrRingResetEpoch`.
-- **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism
-  yet; no code may wire it until its ADR lands. **ADR-0012 settled the transport** (the staged
-  record row fits a four-scalar vector); what keeps OQ-013 open is whether a restored vector may
-  be injected into a running engine at all.
+- **Frozen trim vector transport — IMPLEMENTED (2026-08-02, ADR-0014)**: the Hard Stop this
+  bullet carried is lifted. ADR-0012 settled the transport (the staged-record row fits a
+  four-scalar vector); ADR-0014 took the injection decision and the edge is now the frozen-trim
+  row in the implemented table above, guarded by `testFrozenTrimRestore` (seven mutants, each
+  killed by a distinct check).
 
 ## Verification
 

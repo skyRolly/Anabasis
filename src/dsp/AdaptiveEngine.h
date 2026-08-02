@@ -58,9 +58,10 @@
 //  FREEZE latches the vector: while frozen the four values hold exactly
 //  (bit-repeatable behaviour thereafter — policy inv 3's Freeze clause) and
 //  the capture side (serialization into the per-slot FROZEN_TRIMS) reads the
-//  published atomics once the latch has settled. The RESTORE transport —
-//  message → audio injection of a saved vector — is OQ-013 and remains a
-//  Hard Stop: nothing here consumes FROZEN_TRIMS.
+//  published atomics once the latch has settled. The RESTORE side is
+//  injectTrims() below — ADR-0014 (OQ-013 resolved 2026-08-02): the engine
+//  calls it at the duck's silent bottom with the staged FROZEN_TRIMS vector,
+//  and the freeze latch is what makes the injection a restoration.
 //
 //  The trim MAPPING constants are ⊕ P4 drafts (tuned by ear before v0.1.0,
 //  like the §5.5 curves); the SHAPE — bounded, slewed, deadbanded, frozen —
@@ -149,6 +150,22 @@ public:
         pubCrestDb.store (0.0f, std::memory_order_relaxed);
         pubTiltDb.store (0.0f, std::memory_order_relaxed);
         pubOnsetRate.store (0.0f, std::memory_order_relaxed);
+    }
+
+    // ADR-0014 (resolves OQ-013): adopt a restored frozen-trim vector as the
+    // CURRENT vector, clamped to the declared bounds. The engine calls this at
+    // the §2.8 duck's silent bottom (or the offline direct-adopt), and only
+    // the wrapper ever stages one — with Freeze ON, so finishBlock holds it
+    // exactly (freeze skips the slew; that is what "latched" means). With
+    // Freeze off the next audible block would simply slew away from it, which
+    // is the documented last-writer-wins degradation, not a fault.
+    void injectTrims (const Trims& v) noexcept
+    {
+        trims.releaseOctaves = juce::jlimit (-1.0f, 1.0f, v.releaseOctaves);
+        trims.stereoLink     = juce::jlimit (-0.2f, 0.2f, v.stereoLink);
+        trims.scHpfHz        = juce::jlimit (0.0f, 30.0f, v.scHpfHz);
+        trims.dynTiltDb      = juce::jlimit (0.0f, 0.5f, v.dynTiltDb);
+        publishTrims();
     }
 
     // Invariant 9, the unconditional half. Called once per block by the
@@ -412,9 +429,10 @@ public:
     // Session restore of learned targets (ADAPTIVE child), audio thread only
     // (the wrapper stages the pair and the engine consumes it at block top —
     // the release/acquire flag ordering on that hand-off is in
-    // AnabasisEngine::restoreLearnedTargets). Deliberately distinct from
-    // OQ-013's frozen-trim vector, whose four members are coherence-critical
-    // (half-restored = permanently wrong); nothing here weakens that Hard Stop.
+    // AnabasisEngine::restoreLearnedTargets). Deliberately distinct from the
+    // frozen-trim vector, whose four members are coherence-critical
+    // (half-restored = permanently wrong) — that one crosses as ONE staged
+    // record and lands through injectTrims (ADR-0014), never through here.
     void setLearnedTargets (float onsetRateIn, float tiltDbIn) noexcept
     {
         // The other writer of the references, and the other way a non-finite

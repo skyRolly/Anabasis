@@ -242,6 +242,17 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // the writer's two stores and then re-delivered (see requestLearnStart).
     // Commit BEFORE start within a composed command — the reverse order is the
     // defect this replaced (startLearn zeroes the accumulator commitLearn needs).
+    // ADR-0014: consume the staged frozen-trim record at the block top (the
+    // ADR-0012 contract); the duck bottom below APPLIES it. Last-writer-wins:
+    // a second restore before the bottom overwrites the pending copy.
+    if (frozenPending.exchange (false, std::memory_order_acquire))
+    {
+        pendingFrozenTrims.releaseOctaves = stagedFrozen[0].load (std::memory_order_relaxed);
+        pendingFrozenTrims.stereoLink     = stagedFrozen[1].load (std::memory_order_relaxed);
+        pendingFrozenTrims.scHpfHz        = stagedFrozen[2].load (std::memory_order_relaxed);
+        pendingFrozenTrims.dynTiltDb      = stagedFrozen[3].load (std::memory_order_relaxed);
+        havePendingFrozen = true;
+    }
     if (const int cmd = learnCmd.exchange (kLearnNone, std::memory_order_acquire);
         cmd != kLearnNone)
     {
@@ -286,6 +297,11 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             eq.resetState();
         }
         appliedModel = wantModel;
+        if (havePendingFrozen)
+        {
+            adaptiveEngine.injectTrims (pendingFrozenTrims);   // ADR-0014
+            havePendingFrozen = false;
+        }
         duckState = DuckState::idle;
         duckGain  = 1.0f;
         // A render that STARTS with an empty pipeline is not a transition:
@@ -326,6 +342,15 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             eq.resetState();
         }
         appliedModel = wantModel;
+        if (havePendingFrozen)
+        {
+            // ADR-0014: the restored vector lands at the silent bottom, like
+            // every other restore-driven discontinuity (DESIGN §7). Freeze is
+            // ON in the slot that staged it, so finishBlock holds the vector
+            // from here on — this is the per-slot Freeze memory restoring.
+            adaptiveEngine.injectTrims (pendingFrozenTrims);
+            havePendingFrozen = false;
+        }
 
         // A request seen at (or during) the bottom holds it one more block:
         // the bulk swap it guards reaches the snapshot NEXT block and must be
@@ -428,18 +453,13 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // a trim member); the §9 lockable set is {ceiling} in v1.
     {
         const auto& t = adaptiveEngine.currentTrims();
-        // SCOPE OF THE RELEASE TRIM, stated because the parameter name hides
-        // it: this lands on `limReleaseMs`, which LookaheadLimiter reads ONLY
-        // in manual-release mode. `limAutoRelease` defaults to ON and its two
-        // envelopes step with the fixed kAutoFastMs/kAutoSlowMs constants, so
-        // at factory defaults this trim is computed, published, overlaid and
-        // latched — and inaudible. That is consistent with the rule stated
-        // above (a trim is inert while its host stage is inert) and it is not
-        // obviously what §5.4 intends, which is why the choice is OQ-016 and
-        // not a silent edit here: making it audible means scaling the auto
-        // poles, and that changes the default sound.
+        // ADR-0013 (OQ-016 resolved 2026-08-02, owner-approved): the release
+        // trim reaches BOTH release paths — the manual time below, and the
+        // auto poles through setAutoReleaseScale — so the §5.4 behaviour is
+        // audible at factory defaults (auto ON). One factor, computed once.
         pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f,
                                               p.limReleaseMs * std::pow (2.0f, t.releaseOctaves));
+        limiter.setAutoReleaseScale (std::pow (2.0f, t.releaseOctaves));
         pApplied.stereoLink   = juce::jlimit (0.0f, 1.0f, p.stereoLink + t.stereoLink);
         // The scHpf trim is the one that changes a DETECTOR rather than a
         // gain: pushing the shared sidechain HPF off its 20 Hz exact-skip

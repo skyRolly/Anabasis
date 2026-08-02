@@ -10,6 +10,7 @@
 
 #include "../src/PluginProcessor.h"
 #include "../src/MacroEngine.h"
+#include <array>
 #include <cstdio>
 
 static int failures = 0;
@@ -300,10 +301,10 @@ static void testFrozenSlotRoundTrip()
     auto slot = ab.getChild (0);
     slot.setProperty ("presetName", "Frozen A", nullptr);
     juce::ValueTree trims ("FROZEN_TRIMS");
-    trims.setProperty ("release",    0.25,  nullptr);
-    trims.setProperty ("stereoLink", -0.1,  nullptr);
-    trims.setProperty ("scHpf",      3.0,   nullptr);
-    trims.setProperty ("dynTilt",    0.4,   nullptr);
+    trims.setProperty ("releaseOctaves", 0.25, nullptr);   // the ADR-0014 field names
+    trims.setProperty ("stereoLink",     -0.1, nullptr);
+    trims.setProperty ("scHpfHz",        3.0,  nullptr);
+    trims.setProperty ("dynTiltDb",      0.4,  nullptr);
     slot.appendChild (trims, nullptr);
     auto mask = slot.getChildWithName ("DETACH_MASK");
     juce::ValueTree m ("PARAM");
@@ -325,7 +326,7 @@ static void testFrozenSlotRoundTrip()
     const auto r2 = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (out1.getData(), (int) out1.getSize()));
     const auto s2 = r2.getChildWithName ("AB").getChild (0);
     check (s2.getChildWithName ("FROZEN_TRIMS").isValid()
-             && juce::exactlyEqual ((double) s2.getChildWithName ("FROZEN_TRIMS").getProperty ("release"), 0.25),
+             && juce::exactlyEqual ((double) s2.getChildWithName ("FROZEN_TRIMS").getProperty ("releaseOctaves"), 0.25),
            "frozenSlot: the frozen trim vector survives the round trip");
     check (s2.getChildWithName ("DETACH_MASK").getNumChildren() == 1,
            "frozenSlot: the non-clear detach mask survives the round trip");
@@ -339,6 +340,172 @@ static void testFrozenSlotRoundTrip()
     const auto s3 = r3.getChildWithName ("AB").getChild (0);
     check (s3.getChildWithName ("FROZEN_TRIMS").isValid() && s3.getChildWithName ("DETACH_MASK").getNumChildren() == 1,
            "frozenSlot: trims + mask travel per-slot through the A/B swap paths");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0014 (OQ-013): FROZEN_TRIMS is a RESTORED vector, not just a carried
+// child. The save captures the published latch; the load stages it on
+// ADR-0012's record row; the engine applies it where every restore-driven
+// discontinuity lands — the §2.8 duck's silent bottom (primed) or the
+// unprimed direct-adopt — and Freeze then holds it bit-exactly. Freeze OFF on
+// the adopted surface stages nothing.
+//
+// Stimulus calibration: the release-trim target is (refOnset − onset) × 0.15
+// against the 4.0 factory reference, deadband 0.05 — so the latch pass runs
+// 10 clicks/s (target ≈ −0.9, far off zero) and the A/B away-pass runs a
+// click-FREE tone (target ≈ +0.6, far off the latch, so the un-frozen vector
+// genuinely moves; keeping the clicks would leave it inside the deadband and
+// the "moved" premise vacuous).
+static void testFrozenTrimRestore()
+{
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    // clickPeriod in samples; 0 = pure tone.
+    auto feed = [&] (AnabasisAudioProcessor& p, int blocks, int t0, int clickPeriod)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = t0 + b * 512 + n;
+                float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                           * 220.0f * (float) t / 48000.0f);
+                if (clickPeriod > 0 && (t % clickPeriod) < 96) v += 0.6f;
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            p.processBlock (buf, midi);
+        }
+    };
+    auto set = [] (AnabasisAudioProcessor& p, const char* id, float denorm)
+    {
+        auto* par = p.apvts.getParameter (id);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    auto trimsOf = [] (const AnabasisAudioProcessor& p)
+    {
+        const auto& ad = p.adaptiveReadout();
+        return std::array<float, 4> { ad.publishedTrimRelease(), ad.publishedTrimLink(),
+                                      ad.publishedTrimHpf(),     ad.publishedTrimTilt() };
+    };
+    auto sameVector = [] (const std::array<float, 4>& x, const std::array<float, 4>& y)
+    {
+        return juce::exactlyEqual (x[0], y[0]) && juce::exactlyEqual (x[1], y[1])
+            && juce::exactlyEqual (x[2], y[2]) && juce::exactlyEqual (x[3], y[3]);
+    };
+    auto parse = [] (const juce::MemoryBlock& mb)
+    {
+        return juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (
+                                             mb.getData(), (int) mb.getSize()));
+    };
+
+    // Latch a genuinely moved vector and save it.
+    AnabasisAudioProcessor a;
+    a.prepareToPlay (48000.0, 512);
+    set (a, pid::limGain, 6.0f);                 // limiting engaged, like the DSP suite
+    feed (a, 600, 0, 4800);                      // ~6.4 s at 10 clicks/s
+    set (a, pid::freeze, 1.0f);
+    feed (a, 4, 600 * 512, 4800);                // the latch lands at a block top
+    const auto saved = trimsOf (a);
+    check (std::abs (saved[0]) > 0.2f,
+           "frozenRestore: (premise) the latched release trim is well off zero");
+
+    juce::MemoryBlock state;
+    a.getStateInformation (state);
+
+    // The state carries the captured latch (a dropped saveSlotFromLive capture
+    // dies here, not three checks later).
+    {
+        const auto ft = parse (state).getChildWithName ("AB").getChildWithName ("SLOT")
+                            .getChildWithName ("FROZEN_TRIMS");
+        check (ft.isValid()
+                 && std::abs ((float) (double) ft.getProperty ("releaseOctaves") - saved[0]) < 1.0e-6f,
+               "frozenRestore: the save captured the published latch into FROZEN_TRIMS");
+    }
+
+    // (1) Session load into an UNPRIMED engine: the vector lands on the first
+    //     block (direct-adopt), and Freeze holds it exactly.
+    {
+        AnabasisAudioProcessor fresh;
+        fresh.prepareToPlay (48000.0, 512);
+        fresh.setStateInformation (state.getData(), (int) state.getSize());
+        buf.clear();
+        fresh.processBlock (buf, midi);
+        check (sameVector (trimsOf (fresh), saved),
+               "frozenRestore: an unprimed session load restores the vector on the first block");
+    }
+
+    // (2) Session load into a PRIMED engine: the vector lands at the duck's
+    //     silent bottom and holds exactly from there.
+    {
+        AnabasisAudioProcessor primed;
+        primed.prepareToPlay (48000.0, 512);
+        feed (primed, 12, 0, 4800);
+        check (! sameVector (trimsOf (primed), saved),
+               "frozenRestore: (premise) the primed processor's own vector differs");
+        primed.setStateInformation (state.getData(), (int) state.getSize());
+        feed (primed, 30, 12 * 512, 4800);       // through the duck and out
+        check (sameVector (trimsOf (primed), saved),
+               "frozenRestore: a primed session load lands the vector at the duck bottom");
+    }
+
+    // (3) A/B: the away-pass (freeze off, click-free tone) moves the vector;
+    //     switching back restages the slot's memory through applySlotToLive.
+    {
+        a.switchToSlot (1);                      // slot B: defaults, freeze off
+        feed (a, 120, 604 * 512, 0);
+        check (! sameVector (trimsOf (a), saved),
+               "frozenRestore: (premise) the un-frozen away-pass moved the vector");
+        a.switchToSlot (0);
+        feed (a, 30, 724 * 512, 0);
+        check (sameVector (trimsOf (a), saved),
+               "frozenRestore: switching back to the frozen slot restores its vector");
+    }
+
+    // (4) Load → save with NO audio between: the loaded vector is the truth,
+    //     not the engine's stale published trims (the same mirror rule the
+    //     ADAPTIVE child follows; kills a dropped frozenRestorePending guard).
+    {
+        AnabasisAudioProcessor noAudio;
+        noAudio.prepareToPlay (48000.0, 512);
+        noAudio.setStateInformation (state.getData(), (int) state.getSize());
+        juce::MemoryBlock resaved;
+        noAudio.getStateInformation (resaved);   // deliberately no processBlock
+        const auto ft = parse (resaved).getChildWithName ("AB").getChildWithName ("SLOT")
+                            .getChildWithName ("FROZEN_TRIMS");
+        check (ft.isValid()
+                 && std::abs ((float) (double) ft.getProperty ("releaseOctaves") - saved[0]) < 1.0e-6f,
+               "frozenRestore: a no-audio load then save keeps the loaded vector, not the stale latch");
+    }
+
+    // (5) The SAME session with the freeze parameter flipped off must stage
+    //     nothing: after one block the trims are still near zero, nowhere
+    //     near the saved latch a wrongly-staged inject would have published.
+    {
+        auto root = parse (state);
+        auto params = root.getChildWithName ("ANABASIS");
+        for (int i = 0; i < params.getNumChildren(); ++i)
+        {
+            auto node = params.getChild (i);
+            if (node.hasType ("PARAM") && node.getProperty ("id").toString() == pid::freeze)
+            {
+                node.setProperty ("value", 0.0, nullptr);
+                if (node.hasProperty ("raw"))
+                    node.setProperty ("raw", 0.0, nullptr);
+            }
+        }
+        juce::MemoryBlock off;
+        juce::AudioProcessor::copyXmlToBinary (*root.createXml(), off);
+
+        AnabasisAudioProcessor unfrozen;
+        unfrozen.prepareToPlay (48000.0, 512);
+        unfrozen.setStateInformation (off.getData(), (int) off.getSize());
+        buf.clear();
+        unfrozen.processBlock (buf, midi);
+        check (std::abs (trimsOf (unfrozen)[0]) < 0.5f * std::abs (saved[0]),
+               "frozenRestore: freeze-off on the adopted surface stages no injection");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -713,7 +880,7 @@ static void testFactoryPresets()
 
     int count = 0;
     const auto* table = PresetManager::factoryPresets (count);
-    check (count == 5, "factory: the five brief-named presets are compiled in");
+    check (count == 12, "factory: the brief's >=12-preset bank is compiled in (5 named + 7 owner-approved 2026-08-02)");
 
     // Apply EDM Club (index 2): macros land, style lands, ceiling lands.
     check (proc.applyFactoryPreset (2), "factory: apply succeeds");
@@ -1388,6 +1555,7 @@ int main (int argc, char** argv)
         testDrainInsideRestoreIsSuppressed();
         testAbRawExact();
         testFrozenSlotRoundTrip();
+        testFrozenTrimRestore();
         testAbToleranceRules();
         testPresetContract();
         testMissingChildrenReadAsDefaults();

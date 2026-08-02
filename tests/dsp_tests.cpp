@@ -2892,6 +2892,44 @@ static void testTrimBounds()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0013 (OQ-016): the release trim reaches the AUTO release path — the two
+// pole time-constants scale by 2^octaves, so after the same over-ceiling
+// burst a scale-2 limiter recovers measurably SLOWER than a scale-1 limiter.
+// Measured on the envelope the limiter itself emits (gainsOut), no chain.
+static void testAutoReleaseFollowsTheTrimScale()
+{
+    auto tailGainAfter = [] (float scale) -> float
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (48000.0, 96 + 3);
+        lim.setAutoRelease (true);
+        lim.setStereoLink (1.0f);
+        lim.setTransientPreserve (0.0f);
+        lim.setTruePeakMode (false);
+        lim.setAutoReleaseScale (scale);
+
+        float gains[2] = { 1.0f, 1.0f };
+        // 10 ms hard over-ceiling, then 600 ms of quiet — one time constant of
+        // the SLOW auto pole (600 ms), where the scale-1 and scale-2 recovery
+        // curves are furthest apart (63 % vs 39 % of the slow pole's travel).
+        for (int n = 0; n < 480 + 28800; ++n)
+        {
+            const float v = n < 480 ? 2.0f : 0.1f;
+            float frame[2] = { v, v };
+            lim.processSample (frame, 2, 96, 0.891f, gains);
+        }
+        return gains[0];                            // how far recovery has come
+    };
+
+    const float fast = tailGainAfter (1.0f);
+    const float slow = tailGainAfter (2.0f);
+    check (fast > 0.7f && fast < 1.0f,
+           "autoScale: (premise) scale 1 is mid-recovery after one slow time constant");
+    check (slow < fast - 0.02f,
+           "autoScale: scale 2 is clearly behind — the trim reaches the auto poles");
+}
+
+// ---------------------------------------------------------------------------
 // §2.9 spectrum capture rings (THREAD_MODEL planned edge → implemented at
 // P5): tap 1 is post-input-gain, tap 2 the render, one release-published
 // block per processed chunk. Pinned headlessly: the counts advance exactly
@@ -3563,6 +3601,7 @@ int main()
     testStopThenStartInOneBlockKeepsBoth();
     testFreezeLatchesTrims();
     testTrimBounds();
+    testAutoReleaseFollowsTheTrimScale();
     testSpectrumRingsCarryTheTaps();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();

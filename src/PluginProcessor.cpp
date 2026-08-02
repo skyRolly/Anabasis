@@ -357,6 +357,22 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     slot.appendChild (copyStateWithRaw(), nullptr);
     if (liveBaseline.isValid())
         slot.appendChild (liveBaseline.createCopy(), nullptr);
+    // ADR-0014 capture: with Freeze ON the latched vector IS the published
+    // one, so the save reads it live — unless a restore is still staged and
+    // unconsumed (a load-then-save with no audio between), where the engine's
+    // published trims are STALE and the restored copy is the truth: the same
+    // mirror rule the ADAPTIVE child follows.
+    if (apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f
+        && ! engine.frozenRestorePending())
+    {
+        const auto& a = engine.adaptiveForWrapper();
+        juce::ValueTree ft ("FROZEN_TRIMS");
+        ft.setProperty ("releaseOctaves", (double) a.publishedTrimRelease(), nullptr);
+        ft.setProperty ("stereoLink",     (double) a.publishedTrimLink(), nullptr);
+        ft.setProperty ("scHpfHz",        (double) a.publishedTrimHpf(), nullptr);
+        ft.setProperty ("dynTiltDb",      (double) a.publishedTrimTilt(), nullptr);
+        liveFrozenTrims = ft;
+    }
     if (liveFrozenTrims.isValid())
         slot.appendChild (liveFrozenTrims.createCopy(), nullptr);
     juce::ValueTree mask ("DETACH_MASK");
@@ -412,9 +428,19 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
     livePresetName  = slot.getProperty ("presetName").toString();
     liveBaseline    = slot.getChildWithName ("BASELINE").createCopy();
     liveFrozenTrims = slot.getChildWithName ("FROZEN_TRIMS").createCopy();
-    // OQ-013 HARD STOP: liveFrozenTrims is restored as SESSION DATA only.
-    // The message→audio inject transport is undecided; nothing here may push
-    // these values toward the engine until the OQ-013 ADR lands.
+    // ADR-0014 (OQ-013 resolved 2026-08-02, owner-approved — the Hard Stop
+    // this banner used to carry is LIFTED): a freeze-ON slot's vector is
+    // staged to the engine on ADR-0012's row and lands at the duck's silent
+    // bottom — the per-slot Freeze memory restoring, MODE inv 3's last gap.
+    // The freeze value is read from the freshly adopted surface, not from the
+    // incoming tree: adoptParamsTree already applied the read rules.
+    if (liveFrozenTrims.isValid()
+        && apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f)
+        engine.restoreFrozenTrims (
+            (float) (double) liveFrozenTrims.getProperty ("releaseOctaves", 0.0),
+            (float) (double) liveFrozenTrims.getProperty ("stereoLink", 0.0),
+            (float) (double) liveFrozenTrims.getProperty ("scHpfHz", 0.0),
+            (float) (double) liveFrozenTrims.getProperty ("dynTiltDb", 0.0));
 
     liveDetachMask.clear();
     if (const auto mask = slot.getChildWithName ("DETACH_MASK"); mask.isValid())
@@ -646,6 +672,20 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         }
     }
 
+    // ADR-0014: a freeze-ON session restores its frozen vector too — the same
+    // stage applySlotToLive performs, against the same duck this load already
+    // requested. The freeze value is read from the adopted surface (the
+    // ANABASIS child above), never the raw tree. liveFrozenTrims doubles as
+    // the mirror: while the stage is unconsumed, saveSlotFromLive serialises
+    // it instead of the engine's stale published trims.
+    if (liveFrozenTrims.isValid()
+        && apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f)
+        engine.restoreFrozenTrims (
+            (float) (double) liveFrozenTrims.getProperty ("releaseOctaves", 0.0),
+            (float) (double) liveFrozenTrims.getProperty ("stereoLink", 0.0),
+            (float) (double) liveFrozenTrims.getProperty ("scHpfHz", 0.0),
+            (float) (double) liveFrozenTrims.getProperty ("dynTiltDb", 0.0));
+
     // ADAPTIVE read rules: present → restore the learned targets through the
     // mirror pattern (consumed at the next block top); absent → never
     // learned, defaults (§4.4's discriminator).
@@ -657,7 +697,7 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     //
     // INVARIANT: the mirror store and the engine stage must stay PAIRED. This
     // is the only site that stages an adaptive record today; a future one (a
-    // preset carrying adaptive data, an A/B slot restore once OQ-013 lands)
+    // preset carrying adaptive data, say)
     // that calls restoreLearnedTargets/restoreNeverLearned without updating
     // the mirror would raise `adaptivePending` while the mirror still held the
     // previous record — and getStateInformation, which prefers the mirror

@@ -24,16 +24,17 @@ Part I is the product/DSP spec; Part II is the engineering standard inherited fr
 product **Anamorph**. Open decisions live in [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) —
 **do not guess at them**.
 
-**Current phase: P1–P5 code complete; P5 closes on the human brand/audition pass, then P6.** `docs/DESIGN.md` was **signed off 2026-07-31**,
-closing P0; the full §2 chain, the §2.8 transition layer, §2.7/§2.9 metering and the §5.4 adaptive
-engine with Learn are in the tree (P4's one blocked item is the OQ-013 frozen-trim restore).
-Implementation is governed by the twelve Accepted ADRs in
+**Current phase: v0.1.0 CODE COMPLETE (2026-08-02, under the owner's blanket approval) — the
+post-v0.1.0 human fine review is what remains.** `docs/DESIGN.md` was **signed off 2026-07-31**,
+closing P0; the full §2 chain, the §2.8 transition layer, §2.7/§2.9 metering, the §5.4 adaptive
+engine with Learn AND the ADR-0014 frozen-trim restore, the P5 UI, and the P6 undo/preset/budget
+work are all in the tree. Implementation is governed by the **fourteen** Accepted ADRs in
 [`docs/architecture/design-decisions/`](docs/architecture/design-decisions/ADR_INDEX.md) — read
 `ADR_INDEX.md` before writing code; an ADR outranks `DESIGN.md`, which is now superseded section by
-section as the real architecture set lands. Exit criteria: pluginval **L8 green at P5** (both
-modes ×3, editor under xvfb); L10 at P6. The P5 brand-consistency checklist is implemented but its
-item-by-item HUMAN verification (`docs/BRAND_CONSISTENCY_CHECKLIST.md`) is still owed — Level 5
-cannot be closed headlessly. `docs/HANDOVER.md` carries the status of record.
+section as the real architecture set lands. pluginval gates at **L10** (both modes ×3, editor
+under xvfb) locally and in CI. Every decision dated 2026-08-02 is ⊕ pending the fine review; the
+brand checklist is provisionally passed with its Level-5 boxes deliberately unchecked
+(`docs/BRAND_CONSISTENCY_CHECKLIST.md`). `docs/HANDOVER.md` carries the status of record.
 
 ---
 

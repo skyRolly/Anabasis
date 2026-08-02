@@ -6,7 +6,26 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **Windows-CI stack fix (2026-08-02)** (PR #5): the spectrum commit's
+**Last updated:** for the **v0.1.0 completion batch (2026-08-02, owner blanket approval)**
+(PR #5): the two owed ADRs are written and registered — **ADR-0013** (OQ-016: the release trim
+scales the auto poles; `MODE_AND_ADAPTATION_POLICY.md`'s "three of four audible" scope note
+rewritten to four) and **ADR-0014** (OQ-013: the frozen-trim restore; the Hard Stop banners in
+`PluginProcessor.h`, `AdaptiveEngine.h`, `THREADING_POLICY.md` and `THREAD_MODEL.md` lifted and
+replaced with ADR citations, a frozen-trim row added to the implemented-edges table, ADR-0007's
+index row upgraded to Verified). **A drift found and fixed while writing the ADR-0014 test:**
+`setStateInformation` adopted `liveFrozenTrims` but never staged the engine restore — only
+`applySlotToLive` did — so a freeze-ON *session load* (the primary OQ-013 case) would have
+silently dropped the vector; the stage is now in both paths and `testFrozenTrimRestore`'s
+unprimed/primed load cases pin it (seven mutants total, each killed by a distinct check — both
+application sites, both staging sites, the capture, the no-audio mirror guard, the freeze-off
+condition). OQ-007 (plain zips), OQ-014 (reading 1 — `THREADING_POLICY.md` gains the
+listener-guard row citing ADR-0005/ADR-0011 as enacting authority) and OQ-013/OQ-016 moved to
+Resolved; `testFrozenSlotRoundTrip`'s fixture property names corrected to the real ADR-0014
+field names (`releaseOctaves`/`scHpfHz`/`dynTiltDb` — the old test asserted byte transport, so
+it passed either way; the fixture was drifting, not the test); the preset bank extended to the
+brief's 12 (names/values ⊕); the brand checklist marked provisionally passed (boxes untouched —
+C7); CI strictness 8 → 10; HANDOVER carries the v0.1.0 completion summary. Previous: for the
+**Windows-CI stack fix (2026-08-02)** (PR #5): the spectrum commit's
 two ScopeBuffers carried 2 × 128 KB of INLINE arrays inside every engine, and the state suite
 builds processors on the stack — three coexisting in one test ≈ 1.2 MB against Windows' 1 MB
 default (Linux's 8 MB hid it), and the crash ate its own fully-buffered CI output, which is why
