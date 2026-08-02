@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **eighteenth review round of 2026-08-02** (PR #5): the invariant-9
+**Last updated:** for the **nineteenth review round of 2026-08-02** (PR #5): the two stages that
+emit no audio — the BS.1770 meters and the §5.4 feature extractor — overflow on a legal float and
+fail silently, so they are now repaired per block like the limiter's detector. Previous round: (PR #5): the invariant-9
 recovery had one more hole, and it was in the sentence that justified leaving stage E without a
 boundary — the Post EQ can overflow, and did, permanently. Previous round: (PR #5): one of the four
 §5.4 trims is inert in the factory state — the release trim lands on a parameter the limiter reads
@@ -43,6 +45,48 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Nineteenth review round — the failures that are invisible because they are not audio (2026-08-02)
+
+Seven items: one defect fixed with a two-part regression test, three one-line consistency
+corrections, three repeats left alone.
+
+**A third class of stage, and it is the one the contract kept missing.** Rounds fifteen to
+eighteen were about stages that produce a non-finite SAMPLE, which a boundary can catch. The
+meters and the feature extractor produce no samples at all. Both are fed the delay-aligned dry
+signal — finite by the input boundary, unbounded by anything — and both overflow on it: the
+K-weighting shelf at ~FLT_MAX/3, the band-energy square at ~1.8e19. What follows is silent in
+every sense: a NaN reading compares false against `>= -70 LUFS`, so the §2.7 compensation freezes
+and the integrated histogram stops counting; a NaN feature fails the trim hysteresis
+`|tgt − state| > deadband`, so the trim vector holds its last value for the session **and looks
+entirely plausible doing it**. Measured: `tilt=-nan crest=-nan` and a frozen trim vector, 359
+blocks after a single extreme block.
+
+**Stimulus calibration decided the shape of the test, twice.** A constant huge block does NOT
+poison the extractor's filter state — `bandLp` tracks toward it and stays finite; only the SQUARE
+overflows, and that recovers. The state only breaks on a sign flip, where `x − bandLp` is
+2·FLT_MAX: the stimulus is Nyquist at full scale. And the output meter is unreachable through the
+programme path (the render tap is ceiling-bounded), so the case runs in **bypass**, where
+`render = delayedDry` is the raw input. Each half dies against its own `sanitiseState()`.
+
+**One guard was written, tested, and removed again.** The first draft also dropped a non-finite
+sub-block mean before it entered the meter's ring. No mutant could tell the difference: the NaN
+that this failure actually produces is rejected by the `lufs >= -70.0` absolute gate anyway, since
+every comparison against NaN is false. The property is now an assertion in the test instead of a
+branch in the meter — last round's lesson about unreachable defensive code, applied to my own
+first draft rather than to someone else's line.
+
+**What is NOT fixed, and is now written down.** After an extreme block the features re-converge
+from a huge-but-finite value through the 1.5 s integrator, which can take tens of seconds of
+wrong-but-finite tilt. Bounding the features to fix that is a §5.4 mapping change, not a repair.
+
+**Three consistency corrections.** The limiter's detector-HPF design clamp was 20 Hz where the
+compressor's identical filter uses 10 Hz — unreachable divergence today, aligned rather than
+argued about. The wet ring's zero slack is now justified in place (its read offset is fixed, the
+dry ring's is a three-term sum, which is what the spare slot there guards). And Learn's
+accumulation now says that it sums the ~1.5 s integrated features on purpose, that the bias is
+~1.5 s of pre-start material, and that the P5 grammar owes a minimum pass length rather than this
+owing a re-seed.
 
 ### Eighteenth review round — the hole was in the sentence that said there was no hole (2026-08-02)
 

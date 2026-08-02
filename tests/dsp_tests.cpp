@@ -3034,6 +3034,103 @@ static void testExtremeLevelDoesNotSilencePermanently()
 }
 
 // ---------------------------------------------------------------------------
+// inv 9, the third kind of stage: the ones that emit no audio, so NO boundary
+// can see them fail. Both of these poison themselves from a FINITE input and
+// then fail SILENTLY — the readings are wrong, every gate that compares them
+// is false, and nothing in the engine notices. They are repaired once per
+// block rather than on the recovery flag, and this test is what says so.
+static void testExtremeLevelDoesNotBreakTheMetersOrAdaptation()
+{
+    const double sr = 48000.0;
+    const int block = 512;
+    juce::AudioBuffer<float> buf (2, block);
+    auto tone = [&] (int b)
+    {
+        for (int n = 0; n < block; ++n)
+        {
+            const float ph = 2.0f * 3.14159265f * 220.0f * (float) (b * block + n) / (float) sr;
+            const float v = 0.2f * std::sin (ph);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+    };
+
+    // (a) §5.4 features. The stimulus is Nyquist AT FULL SCALE, not a constant:
+    //     `bandLp += (x − bandLp)·a` overflows on the SIGN FLIP (the difference
+    //     is 2·FLT_MAX), which a constant huge block never does — it only makes
+    //     the band-energy SQUARE overflow, and that recovers on its own. Once
+    //     `bandLp` is NaN every later block is too, `tiltDb`/`crestDb` publish
+    //     NaN, and the trim hysteresis `|tgt − state| > deadband` is false for
+    //     NaN, so the vector freezes at a plausible-looking value for the rest
+    //     of the session.
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        anabasis::EngineParameters p;
+
+        for (int b = 0; b < 60; ++b) { tone (b); engine.process (buf, p); }
+        const float tiltBefore = engine.adaptive().publishedTiltDb();
+
+        const float huge = std::numeric_limits<float>::max();
+        for (int n = 0; n < block; ++n)
+        {
+            const float v = (n % 2 == 0) ? huge : -huge;
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+
+        for (int b = 61; b < 121; ++b) { tone (b); engine.process (buf, p); }
+        const float tiltAfter = engine.adaptive().publishedTiltDb();
+
+        check (std::isfinite (tiltBefore) && tiltBefore < -5.0f,
+               "meters/adaptation: (test premise) the tilt feature reads the tone before the event");
+        check (std::isfinite (tiltAfter) && std::abs (tiltAfter - tiltBefore) < 2.0f,
+               "meters/adaptation: the tilt feature measures again after an extreme sample");
+    }
+
+    // (b) §2.9 output meter, reached through the BYPASS leg — `render` is then
+    //     the raw delay-aligned dry signal, which the engine keeps finite but
+    //     does not bound, and the K-weighting shelf overflows on it (|b1| ≈ 2.7).
+    //     Without the repair the meter reads silence for ever afterwards, which
+    //     is worse than reading NaN: it looks like a legitimate measurement.
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        anabasis::EngineParameters p;
+        p.bypass = true;
+
+        for (int b = 0; b < 300; ++b) { tone (b); engine.process (buf, p); }
+        const float lufsBefore = engine.outputLoudness().shortTermLufs();
+        const float intBefore  = engine.outputLoudness().integratedLufs();
+
+        const float huge = std::numeric_limits<float>::max();
+        for (int n = 0; n < block; ++n)
+        {
+            buf.setSample (0, n, huge);
+            buf.setSample (1, n, huge);
+        }
+        engine.process (buf, p);
+
+        for (int b = 301; b < 601; ++b) { tone (b); engine.process (buf, p); }
+        const float lufsAfter = engine.outputLoudness().shortTermLufs();
+
+        check (std::isfinite (lufsBefore) && lufsBefore > -40.0f,
+               "meters/adaptation: (test premise) the output meter reads the tone before the event");
+        check (std::isfinite (lufsAfter) && std::abs (lufsAfter - lufsBefore) < 1.0f,
+               "meters/adaptation: the output meter measures again after an extreme sample");
+        // The sliding window ages a bad sub-block out on its own; the gated
+        // HISTOGRAM never does, so this pins the property that keeps it clean —
+        // the absolute gate `lufs >= -70.0` is false for the NaN this failure
+        // produces, so the block is simply never counted. Asserted rather than
+        // guarded: a guard here would be a branch no stimulus can distinguish.
+        const float intAfter = engine.outputLoudness().integratedLufs();
+        check (std::isfinite (intAfter) && std::abs (intAfter - intBefore) < 1.0f,
+               "meters/adaptation: the integrated reading is not poisoned for the session");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // inv 9's self-heal must degrade GRACEFULLY (inv 8). Discarding the sliding
 // window costs pre-emption for W samples — documented and accepted. Snapping
 // the ENVELOPE back to unity is a separate effect and not acceptable: the
@@ -3299,6 +3396,7 @@ int main()
     testTrimBounds();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
+    testExtremeLevelDoesNotBreakTheMetersOrAdaptation();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
 

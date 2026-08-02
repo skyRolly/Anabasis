@@ -110,6 +110,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) — the Post-position case of the same test,
   calibrated against the limiter attack and mutation-verified. [Verified]
 
+- **Meters and Simple-mode adaptation no longer break for the session on one extreme sample.**
+  Both are fed signals that are finite but unbounded, and both overflow on a legal float — the
+  loudness meters in their K-weighting filter, the adaptive feature extractor when it squares its
+  band split. Neither emits audio, so nothing in the engine could notice: the readings became NaN,
+  every gate that compares them turned false, and the result was a loudness/true-peak readout
+  stuck at silence, a loudness compensation that stopped tracking, an integrated reading that
+  stopped accumulating, and a Simple-mode trim vector frozen at a plausible-looking value until
+  the plugin was re-prepared. Both are now checked once per block, and a Learn pass that
+  accumulated a broken feature is cancelled rather than committing it into the session.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
+  `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, one stimulus per stage (Nyquist at full
+  scale for the extractor, the bypass leg for the meter), each mutation-verified. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

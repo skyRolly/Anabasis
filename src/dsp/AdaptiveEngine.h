@@ -151,6 +151,60 @@ public:
         pubOnsetRate.store (0.0f, std::memory_order_relaxed);
     }
 
+    // Invariant 9, the unconditional half. Called once per block by the
+    // engine, NOT from the recovery flag, because this class poisons itself
+    // from a FINITE input and produces no non-finite audio to detect: it is
+    // fed the delay-aligned dry signal, which the engine keeps finite but does
+    // not bound, and `lo += bandLp*bandLp` overflows in float at ~1.8e19.
+    // From there `loEnergy` goes inf, then `inf + (finite − inf)·a` = NaN on
+    // the next block, and every consequence is SILENT: `tiltDb`/`crestDb`
+    // publish NaN, and the hysteresis test `|tgt − state| > deadband` is false
+    // for NaN, so the trim vector freezes at whatever it held — for the rest
+    // of the session, looking like a perfectly plausible set of trims.
+    //
+    // Non-finite members are returned to their reset() seeds rather than to
+    // zero: the seeds mean "no measurement yet", which is exactly true after
+    // one has been thrown away, and the crest pair must stay a square apart.
+    void sanitiseState() noexcept
+    {
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            if (! std::isfinite (bandLp[ch]))
+                bandLp[ch] = 0.0f;
+        if (! std::isfinite (envFast) || ! std::isfinite (envSlow))
+            envFast = envSlow = 0.0f;
+        if (! std::isfinite (msAvg) || ! std::isfinite (peakAvg))
+        {
+            msAvg   = 1.0e-12f;
+            peakAvg = 1.0e-6f;
+        }
+        if (! std::isfinite (loEnergy) || ! std::isfinite (hiEnergy))
+            loEnergy = hiEnergy = 1.0e-9f;
+        if (! std::isfinite (onsetRate))
+            onsetRate = 0.0f;
+        if (! std::isfinite (blockPeak) || ! std::isfinite (blockMs)
+            || ! std::isfinite (blockLo) || ! std::isfinite (blockHi))
+        {
+            blockPeak = 0.0f; blockMs = 0.0; blockLo = 0.0; blockHi = 0.0;
+        }
+        if (! std::isfinite (trims.releaseOctaves) || ! std::isfinite (trims.stereoLink)
+            || ! std::isfinite (trims.scHpfHz) || ! std::isfinite (trims.dynTiltDb))
+            trims = {};
+
+        // A Learn pass that accumulated a NaN feature is already ruined, and
+        // its commit would write that NaN into `refTiltDb` — which the next
+        // save serializes into the session's ADAPTIVE child, making the damage
+        // outlive the session. Cancelled exactly the way reset() cancels one:
+        // `learnBlocks == 0` makes the next commit the documented empty-pass
+        // no-op, and `learned` / the references are session state and stay.
+        if (! std::isfinite (learnOnsSum) || ! std::isfinite (learnTiltSum))
+        {
+            learnActive.store (false, std::memory_order_release);
+            learnOnsSum  = 0.0;
+            learnTiltSum = 0.0;
+            learnBlocks  = 0;
+        }
+    }
+
     // Per sample, the delay-aligned dry (input) frame.
     void pushFrame (const float* x, int numCh) noexcept
     {
@@ -221,6 +275,16 @@ public:
 
         if (learnActive.load (std::memory_order_relaxed) && audible)
         {
+            // These are the ~1.5 s INTEGRATED features, not this block's
+            // instantaneous ones, and startLearn() deliberately does not
+            // re-seed them: re-seeding would make the first second of every
+            // pass a re-convergence ramp, which is a worse bias than the one
+            // it removes. The bias it leaves: a pass carries roughly 1.5 s of
+            // whatever was playing BEFORE the user pressed Learn, weighted
+            // down exponentially. Immaterial for a multi-second pass (the
+            // test's is ~5 s) and material for a very short one — so the P5
+            // Learn grammar owes a MINIMUM PASS LENGTH rather than this owing
+            // a re-seed. Recorded here because the sums look instantaneous.
             learnOnsSum  += onsetRate;
             learnTiltSum += tiltDb;
             ++learnBlocks;

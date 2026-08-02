@@ -178,9 +178,15 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    was created by one — "its input is the limited signal, bounded by the ceiling" — which ignored
    that the limiter's ATTACK is what bounds it, and that a short lookahead leaves the envelope at
    ~0.29 while a fully boosted EQ multiplies by ~3.4. Where a stage's corruption produces no
-   non-finite output at all to detect (the limiter's detector high-pass: `NaN` compares false, so
-   the gain computer silently emits unity for ever), the check is unconditional and per block
-   rather than hung on a flag.
+   non-finite output at all to detect, the check is unconditional and per block rather than hung on
+   a flag. **Three stages are in that class**, and they are the ones whose failure is invisible
+   rather than loud: the limiter's detector high-pass (a `NaN` level compares false against the
+   ceiling, so the gain computer emits unity for ever), the BS.1770 meters (a `NaN` reading
+   compares false against every gate, so the §2.7 compensation freezes and the integrated
+   histogram stops accumulating), and the §5.4 feature extractor (a `NaN` feature fails the trim
+   hysteresis, so the trim vector holds its last value for the session and looks plausible doing
+   it). All three are fed signals the engine keeps finite but does not BOUND, which is why a legal
+   float can break them at all.
    **"Self-heals" is not "recovers instantly", and the difference is stated so it is not read as
    one:** the repair runs at the END of the chunk that detected the contamination, so that whole
    chunk has already been processed with the poisoned state and its output is the boundaries'
@@ -248,7 +254,7 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
 | 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
-| 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testSelfHealDoesNotSnapTheEnvelope` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad in either position, RMS detector square, colour c⁵, polyphase IIR — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted) |
+| 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, `testSelfHealDoesNotSnapTheEnvelope` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad in either position, RMS detector square, colour c⁵, polyphase IIR — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted), and the stages that emit no audio to check at all (the meters and the feature extractor, repaired per block) |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor` | **live (P3)** — offline render bit-identical with comp on/off and with delta on/off; realtime monitor pulled to the dry loudness with the predict floor acting before the measure exists (all mutation-verified) |
 | 11 metering accuracy | `testLufsCalibration`, `testLufsGating`, `testLufsWindows` | **partial (P3)** — LUFS M/S/I live against the standard's synthesised calibration points (997 Hz compliance vector −3.01 LKFS ≤ 0.1 LU at 48/44.1 kHz; both gate halves isolated by stimulus, incl. the silence-in-the-threshold-base case only mutation testing surfaced); the dBTP meter and the file-based EBU vector sweep remain |
 | 12 dither placement/default | `testDitherModes` + `testNullWithDefaults` | **live (P2)** — Off default is a true no-op (the bit-exact null proves it); 16-bit lands on the 2⁻¹⁵ grid with a randomised LSB; shaping tilts the error spectrum +12.6 dB toward the top of the band; placement after the clamp, processed path only |

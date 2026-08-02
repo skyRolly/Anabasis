@@ -356,7 +356,14 @@ private:
                     hpfZ1[ch] = hpfZ2[ch] = 0.0f;
             return;
         }
-        const float f    = juce::jlimit (20.0f, (float) (0.49 * sr), freqHz);
+        // 10 Hz, the same lower bound MasteringComp::recomputeHpf uses: the two
+        // stages design the SAME shared `scHpfFreq` filter, and an asymmetric
+        // bound is drift waiting to matter. Unreachable today (the parameter
+        // range is 20…300 Hz and the §5.4 trim only adds), which is exactly why
+        // the two were allowed to differ — the engage test is the semantic one
+        // (`> 20.001` = OFF), and this clamp only keeps the design well
+        // conditioned.
+        const float f    = juce::jlimit (10.0f, (float) (0.49 * sr), freqHz);
         const float w0   = juce::MathConstants<float>::twoPi * f / (float) sr;
         const float cosw = std::cos (w0);
         const float alpha = std::sin (w0) / (2.0f * 0.7071068f);

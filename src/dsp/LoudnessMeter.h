@@ -68,6 +68,40 @@ public:
         totalGatedBlocks = 0;
     }
 
+    // Invariant 9, the unconditional half — called once per block by the
+    // engine rather than from its recovery flag, for the same reason the
+    // limiter's detector state is: this meter poisons itself from a FINITE
+    // input and emits no audio at all, so no boundary can see it. `dryMeter`
+    // is fed the raw delay-aligned input, which the engine keeps finite but
+    // does not bound, and the K-weighting shelf overflows on it (|b1| ≈ 2.7,
+    // so ~FLT_MAX/3 is enough). The TDF-II states then hold inf, the next
+    // sample makes them NaN, and every reading is NaN for the rest of the
+    // session: `momentaryLufs()`, the §2.7 gate that compares it against
+    // −70 LUFS (false for NaN, so the compensation freezes), and the
+    // published M/S/I.
+    //
+    // Only the K-weighting states and the sub-block accumulator are repaired,
+    // and the other two structures are deliberately left alone rather than
+    // scanned: a poisoned sub-block MEAN ages out of the ring within
+    // kSubRing entries, and it cannot reach the gated histogram because the
+    // absolute gate is `lufs >= -70.0`, which is FALSE for the NaN this
+    // failure produces. (A finite-but-astronomical block does enter the
+    // histogram and biases the integrated reading for the session — that is
+    // the meter correctly recording an absurd measurement, and the P5 meter
+    // reset is its escape hatch, not a repair belonging here.)
+    void sanitiseState() noexcept
+    {
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+        {
+            if (! std::isfinite (s1z1[ch]) || ! std::isfinite (s1z2[ch]))
+                s1z1[ch] = s1z2[ch] = 0.0f;
+            if (! std::isfinite (s2z1[ch]) || ! std::isfinite (s2z2[ch]))
+                s2z1[ch] = s2z2[ch] = 0.0f;
+            if (! std::isfinite (subAccum[ch]))
+                subAccum[ch] = 0.0;
+        }
+    }
+
     // One frame (all channels of one sample step).
     void processFrame (const float* x, int numCh) noexcept
     {

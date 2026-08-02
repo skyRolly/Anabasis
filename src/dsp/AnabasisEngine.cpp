@@ -15,6 +15,14 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // ring holds 10 ms + one chunk at 16x, the dry ring holds the base
     // allowance + the worst oversampler delay + one chunk.
     const int maxN = 1 << kMaxOsFactorLog2;
+    // +1, not +2 like the dry ring below, and the difference is deliberate
+    // rather than an oversight: this ring is read at a FIXED offset behind the
+    // write (`delayOs`, and `delayOs ≤ ringSizeOs − maxBlock·osN − 1` by the
+    // way `ringSizeOs` is computed), so the read slot cannot coincide with the
+    // slot being written. The dry ring's offset is a SUM of three quantities
+    // including a table lookup, which is what the spare slot there guards. A
+    // change to the region's tap offset has no cushion here — size it again
+    // rather than assuming one.
     wetRing.setSize (numChans, delaySamples * maxN + maxBlock * maxN + 1);
     // +2, not +1: the read trails the write by num + delaySamples + osLatBase,
     // which at the worst case (full block, 16× linear) is exactly size − 1 —
@@ -417,6 +425,21 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // caught), so the state is checked where it costs a comparison per block
     // instead of relying on the compressor's identical filter poisoning first.
     limiter.sanitiseDetectorState();
+    // The same unconditional treatment, for the same reason, for the three
+    // stages whose corruption produces no audio to inspect: the §2.7/§2.9
+    // meters (fed the delay-aligned dry signal and the render tap — finite,
+    // unbounded, and their K-weighting shelf overflows around FLT_MAX/3) and
+    // the §5.4 feature extractor (squares its band split in float, so ~1.8e19
+    // is enough). Both fail SILENTLY: NaN readings compare false against every
+    // gate, so the loudness compensation freezes, the integrated histogram
+    // stops accumulating and the trim vector holds its last value for the rest
+    // of the session while looking entirely plausible. Costs a few comparisons
+    // per block each. `outTp` is deliberately absent: its history is FIR, so a
+    // poisoned entry flushes itself in 12 samples.
+    dryMeter.sanitiseState();
+    wetMeter.sanitiseState();
+    outMeter.sanitiseState();
+    adaptiveEngine.sanitiseState();
     eq.setTargets (pApplied);
     comp.setPerBlock (pApplied);
     clip.setPerBlock (pApplied);
