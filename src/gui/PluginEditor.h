@@ -33,7 +33,7 @@ public:
 
 private:
     AnabasisAudioProcessor& processor;
-    AnabasisLookAndFeel lookAndFeel;
+    abgui::AnabasisLookAndFeel lookAndFeel;
 #if JUCE_MAC || JUCE_WINDOWS
     juce::OpenGLContext glContext;
 #endif
