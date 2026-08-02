@@ -211,6 +211,60 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         k->setAlpha (0.75f);
     }
 
+    // -- Simple view (§6.2) --------------------------------------------------
+    rotary (bigLoudnessK, bigLoudnessL, pid::loudness);
+    rotary (simpleCharacterK, simpleCharacterL, pid::character);
+    rotary (simpleToneK, simpleToneL, pid::tone);
+    rotary (simpleCeilingK, simpleCeilingL, pid::ceiling);
+    bigLoudnessL.setFont (juce::Font (juce::FontOptions (13.5f)).withExtraKerningFactor (0.2f));
+
+    setupToggleInternal (ceilingLockToggle, "LOCK", "Ceiling lock",
+                         processor.internalState.state()
+                             .getPropertyAsValue (iid::ceilingLock, nullptr));
+
+    // §5.4 Learn — explicit start / explicit end, never background (MODE
+    // inv 3). The button ignores a stop inside the MINIMUM PASS (the ~1.5 s
+    // integrated features carry pre-start material, so an instant stop would
+    // commit a biased reference — the P4-recorded grammar debt); while
+    // learning it counts the remaining seconds down, wordlessly. An EMPTY
+    // pass (nothing above the silence gate) flashes `warn`: the reference
+    // did not move, which is the readout P4 owed the caller.
+    learnButton.setClickingTogglesState (false);
+    learnButton.onClick = [this]
+    {
+        const auto& a = processor.adaptiveReadout();
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        if (! a.isLearning())
+        {
+            processor.startLearn();
+            learnStartedMs = nowMs;
+            learnStopPending = false;
+        }
+        else if (nowMs - learnStartedMs >= kLearnMinPassMs)
+        {
+            hadLearnedAtStop = a.hasLearned();
+            refOnsetAtStop   = a.publishedRefOnset();
+            refTiltAtStop    = a.publishedRefTilt();
+            processor.stopLearn();
+            learnStopPending = true;
+        }
+    };
+    addAndMakeVisible (learnButton);
+    registerAnimated (learnButton);
+
+    outLufsCaption.setText ("out LUFS", juce::dontSendNotification);   // §6.2 wireframe
+    outLufsCaption.setColour (juce::Label::textColourId, colours::textDim);
+    outLufsCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    outLufsCaption.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (outLufsCaption);
+    outLufsValue.setColour (juce::Label::textColourId, colours::text);
+    outLufsValue.setFont (juce::Font (juce::FontOptions (15.0f)));
+    outLufsValue.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (outLufsValue);
+
+    editedDot.onClick = [this] { processor.resetToMacro(); };
+    addChildComponent (editedDot);
+
     // -- overlays ------------------------------------------------------------
     addChildComponent (dimOverlay);
     dimOverlay.setInterceptsMouseClicks (false, false);
@@ -490,6 +544,21 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
         g.fillRoundedRectangle (util, 10.0f);
         g.fillRoundedRectangle (macro, 10.0f);
         glass::fillPanel (g, meter, 10.0f, colours::bgPanel.withAlpha (0.5f), 0.8f);
+
+        // §5.3 / §6.3: per-parameter detach badges — an accent dot on each
+        // control the user has taken off its macro curve.
+        const std::pair<const char*, const juce::Slider*> badged[] = {
+            { "limGain", &limGainK },   { "compThreshold", &thresholdK },
+            { "compRatio", &ratioK },   { "clipDrive", &driveK },
+            { "clipShape", &shapeK },   { "colourDepth", &depthK },
+            { "dynTilt", &dynTiltK },   { "eqTilt", &eqTiltK },
+            { "colourTone", &colToneK },
+        };
+        g.setColour (colours::accent);
+        for (const auto& [id, k] : badged)
+            if (processor.detachMask().contains (juce::String (id)))
+                g.fillEllipse ((float) k->getRight() - 10.0f, (float) k->getY() + 2.0f,
+                               7.0f, 7.0f);
     }
     else
     {
@@ -680,10 +749,37 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
 
 void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
 {
-    // The Simple controls (big knob, macro row, toggle row) land with the
-    // §6.2 pass; the frame, meter panel well and GR strip well are placed by
-    // paint(). Hide the Advanced-only controls meanwhile.
     juce::ignoreUnused (body);
+    auto left = juce::Rectangle<int> (0, kBarH, getWidth() - 308, kSimpleH - kBarH - 128);
+
+    // The one knob — the unambiguous visual focus (§5.1/§8).
+    auto knobArea = left.removeFromTop (330).withSizeKeepingCentre (250, 300);
+    bigLoudnessL.setBounds (knobArea.removeFromBottom (18));
+    bigLoudnessK.setBounds (knobArea);
+    editedDot.setBounds (bigLoudnessK.getRight() - 6, bigLoudnessK.getY() + 16, 14, 14);
+
+    // Secondary macro row: CHARACTER · TONE · CEILING(+lock).
+    auto macroRow = left.removeFromTop (118).reduced (24, 0);
+    const int w = macroRow.getWidth() / 3;
+    auto place = [] (juce::Rectangle<int> c, Knob& k, juce::Label& l)
+    {
+        l.setBounds (c.removeFromBottom (13));
+        k.setBounds (c.reduced (8, 0));
+    };
+    place (macroRow.removeFromLeft (w), simpleCharacterK, simpleCharacterL);
+    place (macroRow.removeFromLeft (w), simpleToneK, simpleToneL);
+    auto ceilCell = macroRow;
+    ceilingLockToggle.setBounds (ceilCell.removeFromRight (54).withSizeKeepingCentre (52, 20));
+    place (ceilCell, simpleCeilingK, simpleCeilingL);
+
+    // Toggle row: [Loudness Comp] [Delta] [Freeze] [Learn] + out LUFS.
+    auto toggles = left.removeFromTop (40).reduced (24, 4);
+    compToggle.setBounds (toggles.removeFromLeft (96));
+    deltaToggle.setBounds (toggles.removeFromLeft (86));
+    freezeToggle.setBounds (toggles.removeFromLeft (94));
+    learnButton.setBounds (toggles.removeFromLeft (78).reduced (0, 2));
+    outLufsValue.setBounds (toggles.removeFromRight (72));
+    outLufsCaption.setBounds (toggles.removeFromRight (70));
 }
 
 // ============================================================================
@@ -710,12 +806,28 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
         &b1FreqL, &b1GainL, &b1QL, &b2FreqL, &b2GainL, &b2QL,
         &eqPosBox,
         &inputGainK, &scHpfK, &inputGainL, &scHpfL,
-        &ditherBox, &shapingToggle, &compToggle, &deltaToggle, &freezeToggle,
+        &ditherBox, &shapingToggle,
         &macroLoudnessK, &macroCharacterK, &macroToneK,
         &macroLoudnessL, &macroCharacterL, &macroToneL,
     };
     for (auto* c : advOnly)
         c->setVisible (adv);
+
+    juce::Component* simpleOnly[] = {
+        &bigLoudnessK, &bigLoudnessL, &simpleCharacterK, &simpleCharacterL,
+        &simpleToneK, &simpleToneL, &simpleCeilingK, &simpleCeilingL,
+        &ceilingLockToggle, &learnButton, &outLufsCaption, &outLufsValue,
+    };
+    for (auto* c : simpleOnly)
+        c->setVisible (! adv);
+
+    // Shared in BOTH views (§6.2 toggle row / §6.3 utility row): the layout
+    // that runs next places them for whichever view is active.
+    for (auto* c : { &compToggle, &deltaToggle, &freezeToggle })
+        c->setVisible (true);
+
+    if (adv)
+        editedDot.setVisible (false);   // Advanced shows per-control badges instead
 }
 
 void AnabasisAudioProcessorEditor::applyUiScale()
@@ -760,6 +872,59 @@ void AnabasisAudioProcessorEditor::timerCallback()
     const bool bypassed = processor.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f;
     if (bypassed != dimOverlay.isVisible())
         dimOverlay.setVisible (bypassed);
+
+    // -- out-LUFS readout (render short-term, the §2.9 tap) ------------------
+    if (! advanced)
+    {
+        const float s = processor.meterLufsS();
+        outLufsValue.setText (s <= -99.0f ? juce::String ("-")
+                                          : juce::String (s, 1),
+                              juce::dontSendNotification);
+    }
+
+    // -- Learn button state (§5.4 grammar) -----------------------------------
+    {
+        const auto& a = processor.adaptiveReadout();
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        juce::String text ("LEARN");
+        if (a.isLearning())
+        {
+            const double leftMs = kLearnMinPassMs - (nowMs - learnStartedMs);
+            if (leftMs > 0.0)
+                text = juce::String ((int) std::ceil (leftMs * 0.001));
+            learnButton.setColour (juce::TextButton::textColourOffId, colours::accent);
+        }
+        else if (learnStopPending)
+        {
+            // The commit lands at a block top; once the engine reports the
+            // pass over, compare what the references did. Unmoved + already
+            // learned-state unchanged = the documented empty pass.
+            learnStopPending = false;
+            const bool moved = a.hasLearned() != hadLearnedAtStop
+                            || ! juce::exactlyEqual (a.publishedRefOnset(), refOnsetAtStop)
+                            || ! juce::exactlyEqual (a.publishedRefTilt(), refTiltAtStop);
+            if (! moved)
+                emptyFlashUntilMs = nowMs + 1500.0;
+        }
+        if (! a.isLearning())
+            learnButton.setColour (juce::TextButton::textColourOffId,
+                                   nowMs < emptyFlashUntilMs ? colours::warn : colours::text);
+        if (text != learnButton.getButtonText())
+            learnButton.setButtonText (text);
+    }
+
+    // -- §5.3 badges: repaint when the mask changes, show the edited dot -----
+    {
+        const auto fp = processor.detachMask().joinIntoString ("|");
+        if (fp != lastMaskFingerprint)
+        {
+            lastMaskFingerprint = fp;
+            editedDot.setVisible (! advanced && fp.isNotEmpty());
+            repaint();
+        }
+        else if (! advanced)
+            editedDot.setVisible (fp.isNotEmpty());
+    }
 }
 
 void AnabasisAudioProcessorEditor::refreshPresetDisplay()

@@ -702,6 +702,113 @@ static void testMeterPublication()
 }
 
 // ---------------------------------------------------------------------------
+// §5.3 detach / re-engage — ADR-0005's P5 half, the gesture grammar. The
+// discriminator's three conditions each get the stimulus that isolates them:
+// a GESTURED edit detaches; the SAME edit ungestured (automation) does not;
+// a macro-originated write does not; and the next macro gesture re-engages
+// everything through the normal mapping, while "reset to macro" re-engages
+// in place. The §5.3 rule the mask enforces — the mapping SKIPS a detached
+// parameter — is asserted through the mapper itself, not by inspecting bits.
+static void testDetachAndReengageGrammar()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+    auto& macro = proc.getMacroEngine();
+
+    auto* limGain  = apvts.getParameter (pid::limGain);
+    auto* loudness = apvts.getParameter (pid::loudness);
+    auto limGainValue = [&] { return apvts.getRawParameterValue (pid::limGain)->load(); };
+
+    // Establish a macro position so the curve has somewhere to put limGain.
+    loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (50.0f));
+    macro.flushPendingMapping();
+    const float mapped50 = limGainValue();
+    check (mapped50 > 1.0f, "detach: (premise) the macro mapped limGain off default");
+
+    // 1. An UNGESTURED write — automation playback — must not detach.
+    limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (3.0f));
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(), "detach: automation (no gesture) never detaches");
+    macro.refreshMapping();               // and the macro takes it right back
+    check (std::abs (limGainValue() - mapped50) < 0.01f,
+           "detach: the ungestured edit was re-mapped by the macro");
+
+    // 2. A GESTURED edit — a real user drag — detaches, and the macro then
+    //    skips that parameter while still driving the others.
+    limGain->beginChangeGesture();
+    limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (2.5f));
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.detachMask().contains ("limGain"), "detach: a gestured edit sets the bit");
+
+    const float userValue = limGainValue();
+    loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (80.0f));
+    macro.flushPendingMapping();
+    check (std::abs (limGainValue() - userValue) < 1.0e-4f,
+           "detach: the mapping skips the detached parameter");
+    const float thr80 = apvts.getRawParameterValue (pid::compThreshold)->load();
+    check (std::abs (thr80 - macro_curves::compThresholdDb (0.8f)) < 0.05f,
+           "detach: the OTHER managed parameters still follow the macro");
+
+    // 3. MACRO-originated writes never detach (condition 2).
+    check (! proc.detachMask().contains ("compThreshold"),
+           "detach: macro writes do not detach the parameters they move");
+
+    // 4. Re-engage on the next macro-knob GESTURE: everything follows again.
+    loudness->beginChangeGesture();
+    loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (60.0f));
+    loudness->endChangeGesture();
+    proc.flushPendingDetach();
+    macro.flushPendingMapping();
+    check (proc.detachMask().isEmpty(), "reengage: a macro gesture clears the mask");
+    check (std::abs (limGainValue() - macro_curves::limGainDb (0.6f)) < 0.05f,
+           "reengage: the formerly detached parameter follows the curve again");
+
+    // 5. Reset-to-macro: detach again, then re-engage IN PLACE — the macro
+    //    does not move, the parameter lands back on the curve at 60.
+    limGain->beginChangeGesture();
+    limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (1.0f));
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.detachMask().contains ("limGain"), "resetToMacro: (premise) detached again");
+    proc.resetToMacro();
+    check (proc.detachMask().isEmpty(), "resetToMacro: the mask is cleared");
+    check (std::abs (limGainValue() - macro_curves::limGainDb (0.6f)) < 0.05f,
+           "resetToMacro: the parameter re-lands on the curve without the macro moving");
+
+    // 6. A RESTORE lands managed values without detaching (condition 3): the
+    //    A/B switch runs inside a ScopedRestore and writes the whole set.
+    proc.switchToSlot (1);
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(), "detach: an A/B restore sets no bits");
+    proc.switchToSlot (0);
+    proc.flushPendingDetach();
+
+    // 7. The OVERLAP cases conditions 2 and 3 exist for — a write landing
+    //    while the user's gesture is OPEN on the same parameter. The gesture
+    //    bit alone cannot tell these writers apart; the source conditions can.
+    //    (a) the MACRO writes limGain mid-gesture: not a user edit, no detach.
+    proc.resetToMacro();
+    proc.flushPendingDetach();
+    loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (70.0f));
+    limGain->beginChangeGesture();               // user holds the knob, moves nothing
+    macro.flushPendingMapping();                 // mapping fires under the open gesture
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(),
+           "detach: a macro write under an open gesture is not a user edit");
+
+    //    (b) a RESTORE writes limGain mid-gesture (the KI-003-adjacent shape):
+    //    also not a user edit, no detach.
+    limGain->beginChangeGesture();
+    proc.switchToSlot (1);                       // ScopedRestore writes the whole set
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(),
+           "detach: a restore under an open gesture is not a user edit");
+}
+
+// ---------------------------------------------------------------------------
 // §2.9 meter-hold reset (the P5 planned edge, now implemented): the request
 // clears the SESSION-CUMULATIVE display state — integrated LUFS and the dBTP
 // max-hold — at the next block top, and nothing else. The rolling windows
@@ -1111,6 +1218,7 @@ int main (int argc, char** argv)
         testMacroRestoreDoesNotClobber();
         testAbSwitchRequestsDuck();
         testMeterPublication();
+    testDetachAndReengageGrammar();
     testMeterResetClearsSessionHolds();
     testGrRingResetEpoch();
         testMetersReadTheRenderNotTheMonitor();

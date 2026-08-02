@@ -131,6 +131,22 @@ of record.
 
 ## Current implementation
 
+**P5 gesture grammar (2026-08-02).** The §5.3 detach/re-engage latch — ADR-0005's deliberately
+deferred half — is wired: a managed parameter detaches only when a change is (1) inside a
+begin/endChangeGesture bracket, (2) not macro-originated (`isApplyingMacro`), and (3) not part of
+a restore (`isRestoring`) — so automation playback, preset/A-B/session restores, and the mapper's
+own writes never detach, INCLUDING when they land under a user's open gesture (the overlap cases
+are tested). The mapping skips detached parameters; the next macro-knob gesture re-engages the
+whole set through the normal glide; `resetToMacro()` re-engages in place. Discriminator callbacks
+can arrive off the message thread, so they only set lock-free bits which the message thread
+drains into the per-slot mask — the same marshalling shape as `mappingPending`, covered by
+whichever reading the OQ-014 owner call takes. Guarded by `testDetachAndReengageGrammar`.
+The §5.4 Learn UI grammar is likewise live: explicit start/end button, a 5 s minimum pass (the
+~1.5 s integrated features must outlast their time constant — the P4-recorded debt), a wordless
+empty-pass readout (`warn` flash: the reference did not move), and the running indicator off
+`isLearning()`. Undo bracketing of the commit lands with the P6 undo machinery, which does not
+exist yet; the commit today is not undoable because nothing is.
+
 **P4 core (2026-08-01).** `src/dsp/AdaptiveEngine.h` — audio-thread feature extraction (crest,
 spectral tilt, transient density, silence-gated at ~−70 dBFS; the P4 trim mapping consumes
 **transient density and tilt** — crest is extracted and published for the UI, reserved for a

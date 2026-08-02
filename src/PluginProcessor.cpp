@@ -26,6 +26,89 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
 
     defaultSlot = saveSlotFromLive();   // pristine defaults (missing-AB read rule)
     storedSlot  = defaultSlot.createCopy();   // slot B starts as a copy of defaults
+
+    // §5.3 detach discriminator (ADR-0005's P5 half — see the header block).
+    // The mapper asks the wrapper, never the reverse: the mask is per-slot
+    // serialized state and lives here.
+    macroEngine->isDetached = [this] (const char* id)
+    { return liveDetachMask.contains (juce::String (id)); };
+    addListener (this);                       // gesture begin/end
+    for (const char* id : managed_params::ids)
+        apvts.addParameterListener (id, this);
+    apvts.addParameterListener (pid::loudness,  this);
+    apvts.addParameterListener (pid::character, this);
+    apvts.addParameterListener (pid::tone,      this);
+}
+
+// The three §5.3 conditions meet here. Gesture callbacks arrive with a raw
+// parameter INDEX; the managed set is matched by ID so a layout reorder can
+// never silently re-key the discriminator.
+static int managedIndexOf (const juce::String& id)
+{
+    for (int i = 0; i < managed_params::kCount; ++i)
+        if (id == managed_params::ids[i])
+            return i;
+    return -1;
+}
+
+void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*,
+                                                                        int parameterIndex)
+{
+    if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (
+            getParameters()[parameterIndex]))
+    {
+        const auto id = p->getParameterID();
+        if (const int m = managedIndexOf (id); m >= 0)
+            managedGestureBits.fetch_or (1u << m, std::memory_order_relaxed);
+        else if (id == pid::loudness || id == pid::character || id == pid::tone)
+        {
+            // §5.3: the NEXT macro-knob gesture re-engages everything — the
+            // clear must land before the gesture's mapping writes, and both
+            // run on the message thread, so the drain below is ordered right.
+            pendingReengage.store (true, std::memory_order_relaxed);
+            if (juce::MessageManager::existsAndIsCurrentThread())
+                handleAsyncUpdate();
+            else
+                triggerAsyncUpdate();
+        }
+    }
+}
+
+void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::AudioProcessor*,
+                                                                      int parameterIndex)
+{
+    if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (
+            getParameters()[parameterIndex]))
+        if (const int m = managedIndexOf (p->getParameterID()); m >= 0)
+            managedGestureBits.fetch_and (~(1u << m), std::memory_order_relaxed);
+}
+
+void AnabasisAudioProcessor::parameterChanged (const juce::String& parameterID, float)
+{
+    const int m = managedIndexOf (parameterID);
+    if (m < 0)
+        return;                                   // macros route through MacroEngine
+    if ((managedGestureBits.load (std::memory_order_relaxed) & (1u << m)) == 0)
+        return;                                   // ungestured: automation/restore — never detaches
+    if (macroEngine->isApplyingMacro() || macroEngine->isRestoring())
+        return;
+    pendingDetachBits.fetch_or (1u << m, std::memory_order_relaxed);
+    if (juce::MessageManager::existsAndIsCurrentThread())
+        handleAsyncUpdate();
+    else
+        triggerAsyncUpdate();
+}
+
+void AnabasisAudioProcessor::handleAsyncUpdate()
+{
+    // Message thread. Re-engage first: a macro gesture that raced a detach
+    // should win (§5.3 — the gesture re-engages, then maps).
+    if (pendingReengage.exchange (false, std::memory_order_relaxed))
+        liveDetachMask.clear();
+    if (auto bits = pendingDetachBits.exchange (0, std::memory_order_relaxed))
+        for (int i = 0; i < managed_params::kCount; ++i)
+            if ((bits & (1u << i)) != 0)
+                liveDetachMask.addIfNotAlreadyThere (managed_params::ids[i]);
 }
 
 juce::AudioProcessorParameter* AnabasisAudioProcessor::getBypassParameter() const

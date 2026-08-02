@@ -6,7 +6,12 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P5 opening commit (2026-08-02)** (PR #5): the two planned edges
+**Last updated:** for the **P5 Simple-view + gesture-grammar commit (2026-08-02)** (PR #5):
+ADR-0005's deferred half is wired and Verified — the §5.3 detach discriminator (three conditions,
+each killed by its own mutant, including the two mid-gesture overlap cases), the mapping skip,
+re-engage-on-gesture and reset-to-macro; the §6.2 Simple view (big knob, macro row, ceiling
+lock, monitor toggles, out-LUFS readout) and the §5.4 Learn button with the 5 s minimum pass and
+the wordless empty-pass readout. Previous: (PR #5): the two planned edges
 THREAD_MODEL reserved for P5 are implemented and their open decisions taken — the meter-hold
 reset (momentary-request row; a state load stages it; `resetIntegrated` watermarks the
 gating-block assembly so a straddling block cannot pin the relative gate at the old programme's
@@ -61,6 +66,26 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### P5, the grammar before the pixels — ADR-0005's other half, and a discriminator that had to
+survive its own overlap cases (2026-08-02)
+
+**The detach discriminator's third condition looked redundant and was not.** Gestured-and-not-
+macro-originated seemed sufficient: macro writes and restores are ungestured, so the gesture
+condition filters them. The first mutation pass proved otherwise by SURVIVING the removal of the
+isApplyingMacro/isRestoring condition — the stimuli never created the overlap it exists for. A
+mapping pass or an A/B restore landing while the user's gesture is OPEN on the same parameter is
+gestured from the discriminator's viewpoint but is not a user edit; two new stimuli create
+exactly that overlap, and the condition's removal now fails both. A guard no mutant kills is
+either dead code or an uncalibrated stimulus — the same lesson as the meter ring, from the other
+side.
+
+**Learn's minimum pass is enforced where the bias lives.** The 5 s floor is not UX polish: the
+features are ~1.5 s integrated, so a shorter pass commits mostly what played BEFORE the button
+press (the P4-recorded debt). The button counts the remainder down in numerals — no invented
+wording — and an empty pass flashes `warn`, which is the readout `commitLearn`'s no-op owed its
+caller since P4. Undo bracketing of the commit waits for the P6 undo machinery, recorded rather
+than half-built.
 
 ### P5 opens — the planned edges are settled before any pixel is drawn (2026-08-02)
 

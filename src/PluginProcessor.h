@@ -32,7 +32,10 @@
 //  ADR lands.
 // ============================================================================
 
-class AnabasisAudioProcessor : public juce::AudioProcessor
+class AnabasisAudioProcessor : public juce::AudioProcessor,
+                               private juce::AudioProcessorListener,
+                               private juce::AudioProcessorValueTreeState::Listener,
+                               private juce::AsyncUpdater
 {
 public:
     AnabasisAudioProcessor();
@@ -101,6 +104,18 @@ public:
     // detach GRAMMAR lives in the wrapper/MacroEngine, never in paint code).
     const juce::StringArray& detachMask() const noexcept { return liveDetachMask; }
 
+    // §5.3 step 4 — "reset to macro": re-engage every detached parameter
+    // WITHOUT moving a macro. Message thread.
+    void resetToMacro()
+    {
+        liveDetachMask.clear();
+        macroEngine->refreshMapping();
+    }
+
+    // Deterministic drain for the headless tests (mirrors flushPendingMapping):
+    // lands any pending detach bits / re-engage into liveDetachMask now.
+    void flushPendingDetach() { handleAsyncUpdate(); }
+
     MacroEngine& getMacroEngine() noexcept { return *macroEngine; }
     const CachedParams& cachedForTest() const noexcept { return cached; }
     PresetManager& getPresetManager() noexcept { return *presetManager; }
@@ -147,6 +162,30 @@ private:
     // half-written mirror. Relaxed is enough — the three are independent
     // scalars whose fallback (the engine's own atomics) is coherent, and
     // ADR-0012's known-limits section already scopes the record's coherence.
+    // -- §5.3 detach discriminator (ADR-0005's P5 half) ---------------------
+    // A managed parameter detaches when a change arrives that is
+    //   (1) gesture-bracketed — a real user drag, begin/endChangeGesture —
+    //   (2) not macro-originated (isApplyingMacro), and
+    //   (3) not part of a restore (isRestoring).
+    // Ungestured writes (automation playback, preset/A-B/session restores)
+    // never detach. The callbacks can arrive off the message thread (APVTS
+    // rule; VST3 gesture threading is host-defined), so the listener only
+    // sets lock-free bits keyed by managed_params index; the message thread
+    // drains them into `liveDetachMask` — the same marshalling shape as
+    // MacroEngine's mappingPending (both are the OQ-014 pattern, and OQ-014's
+    // owner call covers this edge under whichever reading it takes).
+    // A gesture that begins on a MACRO re-engages instead: §5.3's "the next
+    // macro-knob gesture re-engages ALL detached params".
+    void audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int parameterIndex) override;
+    void audioProcessorParameterChangeGestureEnd (juce::AudioProcessor*, int parameterIndex) override;
+    void audioProcessorChanged (juce::AudioProcessor*, const juce::AudioProcessorListener::ChangeDetails&) override {}
+    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
+    void handleAsyncUpdate() override;
+    std::atomic<uint32_t> managedGestureBits { 0 };   // bit n = managed_params::ids[n] mid-gesture
+    std::atomic<uint32_t> pendingDetachBits  { 0 };
+    std::atomic<bool>     pendingReengage    { false };
+
     std::atomic<bool>  stagedAdaptiveLearned { false };
     std::atomic<float> stagedRefOnset { anabasis::AdaptiveEngine::kDefaultRefOnset };
     std::atomic<float> stagedRefTilt  { anabasis::AdaptiveEngine::kDefaultRefTilt };

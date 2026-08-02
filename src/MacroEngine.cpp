@@ -74,6 +74,8 @@ void MacroEngine::applyMapping()
     const float t = apvts.getRawParameterValue (pid::tone)->load();
 
     applying = true;
+    // A detached parameter is the user's until re-engage (§5.3): the mapping
+    // skips it entirely rather than writing and hoping nobody noticed.
     setParam (pid::limGain,       macro_curves::limGainDb (l));
     setParam (pid::compThreshold, macro_curves::compThresholdDb (l));
     setParam (pid::compRatio,     macro_curves::compRatio (l));
@@ -88,6 +90,8 @@ void MacroEngine::applyMapping()
 
 void MacroEngine::setParam (const char* paramID, float denormalisedValue)
 {
+    if (isDetached != nullptr && isDetached (paramID))
+        return;
     if (auto* p = apvts.getParameter (paramID))
     {
         const float norm = p->getNormalisableRange().convertTo0to1 (

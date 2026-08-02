@@ -194,6 +194,37 @@ private:
     Knob macroLoudnessK, macroCharacterK, macroToneK;
     juce::Label macroLoudnessL, macroCharacterL, macroToneL;
 
+    // -- Simple view (§6.2): the big knob IS the product ---------------------
+    Knob bigLoudnessK, simpleCharacterK, simpleToneK, simpleCeilingK;
+    juce::Label bigLoudnessL, simpleCharacterL, simpleToneL, simpleCeilingL;
+    juce::ToggleButton ceilingLockToggle;          // int_ceilingLock (§4.2)
+    juce::TextButton   learnButton { "LEARN" };    // §5.4 explicit start/end
+    juce::Label outLufsCaption, outLufsValue;      // live render short-term
+
+    // §5.3 "edited" indicator + reset-to-macro affordance: an accent dot that
+    // appears when any managed parameter is detached; clicking it re-engages
+    // in place (wording for its tooltip is owner-supplied — C8 TODO).
+    struct EditedDot : public juce::Component, public juce::SettableTooltipClient
+    {
+        std::function<void()> onClick;
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (abgui::colours::accent);
+            g.fillEllipse (getLocalBounds().toFloat().reduced (2.0f));
+        }
+        void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
+    };
+    EditedDot editedDot;
+
+    // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit
+    // end; an empty pass flashes the button in `warn` (wordless readout).
+    double learnStartedMs   = 0.0;
+    bool   learnStopPending = false;
+    float  refOnsetAtStop = 0.0f, refTiltAtStop = 0.0f;
+    bool   hadLearnedAtStop = false;
+    double emptyFlashUntilMs = 0.0;
+    juce::String lastMaskFingerprint;
+
     // -- overlays ------------------------------------------------------------
     DimLayer dimOverlay;
     Backdrop aboutBackdrop, settingsBackdrop, savePresetBackdrop;
@@ -243,6 +274,11 @@ private:
     // combo row 26 + four 78 px knob rows + curve well) + 64 utility + 78
     // macro row + 266 metering strip = 900, which lands on the family number
     // by construction rather than by copying it.
+    // §5.4 minimum Learn pass: the features are ~1.5 s integrated, so a pass
+    // must outlast several time constants before the sums describe the passage
+    // rather than what preceded it (the P4-recorded grammar debt).
+    static constexpr double kLearnMinPassMs = 5000.0;
+
     static constexpr int kWidth      = 940;
     static constexpr int kSimpleH    = 720;
     static constexpr int kBarH       = 46;

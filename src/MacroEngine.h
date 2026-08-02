@@ -26,6 +26,18 @@
 //  test exercises exactly what the engine applies.
 // ============================================================================
 
+// The §5.5 managed set — ONE list, shared by the mapper (which writes these)
+// and the wrapper's §5.3 detach discriminator (which watches them), so the
+// two cannot drift apart. clipMix/compMix are deliberately NOT managed.
+namespace managed_params
+{
+    inline constexpr const char* ids[] = {
+        "limGain", "compThreshold", "compRatio", "clipDrive", "clipShape",
+        "colourDepth", "dynTilt", "eqTilt", "colourTone",
+    };
+    inline constexpr int kCount = 9;
+}
+
 namespace macro_curves
 {
     // DESIGN §5.5 (⊕ draft — tuned by ear at P4, frozen before v0.1.0).
@@ -54,6 +66,25 @@ public:
     // discriminator's "not macro-originated" half. P4's gesture bracketing is
     // the other half.
     bool isApplyingMacro() const noexcept { return applying; }
+
+    // §5.3 detach filter: the wrapper owns the mask (it is per-A/B-slot,
+    // serialized state); the mapper only ASKS. Null = nothing detached.
+    std::function<bool (const char*)> isDetached;
+
+    // True while any ScopedRestore is alive — the detach discriminator's
+    // third condition (a restore lands values, it is not a user gesture).
+    bool isRestoring() const noexcept
+    { return restoreDepth.load (std::memory_order_relaxed) > 0; }
+
+    // §5.3 step 4, "reset to macro": re-run the mapping at the CURRENT macro
+    // position (message thread). The caller clears the mask first; this is
+    // what re-lands the curve values on the freshly re-engaged parameters
+    // without the macro itself moving.
+    void refreshMapping()
+    {
+        mappingPending.store (true, std::memory_order_relaxed);
+        flushPendingMapping();
+    }
 
     // §5.3: a state RESTORE is not a macro gesture. Every restore path
     // (session load, A/B switch, preset apply) notifies the macro listeners
