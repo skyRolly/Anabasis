@@ -42,6 +42,20 @@ bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    grHistoryRing.reset();
+    dbTpMaxHold = -144.0f;
+    // Publish the cleared values too, not just the state behind them: without
+    // this the six meter atomics keep the previous session's readings until a
+    // block completes — and indefinitely if the host prepares without ever
+    // processing (a rate change while stopped, a plugin rescan). No reader
+    // exists before P5, which is why this is cheap to do now rather than a
+    // stale-peak bug to find later.
+    pubLufsM.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubLufsS.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubLufsI.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubDbTpMax.store (-144.0f, std::memory_order_relaxed);
+    pubPlr.store (0.0f, std::memory_order_relaxed);
+    pubGrDb.store (0.0f, std::memory_order_relaxed);
     updateLatency();
 }
 
@@ -90,7 +104,54 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
 
-    engine.process (buffer, snapshot);
+    // A block the engine short-circuited produced no render-tap values:
+    // publishing anyway would re-report the previous block's peaks and push a
+    // duplicate GR-history entry, breaking the one-entry-per-processed-block
+    // property the ring's readers rely on. The engine reports the fact rather
+    // than the wrapper re-deriving its early-return condition.
+    if (! engine.process (buffer, snapshot))
+        return;
+
+    // -- §2.9 metering: publish once per block from the engine's RENDER tap
+    // (relaxed atomics — monotonic display data, THREAD_MODEL meter row).
+    // NOT from `buffer`: the buffer carries the LISTENING path, which the
+    // §2.7 monitor functions alter — metering it made Delta show the
+    // difference signal's loudness, Comp the attenuated level, and both
+    // permanently biased the session-cumulative integrated LUFS and dBTP
+    // hold. The render tap is the programme output (identical to the buffer
+    // whenever the monitor functions are off). Same audio thread, right
+    // after process(): plain reads, no atomics needed on this side.
+    const auto& om = engine.outputLoudness();
+    const float blockTpDb = juce::Decibels::gainToDecibels (engine.lastRenderTpMax(), -144.0f);
+    dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
+
+    // integratedLufs() walks the 751-bin histogram twice (~1500 iterations,
+    // bounded and allocation-free) although the figure only moves when a
+    // gating block commits, every 100 ms. Caching it in finishSubBlock would
+    // remove ~99 % of that at 512-sample blocks — a candidate if the P6 CPU
+    // measurement puts metering near DESIGN §9's ≤ 0.5 % allocation.
+    const float lufsI = om.integratedLufs();
+    pubLufsM.store (om.momentaryLufs(),  std::memory_order_relaxed);
+    pubLufsS.store (om.shortTermLufs(),  std::memory_order_relaxed);
+    pubLufsI.store (lufsI,               std::memory_order_relaxed);
+    pubDbTpMax.store (dbTpMaxHold,       std::memory_order_relaxed);
+    // PLR = session true-peak max − integrated loudness (meaningful only once
+    // both exist; 0 until then).
+    pubPlr.store (lufsI > anabasis::LoudnessMeter::kSilentLufs + 1.0f
+                      ? dbTpMaxHold - lufsI : 0.0f,
+                  std::memory_order_relaxed);
+
+    const float grDb = juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f);
+    pubGrDb.store (grDb, std::memory_order_relaxed);
+    // ONE entry per processBlock CALL, which is the ring's documented contract
+    // — and the span it covers is the HOST's block, not the prepared one. The
+    // engine chunks an oversize block internally while `grMinThisCall` and the
+    // render peak accumulate across every chunk, so a host running 4096 with
+    // 512 prepared publishes one entry describing 85 ms. Correct for a
+    // worst-case display and wrong for a time axis drawn as if entries were
+    // evenly spaced: the P5 GR-history renderer needs a time base, not an
+    // index count. Recorded here rather than in the ring, which cannot know.
+    grHistoryRing.push (grDb, engine.lastRenderPeak());
 }
 
 juce::AudioProcessorEditor* AnabasisAudioProcessor::createEditor()
@@ -221,10 +282,18 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     // swap, not dropped after it, so a drain cannot land between the macro
     // values arriving and the abort.
     const MacroEngine::ScopedRestore guard (*macroEngine);
-    // P1 form: plain swap on the message thread. TODO(P2): route through the
-    // §2.8 forced duck (requestDuck() BEFORE the swap) once the transition
-    // layer exists — a bulk swap without it is a click-free-invariant hole
-    // that pluginval will not catch but invariant 8's per-path test will.
+    // §2.8: BEFORE the swap, so the duck's envelope covers the glide the swap
+    // starts — all but its first few ms. The request and the parameter writes
+    // are separate stores, and the audio thread reads the parameters (snapshot
+    // build) before the flag (block top), so a block can adopt the new values
+    // and start the out-leg together: the first ~6 ms of the glide then plays
+    // at decreasing but non-zero gain. Still band-limited, never a step.
+    // Note the two halves of a swap therefore land at different times: the
+    // smoothed parameters glide from that first block, while the discrete
+    // rewires the same swap carries (eqPosition, colourModel, OS factor) wait
+    // for the silent bottom, which is the whole point of the duck. Only the
+    // smoothed half is exposed, and only for the out-leg's first samples.
+    engine.requestForcedDuck();
     auto newlyStored = saveSlotFromLive();
     applySlotToLive (storedSlot);
     storedSlot = std::move (newlyStored);
@@ -234,6 +303,12 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
 bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
 {
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
+    // DELIBERATELY before the apply, and NOT undone on failure: a failed
+    // applyPreset may still have written some parameters (a partial apply),
+    // and those must land under the duck. Moving this after the success check
+    // to save a ~34 ms dip on the failure path would reopen the unducked
+    // bulk-swap hole INC-001 records.
+    engine.requestForcedDuck();                               // §2.8, as above
 
     juce::StringArray mask;
     if (! presetManager->applyPreset (file, mask))
@@ -273,10 +348,44 @@ void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     ab.appendChild (activeSlot == 0 ? storedSlot.createCopy() : saveSlotFromLive(), nullptr);
     root.appendChild (ab, nullptr);
 
-    // ADAPTIVE is deliberately NOT written while nothing has been learned:
-    // "absent = never learned" is the §4.4 discriminator, and writing an
-    // empty child from the first shipped session would destroy it (Learn
-    // lands at P4 and starts writing the child when it has targets).
+    // ADAPTIVE: "absent = never learned" is the §4.4 discriminator, so the
+    // child is written ONLY once Learn has committed targets. The values are
+    // audio-thread-written atomics read here on the message thread — stable
+    // after the commit, the same capture pattern as the frozen-trim latch.
+    //
+    // While a restore is still STAGED (loaded, not yet consumed by a block
+    // top) the engine's answer is one session out of date, so the staged
+    // record is authoritative instead: a host that loads a project and
+    // re-saves it without running audio must not lose — or resurrect — a
+    // learned reference. Once consumed the two agree.
+    //
+    // Residual window, stated exactly rather than claimed away: the consumer
+    // clears the flag with `exchange` and adopts a few instructions LATER, so
+    // a save landing between the two reads `false` here and falls back to the
+    // engine's pre-adoption values. Cost is one save's worth of learned
+    // references; closing it would need the flag cleared after adoption, which
+    // trades this window for a lost-update one (a stage arriving between adopt
+    // and clear would be erased). ADR-0012 §Known limits records the choice.
+    const bool  restoreStaged = engine.adaptiveRestorePending();
+    const auto& ad            = engine.adaptiveForWrapper();
+    const bool  learnedNow    = restoreStaged
+                                  ? stagedAdaptiveLearned.load (std::memory_order_relaxed)
+                                  : ad.hasLearned();
+    if (learnedNow)
+    {
+        juce::ValueTree adaptive ("ADAPTIVE");
+        adaptive.setProperty ("refOnsetRate",
+                              (double) (restoreStaged
+                                            ? stagedRefOnset.load (std::memory_order_relaxed)
+                                            : ad.publishedRefOnset()),
+                              nullptr);
+        adaptive.setProperty ("refTiltDb",
+                              (double) (restoreStaged
+                                            ? stagedRefTilt.load (std::memory_order_relaxed)
+                                            : ad.publishedRefTilt()),
+                              nullptr);
+        root.appendChild (adaptive, nullptr);
+    }
 
     if (const auto xml = root.createXml())
         copyXmlToBinary (*xml, destData);
@@ -299,6 +408,7 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // the restore below. See KNOWN_ISSUES KI-003 for what this does and does
     // not cover.
     const MacroEngine::ScopedRestore guard (*macroEngine);
+    engine.requestForcedDuck();   // §2.8: a session load is the biggest bulk swap of all
 
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".
@@ -338,6 +448,44 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
                 for (int i = 0; i < mask.getNumChildren(); ++i)
                     liveDetachMask.add (mask.getChild (i).getProperty ("id").toString());
         }
+    }
+
+    // ADAPTIVE read rules: present → restore the learned targets through the
+    // mirror pattern (consumed at the next block top); absent → never
+    // learned, defaults (§4.4's discriminator).
+    // A missing FIELD inside a present child takes its default (§4.4), which
+    // here is the factory neutral reference — not var()'s 0.0, which would
+    // have the trims chase a reference no programme material can match.
+    // The staged record is mirrored here (message thread) so getStateInformation
+    // can answer correctly before the next block top consumes it.
+    //
+    // INVARIANT: the mirror store and the engine stage must stay PAIRED. This
+    // is the only site that stages an adaptive record today; a future one (a
+    // preset carrying adaptive data, an A/B slot restore once OQ-013 lands)
+    // that calls restoreLearnedTargets/restoreNeverLearned without updating
+    // the mirror would raise `adaptivePending` while the mirror still held the
+    // previous record — and getStateInformation, which prefers the mirror
+    // exactly while that flag is up, would serialize the stale one. Route any
+    // new stager through here, or pair the two stores in a helper first.
+    if (const auto adaptive = root.getChildWithName ("ADAPTIVE"); adaptive.isValid())
+    {
+        const auto onset = (float) (double) adaptive.getProperty (
+                               "refOnsetRate", anabasis::AdaptiveEngine::kDefaultRefOnset);
+        const auto tilt  = (float) (double) adaptive.getProperty (
+                               "refTiltDb", anabasis::AdaptiveEngine::kDefaultRefTilt);
+        stagedRefOnset.store (onset, std::memory_order_relaxed);
+        stagedRefTilt.store (tilt, std::memory_order_relaxed);
+        stagedAdaptiveLearned.store (true, std::memory_order_relaxed);
+        engine.restoreLearnedTargets (onset, tilt);
+    }
+    else
+    {
+        stagedRefOnset.store (anabasis::AdaptiveEngine::kDefaultRefOnset,
+                              std::memory_order_relaxed);
+        stagedRefTilt.store (anabasis::AdaptiveEngine::kDefaultRefTilt,
+                             std::memory_order_relaxed);
+        stagedAdaptiveLearned.store (false, std::memory_order_relaxed);
+        engine.restoreNeverLearned();
     }
 
     // Deliberately the SECOND recompute of this load: replaceFrom's batch

@@ -138,6 +138,15 @@ documentation pass — the class of change the gate exists to stop. The evidence
 it is what the duck's silent-bottom timing actually guarantees about publish-before-consume, which is
 measurable only against real `processBlock` code (constraint C2/C7).
 
+**Half-settled 2026-08-01 by ADR-0012** (taken for OQ-015, the smaller instance of the same
+shape): the **mechanism** question is answered — a bounded staged record behind a release/acquire
+flag is now a permitted GUI→Audio path, and a four-scalar trim vector fits it, so "one
+release/acquire-gated per-slot POD" is no longer a new mechanism. What remains open is the part
+ADR-0012 deliberately did **not** decide: whether a restored trim vector may be injected into a
+running engine at all, and what that does to the adaptation state machine. **The Hard Stop
+stands** — no code may wire the `frozenTrims` restore — but the blocker is now a product question,
+not a missing transport.
+
 **Action.** Settle it at P1 **before** any code wires the `frozenTrims` restore. Everything else in
 the P1 skeleton — CMake, parameter surface, POD boundary, pass-through chain, latency — is
 independent of it and is not blocked. Until then `THREADING_POLICY.md` carries the gap explicitly
@@ -175,7 +184,67 @@ residual check-then-act window are documented in `KNOWN_ISSUES.md` KI-003 and
 Not blocking P1 code (the code ships either way); blocking the **THREAD_MODEL.md** write-up, which
 must state one reading or the other.
 
+---
+
+## OQ-016 — Does the §5.4 release trim apply while the limiter is in AUTO release? · `Open (owner call)`
+
+**Question.** The release trim is applied to the effective `limReleaseMs`
+(`AnabasisEngine::process`), which `LookaheadLimiter` consumes **only in manual-release mode**.
+`limAutoRelease` defaults to **on**, and the auto path steps its two envelopes with the fixed
+`kAutoFastMs = 40` / `kAutoSlowMs = 600` constants. So in the factory state the release trim is
+computed, published, displayed as an overlay, latched by Freeze and serialized — and changes
+nothing about the sound. The other three trims reach their stages in the same state.
+
+**Why it cannot be guessed.** Both readings are supported by the documents this repository is
+governed by:
+
+- **Working as specified.** `DESIGN.md` §5.4 defines trims as "bounded deltas applied inside the
+  engine **around the current parameter values**", and `MODE_AND_ADAPTATION_POLICY.md` states that
+  every trim "is inert while its host stage is inert" — the property the invariant-7 null rests
+  on. Under auto release the manual release parameter *is* the inert stage, so an inert trim is
+  the rule working, exactly as the scHpf trim is inert while the detector sits on its 20 Hz skip.
+- **Not delivering the intent.** The same policy advertises four adaptive behaviours as live at
+  P4, and the point of a release trim is to open up on sparse material and clamp down on dense
+  material — which the auto path, being fixed, cannot do. Under this reading the trim should scale
+  the two auto poles by the same 2^octaves factor (preserving their ratio, so the two-stage
+  character is unchanged) and the current wiring is an incomplete implementation.
+
+**Why it is not settled here.** Scaling the auto poles changes what the plugin sounds like **at
+factory defaults** — the trim converges away from zero on ordinary programme material — which is a
+product decision, not a bug fix. It is also the first case of a trim targeting a value that is not
+a user-facing parameter, which is a precedent for the other three.
+
+**Consequence if unresolved.** No code is blocked: the trim is bounded, inert and harmless in the
+current wiring. What is blocked is any claim that all four adaptive behaviours are audible at
+defaults — `MODE_AND_ADAPTATION_POLICY.md`'s "Current implementation" section and `HANDOVER.md`
+now state the scope explicitly instead.
+
+**Recommendation.** Option 2 (scale the auto poles), decided by the owner and recorded in an ADR
+before P5, since the §5.4 overlay in the Advanced view will otherwise display a trim the user
+cannot hear.
+
 ## Resolved
+
+### OQ-015 — Does the learned-target restore need a THREADING_POLICY row, and which shape? · `Resolved 2026-08-01 (P4)`
+
+**Decision: option 1 — ratify the existing implementation.** `ADR-0012` adds a
+**GUI → Audio bounded staged record** row to `THREADING_POLICY.md`'s permitted-path table, with six
+mandatory conditions (bounded and fixed at compile time · one writer, one consumer · payload
+relaxed then flag release-stored, consumed `exchange(acquire)` at a block top · last-writer-wins,
+never queued · the writer may acquire-load the flag to test consumption · the consumer only
+adopts). The learned-target restore is ratified **unchanged** as the first instance;
+`AdaptiveEngine::learned` is ratified as its Audio→GUI mirror. `THREAD_MODEL.md`'s two rows now
+cite ADR-0012 instead of this question.
+
+Rejected: re-expressing the pair as sentinel-valued slots (trades a documented mechanism for an
+undocumented tearing window across two session loads), and deferring the restore to P5 (a
+user-visible regression that returns the same question later).
+
+**OQ-013 is not resolved by this.** ADR-0012 removed its *mechanism* objection — a four-scalar
+trim vector now has a permitted transport — but whether a restored trim vector may be injected
+into a running engine, and what that does to the adaptation state machine, is still open. No code
+may wire that path.
+
 
 ### OQ-011 — What is the macOS deployment target? · `Resolved 2026-07-31 (P1)`
 

@@ -128,6 +128,19 @@ release, with a named review point rather than an open question (OQ-005 is `Reso
 
 ## RISK-008 — The measurement-tap latency contract rests on an unverified detector-delay bound
 
+> **Materially reduced (2026-08-01, P2 limiter commit).** The estimator exists
+> (`src/dsp/TruePeak.h`): 4 phases × **12 taps** designed at `prepare()` (not the Annex-2
+> 48-coefficient table this entry's arithmetic assumed), nominal group delay (12−1)/2 = 5.5 and a
+> worst-case reporting lag of **6 input
+> samples ≈ 0.125 ms** — inside the 0.5 ms minimum engaged lookahead (24 samples at 48 kHz) with
+> 4× margin, and *independent of sample rate in samples* while the minimum window scales up with
+> rate, so the margin only grows. `testReportedLatencyMatchesImpulse` passes with the estimator
+> live in the default path (the impulse still lands at exactly the constant allowance — the tap
+> adds nothing to reported latency), and `testTruePeakAccuracy` measures the estimator itself
+> (grid-aligned +3 dB ISP: −0.004 dB; off-grid worst case: −0.171 dB, the max-reading 4×
+> property). Residual exposure is unchanged in kind but now measured: accuracy (invariant 11's
+> meter, P3), not latency.
+
 **Likelihood:** Low **Impact:** High
 **Trigger:** The first impulse-response latency measurement at P2 (`testReportedLatencyMatchesImpulse`).
 **Why it exists here:** `DESIGN.md` §3.2 resolves `DSP_POLICY.md` invariants 2/5 by making

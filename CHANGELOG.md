@@ -33,6 +33,115 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   deleted at merge, which a branch-relative "the commit that follows" does not
   (`CHANGELOG_POLICY.md` rule 2). [Verified]
 
+- **P2 DSP core (in progress)** — the chain stages now process audio: the §2.2 EQ (tilt pair,
+  shelves, two bells, Pre/Post with the clamp-last guarantee), the §2.3 glue compressor
+  (log-domain, soft knee, RMS/Peak, two-pole auto release, sidechain HPF, parallel mix), and the
+  §2.4 clipper/saturation (hard↔soft knee morph with first-order ADAA — measured 14.8/10.4 dB
+  alias reduction at OS Off — colour models with odd/even balance and tone, the dynamic HF tame,
+  drive with level compensation — and the limiter's push sits AFTER it, so raising loudness does
+  not drive the clipper harder), and the §2.5 limiter upgrades (true-peak mode with the 4×
+  ADR-0003 measurement tap — the ceiling is dBTP-aware — stereo link, Transparent/Punchy/Loud
+  styles, transient preservation, two-pole auto release, shared sidechain HPF), §3
+  oversampling (Off/2×/4×/8×/16× × min/linear phase wrapping Clipper→Limiter, all instances
+  built at prepare, integer-latency mode so reported PDC is exact across the whole matrix,
+  Force-Max offline honoured) and §4.5 dither (TPDF 16/24-bit + first-order noise shaping,
+  deterministic, after the clamp), and the §2.8 click-free transition layer (asymmetric
+  raised-cosine duck ~6 ms out / ~28 ms in: engine rewires — EQ position, colour model, OS
+  factor/phase — execute only at the silent bottom; A/B, preset and session-load bulk swaps
+  request the duck before swapping — closes KI-001 → POSTMORTEMS INC-001). All-defaults remains
+  a bit-exact null; bypass stays a bit-exact null at every oversampling factor.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
+
+- **P3 metering engine (in progress)** — BS.1770-4 LUFS M/S/I with the two-stage gate
+  (calibrated to the standard's compliance vector ≤ 0.1 LU), dBTP max-hold off the shared
+  estimator, PLR, per-block GR published with a 43 s history ring, and the §2.7 monitor layer:
+  loudness-compensated monitoring with loudness-matched bypass (Measure + Predict, monitor-only —
+  the offline render is bit-identical either way) and delta monitoring. The Loudness Comp and
+  Delta toggles now work (KI-002 → POSTMORTEMS INC-002).
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
+
+- **P4 adaptive engine (core)** — audio-thread feature extraction (crest, tilt, transient
+  density), of which **transient density and tilt** drive the §5.4 bounded trim vector around
+  release / stereo link / sidechain HPF / dynamic tame (crest is published for the UI and
+  reserved for a future mapping), second-scale slew with hysteresis, Freeze latching the vector
+  exactly, and the
+  mode-switch invariant pinned sample-identically (`testModeSwitchIsSoundNeutral`). The trims are
+  engine-internal — the host, automation and undo never see them — and the bit-exact null holds
+  with adaptation live. Learn (core) is in: analyse → commit fixes the
+  reference targets, serialized in the global ADAPTIVE child ("absent = never learned").
+  The OQ-013-gated frozen-trim restore remains the one blocked path.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`). [Verified]
+
+### Fixed
+- **An extreme input level could silence the plugin permanently.** A finite but astronomical
+  sample (the kind a broken upstream plugin emits, not one a DAW produces) could overflow a stage
+  that carries gain — an EQ biquad, the compressor's squaring RMS detector, the clipper's colour
+  polynomial, the oversampler's filters — and the stage then held a NaN for ever. The engine's
+  boundaries substituted `0.0f` for the non-finite value on the way out, so the output was silence
+  and nothing signalled that anything had happened: only re-opening the session (or any host
+  action that re-prepared the plugin) brought the sound back. Those boundaries now record the
+  substitution and the affected stage's filter state is cleared, so the engine recovers by itself
+  within the block. A hostile input buffer is unchanged: non-finite input is still zeroed before
+  any state sees it, at no cost.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
+  `testExtremeLevelDoesNotSilencePermanently`, **five** stimuli (counted from the test's own
+  `run(...)` cases, not from an earlier entry — the Post-EQ case was added a round later), each
+  mutation-verified against the matching half of the fix. [Verified]
+
+- **…including with oversampling on, where the recovery was incomplete.** The first fix repaired
+  the engine's own stages but not the oversampler, whose default (minimum-phase) filters are
+  recursive: one infinite state fed itself and every later sample stayed non-finite, so an extreme
+  input still silenced the plugin permanently at any oversampling factor. The oversampler is now
+  reset when it is the stage that produced the value. The repair of the other stages also stopped
+  being a blanket reset — it clears only the values that are actually non-finite, so recovering
+  from a poisoned detector filter no longer snaps the compressor's gain reduction to unity.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — the oversampler case of the same test, now at
+  `FLT_MAX` (the level the polyphase filters overflow at), mutation-verified. [Verified]
+
+- **…and with the EQ in the Post position, where the same silence survived two rounds of fixing.**
+  The Post EQ sits after the limiter but before the ceiling clamp, and the limiter's *attack* — not
+  the ceiling — is what bounds its input: at a short lookahead setting the gain has only fallen to
+  ~0.29 by the time an extreme peak plays, and a fully boosted EQ multiplies by ~3.4, so the
+  biquad overflows and the plugin goes silent for the rest of the session. Stage E now has the two
+  boundaries it was missing (the decimation filters' output and the Post EQ's own), so both stages
+  are repaired like the others. Separately, the limiter's detector high-pass is now checked once
+  per block rather than on the recovery flag: its corruption produces no non-finite output at all
+  (a `NaN` level compares false against the ceiling), so the limiter would have passed everything
+  at unity gain for ever without anything to notice.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — the Post-position case of the same test,
+  calibrated against the limiter attack and mutation-verified. [Verified]
+
+- **Meters and Simple-mode adaptation no longer break for the session on one extreme sample.**
+  Both are fed signals that are finite but unbounded, and both overflow on a legal float — the
+  loudness meters in their K-weighting filter, the adaptive feature extractor when it squares its
+  band split. Neither emits audio, so nothing in the engine could notice: the readings became NaN,
+  every gate that compares them turned false, and the result was a loudness/true-peak readout
+  stuck at silence, a loudness compensation that stopped tracking, an integrated reading that
+  stopped accumulating, and a Simple-mode trim vector frozen at a plausible-looking value until
+  the plugin was re-prepared. Both are now checked once per block, and a Learn pass that
+  accumulated a broken feature is cancelled rather than committing it into the session.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
+  `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, one stimulus per stage (Nyquist at full
+  scale for the extractor, the bypass leg for the meter), each mutation-verified. [Verified]
+
+- **A double Learn press can no longer save a reference measured from one block.** The Learn
+  command was published as a code plus a separate "pending" flag, so an engine that picked the
+  command up between those two writes could have it re-raised behind it and carry it out twice —
+  and a "finish and start again" press carried out twice finishes the pass it just started, one
+  block old. The command is now a single value the engine takes whole.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `AnabasisEngine::learnCmd`; the interleaving
+  itself is not headlessly reproducible, and `testStopThenStartInOneBlockKeepsBoth` pins the
+  composed semantics across the change. [Partially Verified]
+
+- **A Learn analysis that measured through an extreme sample is no longer saved as the reference.**
+  Ending a Learn pass on the block after such a sample stored a broken measurement as the learned
+  reference, which froze Simple-mode adaptation for good — every trim is derived from that
+  reference — and was then written into the project file, so reloading did not clear it. The
+  commit now refuses a measurement that overflowed, with the same outcome as an empty pass (the
+  previous reference stays), and a restore that carries one reads as never-learned.
+  Evidence Source: **PR #5** (`skyRolly/Anabasis`) —
+  `testALearnPassThatOverflowedIsNotCommitted`, both writers mutation-verified. [Verified]
+
 The first entry will be `[0.1.0]`, cut at the end of P6.
 
 ---

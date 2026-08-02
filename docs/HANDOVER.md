@@ -5,11 +5,13 @@ boundary (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.md`). Facts are Verified
 repository; fields with no repository evidence are marked `TODO` rather than invented
 (constraint C7).
 
-Snapshot taken at the **P0 → P1 phase boundary (2026-07-31)**. `docs/DESIGN.md` was signed off by
-the owner on that date, closing P0's exit criterion (`DEVELOPMENT_BRIEF.md` §11), and the eleven
-ADRs it authorised are Accepted and registered. This is a phase-boundary update, so all three
-`DOCUMENTATION_LIFECYCLE_POLICY.md` phase-completion targets are covered: this file, the coverage
-audit, and the §13 phase summary (below).
+Snapshot taken at the **P4 → P5 phase boundary (2026-08-02)**, and carrying every boundary before
+it: the file opened at **P0 → P1 (2026-07-31)**, when `docs/DESIGN.md` was signed off and the
+eleven ADRs it authorised were Accepted and registered, and the P2/P3/P4 phase summaries below
+were added at their own boundaries rather than replacing it. The status table is the row of
+record for the CURRENT phase; the summaries are history and are not rewritten. This is a
+phase-boundary update, so all three `DOCUMENTATION_LIFECYCLE_POLICY.md` phase-completion targets
+are covered: this file, the coverage audit, and the §13 phase summary (below).
 
 The repository's starting point was the **bootstrap** — the migration of Anamorph's governance
 system, documentation library, build/CI scaffolding and working conventions into a new, otherwise
@@ -20,15 +22,116 @@ empty Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BR
 | Field | Value |
 |---|---|
 | **Current Version** | 0.1.0 (pre-release; `project(Anabasis VERSION 0.1.0)` in `CMakeLists.txt`). `CHANGELOG.md` has no released entry; the P1 skeleton is under `[Unreleased]`. |
-| **Current Phase** | **P1 — skeleton** (`DEVELOPMENT_BRIEF.md` §11). **P0 closed 2026-07-31** on owner sign-off of `docs/DESIGN.md`. P1 exit criterion: pluginval **L5** passes. |
+| **Current Phase** | **P4 — Simple adaptive engine, complete except the OQ-013-blocked item**  (`DEVELOPMENT_BRIEF.md` §11). P0 closed 2026-07-31 (owner sign-off); P1 closed 2026-08-01 (pluginval L5 on 3 OSes via PR #4's CI + the two architecture documents; only the OQ-014 owner call remains open from it, and it blocks documentation, not code). P2 exit criterion — per-module unit tests — is met: every §4 module has mutation-verified unit tests in the 183-check suite. |
 | **Branch Strategy** | Feature branch → PR into `main`. CI builds every branch; `main` carries shipped versions. Release tagging convention: annotated `vX.Y.Z`, wired to a `release.yml` at P6. |
 | **Build Status** | **Builds green on Linux** (P1 skeleton, 2026-07-31): `CMakeLists.txt` per ADR-0008 (five targets, JUCE 9.0.0 @ the pinned SHA fetched via FetchContent, C++20, warning-free under the recommended flags), `src/` + `src/dsp/` + `src/gui/` exist. The `preflight` guard now takes its ready=true path, so the full 3-OS matrix runs in CI; Windows/macOS results arrive with the first CI run of this commit. The `docs` job continues to run on every push and gates nothing. |
-| **Test Status** | **88 checks green on Linux**: `AnabasisTests` (32 — null-with-defaults bit-exact, impulse-at-allowance for four lookahead values, ceiling clamp, control/gain priming, limiter window coverage and alignment, smoothing of ceiling and lookahead, hostile-input finiteness, self-heal recovery, bypass null) and `AnabasisStateTests` (56 — registry snapshot vs the frozen fixture, 49/9 counts, raw-exact byte-identical round-trip and its fixed-point precondition, structural-tolerance read rules, batched latency notification, corrupt/foreign no-op, macro fixed point, restore-vs-macro-drain, A/B tier behaviour, preset contract, cache mapping). **pluginval L5 green ×3 in both modes on Linux** — the P1 exit criterion holds locally; 3-platform confirmation is the first CI run. Re-count from the suites' own output when editing this row; it has gone stale once already. |
+| **Test Status** | **306 checks green on Linux**: `AnabasisTests` (219 — null-with-defaults bit-exact, impulse-at-allowance for four lookahead values, ceiling clamp, control/gain priming, limiter window coverage and alignment, smoothing of ceiling and lookahead, hostile-input finiteness, self-heal recovery, recovery from a stage that overflows on a FINITE input (EQ biquad in BOTH positions, RMS detector, colour c⁵, polyphase IIR up and down — `testExtremeLevelDoesNotSilencePermanently`) and from the stages that emit no audio to check (the BS.1770 meters and the §5.4 feature extractor — `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`) and a Learn pass that measured through an overflow never becoming the saved reference (`testALearnPassThatOverflowedIsNotCommitted`), bypass null, EQ frequency response/smoothing/positions, the ADR-0002 post-shelf ceiling stimulus, compressor static curve/detectors/mix/two-stage auto release/sidechain HPF, clipper curve/compensation/ADAA aliasing/colour models/dynamic tame, true-peak accuracy, limiter link/styles/preserve/two-stage auto/detector HPF/dBTP mode, the full OS latency matrix, OS aliasing/transparency/bypass/ceiling, dither modes, the §2.8 duck on rewires/latches/requests, LUFS calibration/gating/windows, inv-10 monitoring honesty incl. the mid-stream offline flip snap, delta, the duck-bottom hold, the post-latch refill hold, a request held through the out-leg, delta covered by the duck, the last-staged-restore rule, stale detector state, limiter control smoothing incl. link/preserve/HPF glides) plus meter publication and the GR ring in the state suite and `AnabasisStateTests` (80 — registry snapshot vs the frozen fixture, 49/9 counts, raw-exact byte-identical round-trip and its fixed-point precondition, structural-tolerance read rules, batched latency notification, corrupt/foreign no-op, macro fixed point, restore-vs-macro-drain, A/B tier behaviour, preset contract, cache mapping, the ADAPTIVE missing-field defaults, meters reading the render not the monitor path, load-then-save with no audio between, the zero-length-block publish guard). `AnabasisTests` also pins the limiter push's chain position (`testLimiterPushDoesNotDriveTheClipper`) and that a realtime→offline flip does not duck the render (`testOfflineFlipDoesNotDuckTheRender`) while the return edge stays ducked (`testReturnFromOfflineIsDucked`), and that an EQ-position change on the offline-entry edge starts from cleared filter state (`testOfflineEntryClearsEqStateOnAPositionChange`). **pluginval L5 green ×3 in both modes on Linux** — the P1 exit criterion holds locally; 3-platform confirmation is the first CI run. Re-count from the suites' own output when editing this row; it has gone stale once already. |
 | **Release Status** | Pre-0.1.0. Nothing has ever left this repository, which is why the compatibility contract can still be shaped at zero cost (`COMPATIBILITY_POLICY.md` §"When the contract starts"). |
 | **Known Blockers** | **One item blocks one P1 path.** **OQ-011 is Resolved** (10.13 deliberate; JUCE 9's documented floor is 10.11, read from the pinned tree — see `OPEN_QUESTIONS.md` §Resolved). **OQ-013** — how the four-scalar frozen trim vector crosses message → audio; it blocks **that restore path only**, and is a thread-model decision (Architecture Review Gate + ADR + Hard Stop), so no P1 code may wire `frozenTrims` until it is taken. CMake, the parameter surface, the POD boundary, the pass-through chain and the latency contract are all independent of it. Everything that previously blocked P1 is closed: `DESIGN.md` is signed off, OQ-010 (lookahead 0/off) and OQ-004/OQ-005 are Resolved with their ADRs. **OQ-002** (JUCE licence tier) blocks commercial distribution, not development. This row must agree with every `Blocking P1` entry in `docs/OPEN_QUESTIONS.md` — check it there, not here, when adding one. |
-| **Pending Tasks** | **P1 skeleton steps 1–7 are DONE** (2026-07-31): CMake/ADR-0008, the 49-param surface + frozen snapshot, POD boundary + threading shape, pass-through chain + basic lookahead limiter on the constant allowance, schema-v1 state harness (frozenTrims/detachMask serialized; inject path untouched per OQ-013), the three P1 tests plus latency/ceiling/bypass/fixed-point/robustness, OQ-011 resolved. **Remaining to close P1:** (a) pluginval L5 green on **Windows + macOS** via the first CI run (green locally on Linux, both modes ×3); (b) the two required P1 documents — `docs/architecture/THREAD_MODEL.md` (from ADR-0011, with code citations) and `docs/architecture/PARAMETER_REGISTRY.md` (from ADR-0010 + the snapshot); (c) `KNOWN_ISSUES` entry for the P1 A/B swap running duck-less until §2.8 lands at P2. Then P2 per the brief. |
+| **Pending Tasks** | **P1 skeleton steps 1–7 are DONE** (2026-07-31): CMake/ADR-0008, the 49-param surface + frozen snapshot, POD boundary + threading shape, pass-through chain + basic lookahead limiter on the constant allowance, schema-v1 state harness (frozenTrims/detachMask serialized; inject path untouched per OQ-013), the three P1 tests plus latency/ceiling/bypass/fixed-point/robustness, OQ-011 resolved. **P1 closure items:** (a) pluginval L5 on Windows + macOS — confirmed by PR #4's CI run (merged 2026-08-01); (b) `THREAD_MODEL.md` + `PARAMETER_REGISTRY.md` — **written** (2026-08-01, from ADR-0011/ADR-0010 with code citations); (c) KI-001 — recorded. **P1 is closed except the OQ-014 owner call** (MacroEngine guard atomics vs the THREADING_POLICY table — documentation question, blocks nothing in code). **P2 is COMPLETE on Linux** (2026-08-01): EQ, compressor, clipper/ADAA, limiter (true peak/link/styles/preserve/two-stage release), oversampling (full matrix, exact PDC), dither, the §2.8 duck (KI-001 → INC-001), `TEST_REPORT.md` and `REALTIME_SAFETY_AUDIT.md`. Remaining before calling the phase closed: the PR #5 3-OS CI run, and the owner's OQ-014 call. **P3 is COMPLETE on Linux** (2026-08-01): LUFS M/S/I calibrated to the BS.1770 compliance vector ≤ 0.1 LU, dBTP/PLR/GR published through the THREAD_MODEL meter atomics, the GrHistoryBuffer SPSC ring, and the §2.7 monitor layer (KI-002 → INC-002; invariant 10 live). The spectrum capture rings land with their P5 consumer. **Next: P4 Simple adaptive engine** — feature extraction, adaptive trims, Learn, mode-switch neutrality — with one standing constraint: **OQ-013 blocks the frozen-trim inject transport** (Hard Stop; Freeze's restore path needs that ADR before it can be wired). |
 | **Roadmap** | P0 research & design → P1 skeleton (pluginval L5) → P2 DSP core → P3 metering engine → P4 Simple adaptive engine → P5 UI → P6 polish & release (pluginval L10, DAW matrix, docs). `DEVELOPMENT_BRIEF.md` §11. v2 candidates (codec preview, reference matching, dynamic EQ, multiband limiting) are out of scope — leave architectural room only. |
 | **Ownership** | `TODO: no owner/team metadata in the repository. Requires project-owner input (OQ-009).` Company of record: RollyTech. |
+
+## P4 phase summary (`DEVELOPMENT_BRIEF.md` §13)
+
+**Changes.** The §5.4 adaptive engine: audio-thread feature extraction (crest, spectral tilt,
+transient density — silence-gated; the trim mapping consumes **transient density and tilt**, with
+crest published for the UI and reserved for a future mapping), the bounded trim vector
+(release ±1 oct, link ±0.2, scHpf
+0…+30 Hz, dynTilt 0…+0.5 dB) slewed at ~2 s with hysteresis and applied to per-block effective
+settings only — **three of the four are audible in the factory state**: the release trim lands on
+`limReleaseMs`, which the limiter reads only in manual-release mode, so with auto release (the
+default) it is computed, published, overlaid and latched but silent, which is **OQ-016**, an owner
+call rather than a code edit because the alternative changes the default sound; Freeze latching the
+vector to the ulp; Learn (analyse → commit reference targets,
+`ADAPTIVE` child serialization with the absent-=-never-learned read rule). The exit criterion —
+**switching modes does not change the sound** — is pinned sample-identically by
+`testModeSwitchIsSoundNeutral`. The invariant-7 null runs with adaptation LIVE because every trim
+is inert while its host stage is inert — a structural property, not a gate.
+
+**Blocked, and only ownable by the owner:** the frozen-trim RESTORE transport (message → audio
+injection of the per-slot four-vector at the duck bottom) is **OQ-013**, an Architecture Review
+Gate + ADR + Hard Stop. Until that ADR lands, a session reload or A/B switch back to a frozen
+slot re-latches from the live engine state instead of reproducing the saved vector — the one gap
+between the current build and MODE inv 3's full Freeze story. OQ-014 (MacroEngine guard atomics
+vs the THREADING_POLICY table) also awaits the owner; it blocks documentation, not code.
+
+**Plan for P5 (UI).** Full Simple + Advanced interface against the Anamorph brand system
+(BRAND_CONSISTENCY_CHECKLIST item by item — the phase exit criterion), the visualisers over the
+already-published atomics and rings (meters, GR history, transfer curve from ClipSat::transfer,
+spectrum rings + GUI-side FFT), Settings page, tooltips, the Learn UI grammar (duck-routed
+engage, undo bracketing), trim delta-overlays in Advanced. P5 needs a fresh session with the
+Anamorph GUI sources read end to end — it is visual work with a different evidence standard
+(Level 5: much of it not headlessly verifiable).
+
+**Risks.** The trim/tame/model constants and the §5.5 curves are all ⊕ drafts awaiting the P6
+listening pass — they may move together, and the fixed-point test will catch any curve/default
+divergence mechanically. The onset detector's constants were already re-tuned once when a test
+caught under-counting; treat its numbers as provisional until listening.
+
+## P3 phase summary (`DEVELOPMENT_BRIEF.md` §13)
+
+**Changes.** The metering engine per DESIGN §2.9: `LoudnessMeter` (K-weighting via the ADR-0009
+pre-warped design, 400 ms gating blocks at 75 % overlap, fixed-size histogram accumulator for the
+gated integrated figure) calibrated against the standard's own compliance sentence at ≤ 0.1 LU
+(48 and 44.1 kHz); dBTP max-hold off the shared 4× estimator; PLR; per-block GR through the first
+Audio→GUI SPSC ring (`GrHistoryBuffer`); the wrapper's per-block relaxed-atomic publish (the
+THREAD_MODEL meter row, implemented); and the §2.7 monitor layer — Measure+Predict loudness
+compensation with loudness-matched bypass, and delta monitoring — both monitor-only, proven
+bit-inert in the offline render (invariant 10 live, mutation-verified). KI-002 closed as INC-002.
+
+**The finding of the phase:** the dropped-absolute-gate mutant survived the two obvious gating
+stimuli — the relative gate masks an absolute-gate removal completely, because silence sits below
+any plausible relative threshold. Its only distinct observable is the effect on the pass-1 mean
+that SETS the relative threshold; the killing stimulus places a −38 LUFS band between the correct
+and the silence-dragged thresholds. Redundant protection mechanisms hide each other's loss.
+
+**Plan for P4 (Simple adaptive engine).** Feature extraction on the audio thread (§5.4: short-term
+LUFS — already built — crest factor, spectral tilt, transient density), the adaptive trims around
+release/stereo-link/scHpf/dynTilt within their declared bounds, Learn, and the
+`testModeSwitchIsSoundNeutral` invariant. **OQ-013 is the standing Hard Stop**: the frozen-trim
+message→audio transport needs its ADR before Freeze's restore path can be wired; everything else
+in P4 is independent of it. The spectrum rings and all views are P5.
+
+**Risks.** Unchanged from P2's list, plus: the §2.7 Measure convergence (~3 s) against the P4
+adaptive trims' own time constants could interact audibly — evaluate in the P6 listening pass;
+the monitor-only semantics (delta inert offline) are DESIGN's words but a user may expect a
+rendered delta — a P6 UX question, not a DSP one.
+
+## P2 phase summary (`DEVELOPMENT_BRIEF.md` §13)
+
+**Changes.** The chain went from pass-through to the full §3/§4 DSP: EQ (six RBJ sections,
+structural null at flat), glue compressor (log-domain, two-pole auto release), clipper/saturation
+(knee-morph ADAA, colour models, dynamic HF tame), the §2.5 limiter (per-channel wedges, stereo
+link, styles, transient preserve, true-peak detector per ADR-0003), oversampling (eight instances
+built at prepare, latched at the duck bottom, PDC exact across the whole factor × phase matrix
+including Force-Max offline), TPDF dither with shaping, and the §2.8 transition layer (KI-001
+closed as INC-001). The engine is staged (base front → OS region → base back) and chunk-safe
+against oversize host blocks. 183 checks (125 DSP + 58 state), every new behaviour
+mutation-verified; `docs/TEST_REPORT.md` records the measured aliasing / accuracy / latency /
+dither numbers with method; `REALTIME_SAFETY_AUDIT.md` audits the audio-thread paths.
+
+**The recurring engineering lesson of the phase** (recorded across the coverage-audit entries):
+four separate tests initially passed against wrong code or failed against correct code because
+the STIMULUS, not the assertion, was wrong — the two-stage-release bounds a single pole could
+satisfy, the ADAA stimulus whose alias physics capped improvement at 4.8 dB, the "off-grid" ISP
+phase that landed on-grid, and the "fundamental untouched" bound that a real droop-recovery
+effect exceeded. The working rule: derive where the property lives (algebra first), assert with
+disjoint bounds, and mutation-verify both directions.
+
+**Plan for P3 (metering engine).** Per DESIGN §2.9: K-weighted LUFS M/S/I with BS.1770-4 gating
+as a fixed-size histogram accumulator (never a growing container), the dBTP meter off the shared
+estimator, PLR, the GR-history SPSC ring (the first Audio→GUI ring — THREAD_MODEL's planned
+edge), the two spectrum capture rings, loudness-compensated monitoring and delta monitoring
+(KI-002 closes). Exit criterion: accuracy vs the EBU R128 vectors (≤ 0.1 LU) and the ISP vector
+set (≤ 0.1 dB where grid-aligned).
+
+**Risks.** OQ-013 still blocks the frozen-trim inject transport (P4 needs the ADR before Freeze
+restore can be wired); OQ-014 stays an owner call; the min-phase impulse-peak ±1 convention is
+documented but a host that measures latency by impulse peak on the min-phase path would see the
+same ±1 (cosmetic, worth a KNOWN_ISSUES entry only if a real host complains); dynamic-tame and
+model-weight constants are P6 listening material and may shift the sound pre-release
+(compatibility cost: zero — nothing has shipped).
 
 ## P0 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 

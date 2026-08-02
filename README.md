@@ -11,19 +11,25 @@ headless Linux machine, no IDE.
 
 ## Project status
 
-- **Version 0.1.0 (pre-release), phase P1 — skeleton.** P0 closed on 2026-07-31 with the owner's
-  sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the eleven ADRs it authorised are Accepted and
-  registered in
+- **Version 0.1.0 (pre-release), phases P1–P4 complete** (P4 minus the one OQ-013-blocked restore
+  path); **P5 (GUI) is next**. P0 closed on 2026-07-31 with the owner's sign-off of
+  [`docs/DESIGN.md`](docs/DESIGN.md); the eleven ADRs it authorised are Accepted and registered in
   [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md).
-- **The P1 skeleton is in the tree**: `CMakeLists.txt` (ADR-0008's five-target graph), `src/`
-  (the 49-parameter surface, the POD engine boundary, a pass-through chain with a basic
-  lookahead limiter on the constant 10 ms allowance, schema-v1 state) and `tests/` (88 checks,
-  green on Linux together with pluginval L5 in both modes ×3).
+- **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 49-parameter
+  surface, the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
+  true-peak lookahead limiter · oversampling to 16× · dither) behind the POD engine boundary on
+  the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
+  §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn, and schema-v1 state
+  with A/B slots — verified by `tests/` (**306 checks** — re-count from the suites' own output when editing,
+  the same rule HANDOVER's status row carries — green on Linux together with pluginval L5 in
+  both modes ×3; see [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
-- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the frozen-trim-vector transport
-  (OQ-013, blocks that one restore path at P1 and nothing else), and **the remaining entries in
+- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the
+  frozen-trim-vector restore (OQ-013 — **ADR-0012 settled its transport**; what stays open is
+  whether a restored vector may be injected into a running engine at all, so the Hard Stop
+  stands), and **the remaining entries in
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)** — which is the list of record, so this
   sentence cannot drift out of date. None of them may be guessed at. Resolved entries
   stay in that file's `Resolved` section; they are decisions, not choices to revisit.
@@ -88,8 +94,9 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)
 - **Rules (binding):** [`docs/policies/`](docs/policies/) — real-time audio, threading, DSP,
   mode/adaptation, compatibility, AI-agent, testing, release, dependency, code style
-- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) — **eleven Accepted
-  ADRs** (ADR-0001…0011, all dated 2026-07-31); the descriptive architecture set lands with P1–P2.
+- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) — **twelve Accepted
+  ADRs**: ADR-0001…0011 (all dated 2026-07-31) plus **ADR-0012** (2026-08-01, the GUI→Audio staged
+  record, ratifying the learned-target restore per OQ-015).
   `DESIGN.md` ranks *below* the ADRs it spawned and loses to them on any disagreement — see
   `docs/SOURCE_OF_TRUTH.md` §"Where `DESIGN.md` sits"
 - **How-to:** [`docs/procedures/`](docs/procedures/) (build, development, CI/CD, testing, release)

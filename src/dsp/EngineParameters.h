@@ -22,6 +22,7 @@ struct EngineParameters
     bool  bypass            = false;
     bool  loudnessComp      = false;
     bool  deltaMonitor      = false;
+    bool  freeze            = false;   // §5.4: latches the adaptive trim vector
 
     // -- input --------------------------------------------------------------
     float inputGainDb       = 0.0f;

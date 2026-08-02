@@ -30,15 +30,61 @@ inline int maxLookaheadSamples (double sampleRate) noexcept
     return (int) std::ceil (kMaxLookaheadMs * 0.001 * sampleRate);
 }
 
-// P1: no oversampling region exists yet, so every factor's oversampler delay
-// is genuinely zero. When the P2 oversampling lands (ADR-0003), this becomes a
-// pure function of (factor, phaseMode) — per-factor IIR/FIR group delays — and
-// MUST stay free of any signal-dependent term (ADR-0004 item 2).
+// The oversampler's contribution, in BASE samples — a pure function of
+// (factor, phaseMode), no signal-dependent term (ADR-0004 item 2), and
+// INTEGERS by construction: the engine builds every juce::dsp::Oversampling
+// instance with useIntegerLatency = true, whose internal fractional-delay
+// compensator rounds the cascade's group delay up to a whole base sample.
+//
+// The values are getLatencyInSamples() MEASURED against the pinned JUCE tree
+// (f8f8864…) in that mode. A JUCE bump that changes either filter design
+// fails testReportedLatencyMatchesImpulse across the OS matrix — that is
+// RISK-001's tripwire doing its job, not an inconvenience to suppress.
+// prepare() also asserts table == getLatencyInSamples() per instance, so a
+// drift is caught at the first debug run even before the matrix test.
+//
+// Sample-rate note: these are filter group delays in SAMPLES, which is why
+// the function ignores its rate argument; the same cascade at 96 kHz delays
+// the same number of samples (a shorter time — the honest physics).
+// At namespace scope so the headroom constant below can be checked against
+// them AT COMPILE TIME. They were function-local statics, and the only thing
+// tying them to `kMaxOsLatencySamples` was a `jassert` in the engine — which
+// compiles out in Release, i.e. in the builds that ship. Same argument that
+// promoted the JUCE-vs-table comparison to an always-recorded flag.
+inline constexpr int kOsLatMin[4] = { 4, 6, 6, 6 };       // IIR polyphase + integer-latency pad
+inline constexpr int kOsLatLin[4] = { 49, 61, 65, 67 };   // FIR equiripple + integer-latency pad
+
 inline int osLatencySamples (OversampleFactor factor, OsPhaseMode phase, double sampleRate) noexcept
 {
-    (void) factor; (void) phase; (void) sampleRate;
-    return 0;
+    (void) sampleRate;
+    if (factor == OversampleFactor::off)
+        return 0;
+    const int idx = (int) factor - 1;                    // x2..x16 → 0..3
+    return phase == OsPhaseMode::minimum ? kOsLatMin[idx] : kOsLatLin[idx];
 }
+
+// The dry-ring / bypass-alignment headroom the engine must allocate for.
+inline constexpr int kMaxOsLatencySamples = 67;
+
+inline constexpr int maxTabulatedOsLatency() noexcept
+{
+    int m = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        m = kOsLatMin[i] > m ? kOsLatMin[i] : m;
+        m = kOsLatLin[i] > m ? kOsLatLin[i] : m;
+    }
+    return m;
+}
+
+// The dry ring is sized with kMaxOsLatencySamples standing in for the per-config
+// osLatBase, so a table entry that outgrew it would make the bypass leg read a
+// slot the write had already passed. Enforced here rather than by the engine's
+// runtime assert, because that assert is a Debug-only tripwire on a table a
+// JUCE bump is expected to move.
+static_assert (maxTabulatedOsLatency() <= kMaxOsLatencySamples,
+               "kMaxOsLatencySamples must cover every entry of the osLatency tables — "
+               "raise it and re-check the dry-ring sizing in AnabasisEngine::prepare");
 
 // The effective factor is not always the selected one: at Force Max an offline
 // bounce renders at 16x, and the reported figure under isNonRealtime() uses

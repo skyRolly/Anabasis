@@ -36,54 +36,8 @@ it does not check heading nesting, so this convention is held by hand.
 
 ## Open issues
 
-### KI-001 — A/B slot switch is not click-safe in the P1 skeleton
-
-**Severity:** Low
-**Status:** Confirmed
-**Affects:** all platforms, all formats (P1 skeleton builds only; no UI exposes A/B yet)
-
-Switching A/B slots performs a plain bulk parameter swap with no transition
-handling, so a switch during playback can produce an audible step. The §2.8
-forced-duck transition layer (asymmetric raised-cosine duck requested *before*
-every bulk swap) lands at P2; until then the swap is exactly the click-free-
-invariant hole `DSP_POLICY.md` invariant 8's per-path test will catch.
-
-**Workaround:** none needed in practice — no UI or host path triggers the swap
-in the P1 build; the API exists for the state tests.
-**Cause:** `switchToSlot` applies `applySlotToLive` directly (TODO(P2) marks
-the duck call site).
-
-Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp` (`switchToSlot`)
-- Test:   `AnabasisStateTests` `testAbSlotsAndTiers` (exercises the swap, not its audibility)
-- Commit: P1 skeleton commit (this change)
-
----
-
-### KI-002 — Loudness Comp and Delta monitoring do nothing in the P1 skeleton
-
-**Severity:** Low
-**Status:** Confirmed
-**Affects:** all platforms, all formats (P1 skeleton builds only)
-
-The **Loudness Comp** and **Delta** toggles are carried through the parameter
-surface and the engine boundary but the engine ignores both, so clicking either
-has no audible effect. They are monitoring features that arrive with the
-metering engine at P3 (`DESIGN.md` §2.7 loudness compensation, §2.6 delta
-monitoring); the parameters exist now because the surface freezes at v0.1.0
-(`PARAMETER_COMPATIBILITY_POLICY.md` rule 1) and adding them later would be a
-`kVersion` bump.
-
-**Workaround:** none — the features are not implemented yet, not broken.
-**Cause:** `EngineParameters::loudnessComp` / `deltaMonitor` are populated by
-`CachedParams::toEngine` but never read by `AnabasisEngine::process`.
-
-Evidence [Verified]:
-- Source: `src/dsp/EngineParameters.h` (fields), `src/dsp/AnabasisEngine.cpp` (no reader)
-- Test:   none — there is no behaviour to assert until P3
-- Commit: P1 skeleton
-
----
+*(KI-001 — unducked discrete transitions — and KI-002 — inert Loudness Comp/Delta — are FIXED
+and recorded as `POSTMORTEMS.md` INC-001/INC-002; their numbers are never reused.)*
 
 ### KI-003 — A host that restores state off the message thread is only partly defended against
 
@@ -113,6 +67,15 @@ drain can read `restoreDepth == 0` immediately before the restore raises it);
 it is nanoseconds against the microseconds the unguarded code exposed, and it
 closes only with the same thread-model decision.
 
+A second member of the same family, recorded rather than left implicit: the
+wrapper mirrors the staged ADAPTIVE record (`stagedAdaptiveLearned`,
+`stagedRefOnset`, `stagedRefTilt`) so a save that lands before the next audio
+block serializes what was loaded. Writer and reader are both nominally the
+message thread, so on a well-behaved host there is no race at all; they are
+**atomics** anyway, because on a host that delivers `setStateInformation` off
+the message thread a concurrent save would otherwise read a half-written
+mirror. ADR-0012's contract covers the engine-side record, not this copy.
+
 **Workaround:** none required on the hosts tested so far — no case of an
 off-message-thread restore has been observed against this plugin. The entry
 exists because the assumption is load-bearing and undocumented elsewhere.
@@ -127,6 +90,138 @@ Evidence [Partially Verified]:
   mid-restore drain single-threaded; the uncovered `replaceState` race is not
   reproducible headlessly
 - Commit: P1 skeleton, thread-safety pass
+
+---
+
+### KI-004 — During an OS-factor switch, reported and actual latency disagree for the duck window
+
+**Severity:** Low
+**Status:** Confirmed (accepted by design — ADR-0004's trade)
+**Affects:** all platforms, all formats — only while an oversampling factor or
+phase change is in flight, and only on the processed path
+
+Changing the OS factor/phase does not rewire immediately: the §2.8 duck fades
+the processed path to silence (~6 ms), executes the rewire at the silent
+bottom on a block boundary, and recovers (~28 ms). Between the parameter
+change and that bottom — at most one host block plus the ~6 ms out-leg — the
+engine still runs the OLD oversampler group delay while the wrapper already
+reports the NEW total to the host. The disagreement is bounded by the
+integer-latency table's span (≤ 67 samples at the extremes, `Latency.h`), and
+the audio inside the window is the duck's fade itself, so nothing audible
+carries the wrong alignment. A related edge: an instance sitting in **full
+bypass** adopts a factor change without the duck (the bypass leg is the
+delay-aligned dry ring, kept bit-exact), so the dry leg's alignment steps by
+the same bounded amount at the block boundary instead of fading through
+silence. Un-bypassing afterwards is already click-free (the ~10 ms crossfade).
+
+**The silent bottom is quantised to the host block grid.** The duck leaves the bottom only at a
+block top (`process()` evaluates the state machine once per block), while the post-latch refill
+counter `bottomHoldSamples` runs down per PROCESSED sample inside the block. A hold that expires
+mid-block therefore waits for the next block top before the ~28 ms in-leg starts, so the audible
+silence is the ~6 ms out-leg plus the refill plus **up to one host block** — ≈ 43 ms of that at a
+2048-sample block, 48 kHz. The bound above ("at most one host block plus the ~6 ms out-leg")
+describes the LATENCY disagreement; this is the separate cost in silence, on the same grid.
+Accepted for the same reason: leaving the bottom mid-block means running the rewire off a block
+boundary, which is what the duck exists to avoid.
+
+**A request raised while the host is not processing is spent on the next playback.** The forced
+duck is a sticky flag consumed at a block top, and the engine has no clock: a swap made while the
+transport is stopped (in a host that suspends the plugin without re-preparing it) leaves the
+request standing, and its ~6 ms out / ~28 ms in leg then plays over the head of the next take
+instead of over the swap it was guarding. Bounded to ~34 ms and audible only as a fade-in — the
+swap itself was never heard, which is why this is a surprise rather than an artefact. A reset
+clears it (`prepareToPlay` reaches `reset()`), so the case that survives is specifically the
+stopped transport. Ageing the request needs a time base the audio thread does not have; the
+wrapper sees the transitions the engine cannot (`releaseResources`, `suspendProcessing`), so it
+is recorded here as a P5 wrapper question rather than patched in the DSP.
+
+**Entering offline abandons an in-flight duck.** When `nonRealtime` first goes
+true the engine adopts the new configuration directly (so a bounce does not
+open with a fade — see the note below), which forces the duck to idle at unity.
+If a duck happened to be in flight at that instant — a factor/model rewire, or
+a wrapper bulk swap requested moments earlier — the processed gain steps from
+its current value (as low as 0.0 at the silent bottom) to 1.0 in one sample,
+and the latch may then clear the lookahead ring at full gain. Bounded to the
+first sample of an offline render, and the alternative (carrying a monitor
+fade into a bounce) is worse; recorded so it is not rediscovered as a defect.
+
+The same latch boundary also steps two internal CONSUMERS of the dry leg that
+the duck does not cover: the §2.7 dry loudness measure and the §5.4 adaptive
+feature extractor are fed the delay-aligned dry signal, whose read offset
+moves by the same ≤ 67-sample difference when `osLatBase` re-latches. The
+splice can register once as a spurious transient in the onset detector and
+as a sub-millisecond hiccup in a 400 ms loudness window — both absorbed by
+their own smoothing (the trims slew over seconds, the measure gates at
+−70 LUFS), so this is measurement noise at the switch instant, not an
+audible or persistent error.
+
+Related and deliberate, so testers do not report it as a hang: the silent
+bottom is **held until the pipeline refills** after a factor/phase latch —
+the latch empties the 10 ms lookahead line and resets the oversampler, so
+recovering immediately would splice real audio in partway up the fade. A
+factor switch therefore mutes for roughly 45 ms end to end (≈6 ms out, ≈11 ms
+refill rounded up to the block grid, 28 ms in) rather than the ~34 ms of the
+two fade legs alone. Every other transition — A/B, preset, session load, EQ
+position, colour model — does not clear the line and keeps the ~34 ms shape.
+
+**Workaround:** none needed in normal use; for sample-surgical A/B of factor
+settings offline, render each factor separately instead of automating the
+switch mid-render.
+**Cause:** ADR-0004 fixes the *reported* latency per factor and forbids
+mid-block latency changes; the duck trades a ≤ 40 ms alignment window for
+click-free, allocation-free switches on the audio thread.
+
+Evidence [Verified]:
+- Source: `src/dsp/AnabasisEngine.cpp` (block-top duck state machine,
+  `latchOsConfig`), `src/dsp/Latency.h` (`kMaxOsLatencySamples`)
+- Test:   `testDuckWrapsOsLatch` (the window is the duck envelope),
+  `testOsLatencyMatrix` (the bound); the bypassed-instance step is
+  established from the code path, not reproducible as a click headlessly
+- Commit: PR #5, P2 transition layer
+
+---
+
+### KI-005 — Moving Clip Drive off exactly 0 dB steps the transfer by half a sample
+
+**Severity:** Low
+**Status:** Confirmed (fix deferred — needs a designed engage crossfade, see below)
+**Affects:** all platforms, all formats — a direct `clipDrive` move (or a
+Character-macro move that carries it) across the 0 dB boundary during playback
+
+The clipper's sub-block is skipped **exactly** at 0 dB drive, which is the
+bit-identity contract. One sample later, with the drive smoother barely off
+zero, the ADAA-1 branch runs — and in the curve's linear region its divided
+difference is `(u + u_prev)/2`, i.e. a `(1 + z⁻¹)/2` FIR. The stage therefore
+swaps *identity* for *a half-sample delay plus a cos(πf/fs) droop* in one
+sample. Both trajectories are individually smooth; the join between them is
+not, and the step is proportional to the signal's **slew**, not to the drive
+amount, so smoothing `driveDb` does not shrink it. An 8 kHz tone loses ~1.2 dB
+and shifts ~12° at that instant; on broadband programme the artefact is one
+sample at roughly half the local sample-to-sample difference. The same happens
+in reverse when drive returns to exactly 0.
+
+Not exposed on the bulk-swap paths — A/B, preset and session loads are covered
+by the §2.8 duck. The reachable case is a knob or automation move.
+
+**Workaround:** automate `clipDrive` from a small non-zero value rather than
+from exactly 0, or make the move while the transport is stopped.
+**Cause:** the exact-zero skip is a change of transfer, not of gain, so the
+two branches cannot be joined by a gain crossfade keyed on drive. A correct
+fix needs a time-based engage ramp (~20 ms) that keeps the ADAA branch running
+while it fades out, primed like the other smoothers so a render does not open
+mid-fade, and landing on exactly 0/1 so the bit-identity skip is preserved.
+**A drive-keyed blend was tried and rejected** during the review round that
+found this: it removes shaping the clipper legitimately owes at tiny drive
+with a loud signal (the knee at unity gain), which `testClipCurveAndCompensation`
+pins deliberately. The ramp belongs with the ⊕ tuning pass, where it can be
+built with its own coverage rather than patched around an existing test.
+
+Evidence [Verified]:
+- Source: `src/dsp/ClipSat.h` (`clipOn` exact-zero test, the ADAA branch)
+- Test:   none yet — the property needs the curvature-based measurement
+  described in the header note; a max-delta test does NOT catch it (the engage
+  sample's first difference is *smaller* than the signal's own)
+- Commit: PR #5, recorded 2026-08-01
 
 ---
 

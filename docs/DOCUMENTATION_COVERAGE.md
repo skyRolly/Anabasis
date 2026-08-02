@@ -6,8 +6,1382 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **P0 → P1 phase boundary** (2026-07-31). `docs/DESIGN.md` **signed off**;
-P0 closed; eleven ADRs Accepted and registered.
+**Last updated:** for the **twenty-third review round of 2026-08-02** (PR #5): the Learn command
+was a code plus a flag, which a consumer could take between the writer's two stores and then have
+re-raised behind it — the same command twice, and a repeated commitThenStart commits a pass one
+block old. Two bits need no record: the code IS the flag now. Previous round: (PR #5): three documentation
+drifts corrected (a changelog stimulus count, HANDOVER's phase header, a missing separator), the
+forced-duck request added to what `reset()` clears, and two ⊕-draft/P5 questions recorded where
+the code that raises them lives. Previous round: (PR #5): the per-block
+repairs moved ahead of every consumer that reads what they repair, the oversampler latency table
+is now bound to its headroom constant by a `static_assert` rather than a Debug-only `jassert`, and
+the meter's ring guard came back — with the stimulus that can tell it is there. Previous round: (PR #5): the previous round's
+Learn cancellation runs later in the block than the Learn COMMIT is consumed, so a ruined pass
+could still be saved as the reference — refused at the writer instead. Previous round: (PR #5): the two stages that
+emit no audio — the BS.1770 meters and the §5.4 feature extractor — overflow on a legal float and
+fail silently, so they are now repaired per block like the limiter's detector. Previous round: (PR #5): the invariant-9
+recovery had one more hole, and it was in the sentence that justified leaving stage E without a
+boundary — the Post EQ can overflow, and did, permanently. Previous round: (PR #5): one of the four
+§5.4 trims is inert in the factory state — the release trim lands on a parameter the limiter reads
+only in manual mode — recorded as **OQ-016** rather than wired, because making it audible changes
+the default sound. Previous round: (PR #5): the previous round's
+recovery covered the engine's own stages but not the oversampler, whose default path is a
+recursive IIR — so the same permanent silence survived at every oversampling factor. Previous round: (PR #5): a finite input could
+make a gain-carrying stage overflow, and the boundary that swallowed the resulting NaN left the
+stage holding it — the plugin went silent until it was re-prepared. The boundaries now record
+what they substitute and the affected stage is cleared. Previous round: (PR #5): the ADR index still
+told readers the project had no `src/` and no `tests/`, and the eleven sign-off ADRs still read
+`Unverified (no src/ yet)`. Documentation only. Previous round: (PR #5): the Learn commands
+join the restore on ADR-0012's staged-record row — two flags in a fixed order lost BOTH commands
+when a stop and a start fell in the same block. Previous round: (PR #5): the clipper's engage
+edge is a confirmed defect recorded as **KI-005** after a fix attempt was tried and reverted, plus
+seven scope/comment corrections. Previous round: (PR #5): invariant 12's scope
+now names the bypass crossfade as its second post-dither leg (the claim written two rounds ago
+was too absolute), and three comment/scope corrections land with it. Previous round: (PR #5): `AdaptiveEngine::reset()`
+cancels an in-flight Learn pass. Previous round: (PR #5): the direct-adopt branch
+now clears EQ state on a position change (the offline-entry edge made that branch reachable
+mid-stream), the wrapper's staged mirror is atomic, and two reset-lifecycle carry-overs are
+closed. Previous round: (PR #5): the previous round's
+offline-flip fix was direction-agnostic and broke the RETURN edge — fixed, with both directions
+now pinned by their own tests. Previous round: (PR #5): a realtime→offline flip
+no longer ducks the head of a bounce, `learnActive` joins `learned` as an atomic, and CLAUDE.md
+stops claiming the project is at P1. Previous round: (PR #5): the limiter push was
+being applied BEFORE the clipper instead of after it — a real chain-order deviation that made the
+macro's primary push drive the clipper as well. Previous round: (PR #5):
+**ADR-0012** ratifies the GUI→Audio staged record unchanged (owner chose option 1), adding the row
+to `THREADING_POLICY.md`; invariant 7 gains the bypass-null scope sentence. Previous round: (PR #5): the load-then-save
+learned-reference loss, the publish-on-a-short-circuited-block duplicate, and **OQ-015** — an
+external review found that the P4 learned-target restore is an off-table cross-thread path that
+never passed the Architecture Review Gate. Previous round: (PR #5): the meters moved off
+the monitor path onto the engine's render tap, the limiter's three level-affecting controls
+(link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
+(45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Twenty-third review round — the fix was a narrower mechanism, not a wider one (2026-08-02)
+
+Nine items: one defect fixed, one warning made mechanical, one comment completed, three repeats,
+three verifications that agree with the code.
+
+**A staged record with a two-bit payload was the wrong shape, and the second window proves it.**
+ADR-0012's Known limits described one consequence of publishing code-then-flag: a composing writer
+that reads the flag back between the consumer's `exchange` and its use drops an outstanding
+commit. The review found the same window in the other direction — a consumer whose `exchange`
+lands between the writer's two stores runs the already-visible new code, and the writer's following
+`store(pending, true)` re-delivers it. A repeated bare commit is harmless; a repeated
+`commitThenStart` calls `commitLearn()` on the pass its own first delivery started one block
+earlier, so `learnBlocks == 1` and the saved reference is measured from a single block of audio
+and then serialized into the project.
+
+**The fix removes a mechanism rather than adding one.** The payload is two bits, so there is
+nothing to stage: `learnCmd` is one atomic word with `kLearnNone` meaning nothing pending, and one
+store cannot be split. The edge moves from ADR-0012's staged-record row to the single-lock-free-
+scalar row it always fitted — a narrowing, no new path, one fewer window. ADR-0012 keeps its
+contract (the learned-target restore has a real payload) and gains the amendment; `THREAD_MODEL.md`
+carries the new row text. The surviving residual is the opposite direction, and closing it would
+trade a dropped command for a duplicated one — which is the trade this round just refused in the
+other direction. **The race is not headlessly reproducible**, like KI-003's: what the suite pins
+is that the composed semantics still hold (`testStopThenStartInOneBlockKeepsBoth`).
+
+**A warning became a tripwire.** Invariant 7's third leg — the bit-exact null holding because
+`ClipSat::activityEnv` is exactly `0.0f` while nothing clips — was carried by comments in two
+files and by nothing executable. `activityEnvelope()` is now public for the test that asserts the
+zero directly. Verified the way it should be: a mutant that floors the envelope at `1e-9` passes
+the null test (the tame branch needs `tameGainDb < -0.01f`, so a tiny value changes no sample) and
+fails the new check. That is exactly the failure the comments feared, and it is now mechanical.
+
+**Three verifications, and one of them extended a comment.** The reviewer re-traced the limiter's
+detector recovery and agreed with last round's comment, then found what it did not cover: in
+true-peak mode a NaN also enters the estimator's 12-tap FIR history, so the un-limited stretch is
+one window PLUS `kTaps` region samples. Added. The other two — the loudness-compensation measure
+being only marginally perturbed by the duck, and the three-way render equality being structural
+rather than incidental — confirm existing comments and needed no change.
+
+### Twenty-second review round — the round with no defects in it (2026-08-02)
+
+Six items, and the review classes five of them as not-defects itself. Nothing changed about what
+the plugin computes.
+
+**Three documentation drifts, all of the same kind: a number or a sentence that no test reads.**
+The changelog said the extreme-level test carries four stimuli; it carries five (the Post-EQ case
+landed a round later). `HANDOVER.md`'s preamble still opened "Snapshot taken at the P0 → P1 phase
+boundary" above a status table reading P4 and three later phase summaries. `KNOWN_ISSUES.md` lost
+one `---` between KI-003 and KI-004. The changelog entry now says where its count comes from — the
+test's own `run(...)` cases — because "five" is as re-derivable as "four" was.
+
+**The forced-duck request joins what `reset()` clears.** Behaviour is unchanged and no mutant can
+kill the line: the first block after a reset takes the `! smoothersPrimed` branch, which already
+discards the request. The line is there so that discard is not load-bearing for a fact stated in
+another branch — and the comment says exactly that, rather than dressing it as a guard. What it
+does not fix is recorded in KI-004: a swap made while the transport is stopped leaves the request
+standing, and ~34 ms of fade plays over the head of the next take. Ageing it needs a time base the
+audio thread does not have, so it is a P5 wrapper question.
+
+**Two ⊕ drafts recorded next to the constants rather than in a backlog.** The tilt→scHpf mapping
+saturates at its +30 Hz bound as soon as the measured split is ~5 dB darker than the −6 dB
+reference, and the split is a first-order 800 Hz one-pole that biases the measurement low on real
+programme — so the trim can converge onto a RAIL while `testTrimBounds` (membership) and
+`testAdaptationConvergesAndHolds` (convergence) both pass. The P6 listening pass owes a check that
+the vector sits away from every bound on representative material. That check cannot be written
+before the constants are tuned, which is why it is a comment at the mapping and not a test today.
+
+**Nothing was done about the limiter's wedge item**, because it is the reviewer confirming the
+comment written last round by tracing the code — the recovery bound, the reason domination cannot
+remove a NaN entry, and what holds invariant 4 meanwhile all match. An independent trace agreeing
+with a comment is the outcome the comment was written for.
+
+### Twenty-first review round — ordering, a Release-only assert, and a guard that came back (2026-08-02)
+
+Eleven items, most of them explicitly not defects. Three fixed, five recorded in code where a
+reader will meet them, three already carried.
+
+**The ordering fix generalises the previous round's.** The per-block repairs ran near the end of
+`process()`, while `currentTrims()` — which reads state one of them repairs — is read earlier. The
+reviewer verified the hole is not live (a NaN target fails the trim hysteresis, so a NaN trim is
+never stored, which makes that branch of `sanitiseState` dead code today) and asked the right
+question anyway: it stops being dead the moment the hysteresis changes, and a NaN trim would reach
+`limiter.setStereoLink`, whose `SmoothedValue` nothing sanitises. Moved to the top of the block,
+where the comment now says the position is load-bearing. Same lesson as the Learn commit: "the
+sweep runs later in the same function" is a fact about call order that nothing enforces.
+
+**A `jassert` that guards a shipping build guards nothing.** The dry ring is sized with
+`kMaxOsLatencySamples` standing in for the per-config oversampler latency, and the only thing
+tying the two together was a `jassert` — compiled out in Release, which is what ships. The tables
+moved to namespace scope and a `static_assert` now binds them to the constant at compile time.
+The same argument had already promoted the JUCE-vs-table comparison to an always-recorded flag;
+this was the entry it missed.
+
+**The meter's ring guard came back, and the reason it was removed was a bad stimulus, not a bad
+guard.** Round nineteen removed it because no mutant could distinguish it. The review pointed out
+why: the reasoning ("the absolute gate rejects NaN") holds for the integrated histogram and not
+for the sliding windows, where a stored NaN reads for up to ~3.2 s and freezes the §2.7
+compensation with it. The mutant survived because the test used a 512-sample block — the per-block
+repair clears the accumulator before the 100 ms sub-block boundary about nine times in ten. At
+8192 the boundary falls inside the poisoned block every time, and the mutant dies. **A guard that
+no mutant kills is either dead code or an uncalibrated stimulus, and telling them apart is work,
+not a judgement call.**
+
+**Five things recorded rather than changed**, each next to the code it constrains: the §5.4
+features re-converge over tens of seconds after a huge-but-finite excursion (no accumulator is
+non-finite, so no repair touches it; bounding them is a mapping change); the limiter's wedge keeps
+NaN entries until index expiry, so detector recovery is one window rather than one block; the
+integrated histogram's top bin is a hard range limit above +5 LUFS; and one GR-history entry spans
+the HOST block, so the P5 renderer needs a time base rather than an index count. `DSP_POLICY.md`
+invariant 9 now carries the recovery times together, because "self-heals" had come to mean four
+different latencies.
+
+### Twentieth review round — the guard was right, and ran too late (2026-08-02)
+
+Three items: one defect fixed, two repeats already recorded (one of which the review itself
+classes as not-a-defect).
+
+**The previous round added exactly the right guard in exactly the wrong place.** `sanitiseState()`
+cancels a Learn pass whose sums went non-finite, so that `commitLearn()` cannot store one — but it
+runs late in `process()`, while the staged Learn command is consumed at the block TOP. A commit
+landing on the block after an overflow therefore gets in first: `refTiltDb` becomes NaN,
+`publishRefs()` publishes it, `learned` goes true. From there the damage is permanent (every trim
+target derives from the reference, and both `jlimit` and the hysteresis `|tgt − state| > deadband`
+pass NaN through untouched, so the vector never moves again) and persistent (`hasLearned()` true
+means the next save writes it into the session's `ADAPTIVE` child). Reproduced before fixing:
+both assertions of the new test fail on the tree as it stood.
+
+**Fixed at the writer, not by reordering the calls.** Moving `sanitiseState()` above the Learn
+consume would work today and would be a fact about call order that nothing enforces — the same
+class of argument as the reachability claim that put the Post-EQ hole in. `commitLearn()` now
+refuses a non-finite measurement outright, with the outcome the empty pass already has (previous
+reference stays, nothing published, `learned` not raised). `setLearnedTargets()` — the other
+writer, reached by a session restore — gets the same check, so a file written by a build that did
+commit one reads as never-learned rather than re-poisoning a healthy engine.
+
+**The stimulus is the constant huge block, not the Nyquist one.** The extractor's Learn
+accumulation is inside `if (learnActive && audible)`, and `audible` is `ms > 1e-7` — false for the
+NaN that Nyquist-at-full-scale produces, true for the `inf` a constant block produces. The
+previous round's stimulus, reused here, would have tested nothing.
+
+**A warning caught by the build, not by review.** The first version of the test compared trims
+with `!=`; `-Wfloat-equal` is on, and the project's gate treats warnings as findings. Replaced
+with `juce::exactlyEqual`, the idiom the rest of the tree uses.
+
+### Nineteenth review round — the failures that are invisible because they are not audio (2026-08-02)
+
+Seven items: one defect fixed with a two-part regression test, three one-line consistency
+corrections, three repeats left alone.
+
+**A third class of stage, and it is the one the contract kept missing.** Rounds fifteen to
+eighteen were about stages that produce a non-finite SAMPLE, which a boundary can catch. The
+meters and the feature extractor produce no samples at all. Both are fed the delay-aligned dry
+signal — finite by the input boundary, unbounded by anything — and both overflow on it: the
+K-weighting shelf at ~FLT_MAX/3, the band-energy square at ~1.8e19. What follows is silent in
+every sense: a NaN reading compares false against `>= -70 LUFS`, so the §2.7 compensation freezes
+and the integrated histogram stops counting; a NaN feature fails the trim hysteresis
+`|tgt − state| > deadband`, so the trim vector holds its last value for the session **and looks
+entirely plausible doing it**. Measured: `tilt=-nan crest=-nan` and a frozen trim vector, 359
+blocks after a single extreme block.
+
+**Stimulus calibration decided the shape of the test, twice.** A constant huge block does NOT
+poison the extractor's filter state — `bandLp` tracks toward it and stays finite; only the SQUARE
+overflows, and that recovers. The state only breaks on a sign flip, where `x − bandLp` is
+2·FLT_MAX: the stimulus is Nyquist at full scale. And the output meter is unreachable through the
+programme path (the render tap is ceiling-bounded), so the case runs in **bypass**, where
+`render = delayedDry` is the raw input. Each half dies against its own `sanitiseState()`.
+
+**One guard was written, tested, and removed again.** The first draft also dropped a non-finite
+sub-block mean before it entered the meter's ring. No mutant could tell the difference: the NaN
+that this failure actually produces is rejected by the `lufs >= -70.0` absolute gate anyway, since
+every comparison against NaN is false. The property is now an assertion in the test instead of a
+branch in the meter — last round's lesson about unreachable defensive code, applied to my own
+first draft rather than to someone else's line.
+
+**What is NOT fixed, and is now written down.** After an extreme block the features re-converge
+from a huge-but-finite value through the 1.5 s integrator, which can take tens of seconds of
+wrong-but-finite tilt. Bounding the features to fix that is a §5.4 mapping change, not a repair.
+
+**Three consistency corrections.** The limiter's detector-HPF design clamp was 20 Hz where the
+compressor's identical filter uses 10 Hz — unreachable divergence today, aligned rather than
+argued about. The wet ring's zero slack is now justified in place (its read offset is fixed, the
+dry ring's is a three-term sum, which is what the spare slot there guards). And Learn's
+accumulation now says that it sums the ~1.5 s integrated features on purpose, that the bias is
+~1.5 s of pre-start material, and that the P5 grammar owes a minimum pass length rather than this
+owing a re-seed.
+
+### Eighteenth review round — the hole was in the sentence that said there was no hole (2026-08-02)
+
+Six items: two defects fixed, one flag-coverage gap closed with them, three repeats left alone.
+
+**The stage-E boundary I removed two rounds ago was load-bearing.** It was dropped on this
+argument: *"Stage E needs no boundary of its own: its input is the limited signal, bounded by the
+ceiling (invariant 4), so eqPost cannot overflow."* Wrong twice. The `CeilingClamp` runs **after**
+the Post EQ — that is what ADR-0002 exists for — so it bounds the EQ's output, not its input. And
+what actually bounds stage E's input is the limiter's **attack**, not the ceiling: at the default
+2 ms lookahead the envelope is down to ~0.008 by the time an extreme peak plays, which is why the
+first stimulus found nothing, but at 0.1 ms it has only ~5 samples and reaches ~0.29 — and a fully
+boosted EQ multiplies by ~3.4. Measured with the engine instrumented: `postEqIn = 9.9e37`,
+`out = 3.4e38`, 402494 non-finite samples, output `0.000000` for ever after.
+
+**Two boundaries, not one.** The staging read at the top of stage E is the other missing one: with
+oversampling on it carries `processSamplesDown`'s output, the decimation half of the same polyphase
+filters the region read already guards, so a non-finite value there is attributed to the
+oversampler and repairs it. That closes the flag-coverage asymmetry the same review flagged
+separately — `regionInputNonFinite` covered the up-sampler only.
+
+**The limiter's detector high-pass needed the opposite treatment.** Its corruption produces no
+non-finite output to detect: `det` goes NaN, every wedge value goes NaN, and `peak > ceiling` is
+**false** for NaN, so `needed` stays 1.0f and the limiter emits unity gain for ever — finite,
+silent, and invisible to every boundary in the engine. A repair hung on a flag cannot fire for a
+fault that raises no flag, so the state is checked unconditionally once per block instead. The
+sanitisation added to `resetWindow()` last round moved there rather than being duplicated.
+
+**Stimulus calibration was the whole difficulty, again.** The obvious Post-position test — a
++12 dB shelf at the default lookahead — passes against the bug, because the limiter really does
+bound stage E's input under normal settings. The case only exists at a short lookahead, with the
+peak detector (the RMS square collapses the level first) and every EQ band boosted. A test written
+from the review's description alone would have gone green and closed the item.
+
+**Lesson, and it is the same one twice.** Round fifteen removed a guard because a reachability
+argument said the case could not happen; round sixteen found the recovery incomplete for a stage
+the invariant text itself named. Both times the defect was inside carefully argued prose. The rule
+this branch now carries in `DSP_POLICY.md`: a reachability argument is not a boundary — it is a
+claim about today's chain, and it belongs in a comment next to a check, not instead of one.
+
+### Seventeenth review round — an adaptive behaviour that is computed, published, latched and silent (2026-08-02)
+
+Eleven items: one product question raised rather than answered, four documentation/comment
+corrections, six repeats of items already recorded (three of them verbatim from the previous
+round, against comments this branch already carries).
+
+**The one substantive finding is a question, not a bug.** `LookaheadLimiter::setRelease` writes
+`aRelManual`, which `processSample` reads only in the `else` branch of `if (autoRelease)`; the auto
+path steps its two envelopes with fixed 40 ms / 600 ms constants. `limAutoRelease` defaults to on.
+So the §5.4 release trim is computed, slewed, published, displayed as an overlay, latched by Freeze
+and serialized — and inaudible at factory defaults, while the other three trims reach their stages.
+
+**Why it was not simply wired.** Both readings are backed by documents this repository is governed
+by. `DESIGN.md` §5.4 defines trims as deltas "around the current parameter values" and
+`MODE_AND_ADAPTATION_POLICY.md` states that every trim "is inert while its host stage is inert" —
+the property the invariant-7 null rests on — so an inert trim on an unused parameter is that rule
+working. Against that, a release trim that cannot open up on sparse material is not delivering what
+§5.4 exists for. Making it audible means scaling the two auto poles, which changes **what the
+plugin sounds like at factory defaults**: a product decision, and `CLAUDE.md`'s standing rule is
+that open decisions go to `OPEN_QUESTIONS.md` rather than being guessed at. **OQ-016**, with the
+recommendation stated and the scope now written into the policy's "Current implementation"
+section, `HANDOVER.md`'s P4 summary and the application site itself.
+
+**Three corrections that are one sentence each.** Invariant 9 now says what "self-heals" costs —
+the repair runs at the end of the chunk, so recovery is one chunk plus the lookahead line, not one
+sample. `setTruePeakMode`'s history clear now states its own cost: ~12 region samples that
+under-report, against an unbounded over-report if the stale window were kept. And a typo in the
+delta-leg duck comment ("undicked") is fixed, in the sentence that is the load-bearing explanation
+for why `dryForDelta` carries the duck gain.
+
+**Six repeats, and what that says.** The clipper's engage edge (KI-005), the dynTilt trim sitting
+at its clamp, the GR tap being the limiter's alone, the detector high-pass during a lookahead
+glide, the bulk swap's two halves, the GR ring's rewinding index — all six are already recorded,
+four of them in comments this branch added in the previous two rounds, and the ring's "generation
+counter or never rewind" choice is already written into `THREAD_MODEL.md`'s planned edges. A review
+reading a slightly older tree will re-raise what it cannot see; the answer is to check the current
+file before re-fixing, which is why nothing was touched for those six.
+
+**The check-count item was the reviewer reading the PR description, not the tree.** README and
+HANDOVER both say 293 (206 + 87), which is what the suites print; the description said 282. The
+description is what was stale, and it is the one place the "re-count from the output" rule does not
+enforce itself, so it is updated with the push rather than left to drift again.
+
+### Sixteenth review round — the recovery covered every stage the engine owns (2026-08-02)
+
+Ten items: two defects fixed, one seed corrected, four comment/scope corrections, three already
+recorded and left alone.
+
+**The previous round's fix was incomplete in exactly the way its own text advertised.** The
+rewritten invariant 9 names "a polyphase filter" among the stages that can generate a non-finite
+value from a legal float, and the region-read boundary sets the flag for precisely that case — but
+the repair block cleared `eq`, `comp` and `clip` and never touched the oversampler. Measured: at
+`FLT_MAX` with x4 or x16 **minimum-phase** oversampling the plugin is silent for ever; the same
+stimulus on the **linear-phase** path recovers by itself. That is the difference between an IIR
+allpass chain, which feeds its own poisoned state, and an FIR, which flushes in a few samples.
+`osActive->reset()` now runs on a separate flag set only by the region boundary — a full reset is
+a discontinuity and must not fire for a fault another stage caused.
+
+**A fix from the last round was itself a regression, and the review caught it.** `comp.reset()`
+zeroes the gain-reduction envelope, so a block that tripped the recovery resumed at unity with no
+release ramp — the exact effect `LookaheadLimiter::resetWindow` exists to avoid, argued at length
+in its own comment. Replaced by `sanitiseState()` on the EQ, the compressor and the clipper:
+clear the members that are actually non-finite, carry the rest. The envelope is cleared only when
+it is itself NaN, which is the one case where there is nothing to carry. `primed` is no longer
+disturbed either, so the smoothers no longer snap.
+
+**Defence in depth where no stimulus reaches.** The limiter's detector high-pass is recursive and
+fed from the wet ring, which the engine keeps finite but not bounded; `|b1| ≈ 2` means a ring
+sample past ~`FLT_MAX/2` overflows it, and `resetWindow` sanitised the envelopes but not the
+biquad. No probe in the suite reaches it — the compressor's identical sidechain filter sits
+upstream on the same parameter and poisons first — so this is stated as an argument about today's
+chain rather than a guarantee, and the two lines went in anyway.
+
+**One measurement that looked like a defect and was not.** With the colour model at full depth, an
+input around 3e7 leaves the output pinned at the ceiling for ≈2.8 s afterwards. Nothing is
+poisoned: the colour DC blocker is a 5 Hz one-pole, and 87 time constants of decay from 1e35 is
+exactly that long. Recorded because the first probe ran a 2.1 s tail and reported it as permanent.
+
+**A seed that published a physically impossible number.** `AdaptiveEngine::reset` seeded
+`msAvg = peakAvg = 1e-6`, but crest is `20·log10(peakAvg / sqrt(msAvg))` — two quantities a square
+apart — so the published crest started at −60 dB and took seconds to climb out. Nothing consumes
+crest today, so this is a P5 readout fix, one line, with the seeds now a square apart.
+
+**Three enumerations corrected in place.** Invariant 12 said "exactly two legs sit downstream of
+the quantiser" and there are three — the delta substitution subtracts the undithered dry from the
+dithered processed signal. The GR tap is the limiter's alone, which the published meter, the
+history ring and the §2.7 predict floor all inherit. The detector high-pass sees a
+non-contiguous sample stream while the lookahead glides, the same class of cost the wedge already
+records.
+
+**Lesson.** Both defects this round were in the previous round's fix, and both were findable from
+its own documentation: the invariant text named the polyphase filter the code forgot, and the
+limiter's comment argued against the reset the new code performed. A fix that ships with a
+carefully written rationale should be re-read against that rationale before it is called done —
+the rationale is the most precise specification of the fix that exists.
+
+### Fifteenth review round — the boundary protected everything except the stage that broke (2026-08-01)
+
+Eleven items: one real defect fixed with a four-stimulus regression test, two documentation
+corrections, eight already recorded in earlier rounds.
+
+**The defect falsifies a comment written three rounds ago.** That round added the invariant 9
+self-heal rationale: the limiter is the only stage repaired because *"the EQ biquads, the
+compressor envelope and detector HPF, ClipSat's ADAA and filter states … all sit downstream of
+one of those [sanitisation boundaries], which is why none of them is reset here: they cannot hold
+a NaN to begin with."* The reviewer read the code instead of the comment and found stage A
+sanitises **before** the EQ and only re-checks **after** the compressor, so the post-EQ value
+reaches `comp.processSample` unchecked — and the same shape exists in the region, where
+`ClipSat::processSample` consumes `region.getSample()` directly.
+
+**Confirmed by measurement before anything was changed.** One block of `0.5 × FLT_MAX` with a
++12 dB shelf engaged, then ordinary programme material: output RMS `0.000000` for every subsequent
+block, for ever. The mechanism is the one the review described — the EQ biquad overflows, the
+compressor's `levelDb` goes infinite, its GR target goes to `-inf`, and the next sample's
+`-inf + inf` is a NaN the envelope keeps.
+
+**The load-bearing half of the fix is not the one the review asked for.** Adding the two missing
+boundaries CONTAINS the contamination but does not remove it: the stage that overflowed still
+holds the NaN, so the boundary keeps substituting `0.0f` and the silence is just as permanent. The
+real hole is that a substituting boundary was **silent** — a NaN generated inside the chain was
+swallowed with nothing set, so the existing self-heal never fired. The boundaries now record
+(`stageGeneratedNonFinite`), and the three stages that can poison themselves are reset on that
+record. Non-finite INPUT still costs no state: it is zeroed before the EQ, so it cannot set the
+flag, and `testSelfHealDoesNotSnapTheEnvelope` — which poisons one input sample — is byte-for-byte
+unaffected.
+
+**Four stimuli, because each stage overflows on a different quantity and shields the next.** The
+EQ needs `|x|` within a few dB of `FLT_MAX`; the compressor's RMS detector squares, so ~1.8e19 is
+its ceiling; the colour model's `c⁵` term needs ~5e7 **and** drive at zero, because a driven
+clipper's transfer function bounds its own output and protects the polynomial; the oversampler's
+filters need the peak detector, or the compressor squares first and collapses the level before the
+region sees it. Each case dies against exactly one element of the fix being reverted — three
+resets and two recording boundaries, verified one at a time.
+
+**The two containment boundaries are kept although no single mutant kills them.** They are what
+confines an EQ overflow to the EQ: with the post-EQ boundary present, case 1 recovers on
+`eq.resetState()` alone; with it removed, `comp.reset()` becomes load-bearing for a fault the
+compressor did not cause. That is a property of a mutant PAIR rather than of one output, so it is
+recorded here and in the code comment rather than asserted by a test that cannot see it.
+
+**A guard was also removed.** The first draft sanitised after the ceiling clamp in stage E too.
+Stage E's input is the limited signal, bounded by the ceiling under invariant 4, so `eqPost`
+cannot overflow and the branch is unreachable — it went back out rather than shipping as a
+per-sample cost with no reachable case. Unreachable defensive code is a claim about the chain that
+nothing checks.
+
+**Lesson.** "Sanitised at the boundary" describes what a value does, not what a stage holds. Every
+boundary in this engine was written as a *propagation* control and then read, in a comment, as a
+*state* guarantee — including by the author of that comment. The two are only the same for stages
+whose arithmetic cannot overflow, which is none of them.
+
+### Fourteenth review round — the decision index was still describing an empty repository (2026-08-01)
+
+Eight items, all documentation or comments: three drift corrections, two residuals written into
+the contract that already governs them, three repeats already recorded.
+
+**The index that CLAUDE.md makes mandatory reading was the most wrong document in the tree.**
+`ADR_INDEX.md` still ended its registry paragraph with "Anabasis has no `src/` and no `tests/`, so
+every runtime claim is a contract the P1+ code must satisfy, not an observation", and every
+sign-off ADR still read `Unverified (no src/ yet)` — while `DOCUMENTATION_COVERAGE.md`'s
+module table in the same PR marks the modules those ADRs govern `Full | Verified`. A reader
+following the mandated order (index first, then code) was told the codebase did not exist.
+
+Fixed by doing the assessment rather than flipping a column: each row now carries the **named test
+that discharges it** — ADR-0002 → `testLimiterPushDoesNotDriveTheClipper` + the EQ-position pair,
+ADR-0004 → `testReportedLatencyMatchesImpulse` + `testOsLatencyMatrix`, ADR-0009 → the −3.01 LKFS
+compliance vector, and so on. Three stay **Partially Verified** with the unwired half named:
+ADR-0005 (the detach/re-engage gesture grammar is P5), ADR-0007 (the FROZEN_TRIMS inject is
+OQ-013), ADR-0011 (OQ-014 and the KI-003 `replaceState` race, plus ADR-0012's amendment). The
+same stale reasoning in this file's own gaps list is corrected to match. Upgrading confidence
+without an evidence citation is what the audit rules forbid; upgrading it *with* one was simply
+owed and had been outstanding for four phases.
+
+**Two residuals of last round's Learn fix, both written into the contract that governs them.** The
+reviewer found the composition's own consume-then-read window — a `requestLearnStart()` landing
+between the consumer's `exchange` and its payload read sees `pending == false`, composes a bare
+start, and drops the outstanding commit. That is ADR-0012 Known-limits #1 with a *composing*
+writer, a case limit 1's wording did not cover, so it is now limit #2 in the ADR itself. And my
+justification for collapsing start→stop to a bare commit ("a commit with nothing accumulated is
+the documented empty-pass no-op") was too broad: it holds only when no pass was running. With one
+already running, that collapse commits ITS statistics — a valid reference, not the one the user's
+two clicks described. Both now stated at the site instead of implied by "last-writer-wins".
+
+**A new document re-introduced the pattern the same PR had just retired.** `REALTIME_SAFETY_AUDIT.md`
+shipped with `file:line` citations for the allocation sites, and every one had drifted by the time
+it was next read (`pushArr` did not exist when they were written). Converted to symbol-based
+citations, with the rule stated in the file so the next author does not re-learn it: **a line
+number in a document is an assertion nobody re-runs.** That makes three files that have now
+learned this — THREAD_MODEL, this audit, and the coverage table.
+
+**Recorded, no change:** the §2.7 measure gates on momentary (400 ms) while its value is a
+short-term (3 s) difference — deliberate, not a mismatched window: the gate answers "is there
+programme here", and between 0.4 s and 3 s both short-term readings are the same sentinel so their
+difference is exactly 0 and only the predict floor acts, which is the documented split. The two
+meters advance in lockstep, so one can never be valid while the other is silent.
+
+**Repeats already handled:** the ClipSat engage edge (KI-005 — attempted, measured, reverted), the
+GR-ring index rewind and the Learn-commit-without-audio gap (both in the P5 planned-edge scope),
+and the dynTilt third mechanism (landed two rounds ago in both files).
+
+Suites: 198 + 87, unchanged — nothing behavioural in this round.
+
+### Thirteenth review round — the same two-flag defect, in the path that was left behind (2026-08-01)
+
+Nine items: one defect fixed, two doc drifts corrected, six already handled in the previous two
+rounds (KI-005, the GR-ring index, the Learn-commit mirror gap, the verified duck/rings, the
+dynTilt third mechanism, the ceiling ZOH).
+
+**The defect is the one this PR already fixed once, in the path that was not touched.** Learn
+start/stop were two independent flags consumed in a fixed order: `learnStartReq` then
+`learnStopReq`. A stop followed by a start inside one audio block left both flags up, so
+`startLearn()` ran first — zeroing the accumulator the stop was about to commit — and
+`commitLearn()` then no-opped on `learnBlocks == 0`. **Both commands were lost**: the finished
+pass never committed and the new one never began, with nothing to tell the user. The adaptive
+restore had exactly this shape and was rewritten as a staged record three rounds ago; the Learn
+commands were left in the older form because nobody re-read the neighbouring code when the class
+of defect was identified.
+
+**Fixed on ADR-0012's row, which already authorises it** — no new mechanism, no gate item: one
+`learnCmdCode` payload behind one release-stored `learnCmdPending` flag, acquire-exchanged at the
+block top. The one thing a staged record cannot carry is ORDER, and that information exists only
+on the writer's thread, so the composition happens there: a start arriving on top of an unconsumed
+commit becomes a single **commitThenStart**. Everything else degrades to last-writer-wins, which
+is correct because a commit with nothing accumulated is the documented empty-pass no-op — so
+start→stop in one block ends with nothing running and nothing spuriously committed, which is what
+the user asked for. ADR-0012 condition 5 (the writer may read the flag back) is exactly what
+makes the composition legal.
+
+**Two test-craft notes from this round, both worth keeping.** The first draft asserted that the
+committed onset reference had MOVED off its 4.0 factory default — and it failed, because a steady
+sine's own startup transient (envFast rising faster than envSlow) leaves the onset feature near
+that value by coincidence. The replacement asserts `hasLearned()`, which is not a weaker proxy but
+the exact property: `commitLearn` latches only when `learnBlocks > 0`, so it can be true only if
+the accumulator survived. And a python edit removing the now-unused `ref0` line hit the FIRST of
+two identical lines — the one belonging to the neighbouring Learn test — which the compiler caught
+immediately. Both are instances of the same discipline this file keeps recording: assert the
+property, not a correlate of it; and anchor an edit on something unique.
+
+**Doc drift, both introduced by this PR and both in files it edited.** DSP_POLICY's invariant→test
+map still had row 1 (chain order) at `TODO (P2)` while this PR's headline defect — the limiter
+push applied before Clip/Sat — was fixed and pinned; the row now cites
+`testLimiterPushDoesNotDriveTheClipper` plus the two EQ-position tests and reads **live**.
+REPOSITORY_MAP still advertised `ADR-0001…0011` although ADR-0012 landed in the same PR that
+rewrote the lines immediately below it. Both are the "touched the paragraph, missed the sentence"
+pattern the CLAUDE.md entry-point drift already illustrated two rounds ago.
+
+Suites: 198 + 87.
+
+### Twelfth review round — a fix attempted, measured, and reverted (2026-08-01)
+
+Ten items: one confirmed defect recorded rather than patched, seven notes/corrections, two
+verifications.
+
+**The defect: leaving 0 dB clip drive steps the transfer.** The sub-block is skipped exactly at
+0 dB (the bit-identity contract); one sample later the ADAA-1 branch runs, and in the curve's
+linear region its divided difference is `(u + u_prev)/2` — so the stage swaps *identity* for a
+`(1 + z⁻¹)/2` FIR in one sample. The reviewer's key observation is the one that matters: the step
+is proportional to the signal's **slew**, not to the drive, so smoothing `driveDb` cannot shrink
+it, and the existing header note about `adaaPrev` covers only the memory VALUE, not the transfer.
+Confirmed against the arithmetic; it is an invariant-8 violation on a reachable knob move.
+
+**A fix was written, tested, and reverted — the reason is worth more than the patch.** Blending
+the ADAA output toward dry over the first 0.5 dB of drive makes the engage continuous and keeps
+the exact-zero skip intact. It also broke `testClipCurveAndCompensation`, which deliberately uses
+**0.001 dB drive with a unity-amplitude signal** to isolate the knee shape: at that setting the
+clipper must shape (the signal reaches the knee on its own), and a drive-keyed blend removes
+precisely that. The blend conflates "how hard we drive" with "how far into the engage we are" —
+they are different axes, and the test was right. A correct fix needs a TIME-based engage ramp
+(~20 ms) that keeps the ADAA branch running while it fades out, primed like the other smoothers,
+landing on exactly 0/1 so the bit-identity skip survives: new state, a changed skip condition, and
+its own coverage. That is ⊕ tuning-pass work, not a review-round patch, so the tree was restored
+byte-for-byte and the defect is **KI-005** with the failed approach recorded in it.
+
+**This is the round's real lesson, and it is the standing instruction working as intended.** Nine
+rounds of this PR have shown the pattern: rounds 7→8→9 were each a defect introduced by the
+previous round's fix. Attempting this one anyway — with an existing test as the tripwire — cost
+one build and left no residue. Reverting on a broken test rather than tuning the constant around
+it is the difference between recording a known issue and shipping the tenth consequential change.
+
+**Two figures reconciled.** The true-peak estimator's worst-case reporting lag is **6** input
+samples, not the 5.5 quoted in four places: the nominal FIR group delay is (12−1)/2 = 5.5, but each
+call returns the maximum over `x[n−6]` and the interpolated points at n−5.75/−5.5/−5.25, so the
+oldest sample an estimate can describe is n−6 — which is the number a lookahead-margin argument
+must use. `TruePeak.h`, `LookaheadLimiter.h`, TEST_REPORT and RISK-008 now agree, and the
+"~23 % of a 0.5 ms window" figure becomes ~25 %.
+
+**Invariant 4 gains its third leg.** Dither runs after the clamp by ADR-0002's explicit order, and
+TPDF rounding can put a sample ~1.5 LSB above the ceiling — 0.004 dB at 16-bit and the lowest
+ceiling, two orders inside the invariant's own ≤ 0.1 dBTP tolerance, and zero with dither off
+(which is the configuration its test runs in). The strict reading of "never exceeds" would
+otherwise be falsified by the stage the ADR deliberately puts there.
+
+**Load-bearing facts written where they are load-bearing.** The `ceilArr` zero-order hold is not
+merely tolerated: the region's gain computer and stage E's clamp must use the SAME instantaneous
+ceiling, which is exactly `CeilingClamp`'s "backstop, never a second differently-timed threshold"
+contract — interpolating it across the region would break that, so the comment now says "do not
+improve it". `activityEnv` being bit-zero is load-bearing from a file that never mentions the
+adaptive engine: the dynTilt trim reaches its +0.5 dB clamp with features un-converged, so the
+null rests on the tame branch never being taken — a THIRD inertness mechanism, distinct from the
+arithmetic one (release/link) and the detector-threshold one (scHpf), and the AdaptiveEngine
+header no longer lumps it in with the first.
+
+**Also recorded:** the scHpf trim's steady-state trade (a detector high-pass under-reports
+low-frequency peaks, so bass transients reach the clamp instead of the limiter — the failure mode
+changes from limiting to clipping, inside the declared bound and therefore intended); the
+Learn-commit direction's mirror gap (a stop with no further audio leaves the pass uncommitted, and
+unlike the restore direction it is NOT mirror-fixable — the sums live on the audio thread, so the
+P5 Learn grammar owes an acknowledged commit); the GR ring's reset rewinding its monotonic index
+and bulk-clearing against a `const` peek, folded into the same P5 reader-contract decision as the
+meter holds; and the confirmation that the latency-table tripwire holds because one
+`FetchContent_MakeAvailable(JUCE)` feeds every target, so the suite verifies the revision the
+release ships.
+
+Suites: 195 + 87 (unchanged — nothing behavioural landed this round).
+
+### Eleventh review round — the absolute claim, and two comments that outlived their code (2026-08-01)
+
+Eight items (two of them the same defect reported twice): one scope correction with its code
+comment, two comment-drift fixes, one cheap publication fix, two notes recorded, one stale
+external artefact.
+
+**The invariant-12 scope sentence I wrote two rounds ago was wrong, and it was wrong by being
+absolute.** It said the monitor gain is the only leg downstream of dither and therefore "no render
+is affected: an exported file is on the 2^-15/2^-23 grid exactly". The §2.8 **bypass crossfade**
+is also downstream of dither, and unlike the monitor gain it is not gated on `nonRealtime` — a
+host automating `bypass` inside an offline render emits ~10 ms of samples that are a convex
+combination of the dithered wet leg and the UNDITHERED dry one. Both endpoints take exact
+branches, so every steady state is on the grid; the ramp is not.
+
+**Fixed as a scope correction, not a DSP change, and the reason is invariant 7.** The reviewer's
+first option — move the crossfade upstream of dither — would send the dry leg THROUGH the
+quantiser, and invariant 7 requires bypass to be a bit-exact null. That trade is strictly worse: a
+bounded off-grid ramp on an audition toggle against breaking the null that the bypass test pins.
+The invariant now enumerates both post-dither legs with what each costs, and the crossfade carries
+the same reasoning inline. Lesson: an invariant amended to carve out one exception should be
+checked for OTHER instances of the same shape before the word "no" is written — the carve-out I
+added for the monitor gain read as a survey and was a single case.
+
+**Two comments outlived the code they described**, both from changes I made in earlier rounds:
+- The "one deliberate dropped duck request" note still claimed the first-block path was the only
+  case. Since the offline-flip fix, `enteringOffline` shares that branch, so a bulk swap landing
+  on the flip block is also dropped. Behaviour was already recorded in KI-004; the in-code text
+  now names both cases and points there.
+- MODE_AND_ADAPTATION's new Learn-cancellation sentence said "sample-rate change, host stop".
+  `AdaptiveEngine::reset()` is reachable only through `prepare()` — the processor deliberately
+  does not override `AudioProcessor::reset()`, which THREAD_MODEL states in the same PR — so a
+  transport stop cancels nothing. Narrowed to what is reachable, with the override left as the P5
+  question it belongs to (it also governs the delay-line tails and the meter holds). The code
+  comment carried the same overclaim and is corrected with it.
+
+**One cheap publication fix.** `prepareToPlay` cleared `dbTpMaxHold`, the GR ring and the engine's
+meters but left the six published atomics holding the previous session's readings — until the next
+block completes, and indefinitely if the host prepares without processing (rate change while
+stopped, plugin rescan). No reader exists before P5, which is exactly why it is cheap now and a
+stale-peak bug report later.
+
+**Recorded, not changed:** ADAA-1's `(1 + z⁻¹)/2` divided difference low-passes the WHOLE
+programme whenever drive is non-zero (cos(πf/fs), ≈2 dB at 10 kHz — the same droop the
+oversampling test measures as a +1.3 dB "recovery") and adds a half-sample group delay
+`Latency.h` does not model; the impulse-position test stays sample-exact only because
+`clipDriveDb == 0` on that path. Both now in the ClipSat header and TEST_REPORT. And the staged
+mirror's pairing invariant is stated at its only writer: a future stager that raises
+`adaptivePending` without updating the mirror would have `getStateInformation` serialize the
+stale one. A helper would make that unbreakable; deliberately not refactored this round, since the
+hazard is future and the wrapper's state path is the highest-consequence code in the file.
+
+**External artefact:** the PR description still quoted 223 checks (151 + 72) from an early round.
+The suites' own output is the rule of record and says 195 + 87; the description is corrected to
+match rather than the docs being bent to it.
+
+Suites: 195 + 87 (unchanged — the only behavioural change publishes values no reader consumes).
+
+### Tenth review round — a reset that cleared the features but not the pass measuring them (2026-08-01)
+
+One item, fixed. `AdaptiveEngine::reset()` zeroed the trims, the features and the block
+accumulators but left `learnActive`, `learnOnsSum`, `learnTiltSum` and `learnBlocks` standing.
+`AnabasisEngine::reset()` — and therefore `prepare()` — calls it, so a sample-rate change or host
+stop **during** a Learn pass kept accumulating into the same sums across the discontinuity while
+`onsetRate` restarted from zero. The committed reference was then a mix of pre- and post-reset
+statistics plus a stretch of re-converging onset rate: a wrong answer that looks like a
+successful commit.
+
+The pass is now **cancelled**, not paused: `learnBlocks == 0` makes the next commit a no-op, which
+is the already-documented empty-pass path, so the reference the session already had survives
+untouched. `learned`, `refOnsetRate` and `refTiltDb` are deliberately NOT cleared — they are the
+answer a previous commit or a session restore established, and a rate change is not a reason to
+forget it. The reviewer's framing was right that this needed deciding rather than defaulting:
+"clear everything" would have discarded session state, "clear nothing" is the defect.
+
+Test uses a steady sine — no transients, so a pass that commits lands the onset reference near 0
+against the 4.0 factory default, making "did the cancelled pass commit?" a disjoint question
+rather than a tolerance one. Mutation-verified: removing the four lines fails both checks.
+
+Not touched, per the round's scope: the bypass/dither grid question, the published meters' reset
+lifecycle, a staged-mirror helper refactor, and the zero-length-block guard.
+
+Suites: 195 + 87.
+
+### Ninth review round — the second-order consequence of making a branch reachable (2026-08-01)
+
+Ten items: four fixes, two recorded, four verifications/repeats.
+
+**The EQ state fix is the same class of miss as last round's, one level deeper.** The direct-adopt
+branch assigns `appliedEqPos` without the `eq.resetState()` its silent-bottom twin performs. That
+was harmless for as long as the branch was only reachable immediately after `reset()`, which has
+already cleared the biquads — and round seven made it reachable **mid-stream** by routing the
+offline-entry edge through it. So a bounce started on the exact block the EQ position changes
+began with the other position's filter history, which is the rule `MasteringEQ::resetState`'s own
+comment states. Fixed by pairing the two operations on this branch as well.
+
+The pattern across rounds seven → eight → nine is worth naming: widening a branch's reachability
+is not a local change, because every *omission* inside it that was safe under the old
+precondition becomes a defect under the new one. Round eight caught the branch running in the
+wrong direction; round nine caught what the branch fails to do now that it runs mid-stream. The
+check that would have caught both at once is to re-read the whole branch body against the new
+precondition, not just the condition guarding it.
+
+**Test design, since "no artefact" is hard to assert directly:** the input goes SILENT at the flip
+and Force Max changes the factor, so `latchOsConfig` empties the lookahead ring — everything
+downstream of the region is then fed exact zeros and the Post EQ is the only thing that can
+produce a nonzero sample. Clean state gives exactly 0.0; stale state rings out the charged
+history. Mutation-verified against the missing `resetState`.
+
+**Three smaller closures.** The wrapper's staged ADAPTIVE mirror is now three atomics: writer and
+reader are both nominally the message thread, but KI-003 records that VST3 does not promise which
+thread delivers `setStateInformation`, so a concurrent save could read a half-written mirror —
+it is a new instance of KI-003's own shape, and the entry now says so. `lastNonRealtime` and
+`grMinLinear` are cleared in `reset()`: neither changed behaviour today (the first is shadowed by
+`smoothersPrimed`, the second is one 200 ms-smoothed monitor target), but both made a reset-scoped
+invariant depend on something outside `reset()` — the GR tap in particular carried the previous
+session's last reduction into the first block's §2.7 predict floor.
+
+**Recorded, not fixed:** entering offline abandons an in-flight duck at its current gain (a step
+bounded to the first sample of a render, and the alternative — carrying a monitor fade into a
+bounce — is worse), now in KI-004 with the other flip-window costs.
+
+**Verified by the reviewer, no action:** ring sizing and tap offsets against their worst cases,
+again. Repeats already recorded: the metering CPU budget (P6), the ZOH push idiom (noted at the
+site last round), the session-cumulative meter holds (P5), and the `bool` return conflating three
+early-return conditions.
+
+Suites: 193 + 87.
+
+### Eighth review round — the previous round's fix broke the other direction (2026-08-01)
+
+Eight items: one regression fixed (mine, from the round before), one hardening, six
+verifications and repeats needing no change.
+
+**The regression, stated plainly.** Last round's `offlineFlip` flag was written as
+`p.nonRealtime != lastNonRealtime` — direction-agnostic — so the OFFLINE→REALTIME edge took the
+direct-adopt branch too. That edge lands in **live playback**, where direct adopt calls
+`latchOsConfig` (clearing the lookahead ring and resetting the oversampler) at FULL gain: ~11 ms
+of exact silence followed by an abrupt resumption. That is the click DSP_POLICY invariant 8 names
+for precisely this switch — the fix for one edge introduced the defect on the other. It is now
+`p.nonRealtime && ! lastNonRealtime`; the return edge goes through the §2.8 duck like any other
+factor rewire, and both directions have their own test (`testOfflineFlipDoesNotDuckTheRender`,
+`testReturnFromOfflineIsDucked`), each mutation-verified — the second one kills exactly last
+round's expression.
+
+**Why my own testing missed it.** The round-seven test rendered a single flip into offline and
+stopped there; the return edge was never exercised because the *reported bug* was about bounces.
+A test written from the bug report tests the bug report. The symmetric case — flip there and
+back — costs one extra line of loop condition and is now what the offline tests do. Second
+instance this session of a fix whose blast radius was wider than the case that motivated it (the
+first was the limiter-smoothing change silently un-killing the stale-detector mutants), and the
+cheap guard is the same both times: after changing a condition, ask which OTHER inputs reach it.
+
+**Hardening: `currentTrims()` is now private with `AnabasisEngine` a friend.** It returned a
+reference to the plain `Trims` struct that `finishBlock` mutates, sitting in the public surface
+the wrapper hands to message-thread callers through `adaptiveReadout()` — the same shape that
+produced the `learned` and `learnActive` races, two rounds and one round ago respectively. The
+readout surface is now atomics-only **by construction** rather than by convention; the engine
+(the only in-tree caller, on the audio thread) reaches it through the friendship and the P5 UI
+reads `publishedTrim*()` like every other display value. Third instance of this pattern, and the
+first one fixed before a caller existed rather than after.
+
+**Recorded, no change: the push is a zero-order hold inside the region.** Carrying the smoothed
+gain per BASE sample and holding it across all `osN` region samples makes it piecewise-constant
+rather than band-limited, which puts images around multiples of the base rate while the 20 ms
+glide runs. They sit above the decimation cutoff and are removed on the way down, so the steady
+state is unaffected — but the `ceilArr`/`wArr`/`pushArr` idiom is the obvious one to reuse for the
+next level-affecting control inside the region, where a slower glide or a higher factor could put
+an image under the cutoff. Noted at the site rather than left for someone to rediscover.
+
+**Verified by the reviewer, no action:** the ring sizing and detector tap offsets against their
+worst cases (wet ring, dry ring, `wOs ≤ maxWindow`), and the exhaustiveness of duck-request
+consumption across the four block-top branches — the only discarded request being the documented
+first-block path. Repeats already recorded: the metering CPU budget (P6), the session-cumulative
+meter holds surviving state loads (P5, scope now in THREAD_MODEL), and the `bool` return
+conflating three early-return conditions (the header enumerates them; nothing needs to tell them
+apart today).
+
+Suites: 191 + 87.
+
+### Seventh review round — a fade at the head of every Force-Max bounce (2026-08-01)
+
+Ten items: two code fixes, seven notes/corrections, one repeat.
+
+**The render-path defect.** `effectiveFactor` depends on `nonRealtime` (Force Max forces 16×), so
+the realtime→offline flip changes `wantIdx` and `rewireWanted` goes true with `smoothersPrimed`
+already set from the realtime session — the engine ducked out, latched, and held
+`bottomHoldSamples` before recovering. A host that calls `setNonRealtime(true)` and renders
+**without an intervening `prepareToPlay`** therefore wrote ~45 ms of fade into the head of the
+bounce. Probed before deciding: the render drops to EXACT silence, so it is reachable through the
+engine's own API contract, not just in theory. A realtime↔offline flip is now treated as the
+reset-class event it is — direct adopt, exactly like the first block after prepare — so the
+no-re-prepare path behaves like the re-prepare path most hosts take. What remains at the flip is
+the pipeline refill, which is honest latency: the host re-reads PDC across the flip
+(`setNonRealtime` is an ADR-0004 recompute trigger) precisely because the factor changed.
+
+**Why the offline tests missed it:** every existing offline test either prepares in the offline
+state or flips `nonRealtime` while the factor is unchanged (`forceMaxOffline` false). The
+combination that breaks — Force Max, a non-16× selection, and a flip with no re-prepare — was
+untested because each ingredient was individually covered. Mutation-verified.
+
+**`learnActive` promoted to an atomic**, joining `learned` from round four. It is written on the
+audio thread and read by `isLearning()`, which the wrapper hands to message-thread callers through
+`adaptiveReadout()`. Nothing polls it today — the P5 Learn indicator will, which is exactly when
+it would have become the same data race that was fixed for `learned` two rounds ago. Fixing the
+second instance of a pattern before its caller exists is cheaper than rediscovering it.
+
+**CLAUDE.md said P1.** The entry point every contributor and agent reads first still declared
+"Current phase: P1 (skeleton)" while README said P1–P4 complete and HANDOVER's status row said P4.
+The previous round edited that very paragraph — for the ADR count — and left the phase line, which
+is the most avoidable kind of drift: touching a sentence is the moment to check the rest of it.
+Now states the phase, the blocked item, and points at HANDOVER as the status of record.
+
+**Corrections where code and comment disagreed.** The §2.7 predict floor is corrected by the
+previous block's DEEPEST reduction (`grMinLinear` is a per-call minimum), not the "block average"
+the comment claimed — the floor is therefore slightly more aggressive than documented, which is
+the safe direction for a monitor-only attenuation, but the text now matches the code. The limiter
+style's alpha-domain approximation names its true worst case: the shortest release at the LOWEST
+engaged rate (1 ms at 44.1 kHz with OS off, 1.3 %), not the 48 kHz figure quoted last round.
+
+**Implicit couplings made explicit.** `ClipSat::setRate` now says it MUST be followed by `reset()`
+and why: the snap it performs would let `depth`/`driveDb` leave zero in one step, and both
+skipped-branch arguments in that file (cold colour filter states, pre-drive ADAA memory) rest on
+those two moving only through their 20 ms glide. `latchOsConfig` pairs the calls; a future caller
+that does not would break both at once.
+
+**Budget note promoted from a comment to TEST_REPORT.** Stage E now runs ~6 biquads + ~72 MACs per
+frame of metering on top of the chain, and DESIGN §9's ≤ 0.5 % allocation is the binding
+`Unverified` number for the subsystem — with an explicit "measure before adding another per-sample
+tap", since the P5 spectrum rings are next. THREAD_MODEL's meter-hold-reset planned edge gained
+its full scope: the session-cumulative holds also survive `setStateInformation` and
+`AudioProcessor::reset()`, which a "GUI reset button" description does not obviously cover.
+
+Suites: 189 + 87.
+
+### Sixth review round — the push was in the wrong stage, and only a clipper could show it (2026-08-01)
+
+Fourteen items: one real DSP defect, two small structural fixes, ten notes/scope corrections, one
+repeat of a known P5 gap.
+
+**The defect is a chain-order deviation, and it is the kind this project is built to prevent.**
+`limGain` — the limiter's drive, and the macro layer's primary push (`18·l^1.2`, up to +18 dB) —
+was multiplied into the signal in stage A, right after the compressor and BEFORE `processSamplesUp`
+and `ClipSat`. Invariant 1 / ADR-0002 put the limiter after Clip/Sat, DESIGN §2.5 defines `limGain`
+as the gain that drives the limiter's fixed threshold, and **the engine's own header comment**
+states the intended layout verbatim: `OS region: [up ×N] → Clipper/Sat → limiter push → 10 ms
+lookahead line → LookaheadLimiter`. Because ClipSat clips against a fixed unity threshold scaled
+only by `clipDrive`, every dB of push moved the clip point down by a dB: at +18 dB, material 18 dB
+below the intended clip point saturated. On the default Simple-mode path.
+
+**Why five review rounds and 185 checks did not catch it.** The all-defaults null has
+`clipDrive = 0`, and ClipSat skips its whole sub-block at exactly 0 dB drive — so the two gains'
+ORDER is unobservable on every existing null, bypass and latency test. The property needs a test
+where the clipper is doing real work and the two gains are told apart: input gain +12 with push 0
+against input gain 0 with push +12, stimulus low enough that the compressor is inert in both.
+Correct code puts the clipper at 0.05 in one run and 0.20 in the other (h3 at −127 dB against
+−17.7 dB); the buggy code feeds it 0.20 in both and the renders are bit-identical. 110 dB of
+separation, asserted at 20, mutation-verified by restoring the old placement. The fix carries the
+push per base sample in `pushArr` (the `ceilArr`/`wArr` idiom already there) and applies it inside
+the region after `clip.processSample`, with the exact-1 skip that keeps the null bit-exact — all
+187 + 87 checks stayed green through the move, which is what "restructure, then extend" is for.
+
+**Lesson worth keeping:** a stage that is *skipped* at defaults hides the ordering of everything
+around it. When a bypassed-at-defaults stage lands, the tests that must be written are the ones
+that engage it — the null tests get *weaker* at exactly that moment, not stronger.
+
+**Two structural fixes.** `AnabasisEngine::process` now returns `bool` (false = short-circuited),
+and the wrapper's publish guard asks instead of re-deriving the early-return condition — the
+previous round's guard already had drifted, missing `ringSizeOs <= 0`. And stage A clears the
+staging rows above `nCh` so a caller handing fewer channels than `prepare()` was told cannot have
+last block's leftovers filtered through the oversampler (test-only today; `isBusesLayoutSupported`
+enforces stereo).
+
+**ADR-0012 gains a "Known limits" section** rather than leaving the reviewer's two coherence
+observations as folklore: the consume-then-adopt window (a save landing between the flag
+`exchange` and the adoption reads pre-adoption values — one save's worth; closing it trades for a
+lost-update window, so it is not closed) and the one-block torn pair if a second restore lands
+between the flag exchange and the payload loads (self-correcting at the next block top). Both are
+now part of the contract's text, which is where OQ-015 asked for them.
+
+**Scope and comment corrections, no behaviour change.** The §2.9 render tap states its deliberate
+inclusion of the duck (meters report what was EMITTED; the alternative describes audio nobody
+heard) with the cost named. `AdaptiveEngine`'s "structural, not a gate" header now separates the
+three trims that are inert by arithmetic from `scHpf`, whose inertness rests on the detector
+staying below both thresholds — a property of the stimulus, which is why `testNullWithDefaults`
+asserts its own precondition. `commitLearn` records that an empty Learn pass leaves an older
+learned state live with no signal back to the caller (a P5 UI item, not a P4 defect). `ClipSat`'s
+ADAA memory note says why storing the pre-drive sample is sound only while drive is smoothed.
+`switchToSlot` no longer claims the duck covers the whole glide — it covers all but the first
+~6 ms, since the audio thread reads parameters before the flag. `LoudnessMeter` records the
+relative gate's 0.1 LU bin quantisation. TEST_REPORT records what the true-peak estimator's
+5.5-sample group delay costs the shortest lookahead setting (~23 % of a 0.5 ms window) and why it
+is recorded rather than compensated.
+
+Unchanged and repeated from previous rounds: the meter-hold reset stays a P5 planned edge, and the
+integrated-LUFS histogram walk stays a P6 CPU-budget note. Suites: 187 + 87.
+
+### OQ-015 decided, and the last scope sentence — ADR-0012 (2026-08-01)
+
+Two items, both settled without touching a line of DSP.
+
+**The owner took option 1: ratify the implementation.** `ADR-0012` — numbered 0012, not 0015,
+because `ADR_POLICY.md` rule 6 makes the ADR sequence follow the highest existing ADR and the
+question sequence is independent — adds a **GUI → Audio bounded staged record** row to
+`THREADING_POLICY.md` with six mandatory conditions: bounded and fixed at compile time · one
+writer (off the audio thread), one consumer · payload relaxed, then one flag release-stored,
+consumed `exchange(acquire)` **at a block top** · last-writer-wins only, never a queue · the
+writer may acquire-load the flag to test consumption (this is what lets `getStateInformation`
+serialize a staged-but-unconsumed record) · the consumer only adopts. The learned-target restore
+is ratified **unchanged** as the first instance, and `AdaptiveEngine::learned` as its Audio→GUI
+mirror. `THREAD_MODEL.md`'s two rows now cite ADR-0012 instead of "no row — see OQ-015"; the
+sentinel row's exclusion sentence now points at the new row rather than at the Gate.
+
+**What the ADR deliberately did not do**, because ratifying a mechanism is not the same as
+approving every use of it: OQ-013 stays **open**. Its trim vector now has a permitted transport —
+the mechanism objection is gone — but whether a restored vector may be injected into a running
+engine, and what that does to the adaptation state machine, is a product question nobody has
+answered. The Hard Stop stands; only its reason changed, and both OQ-013 and `THREADING_POLICY`'s
+blockquote now say so explicitly rather than leaving a reader to infer that ADR-0012 unblocked it.
+
+**Invariant 7 gets the third scope sentence.** Invariants 4 (ceiling) and 12 (dither last) were
+scoped to the programme path in the previous two rounds; invariant 7's "bypass is a null test"
+was still unqualified while the §2.7 monitor gain is applied POST-mix — deliberately, since that
+is exactly what makes A/B against bypass loudness-matched. So the bypass null is bit-exact with
+the monitor functions off and bit-exact in every render (both are snapped inert offline), and a
+null measured with Loudness Comp engaged is measuring the monitor. Stated, with the three tests
+that guard each half named. That completes the set: every invariant whose text could be read as
+covering an audition-only leg now says which side of the line it sits on.
+
+**Process note worth keeping.** Three consecutive review rounds each found one unqualified
+invariant, in descending order of obviousness. The invariants were written at P0 against a chain
+that had no monitor layer; the monitor layer arrived at P3 and nobody re-read the invariant list
+against it. A new subsystem that sits downstream of the render path is a prompt to re-read every
+invariant, not just the ones it obviously touches.
+
+### Fourth P4 review round — a save that ran before the audio thread, and a threading path that never passed the gate (2026-08-01)
+
+Twelve items: two defects fixed, one **Hard Stop escalated rather than patched**, six
+comment/scope clarifications, three confirmations that needed no action.
+
+**The Hard Stop is the important one.** The §5.4 learned-target restore stages two floats plus a
+discriminator behind a separate release-stored flag. `THREADING_POLICY.md`'s sentinel row excludes
+that shape verbatim — *"anything unbounded, wider than one lock-free scalar, or needing ordering
+against other state is **not** this row"* — and the table closes with *"any path not in this table
+is a new cross-thread path → Architecture Review Gate."* It was built at P4 by analogy to the GR
+ring's release/acquire pair, which is an **Audio→GUI** row and does not authorise a **GUI→Audio**
+record; two rounds of review (including mine) then documented it under invented row names, which
+made it read as authorised. It is now `OPEN_QUESTIONS.md` **OQ-015** with three costed options
+(ratify with a small ADR / re-express as sentinel slots and accept a tearing window / defer the
+restore to P5), both THREAD_MODEL rows are marked **"no row — see OQ-015"** exactly as the
+MacroEngine edge is under OQ-014, and the shape is frozen — no further staged fields, no second
+record, and OQ-013's trim transport still cannot be wired. The code ships meanwhile because it is
+tested and reverting it unreviewed would be a larger unreviewed change than leaving it.
+**Lesson, and it is the one worth keeping from this round:** "it uses the same memory-ordering
+primitives as an approved mechanism" is not the same claim as "it is an approved mechanism", and
+writing a plausible row name into the architecture doc is how the first claim gets mistaken for
+the second. The MacroEngine edge was handled correctly a phase earlier; the pattern existed and
+was not followed.
+
+**Learn was lost by a load-then-save with no audio between.** `setStateInformation` only STAGES
+the ADAPTIVE record; the engine adopts it at the next block top, and `getStateInformation` gated
+the child on the engine's `hasLearned()`. A host that duplicates a track, copies plugin state, or
+opens a project and re-saves without transport therefore serialized the engine's one-session-stale
+answer: the child omitted (Learn silently gone) and, in the mirror case, an old learned child
+resurrected over an un-learned session. The wrapper now mirrors the staged record on the message
+thread and prefers it while `adaptiveRestorePending()` is true; once consumed the two agree, so a
+concurrent consume hands back the same values. The existing round-trip test hid this by running
+two blocks before re-saving — a test that models the *unhurried* path only.
+
+**A short-circuited block still published.** `AnabasisEngine::process` returns early on zero
+samples/channels without touching the render-tap values, and the wrapper published anyway:
+previous-block peaks re-reported, a duplicate GR-history entry pushed, breaking the
+one-entry-per-processed-block property `testMeterPublication` itself asserts. Guarded, with the
+zero-length block now in that test.
+
+**Scope clarifications, all doc/comment-only.** Invariant 12 ("dither is the last stage before
+output") now carries the same scope sentence invariant 4 got last round: last on the PROGRAMME
+path — the §2.7 monitor gain is applied after it, post-mix, and is snapped inert offline, so no
+render leaves the 2^-15/2^-23 grid; auditioning with Comp on does, correctly. `ClipSat`'s colour
+sub-block says why its tone/DC state is deliberately NOT kept warm while skipped (it filters the
+residue, which is multiplied by a `dep` that only leaves zero through a 20 ms smoother — unlike
+the ADAA memory and tame filter beside it, which filter the signal). The Latency-table flag says
+why it is recorded and not self-healing (clamping the engine to the measured value would make it
+disagree with the wrapper's `predictLatencySamples`, manufacturing the desync it prevents). The
+duck request dropped at `! smoothersPrimed` is marked as the one deliberate drop among the four.
+`LoudnessMeter`'s un-normalised stage-2 numerator is marked as BS.1770-4's own, so a future reader
+does not "fix" 0.04 LU into every reading.
+
+**One review claim was arithmetically wrong, checked rather than taken.** The limiter's
+`relScale` multiplies the release alpha while the comment says it scales release TIME; the review
+put the resulting error at "~0.98 ms rather than 0.5 ms" for a 1 ms release. It is not: α = 1 −
+e^(−1/48) = 0.0206 at 48 kHz, ×2 → τ = −1/ln(1 − 0.0412) = 23.8 samples = **0.495 ms**, a 1 %
+error that shrinks as the release lengthens and shrinks again at every oversampled rate. The
+comment now records the exact relationship and that TEST_REPORT's style numbers are alpha ratios;
+no code change, because re-deriving from `onePoleMs(releaseMs / k)` would move every measured
+style number for a 1 % correction — a ⊕ tuning change, not a fix.
+
+Also noted without action: the integrated-LUFS histogram walk (~1500 iterations/block, a P6 CPU-
+budget candidate, now commented at the call site) and the still-missing meter-hold reset (P5
+planned edge). Suites: 185 + 87.
+
+### Third P4 review round — the meters were watching the monitor, and the limiter's levels were stepping (2026-08-01)
+
+Fourteen items: four defects fixed, two accepted-and-recorded, two dismissed-or-confirmed by the
+reviewer's own trace, six doc/comment corrections. Every code fix mutation-verified; six mutants,
+six kills, each by exactly its own test.
+
+**The meters were measuring the wrong signal.** `processBlock` metered the buffer AFTER
+`engine.process()` — but that buffer carries the LISTENING path: §2.7 delta replaces it with
+`dry − processed` and loudness comp multiplies it by the monitor gain. So Delta showed the
+difference signal's LUFS, Comp showed the attenuated level, and — because integrated LUFS is a
+gated histogram over the whole session and the dBTP hold is a session max — a few seconds of
+either permanently biased both, in a loudness maximizer, where the meter is half the product.
+The §2.9 output meters (LUFS M/S/I, dBTP, PLR, GR-history peak) now read a per-sample RENDER tap
+inside the engine: the bypass-mixed programme path with no delta and no monitor gain — exactly
+what an offline render emits, since both monitor functions are inert offline (invariant 10). The
+tap is bit-identical to the buffer whenever the monitor functions are off, so nothing moved on
+the default path. The wrapper's own LoudnessMeter/TruePeakEstimator members are gone; it
+publishes from engine accessors on the same audio thread. The regression test pins EXACT equality
+of every published reading across comp-on/comp-off/delta-on runs, with a listening-path-differs
+guard so it cannot pass vacuously.
+
+**Three limiter controls were stepping.** The per-block-setter header claimed "rates and modes,
+not levels", and for release/style it is true — but `link` blends the detector LEVEL per sample,
+`preserve` selects the attack alpha, and the detector HPF moves the detector spectrum, and all
+three were adopted raw at buffer boundaries: a full-scale link step moved a limited channel's
+gain 0.44 in ONE sample. All three now glide (20 ms SmoothedValue at the engaged rate, primed on
+the first block, snapped at a latch — a silent-bottom event). The HPF re-derives its biquad per
+step while gliding, the same pattern MasteringComp already used for the SAME shared scHpfFreq
+value — the asymmetry between the two consumers of one parameter was the tell. The preserve map's
+discontinuity at exactly 0 (instant attack vs ~0.05 ms for any positive value) is deliberate —
+the wedge-contract tests rely on exactness at 0 — and now says so in place.
+
+**The glide changed what one existing test proved.** The stale-detector test turned the HPF off
+and fed silence; with the off-switch now a ~960-sample glide, the biquad would have DRAINED
+during the glide and the missing-state-clear mutant would have survived on an empty delay line.
+The test now keeps the loud signal running until the off edge actually fires, so the state is
+charged when the clear does or does not happen. Same rule as the crest alignment last round —
+put the property where the assertion looks — arising not from a bad stimulus but from a fix
+changing the timing underneath a good one. Both re-run mutants still die.
+
+**Accepted and recorded.** The latch-boundary step in the delay-aligned dry leg also feeds the
+§2.7 dry measure and the adaptive feature extractor un-ducked — appended to KI-004 with why it
+stays measurement noise (seconds-scale trim slew, −70 LUFS gate). Invariant 4's "under every
+condition" now states its scope explicitly: the PROGRAMME path — delta can reach ~2× full scale
+on decorrelated material by construction, bypass carries unclamped dry, both are audition-only
+and inert offline; recorded in DSP_POLICY as a scope clarification with the ceiling test's
+comment updated to match. The wedge buffer's exactly-at-capacity sizing got the same one-spare-
+slot treatment as the dry ring.
+
+**The doc drift this round was partly self-inflicted and partly systemic.** THREAD_MODEL said 44
+cached atomics the same day the PR made it 45 — the freeze cache append (P4) never touched the
+row. README said 228 checks while HANDOVER said 253: the SECOND round updated HANDOVER and not
+README, one round after the audit claimed README was "caught up" — the claim was true when
+written and stale two commits later. Both now carry the HANDOVER row's own rule ("re-count from
+the suites' output when editing"). PARAMETER_REGISTRY still described §2.8 as unlanded
+("will be duck-routed when the transition layer lands") two rounds after it landed. And
+THREAD_MODEL's `file:line` citations had gone stale twice (`engagedWindow` at :84 → :128), so the
+volatile ones are now symbol-based — a line number in a document is a assertion nobody re-runs.
+
+Also: the null test's stimulus level (−12 dBFS vs the −3 dBFS knee bottom) is now a named
+precondition WITH a self-enforcing check — the reviewer's structural-inertness trace showed the
+bit-exact null with trims live rests on every stage being below its engage point, so the test
+now refuses a stimulus that would quietly change what it proves; the preset-apply duck request
+carries a comment stopping a future "optimisation" from moving it after the success check
+(re-opening INC-001's hole); the meter-hold reset stays a P5 planned edge (the render-tap fix
+removed the amplification that made its absence bite). Suites: 185 + 80.
+
+### Second P4 review round — the transition layer had a click in it, and the test that should have caught it stopped thirty samples early (2026-08-01)
+
+Fourteen items. Nine fixed, one accepted and appended to KI-004, one dismissed by its own
+reviewer, three cosmetic/latent and fixed with the rest. Every fix carries a mutation-verified
+test; two of those tests had to be rebuilt after the mutants survived them.
+
+**The headline defect was in the layer that exists to prevent it.** `latchOsConfig` clears the
+lookahead ring and resets the oversampler, so after a factor/phase latch the processed path emits
+EXACT silence for `delaySamples + osLatBase` base samples — 541 at 4×/48 kHz. The bottom branch
+started the 28 ms in-leg on that same block top, so the first real sample arrived 541 samples up a
+1344-sample ramp, at gain ≈ 0.35: a −9 dB step, i.e. a click, on every oversampling change. The
+fix holds the bottom until the refill completes (`bottomHoldSamples`, counted down per processed
+base sample). A factor switch now mutes ~45 ms instead of ~34; that cost is recorded in KI-004
+because it is audible in a different way and testers must not report it as a hang.
+
+**Why the suite did not see it, precisely.** `testDuckWrapsOsLatch` measured its maximum
+sample-to-sample delta over `20*512 … 22*512` = 10240…11263, and the splice landed at ~11293 —
+thirty samples past the last one examined. The window is now the whole transition, and the
+property has a direct assertion rather than a proxy: find the first non-zero sample after the
+latch, peak the cycle that follows it. Held bottom → ~0.01 (the ramp is at its own start);
+unheld → ~0.34. A factor of thirty between the two outcomes, which is what a bound should look
+like.
+
+**Two more dropped-request holes of the same shape.** A `requestForcedDuck()` consumed while the
+OUT leg was still running fell through every branch and vanished (the bottom-state case was
+fixed last round; this was the state before it). It is now remembered in `duckAskedWhileOut` and
+spent as one held bottom block. Reaching it in a test needs 128-sample blocks — at 512 the 288-
+sample out-leg always completes inside the block that starts it, so the `out` state is never
+observed at a block top.
+
+**Delta monitoring was the opposite of ducked.** `wetLeg = delayedDry − processed` subtracted a
+ducked processed term from an unducked dry one, so during a transition the delta output rose to
+the FULL dry signal exactly when the layer was meant to be silent — the loudest possible artefact
+from the click-free mechanism. The dry term now carries the same duck gain (`dryForDelta`), which
+makes the whole difference scale by `duckGain`; the bypass leg keeps the pure `delayedDry`, so
+invariant 7 is untouched. Chosen over moving the duck downstream of the delta mix because that
+would have re-ordered dither against the mix for no additional benefit.
+
+**Last-writer-wins needed one flag, not two.** `adaptiveRestorePending` and `adaptiveClearPending`
+were independent flags consumed in a fixed order (clear, then restore), so two session loads
+between audio blocks — a learned session then an un-learned one — left the LAST loaded session
+holding the FIRST one's references, which the next save then serialized. They are now one staged
+record: a `pendingLearned` discriminator plus the two refs behind a single release-stored flag.
+This retracts the "two INDEPENDENT self-correcting scalars" reasoning in the P4 Learn entry
+below: self-correction was an argument about torn *values*, and it was never an argument about
+*which staged intent* wins.
+
+**Stale detector state on re-entry.** The true-peak estimator's 12-tap history only advances
+while `tpMode` is on (the engine flips it from the OS factor), and the detector HPF kept its
+biquad delay line when the frequency dropped to the range floor (the adaptive scHpf trim can
+drive that edge). Both now clear on their re-entry edge. **The first version of this test proved
+nothing:** its 4000-sample 60 Hz charging passage ended at exactly 5.00 periods, freezing the
+history on a zero crossing, and both mutants survived. 4200 samples (5.25 periods) ends on the
+crest and both mutants die. Third instance of this family in the project — a stimulus that does
+not put the property where the assertion looks is not a weak test, it is a green one that tests
+nothing.
+
+**Measured, not assumed, while setting that test's bound:** the limiter's one-pole release stalls
+at 0.99999857 rather than reaching unity — once `(1−env)·a` falls below half an ULP near 1.0 the
+addition rounds away. Harmless (−0.00001 dB) but it means the engine's `exactlyEqual(gain, 1.0f)`
+fast path never re-arms after the first gain reduction. Recorded here; not chased, because
+snapping it would change gain behaviour to save an exact-compare branch.
+
+Also fixed: the ADAPTIVE child's fields are read with the factory references as their defaults
+(`getProperty` with no default yields `var()` → 0.0, and a session missing them restored a
+reference no material can match — §4.4's rule was applied everywhere else on that path); the
+`Latency.h` cross-check against JUCE's own reported latency is recorded unconditionally and
+asserted by the suite instead of living only in a `jassert` that compiles out of every shipping
+build; the dry ring gets one spare slot (its worst case sat at exactly size−1 — correct, but with
+zero slack); the wrapper's metering block no longer indexes channel 0 unconditionally nor feeds a
+mono buffer twice; `resetWindow`'s sanitise loops moved out of the per-channel loop; the unused
+`fresh` processor left in the Learn round-trip test is gone. Suites: 177 + 76.
+
+### P4 review round — two real races, a dropped duck request, and a coverage table that still denied the code existed (2026-08-01)
+
+A ten-item external review. Six items were real and are fixed; two were accepted and recorded
+rather than fixed; one was already-correct behaviour; one was dismissed by its own reviewer.
+
+**The two memory-ordering findings were correct.** `AdaptiveEngine::learned` was a plain `bool`
+written on the audio thread (`commitLearn`) and read by `getStateInformation` off it — a data
+race in the ISO sense, and a practical one: `hasLearned()` could see `true` before the reference
+targets it guards were visible, serializing a half-written ADAPTIVE child. Same shape on the
+restore path: `restoreLearnedTargets` staged its two payload atomics and its flag ALL relaxed, so
+the consuming block could see the flag without the pair. Both now follow the flag-orders-payload
+discipline the GR ring already used: payload first, flag **release**-stored, consumer
+**acquire**s (`learned.store(true, release)` after `publishRefs()`; `adaptiveRestorePending`
+release-stored, `exchange (false, acquire)` at the block top). The comment that had justified the
+relaxed pair — "each scalar is self-correcting, a torn pair re-slews" — was true of the *trims*
+but not of the *refs a save can immediately re-serialize*, and it is gone. Lesson repeated from
+the P1 rounds: a comment that argues a race is benign is usually describing a different variable
+than the one it annotates.
+
+**The dropped duck request was the subtle one.** A `requestForcedDuck()` landing while the
+engine sat at the silent bottom was consumed at the block top and then ignored — the bottom
+branch unconditionally began recovery, so the bulk swap that request was guarding (arriving in
+the NEXT snapshot) stepped in mid-recovery at audible gain. The fix holds the bottom one more
+block when the flag arrives there. The regression test is a two-run comparison (second request
+during the bottom block → the following block is EXACT silence where the control run is already
+recovering) and was mutation-verified: reverting the hold fails exactly that check.
+
+**Monitor snap on the realtime→offline flip.** Invariant 10's test rendered offline from sample
+zero, so it never saw the flip case: a mid-stream `nonRealtime` flip left `monitorGain` slewing
+200 ms toward unity and the delta fade draining ~10 ms into the render. The §2.7 block now SNAPS
+both (`setCurrentAndTargetValue (1.0f)`, `deltaMix = 0`) the block `nonRealtime` is observed,
+and the extended test asserts the offline tail is bit-identical between comp on and off — while
+also asserting the runs DIFFER before the flip, so the identity check cannot pass vacuously.
+
+**Accepted, not fixed — now KI-004.** The ≤ one-block + ~6 ms window where reported and actual
+latency disagree during a ducked OS switch, and the bypassed-instance step (factor change adopted
+without the duck while fully bypassed), are ADR-0004's deliberate trade. They are now a
+KNOWN_ISSUES entry with the bound (≤ 67 samples) instead of tribal knowledge.
+
+**The coverage lie in this file.** The module-coverage table still read "*(none — `src/` does not
+exist)*" with eight DSP modules and the wrapper in the tree — this audit file failed its own
+update protocol for four phases while its narrative entries stayed current. The table, the
+self-coverage rows (TEST_REPORT, THREAD_MODEL, PARAMETER_REGISTRY, REALTIME_SAFETY_AUDIT), the
+gaps list and README's status block are caught up; THREAD_MODEL gained the three P4 edges
+(Learn commands, restore hand-off, learned flag) its table was missing. Lesson: chronological
+entries do not keep summary tables honest — only touching the table on every round does.
+
+Also in this round: the dry-ring capacity envelope is now a `jassert` at `latchOsConfig` (it
+held by construction; now it trips the moment a Latency.h table entry outgrows the prepare-time
+sizing), the stale "P1 form / TODO(P2)" comments in `switchToSlot` and `PluginProcessor.h` that
+described the opposite of the code are gone, the onset-detector comment says 6 dB (2.0×) as the
+code implements, and `AdaptiveEngine::expectedBlockLen` (written, never read) is removed.
+Suites: 156 + 72. Evidence: PR #5.
+
+### P4, Learn commit — and a silent no-op replace caught by its own test (2026-08-01)
+
+**Learn (core)**: start → silence-gated accumulation of the feature means → commit fixes the
+reference targets (the analysed passage becomes what trims toward zero — Learn feeds the
+references, never the output stage). Targets serialize in the global `ADAPTIVE` child, written
+only once learned; restore rides the host-hidden mirror pattern as two INDEPENDENT self-correcting
+scalars — documented as deliberately distinct from OQ-013's coherence-critical four-vector, whose
+transport stays hard-stopped. `testLearnCommitAndAdaptiveRoundTrip` covers commit, byte-identical
+round trip with the child present, and the absent-child = never-learned read rule.
+
+**Two catches during the increment, both by the test written first:** (1) the wrapper's restore
+edit anchored on a comment an earlier round had rewritten — the python replace silently no-op'd
+and the ADAPTIVE child saved but never restored; the round-trip check failed on exactly that.
+Edits now assert their anchors. (2) The onset detector under-counted dense clicks (the fast
+envelope released at 80 ms and was still elevated when the next hit landed): 1.8/s measured on a
+10/s stimulus. A 30 ms release and a 500 ms symmetric baseline read 8.25/s — and the Learn test's
+"reference moved" premise is what surfaced it.
+
+### P4 core — adaptation that provably cannot break the null (2026-08-01)
+
+**`AdaptiveEngine`** (src/dsp/AdaptiveEngine.h): block-rate features of the delay-aligned input
+(crest, spectral tilt via an 800 Hz one-pole split, transient density via a fast/slow envelope
+onset detector with a 50 ms re-arm), silence-gated so a breakdown holds rather than re-slews; the
+four-member trim vector slewed at ~2 s with deadbands, hard-bounded, applied to the per-block
+EFFECTIVE settings only. The load-bearing design fact, stated in the header and proven by the
+suite: **every trim is inert while its host stage is inert**, so the bit-exact null runs with
+adaptation LIVE — no adaptation on/off gate exists to forget. `freeze` now reaches the engine
+(cache slot 45 — an internal cache change, not a surface change; the registry snapshot is
+untouched). Freeze latches the vector exactly (ulp-equality across a programme change, mutation-
+verified), `testModeSwitchIsSoundNeutral` pins invariant 2 sample-identically, and the policy's
+Current-implementation section is populated with the evidence map. OQ-013 still blocks the
+frozen-trim RESTORE; Learn is the remaining P4 item.
+
+### P3, publication + monitor commit — meters reach the GUI boundary, KI-002 closes (2026-08-01)
+
+**Meter publication**: the wrapper measures the OUTPUT per block and publishes LUFS M/S/I, dBTP
+max-hold (shared TruePeakEstimator), PLR and GR through relaxed atomics — the THREAD_MODEL meter
+row, now implemented, plus **`GrHistoryBuffer`**: the first Audio→GUI SPSC ring in the tree
+(4096 entries ≈ 43 s at 512/48 k; entry written first, index release-stored after, stateless
+peeks). `testMeterPublication` pins the readings, the PLR identity and the one-entry-per-block
+ring advance.
+
+**§2.7 monitor layer** (KI-002 → INC-002): Measure (K-weighted ST loudness, dry vs processed,
+frozen under the −70 LUFS absolute gate) + Predict (deterministic gain lift, GR-corrected,
+floor-only), min-combined, 200 ms smoothed, applied POST-mix so the bypass leg carries the same
+gain — the loudness-matched bypass falls out of the placement rather than needing machinery.
+Delta behind its own ~10 ms crossfade; a transparent chain's delta is EXACT silence because the
+default path is bit-exact. Invariant 10 is **live**: the offline render is bit-identical with
+either toggle in either position, and the predict floor is pinned by an early-window check the
+measure could not satisfy (short-term needs seconds; the floor acts in one block). Mutants
+killed: comp/delta ignoring nonRealtime, predict floor dropped.
+
+### P3 opens — the LUFS meter, and a gate half that only mutation could see (2026-08-01)
+
+**`LoudnessMeter`** (src/dsp/LoudnessMeter.h): BS.1770-4 K-weighting (the ADR-0009 pre-warped
+biquad design from the sibling's LoudnessMatch, provenance in the header), 100 ms sub-blocks →
+400 ms gating blocks at 75 % overlap, M/S off the sub-block ring, INTEGRATED through the
+fixed-size histogram accumulator (751 × 0.1 LU bins — REALTIME_AUDIO_POLICY's named consequence:
+never a growing container). Calibrated against the standard's own compliance sentence — 0 dBFS
+997 Hz in one channel reads −3.01 LKFS — at 48 AND 44.1 kHz, ≤ 0.1 LU.
+
+**The audit-worthy find: the absolute gate was UNTESTABLE with the obvious stimuli.** The
+dropped-absolute-gate mutant survived both gating tests, because silence lands at the histogram
+floor, below any plausible relative threshold — the relative gate masks the absolute one
+completely on programme-plus-silence material. The absolute gate's only distinct observable is
+its effect on the pass-1 mean that SETS the relative threshold; the killing stimulus needed a
+band placed between the correct threshold (−34.8) and the silence-dragged one (−41.7): 10 s at
+−20 + 20 s at −38 + 120 s of silence reads −20.0 correctly and ≈ −24.7 on the mutant. Fifth
+stimulus-calibration case this project has recorded, and the sharpest: the redundancy between
+two protection mechanisms is itself what hides the loss of one.
+
+### P2, transition-layer commit — the §2.8 duck, and KI-001 becomes INC-001 (2026-08-01)
+
+**The duck exists**: asymmetric raised cosine (~6 ms out / ~28 ms in), advancing per base sample,
+multiplying the PROCESSED path only (downstream of the clamp — a gain ≤ 1 cannot re-exceed the
+ceiling; upstream of dither — the export grid stays intact; never the dry path — bypass stays a
+bit-exact null). Engine-side discrete rewires (`eqPosition`, `colourModel`, OS factor/phase) are
+held in applied-state fields and execute ONLY at the silent bottom at a block boundary — the POD
+the stages see carries the applied values, so nothing rewires at audible gain and OS latency still
+never moves mid-block. Wrapper bulk swaps (A/B, preset apply, session load) call
+`requestForcedDuck()` BEFORE the swap — the first implemented instance of the THREADING_POLICY
+momentary-request row, recorded as such in `THREAD_MODEL.md`. The first block after prepare/reset
+adopts directly: a duck there would dip the head of every render for no transition at all (and
+would have broken the OS latency matrix's fresh-engine timing — noticed at design time, not by a
+red test, for once).
+
+**KI-001 is closed and moved**: `POSTMORTEMS.md` INC-001 carries the mechanism, the fix, and the
+four mutation-verified prevention tests (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`,
+`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck` — the last one pins the WRAPPER wiring and
+fails when the `switchToSlot` request call is removed). DSP_POLICY invariant 8 is now **live**.
+
+**One defect caught in-flight**: the duck-out phase inversion carried a spurious `1−p`, sending a
+fresh duck to the bottom in ONE sample — precisely the step the smoothness test exists to catch,
+and it did, before commit. The inversion's derivation now lives in the comment.
+
+### P2, oversampling + dither commit — the engine restructure, and TEST_REPORT.md exists (2026-08-01)
+
+**The engine is now staged**: base-rate front (input gain → EQ-Pre → compressor), the ADR-0003
+oversampled region (up ×N → clipper/sat → the 10 ms lookahead line AT the region rate → limiter →
+down ×N), base-rate back (EQ-Post → clamp → dither → bypass). All eight `juce::dsp::Oversampling`
+instances (2×/4×/8×/16× × IIR-min/FIR-linear) are built and `initProcessing`'d at `prepare()`
+per ADR-0011; a runtime factor/phase change latches at a block boundary as a reset-class event
+(KI-001 extended — third member of the §2.8 family). `useIntegerLatency` keeps every
+configuration's group delay a whole base sample, so `Latency.h` now carries the measured table
+(min {4,6,6,6} / lin {49,61,65,67}) and `prepare()` asserts table == `getLatencyInSamples()` per
+instance — a JUCE bump that redesigns either cascade fails loudly twice. Oversize host blocks are
+processed in prepared-size **chunks** — the earlier "correctness needs only delaySamples+1"
+argument no longer holds for a block-structured engine, so the guarantee moved from arithmetic to
+structure. Dither: TPDF 16/24 + first-order shaping, deterministic xorshift (offline renders
+repeat), after the clamp, processed path only.
+
+**Every existing check survived the restructure bit-for-bit** — the null, the wedge alignment,
+the priming, byte-identity — before any new test was added; that ordering (restructure green
+first, then extend) is what kept a 400-line rewrite from being a bug factory.
+
+**`docs/TEST_REPORT.md` now exists** and closes part of the "no measured numbers anywhere" gap:
+aliasing (ADAA −14.8/−10.4 dB; 4× ≈ −74 dB; the +1.3 dB fundamental recovery that looks like a
+bug and is oversampling removing ADAA's sinc droop), true-peak accuracy (−0.004 grid / −0.171
+off-grid), the full latency matrix (linear cells sample-exact; min-phase ±1 with the dispersion
+rationale), transparency (−69 dB), dither shaping (+12.6 dB tilt). Each number is asserted with
+margin by a named test, so the report cannot silently rot.
+
+**One calibration note for the record:** the OS aliasing test's first "fundamental untouched"
+bound (±1 dB) failed on CORRECT code — 4× genuinely raises the fundamental 1.3 dB by removing the
+ADAA droop. Third instance of the same lesson this phase; the bound now names the mechanism.
+
+### P2, clipper and limiter commits — two stimulus-calibration catches in one day (2026-08-01)
+
+**`ClipSat`** landed with the knee-morph ADAA clipper, colour models, the dynamic HF tame and the
+mix — see the commit for the mechanism inventory. The audit-worthy finding was in its ADAA test:
+the first stimulus (5 kHz tone, folded 5th) showed only 4.8 dB of improvement — and that is the
+**theoretically correct** number for ADAA-1 at a 25 kHz source harmonic (≈ |sinc(π·f/fs)|), so a
+6 dB assertion there fails on correct code. The fix was to *calibrate the stimulus, not loosen the
+bound*: at 11.72 kHz the folded 3rd/5th improve by a measured 14.8/10.4 dB, asserted at 6/8. The
+same class recurred in the true-peak test: the "off-grid" ISP phase π/8 put the continuous peak at
+t = 0.75 — exactly ON a 4× interpolation point — and measured −0.002 dB, i.e. it tested nothing;
+φ = 0.3125π puts the peak between points and measures the real −0.171 dB max-reading property.
+Both are the smoothing-test lesson in a new costume: **compute where the property lives before
+asserting on it**.
+
+**`LookaheadLimiter` grew into the §2.5 spec** — per-channel wedges with stereo link, the
+ADR-0003 true-peak estimator as its detector option (12-tap × 4-phase windowed sinc designed at
+prepare, group delay 5.5 samples — RISK-008 materially reduced with measured numbers), transient
+preservation (instant attack at 0, the exactness the wedge tests pin), Transparent/Punchy/Loud as
+constant-presets, the shared sidechain HPF with **floor-as-off semantics** (an exact skip at
+20 Hz, now consistent across both detectors — the compressor was changed to match), and the
+two-pole auto release pinned by the same disjoint-bounds technique as the compressor's. One
+genuine bug was caught by test-first here: the style factor multiplied the release *alpha* by 0.5,
+making Loud the SLOWEST style — the probe run showed Transparent 0.413 vs Loud 0.336 recovered,
+inverted from the contract, fixed to time-domain scaling before commit. Six mutants killed: link
+ignored, tp ignored, styles inert, preserve inert, single-pole auto, HPF inert. The engine tests
+that pin the wedge contract sample-exactly (`testLimiterAlignment`,
+`testControlsPrimedOnPrepare`, self-heal) now pin `truePeakMode=false / transientPreserve=0 /
+limAutoRelease=false` explicitly, with comments naming why each control legitimately blurs what
+those tests measure.
+
+### P2, first commits — EQ and compressor, and a two-stage test that a mid-speed pole slipped through (2026-08-01)
+
+**P1 closed** (PR #4 merged with 3-OS CI; `THREAD_MODEL.md` + `PARAMETER_REGISTRY.md` written from
+ADR-0011/ADR-0010; OQ-014 remains the one open owner call). **P2 opened** on PR #5, per the brief
+§11 module list, in chain order.
+
+**`MasteringEQ`** (src/dsp/MasteringEQ.h): six RBJ sections — the §2.2 complementary tilt pair at
+700 Hz, shelves at fixed Q 0.707, two bells. All-flat is bit-transparent **by structure** (a
+section at exactly 0 dB is skipped; a biquad at 0 dB gain is only approximately identity in float,
+which would break invariant 7's null). Eleven smoothed parameters inside the module; coefficients
+recompute per sample only while a smoother moves. Pre upstream of the wet ring (the limiter
+detector sees the EQ'd signal), Post between limiter and clamp — and
+`testOutputNeverExceedsCeiling` now runs ADR-0002's **mandated stimulus**: both positions, +12 dB
+shelf after the limiter, mutation-verified by moving the clamp upstream of the post EQ. The
+`eqPosition` rewire is a KI-001-class step until §2.8 lands (KI-001 extended). Four EQ mutants
+killed: tilt sign, unsmoothed targets, always-engaged sections, clamp-before-post-EQ.
+
+**`MasteringComp`** (src/dsp/MasteringComp.h): feed-forward log-domain gain computer — per-channel
+detector-side sidechain HPF (20–300 Hz), stereo-linked max detector, RMS (10 ms) / Peak modes,
+soft-knee static curve, ballistics on the GR signal in dB, parallel mix with exact endpoints, and
+the §2.3 **two-pole auto release** (80 ms + 900 ms averaged in dB). Below the knee bottom the
+sample passes bit-exact — the all-defaults null path (threshold 0 dBFS). Five mutants killed:
+knee dropped, RMS mode dropped, HPF dropped, both-poles-slow, both-poles-fast.
+
+**The finding worth the audit entry: the first two-stage-release test was satisfiable by a single
+pole.** Its three assertions (fast initial recovery, deceleration, tail held at −0.5 dB after
+200 ms) all pass for one ~150 ms pole — found because the both-poles-fast mutant survived. The
+fix was to choose bounds that are **provably disjoint for any single exponential**: the
+deceleration ratio (rec₂ < 0.6·rec₁ ⇔ e^(−100ms/τ) < 0.6) forces τ < 196 ms, and the 800 ms
+tail-hold (< −1.5 dB) forces τ > 322 ms — no single τ satisfies both, so only a genuine
+two-stage release passes. Verified in both directions: the real code passes; the fast-pair,
+slow-pair and single-150 ms mutants each fail a named check. Same lesson as the self-heal test
+last commit, sharpened: it is not enough for a test to fail on *the* mutant you tried — the
+assertion set must exclude the whole family of wrong shapes, and back-of-envelope algebra on the
+bounds is how you know it does.
 
 ### P1 skeleton, seventh commit — a review claim falsified by its own regression test (2026-08-01)
 
@@ -2032,9 +3406,15 @@ must satisfy rather than compliance it already has (constraint C7).
 
 | Module | Documented in | Coverage | Confidence |
 |---|---|---|---|
-| *(none — `src/` does not exist)* | — | — | — |
+| `src/dsp/AnabasisEngine.{h,cpp}` (staged chain, OS region, §2.8 duck, §2.7 monitor hooks) | `THREAD_MODEL.md`, `REALTIME_SAFETY_AUDIT.md`, `DSP_POLICY.md` invariant map, ADR-0004/0011 | Full | Verified (`tests/dsp_tests.cpp`) |
+| `src/dsp/LookaheadLimiter.h` | `TEST_REPORT.md` (styles/auto-release/TP numbers), `DSP_POLICY.md` inv 8/9 | Full | Verified |
+| `src/dsp/MasteringEQ.h` · `MasteringComp.h` · `ClipSat.h` | `TEST_REPORT.md` (ADAA aliasing, comp two-stage bounds), DEVELOPMENT_BRIEF §2.2–2.4 cross-refs | Full | Verified |
+| `src/dsp/TruePeak.h` · `LoudnessMeter.h` | `TEST_REPORT.md` (BS.1770-4 compliance vector, ISP estimator), ADR-0003 | Full | Verified |
+| `src/dsp/AdaptiveEngine.h` | `MODE_AND_ADAPTATION_POLICY.md` Current implementation, `THREAD_MODEL.md` | Full | Verified |
+| `src/dsp/GrHistoryBuffer.h` · `Latency.h` · `EngineParameters.h` | `THREAD_MODEL.md` (SPSC row), ADR-0004 (latency table) | Full | Verified |
+| `src/PluginProcessor.{h,cpp}` · `PluginParameters.{h,cpp}` (wrapper, APVTS, state, macro layer) | `PARAMETER_REGISTRY.md`, `SERIALIZATION` notes in `THREAD_MODEL.md`, ADR-0005/0006 | Full | Verified (`tests/state_tests.cpp`) |
 
-Rows are added as modules land. The planned module set and its responsibilities are listed in
+Rows were added as modules landed. The remaining planned modules (`src/gui/`, P5) are listed in
 `docs/REPOSITORY_MAP.md` §`src/`; that is a **plan**, not coverage.
 
 ## Documentation-set self-coverage (deliverables present)
@@ -2045,7 +3425,8 @@ Rows are added as modules land. The planned module set and its responsibilities 
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
-| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0011 (Accepted 2026-07-31)** | Decisions complete for P0; the *descriptive* set (ARCHITECTURE, LATENCY_MODEL, PARAMETER_REGISTRY, …) lands with P1–P2 |
+| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0012** (0001…0011 Accepted 2026-07-31, **ADR-0012** 2026-08-01); descriptive set so far: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2) | Decisions complete for P0; remaining descriptive docs (ARCHITECTURE, SIGNAL_FLOW, LATENCY_MODEL, …) land by P6 |
+| docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
 | user | — | Deferred to P6 |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
 | root — legal | — | Deferred to P6 (produced against a real dependency tree; copying another project's inventory would be invented evidence) |
@@ -2057,19 +3438,25 @@ Rows are added as modules land. The planned module set and its responsibilities 
 
 These are **deliberate**, not oversights. Each names what would close it.
 
-- **No architecture set** — `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`,
-  `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md`,
-  `REALTIME_SAFETY_AUDIT.md`, `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`,
-  `PERFORMANCE_BUDGET.md` all describe code that does not exist. Closed by P1–P2.
-- ~~**No ADRs**~~ — **closed 2026-07-31**: ADR-0001…0011 are Accepted and registered. They remain
-  `Unverified` in confidence (no `src/`), which is a *different* gap from absence: each is a
-  contract the P1+ code must satisfy, and its confidence is upgraded as its code and tests land.
+- **Architecture set, partially closed** — `THREAD_MODEL.md` and `PARAMETER_REGISTRY.md` landed
+  with P1, `REALTIME_SAFETY_AUDIT.md` with P2. Still absent: `ARCHITECTURE.md`,
+  `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md`,
+  `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`, `PERFORMANCE_BUDGET.md` — closed by P5–P6 as
+  the code they would describe stabilises.
+- ~~**No ADRs**~~ — **closed 2026-07-31**: ADR-0001…0011 are Accepted and registered. They were
+  authored `Unverified` (no `src/` existed then), which is a *different* gap from absence: each is
+  a contract the code must satisfy. **Closed for most of them as of the P1–P4 code**: `ADR_INDEX.md`
+  now carries a per-ADR confidence with the named test that discharges it, and the three still at
+  `Partially Verified` say which half is unwired (ADR-0005's gesture grammar → P5, ADR-0007's
+  FROZEN_TRIMS inject → OQ-013, ADR-0011's OQ-014/KI-003 questions).
   New decisions still follow C1 — evidence-driven, no quota.
 - **Policy compliance sections are `TODO (no code yet)`** in `REALTIME_AUDIO_POLICY`,
   `THREADING_POLICY`, `DSP_POLICY` and `MODE_AND_ADAPTATION_POLICY`. Closed as each phase lands,
   with evidence citations.
-- **No performance or aliasing numbers anywhere** — and none may be written until measured with a
-  recorded machine and methodology (constraint C2). Closed by `TEST_REPORT.md` at P2/P6.
+- **Performance numbers** — none may be written until measured with a recorded machine and
+  methodology (C2). `docs/TEST_REPORT.md` exists since P2 (2026-08-01) and carries the measured
+  aliasing / true-peak / latency-matrix / dither data; CPU and memory budgets remain open until a
+  machine spec is recorded (P2/P6).
 - **No host (DAW) matrix** — requires manual testing. Closed by the P6 DAW smoke tests.
 - **Legal / attribution class absent** — closed at P6 against the actually-pinned JUCE tree.
 - **`docs/user/` absent** — closed at P6.

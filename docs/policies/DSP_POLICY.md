@@ -89,6 +89,22 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    before dither, and holds **under every condition** — any input, any parameter combination, any
    automation rate, any sample rate, during and after every transition. Tolerance ≤ 0.1 dBTP in
    true-peak mode.
+   **Scope: the PROGRAMME path** — the processed signal, and everything an offline render can
+   emit. The two monitor-only audition legs are outside it by the same reading that lets bypass
+   carry the unclamped dry signal (invariant 7): bypass monitoring plays the input as-is, and
+   **delta monitoring** plays `dry − processed`, which on decorrelated material can reach roughly
+   twice full scale. Both are listening-only (inert under `nonRealtime`, invariant 10), so no
+   render can exceed the ceiling; the stated-explicitly rule exists because a reader of the
+   pre-clarification text could take "under every condition" to cover the audition legs too.
+   A third leg is render-visible and belongs in the same paragraph: **dither runs after the
+   clamp** (ADR-0002 fixes that order — "ceiling clamp always last before dither"), and TPDF
+   quantisation can round up by ≤ 0.5 LSB plus the ≤ 1 LSB dither offset, so an emitted sample
+   can sit ~1.5 LSB above the ceiling. At 16-bit that is 4.6e-5 linear — **0.004 dB** at the
+   lowest (−20 dB) ceiling, two orders inside the ≤ 0.1 dBTP tolerance this invariant already
+   states, and zero with dither off (the default, and the configuration
+   `testOutputNeverExceedsCeiling` runs in). Named because the strict reading of "never exceeds"
+   would otherwise be falsified by the very stage the ADR puts there deliberately.
+   Recorded 2026-08-01 (PR #5) — a clarification of scope, not a weakening of the promise.
    This is the product's core promise; weakening it is an Architecture Review Gate item in its own
    right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep).
 
@@ -114,7 +130,16 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    processing engaged, output is a bit-exact (delay-aligned) copy of the input: unity input gain,
    flat EQ, compressor below threshold, clipper/saturation at zero drive, limiter below threshold,
    dither off. Bypass is a null test.
-   Guarded by: `testNullWithDefaults`, `testBypassNull`.
+   **Scope, the same carve-out invariants 4 and 12 carry** (recorded 2026-08-01, PR #5): the
+   bypass null is a property of the **programme path** — bit-exact with the §2.7 monitor
+   functions off, and bit-exact in every render, since both are snapped inert under
+   `nonRealtime` (invariant 10). Auditioning with **Loudness Comp** engaged scales the bypass leg
+   too, by design: the monitor gain is applied POST-mix precisely so that A/B-ing against bypass
+   is loudness-matched, which is the feature (§2.7, ADR-0006 "monitoring never in the render
+   path"). A bypass null measured with Loudness Comp on is measuring the monitor, not the
+   invariant.
+   Guarded by: `testNullWithDefaults`, `testBypassNull` (both with the monitor functions off),
+   `testLoudnessCompensationDoesNotAlterRender` (the render-side half).
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
    the oversampling factor, **the oversampling phase mode**, the EQ position, **the colour model**,
@@ -136,8 +161,59 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    (FTZ/DAZ) is active for the whole block; a non-finite sample anywhere resets the affected state
    rather than propagating. Filter cutoffs are Nyquist-clamped; automation cannot drive a
    coefficient out of range.
+   **"Self-heals" is a recovery guarantee, not only a containment one.** Substituting `0.0f` at a
+   boundary protects everything DOWNSTREAM of it and nothing else, so it is only half the
+   invariant: a stage that overflowed on a legal float (a biquad's gain, a squared detector level,
+   a fifth-power colour term, a polyphase filter) keeps the NaN in its own state, and a boundary
+   that silently substitutes turns that into permanent silence with no signal that anything
+   happened. Therefore every substituting boundary also RECORDS the substitution, and the stages
+   that can generate one are REPAIRED on that record. Repair is value-level wherever the state is
+   ours (`sanitiseState` clears the members that are non-finite and carries the rest, so a
+   poisoned detector filter does not also cost the compressor its gain-reduction envelope — the
+   rule `LookaheadLimiter::resetWindow` already followed); the oversampler is the exception,
+   because its state is JUCE's and its default path is a polyphase **IIR** that feeds itself, so
+   it takes a full `reset()` and only on the boundary that means the oversampler itself produced
+   the value. A stage added to the chain must satisfy both halves — see the invariant 9 block in
+   `AnabasisEngine::processChunk`. **A reachability argument is not a boundary.** The Post-EQ hole
+   was created by one — "its input is the limited signal, bounded by the ceiling" — which ignored
+   that the limiter's ATTACK is what bounds it, and that a short lookahead leaves the envelope at
+   ~0.29 while a fully boosted EQ multiplies by ~3.4. Where a stage's corruption produces no
+   non-finite output at all to detect, the check is unconditional and per block rather than hung on
+   a flag. **Three stages are in that class**, and they are the ones whose failure is invisible
+   rather than loud: the limiter's detector high-pass (a `NaN` level compares false against the
+   ceiling, so the gain computer emits unity for ever), the BS.1770 meters (a `NaN` reading
+   compares false against every gate, so the §2.7 compensation freezes and the integrated
+   histogram stops accumulating), and the §5.4 feature extractor (a `NaN` feature fails the trim
+   hysteresis, so the trim vector holds its last value for the session and looks plausible doing
+   it). All three are fed signals the engine keeps finite but does not BOUND, which is why a legal
+   float can break them at all.
+   **Repair belongs at the writer when the damage would OUTLIVE the block.** The per-block repairs
+   above run late in `process()`, so anything consumed at a block top — the §5.4 Learn commands —
+   sees the previous block's state. A commit is therefore checked where it writes
+   (`AdaptiveEngine::commitLearn` refuses a non-finite reference, the same outcome as the
+   documented empty pass), not where the state is swept, because a committed reference is
+   permanent (every trim target derives from it, and both `jlimit` and the hysteresis pass NaN
+   through untouched) and persistent (`hasLearned()` makes the next save serialize it). The
+   restore path is guarded at the same place for the same reason. The per-block repairs
+   themselves run **before** every consumer in `process()` for the same reason — position in the
+   block is part of the contract, not an accident of where the code was added.
+   **Recovery times are not uniform, and each is stated where it lives:** one block for a repaired
+   filter state; up to one lookahead window for the limiter's wedge (NaN entries are never
+   dominated, only expired, and `needed` falls back to unity meanwhile); one chunk plus the
+   lookahead line for the audio path; and tens of seconds for the §5.4 features after a
+   huge-but-FINITE excursion, which no repair touches because every accumulator stays finite —
+   bounding them is a mapping change, so it is a documented recovery time rather than a silent
+   edit.
+   **"Self-heals" is not "recovers instantly", and the difference is stated so it is not read as
+   one:** the repair runs at the END of the chunk that detected the contamination, so that whole
+   chunk has already been processed with the poisoned state and its output is the boundaries'
+   `0.0f`. The lookahead ring then holds up to `delayOs` of those zeroed samples, which read out
+   over the following ~10 ms. Recovery is therefore **one chunk plus the lookahead line**, not one
+   sample — a bounded silence on a signal that was already unusable, which is what graceful
+   degradation means here.
    Guarded by: `testNoBadSamples` across the algorithm × oversampling × sample-rate matrix,
-   including silence and hostile automation.
+   including silence and hostile automation; `testExtremeLevelDoesNotSilencePermanently` for the
+   recovery half; `testSelfHealDoesNotSnapTheEnvelope` for the manner of the recovery.
 
 10. **Loudness-compensated monitoring and loudness-matched bypass are honest** (§3). The
     compensation is a measurement-driven gain applied to the *monitoring* path; it must never
@@ -154,6 +230,26 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 
 12. **Dither is off by default and is the last stage before output.** It is intended for final
     export only; enabling it must not change gain staging. TPDF, with optional noise shaping.
+    **Scope, stated for the same reason invariant 4's is** (recorded 2026-08-01, PR #5): "last
+    stage" means last on the **programme path**, and **three** legs sit downstream of the
+    quantiser (the count was corrected from two on 2026-08-02 — the delta leg was missed):
+    - the **§2.7 loudness-compensation gain**, applied post-mix so a loudness-matched bypass
+      carries the same gain. Monitor-only, snapped inert under `nonRealtime` (invariant 10), so
+      it never reaches a render: auditioning with Loudness Comp engaged does scale the dithered
+      signal off the grid, which is correct — the monitor is not the export.
+    - the **§2.8 bypass crossfade**, which is *not* monitor-only and does run in a render when a
+      host automates `bypass`. Both endpoints are exact branches, so every steady state is on the
+      grid; the ~10 ms ramp between them is a convex combination of the dithered wet leg and the
+      **undithered** dry one, and those samples are off it. Accepted rather than fixed: moving
+      the crossfade upstream of dither would send the dry leg through the quantiser, and
+      **invariant 7 requires bypass to be a bit-exact null**. A bounded off-grid ramp on an
+      audition toggle is the cheaper of the two, and the corrected claim is that a render is on
+      the grid *except* across a bypass toggle — not unconditionally.
+    - the **§2.9 delta substitution**, `wetLeg = dryForDelta − processed`: it subtracts the
+      undithered delay-aligned dry signal from the dithered processed one, so an audition with
+      Delta engaged is off the grid too. Monitor-only and snapped inert under `nonRealtime`, so
+      like the compensation gain it never reaches a render — which is why the substance of the
+      invariant is unchanged and only the enumeration was wrong.
 
 13. **The DSP core is format-agnostic.** `src/dsp/` depends only on `juce_dsp` /
     `juce_audio_basics` and is driven by a POD parameter snapshot; it never includes the plugin
@@ -167,18 +263,18 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 
 | Invariant | Guarding test | Status |
 |---|---|---|
-| 1 chain order | chain-order / transfer-order test | TODO (P2) |
-| 2 latency exactness | `testReportedLatencyMatchesImpulse` | **partial (P1)** — impulse lands at the constant allowance for every lookahead value; the OS × lookahead matrix arrives with oversampling at P2 |
-| 3 true peak ≥ 4× | true-peak accuracy test | TODO (P3) |
-| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P1)** — sample-level hostile sweep is live; the ≤ 0.1 dBTP matrix needs the true-peak tap (P2/P3) |
-| 5 oversampling scope | latency-matrix + aliasing measurement | TODO (P2) |
-| 6 ADAA | aliasing measurement (dB, recorded) | TODO (P2) |
+| 1 chain order | `testLimiterPushDoesNotDriveTheClipper` (the push sits after Clip/Sat), `testEqPositionsAreDistinct` + `testOutputNeverExceedsCeiling` in BOTH EQ positions (the clamp is last before dither) | **live** (P2) |
+| 2 latency exactness | `testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix` | **live (P2)** — the impulse lands at exactly `maxLookahead + osLatency` for every lookahead value AND every factor × phase cell, Force-Max-offline included; linear-phase cells are sample-exact, min-phase cells within 1 sample of the nominal bulk delay (IIR dispersion, documented in the test) |
+| 3 true peak ≥ 4× | `testTruePeakAccuracy`, `testLimiterTruePeakMode` | **partial (P2)** — the 4× measurement-tap estimator is live in the limiter's detector (grid-aligned ISP −0.004 dB, off-grid −0.171 dB recorded; the ceiling is dBTP-aware in true-peak mode); the full OS-matrix stimulus and the dBTP meter arrive with the oversampler (P2) and metering (P3) |
+| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P2)** — the ADR-0002 mandated stimulus is live: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix still needs the true-peak tap (P2/P3) |
+| 5 oversampling scope | `testOsLatencyMatrix`, `testOsReducesAliasing`, `testCeilingUnderOs`, `testBypassNullUnderOs` | **live (P2)** — the region wraps Clipper/Sat → Limiter; EQ/comp/clamp/dither at base rate; bypass stays bit-exact at every factor; measured: 4× drops the driven-clipper folded 3rd by ~74 dB beyond ADAA alone |
+| 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
-| 8 click-free transitions | per-path click tests | **partial (P1)** — the ceiling and lookahead smoothing paths are pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`); the duck-routed rewires and the bulk swaps need the §2.8 transition layer (P2) |
-| 9 no NaN/Inf/denormals | `testNoBadSamples` | **live (P1)** |
-| 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender` | TODO (P3) |
-| 11 metering accuracy | EBU R128 vectors + ISP signals | TODO (P3) |
-| 12 dither placement/default | dither default + placement test | TODO (P2) |
+| 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
+| 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, `testALearnPassThatOverflowedIsNotCommitted`, `testSelfHealDoesNotSnapTheEnvelope` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad in either position, RMS detector square, colour c⁵, polyphase IIR — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted), and the stages that emit no audio to check at all (the meters and the feature extractor, repaired per block) |
+| 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor` | **live (P3)** — offline render bit-identical with comp on/off and with delta on/off; realtime monitor pulled to the dry loudness with the predict floor acting before the measure exists (all mutation-verified) |
+| 11 metering accuracy | `testLufsCalibration`, `testLufsGating`, `testLufsWindows` | **partial (P3)** — LUFS M/S/I live against the standard's synthesised calibration points (997 Hz compliance vector −3.01 LKFS ≤ 0.1 LU at 48/44.1 kHz; both gate halves isolated by stimulus, incl. the silence-in-the-threshold-base case only mutation testing surfaced); the dBTP meter and the file-based EBU vector sweep remain |
+| 12 dither placement/default | `testDitherModes` + `testNullWithDefaults` | **live (P2)** — Off default is a true no-op (the bit-exact null proves it); 16-bit lands on the 2⁻¹⁵ grid with a randomised LSB; shaping tilts the error spectrum +12.6 dB toward the top of the band; placement after the clamp, processed path only |
 | 13 format-agnostic core | build-level: `AnabasisDSP` links without the wrapper | **live (P1)** — the `AnabasisTests` target compiles the core with no wrapper and no GUI |
 
 ## Enforcement

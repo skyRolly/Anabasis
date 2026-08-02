@@ -600,6 +600,360 @@ static void testRawRoundTripIsIdempotent()
 }
 
 // ---------------------------------------------------------------------------
+// §2.8 wiring, wrapper side: switchToSlot requests the forced duck BEFORE the
+// swap, so a mid-stream A/B compare dips through the silent bottom instead of
+// stepping. (The duck mechanism itself is pinned in the DSP suite; THIS test
+// pins that the wrapper actually asks for it — remove the requestForcedDuck()
+// call and the dip vanishes.)
+static void testAbSwitchRequestsDuck()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto runBlock = [&] (int blockIdx, std::vector<float>& out)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 300.0f * (float) (blockIdx * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+        for (int n = 0; n < 512; ++n)
+            out.push_back (buf.getSample (0, n));
+    };
+
+    std::vector<float> out;
+    for (int b = 0; b < 10; ++b) runBlock (b, out);
+    proc.switchToSlot (1);                       // must request the duck first
+    for (int b = 10; b < 30; ++b) runBlock (b, out);
+
+    float minEnv = 1.0f, tailPeak = 0.0f;
+    for (size_t n = 10 * 512; n < 10 * 512 + 2000; n += 60)
+    {
+        float peak = 0.0f;
+        for (size_t k = n; k < n + 240; ++k)
+            peak = juce::jmax (peak, std::abs (out[k]));
+        minEnv = juce::jmin (minEnv, peak);
+    }
+    for (size_t n = out.size() - 2400; n < out.size(); ++n)
+        tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+
+    check (minEnv < 0.02f,  "abDuck: the A/B switch dips through the silent bottom");
+    check (tailPeak > 0.3f, "abDuck: and the stream recovers");
+}
+
+// ---------------------------------------------------------------------------
+// §2.9 meter publication: the wrapper measures the OUTPUT and publishes once
+// per block through the THREAD_MODEL meter atomics. A −20 dBFS 997 Hz tone
+// must read −20 LUFS momentary/integrated, ~−20 dBTP (sine ISP ≈ sample peak
+// at 997 Hz), PLR = dbTpMax − lufsI, GR 0; the GR-history ring advances one
+// entry per block with a release-stored index.
+static void testMeterPublication()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    const int blocks = (int) (6.0 * 48000.0 / 512.0);   // 6 s: I-gate warm
+    for (int b = 0; b < blocks; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.1f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 997.0f * (float) (b * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+    check (near (proc.meterLufsM(), -20.0f, 0.3f), "meters: momentary reads the tone's loudness");
+    check (near (proc.meterLufsI(), -20.0f, 0.2f), "meters: integrated agrees");
+    check (near (proc.meterDbTpMax(), -20.0f, 0.2f),
+           "meters: dBTP max-hold reads the sine's true peak");
+    check (near (proc.meterPlr(), proc.meterDbTpMax() - proc.meterLufsI(), 1.0e-4f),
+           "meters: PLR is dbTpMax minus integrated");
+    check (near (proc.meterGrDb(), 0.0f, 0.01f), "meters: no reduction on a -20 dBFS tone");
+
+    const auto& ring = proc.grHistory();
+    check (ring.available() == (int64_t) blocks,
+           "meters: the GR history ring advanced exactly one entry per block");
+    const auto last = ring.peek (ring.available() - 1);
+    check (near (last.peak, 0.1f, 0.01f), "meters: the history entry carries the block peak");
+
+    // A block the engine short-circuits produces no render-tap values, so the
+    // publish must be skipped too — otherwise the previous block's peaks are
+    // re-reported and a duplicate entry lands in the ring, breaking exactly
+    // the one-entry-per-block property asserted above.
+    const auto before = ring.available();
+    const float tpBefore = proc.meterDbTpMax();
+    juce::AudioBuffer<float> empty (2, 0);
+    proc.processBlock (empty, midi);
+    check (ring.available() == before,
+           "meters: a zero-length block pushes no history entry");
+    check (juce::exactlyEqual (proc.meterDbTpMax(), tpBefore),
+           "meters: a zero-length block re-publishes nothing");
+}
+
+// ---------------------------------------------------------------------------
+// §2.9 vs §2.7: the meters report the RENDER, not the listening path. With
+// Delta or Loudness Comp engaged the buffer handed to the host is the monitor
+// signal — metering it showed the difference signal's loudness (Delta) or the
+// attenuated level (Comp), and permanently biased the session-cumulative
+// integrated LUFS and dBTP hold. The published readings must be identical
+// whether the monitor functions are on or off, while the audible output
+// plainly differs (the guard that keeps this from passing vacuously).
+static void testMetersReadTheRenderNotTheMonitor()
+{
+    auto run = [] (bool comp, bool delta)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto set = [&] (const char* id, float denorm)
+        {
+            auto* p = proc.apvts.getParameter (id);
+            p->setValueNotifyingHost (p->getNormalisableRange().convertTo0to1 (denorm));
+        };
+        set (pid::limGain, 12.0f);                     // wet well above dry: comp acts
+        if (comp)  set (pid::loudnessComp, 1.0f);
+        if (delta) set (pid::deltaMonitor, 1.0f);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        double tailSq = 0.0;
+        for (int b = 0; b < 200; ++b)                  // ~2.1 s: measure + smoothers settle
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.1f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 150)
+                for (int n = 0; n < 512; ++n)
+                    tailSq += (double) buf.getSample (0, n) * buf.getSample (0, n);
+        }
+        struct R { float lufsS, lufsM, tpMax, plr; double tailRms; };
+        return R { proc.meterLufsS(), proc.meterLufsM(), proc.meterDbTpMax(),
+                   proc.meterPlr(), std::sqrt (tailSq / (50.0 * 512.0)) };
+    };
+
+    const auto plain = run (false, false);
+    const auto comp  = run (true,  false);
+    const auto delta = run (false, true);
+
+    // The render is bit-identical across the three runs, so the published
+    // readings are too — exact, not approximate: same samples, same meters.
+    check (juce::exactlyEqual (plain.lufsS, comp.lufsS)
+             && juce::exactlyEqual (plain.lufsM, comp.lufsM)
+             && juce::exactlyEqual (plain.tpMax, comp.tpMax)
+             && juce::exactlyEqual (plain.plr,  comp.plr),
+           "meters/monitor: loudness comp does not move a single published reading");
+    check (juce::exactlyEqual (plain.lufsS, delta.lufsS)
+             && juce::exactlyEqual (plain.tpMax, delta.tpMax),
+           "meters/monitor: delta does not move the published readings either");
+
+    // Not vacuous: the LISTENING path really was altered in both runs.
+    check (comp.tailRms < plain.tailRms * 0.7,
+           "meters/monitor: comp audibly attenuates the monitor (the runs are not identical)");
+    // Delta's tail is the dry-minus-wet residue (~0.75× here, direction not
+    // guaranteed), so the guard is a relative difference, not an ordering.
+    check (std::abs (delta.tailRms - plain.tailRms) > 0.1 * plain.tailRms,
+           "meters/monitor: delta audibly replaces the monitor with the difference signal");
+}
+
+// ---------------------------------------------------------------------------
+// MODE_AND_ADAPTATION_POLICY invariant 2's named guard: switching Simple ⇄
+// Advanced changes NOTHING about the rendered sound — not approximately,
+// sample-identically. Two processors, identical input and settings; one
+// toggles advancedMode repeatedly mid-stream (at macro positions and after a
+// manual Advanced edit), the other never does. Byte-compare the outputs.
+// Structurally the switch cannot reach the DSP (advancedMode is not in the
+// cache order), and this test is what keeps that structural fact true.
+static void testModeSwitchIsSoundNeutral()
+{
+    auto renderWithToggles = [] (bool toggle) -> std::vector<float>
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        // Same non-default context on both: a macro position and a manual
+        // Advanced edit (which detaches limGain from the macro).
+        proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.4f);
+        proc.getMacroEngine().flushPendingMapping();
+        proc.apvts.getParameter (pid::limGain)->setValueNotifyingHost (0.6f);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        std::vector<float> out;
+        for (int b = 0; b < 60; ++b)
+        {
+            if (toggle && b % 7 == 3)
+                proc.apvts.getParameter (pid::advancedMode)
+                    ->setValueNotifyingHost (b % 14 == 3 ? 1.0f : 0.0f);
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 330.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+
+    const auto still = renderWithToggles (false);
+    const auto moved = renderWithToggles (true);
+    bool identical = still.size() == moved.size();
+    for (size_t n = 0; identical && n < still.size(); ++n)
+        if (! juce::exactlyEqual (still[n], moved[n]))
+            identical = false;
+    check (identical, "modeSwitch: Simple/Advanced toggling is sample-identical to not toggling");
+}
+
+// ---------------------------------------------------------------------------
+// §5.4 Learn end to end: analyse a passage → commit → the reference targets
+// move; the session then carries an ADAPTIVE child that restores them; a
+// session WITHOUT the child restores "never learned" (§4.4's discriminator).
+static void testLearnCommitAndAdaptiveRoundTrip()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    const float refOnset0 = proc.adaptiveReadout().publishedRefOnset();
+    check (! proc.adaptiveReadout().hasLearned(), "learn: factory state has never learned");
+
+    proc.startLearn();
+    for (int b = 0; b < 500; ++b)                    // ~5 s of transient-dense material
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                       * 220.0f * (float) t / 48000.0f);
+            if ((t % 4800) < 96) v += 0.6f;          // 10 clicks/s: far off the default ref
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    proc.stopLearn();
+    for (int b = 0; b < 2; ++b) proc.processBlock (buf, midi);   // commit consumed at block top
+
+    check (proc.adaptiveReadout().hasLearned(), "learn: commit latches the learned state");
+    const float refOnsetLearned = proc.adaptiveReadout().publishedRefOnset();
+    check (refOnsetLearned > refOnset0 + 2.0f,
+           "learn: the onset reference moved to the analysed passage's density");
+
+    // Round trip: the ADAPTIVE child restores the targets...
+    juce::MemoryBlock state;
+    proc.getStateInformation (state);
+    AnabasisAudioProcessor restored;
+    restored.prepareToPlay (48000.0, 512);
+    restored.setStateInformation (state.getData(), (int) state.getSize());
+    for (int b = 0; b < 2; ++b) restored.processBlock (buf, midi);   // mirror consumed
+    check (std::abs (restored.adaptiveReadout().publishedRefOnset() - refOnsetLearned) < 1.0e-4f,
+           "learn: the ADAPTIVE child restores the learned targets");
+
+    // ...byte-identity still holds with the child present...
+    juce::MemoryBlock again;
+    restored.getStateInformation (again);
+    check (state == again, "learn: save → load → save stays byte-identical with ADAPTIVE present");
+
+    // ...and a session WITHOUT the child restores never-learned defaults.
+    juce::MemoryBlock blank;
+    AnabasisAudioProcessor().getStateInformation (blank);
+    restored.setStateInformation (blank.getData(), (int) blank.getSize());
+    for (int b = 0; b < 2; ++b) restored.processBlock (buf, midi);
+    check (! restored.adaptiveReadout().hasLearned()
+             && std::abs (restored.adaptiveReadout().publishedRefOnset() - refOnset0) < 1.0e-4f,
+           "learn: absent ADAPTIVE means never learned — defaults restored");
+
+    // Load → save with NO audio in between. The engine only adopts a staged
+    // restore at a block top, so a host that duplicates a track, copies plugin
+    // state, or saves a freshly opened project without transport would have
+    // serialized the engine's one-session-stale answer: the ADAPTIVE child
+    // omitted entirely (Learn silently lost), and in the mirror case an old
+    // learned child resurrected over an un-learned session.
+    {
+        AnabasisAudioProcessor noAudio;
+        noAudio.prepareToPlay (48000.0, 512);
+        noAudio.setStateInformation (state.getData(), (int) state.getSize());
+        juce::MemoryBlock resaved;
+        noAudio.getStateInformation (resaved);          // deliberately no processBlock
+
+        auto xml = juce::AudioProcessor::getXmlFromBinary (resaved.getData(), (int) resaved.getSize());
+        check (xml != nullptr, "learn/noAudio: the immediate re-save parses");
+        const auto reloaded = juce::ValueTree::fromXml (*xml);
+        const auto child    = reloaded.getChildWithName ("ADAPTIVE");
+        check (child.isValid(),
+               "learn/noAudio: loading and re-saving without audio keeps the ADAPTIVE child");
+        check (std::abs ((float) (double) child.getProperty ("refOnsetRate") - refOnsetLearned)
+                 < 1.0e-4f,
+               "learn/noAudio: ...with the loaded session's references, not the engine's stale ones");
+
+        // Mirror: a LEARNED engine loaded with an un-learned session and
+        // re-saved before the next block must not resurrect the old child.
+        AnabasisAudioProcessor wasLearned;
+        wasLearned.prepareToPlay (48000.0, 512);
+        wasLearned.setStateInformation (state.getData(), (int) state.getSize());
+        for (int b = 0; b < 2; ++b) wasLearned.processBlock (buf, midi);   // adopt it
+        check (wasLearned.adaptiveReadout().hasLearned(), "learn/noAudio: the mirror run did learn");
+        juce::MemoryBlock blank2;
+        AnabasisAudioProcessor().getStateInformation (blank2);
+        wasLearned.setStateInformation (blank2.getData(), (int) blank2.getSize());
+        juce::MemoryBlock afterBlank;
+        wasLearned.getStateInformation (afterBlank);    // again no processBlock
+        auto xml2 = juce::AudioProcessor::getXmlFromBinary (afterBlank.getData(),
+                                                            (int) afterBlank.getSize());
+        check (xml2 != nullptr && ! juce::ValueTree::fromXml (*xml2)
+                                      .getChildWithName ("ADAPTIVE").isValid(),
+               "learn/noAudio: an un-learned session re-saved without audio stays un-learned");
+    }
+
+    // A PRESENT child with the values MISSING is the §4.4 read rule's other
+    // half: a missing field takes its default, and the default here is the
+    // factory neutral reference — not var()'s 0.0, which would leave the
+    // trims chasing a reference no programme material can produce.
+    {
+        auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize());
+        check (xml != nullptr, "learn: the saved session parses back to XML (fixture precondition)");
+        auto root = juce::ValueTree::fromXml (*xml);
+        auto adaptive = root.getChildWithName ("ADAPTIVE");
+        check (adaptive.isValid(), "learn: the learned session really does carry ADAPTIVE");
+        adaptive.removeProperty ("refOnsetRate", nullptr);
+        adaptive.removeProperty ("refTiltDb", nullptr);
+        juce::MemoryBlock stripped;
+        if (const auto out = root.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*out, stripped);
+
+        AnabasisAudioProcessor partial;
+        partial.prepareToPlay (48000.0, 512);
+        partial.setStateInformation (stripped.getData(), (int) stripped.getSize());
+        for (int b = 0; b < 2; ++b) partial.processBlock (buf, midi);
+        check (partial.adaptiveReadout().hasLearned(),
+               "learn: a present ADAPTIVE child still means learned, values or not");
+        check (std::abs (partial.adaptiveReadout().publishedRefOnset()
+                           - anabasis::AdaptiveEngine::kDefaultRefOnset) < 1.0e-4f
+                 && std::abs (partial.adaptiveReadout().publishedRefTilt()
+                           - anabasis::AdaptiveEngine::kDefaultRefTilt) < 1.0e-4f,
+               "learn: missing ADAPTIVE fields fall back to the factory references, not zero");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -663,6 +1017,11 @@ int main (int argc, char** argv)
         testMacroDefaultIsFixedPoint();
         testAbSlotsAndTiers();
         testMacroRestoreDoesNotClobber();
+        testAbSwitchRequestsDuck();
+        testMeterPublication();
+        testMetersReadTheRenderNotTheMonitor();
+        testModeSwitchIsSoundNeutral();
+        testLearnCommitAndAdaptiveRoundTrip();
         testDrainInsideRestoreIsSuppressed();
         testAbRawExact();
         testFrozenSlotRoundTrip();

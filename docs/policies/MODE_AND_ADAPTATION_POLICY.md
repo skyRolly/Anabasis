@@ -131,7 +131,50 @@ of record.
 
 ## Current implementation
 
-**TODO (no code yet).** Populated at P4 with evidence citations.
+**P4 core (2026-08-01).** `src/dsp/AdaptiveEngine.h` — audio-thread feature extraction (crest,
+spectral tilt, transient density, silence-gated at ~−70 dBFS; the P4 trim mapping consumes
+**transient density and tilt** — crest is extracted and published for the UI, reserved for a
+future mapping) and the bounded trim vector
+(release ±1 octave, stereo link ±0.2, scHpf 0…+30 Hz, dynTilt 0…+0.5 dB), slewed at ~2 s with a
+hysteresis deadband, applied to the per-block effective settings inside `AnabasisEngine` — never
+parameter writes, never lookahead or the OS factor (inv 4 holds structurally: the class emits
+only the four values). **Three of the four are audible in the factory state.** The release trim
+lands on `limReleaseMs`, which the limiter consumes only in **manual** release mode; with
+`limAutoRelease` on (the default) the two auto poles are fixed constants and the trim, while
+computed, published, overlaid and latched, changes nothing about the sound. That is the "inert
+while its host stage is inert" rule doing what it says, and it is also not obviously what §5.4
+intends — the question of whether the trim should scale the auto poles is **OQ-016**, an owner
+call, deliberately not answered in code. The invariant-7 null survives adaptation BY CONSTRUCTION: every trim is
+inert while its host stage is inert, and the bit-exact null test runs with adaptation live. An
+engine `reset()` **cancels an in-flight Learn pass** — the features it was measuring are zeroed
+by the same call, so a commit spanning the discontinuity would mix two statistics; `learned` and
+the reference targets survive, being session state, and the cancelled pass leaves them alone
+(`testResetCancelsAnInFlightLearnPass`). **Which host actions reach that reset:**
+`prepareToPlay` only — a sample-rate or block-size change. The processor deliberately does not
+override `juce::AudioProcessor::reset()` (`THREAD_MODEL.md`), so a transport stop that calls it
+without re-preparing cancels nothing; whether to override it is a P5 question that also governs
+the delay-line tails and the published meter holds, and is not decided here.
+
+Evidence (all mutation-verified):
+- inv 2: `testModeSwitchIsSoundNeutral` (state suite) — toggling Simple⇄Advanced mid-stream, at a
+  macro position and after a manual detach-causing edit, is sample-identical to not toggling.
+- inv 3: `testAdaptationConvergesAndHolds` (converge, then hold with < 0.5 dB residual output
+  modulation on steady programme) and `testFreezeLatchesTrims` (frozen vector does not move by an
+  ulp under a full programme change; unfreezing re-enables motion).
+- inv 4: `testTrimBounds` (pathological programme; published vector inside every bound).
+- inv 1/6: `testMacroDefaultIsFixedPoint`, `testMacroRestoreDoesNotClobber` (P1, still green).
+
+**Learn (core)** is in: explicit start → integrated-style feature accumulation (silence-gated)
+→ explicit commit fixes the reference targets, so the analysed passage becomes the material that
+trims toward zero (`AdaptiveEngine::startLearn/commitLearn`, wrapper command atomics). Learned
+targets serialize in the global `ADAPTIVE` child — written only once learned, "absent = never
+learned" (§4.4) — and restore through the host-hidden-session-state mirror pattern: two
+INDEPENDENT self-correcting scalars, deliberately distinct from OQ-013's coherence-critical
+frozen-trim vector, whose restore transport remains a **Hard Stop** until its ADR. Guarded by
+`testLearnCommitAndAdaptiveRoundTrip` (commit moves the reference; the child restores it
+byte-identically; absent restores never-learned defaults). The Learn UI grammar (duck-routed
+engage, undo bracketing, running readout display) lands with the P5 UI.
+Trim mapping constants are ⊕ drafts, tuned by ear before v0.1.0 like the §5.5 curves.
 
 ## Enforcement
 

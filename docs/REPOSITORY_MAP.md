@@ -100,14 +100,17 @@ docs/
 │                          See SOURCE_OF_TRUTH.md §"Where DESIGN.md sits".
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
-│   BRAND_CONSISTENCY_CHECKLIST.md
+│   BRAND_CONSISTENCY_CHECKLIST.md, TEST_REPORT.md (measured data + method, grows per phase)
 ├── user/           [P6] end-user class: USER_MANUAL, INSTALLATION
-├── architecture/   design-decisions/ — ADR_INDEX.md + ADR-0001…0011 (all Accepted
-│                   2026-07-31). [P1–P2] the descriptive set:
-│                   ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE, DSP_ALGORITHMS,
-│                   THREAD_MODEL, API_REFERENCE, PARAMETER_REGISTRY/REFERENCE,
-│                   SERIALIZATION_REGISTRY, STATE_SERIALIZATION, LATENCY_MODEL,
-│                   PERFORMANCE_BUDGET, REALTIME_SAFETY_AUDIT, COMPATIBILITY_MATRIX
+├── architecture/   design-decisions/ — ADR_INDEX.md + ADR-0001…0012 (0001–0011 Accepted
+│                   2026-07-31). THREAD_MODEL.md (implemented model, from ADR-0011)
+│                   and PARAMETER_REGISTRY.md (the surface ledger, from ADR-0010 +
+│                   the frozen snapshot) exist since P1 close;
+│                   REALTIME_SAFETY_AUDIT.md since P2 close. [P3+] the rest of the
+│                   descriptive set: ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE,
+│                   DSP_ALGORITHMS, API_REFERENCE, SERIALIZATION_REGISTRY,
+│                   STATE_SERIALIZATION, LATENCY_MODEL, PERFORMANCE_BUDGET,
+│                   COMPATIBILITY_MATRIX
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. [P6] PACKAGING
 └── policies/       REALTIME_AUDIO, THREADING, DSP, MODE_AND_ADAPTATION, COMPATIBILITY family,
