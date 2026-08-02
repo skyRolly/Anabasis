@@ -165,6 +165,17 @@ public:
     // Non-finite members are returned to their reset() seeds rather than to
     // zero: the seeds mean "no measurement yet", which is exactly true after
     // one has been thrown away, and the crest pair must stay a square apart.
+    //
+    // WHAT THIS DOES NOT FIX, stated so it is not rediscovered as a defect: a
+    // huge but FINITE block (say 1e30) leaves every accumulator finite and
+    // enormous, so nothing here touches it, and they return to a sane value
+    // only through the ~1.5 s `aFeature` integrator — which from 1e30 is tens
+    // of seconds of wildly wrong `crestDb`/`tiltDb` and a trim vector parked
+    // at a bound (`scHpfHz` in particular really does engage a detector
+    // high-pass in both the compressor and the limiter). Bounding the
+    // accumulators would fix it and is a §5.4 mapping change, not a repair:
+    // the mapping is `DESIGN.md`'s and an owner call, so this stays a
+    // documented recovery time rather than a silent edit here.
     void sanitiseState() noexcept
     {
         for (int ch = 0; ch < kMaxChannels; ++ch)

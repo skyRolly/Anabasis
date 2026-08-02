@@ -80,15 +80,14 @@ public:
     // −70 LUFS (false for NaN, so the compensation freezes), and the
     // published M/S/I.
     //
-    // Only the K-weighting states and the sub-block accumulator are repaired,
-    // and the other two structures are deliberately left alone rather than
-    // scanned: a poisoned sub-block MEAN ages out of the ring within
-    // kSubRing entries, and it cannot reach the gated histogram because the
-    // absolute gate is `lufs >= -70.0`, which is FALSE for the NaN this
-    // failure produces. (A finite-but-astronomical block does enter the
-    // histogram and biases the integrated reading for the session — that is
-    // the meter correctly recording an absurd measurement, and the P5 meter
-    // reset is its escape hatch, not a repair belonging here.)
+    // Only the K-weighting states and the sub-block accumulator are repaired.
+    // The ring needs no scan because finishSubBlock() keeps a non-finite mean
+    // out of it in the first place (see there — the reason is how long a
+    // stored one would linger, not the integrated reading). A
+    // finite-but-astronomical block DOES enter the histogram and biases the
+    // integrated reading for the session; that is the meter correctly
+    // recording an absurd measurement, and the P5 meter reset is its escape
+    // hatch, not a repair belonging here.
     void sanitiseState() noexcept
     {
         for (int ch = 0; ch < kMaxChannels; ++ch)
@@ -162,7 +161,19 @@ private:
             frameSum += subAccum[ch];          // stereo weights 1.0
             subAccum[ch] = 0.0;
         }
-        subRing[(size_t) (subCount % kSubRing)] = frameSum / (double) subBlockLen;
+        // A non-finite sub-block mean is dropped to 0.0 rather than stored, and
+        // the reason is RECOVERY LATENCY, not correctness of the integrated
+        // reading: the gated histogram rejects a NaN anyway (`lufs >= -70.0` is
+        // false for it), but the sliding windows do not — one stored NaN makes
+        // momentary and short-term read NaN until it ages out, which is up to
+        // kSubRing sub-blocks ≈ 3.2 s, and for all of that time the §2.7
+        // compensation's `> -70 LUFS` gate is false and the compensation is
+        // frozen. 0.0 is below the absolute gate, so the block is simply not
+        // counted, and it pulls a 30-entry window down by ~0.15 dB while it
+        // sits there. Seconds of a frozen monitor gain against a tenth of a dB
+        // for one window: the trade is not close.
+        const double subMean = frameSum / (double) subBlockLen;
+        subRing[(size_t) (subCount % kSubRing)] = std::isfinite (subMean) ? subMean : 0.0;
         ++subCount;
         subFill = 0;
 
@@ -177,6 +188,16 @@ private:
             const double lufs = energyToLufs (z);
             if (lufs >= -70.0)                 // absolute gate
             {
+                // The clamp is a HARD RANGE LIMIT, not a rounding detail:
+                // every gating block above +5 LUFS lands in the top bin. Pass 1
+                // stays exact (it sums the ENERGIES, not bin centres), but
+                // `firstBin` in integratedLufs() is derived from the relative
+                // threshold and clamps the same way, so a pass-1 mean above
+                // +15 LUFS leaves only the top bin surviving pass 2.
+                // Unreachable through the render tap, which is ceiling-bounded,
+                // and reachable for the dry/wet meters only on input no DAW
+                // produces — but it is the constraint to remember before
+                // pointing a meter at an unbounded tap.
                 const int bin = juce::jlimit (0, kBins - 1,
                                               (int) ((lufs - kBinFloor) / kBinWidth));
                 ++histCount[(size_t) bin];

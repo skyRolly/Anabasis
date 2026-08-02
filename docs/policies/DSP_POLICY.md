@@ -194,7 +194,16 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    documented empty pass), not where the state is swept, because a committed reference is
    permanent (every trim target derives from it, and both `jlimit` and the hysteresis pass NaN
    through untouched) and persistent (`hasLearned()` makes the next save serialize it). The
-   restore path is guarded at the same place for the same reason.
+   restore path is guarded at the same place for the same reason. The per-block repairs
+   themselves run **before** every consumer in `process()` for the same reason — position in the
+   block is part of the contract, not an accident of where the code was added.
+   **Recovery times are not uniform, and each is stated where it lives:** one block for a repaired
+   filter state; up to one lookahead window for the limiter's wedge (NaN entries are never
+   dominated, only expired, and `needed` falls back to unity meanwhile); one chunk plus the
+   lookahead line for the audio path; and tens of seconds for the §5.4 features after a
+   huge-but-FINITE excursion, which no repair touches because every accumulator stays finite —
+   bounding them is a mapping change, so it is a documented recovery time rather than a silent
+   edit.
    **"Self-heals" is not "recovers instantly", and the difference is stated so it is not read as
    one:** the repair runs at the END of the chunk that detected the contamination, so that whole
    chunk has already been processed with the poisoned state and its output is the boundaries'

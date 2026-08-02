@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **twentieth review round of 2026-08-02** (PR #5): the previous round's
+**Last updated:** for the **twenty-first review round of 2026-08-02** (PR #5): the per-block
+repairs moved ahead of every consumer that reads what they repair, the oversampler latency table
+is now bound to its headroom constant by a `static_assert` rather than a Debug-only `jassert`, and
+the meter's ring guard came back — with the stimulus that can tell it is there. Previous round: (PR #5): the previous round's
 Learn cancellation runs later in the block than the Learn COMMIT is consumed, so a ruined pass
 could still be saved as the reference — refused at the writer instead. Previous round: (PR #5): the two stages that
 emit no audio — the BS.1770 meters and the §5.4 feature extractor — overflow on a legal float and
@@ -47,6 +50,46 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### Twenty-first review round — ordering, a Release-only assert, and a guard that came back (2026-08-02)
+
+Eleven items, most of them explicitly not defects. Three fixed, five recorded in code where a
+reader will meet them, three already carried.
+
+**The ordering fix generalises the previous round's.** The per-block repairs ran near the end of
+`process()`, while `currentTrims()` — which reads state one of them repairs — is read earlier. The
+reviewer verified the hole is not live (a NaN target fails the trim hysteresis, so a NaN trim is
+never stored, which makes that branch of `sanitiseState` dead code today) and asked the right
+question anyway: it stops being dead the moment the hysteresis changes, and a NaN trim would reach
+`limiter.setStereoLink`, whose `SmoothedValue` nothing sanitises. Moved to the top of the block,
+where the comment now says the position is load-bearing. Same lesson as the Learn commit: "the
+sweep runs later in the same function" is a fact about call order that nothing enforces.
+
+**A `jassert` that guards a shipping build guards nothing.** The dry ring is sized with
+`kMaxOsLatencySamples` standing in for the per-config oversampler latency, and the only thing
+tying the two together was a `jassert` — compiled out in Release, which is what ships. The tables
+moved to namespace scope and a `static_assert` now binds them to the constant at compile time.
+The same argument had already promoted the JUCE-vs-table comparison to an always-recorded flag;
+this was the entry it missed.
+
+**The meter's ring guard came back, and the reason it was removed was a bad stimulus, not a bad
+guard.** Round nineteen removed it because no mutant could distinguish it. The review pointed out
+why: the reasoning ("the absolute gate rejects NaN") holds for the integrated histogram and not
+for the sliding windows, where a stored NaN reads for up to ~3.2 s and freezes the §2.7
+compensation with it. The mutant survived because the test used a 512-sample block — the per-block
+repair clears the accumulator before the 100 ms sub-block boundary about nine times in ten. At
+8192 the boundary falls inside the poisoned block every time, and the mutant dies. **A guard that
+no mutant kills is either dead code or an uncalibrated stimulus, and telling them apart is work,
+not a judgement call.**
+
+**Five things recorded rather than changed**, each next to the code it constrains: the §5.4
+features re-converge over tens of seconds after a huge-but-finite excursion (no accumulator is
+non-finite, so no repair touches it; bounding them is a mapping change); the limiter's wedge keeps
+NaN entries until index expiry, so detector recovery is one window rather than one block; the
+integrated histogram's top bin is a hard range limit above +5 LUFS; and one GR-history entry spans
+the HOST block, so the P5 renderer needs a time base rather than an index count. `DSP_POLICY.md`
+invariant 9 now carries the recovery times together, because "self-heals" had come to mean four
+different latencies.
 
 ### Twentieth review round — the guard was right, and ran too late (2026-08-02)
 

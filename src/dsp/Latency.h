@@ -46,19 +46,45 @@ inline int maxLookaheadSamples (double sampleRate) noexcept
 // Sample-rate note: these are filter group delays in SAMPLES, which is why
 // the function ignores its rate argument; the same cascade at 96 kHz delays
 // the same number of samples (a shorter time — the honest physics).
+// At namespace scope so the headroom constant below can be checked against
+// them AT COMPILE TIME. They were function-local statics, and the only thing
+// tying them to `kMaxOsLatencySamples` was a `jassert` in the engine — which
+// compiles out in Release, i.e. in the builds that ship. Same argument that
+// promoted the JUCE-vs-table comparison to an always-recorded flag.
+inline constexpr int kOsLatMin[4] = { 4, 6, 6, 6 };       // IIR polyphase + integer-latency pad
+inline constexpr int kOsLatLin[4] = { 49, 61, 65, 67 };   // FIR equiripple + integer-latency pad
+
 inline int osLatencySamples (OversampleFactor factor, OsPhaseMode phase, double sampleRate) noexcept
 {
     (void) sampleRate;
     if (factor == OversampleFactor::off)
         return 0;
-    static constexpr int kMin[4] = { 4, 6, 6, 6 };       // IIR polyphase + integer-latency pad
-    static constexpr int kLin[4] = { 49, 61, 65, 67 };   // FIR equiripple + integer-latency pad
     const int idx = (int) factor - 1;                    // x2..x16 → 0..3
-    return phase == OsPhaseMode::minimum ? kMin[idx] : kLin[idx];
+    return phase == OsPhaseMode::minimum ? kOsLatMin[idx] : kOsLatLin[idx];
 }
 
 // The dry-ring / bypass-alignment headroom the engine must allocate for.
 inline constexpr int kMaxOsLatencySamples = 67;
+
+inline constexpr int maxTabulatedOsLatency() noexcept
+{
+    int m = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        m = kOsLatMin[i] > m ? kOsLatMin[i] : m;
+        m = kOsLatLin[i] > m ? kOsLatLin[i] : m;
+    }
+    return m;
+}
+
+// The dry ring is sized with kMaxOsLatencySamples standing in for the per-config
+// osLatBase, so a table entry that outgrew it would make the bypass leg read a
+// slot the write had already passed. Enforced here rather than by the engine's
+// runtime assert, because that assert is a Debug-only tripwire on a table a
+// JUCE bump is expected to move.
+static_assert (maxTabulatedOsLatency() <= kMaxOsLatencySamples,
+               "kMaxOsLatencySamples must cover every entry of the osLatency tables — "
+               "raise it and re-check the dry-ring sizing in AnabasisEngine::prepare");
 
 // The effective factor is not always the selected one: at Force Max an offline
 // bounce renders at 16x, and the reported figure under isNonRealtime() uses

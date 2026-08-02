@@ -156,6 +156,17 @@ public:
     // on the same parameter upstream and would usually poison first, which is
     // an argument about today's chain, not a guarantee, and is exactly the
     // shape of argument that put the Post EQ hole in this file's sibling.
+    // Recovery is one WINDOW, not one block, and the difference is worth
+    // stating: the NaN levels already pushed into the wedge stay there. The
+    // dominated-entry drop tests `wv[prev(t)] <= level`, false for NaN, so
+    // domination never removes them — only index expiry does,
+    // `wi[h] < writeCount - windowSamples`. Until then `needed` is 1.0f
+    // (a NaN peak fails `peak > ceilingLinear`), i.e. up to the engaged
+    // lookahead of un-limited signal, absorbed by the unconditional
+    // CeilingClamp downstream. The envelope cannot follow it anywhere bad,
+    // because the fallback is unity rather than a non-finite value. Clearing
+    // the wedge here as well would cost the pre-emption of every entry in it
+    // for a fault that expires on its own.
     void sanitiseDetectorState() noexcept
     {
         for (int ch = 0; ch < kMaxChannels; ++ch)

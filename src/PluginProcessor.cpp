@@ -143,6 +143,14 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     const float grDb = juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f);
     pubGrDb.store (grDb, std::memory_order_relaxed);
+    // ONE entry per processBlock CALL, which is the ring's documented contract
+    // — and the span it covers is the HOST's block, not the prepared one. The
+    // engine chunks an oversize block internally while `grMinThisCall` and the
+    // render peak accumulate across every chunk, so a host running 4096 with
+    // 512 prepared publishes one entry describing 85 ms. Correct for a
+    // worst-case display and wrong for a time axis drawn as if entries were
+    // evenly spaced: the P5 GR-history renderer needs a time base, not an
+    // index count. Recorded here rather than in the ring, which cannot know.
     grHistoryRing.push (grDb, engine.lastRenderPeak());
 }
 

@@ -3166,36 +3166,68 @@ static void testExtremeLevelDoesNotBreakTheMetersOrAdaptation()
     //     does not bound, and the K-weighting shelf overflows on it (|b1| ≈ 2.7).
     //     Without the repair the meter reads silence for ever afterwards, which
     //     is worse than reading NaN: it looks like a legitimate measurement.
+    //
+    //     The host block is 8192 here, and that is calibration rather than a
+    //     detail: the 100 ms sub-block boundary (4800 samples at 48 kHz) has to
+    //     fall INSIDE the poisoned block for the ruined accumulator to reach
+    //     the sliding-window ring at all. At 512 samples the per-block repair
+    //     clears the accumulator first about nine times in ten, and the ring
+    //     guard the meter carries looks like dead code.
     {
+        const int bigBlock = 8192;
+        juce::AudioBuffer<float> big (2, bigBlock);
         anabasis::AnabasisEngine engine;
-        engine.prepare (sr, block, 2);
+        engine.prepare (sr, bigBlock, 2);
         anabasis::EngineParameters p;
         p.bypass = true;
 
-        for (int b = 0; b < 300; ++b) { tone (b); engine.process (buf, p); }
+        auto bigTone = [&] (int b)
+        {
+            for (int n = 0; n < bigBlock; ++n)
+            {
+                const float ph = 2.0f * 3.14159265f * 220.0f
+                                     * (float) (b * bigBlock + n) / (float) sr;
+                const float v = 0.2f * std::sin (ph);
+                big.setSample (0, n, v);
+                big.setSample (1, n, v);
+            }
+        };
+
+        for (int b = 0; b < 40; ++b) { bigTone (b); engine.process (big, p); }
         const float lufsBefore = engine.outputLoudness().shortTermLufs();
         const float intBefore  = engine.outputLoudness().integratedLufs();
 
         const float huge = std::numeric_limits<float>::max();
-        for (int n = 0; n < block; ++n)
+        for (int n = 0; n < bigBlock; ++n)
         {
-            buf.setSample (0, n, huge);
-            buf.setSample (1, n, huge);
+            big.setSample (0, n, huge);
+            big.setSample (1, n, huge);
         }
-        engine.process (buf, p);
+        engine.process (big, p);
 
-        for (int b = 301; b < 601; ++b) { tone (b); engine.process (buf, p); }
+        // Measured TWICE, and the early one is the point: the K-weighting
+        // states are repaired at the next block top, but a sub-block mean
+        // already folded into the ring would sit there for up to kSubRing
+        // sub-blocks (~3.2 s), reading NaN the whole time and freezing the
+        // §2.7 compensation with it. Three blocks ≈ 0.5 s is well inside that
+        // window and well outside the one-block repair.
+        for (int b = 41; b < 44; ++b) { bigTone (b); engine.process (big, p); }
+        const float lufsSoon = engine.outputLoudness().shortTermLufs();
+
+        for (int b = 44; b < 90; ++b) { bigTone (b); engine.process (big, p); }
         const float lufsAfter = engine.outputLoudness().shortTermLufs();
 
         check (std::isfinite (lufsBefore) && lufsBefore > -40.0f,
                "meters/adaptation: (test premise) the output meter reads the tone before the event");
+        check (std::isfinite (lufsSoon),
+               "meters/adaptation: the output meter reads a number within half a second of the event");
         check (std::isfinite (lufsAfter) && std::abs (lufsAfter - lufsBefore) < 1.0f,
                "meters/adaptation: the output meter measures again after an extreme sample");
-        // The sliding window ages a bad sub-block out on its own; the gated
-        // HISTOGRAM never does, so this pins the property that keeps it clean —
-        // the absolute gate `lufs >= -70.0` is false for the NaN this failure
-        // produces, so the block is simply never counted. Asserted rather than
-        // guarded: a guard here would be a branch no stimulus can distinguish.
+        // The gated HISTOGRAM ages nothing out, so this pins the property that
+        // keeps it clean — the absolute gate `lufs >= -70.0` is false for the
+        // NaN this failure produces, so the block is never counted. That half
+        // needs no guard; the sliding window's does, and the half-second
+        // assertion above is what measures it.
         const float intAfter = engine.outputLoudness().integratedLufs();
         check (std::isfinite (intAfter) && std::abs (intAfter - intBefore) < 1.0f,
                "meters/adaptation: the integrated reading is not poisoned for the session");

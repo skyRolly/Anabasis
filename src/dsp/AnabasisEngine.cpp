@@ -372,6 +372,33 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         windowSamples.setTargetValue (windowTarget);
     }
 
+    // ---- Invariant 9, the unconditional per-block repairs -----------------
+    // POSITION IS LOAD-BEARING: everything below reads state these calls
+    // repair — `currentTrims()` on the next line most of all — so they run
+    // FIRST. The alternative, repairing at the end of the block, was how a
+    // ruined Learn pass reached commitLearn(): a consumer that runs at the
+    // block top sees the previous block's state, and "the sweep happens later
+    // in the same function" is a fact about call order that nothing enforces.
+    //
+    // These four stages need an unconditional check rather than the recovery
+    // flag because their corruption produces NO non-finite audio to detect.
+    // The limiter's detector high-pass: `det` goes NaN, every wedge value goes
+    // NaN, and `peak > ceilingLinear` is FALSE for NaN — `needed` stays 1.0f
+    // and the limiter emits unity gain for ever, which is the failure a
+    // maximizer can least afford (the CeilingClamp then hard-clips what the
+    // limiter should have caught). The §2.7/§2.9 meters and the §5.4 feature
+    // extractor emit no audio at all: NaN readings compare false against every
+    // gate, so the loudness compensation freezes, the integrated histogram
+    // stops accumulating, and the trim vector holds its last value for the
+    // session while looking entirely plausible. A few comparisons per block
+    // each. `outTp` is deliberately absent: its history is FIR, so a poisoned
+    // entry flushes itself in 12 samples.
+    limiter.sanitiseDetectorState();
+    dryMeter.sanitiseState();
+    wetMeter.sanitiseState();
+    outMeter.sanitiseState();
+    adaptiveEngine.sanitiseState();
+
     // §5.4 adaptive trims: bounded deltas around the CURRENT values, applied
     // to the per-block settings only — never parameter writes, never
     // lookahead or the OS factor (policy inv 4). All four are inert when
@@ -416,30 +443,6 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // that the tap runs its own 4x estimator (8x effective at 2x).
     limiter.setTruePeakMode (p.truePeakMode && osN < 4);
     limiter.setDetectorHpf (pApplied.scHpfFreqHz);
-    // Per block, not on the invariant-9 flag: a poisoned detector high-pass
-    // produces NO flag to hang a repair on. `det` goes NaN, every wedge value
-    // goes NaN, and `peak > ceilingLinear` is FALSE for NaN — so `needed`
-    // stays 1.0f and the limiter emits unity gain for ever, with finite output
-    // and nothing to notice. That is the failure mode a maximizer can least
-    // afford (the CeilingClamp then hard-clips what the limiter should have
-    // caught), so the state is checked where it costs a comparison per block
-    // instead of relying on the compressor's identical filter poisoning first.
-    limiter.sanitiseDetectorState();
-    // The same unconditional treatment, for the same reason, for the three
-    // stages whose corruption produces no audio to inspect: the §2.7/§2.9
-    // meters (fed the delay-aligned dry signal and the render tap — finite,
-    // unbounded, and their K-weighting shelf overflows around FLT_MAX/3) and
-    // the §5.4 feature extractor (squares its band split in float, so ~1.8e19
-    // is enough). Both fail SILENTLY: NaN readings compare false against every
-    // gate, so the loudness compensation freezes, the integrated histogram
-    // stops accumulating and the trim vector holds its last value for the rest
-    // of the session while looking entirely plausible. Costs a few comparisons
-    // per block each. `outTp` is deliberately absent: its history is FIR, so a
-    // poisoned entry flushes itself in 12 samples.
-    dryMeter.sanitiseState();
-    wetMeter.sanitiseState();
-    outMeter.sanitiseState();
-    adaptiveEngine.sanitiseState();
     eq.setTargets (pApplied);
     comp.setPerBlock (pApplied);
     clip.setPerBlock (pApplied);
