@@ -196,6 +196,14 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
     // The default patch first — an override TABLE is defaults + intents, and
     // skipping the reset would blend two presets. Locked/excluded parameters
     // go through the same shared core as every file preset.
+    //
+    // This ITERATES the APVTS tree while WRITING it: `setValueNotifyingHost`
+    // has APVTS write the `value` property of the very node being visited.
+    // Safe with juce::ValueTree's iterator because a property write neither
+    // adds nor removes children, so the child array is never reallocated — and
+    // stated because that is the whole reason it is safe. A listener that ever
+    // added or removed a PARAM node from here would invalidate the iteration,
+    // so collect the ids first if that day comes.
     const bool locked = internal.ceilingLocked();
     for (const auto node : apvts.state)
     {

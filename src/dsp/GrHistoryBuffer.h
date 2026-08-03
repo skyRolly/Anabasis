@@ -91,6 +91,10 @@ public:
 
     // Stateless peek at entry n (absolute index). Entries older than kSize
     // behind the head have been overwritten; the caller clamps its window.
+    // The clamp is **kSize - 1**, not kSize: the index is masked, so `head -
+    // kSize` aliases the slot `push` is filling at this instant (it writes the
+    // slot, THEN publishes head + 1). A reader that asks for the full capacity
+    // therefore reads a half-written entry as its oldest one.
     Entry peek (int64_t n) const noexcept
     { return entries[(size_t) (n & (int64_t) kMask)]; }
 

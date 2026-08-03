@@ -53,6 +53,20 @@ AnabasisAudioProcessor::~AnabasisAudioProcessor()
 {
     // FIRST, before any member is destroyed — see the declaration.
     macroEngine->stopDraining();
+
+    // Symmetric with the constructor, and deliberately explicit rather than
+    // order-dependent. It IS safe implicitly today — `apvts` is declared above
+    // every member these callbacks touch, so it outlives them, and nothing
+    // changes a parameter during teardown — but "safe because of declaration
+    // order" is the argument the startDraining/stopDraining split was written
+    // to stop relying on. Deregistering says what the destructor guarantees
+    // instead of leaving a reader to re-derive it.
+    removeListener (this);
+    for (const char* id : managed_params::ids)
+        apvts.removeParameterListener (id, this);
+    apvts.removeParameterListener (pid::loudness,  this);
+    apvts.removeParameterListener (pid::character, this);
+    apvts.removeParameterListener (pid::tone,      this);
 }
 
 // The three §5.3 conditions meet here. Gesture callbacks arrive with a raw

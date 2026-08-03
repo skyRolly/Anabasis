@@ -240,14 +240,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   against a preset applied in slot B.
 - **Double-clicking a knob to reset it now behaves exactly like alt-clicking it** (2026-08-03): it
   is undoable, and on a Simple-mode macro parameter it detaches from the macro the same way.
+- **Automating Loudness, Character or Tone no longer takes back a knob you had just taken off the
+  macro** (2026-08-03). When the host moved a macro while a knob edit was still being picked up,
+  that knob was written from the macro curve and only afterwards marked as detached — so it stuck
+  at the macro's value instead of yours, and the session was saved that way. Every route into the
+  macro update now applies your edits first.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
   the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
   documented; a well-formed preset file from another plugin is refused without costing an undo
-  step; the transfer/EQ curve display follows a host sample-rate change; closing the plugin can no
-  longer race its own background housekeeping.
+  step; the transfer/EQ curve display follows a host sample-rate change; the oldest column of the
+  gain-reduction history can no longer be drawn from an entry the audio thread is still writing;
+  closing the plugin can no longer race its own background housekeeping.
   Evidence Source: **PR #6** (`skyRolly/Anabasis`) — `testUndoRequestsDuck`,
   `testFrozenTrimRestore` (undo + save-window cases), `testMeterResetIgnoresTheStraddlingSubBlock`,
-  `testAGestureEndWithoutACountedBeginIsIgnored`; all mutation-verified. [Verified]
+  `testAGestureEndWithoutACountedBeginIsIgnored`,
+  `testThePostedDrainAlsoTakesTheWrapperBitsFirst`,
+  `testGrHistoryWindowNeverAsksForTheHeadSlot`; all mutation-verified. [Verified]
 
 The first entry will be `[0.1.0]`, cut when the post-v0.1.0 fine review clears the tag.
 

@@ -6,7 +6,40 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 30 (2026-08-03)**, both of whose findings were the SAME
+**Last updated:** for **review round 31 (2026-08-03)**, whose first finding is the previous
+round's fix counted in prose instead of enforced in code:
+(1) **The posted drain was a FOURTH entry point.** Round 30 fixed the tick's order and wrote "all
+three paths now apply the same precedence" — while `MacroEngine::handleAsyncUpdate`, the path a
+message-thread macro write posts to, still called `drainPendingMapping()` alone. Host automation
+of Loudness/Character/Tone (message thread, no gesture, so nothing re-engages) racing a gestured
+managed edit delivered off-thread mapped over the user's value, and the NEXT tick then marked that
+parameter detached at the value the macro had just written. All three triggers — the 30 ms timer,
+the posted update, and `flushPendingMapping` — now call `drainTick()`, so there is one sequence
+and three ways to ask for it rather than a count that has to be re-checked; `handleAsyncUpdate` is
+public for the reason `drainTick` is, because no message loop runs in the headless tests and an
+entry point no test can call is exactly how this one drifted. Both the posted path and the flush
+are mutation-verified.
+(2) **The GR history frame asked for the ring's FULL capacity.** `peek` masks the absolute index,
+so `head - kSize` aliases the slot the audio thread is filling at that instant — the producer
+writes the slot and THEN publishes `head + 1`, so the oldest entry of a full-capacity window is
+half-written. Reachable at ordinary settings (20 s at 48 kHz saturates the clamp for any block up
+to ~234 samples). Clamp corrected to `kSize - 1`, the reason mirrored into
+`GrHistoryBuffer::peek`'s contract, and the bound extracted to `GrHistoryView::windowEntries` so
+it is testable without a graphics context — the tear itself is only observable with a concurrent
+producer, so the bound has to be the guard.
+(3) **The processor's destructor did not deregister its listeners.** It is safe today by
+declaration order alone; the `startDraining`/`stopDraining` split exists precisely to stop relying
+on that argument, so the teardown now says what it guarantees.
+Comments where a future change would silently break something: `Knob::mouseDoubleClick`'s gesture
+bracketing now records the settled JUCE dispatch order with its citation (two reviews read it in
+opposite directions; the pinned `juce_Component.cpp` dispatches `mouseDoubleClick` from
+`internalMouseUp` AFTER `mouseUp`, so the bracket cannot nest inside the drag's); and
+`applyFactoryPreset` states why iterating the APVTS tree while writing it is safe (a property write
+neither adds nor removes children) so a listener that ever added a PARAM node from there is
+recognised as invalidating the iteration. KI-007 gains an eighth item: a macro-knob gesture that
+moves nothing re-engages the mask without re-landing the curve, while `resetToMacro()` does both —
+a §5.3 wording question, not a defect.
+Previous: **review round 30 (2026-08-03)**, both of whose findings were the SAME
 failure the previous rounds kept producing — a rule applied at one of its sites:
 (1) **Round 29's staged-bit drop was written at ONE of the mask's five replacement sites.**
 `applySlotToLive` got it; `applyFactoryPreset`, `applyPresetFile`, `setStateInformation` (which

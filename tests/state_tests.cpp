@@ -10,6 +10,7 @@
 
 #include "../src/PluginProcessor.h"
 #include "../src/MacroEngine.h"
+#include "../src/gui/GrHistoryView.h"
 #include <array>
 #include <cstdio>
 #include <thread>
@@ -1459,6 +1460,72 @@ static void testTheDrainTickReEngagesBeforeItMaps()
            "tickOrder: …and the SAME tick's mapping landed the curve on it");
 }
 
+// The POSTED half of the same contract. `MacroEngine::parameterChanged` posts
+// `triggerAsyncUpdate()` when a macro id changes on the message thread, and for
+// one revision `handleAsyncUpdate` ran `drainPendingMapping()` ALONE while the
+// timer ran the wrapper's drain first — so the two entry points into "map now"
+// disagreed about whether the detach mask was up to date. The stimulus that
+// isolates it is host automation of a macro (message thread, NO gesture, so
+// nothing re-engages) racing a gestured managed edit delivered off-thread
+// (bit staged, `drainDetachBitsSoon` deliberately refusing to post).
+static void testThePostedDrainAlsoTakesTheWrapperBitsFirst()
+{
+    AnabasisAudioProcessor proc;
+    auto* limGain  = proc.apvts.getParameter (pid::limGain);
+    auto* loudness = proc.apvts.getParameter (pid::loudness);
+    auto lim = [&] { return proc.apvts.getRawParameterValue (pid::limGain)->load(); };
+
+    std::thread offThread ([limGain]
+    {
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (2.0f));
+        limGain->endChangeGesture();
+    });
+    offThread.join();
+    check (proc.detachMask().isEmpty(),
+           "postedDrain: (premise) the off-thread detach bit is staged, not yet in the mask");
+    check (std::abs (lim() - 2.0f) < 1.0e-3f,
+           "postedDrain: (premise) limGain holds the user's value");
+
+    // Ungestured macro write on the message thread: the one stimulus that
+    // posts. No gesture means no §5.3 re-engage, so limGain must stay the
+    // user's — and it only does if the posted handler drains the wrapper's
+    // staged bit BEFORE its own mapping consults the mask.
+    loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (70.0f));
+    proc.getMacroEngine().handleAsyncUpdate();     // what the message queue would run
+
+    check (proc.detachMask().contains (pid::limGain),
+           "postedDrain: the posted handler took the wrapper's staged bit first");
+    check (std::abs (lim() - 2.0f) < 1.0e-3f,
+           "postedDrain: …so the SAME handler's mapping skipped limGain");
+    check (std::abs (proc.apvts.getRawParameterValue (pid::compThreshold)->load()
+                       - macro_curves::compThresholdDb (0.7f)) < 0.05f,
+           "postedDrain: the un-detached managed parameters still followed the macro");
+
+    // The THIRD entry point, closing the set: `flushPendingMapping` (reset-to-
+    // macro, and the headless tests' own flush). Same stimulus, a second
+    // managed parameter, so a revision that fixes two of the three routes and
+    // leaves the third calling `drainPendingMapping()` alone still fails here.
+    auto* clipDrive = proc.apvts.getParameter (pid::clipDrive);
+    std::thread offThread2 ([clipDrive]
+    {
+        clipDrive->beginChangeGesture();
+        clipDrive->setValueNotifyingHost (clipDrive->getNormalisableRange().convertTo0to1 (6.0f));
+        clipDrive->endChangeGesture();
+    });
+    offThread2.join();
+    check (! proc.detachMask().contains (pid::clipDrive),
+           "postedDrain: (premise) the second bit is staged too, not yet in the mask");
+
+    loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (40.0f));
+    proc.getMacroEngine().flushPendingMapping();
+
+    check (proc.detachMask().contains (pid::clipDrive),
+           "postedDrain: the flush ran the same sequence — staged bit first");
+    check (std::abs (proc.apvts.getRawParameterValue (pid::clipDrive)->load() - 6.0f) < 1.0e-3f,
+           "postedDrain: …and its mapping skipped the freshly detached clipDrive");
+}
+
 // ---------------------------------------------------------------------------
 // §5.3 detach / re-engage — ADR-0005's P5 half, the gesture grammar. The
 // discriminator's three conditions each get the stimulus that isolates them:
@@ -1656,6 +1723,27 @@ static void testGrRingResetEpoch()
     check ((ring.resetEpoch() & 1u) == 0u, "grEpoch: and lands even");
     check (ring.available() == 0,
            "grEpoch: the index rewound — which is why the epoch must exist");
+}
+
+// ---------------------------------------------------------------------------
+// The reader's other half: the WINDOW CLAMP. `peek` masks the absolute index,
+// so `head - kSize` aliases the slot the producer is filling at that instant —
+// a frame asking for the full capacity reads a half-written entry as its
+// oldest. Asserted through the pure bound rather than through a rendered
+// frame, because the tear is only OBSERVABLE with a concurrent producer, which
+// no deterministic test can stage: the guard has to be the bound itself.
+static void testGrHistoryWindowNeverAsksForTheHeadSlot()
+{
+    using Ring = anabasis::GrHistoryBuffer;
+    check (GrHistoryView::windowEntries (48000.0, 64) == Ring::kSize - 1,
+           "grWindow: a 64-sample block saturates at kSize - 1, never kSize");
+    check (GrHistoryView::windowEntries (192000.0, 32) == Ring::kSize - 1,
+           "grWindow: …and so does every rate/block that would overflow the ring");
+    check (GrHistoryView::windowEntries (48000.0, 512)
+               == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 48000.0 / 512.0),
+           "grWindow: below the clamp the window is the whole 20 s");
+    check (GrHistoryView::windowEntries (0.0, 512) == GrHistoryView::windowEntries (48000.0, 512),
+           "grWindow: an unprepared processor reads as 48 kHz, not as a divide by zero");
 }
 
 // ---------------------------------------------------------------------------
@@ -1981,15 +2069,17 @@ int main (int argc, char** argv)
         testAbSwitchRequestsDuck();
         testUndoRequestsDuck();
         testMeterPublication();
-    testAGestureEndWithoutACountedBeginIsIgnored();
-    testAMacroGestureWinsADetachRacingItInOneDrain();
-    testARestoreDropsStagedDetachBits();
-    testTheDrainTickReEngagesBeforeItMaps();
-    testDetachAndReengageGrammar();
-    testUndoIsPerSlotGestureCoalescedAndMaskWide();
-    testFactoryPresets();
-    testMeterResetClearsSessionHolds();
-    testGrRingResetEpoch();
+        testAGestureEndWithoutACountedBeginIsIgnored();
+        testAMacroGestureWinsADetachRacingItInOneDrain();
+        testARestoreDropsStagedDetachBits();
+        testTheDrainTickReEngagesBeforeItMaps();
+        testThePostedDrainAlsoTakesTheWrapperBitsFirst();
+        testDetachAndReengageGrammar();
+        testUndoIsPerSlotGestureCoalescedAndMaskWide();
+        testFactoryPresets();
+        testMeterResetClearsSessionHolds();
+        testGrRingResetEpoch();
+        testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();

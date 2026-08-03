@@ -127,6 +127,18 @@ private:
             // "gesture-bracketed"). Unbracketed, a double-click reset silently
             // did neither, so the next macro pass took the value straight back
             // while an alt-click reset held.
+            //
+            // It does NOT nest inside the SliderAttachment's own drag gesture,
+            // and two review rounds reached opposite conclusions about that, so
+            // here is the answer with its citation: JUCE dispatches
+            // `mouseDoubleClick` from `Component::internalMouseUp`, AFTER
+            // `target->mouseUp (me)` (juce_Component.cpp, the "check for
+            // double-click" block — read from the pinned tree, not from
+            // memory). By then `Slider::mouseUp` has destroyed `currentDrag`
+            // and the attachment has closed its gesture — which is also why
+            // stock `Slider::mouseDoubleClick` can construct its own
+            // `DragInProgress`. The host therefore sees one balanced
+            // begin/end pair and `jassert (! isPerformingGesture)` cannot fire.
             if (e.getNumberOfClicks() != 2)
                 return;
             if (resetParam != nullptr) resetParam->beginChangeGesture();

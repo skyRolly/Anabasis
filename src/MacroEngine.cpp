@@ -71,7 +71,16 @@ void MacroEngine::parameterChanged (const juce::String&, float)
 
 void MacroEngine::handleAsyncUpdate()
 {
-    drainPendingMapping();
+    // The posted path, and it runs the SAME sequence as the timer — see
+    // drainTick(). It called `drainPendingMapping()` alone for one round, which
+    // is the fourth entry point the "all three agree" comment below did not
+    // count: a macro id written on the message thread WITHOUT a gesture (host
+    // automation of loudness/character/tone) posts here, and if a managed edit
+    // had been delivered off-thread in the previous 30 ms its detach bit was
+    // still staged — so the mapping overwrote the user's value, and the next
+    // tick then marked that parameter detached at the value the macro had just
+    // put there.
+    drainTick();
 }
 
 void MacroEngine::timerCallback()
@@ -94,11 +103,17 @@ void MacroEngine::drainTick()
     // re-engages ALL detached params"; that is only true if the re-engage is
     // visible to the pass that lands the curve.
     //
-    // This is the same precedence `handleAsyncUpdate` applies INSIDE the drain
+    // This is the same precedence the wrapper's drain applies INTERNALLY
     // (detach bits, then the re-engage clears over them), and the same one the
-    // message-thread path gets for free — there `drainDetachBitsSoon` clears
-    // synchronously at gesture begin, before any mapping write. All three now
-    // agree.
+    // message-thread gesture path gets for free — there `drainDetachBitsSoon`
+    // clears synchronously at gesture begin, before any mapping write.
+    //
+    // EVERY trigger routes through this function — the 30 ms timer, the posted
+    // `handleAsyncUpdate`, and `flushPendingMapping` — because the previous
+    // revision fixed the order here and left `handleAsyncUpdate` calling
+    // `drainPendingMapping()` alone, then claimed in this very comment that
+    // "all three now agree". Counting the paths in prose is how the fourth one
+    // was missed; there is now one sequence and three ways to ask for it.
     if (onDrainTick)
         onDrainTick();
     drainPendingMapping();
@@ -107,7 +122,7 @@ void MacroEngine::drainTick()
 void MacroEngine::flushPendingMapping()
 {
     cancelPendingUpdate();
-    drainPendingMapping();
+    drainTick();
 }
 
 void MacroEngine::drainPendingMapping()

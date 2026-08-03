@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "LookAndFeel.h"
 #include "FrameClock.h"
+#include "../dsp/GrHistoryBuffer.h"
 
 class AnabasisAudioProcessor;
 
@@ -35,6 +36,22 @@ public:
 
     // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band.
     static constexpr double kWindowSeconds = 20.0;
+
+    // How many entries behind the head the frame may read, given the prepared
+    // rate and block size. Pure and public because the CLAMP is the part with
+    // a correctness argument — `kSize - 1`, not `kSize`, because `peek` masks
+    // the absolute index and `head - kSize` therefore aliases the slot the
+    // audio thread is filling right now (it writes the slot, THEN publishes
+    // head + 1), so a full-capacity window reads a half-written entry as its
+    // oldest. A clamp that only exists inside `paint` is a clamp no test can
+    // pin without a graphics context, which is how it sat one too wide.
+    static int64_t windowEntries (double sampleRate, int blockSize) noexcept
+    {
+        const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
+        const int    bs = juce::jmax (1, blockSize);
+        return juce::jmin<int64_t> (anabasis::GrHistoryBuffer::kSize - 1,
+                                    (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
+    }
 
 private:
     void tick (double dt);

@@ -296,7 +296,7 @@ half alone.
 
 **Severity:** Low (each is display or recall bookkeeping; none changes a rendered sample on its own)
 **Status:** Recorded — opened by review round 25 (2026-08-03) with three items and extended by
-rounds 27 and 28; deliberately NOT fixed, because each is a semantics question rather than a
+rounds 27, 28 and 31; deliberately NOT fixed, because each is a semantics question rather than a
 defect, and several are the same question KI-006 asks. **The count is deliberately not in the
 heading**: it was "Three" for one round after the fourth item landed, which is exactly how a
 fine-review checklist gets read as shorter than it is. Numbered items below are the list of
@@ -359,6 +359,19 @@ record.
    copied values, silently discarding the copy AND that slot's last edit. Same family as item 3:
    what the undo unit should do when a whole slot is replaced from outside its own history is one
    question, and it should be answered once for undo/redo, Copy, and the dirty datum together.
+
+8. **A macro-knob gesture that moves nothing re-engages the mask without re-landing the curve.**
+   `audioProcessorParameterChangeGestureBegin` sets `pendingReengage` for `loudness`/`character`/
+   `tone` on the BEGIN, so a click-and-release on a macro knob with no value change clears the
+   detach mask — §5.3's "the next macro-knob gesture re-engages ALL detached params", read
+   literally. But no value changed, so nothing arms `mappingPending`, and the drain that follows
+   has no mapping pass to run: the freshly re-engaged parameters keep the user's off-curve values
+   until the next real macro move. `resetToMacro()` — the explicit "reset to macro" verb — clears
+   the mask AND calls `refreshMapping()`, so the two re-engagement routes end in different places.
+   Whether §5.3 intends a gesture-driven re-engage to also re-land the curve, or intends the mask
+   clear alone (leaving the curve to arrive with the next move), is the spec question; the code is
+   consistent with the sentence as written, which is why this is recorded rather than "fixed" by
+   adding a `refreshMapping()` that would change audible behaviour on a stray click.
 
 **For the post-v0.1.0 fine review, alongside KI-006.**
 

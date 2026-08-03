@@ -173,9 +173,15 @@ public:
     // ScopedRestore models what the timer would really do there.
     void flushPendingMapping();
 
+    // The POSTED drain, public for the same reason `drainTick` is: it is a
+    // separate entry point into the same sequence, no message loop runs in the
+    // headless tests, and an entry point no test can call is exactly how this
+    // one drifted into running the mapping without the wrapper's drain in
+    // front of it. Calling it directly is what the message queue would do.
+    void handleAsyncUpdate() override;                             // message thread only
+
 private:
     void parameterChanged (const juce::String&, float) override;   // any thread → flag only
-    void handleAsyncUpdate() override;                             // message thread only
     void timerCallback() override;                                 // message thread only
     void drainPendingMapping();                                    // message thread only
     void applyMapping();
