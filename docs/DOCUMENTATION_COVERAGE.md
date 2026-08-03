@@ -6,7 +6,56 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 37 (2026-08-03)** — a triaged round, limited to findings that
+**Last updated:** for **review round 38 (2026-08-03)** — a triaged round of five state-consistency
+items, each the minimal change consistent with the model already in the tree:
+(1) **A debug build could abort while browsing presets.** `relandMacroCurve()` asserted that no
+detach bit was staged, in the one function written to cope with one being staged.
+`applyFactoryPreset` calls `replaceDetachMask` INSIDE its `ScopedRestore` and reaches the re-land
+several statements after the guard drops, and `parameterChanged` stages a bit from whichever thread
+the host delivers the callback on (KI-003) — so the assertion could not hold under the threading
+model the same file documents. The two stores were already the whole mechanism; the assert is gone
+and the comment now says why dropping the bits is the correct outcome (a gesture racing a bulk swap
+belongs to the state being replaced, which `replaceDetachMask` decides for every other path).
+(2) **A load reset two of the three gesture-state members.** `openGestureBits` and `gesturePreState`
+were cleared; `managedGestureBits` was not — and it is set and cleared on ANY thread, so a BEGIN
+delivered off-thread with the session replaced before its END left the bit standing, and the next
+UNGESTURED write to that managed parameter satisfied the "gesture-bracketed" half of the §5.3
+discriminator. The three are one family and now reset together.
+(3) **Frozen-trim persistence, two unambiguous halves.** A freeze-OFF slot no longer serialises a
+`FROZEN_TRIMS` child at all: `frozen` used to start from the carried mirror unconditionally, so a
+slot that was frozen, loaded, then un-frozen wrote the old vector into every later save — a latch
+serialised by a slot §5.4/MODE invariant 3 gives nothing to latch, and a child of the tree
+`presetDirty()` compares. And the capture now also requires
+`AdaptiveEngine::hasPublishedTrims()`, because the four published atomics start at zero and "all
+four read 0" is otherwise indistinguishable between *measured, no trim* and *never measured* — the
+save half of KI-006, closed without needing the audio half's owner call, since a value never
+measured cannot be more truthful than the one the slot already holds. The round-trip fixture was
+corrected with it: it set `FROZEN_TRIMS` on a slot whose `freeze` was OFF, so it pinned the round
+trip of a state the product cannot produce; it now sets Freeze ON on both surfaces (the root
+`ANABASIS` child carries the ACTIVE slot's live values, the `AB` child the per-slot copies) and a
+new check pins the freeze-OFF half.
+(4) **Undo/redo restore the dirty datum beside the state.** They restored the whole slot including
+`presetName` while `presetBaseline` stayed put, so undoing a preset apply left the name and the
+datum describing different presets. Neither route this was recorded as needing was required — the
+baseline did not go into the StateSet (an ADR-0007 schema change and a Hard Stop) and undo does not
+recompute it: the stacks are session-local and never serialized, so an entry is now the pair
+`{ slot, baseline }`, taken and restored together.
+(5) **Reset-to-macro is undoable.** It clears the mask and re-lands nine values while pushing
+nothing onto the §7 stack, and its writes are ungestured so no drag step appeared either. It now
+pushes its pre-state exactly as the preset applies do. No duck request added: unlike a preset apply
+or an undo it rewires no discrete stage, and DSP invariant 8's enumeration is about the bulk swaps
+that do.
+`testStateReplacementAndHistoryConsistency` covers (2), (4) and (5); the frozen-trim half is covered
+by `testFrozenSlotRoundTrip`'s new freeze-OFF check. Four mutants, one per guard. Documents
+re-checked and synced: `KNOWN_ISSUES` KI-006 (save half CLOSED, audio half untouched and still an
+owner call) and KI-007 items 3, 5 (the `FROZEN_TRIMS` input settled, the preset-EXCLUDED half still
+open) and 9.
+**Left documented, per the triage:** the frozen vector surviving a factory apply (KI-007 item 1 — a
+MODE-invariant-3 question, and `applyPresetFile` behaves identically, so there is no internal
+inconsistency to correct), the preset dirty model's preset-EXCLUDED half, the undo/state-restore
+THREADING architecture (KI-003), the duck's cost on a frozen-slot restore, the spectrum rings not
+being cleared on `prepare()`, and the analyser/menu/navigation/CI items the brief excluded.
+Previous: **review round 37 (2026-08-03)** — a triaged round, limited to findings that
 violate an invariant this build has already established. Four, plus one pairing hardening:
 (1) **The post-teardown drain guarantee was unenforced.** Round 36 removed the `std::function`
 nulling from `stopDraining()` for a sound reason (it raced a tick already about to invoke one) and

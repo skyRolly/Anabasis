@@ -471,6 +471,15 @@ public:
     float publishedTrimLink() const noexcept    { return pubTrimLink.load (std::memory_order_relaxed); }
     float publishedTrimHpf() const noexcept     { return pubTrimHpf.load (std::memory_order_relaxed); }
     float publishedTrimTilt() const noexcept    { return pubTrimTilt.load (std::memory_order_relaxed); }
+    // Has ANY block ever published a vector? The four atomics above start at
+    // zero and stay there until `finishBlock` publishes — which it only does
+    // while un-frozen and audible — so "all four read 0" is ambiguous between
+    // "measured, and the answer is no trim" and "never measured". The ADR-0014
+    // save capture needs the difference: reading the published atomics on an
+    // instance that was prepared but never processed a block would serialise
+    // an all-zero FROZEN_TRIMS over a vector the slot already holds. Relaxed,
+    // one-way, and set beside the values it describes.
+    bool hasPublishedTrims() const noexcept     { return pubTrimEver.load (std::memory_order_relaxed); }
 
 private:
     // AUDIO-THREAD ONLY, and private so that is true by construction rather
@@ -490,6 +499,7 @@ private:
         pubTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
         pubTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
         pubTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
+        pubTrimEver.store (true, std::memory_order_relaxed);
     }
 
     float onePoleMs (float ms) const noexcept
@@ -533,6 +543,7 @@ private:
     std::atomic<float> pubCrestDb { 0.0f }, pubTiltDb { 0.0f }, pubOnsetRate { 0.0f };
     std::atomic<float> pubTrimRel { 0.0f }, pubTrimLink { 0.0f },
                        pubTrimHpf { 0.0f }, pubTrimTilt { 0.0f };
+    std::atomic<bool>  pubTrimEver { false };   // see hasPublishedTrims()
     std::atomic<float> pubRefOnset { kDefaultRefOnset }, pubRefTilt { kDefaultRefTilt };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaptiveEngine)

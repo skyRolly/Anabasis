@@ -183,6 +183,18 @@ public:
     // WITHOUT moving a macro. Message thread.
     void resetToMacro()
     {
+        // §7: this is a user-visible multi-parameter change — the whole detach
+        // mask plus the nine §5.5 managed values — so it takes an undo step
+        // like every other one. It had none: the writes are ungestured (so the
+        // drag path never sees them) and the mask replacement is not a
+        // parameter write at all, which left the one affordance in the Simple
+        // view that changes nine parameters at once as the only one the user
+        // could not take back. Pushed BEFORE the change, exactly as the preset
+        // applies do, so the entry is the pre-state. No duck request: unlike a
+        // preset apply or an undo this rewires no discrete stage — it moves
+        // nine continuous, smoothed values — and DSP invariant 8's click-free
+        // enumeration is about the bulk swaps that do.
+        pushUndoStep (saveSlotFromLive());
         replaceDetachMask ({});      // …and drops any staged detach with it
         relandMacroCurve();
     }
@@ -213,8 +225,20 @@ private:
         // enforcement would have been weaker than the sentence above it.
         // Dropping them is what `replaceDetachMask` already did, so this is a
         // no-op for both existing callers and idempotent by construction.
-        jassert (pendingDetachBits.load (std::memory_order_relaxed) == 0
-                 && ! pendingReengage.load (std::memory_order_relaxed));
+        // The two stores ARE the mechanism, in every build. There is
+        // deliberately no `jassert` that they were already clear: a bit can be
+        // legitimately set at this point. `applyFactoryPreset` calls
+        // `replaceDetachMask` INSIDE its `ScopedRestore` and reaches here
+        // several statements after the guard drops, and
+        // `AnabasisAudioProcessor::parameterChanged` stages a bit from
+        // whichever thread the host delivers the callback on — the whole
+        // atomic-bit machinery exists because VST3 gesture threading is
+        // host-defined (KI-003). Asserting "no edit is waiting" in the one
+        // place written to cope with an edit waiting made a debug build abort
+        // on ordinary preset browsing. Dropping the bits is the correct
+        // outcome either way: a gesture racing a bulk swap belongs to the
+        // state being replaced, which is exactly what `replaceDetachMask`
+        // already decides for every other path.
         pendingDetachBits.store (0, std::memory_order_relaxed);
         pendingReengage.store (false, std::memory_order_relaxed);
         macroEngine->refreshMapping();
@@ -238,8 +262,23 @@ private:
     // Per-slot StateSet = {params, presetName, baseline, frozenTrims,
     // detachMask} (ADR-0007) — all five fields or none on every copy path.
     int activeSlot = 0;
-    juce::Array<juce::ValueTree> undoStacks[anabasis::kNumAbSlots],
-                                 redoStacks[anabasis::kNumAbSlots];
+    // A §7 history entry is the StateSet PLUS the dirty datum that described
+    // it. `presetBaseline` is deliberately NOT in the StateSet — it is not
+    // serialized, and putting it there would be an ADR-0007 schema change and
+    // a Hard Stop — but undo/redo restore the whole slot INCLUDING
+    // `presetName`, so leaving the baseline behind left the name and the datum
+    // describing different presets: undoing a preset apply restored the
+    // previous state while the top bar kept comparing against the applied
+    // preset. The stacks are session-local and never serialized, so carrying
+    // the pair costs nothing outside memory and settles the pairing at the one
+    // place entries are made and taken.
+    struct UndoEntry
+    {
+        juce::ValueTree slot;       // the StateSet to restore
+        juce::ValueTree baseline;   // `presetBaseline` as it was beside it
+    };
+    juce::Array<UndoEntry> undoStacks[anabasis::kNumAbSlots],
+                           redoStacks[anabasis::kNumAbSlots];
     juce::ValueTree gesturePreState;     // armed at first gesture-begin
     // The state the named preset landed, PER SLOT — it is the datum
     // `presetDirty()` compares against, and `livePresetName` is per-slot state,

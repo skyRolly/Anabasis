@@ -198,7 +198,8 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
 // in total — but that is an invariant living in two places, and a future path
 // that pushed a redo entry directly would grow without limit. One function,
 // one bound.
-static void pushCapped (juce::Array<juce::ValueTree>& stack, juce::ValueTree entry, int cap)
+template <typename Stack, typename Entry>
+static void pushCapped (Stack& stack, Entry entry, int cap)
 {
     stack.add (std::move (entry));
     while (stack.size() > cap)
@@ -207,7 +208,12 @@ static void pushCapped (juce::Array<juce::ValueTree>& stack, juce::ValueTree ent
 
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
 {
-    pushCapped (undoStacks[activeSlot], preState.createCopy(), kUndoCap);
+    // `presetBaseline` is read HERE rather than passed in, and every caller
+    // makes that correct: a gesture does not touch the datum, and the preset
+    // applies push BEFORE they replace it, so what this reads is always the
+    // baseline that belonged beside `preState`.
+    pushCapped (undoStacks[activeSlot],
+                UndoEntry { preState.createCopy(), presetBaseline.createCopy() }, kUndoCap);
     redoStacks[activeSlot].clear();      // a new edit invalidates the redo line
 }
 
@@ -224,11 +230,17 @@ void AnabasisAudioProcessor::undo()
     auto& stack = undoStacks[activeSlot];
     if (stack.isEmpty())
         return;
-    pushCapped (redoStacks[activeSlot], saveSlotFromLive(), kUndoCap);
+    pushCapped (redoStacks[activeSlot],
+                UndoEntry { saveSlotFromLive(), presetBaseline.createCopy() }, kUndoCap);
     const auto prev = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3: not a gesture
     engine.requestForcedDuck();
-    applySlotToLive (prev);
+    applySlotToLive (prev.slot);
+    // …and the datum that described it. `applySlotToLive` restores
+    // `presetName` from the StateSet, so restoring one without the other left
+    // the top bar comparing a previous preset's state against the applied
+    // preset's baseline and rendering the mark for neither.
+    presetBaseline = prev.baseline;
 }
 
 void AnabasisAudioProcessor::redo()
@@ -236,11 +248,13 @@ void AnabasisAudioProcessor::redo()
     auto& stack = redoStacks[activeSlot];
     if (stack.isEmpty())
         return;
-    pushCapped (undoStacks[activeSlot], saveSlotFromLive(), kUndoCap);
+    pushCapped (undoStacks[activeSlot],
+                UndoEntry { saveSlotFromLive(), presetBaseline.createCopy() }, kUndoCap);
     const auto next = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();                              // §2.8, as undo()
-    applySlotToLive (next);
+    applySlotToLive (next.slot);
+    presetBaseline = next.baseline;                          // paired, as undo()
 }
 
 void AnabasisAudioProcessor::parameterChanged (const juce::String& parameterID, float)
@@ -511,17 +525,38 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     // ~3 Hz by the editor), and a display query that rewrites the mirror would
     // destroy the loaded vector the moment it ran inside that window — the
     // mirror is written by the restore paths only.
-    juce::ValueTree frozen = liveFrozenTrims;
-    if (apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f
-        && ! engine.frozenRestorePending())
+    //
+    // FREEZE OFF ⇒ NO CHILD AT ALL. `frozen` used to start from the mirror
+    // unconditionally, so a slot that was frozen, loaded, then UN-frozen kept
+    // writing the old vector into every later save — a latch serialised by a
+    // slot that no longer holds one. Inert for audio (both landing sites stage
+    // it only for a freeze-ON adopted surface) but not inert for state: it is
+    // the record of a Freeze the user has switched off, and it is a child of
+    // the tree `presetDirty()` compares, so its presence flipped the edited
+    // mark. §5.4/MODE invariant 3 give a freeze-OFF slot nothing to latch.
+    juce::ValueTree frozen;
+    if (apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f)
     {
+        frozen = liveFrozenTrims;              // the staged-but-unapplied window
+        // …and the ENGINE's latch when it is the truth. `hasPublishedTrims()`
+        // is the third condition, and it was missing: on an instance that was
+        // prepared but never processed a block the four published atomics are
+        // still at their initial zero, which is indistinguishable from a
+        // measured "no trim" — so this branch overwrote a vector the slot
+        // genuinely holds with zeros, and the next load re-injected them.
+        // KI-006 records the audio half of that asymmetry; this is the save
+        // half, and it needs no answer to the audio one: a value that was
+        // never measured cannot be more truthful than the one already held.
         const auto& a = engine.adaptiveForWrapper();
-        juce::ValueTree ft ("FROZEN_TRIMS");
-        ft.setProperty ("releaseOctaves", (double) a.publishedTrimRelease(), nullptr);
-        ft.setProperty ("stereoLink",     (double) a.publishedTrimLink(), nullptr);
-        ft.setProperty ("scHpfHz",        (double) a.publishedTrimHpf(), nullptr);
-        ft.setProperty ("dynTiltDb",      (double) a.publishedTrimTilt(), nullptr);
-        frozen = ft;
+        if (! engine.frozenRestorePending() && a.hasPublishedTrims())
+        {
+            juce::ValueTree ft ("FROZEN_TRIMS");
+            ft.setProperty ("releaseOctaves", (double) a.publishedTrimRelease(), nullptr);
+            ft.setProperty ("stereoLink",     (double) a.publishedTrimLink(), nullptr);
+            ft.setProperty ("scHpfHz",        (double) a.publishedTrimHpf(), nullptr);
+            ft.setProperty ("dynTiltDb",      (double) a.publishedTrimTilt(), nullptr);
+            frozen = ft;
+        }
     }
     if (frozen.isValid())
         slot.appendChild (frozen.createCopy(), nullptr);
@@ -845,6 +880,17 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     }
     openGestureBits.store (0, std::memory_order_relaxed);
     gesturePreState = {};
+    // …and the THIRD member of the gesture-state family, which the load did
+    // not reset. `managedGestureBits` is set and cleared on ANY thread (an
+    // off-thread drag detaches), so a BEGIN delivered off-thread with the
+    // session replaced before its matching END left the bit standing — and the
+    // next ungestured write to that managed parameter would then satisfy the
+    // "gesture-bracketed" half of the §5.3 discriminator. The other two
+    // conditions keep the exposure narrow (the mapper's own writes are covered
+    // by `isApplyingMacro`/`isRestoring`), but a load starts a fresh session
+    // and no gesture from the previous one may outlive it: the three members
+    // are one family and now reset together.
+    managedGestureBits.store (0, std::memory_order_relaxed);
     // The P5 decision THREAD_MODEL left open, taken: a state load CLEARS the
     // session-cumulative meter holds. The integrated LUFS and the dBTP hold
     // describe the programme measured so far, and after a load the programme

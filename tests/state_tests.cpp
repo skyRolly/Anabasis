@@ -344,6 +344,26 @@ static void testFrozenSlotRoundTrip()
     auto ab   = root.getChildWithName ("AB");
     auto slot = ab.getChild (0);
     slot.setProperty ("presetName", "Frozen A", nullptr);
+    // FREEZE ON in the slot's own parameter tree, because that is what a
+    // frozen slot IS: §5.4/MODE invariant 3 give a freeze-OFF slot nothing to
+    // latch, and since round 38 `saveSlotFromLive` emits no `FROZEN_TRIMS`
+    // child for one. The fixture used to leave `freeze` at its default and
+    // still expect the child back — a state the product cannot produce, so the
+    // round trip it pinned was of an inconsistent tree rather than of ADR-0014.
+    // BOTH surfaces, because they are different trees: the ACTIVE slot's live
+    // values come from the root-level `ANABASIS` child (`setStateInformation`
+    // adopts that one), while the `AB` child carries the per-slot copies. A
+    // fixture that set only the latter loaded with Freeze OFF.
+    auto setFreezeOn = [] (juce::ValueTree params)
+    {
+        if (auto fz = params.getChildWithProperty ("id", "freeze"); fz.isValid())
+        {
+            fz.setProperty ("value", 1.0, nullptr);
+            fz.setProperty ("raw",   1.0, nullptr);
+        }
+    };
+    setFreezeOn (root.getChildWithName ("ANABASIS"));
+    setFreezeOn (slot.getChildWithName ("ANABASIS"));
     juce::ValueTree trims ("FROZEN_TRIMS");
     trims.setProperty ("releaseOctaves", 0.25, nullptr);   // the ADR-0014 field names
     trims.setProperty ("stereoLink",     -0.1, nullptr);
@@ -384,6 +404,18 @@ static void testFrozenSlotRoundTrip()
     const auto s3 = r3.getChildWithName ("AB").getChild (0);
     check (s3.getChildWithName ("FROZEN_TRIMS").isValid() && s3.getChildWithName ("DETACH_MASK").getNumChildren() == 1,
            "frozenSlot: trims + mask travel per-slot through the A/B swap paths");
+
+    // The other half of the same rule: a slot the user UN-freezes stops
+    // serialising a latch it no longer holds. Before this, `frozen` started
+    // from the mirror unconditionally, so the vector was written into every
+    // later save — and, being a child of the tree `presetDirty()` compares,
+    // kept flipping the edited mark for a change no preset could carry.
+    b.apvts.getParameter (pid::freeze)->setValueNotifyingHost (0.0f);
+    juce::MemoryBlock out4;
+    b.getStateInformation (out4);
+    const auto r4 = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (out4.getData(), (int) out4.getSize()));
+    check (! r4.getChildWithName ("AB").getChild (0).getChildWithName ("FROZEN_TRIMS").isValid(),
+           "frozenSlot: a freeze-OFF slot serialises no frozen vector at all");
 }
 
 // ---------------------------------------------------------------------------
@@ -1652,6 +1684,81 @@ static void testTeardownAndReengageInvariants()
     }
 }
 
+// Round 38's state-consistency invariants: each has exactly one observable
+// consequence, so each gets exactly one stimulus.
+static void testStateReplacementAndHistoryConsistency()
+{
+    // (1) A state LOAD resets every member of the gesture-state family.
+    // `managedGestureBits` was the one it did not: a BEGIN delivered off the
+    // message thread with the session replaced before its matching END left
+    // the bit standing, and the next UNGESTURED write to that managed
+    // parameter then satisfied the "gesture-bracketed" half of §5.3.
+    {
+        AnabasisAudioProcessor proc;
+        juce::MemoryBlock session;
+        proc.getStateInformation (session);
+
+        auto* limGain = proc.apvts.getParameter (pid::limGain);
+        std::thread offThread ([limGain] { limGain->beginChangeGesture(); });   // no END
+        offThread.join();
+
+        proc.setStateInformation (session.getData(), (int) session.getSize());
+
+        // An UNGESTURED write, i.e. automation. With the stale bit it detached.
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (3.0f));
+        proc.flushPendingDetach();
+        check (proc.detachMask().isEmpty(),
+               "loadReset: a gesture left open across a load cannot detach the next automation write");
+    }
+
+    // (2) Undo restores the dirty DATUM beside the state it describes.
+    // `applySlotToLive` restores `presetName` from the StateSet, so leaving
+    // `presetBaseline` behind left the two describing different presets: after
+    // undoing a preset apply the top bar compared a previous preset's state
+    // against the applied preset's baseline.
+    {
+        AnabasisAudioProcessor proc;
+        proc.applyFactoryPreset (1);
+        check (! proc.presetDirty(), "undoBaseline: (premise) a fresh apply reads clean");
+        proc.applyFactoryPreset (2);
+        check (! proc.presetDirty(), "undoBaseline: (premise) …and so does the second");
+        proc.undo();
+        check (proc.currentPresetName() == "Loud Pop",
+               "undoBaseline: (premise) undo restored the previous preset's name");
+        check (! proc.presetDirty(),
+               "undoBaseline: …and its baseline with it, so the name reads clean");
+        proc.redo();
+        check (proc.currentPresetName() == "EDM Club" && ! proc.presetDirty(),
+               "undoBaseline: redo carries the pair the other way");
+    }
+
+    // (3) Reset-to-macro is a user-visible multi-parameter change, so §7 makes
+    // it undoable like every other one. It clears the whole mask and re-lands
+    // nine values; the writes are ungestured, so the drag path never saw them.
+    {
+        AnabasisAudioProcessor proc;
+        auto* limGain = proc.apvts.getParameter (pid::limGain);
+        proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (
+            proc.apvts.getParameter (pid::loudness)->getNormalisableRange().convertTo0to1 (60.0f));
+        proc.getMacroEngine().flushPendingMapping();
+
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (2.0f));
+        limGain->endChangeGesture();
+        proc.flushPendingDetach();
+        check (proc.detachMask().contains (pid::limGain),
+               "resetUndo: (premise) limGain is detached at the user's value");
+
+        proc.resetToMacro();
+        check (proc.detachMask().isEmpty() && proc.canUndo(),
+               "resetUndo: reset-to-macro re-engages and pushes an undo step");
+        proc.undo();
+        check (proc.detachMask().contains (pid::limGain)
+                   && std::abs (proc.apvts.getRawParameterValue (pid::limGain)->load() - 2.0f) < 1.0e-3f,
+               "resetUndo: …and undoing it restores both the mask and the value");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // §5.3 detach / re-engage — ADR-0005's P5 half, the gesture grammar. The
 // discriminator's three conditions each get the stimulus that isolates them:
@@ -2360,6 +2467,7 @@ int main (int argc, char** argv)
         testAGestureEndWithoutACountedBeginIsIgnored();
         testAMacroGestureWinsADetachRacingItInOneDrain();
         testTeardownAndReengageInvariants();
+        testStateReplacementAndHistoryConsistency();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();

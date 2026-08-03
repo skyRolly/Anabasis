@@ -269,6 +269,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - **Copying one A/B slot over the other starts that slot's undo history fresh** (2026-08-03).
   Before, the first undo after switching to the copied-into slot restored a state from before the
   copy — silently discarding both the copy and that slot's last edit.
+- **Undoing a preset change restores the edited mark too** (2026-08-03): the name reverted but the
+  " *" kept comparing against the preset that had just been applied.
+- **"Reset to macro" can be undone** (2026-08-03). It re-attaches every knob to the macro and
+  re-lands nine values at once, and it was the only change of that size the user could not take
+  back.
+- **An un-frozen A/B slot no longer saves a Freeze memory it does not hold** (2026-08-03), and a
+  plugin that has been opened but has not yet played audio no longer overwrites a saved Freeze
+  memory with zeros.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
   the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
   documented; a well-formed preset file from another plugin is refused without costing an undo
@@ -283,7 +291,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testTheSettingsPanelFollowsAProjectLoad`,
   `testTheWholeTickIsSuppressedInsideARestore`,
   `testMeterResetClearsSessionHolds` (the no-audio-at-all case),
-  `testTeardownAndReengageInvariants`; all mutation-verified. [Verified]
+  `testTeardownAndReengageInvariants`, `testStateReplacementAndHistoryConsistency`; all
+  mutation-verified. [Verified]
 
 - **Changed under the same PR:** the "Transparent Master" and "Classical Dynamics" factory presets
   now select the **Clean** colour model explicitly. Both are described as untouched, and both were

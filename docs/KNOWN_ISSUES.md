@@ -293,15 +293,16 @@ discontinuity, which is an owner/ADR call, not a bug fix. The alternative
 `liveFrozenTrims` holds one, i.e. after a load — a vector latched live in this
 session has no copy to re-stage from.
 
-**The SAVE half of the same gap, added 2026-08-03 (review round 27).** The description above is
-about the audio; the capture has the mirror-image problem. `saveSlotFromLive` reads
-`publishedTrim*()` whenever Freeze is on and no restore is pending — and on an instance that was
-prepared but has never PROCESSED a block, those atomics are all zero. Such a session serialises an
-all-zero `FROZEN_TRIMS` for a slot the user believes holds a latched vector, and the next load
-injects zeros. The two halves want one answer: if the resolution is "the trim vector survives a
-re-prepare", the published atomics stay meaningful and the capture is right as written; if it is
-"a re-prepare drops it", the capture needs a has-ever-published discriminator. Do not settle one
-half alone.
+**The SAVE half of the same gap, added 2026-08-03 (review round 27), CLOSED 2026-08-03 (round
+38).** The description above is about the audio; the capture had the mirror-image problem.
+`saveSlotFromLive` read `publishedTrim*()` whenever Freeze was on and no restore was pending — and
+on an instance that was prepared but had never PROCESSED a block, those atomics are all zero, so
+the session serialised an all-zero `FROZEN_TRIMS` for a slot the user believes holds a latched
+vector and the next load injected zeros. It needed no answer to the audio half after all: the
+capture now also requires `AdaptiveEngine::hasPublishedTrims()`, a one-way flag set beside the four
+values, because "all four read 0" is otherwise indistinguishable between *measured, and the answer
+is no trim* and *never measured* — and a value that was never measured cannot be more truthful than
+the one the slot already holds. The AUDIO half above is untouched and still needs the owner call.
 
 **For the post-v0.1.0 fine review.**
 
@@ -330,12 +331,14 @@ record.
    index vs file) instead of re-deriving it from the display string — which is state the editor
    does not currently keep, hence not a one-line change.
 
-3. **Undo/redo do not restore `presetBaseline`.** They restore the whole SLOT tree while
-   `applyFactoryPreset` / `applyPresetFile` / `savePresetFile` all reset the dirty datum, so
-   undoing a preset apply restores the state but keeps the applied preset's baseline: the top
-   bar's dirty mark can read wrong until the next apply or save. Display-only. The clean fix is to
-   decide whether the baseline belongs IN the StateSet (a schema change — ADR-0007, Hard Stop) or
-   whether undo should recompute it; that is why it is recorded rather than patched.
+3. **RESOLVED 2026-08-03 (round 38) — undo/redo restore `presetBaseline`.** They restored the whole
+   SLOT tree, `presetName` included, while `applyFactoryPreset` / `applyPresetFile` /
+   `savePresetFile` reset the dirty datum — so undoing a preset apply left the name and the datum
+   describing different presets. Neither of the two routes this entry weighed was needed: the
+   baseline did NOT have to go into the StateSet (that would be an ADR-0007 schema change and a
+   Hard Stop) and undo did not have to recompute it. The stacks are session-local and never
+   serialized, so a history entry is now the pair — `{ slot, baseline }` — taken and restored
+   together at the one place entries are made.
 
 4. **RESOLVED 2026-08-03 (round 37) — the preset menu's raw LookAndFeel pointer.** `showPresetMenu`
    handed the menu `&lnf`, an editor member the menu window could outlive if a host tore the window
@@ -358,14 +361,13 @@ record.
    means deciding exactly that set (excluded params, `FROZEN_TRIMS`, `BASELINE` — but NOT
    `DETACH_MASK`, which presets do carry) — a small spec question, and the reason it is recorded
    here with items 1–4 rather than guessed at inside a no-new-bugs round.
-   **Feeding the same decision** (added 2026-08-03, review round 33): a freeze-OFF slot still
-   SERIALISES a `FROZEN_TRIMS` child. `saveSlotFromLive`'s capture branch runs only with Freeze
-   ON; otherwise `frozen` keeps the previously loaded/carried `liveFrozenTrims` and is appended
-   anyway, so a slot that was frozen, loaded, then un-frozen writes the old vector into every
-   later save. Inert for audio — both landing sites stage it only for a freeze-ON adopted surface
-   — but it is exactly the child whose presence/absence flips this item's dirty comparison, so
-   "what a preset cannot carry" and "when a slot may hold a frozen vector at all" are one
-   decision, not two.
+   **One input to that decision is now settled** (round 33 recorded it, round 38 closed it): a
+   freeze-OFF slot no longer serialises a `FROZEN_TRIMS` child at all. `frozen` used to start from
+   the carried mirror unconditionally, so a slot that was frozen, loaded, then un-frozen wrote the
+   old vector into every later save — a latch serialised by a slot that §5.4/MODE invariant 3 give
+   nothing to latch. That was a state-consistency defect on its own, and it removes the
+   `FROZEN_TRIMS` half of this item's noise; what REMAINS open is the preset-EXCLUDED parameter
+   half (`freeze` itself, and the view-tier ids), which is still the spec question above.
 
 6. **The spectrum view freezes rather than decaying when audio stops.**
    `SpectrumView::tick` returns early when neither capture ring's write count moved, so the
@@ -397,16 +399,14 @@ record.
    and `resetToMacro()`) do the same two things. Inert when nothing was detached, because
    `setParam` skips writes that would not change the value.
 
-9. **Reset-to-macro is a nine-parameter, mask-wide change with no undo step.** `resetToMacro()`
-   clears the detach mask and re-lands the curve on all nine managed parameters through
-   `refreshMapping()`, but pushes nothing onto the §7 stack, and its writes are ungestured — so
-   `parameterChanged` folds them into the automation path and no coalesced drag step appears
-   either. The §7 grammar makes preset applies and drags undoable; clicking the Simple view's
-   "edited" dot is a larger change than either and cannot be taken back. Same shape as item 7
-   (Copy A→B) and item 3 (undo not restoring the dirty baseline): the question is what the undo
-   unit should do when a whole set of parameters is replaced from outside a drag, and it wants one
-   answer for all three. Note the direction: item 8 is a re-engage that does NOT re-land the
-   curve; this is the verb that DOES, and neither is undoable.
+9. **RESOLVED 2026-08-03 (round 38) — reset-to-macro is undoable.** It clears the detach mask and
+   re-lands the curve on all nine managed parameters, but pushed nothing onto the §7 stack, and its
+   writes are ungestured so no drag step appeared either — leaving the one Simple-view affordance
+   that changes nine parameters at once as the only one the user could not take back. It needed no
+   new grammar: the preset applies already push their pre-state before changing anything, so
+   `resetToMacro()` does the same. No duck request was added — unlike a preset apply or an undo it
+   rewires no discrete stage, and DSP invariant 8's click-free enumeration is about the bulk swaps
+   that do. Item 7's Copy A→B, recorded here as the same shape, was settled in round 37.
 
 **For the post-v0.1.0 fine review, alongside KI-006.**
 
