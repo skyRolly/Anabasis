@@ -77,7 +77,14 @@ void LoudnessMeterView::paint (juce::Graphics& g)
 
     const char* tags[] = { "M", "S", "I" };
     const float vals[] = { shownM, shownS, shownI };
-    juce::Rectangle<int> lastBar;
+    // One rectangle per row, kept for the target ticks below: they used to
+    // RE-DERIVE the row origin from `getLocalBounds()` (`… + 18 + r * 26 + 6`),
+    // a second copy of arithmetic this loop already performs. It happened to
+    // agree — the tick spans `bar.getY() - 2` to `bar.getBottom() + 2`, the
+    // deliberate 2 px overhang on an 8 px bar — but a change to the header
+    // height, the 24 px row or the 2 px gap would have moved one copy and not
+    // the other. There is now one source for both.
+    juce::Rectangle<int> bars[3];
     for (int r = 0; r < 3; ++r)
     {
         auto row = area.removeFromTop (24);
@@ -89,7 +96,7 @@ void LoudnessMeterView::paint (juce::Graphics& g)
         g.drawText (fmt (vals[r]), row.removeFromLeft (48), juce::Justification::centredRight);
         row.removeFromLeft (8);
         auto bar = row.reduced (0, 8);
-        lastBar = bar;
+        bars[r] = bar;
         g.setColour (colours::bgRaised);
         g.fillRoundedRectangle (bar.toFloat(), 3.0f);
         if (vals[r] > silent)
@@ -111,13 +118,11 @@ void LoudnessMeterView::paint (juce::Graphics& g)
     {
         if ((shownMask & (1 << t)) == 0)
             continue;
-        const float x = toX (lastBar, kTargets[t].lufs);
+        const float x = toX (bars[2], kTargets[t].lufs);   // all three share a width
         g.setColour (colours::textDim.withAlpha (0.8f));
         for (int r = 0; r < 3; ++r)
-        {
-            const float y0 = (float) (getLocalBounds().reduced (12, 10).getY() + 18 + r * 26 + 6);
-            g.drawLine (x, y0, x, y0 + 12.0f, 1.0f);
-        }
+            g.drawLine (x, (float) bars[r].getY() - 2.0f,
+                        x, (float) bars[r].getBottom() + 2.0f, 1.0f);
         g.drawText (kTargets[t].shortName,
                     juce::Rectangle<int> ((int) x - 10, tagRow.getY(), 20, 12),
                     juce::Justification::centred);

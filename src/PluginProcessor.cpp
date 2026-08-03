@@ -291,16 +291,26 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a
     // block completes — and indefinitely if the host prepares without ever
-    // processing (a rate change while stopped, a plugin rescan). No reader
-    // exists before P5, which is why this is cheap to do now rather than a
-    // stale-peak bug to find later.
+    // processing (a rate change while stopped, a plugin rescan).
+    publishSilentMeters();
+    updateLatency();
+}
+
+// The six published meter atomics, cleared — ONE list, because three sites
+// need exactly this and two of them had grown their own copy. Relaxed stores,
+// so it is callable from any thread: `prepareToPlay` (host), the block-top
+// meter-reset consume (audio) and `setStateInformation` (whichever thread the
+// host restores on) all use it. It deliberately does NOT touch `dbTpMaxHold`,
+// which is plain audio-thread state and stays with the two callers that own
+// that thread.
+void AnabasisAudioProcessor::publishSilentMeters() noexcept
+{
     pubLufsM.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
     pubLufsS.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
     pubLufsI.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
     pubDbTpMax.store (-144.0f, std::memory_order_relaxed);
     pubPlr.store (0.0f, std::memory_order_relaxed);
     pubGrDb.store (0.0f, std::memory_order_relaxed);
-    updateLatency();
 }
 
 void AnabasisAudioProcessor::setNonRealtime (bool isNonRealtime) noexcept
@@ -347,9 +357,7 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     {
         engine.resetMeterHolds();
         dbTpMaxHold = -144.0f;
-        pubLufsI.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
-        pubDbTpMax.store (-144.0f, std::memory_order_relaxed);
-        pubPlr.store (0.0f, std::memory_order_relaxed);
+        publishSilentMeters();   // superset of the three this needed; see there
     }
 
     // Build the POD snapshot ONCE per block (ADR-0001/ADR-0011).
@@ -818,8 +826,17 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // is a different session's — keeping the old maximum "will read as a bug
     // the first time a meter is visible" (the reviewer's words, and correct).
     // Staged through the same momentary-request row as the GUI button, so the
-    // clear lands at a block top like every other cross-thread command.
+    // clear lands at a block top like every other cross-thread command — AND
+    // published here as well, because a project is ordinarily opened with the
+    // transport stopped and no block then runs at all: the request would sit
+    // pending while the open editor still showed the previous session's
+    // integrated LUFS and dBTP maximum. The engine-side clear still has to
+    // wait for its block top (it is engine state); the DISPLAY does not, and
+    // the constants are the same ones `prepareToPlay` writes for the same
+    // reason. If audio is in fact running, the next block's own publish
+    // overwrites this within one block.
     requestMeterReset();
+    publishSilentMeters();
 
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".

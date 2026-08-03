@@ -253,6 +253,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - **Tooltips are drawn in the product's own style** (2026-08-03): the tooltip window was created
   without being told which look-and-feel to use, so it fell back to the JUCE default and the
   designed capsule never appeared.
+- **Opening a project resets the meters immediately, not at the next note** (2026-08-03). Loading
+  a session clears the integrated loudness and true-peak hold — but the clear only took visible
+  effect once audio started, so a project opened with the transport stopped showed the previous
+  session's readings for as long as it stayed stopped.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
   the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
   documented; a well-formed preset file from another plugin is refused without costing an undo
@@ -265,7 +269,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testThePostedDrainAlsoTakesTheWrapperBitsFirst`,
   `testGrHistoryWindowNeverAsksForTheHeadSlot`,
   `testTheSettingsPanelFollowsAProjectLoad`,
-  `testTheWholeTickIsSuppressedInsideARestore`; all mutation-verified. [Verified]
+  `testTheWholeTickIsSuppressedInsideARestore`,
+  `testMeterResetClearsSessionHolds` (the no-audio-at-all case); all
+  mutation-verified. [Verified]
 
 The first entry will be `[0.1.0]`, cut when the post-v0.1.0 fine review clears the tag.
 

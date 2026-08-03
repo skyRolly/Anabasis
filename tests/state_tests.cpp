@@ -1384,6 +1384,12 @@ static void testAMacroGestureWinsADetachRacingItInOneDrain()
 
     check (proc.detachMask().isEmpty(),
            "drainOrder: a macro gesture re-engages a detach that raced it into the same drain");
+    // Asserts the MASK only, on purpose. This gesture moved no value, so
+    // nothing armed a mapping and limGain still holds the user's off-curve
+    // value while reading as re-engaged — whether §5.3 wants a gesture-driven
+    // re-engage to also re-land the curve (as `resetToMacro()` does) is the
+    // open question recorded as KI-007 item 8. Pinning either reading here
+    // would silently decide it, so the check stops where the rule is settled.
 }
 
 // ---------------------------------------------------------------------------
@@ -1731,6 +1737,17 @@ static void testMeterResetClearsSessionHolds()
     check (proc.meterDbTpMax() > -8.0f, "meterReset: (premise) holds re-raised before the load");
     feedTone (0.005f, 8, 3 * warm * 512);              // drain the loud tail first
     proc.setStateInformation (state.getData(), (int) state.getSize());
+
+    // BEFORE any further audio: opening a project with the transport stopped
+    // is the ordinary case, and no block then runs at all. The engine-side
+    // clear legitimately waits for its block top, but the DISPLAY must not —
+    // the request would otherwise sit pending while an open editor still read
+    // the previous programme's integrated LUFS and dBTP maximum.
+    check (proc.meterDbTpMax() < -100.0f,
+           "meterReset: the load published the cleared dBTP hold with no audio at all");
+    check (juce::exactlyEqual (proc.meterLufsI(), anabasis::LoudnessMeter::kSilentLufs),
+           "meterReset: …and the cleared integrated reading");
+
     feedTone (0.005f, 20, (3 * warm + 8) * 512);
     check (proc.meterDbTpMax() < -40.0f,
            "meterReset: a session load cleared the previous programme's holds");

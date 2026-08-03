@@ -402,6 +402,17 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         settingsBackdrop.addAndMakeVisible (b);
     }
 
+    // These four are bound by `getToggleStateValue().referTo (…)` inside
+    // `setupToggleInternal` — a bool↔bool binding `juce::Value` CAN express, so
+    // they follow a project load by themselves and are deliberately NOT in
+    // `refreshInternalSettingsBoxes()`. The panel therefore has two refresh
+    // mechanisms, which is worth naming rather than leaving to be discovered:
+    // the re-seeded controls are the ones whose widget state is not the stored
+    // value (index↔value for the combos, index↔percent for `uiScaleBox`, one
+    // BIT of an int for each target checkbox). The trade is testability —
+    // `juce::Value` delivers its change asynchronously through the message
+    // loop, which the headless suite does not run, so
+    // `testTheSettingsPanelFollowsAProjectLoad` covers the re-seeded half only.
     setupToggleInternal (animToggle, "UI animation", "UI animation",
                          ist.getPropertyAsValue (iid::uiAnimations, nullptr));
     setupToggleInternal (tooltipsToggle, "Tooltips", "Tooltips",
@@ -486,6 +497,17 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
 
 AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
 {
+    // FIRST, for the reason `~AnabasisAudioProcessor` calls `stopDraining()`
+    // first and for the reason `startDraining()` exists at all: both base
+    // classes stop themselves in THEIR destructors, which run AFTER every
+    // member here is gone, so `timerCallback` and `handleAsyncUpdate` — which
+    // touch `meterView`, `animated`, the attachments — are quiet only because
+    // the message thread is the one executing this destructor. That is "safe
+    // by ordering", the argument this PR stopped relying on everywhere else;
+    // say it instead.
+    stopTimer();
+    cancelPendingUpdate();
+
 #if JUCE_MAC || JUCE_WINDOWS
     glContext.detach();
 #endif

@@ -304,7 +304,7 @@ half alone.
 
 **Severity:** Low (each is display or recall bookkeeping; none changes a rendered sample on its own)
 **Status:** Recorded — opened by review round 25 (2026-08-03) with three items and extended by
-rounds 27, 28 and 31; deliberately NOT fixed, because each is a semantics question rather than a
+rounds 27, 28, 31 and 33; deliberately NOT fixed, because each is a semantics question rather than a
 defect, and several are the same question KI-006 asks. **The count is deliberately not in the
 heading**: it was "Three" for one round after the fourth item landed, which is exactly how a
 fine-review checklist gets read as shorter than it is. Numbered items below are the list of
@@ -351,6 +351,14 @@ record.
    means deciding exactly that set (excluded params, `FROZEN_TRIMS`, `BASELINE` — but NOT
    `DETACH_MASK`, which presets do carry) — a small spec question, and the reason it is recorded
    here with items 1–4 rather than guessed at inside a no-new-bugs round.
+   **Feeding the same decision** (added 2026-08-03, review round 33): a freeze-OFF slot still
+   SERIALISES a `FROZEN_TRIMS` child. `saveSlotFromLive`'s capture branch runs only with Freeze
+   ON; otherwise `frozen` keeps the previously loaded/carried `liveFrozenTrims` and is appended
+   anyway, so a slot that was frozen, loaded, then un-frozen writes the old vector into every
+   later save. Inert for audio — both landing sites stage it only for a freeze-ON adopted surface
+   — but it is exactly the child whose presence/absence flips this item's dirty comparison, so
+   "what a preset cannot carry" and "when a slot may hold a frozen vector at all" are one
+   decision, not two.
 
 6. **The spectrum view freezes rather than decaying when audio stops.**
    `SpectrumView::tick` returns early when neither capture ring's write count moved, so the
@@ -380,6 +388,17 @@ record.
    clear alone (leaving the curve to arrive with the next move), is the spec question; the code is
    consistent with the sentence as written, which is why this is recorded rather than "fixed" by
    adding a `refreshMapping()` that would change audible behaviour on a stray click.
+
+9. **Reset-to-macro is a nine-parameter, mask-wide change with no undo step.** `resetToMacro()`
+   clears the detach mask and re-lands the curve on all nine managed parameters through
+   `refreshMapping()`, but pushes nothing onto the §7 stack, and its writes are ungestured — so
+   `parameterChanged` folds them into the automation path and no coalesced drag step appears
+   either. The §7 grammar makes preset applies and drags undoable; clicking the Simple view's
+   "edited" dot is a larger change than either and cannot be taken back. Same shape as item 7
+   (Copy A→B) and item 3 (undo not restoring the dirty baseline): the question is what the undo
+   unit should do when a whole set of parameters is replaced from outside a drag, and it wants one
+   answer for all three. Note the direction: item 8 is a re-engage that does NOT re-land the
+   curve; this is the verb that DOES, and neither is undoable.
 
 **For the post-v0.1.0 fine review, alongside KI-006.**
 

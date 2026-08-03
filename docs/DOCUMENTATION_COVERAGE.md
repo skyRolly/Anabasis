@@ -6,7 +6,55 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 32 (2026-08-03)**, where the recurring shape is a
+**Last updated:** for **review round 33 (2026-08-03)**, a round of second copies and deferred
+work that a stopped transport never reaches:
+(1) **A project loaded with the transport stopped showed the previous session's meters.**
+`setStateInformation` staged the meter-hold clear through the momentary-request row, and the
+request is consumed at a BLOCK TOP — but opening a project with the transport stopped is the
+ordinary case and no block runs at all, so an open editor kept reading the old integrated LUFS and
+dBTP maximum indefinitely. The engine-side clear legitimately waits (it is engine state); the
+DISPLAY does not, and `prepareToPlay` already published exactly these constants for exactly this
+reason. Factored into `publishSilentMeters()` — one list, three callers (prepare, the block-top
+consume, the load) — because two of the three had grown their own copy of it and they disagreed
+about which of the six atomics to clear. `dbTpMaxHold` deliberately stays OUT of the helper: it is
+plain audio-thread state, and only the two callers that own that thread touch it. Mutation-verified
+in `testMeterResetClearsSessionHolds`, which now asserts before feeding any audio.
+(2) **The editor's `Timer` and `AsyncUpdater` bases stopped themselves only after its members were
+destroyed.** Base destructors run last, so `timerCallback`/`handleAsyncUpdate` — which touch
+`meterView`, `animated`, the attachments — were quiet only because the message thread happens to be
+the one executing `~AnabasisAudioProcessorEditor`. That is "safe by ordering", the argument this PR
+stopped relying on for `MacroEngine::startDraining`/`stopDraining` and for the processor
+destructor; `stopTimer(); cancelPendingUpdate();` now run first, so the editor says what it
+guarantees.
+(3) **The loudness meter's target ticks re-derived the row origin from `getLocalBounds()`.** The
+review read the second copy as a 2 px misalignment; the arithmetic in fact AGREED — the tick spans
+`bar.getY() - 2` to `bar.getBottom() + 2`, a deliberate symmetric overhang on an 8 px bar, so there
+was no visual defect. The duplication was real: a change to the header height, the 24 px row or the
+2 px gap would have moved one copy and not the other. The three bar rectangles are now kept and the
+ticks derive from them, so there is one source.
+(4) **`One factor, computed once` called `std::pow` twice.** The ADR-0013 release scale was
+computed separately for the manual time and for `setAutoReleaseScale`; the comment claiming
+otherwise was the drift, and the second `pow` was the only measurable part of that block. Computed
+once into a local, bit-identical. The call stays unconditional and the comment now says why: it is
+idempotent, factor 1.0 reproduces the prepared alphas exactly (so the invariant-7 null holds with
+adaptation live), and a changed-since-last-block gate would be a second piece of state that has to
+agree with the first — for one `pow` and two `exp` per block.
+Comments where a future change would break something silently: `setupToggleInternal`'s four
+`referTo`-bound toggles now say why they are NOT in `refreshInternalSettingsBoxes()` (a bool↔bool
+binding `juce::Value` can express, unlike index↔value, index↔percent or one-bit-of-an-int) and
+that the trade is testability, since `juce::Value` delivers asynchronously through a message loop
+the headless suite does not run; and `testAMacroGestureWinsADetachRacingItInOneDrain` states that
+it asserts the MASK only on purpose, because pinning the curve would silently decide KI-007 item 8.
+KI-007 gains a ninth item (reset-to-macro is a nine-parameter, mask-wide change with no undo step —
+the verb that DOES re-land the curve, where item 8 is the gesture that does not, and neither is
+undoable) and item 5 gains the fact that feeds the same decision: a freeze-OFF slot still
+serialises a stale `FROZEN_TRIMS` child, which is precisely the child whose presence flips the
+dirty comparison. Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer stays
+KI-007 item 4 — both available repairs carry their own risk (`dismissAllActiveMenus()` in the
+destructor also closes another instance's menu; a shared static trades it for static-destruction
+order at DLL unload) — and the KI-003/KI-006/KI-007 restatements are already recorded in the same
+words.
+Previous: **review round 32 (2026-08-03)**, where the recurring shape is a
 DIRECTION or a GUARD applied to some of the things it names:
 (1) **The Settings panel's three §6.4 target checkboxes never followed a project load.** They are
 hand-built — three BITS of one int, so `Value::referTo` cannot express them — and were seeded once

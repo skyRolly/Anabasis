@@ -184,6 +184,7 @@ public:
 
 private:
     void updateLatency();               // the single setLatencySamples call site
+    void publishSilentMeters() noexcept;   // the six meter atomics, cleared (one list)
     juce::ValueTree copyStateWithRaw();  // APVTS copy + additive exact-`raw` per PARAM
     void adoptParamsTree (const juce::ValueTree& paramsWithRaw);   // strip → replaceState → reassert
     juce::ValueTree saveSlotFromLive();

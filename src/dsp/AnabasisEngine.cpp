@@ -480,10 +480,17 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // ADR-0013 (OQ-016 resolved 2026-08-02, owner-approved): the release
         // trim reaches BOTH release paths — the manual time below, and the
         // auto poles through setAutoReleaseScale — so the §5.4 behaviour is
-        // audible at factory defaults (auto ON). One factor, computed once.
-        pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f,
-                                              p.limReleaseMs * std::pow (2.0f, t.releaseOctaves));
-        limiter.setAutoReleaseScale (std::pow (2.0f, t.releaseOctaves));
+        // audible at factory defaults (auto ON). One factor, computed once —
+        // it said that while calling `pow` twice, which is both the comment
+        // drifting from the code and the only measurable part of this block.
+        // Still UNCONDITIONAL (no manual/auto test, no changed-since-last-block
+        // gate): the call is idempotent and factor 1.0 reproduces the prepared
+        // alphas exactly, so the invariant-7 bit-exact null holds with
+        // adaptation live — and a gate would be a second piece of state that
+        // has to agree with the first, for one `pow` and two `exp` per block.
+        const float releaseScale = std::pow (2.0f, t.releaseOctaves);
+        pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f, p.limReleaseMs * releaseScale);
+        limiter.setAutoReleaseScale (releaseScale);
         pApplied.stereoLink   = juce::jlimit (0.0f, 1.0f, p.stereoLink + t.stereoLink);
         // The scHpf trim is the one that changes a DETECTOR rather than a
         // gain: pushing the shared sidechain HPF off its 20 Hz exact-skip
