@@ -31,6 +31,26 @@ watermark exists to prevent. The wrapper-level test could not see it (its stimul
 audio before the reset, so the straddler was already quiet); the new
 `testMeterResetIgnoresTheStraddlingSubBlock` drives the meter directly, where "old programme" and
 "lookahead tail" cannot be confused, and the two readings are ~30 dB apart.
+**An adversarial verification pass over the round-24 diff then found four more, three of them in
+the round-24 fixes themselves** — recorded because the pattern is the round's own lesson repeating
+one level down: (a) the staged frozen record could still strand, because the caller's duck request
+and the stage are two separate stores with a full `adoptParamsTree` between them, so a block
+landing in the gap spends the whole duck before the record exists — the record now carries its own
+duck request, which makes "a staged record always gets a bottom" structural rather than a rule four
+call sites must remember (`testAStagedFrozenVectorAlwaysGetsABottom` reproduces the interleaving
+deterministically); (b) `frozenAppliedSeq` was relaxed on both sides although it GATES a read of
+the four published trim atomics — release/acquire now, since the staleness-counter row's "carries
+no payload" justification does not apply to a counter that announces other values; (c) the
+consumer sampled the generation AFTER the payload, so a stage landing mid-consume stamped the
+newer number onto the older vector and claimed settled — sampled first now, which makes the same
+interleaving self-correcting instead; (d) the gesture fix closed only one asymmetry — a
+message-thread begin whose END arrived off-thread leaked its bit for ever and undo then never
+fired again for the rest of the session. The mask is atomic and the end clears it on whichever
+thread it arrives on; only the ValueTree work stays message-thread-gated. (b) and (c) are
+memory-ordering corrections that no single-threaded mutant can kill on x86-TSO — recorded as
+correctness-by-construction rather than given a synthetic test. The pass also surfaced **KI-006**
+(a sample-rate change drops a frozen slot's adaptation from the audio while the readout and save
+still report it) which PREDATES this work and is recorded, not folded in.
 Also fixed, smaller: the gesture-end counter was asymmetric (a host delivering begin off-thread
 and end on the message thread closed a different open drag, pushing its step mid-gesture — now
 keyed per parameter, `testAGestureEndWithoutACountedBeginIsIgnored` with the off-thread begin as

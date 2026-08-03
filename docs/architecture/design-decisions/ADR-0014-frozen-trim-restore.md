@@ -86,6 +86,16 @@ vector sat pending indefinitely and was injected at the next unrelated duck — 
 into whatever slot was live by then. Ducking an undo is independently owed: DSP_POLICY invariant
 8's click-free enumeration names the undo step as one of the three bulk swaps (ADR-0004).
 
+**The record carries its OWN duck request** (`restoreFrozenTrims` raises `duckRequested` beside
+the flag), which is what makes the paragraph above structural instead of a rule four call sites
+must remember. The caller's request and the stage are separate stores with a whole parameter
+restore between them — `adoptParamsTree` replaces the state and re-asserts every raw value — so an
+audio block landing in that gap consumes the request, runs the entire ~34 ms duck and returns to
+idle *before the record exists*. Adversarial verification of the round-24 fix found this; without
+the record's own request the strand survives on a path with no rewire to bring the duck back. A
+duplicate request costs nothing: one seen at the bottom holds it a further block, which is the
+behaviour the transition layer already implements.
+
 **Degradation, stated not hidden.** If Freeze is turned off between stage and consumption, the
 injected vector publishes once and the next audible block slews away from it — the documented
 last-writer-wins degradation of ADR-0012, not a fault.

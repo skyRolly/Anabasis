@@ -247,15 +247,21 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // a second restore before the bottom overwrites the pending copy.
     if (frozenPending.exchange (false, std::memory_order_acquire))
     {
+        // Generation FIRST, payload after — deliberately this order. The
+        // writer's settled test is stageSeq == appliedSeq, and only the
+        // application below may advance the applied side, so the number
+        // stamped here must never be NEWER than the vector it labels. Read
+        // last, a stage landing between the payload loads and this one would
+        // stamp its generation onto the previous vector and the writer would
+        // read "settled" while the published trims were a restore behind.
+        // Read first, that same interleaving stamps the OLDER generation, the
+        // record stays pending, and the next block top re-consumes it — the
+        // self-correcting direction of ADR-0012's Known-limit 3.
+        pendingFrozenSeq = frozenStageSeq.load (std::memory_order_relaxed);
         pendingFrozenTrims.releaseOctaves = stagedFrozen[0].load (std::memory_order_relaxed);
         pendingFrozenTrims.stereoLink     = stagedFrozen[1].load (std::memory_order_relaxed);
         pendingFrozenTrims.scHpfHz        = stagedFrozen[2].load (std::memory_order_relaxed);
         pendingFrozenTrims.dynTiltDb      = stagedFrozen[3].load (std::memory_order_relaxed);
-        // Remember WHICH generation this copy is: the writer's settled test is
-        // stageSeq == appliedSeq, and only the application below may advance
-        // the applied side. Read after the acquire-exchange, so a stage that
-        // lands later this block leaves stageSeq ahead and stays pending.
-        pendingFrozenSeq  = frozenStageSeq.load (std::memory_order_relaxed);
         havePendingFrozen = true;
     }
     if (const int cmd = learnCmd.exchange (kLearnNone, std::memory_order_acquire);
@@ -305,7 +311,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         if (havePendingFrozen)
         {
             adaptiveEngine.injectTrims (pendingFrozenTrims);   // ADR-0014
-            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_relaxed);
+            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_release);
             havePendingFrozen = false;
         }
         duckState = DuckState::idle;
@@ -357,7 +363,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             adaptiveEngine.injectTrims (pendingFrozenTrims);
             // Only NOW is the published vector the restored one — the writer's
             // capture guard reads this, not the block-top flag.
-            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_relaxed);
+            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_release);
             havePendingFrozen = false;
         }
 

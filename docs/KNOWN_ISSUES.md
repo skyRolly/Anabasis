@@ -225,6 +225,40 @@ Evidence [Verified]:
 
 ---
 
+### KI-006 — A sample-rate change silently drops a frozen slot's adaptation from the AUDIO while the readout and the save still report it
+
+**Severity:** Medium
+**Status:** Confirmed (fix deferred — it is a Freeze-semantics decision, not a repair)
+**Affects:** all platforms/formats. Trigger: Freeze ON with a latched trim
+vector, then any `prepareToPlay` — a host sample-rate or block-size change.
+
+`AnabasisEngine::prepare` calls `AdaptiveEngine::prepare` → `reset()`, which
+zeroes the internal `trims` struct along with the features. The PUBLISHED trim
+atomics are NOT zeroed, and cannot be: `finishBlock` only publishes inside
+`if (! freeze && audible)`, which is exactly what "Freeze latches the vector"
+means. So after the re-prepare the engine applies a zero trim vector to the
+audio while `publishedTrim*()` — the Advanced overlay, and the ADR-0014 save
+capture — still report the latched one. The slot's serialized `FROZEN_TRIMS`
+therefore stays correct; the sound does not match it until the vector is
+restored by some later path (an A/B switch back, a session reload).
+
+**Found by** the adversarial verification pass over review round 24
+(2026-08-03), not by the review itself; it PREDATES ADR-0014 (P4 shipped the
+same reset), which is why it is recorded rather than folded into that round's
+fixes.
+
+**Why it is not simply "keep the trims across reset".** That is the likely
+resolution — the trim vector is a bounded, rate-independent control value, not
+signal state, and carrying it would also make an un-frozen re-prepare re-slew
+from where it was instead of jumping to zero — but it changes what
+`MODE_AND_ADAPTATION_POLICY` invariant 3's Freeze clause promises across a
+discontinuity, which is an owner/ADR call, not a bug fix. The alternative
+(re-stage the vector from the wrapper at `prepareToPlay`) only works when
+`liveFrozenTrims` holds one, i.e. after a load — a vector latched live in this
+session has no copy to re-stage from.
+
+**For the post-v0.1.0 fine review.**
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

@@ -138,9 +138,13 @@ public:
     // folds silently into the current state, exactly as §7 words it. Preset
     // applies bracket as one step (parse first: a failed parse pushes
     // nothing). Undo/redo restores run inside ScopedRestore (a restore is
-    // not a gesture) and never duck — every landed value glides through the
-    // engine's own smoothing, and discrete rewires are duck-routed by the
-    // engine regardless of who wrote them. Stacks are per slot, capped at
+    // not a gesture) and DO request the §2.8 duck, like every other bulk swap
+    // — DSP_POLICY invariant 8 names the undo step as one of its three routes.
+    // This comment used to say they never duck, on the reasoning that discrete
+    // rewires are duck-routed by the engine regardless of who wrote them: true
+    // for rewires, but an undo that moves no discrete stage produced no duck at
+    // all, and after ADR-0014 that left the frozen-trim vector it stages with
+    // no silent bottom to land at. Stacks are per slot, capped at
     // 128, and NEVER serialized (a session load clears all four).
     // Message-thread only; off-thread gesture callbacks skip the snapshot,
     // which degrades to the automation path (folded silently) rather than
@@ -190,15 +194,17 @@ private:
                                  redoStacks[anabasis::kNumAbSlots];
     juce::ValueTree gesturePreState;     // armed at first gesture-begin
     juce::ValueTree presetBaseline;      // the state the named preset landed
-    int  openGestureCount = 0;
-    // One bit per parameter index whose gesture-BEGIN was counted, so a
-    // gesture-end can only close its own drag (see the callbacks). The
-    // parameter surface is 49 wide and frozen by ADR-0010, so one word covers
-    // it with room to spare; a hypothetical index past the word degrades to the
-    // uncounted (automation) path rather than mis-keying, and the constructor
-    // asserts the width so the degradation cannot go unnoticed in a debug run.
+    // One bit per parameter index with an OPEN message-thread gesture, so an
+    // end can only close its own drag and cannot leak one (see the callbacks
+    // for both asymmetries). Atomic because the END clears it on whichever
+    // thread the host delivers it on, exactly like `managedGestureBits` beside
+    // it — the listener-guard row (OQ-014). The parameter surface is 49 wide
+    // and frozen by ADR-0010, so one word covers it with room to spare; a
+    // hypothetical index past the word degrades to the untracked (automation)
+    // path rather than mis-keying, and the constructor asserts the width so
+    // the degradation cannot go unnoticed in a debug run.
     static constexpr int kMaxCountedGestureIndex = 64;
-    uint64_t countedGestureBits = 0;
+    std::atomic<uint64_t> openGestureBits { 0 };
     void pushUndoStep (juce::ValueTree preState);
     static constexpr int kUndoCap = 128;
     juce::ValueTree defaultSlot;         // pristine defaults, for the missing-AB read rule

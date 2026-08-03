@@ -1187,6 +1187,37 @@ static void testAGestureEndWithoutACountedBeginIsIgnored()
     proc.undo();
     check (std::abs (proc.apvts.getRawParameterValue (pid::limGain)->load() - before) < 1.0e-3f,
            "gestureSymmetry: and that step is the whole drag");
+
+    // The OPPOSITE asymmetry, and the one that used to be permanent: a begin
+    // counted on the message thread whose END arrives off it. Guarding the
+    // bookkeeping behind the thread test leaked that drag for ever — the mask
+    // never returned to empty, so no later drag on ANY control could push a
+    // step again and undo was dead for the rest of the session. The end now
+    // clears its bit on whichever thread it arrives on; only the ValueTree
+    // work stays message-thread-gated, so the lost step is that one drag's
+    // (the documented automation-path degradation), not every future one.
+    {
+        AnabasisAudioProcessor p2;
+        auto* g = p2.apvts.getParameter (pid::limGain);
+        g->beginChangeGesture();
+        g->setValueNotifyingHost (g->getNormalisableRange().convertTo0to1 (5.0f));
+        std::thread endOffThread ([g] { g->endChangeGesture(); });
+        endOffThread.join();
+        p2.flushPendingDetach();
+        check (! p2.canUndo(),
+               "gestureSymmetry: (premise) an off-thread end pushes nothing — the automation rule");
+
+        const float mid = p2.apvts.getRawParameterValue (pid::limGain)->load();
+        g->beginChangeGesture();               // a NEW, entirely ordinary drag
+        g->setValueNotifyingHost (g->getNormalisableRange().convertTo0to1 (11.0f));
+        g->endChangeGesture();
+        p2.flushPendingDetach();
+        check (p2.canUndo(),
+               "gestureSymmetry: the off-thread end did not strand the drag — undo still works after it");
+        p2.undo();
+        check (std::abs (p2.apvts.getRawParameterValue (pid::limGain)->load() - mid) < 1.0e-3f,
+               "gestureSymmetry: and the recovered step is the new drag, not the lost one");
+    }
 }
 
 // ---------------------------------------------------------------------------

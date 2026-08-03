@@ -2955,6 +2955,66 @@ static void testAutoReleaseFollowsTheTrimScale()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0014's structural obligation: a STAGED frozen-trim record always gets a
+// silent bottom to land at. The wrapper requests the duck and stages the
+// record as two separate stores with a whole parameter restore between them,
+// so a block landing in that gap consumes the request, runs the entire ~34 ms
+// duck, and returns to idle BEFORE the record exists — after which nothing
+// brings the duck back and the vector waits for an unrelated one (an A/B
+// switch, say), landing in whatever slot is live by then. That is the same
+// misapplication the duck was added to prevent, one level down. The record
+// therefore carries its own request.
+//
+// The interleaving is reproduced exactly rather than raced: the request is
+// spent first, deliberately, and only then is the record staged.
+static void testAStagedFrozenVectorAlwaysGetsABottom()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.limGainDb    = 6.0f;
+    p.truePeakMode = false;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto feed = [&] (int blocks, int t0)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = t0 + b * 512 + n;
+                float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                           * 220.0f * (float) t / (float) sr);
+                if ((t % 4800) < 96) v += 0.6f;
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+        }
+    };
+
+    feed (400, 0);                       // adapt, then latch something non-zero
+    p.freeze = true;
+    feed (4, 400 * 512);
+    const float latched = engine.adaptive().publishedTrimRelease();
+
+    // The wrapper's request is consumed and the whole duck completes…
+    engine.requestForcedDuck();
+    feed (40, 404 * 512);                // out → bottom → in → idle, all spent
+
+    // …and only now does the record arrive. Distinct from the latched vector
+    // so "did it land?" is a disjoint question.
+    const float wanted = latched > 0.0f ? -0.75f : 0.75f;
+    engine.restoreFrozenTrims (wanted, 0.15f, 12.0f, 0.4f);
+    feed (40, 444 * 512);                // enough for a duck the record must ask for itself
+
+    check (std::abs (engine.adaptive().publishedTrimRelease() - wanted) < 1.0e-6f,
+           "frozenStage: a record staged after the caller's duck was spent still gets a bottom");
+    check (std::abs (engine.adaptive().publishedTrimHpf() - 12.0f) < 1.0e-6f,
+           "frozenStage: …and the whole vector lands, not just one member");
+}
+
+// ---------------------------------------------------------------------------
 // The meter-reset watermark's OFF-BY-ONE half, which the wrapper-level test
 // cannot see: gating blocks are assembled from the last four 100 ms
 // sub-blocks, and at the instant of the reset one sub-block is PARTIALLY
@@ -3672,6 +3732,7 @@ int main()
     testFreezeLatchesTrims();
     testTrimBounds();
     testAutoReleaseFollowsTheTrimScale();
+    testAStagedFrozenVectorAlwaysGetsABottom();
     testMeterResetIgnoresTheStraddlingSubBlock();
     testSpectrumRingsCarryTheTaps();
     testNoBadSamples();

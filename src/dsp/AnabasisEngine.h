@@ -163,9 +163,22 @@ public:
         stagedFrozen[3].store (tilt,   std::memory_order_relaxed);
         // Stage generation, stored BEFORE the flag so the consumer's acquire
         // orders it with the payload. See frozenRestorePending() for why the
-        // flag alone cannot answer the writer's question.
-        frozenStageSeq.store (frozenStageSeq.load (std::memory_order_relaxed) + 1u,
-                              std::memory_order_relaxed);
+        // flag alone cannot answer the writer's question. `fetch_add` rather
+        // than load+store: `setStateInformation` is not promised on the message
+        // thread (KI-003), so two stagers can in principle overlap, and a lost
+        // increment would read as "already applied".
+        frozenStageSeq.fetch_add (1u, std::memory_order_relaxed);
+        // The record's OWN duck request, and the reason it lives here rather
+        // than only at the four call sites: the bottom is the only place the
+        // vector can land, and the caller's `requestForcedDuck()` is a separate
+        // store from this one. A block landing between the two consumed the
+        // request, ran the whole ~34 ms duck, and returned to idle before the
+        // record was staged — after which nothing would bring the duck back and
+        // the vector waited for an unrelated one. Requesting it WITH the record
+        // makes "a staged record always gets a bottom" structural. A second
+        // request costs nothing: the duck logic already treats one seen at the
+        // bottom as "hold one more block".
+        duckRequested.store (true, std::memory_order_relaxed);
         frozenPending.store (true, std::memory_order_release);
     }
     // "Is the engine's published trim vector still older than the last record
@@ -177,16 +190,22 @@ public:
     // consumer remembers the generation it took and stores it back only after
     // injectTrims, so equality means "published == last staged".
     //
-    // Relaxed on both sides — THREADING_POLICY's generation/staleness-counter
-    // row: they carry no payload, they gate a message-thread decision, and the
-    // payload's own ordering is the release/acquire pair above. A record staged
-    // and then dropped by prepare()/reset() cannot strand this: those clear
-    // neither `havePendingFrozen` nor the flag, and the unprimed direct-adopt
-    // branch applies the pending copy on the first block after either.
+    // The applied side is RELEASE/ACQUIRE, not relaxed, and the distinction is
+    // the whole point of the pair: unlike the display counters on
+    // THREADING_POLICY's staleness row, this one GATES a read of other atomics
+    // (`publishedTrim*`). Relaxed on both sides would let a reader observe
+    // "settled" while the four published trims injectTrims wrote just before it
+    // were still the old ones — the same stale capture, one reordering later.
+    // The acquire here pairs with the release in the application sites.
+    //
+    // A record staged and then dropped by prepare()/reset() cannot strand this:
+    // those clear neither `havePendingFrozen` nor the flag, and the unprimed
+    // direct-adopt branch applies the pending copy on the first block after
+    // either.
     bool frozenRestorePending() const noexcept
     {
         return frozenStageSeq.load (std::memory_order_relaxed)
-            != frozenAppliedSeq.load (std::memory_order_relaxed);
+            != frozenAppliedSeq.load (std::memory_order_acquire);
     }
 
     // Learned-target restore (session load, ADAPTIVE child): host-hidden

@@ -61,23 +61,29 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
     // step will restore. Message thread only — an off-thread gesture (host
     // UI) skips this and its edit folds silently, the automation rule.
     //
-    // The count is keyed by PARAMETER, not just incremented: VST3 gesture
-    // threading is host-defined (the same premise this class's off-thread
-    // degradation path rests on), so a host can deliver a begin off the message
-    // thread — uncounted here — and its end on it. A bare `--` would then close
-    // a DIFFERENT, still-open drag: that drag's step got pushed mid-gesture,
-    // `gesturePreState` was cleared, and its real end pushed nothing. Only ends
-    // whose begin was counted may decrement.
+    // Open drags are tracked as a BITMASK keyed by parameter index, not as a
+    // bare count, because VST3 gesture threading is host-defined (the same
+    // premise this class's off-thread degradation path rests on) and the two
+    // asymmetries a count cannot survive are opposites:
+    //   • begin off the message thread, end on it — a bare `--` closed a
+    //     DIFFERENT, still-open drag, pushing its step mid-gesture and clearing
+    //     the snapshot, so its real end pushed nothing. Only a bit this handler
+    //     set can be cleared, so a foreign end matches nothing.
+    //   • begin on the message thread, end off it — the end below clears the
+    //     bit on ANY thread (see there), so the mask cannot leak. A count
+    //     guarded by the thread test leaked one open drag for ever, and undo
+    //     then never fired again for the rest of the session.
+    // Only message-thread begins set a bit: an off-thread gesture is invisible
+    // to undo by design (it folds into the automation path), and letting it
+    // occupy the mask would suppress a concurrent real drag's step.
     if (juce::MessageManager::existsAndIsCurrentThread()
         && parameterIndex >= 0 && parameterIndex < kMaxCountedGestureIndex)
     {
         const uint64_t bit = 1ull << parameterIndex;
-        if ((countedGestureBits & bit) == 0)
-        {
-            countedGestureBits |= bit;
-            if (openGestureCount++ == 0)
-                gesturePreState = saveSlotFromLive();
-        }
+        // Arming on 0 → non-zero is what makes one drag (or several
+        // overlapping ones) exactly one step.
+        if (openGestureBits.fetch_or (bit, std::memory_order_relaxed) == 0)
+            gesturePreState = saveSlotFromLive();
     }
 
     if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (
@@ -108,22 +114,33 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
         if (const int m = managedIndexOf (p->getParameterID()); m >= 0)
             managedGestureBits.fetch_and (~(1u << m), std::memory_order_relaxed);
 
-    // Symmetric with the begin above: an end whose begin was never counted
-    // (delivered off the message thread) must not close someone else's drag.
+    // The bit is cleared on WHICHEVER thread the end arrives on — that is the
+    // half a thread-guarded count could not do, and its absence stranded an
+    // open drag for ever (undo then never fired again). Clearing a bit is a
+    // lock-free store; only the ValueTree work below is message-thread-gated,
+    // which is the same split the detach discriminator uses.
     const uint64_t bit = parameterIndex >= 0 && parameterIndex < kMaxCountedGestureIndex
                              ? 1ull << parameterIndex : 0ull;
-    if (juce::MessageManager::existsAndIsCurrentThread()
-        && bit != 0 && (countedGestureBits & bit) != 0 && openGestureCount > 0)
+    if (bit == 0)
+        return;
+    const uint64_t prevOpen = openGestureBits.fetch_and (~bit, std::memory_order_relaxed);
+
+    // Push only when THIS end closed the last open drag (`prevOpen == bit`):
+    // an end for a bit we never set — a begin delivered off-thread — matches
+    // nothing, and overlapping drags collapse to one step at the last close.
+    // An end that arrives off-thread still clears above but pushes nothing:
+    // that step is lost, which is the documented automation-path degradation,
+    // and the next message-thread begin re-arms from 0 rather than inheriting
+    // a stale snapshot.
+    if (prevOpen == bit
+        && juce::MessageManager::existsAndIsCurrentThread()
+        && gesturePreState.isValid())
     {
-        countedGestureBits &= ~bit;
-        if (--openGestureCount == 0 && gesturePreState.isValid())
-        {
-            // One step per completed drag, and only if something CHANGED —
-            // an aborted gesture (press, no move) pushes nothing.
-            if (! gesturePreState.isEquivalentTo (saveSlotFromLive()))
-                pushUndoStep (gesturePreState);
-            gesturePreState = {};
-        }
+        // One step per completed drag, and only if something CHANGED —
+        // an aborted gesture (press, no move) pushes nothing.
+        if (! gesturePreState.isEquivalentTo (saveSlotFromLive()))
+            pushUndoStep (gesturePreState);
+        gesturePreState = {};
     }
 }
 
@@ -667,9 +684,8 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         undoStacks[slot].clear();
         redoStacks[slot].clear();
     }
-    openGestureCount   = 0;
-    countedGestureBits = 0;      // paired with openGestureCount, always
-    gesturePreState    = {};
+    openGestureBits.store (0, std::memory_order_relaxed);
+    gesturePreState = {};
     // The P5 decision THREAD_MODEL left open, taken: a state load CLEARS the
     // session-cumulative meter holds. The integrated LUFS and the dBTP hold
     // describe the programme measured so far, and after a load the programme
