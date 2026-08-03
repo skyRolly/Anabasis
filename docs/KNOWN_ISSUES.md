@@ -87,6 +87,18 @@ it closes with the same thread-model decision rather than separately; recorded
 because the stacks are NEW state added at P6, and this round's standard
 elsewhere was that both halves of a premise should agree.
 
+**The construction and destruction halves of the MacroEngine drain are not
+equally strong**, recorded 2026-08-03 (review round 29) so the pair is not read
+as fully closed. `startDraining()` closes its race STRUCTURALLY — the timer
+does not exist until both callbacks are assigned, so no tick can observe a
+half-written `std::function`. `stopDraining()` only narrows its own: it stops
+the timer and clears the callbacks, but does not join a `timerCallback` that
+has ALREADY entered, because `juce::Timer` offers no such join. The remaining
+window is "a tick already executing while another thread destroys the
+processor", which needs a host that destroys a processor concurrently with its
+own message thread — the same premise class as the rest of this entry, and it
+closes with the same thread-model decision rather than separately.
+
 **Workaround:** none required on the hosts tested so far — no case of an
 off-message-thread restore has been observed against this plugin. The entry
 exists because the assumption is load-bearing and undocumented elsewhere.
@@ -331,6 +343,14 @@ record.
    means deciding exactly that set (excluded params, `FROZEN_TRIMS`, `BASELINE` — but NOT
    `DETACH_MASK`, which presets do carry) — a small spec question, and the reason it is recorded
    here with items 1–4 rather than guessed at inside a no-new-bugs round.
+
+6. **The spectrum view freezes rather than decaying when audio stops.**
+   `SpectrumView::tick` returns early when neither capture ring's write count moved, so the
+   per-bin EMA stops and the last analysed trace stays on screen indefinitely after a transport
+   stop or a plugin suspend. It is cheap and reads as deliberate ("idle: nothing new"), but most
+   analysers decay to the floor, and a frozen trace can be mistaken for live signal. Which
+   behaviour this product wants is a listening-pass call, not a repair — the fix (run the EMA
+   toward the floor on an idle tick) is three lines once the answer is known.
 
 **For the post-v0.1.0 fine review, alongside KI-006.**
 

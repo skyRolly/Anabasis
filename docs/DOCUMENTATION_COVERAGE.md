@@ -6,7 +6,36 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 28 (2026-08-03)**:
+**Last updated:** for **review round 29 (2026-08-03)**, a round of loose ends rather than defects
+— most of its findings were already recorded in KI-003/006/007, and the rest were places where a
+rule this PR wrote had not been applied to itself:
+(1) **A restore replaced the detach mask but not the STAGED bits.** An off-thread gestured edit
+leaves its bit un-drained for up to one 30 ms tick; a slot switch, preset apply or session load
+landing in that window would have the following tick stamp that id onto the mask the restore had
+just installed — the carry-over those paths clear the mask to prevent. Both staged inputs are now
+dropped where the mask is replaced, which is what `MacroEngine::ScopedRestore` already does to a
+pending mapping and for the same reason: a restore is not a gesture, so a gesture racing it
+belongs to the state being replaced. Mutation-verified.
+(2) **The accessibility claim did not hold for the host-hidden controls.** `setupCombo`/
+`setupToggle` (the APVTS paths) set a title; `setupComboInternal`/`setupToggleInternal` did not,
+and `uiScaleBox` — hand-built because it maps index↔percent — missed `registerAnimated` too, so
+its hover skipped the easing every other combo has. A ComboBox with an empty title exposes NO
+accessible name (a Button falls back to its text), so "accessibility names on every control" was
+false for exactly the Settings panel.
+(3) **`ANABASIS_BUILD_BENCH` was nested inside `ANABASIS_BUILD_TESTS`**, so
+`-DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_TESTS=OFF` silently built nothing — the option's
+documented contract was stronger than its implementation. Moved to file scope and verified with
+tests OFF. (4) `build.yml`'s header carried TWO P6 strictness rows that disagreed, in the block now
+cited as the single authority for that number — collapsed, with a note that the env var is
+unconditional rather than phase-gated. (5) `TESTING_POLICY.md` stated the rule against restating
+the strictness and restated it parenthetically in the same sentence. (6) OQ-013/014/016 were
+marked Resolved but left physically among the open entries while OQ-007 was moved — a reader
+scanning the top saw three resolved questions mixed with the live ones; all three moved.
+Recorded rather than fixed: the `startDraining`/`stopDraining` pair is not symmetric in STRENGTH
+(construction is closed structurally, teardown cannot join a tick already executing — KI-003), and
+the spectrum view freezes rather than decaying when audio stops, which is a listening-pass call
+(KI-007 item 6).
+Previous: **review round 28 (2026-08-03)**:
 (1) **The dBTP readout warned against a literal −1**, which is merely the ceiling's DEFAULT, while
 the view's own banner and this file both describe the row as "dBTP in `warn` over the ceiling". At
 any other setting the warning fired at the wrong level — silent while genuinely over at a −6

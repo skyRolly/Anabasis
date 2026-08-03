@@ -186,24 +186,6 @@ if(ANABASIS_BUILD_TESTS)
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
 
-    # -- AnabasisBench: the DESIGN §9 measurement procedure. OFF by default —
-    #    a benchmark that always builds gets run casually and quoted without
-    #    its machine, which is the C2 failure the budget doc guards against.
-    if(ANABASIS_BUILD_BENCH)
-        juce_add_console_app(AnabasisBench PRODUCT_NAME "AnabasisBench")
-        target_sources(AnabasisBench PRIVATE tests/bench.cpp)
-        target_compile_definitions(AnabasisBench PUBLIC
-            JUCE_WEB_BROWSER=0
-            JUCE_USE_CURL=0
-            JUCE_STANDALONE_APPLICATION=1)
-        target_link_libraries(AnabasisBench
-            PRIVATE
-                AnabasisDSP
-            PUBLIC
-                AnabasisHardening
-                juce::juce_recommended_config_flags
-                juce::juce_recommended_warning_flags)
-    endif()
 
     # -- AnabasisStateTests: state / parameter-compatibility. Compiles
     #    tests/state_tests.cpp plus the shared wrapper/GUI source list to
@@ -231,6 +213,30 @@ if(ANABASIS_BUILD_TESTS)
             juce::juce_audio_utils
             juce::juce_dsp
             juce::juce_opengl
+        PUBLIC
+            AnabasisHardening
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif()
+
+# -- AnabasisBench: the DESIGN §9 measurement procedure. OFF by default —
+#    a benchmark that always builds gets run casually and quoted without
+#    its machine, which is the C2 failure the budget doc guards against.
+#    OUTSIDE the ANABASIS_BUILD_TESTS block on purpose: the option is
+#    documented as independent, and nested it made
+#    `-DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_TESTS=OFF` build nothing
+#    at all — silently, which is the worst way for an option to be a lie.
+#    It needs only AnabasisDSP, which is defined above either way.
+if(ANABASIS_BUILD_BENCH)
+    juce_add_console_app(AnabasisBench PRODUCT_NAME "AnabasisBench")
+    target_sources(AnabasisBench PRIVATE tests/bench.cpp)
+    target_compile_definitions(AnabasisBench PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(AnabasisBench
+        PRIVATE
+            AnabasisDSP
         PUBLIC
             AnabasisHardening
             juce::juce_recommended_config_flags

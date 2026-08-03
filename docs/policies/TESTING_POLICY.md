@@ -129,7 +129,9 @@ invariant→test map in `DSP_POLICY.md`) and `AnabasisStateTests` (state/compati
 behavioural macro/mode guards). Counts are read from the suites' own output — the same
 re-count-don't-trust rule `HANDOVER.md` and `README.md` carry — and pluginval runs at the phase
 strictness in both modes, three consecutive passes, with the editor opening under `xvfb` since P5.
-The strictness itself is **not restated here**: `.github/workflows/build.yml` holds it in one
-place (`ANABASIS_PLUGINVAL_STRICTNESS`, raised to **10** on 2026-08-02 when the P6 bar landed) and
-a number copied into prose is a number that goes stale — this sentence said "8 at P3–P5" in the
-present tense for a day after CI had moved.
+The strictness itself is **not restated here** — not even parenthetically, which is how the
+previous revision of this paragraph managed to state the rule and break it in the same sentence.
+`.github/workflows/build.yml` holds the value in one place
+(`ANABASIS_PLUGINVAL_STRICTNESS`, with the phase history beside it), because a number copied into
+prose is a number that goes stale: this sentence carried "8 at P3–P5" in the present tense for a
+day after CI had moved past it.

@@ -374,6 +374,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     passComboHoverThrough (uiScaleBox);
     allCombos.add (&uiScaleBox);
     settingsBackdrop.addAndMakeVisible (uiScaleBox);
+    // Hand-built rather than via setupComboInternal (it maps index↔percent, not
+    // index↔value), which is exactly how it came to miss both of that helper's
+    // tail calls: without registerAnimated its hover lift skipped the easing
+    // every other combo has, and without a title it had no accessibility name.
+    registerAnimated (uiScaleBox);
+    uiScaleBox.setTitle ("UI scale");
     for (auto* b : { &oversampleBox, &phaseBox, &offlineBox })
     {
         removeChildComponent (b);
@@ -570,6 +576,12 @@ void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
     box.onChange = [&box, value]() mutable
     { value.setValue (juce::jmax (0, box.getSelectedItemIndex())); };
     registerAnimated (box);
+    // The accessibility name. `setupCombo` (the APVTS path) sets one from the
+    // parameter's registry name; these host-hidden combos had none, and unlike
+    // a Button — which falls back to its button text — a ComboBox with an empty
+    // title exposes no name at all. The tooltip IS the control's name here (the
+    // Settings rows label themselves that way), so it is the honest source.
+    box.setTitle (tidyTip (tip));
 }
 
 void AnabasisAudioProcessorEditor::setupToggleInternal (juce::ToggleButton& t,
@@ -581,6 +593,7 @@ void AnabasisAudioProcessorEditor::setupToggleInternal (juce::ToggleButton& t,
     addAndMakeVisible (t);
     t.getToggleStateValue().referTo (value);
     registerAnimated (t);
+    t.setTitle (tip.isNotEmpty() ? tidyTip (tip) : text);   // as setupToggle does
 }
 
 // ============================================================================

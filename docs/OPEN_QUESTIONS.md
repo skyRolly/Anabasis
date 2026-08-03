@@ -107,7 +107,9 @@ refers to the pluginval **gate**, not to which bytes it sees.
 
 ---
 
-## OQ-013 — How does the frozen trim vector cross message → audio? · `Resolved 2026-08-02 (ADR-0014)`
+## Resolved
+
+### OQ-013 — How does the frozen trim vector cross message → audio? · `Resolved 2026-08-02 (ADR-0014)`
 
 **Decision (2026-08-02, under the owner's v0.1.0 blanket approval; ⊕ for the post-v0.1.0 fine
 review).** **Inject, freeze-gated, at the duck's silent bottom** — recorded by **ADR-0014**. The
@@ -169,7 +171,7 @@ silently filled in.
 
 ---
 
-## OQ-014 — Do the MacroEngine guard atomics need a THREADING_POLICY table row? · `Resolved 2026-08-02 (reading 1)`
+### OQ-014 — Do the MacroEngine guard atomics need a THREADING_POLICY table row? · `Resolved 2026-08-02 (reading 1)`
 
 **Decision (2026-08-02, under the owner's v0.1.0 blanket approval; ⊕ for the post-v0.1.0 fine
 review).** **Reading 1 — already blessed; the table had a documentation gap.** The guards
@@ -208,7 +210,7 @@ must state one reading or the other.
 
 ---
 
-## OQ-016 — Does the §5.4 release trim apply while the limiter is in AUTO release? · `Resolved 2026-08-02 (ADR-0013)`
+### OQ-016 — Does the §5.4 release trim apply while the limiter is in AUTO release? · `Resolved 2026-08-02 (ADR-0013)`
 
 **Decision (2026-08-02, under the owner's v0.1.0 blanket approval; ⊕ for the post-v0.1.0 fine
 review).** **Option 2 — the trim scales the auto poles**, as this entry recommended: recorded by
@@ -254,7 +256,6 @@ now state the scope explicitly instead.
 before P5, since the §5.4 overlay in the Advanced view will otherwise display a trim the user
 cannot hear.
 
-## Resolved
 
 ### OQ-007 — Does the release pipeline ship installers at P6? · `Resolved 2026-08-02`
 

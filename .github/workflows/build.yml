@@ -19,13 +19,20 @@ permissions:
 # pluginval strictness escalates with the project phase, and lives in ONE place
 # so raising the bar is a one-line edit (docs/policies/TESTING_POLICY.md):
 #
-#     P1-P2 (skeleton, DSP core)   -> 5   development bar
-#     P3-P5 (metering, adaptive, UI) -> 8 standard gate
-#     P6 (polish & release)          -> 10  release gate (raised 2026-08-02)
-#     P6 / every release           -> 10  pre-release gold standard, REQUIRED
+# The env var below is the value in force RIGHT NOW, unconditionally, on every
+# branch — it is not phase-gated at runtime; the phases are the history of how
+# the bar was raised:
+#
+#     P1-P2 (skeleton, DSP core)      -> 5    development bar
+#     P3-P5 (metering, adaptive, UI)  -> 8    standard gate
+#     P6 / every release              -> 10   pre-release gold standard,
+#                                             REQUIRED (in force since
+#                                             2026-08-02)
 #
 # Lowering it below the current phase's value is a deliberate act that must be
-# justified in the PR.
+# justified in the PR. This block is cited as the single authority for the
+# number, so it carries no duplicate rows: the 2026-08-02 raise briefly added a
+# second P6 line that disagreed with the first.
 # ---------------------------------------------------------------------------
 env:
   ANABASIS_PLUGINVAL_STRICTNESS: 10

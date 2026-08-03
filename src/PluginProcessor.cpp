@@ -541,6 +541,18 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
             (float) (double) liveFrozenTrims.getProperty ("scHpfHz", 0.0),
             (float) (double) liveFrozenTrims.getProperty ("dynTiltDb", 0.0));
 
+    // The restored slot's mask REPLACES the live one — and the staged inputs
+    // with it. A gestured managed edit delivered off the message thread just
+    // before this leaves its bit un-drained, and the next tick (up to 30 ms
+    // later) would add that id to the mask the slot just restored: the slot
+    // would come up carrying a detach its own tree never held. Same for a
+    // racing re-engage. Dropping whatever is armed is exactly what
+    // `MacroEngine::ScopedRestore` does to a pending mapping on the way out,
+    // and for the same reason — a restore is not a gesture (§5.3), so a
+    // gesture that raced it belongs to the state being replaced.
+    pendingDetachBits.store (0, std::memory_order_relaxed);
+    pendingReengage.store (false, std::memory_order_relaxed);
+
     liveDetachMask.clear();
     if (const auto mask = slot.getChildWithName ("DETACH_MASK"); mask.isValid())
         for (int i = 0; i < mask.getNumChildren(); ++i)

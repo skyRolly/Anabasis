@@ -1344,6 +1344,35 @@ static void testAMacroGestureWinsADetachRacingItInOneDrain()
 }
 
 // ---------------------------------------------------------------------------
+// A RESTORE replaces the detach mask, so it must drop the staged bits too. An
+// off-thread gestured edit leaves its bit un-drained for up to one 30 ms tick;
+// if a slot switch (or preset apply, or session load) lands inside that window,
+// the tick afterwards would add the id to the mask the restore just installed —
+// the restored slot coming up with a detach its own tree never carried, which
+// is precisely the carry-over the restore paths clear the mask to prevent.
+static void testARestoreDropsStagedDetachBits()
+{
+    AnabasisAudioProcessor proc;
+    auto* limGain = proc.apvts.getParameter (pid::limGain);
+
+    std::thread offThread ([limGain]
+    {
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (
+            limGain->getNormalisableRange().convertTo0to1 (7.0f));
+        limGain->endChangeGesture();
+    });
+    offThread.join();
+    check (proc.detachMask().isEmpty(),
+           "restoreDrop: (premise) the off-thread detach is staged, not yet drained");
+
+    proc.switchToSlot (1);          // slot B's tree carries no detach mask
+    proc.flushPendingDetach();      // …and the tick that follows must add nothing
+    check (proc.detachMask().isEmpty(),
+           "restoreDrop: a slot switch drops the staged bit instead of stamping it on the new slot");
+}
+
+// ---------------------------------------------------------------------------
 // §5.3 detach / re-engage — ADR-0005's P5 half, the gesture grammar. The
 // discriminator's three conditions each get the stimulus that isolates them:
 // a GESTURED edit detaches; the SAME edit ungestured (automation) does not;
@@ -1867,6 +1896,7 @@ int main (int argc, char** argv)
         testMeterPublication();
     testAGestureEndWithoutACountedBeginIsIgnored();
     testAMacroGestureWinsADetachRacingItInOneDrain();
+    testARestoreDropsStagedDetachBits();
     testDetachAndReengageGrammar();
     testUndoIsPerSlotGestureCoalescedAndMaskWide();
     testFactoryPresets();
