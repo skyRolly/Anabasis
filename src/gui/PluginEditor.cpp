@@ -1050,6 +1050,15 @@ void AnabasisAudioProcessorEditor::timerCallback()
     // only consumer of that flag, since the on-thread half posts normally.
     if (uiRefreshPending.exchange (false, std::memory_order_relaxed))
         handleAsyncUpdate();
+
+    // The authoritative combo hover flag `drawComboBox` prefers. Without it
+    // that code fell back for ever to a live cursor test it documents as a
+    // pre-first-tick stopgap — and `allCombos`, collected by every combo
+    // setup, was dead state: a half-ported piece of the Anamorph editor. One
+    // flag per combo per tick; the boxes already repaint on mouse activity, so
+    // this changes what is drawn, not how often.
+    for (auto* c : allCombos)
+        c->getProperties().set ("hov", c->isMouseOver (true));
     refreshInternalSettingsBoxes();
     refreshPresetDisplay();
     const bool bypassed = processor.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f;

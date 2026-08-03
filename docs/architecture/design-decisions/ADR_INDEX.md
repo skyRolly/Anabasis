@@ -25,7 +25,7 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0011](ADR-0011-threading-model.md) | Threading model: two threads, no workers, atomic + SPSC publication | Accepted | **Partially Verified** — every implemented edge is mapped in `THREAD_MODEL.md` and `REALTIME_SAFETY_AUDIT.md` audits the audio thread; the two questions it left open are OQ-014 and the off-thread `replaceState` race (KI-003), and ADR-0012 amends its permitted-path table |
 | [ADR-0012](ADR-0012-staged-record-cross-thread-path.md) | GUI→Audio **bounded staged record** behind a release/acquire flag (ratifies the learned-target restore, OQ-015) | Accepted | Verified |
 | [ADR-0013](ADR-0013-release-trim-reaches-auto-poles.md) | The §5.4 release trim scales the limiter's **AUTO release poles** by `2^octaves` (resolves OQ-016) | Accepted | Verified — `testAutoReleaseFollowsTheTrimScale`, mutation-verified against the fixed-constant alphas |
-| [ADR-0014](ADR-0014-frozen-trim-restore.md) | Frozen trim vector **restored**: staged on ADR-0012's row, applied at the §2.8 duck's silent bottom (resolves OQ-013) | Accepted | Verified — `testFrozenTrimRestore`, seven mutants each killed by a distinct check |
+| [ADR-0014](ADR-0014-frozen-trim-restore.md) | Frozen trim vector **restored**: staged on ADR-0012's row, applied at the §2.8 duck's silent bottom (resolves OQ-013) | Accepted | Verified — `testFrozenTrimRestore`, every element killed by its own mutant (the ADR enumerates them) |
 
 ADR-0013 and ADR-0014 were taken on **2026-08-02** under the owner's v0.1.0 blanket approval
 (every human-review/owner-decision gate pre-approved to unblock the complete first version, with

@@ -6,7 +6,37 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 27 (2026-08-03)**:
+**Last updated:** for **review round 28 (2026-08-03)**:
+(1) **The dBTP readout warned against a literal −1**, which is merely the ceiling's DEFAULT, while
+the view's own banner and this file both describe the row as "dBTP in `warn` over the ceiling". At
+any other setting the warning fired at the wrong level — silent while genuinely over at a −6
+ceiling, red while legal at a raised one — and a factory preset already ships a moved ceiling
+(EDM Club, −0.5), so the non-default case is ordinary, not an edge. The ceiling joins the view's
+snapshot so a ceiling move repaints the colour on its own.
+(2) **The mutant count for `testFrozenTrimRestore` existed in six places and two of them
+disagreed** (seven vs nine — nine is current, seven predates the round-24 additions). Resolved the
+way the pluginval strictness was: ONE authority (ADR-0014's evidence line, which also enumerates
+them) and every other reference says "each killed by its own mutant" without a number. The
+historical coverage entry keeps its seven, marked AT THIS DATE.
+(3) **The bench target was compiled by no automated job**, so `tests/bench.cpp` would rot silently
+the first time a DSP signature moved — surfacing only when someone re-ran the measurement
+`PERFORMANCE_BUDGET.md`'s refresh rule requires. The Linux job now configures with
+`ANABASIS_BUILD_BENCH=ON`; it is still never RUN in CI (timings from a shared runner are exactly
+the numbers C2 says must not be quoted). Its stale "run() above" comment is gone with it.
+(4) **`allCombos` was dead state and the LookAndFeel's authoritative hover flag was never
+published** — a half-ported piece of the Anamorph editor, so `drawComboBox` fell back for ever to
+the live cursor test it documents as a pre-first-tick stopgap. The 24 Hz tick now publishes `hov`.
+(5) The tooltip comment in `LookAndFeel.cpp` cited **KI-006**, which in Anamorph is the
+transparent-window artefact and in Anabasis is an unrelated Freeze/re-prepare issue — the
+reference came with the adapted file and pointed readers at the wrong document; now attributed
+explicitly to Anamorph's numbering. **KI-007's heading said "Three" while four items were listed**
+(and this round adds a fifth: the dirty marker keys on the whole slot tree, so preset-EXCLUDED
+parameters mark a preset as edited) — the count is out of the heading entirely, because a
+fine-review checklist read as shorter than it is, is worse than one with no number.
+KI-003 gains a third family member: the §7 undo stacks are cleared from `setStateInformation`,
+which the same file says may not arrive on the message thread — the same exposure as
+`replaceState` on that path, recorded because the stacks are new P6 state.
+Previous: **review round 27 (2026-08-03)**:
 (1) **The preset dirty datum was engine-wide while the name it describes is per-slot.**
 `presetBaseline` survived a session load (which cannot restore it — a session records WHICH preset
 a slot holds, never whether it had been edited since) and did not travel across an A/B switch, so
@@ -100,7 +130,7 @@ can arrive on the audio thread, where posting takes a lock and may allocate — 
 frozen-trim record's duck request moved from a second store beside the flag to a derivation at
 the consume, removing the last ordering question between them. `GrHistoryBuffer::reset`'s opening
 seqlock increment is a relaxed increment + release FENCE, since a release store orders only
-earlier writes and the bulk clear could be observed above it. **KI-007 records the three items
+earlier writes and the bulk clear could be observed above it. **KI-007 opens with the three items
 this round deliberately did not fix** — the frozen vector surviving a factory apply, preset-ring
 navigation identifying entries by name, and undo not restoring the dirty baseline — because each
 is a semantics call and two of them are KI-006's question.
@@ -171,7 +201,7 @@ index row upgraded to Verified). **A drift found and fixed while writing the ADR
 `setStateInformation` adopted `liveFrozenTrims` but never staged the engine restore — only
 `applySlotToLive` did — so a freeze-ON *session load* (the primary OQ-013 case) would have
 silently dropped the vector; the stage is now in both paths and `testFrozenTrimRestore`'s
-unprimed/primed load cases pin it (seven mutants total, each killed by a distinct check — both
+unprimed/primed load cases pin it (seven mutants AT THIS DATE, each killed by a distinct check — both
 application sites, both staging sites, the capture, the no-audio mirror guard, the freeze-off
 condition). OQ-007 (plain zips), OQ-014 (reading 1 — `THREADING_POLICY.md` gains the
 listener-guard row citing ADR-0005/ADR-0011 as enacting authority) and OQ-013/OQ-016 moved to

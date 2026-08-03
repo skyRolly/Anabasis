@@ -88,9 +88,13 @@ int main()
                     double worstUs = 0.0;
                     for (int r = 0; r < 5; ++r)
                     {
-                        // Inline measurement (run() above documents the shape;
-                        // the accounting lives here so ns/sample sums ONLY the
-                        // timed process() region).
+                        // Inline measurement, deliberately not factored into a
+                        // helper: the accounting has to sum ONLY the timed
+                        // process() region, and a helper that also owned the
+                        // stimulus would invite counting the generator with it.
+                        // (This comment used to cite a `run()` that no longer
+                        // exists — it was factored away and the reference was
+                        // not.)
                         anabasis::AnabasisEngine engine;
                         engine.prepare (c.sr, c.block, 2);
                         anabasis::EngineParameters p;

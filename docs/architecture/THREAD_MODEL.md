@@ -124,7 +124,7 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
 - **Frozen trim vector transport — IMPLEMENTED (2026-08-02, ADR-0014)**: the Hard Stop this
   bullet carried is lifted. ADR-0012 settled the transport (the staged-record row fits a
   four-scalar vector); ADR-0014 took the injection decision and the edge is now the frozen-trim
-  row in the implemented table above, guarded by `testFrozenTrimRestore` (seven mutants, each
+  row in the implemented table above, guarded by `testFrozenTrimRestore` (every element killed by its own mutant, each
   killed by a distinct check).
 
 ## Verification

@@ -62,7 +62,11 @@ private:
 
     // Snapshot gate: repaint only when a shown value actually changed.
     float shownM = 1.0f, shownS = 1.0f, shownI = 1.0f,
-          shownTp = 1.0f, shownPlr = -1.0f;
+          shownTp = 1.0f, shownPlr = -1.0f,
+          // The dBTP row's warn threshold is the USER's ceiling, so it is part
+          // of the snapshot: a ceiling move must repaint the colour even when
+          // no meter value changed.
+          shownCeiling = 1.0f;
     int   shownMask = -1;
     bool  shownTpOn = true;
 

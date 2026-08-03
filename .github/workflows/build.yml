@@ -172,9 +172,19 @@ jobs:
           ./scripts/setup-linux.sh
 
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+        # ANABASIS_BUILD_BENCH is ON here and nowhere else. The bench stays OFF
+        # by default (a benchmark that always builds gets run casually and
+        # quoted without its machine — the C2 failure PERFORMANCE_BUDGET.md
+        # guards against), but OFF everywhere meant `tests/bench.cpp` was
+        # compiled by no automated job at all: its DSP calls would rot silently
+        # the first time a signature moved, and the rot would only surface when
+        # someone re-ran the measurement the budget's refresh rule requires.
+        # Building it on ONE platform costs a translation unit and makes the
+        # rot a red build. It is still never RUN in CI — timings from a shared
+        # runner are exactly the numbers that must not be quoted.
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
-      - name: Build (VST3 + Standalone + tests)
+      - name: Build (VST3 + Standalone + tests + bench)
         id: build
         run: cmake --build build --config Release
 

@@ -120,7 +120,8 @@ duck's silent bottom or the unprimed direct-adopt, after which Freeze holds it e
 capture side follows the ADAPTIVE child's mirror rule: a load→save with no audio between
 serialises the loaded copy, not the engine's stale published trims. The Hard Stop banners in
 `PluginProcessor.h`, `THREADING_POLICY.md` and `THREAD_MODEL.md` are lifted; guarded by
-`AnabasisStateTests` `testFrozenTrimRestore` (seven mutants, each killed by a distinct check).
+`AnabasisStateTests` `testFrozenTrimRestore` (every element killed by its own mutant; ADR-0014
+enumerates them).
 The original entry follows as the record of why this needed deciding.
 
 **Question.** ADR-0007 routes `frozenTrims` through "the engine-side inject-at-the-duck-bottom path,

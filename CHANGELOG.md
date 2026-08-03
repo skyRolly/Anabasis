@@ -196,7 +196,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   buffers per engine instance; storage is heap-allocated at construction now, and both test
   suites print unbuffered so a crash can no longer swallow its own output).
   Evidence Source: **PR #5** (`skyRolly/Anabasis`) — `testAutoReleaseFollowsTheTrimScale`,
-  `testFrozenTrimRestore` (seven mutants), `testFactoryPresets`; ADR-0013/ADR-0014;
+  `testFrozenTrimRestore`, `testFactoryPresets`; ADR-0013/ADR-0014;
   OQ-007/OQ-013/OQ-014/OQ-016 → Resolved. [Verified]
 
 ### Fixed
@@ -220,6 +220,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   the Settings panel open no longer leaves them showing the previous project's choices.
 - **Automating Bypass with the window open no longer risks an audio dropout** (2026-08-03): the
   window asked the message queue for work from inside the audio callback, which can take a lock.
+- **The true-peak readout turns red against YOUR ceiling** (2026-08-03), not against a fixed
+  −1 dBTP: at any other ceiling — including the −0.5 the "EDM Club" preset sets — it warned at the
+  wrong level, staying neutral while genuinely over or lighting up while legal.
 - **Factory presets change the sound** (2026-08-03). A factory preset expresses itself through the
   three macro knobs, and the translation from those positions to the compressor / clipper /
   limiter / EQ settings was being cancelled as the preset loaded, so every factory preset left the

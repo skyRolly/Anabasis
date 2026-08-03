@@ -76,6 +76,17 @@ message thread, so on a well-behaved host there is no race at all; they are
 the message thread a concurrent save would otherwise read a half-written
 mirror. ADR-0012's contract covers the engine-side record, not this copy.
 
+A **third** member, added 2026-08-03 (review round 28): the §7 undo/redo stacks.
+`setStateInformation` clears `undoStacks`/`redoStacks`/`gesturePreState`, which
+are plain `juce::Array<juce::ValueTree>` members, while the editor reads
+`canUndo()`/`canRedo()` on its 24 Hz tick and `undo()`/`redo()` pop from them on
+the message thread — so an off-thread load with the window open can race a
+`clear()` against a `removeAndReturn()`. It is the same exposure as
+`replaceState`, `liveDetachMask.clear()` and `livePresetName` on this path, and
+it closes with the same thread-model decision rather than separately; recorded
+because the stacks are NEW state added at P6, and this round's standard
+elsewhere was that both halves of a premise should agree.
+
 **Workaround:** none required on the hosts tested so far — no case of an
 off-message-thread restore has been observed against this plugin. The entry
 exists because the assumption is load-bearing and undocumented elsewhere.
@@ -269,12 +280,15 @@ half alone.
 
 **For the post-v0.1.0 fine review.**
 
-### KI-007 — Three preset/Freeze bookkeeping edges the fine review must settle together
+### KI-007 — Preset/Freeze bookkeeping edges the fine review must settle together
 
 **Severity:** Low (each is display or recall bookkeeping; none changes a rendered sample on its own)
-**Status:** Recorded — raised by review round 25 (2026-08-03) and deliberately NOT fixed in that
-round, because each is a semantics question rather than a defect, and two of them are the same
-question KI-006 asks.
+**Status:** Recorded — opened by review round 25 (2026-08-03) with three items and extended by
+rounds 27 and 28; deliberately NOT fixed, because each is a semantics question rather than a
+defect, and several are the same question KI-006 asks. **The count is deliberately not in the
+heading**: it was "Three" for one round after the fourth item landed, which is exactly how a
+fine-review checklist gets read as shorter than it is. Numbered items below are the list of
+record.
 
 1. **A factory-preset apply keeps the slot's frozen-trim vector.** `applyFactoryPreset` clears
    `liveBaseline` and the detach mask but not `liveFrozenTrims`, and `freeze` is
@@ -306,6 +320,17 @@ question KI-006 asks.
    own risk (`dismissAllActiveMenus()` in the editor destructor also closes another instance's
    menu; a shared static LookAndFeel trades this for static-destruction order at DLL unload), which
    is why it is recorded rather than patched under a "no new bugs" round.
+
+5. **The dirty marker keys on the whole slot tree, so preset-EXCLUDED parameters mark a preset as
+   edited.** `presetDirty()` compares `presetBaseline` against a fresh `saveSlotFromLive()`, which
+   carries the FULL parameter set plus the `FROZEN_TRIMS` child. `freeze` is preset-excluded
+   (`isPresetExcludedParam`), so no preset can ever have carried it — yet toggling Freeze changes
+   the slot tree twice over (the `freeze` PARAM node, and the appearance of `FROZEN_TRIMS` once
+   the capture branch fires) and flips the name to edited. The view-tier exclusions behave the
+   same way. Display-only. The fix is a comparison that drops what a preset cannot carry, which
+   means deciding exactly that set (excluded params, `FROZEN_TRIMS`, `BASELINE` — but NOT
+   `DETACH_MASK`, which presets do carry) — a small spec question, and the reason it is recorded
+   here with items 1–4 rather than guessed at inside a no-new-bugs round.
 
 **For the post-v0.1.0 fine review, alongside KI-006.**
 

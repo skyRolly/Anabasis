@@ -36,6 +36,7 @@ void LoudnessMeterView::tick (double)
                           .getProperty (iid::meterTargets, ~0);
     const bool tpOn = (bool) processor.internalState.state()
                           .getProperty (iid::tpMeterOn, true);
+    const float ceil = processor.apvts.getRawParameterValue (pid::ceiling)->load();
 
     // Bitwise compares, so even a NaN transition still repaints once.
     const bool changed = std::memcmp (&m, &shownM, 4) != 0
@@ -43,10 +44,12 @@ void LoudnessMeterView::tick (double)
                       || std::memcmp (&i, &shownI, 4) != 0
                       || std::memcmp (&tp, &shownTp, 4) != 0
                       || std::memcmp (&plr, &shownPlr, 4) != 0
+                      || std::memcmp (&ceil, &shownCeiling, 4) != 0
                       || mask != shownMask || tpOn != shownTpOn;
     if (! changed)
         return;
     shownM = m; shownS = s; shownI = i; shownTp = tp; shownPlr = plr;
+    shownCeiling = ceil;
     shownMask = mask; shownTpOn = tpOn;
     repaint();
 }
@@ -130,7 +133,13 @@ void LoudnessMeterView::paint (juce::Graphics& g)
         g.drawText ("TP", row.removeFromLeft (30), juce::Justification::centredLeft);
         // Over-ceiling reads in `warn` — the §6.1 colour-blind-safe pairing
         // (gold accent vs desaturated red survives as a luminance difference).
-        g.setColour (shownTp > -1.0f && shownTp > -99.0f ? colours::warn : colours::text);
+        // Against the USER's ceiling, not a literal: the threshold was
+        // hard-coded to −1.0, which is merely the ceiling's DEFAULT, so any
+        // other setting warned at the wrong level — silent while genuinely
+        // over at a −6 ceiling, red while legal at a raised one. Both are in
+        // dBTP, and a factory preset already ships a moved ceiling (EDM Club
+        // sets −0.5), so a non-default ceiling is the ordinary case.
+        g.setColour (shownTp > shownCeiling && shownTp > -99.0f ? colours::warn : colours::text);
         g.setFont (juce::Font (juce::FontOptions (13.0f)));
         g.drawText (fmt (shownTp, 2) + " dBTP", row, juce::Justification::centredLeft);
     }

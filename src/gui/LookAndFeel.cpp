@@ -830,7 +830,10 @@ void AnabasisLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& te
     auto b = full.reduced (1.0f);
     // On platforms WITHOUT per-pixel window alpha (notably Linux/X11 with no compositor),
     // juce::TooltipWindow cannot be semi-transparent, so the area OUTSIDE the rounded capsule
-    // renders the window's opaque fill -> black corners (KI-006). Pre-fill the whole bounds with
+    // renders the window's opaque fill -> black corners (ANAMORPH's KI-006, whose numbering this
+    // adapted file inherited; Anabasis has no entry for it -- and its own KI-006 is an unrelated
+    // Freeze/re-prepare issue, so the bare reference pointed a reader at the wrong document).
+    // Pre-fill the whole bounds with
     // the capsule colour so the corners match the capsule instead of rendering black. Where
     // transparent windows ARE available (macOS / Windows / compositing Linux) the corners stay
     // genuinely transparent -- no visual change there. NOTE: juce::TooltipWindow declares itself
