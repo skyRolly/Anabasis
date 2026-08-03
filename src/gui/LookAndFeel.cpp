@@ -839,7 +839,11 @@ void AnabasisLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& te
     // genuinely transparent -- no visual change there. NOTE: juce::TooltipWindow declares itself
     // opaque by default, which makes these unpainted corners UNDEFINED pixels; on macOS the
     // editor marks its TooltipWindow non-opaque so the peer clears them to real alpha every
-    // paint (the Apple-Silicon-native white-corner fix, 0.8.10 -- see PluginEditor.cpp).
+    // paint (the Apple-Silicon-native white-corner fix, 0.8.10). That marking was NOT carried
+    // across with this file and was owed the moment the editor handed this LookAndFeel to its
+    // TooltipWindow at all -- a parentless desktop tooltip inherits nothing, so until then it
+    // resolved the DEFAULT look-and-feel and none of this ran. Both halves now exist:
+    // `PluginEditor.cpp` sets the look-and-feel and, under JUCE_MAC, `setOpaque (false)`.
     if (! juce::Desktop::getInstance().canUseSemiTransparentWindows())
     {
         g.setColour (colours::bgRaised);

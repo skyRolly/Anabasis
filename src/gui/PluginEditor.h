@@ -55,6 +55,15 @@ public:
     // sibling product fixed — provenance header above).
     void setScaleFactor (float newScale) override;
 
+    // The Settings panel's state→widget direction, run on the 24 Hz tick.
+    // PUBLIC only so the headless suite can drive it: no message loop runs
+    // there, so the tick never fires, and this direction has now been the
+    // missing half TWICE — the three combos plus `uiScaleBox` (round 26) and
+    // the three §6.4 target checkboxes (round 32). A direction nothing can
+    // call is a direction nothing can guard. The implementation comment
+    // carries the reasoning.
+    void refreshInternalSettingsBoxes();
+
 private:
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -110,6 +119,17 @@ private:
         {
             if (e.mods.isAltDown())
             {
+                // Deliberately WITHOUT `Slider::mouseDown (e)`: the alt-click is
+                // a complete gesture on its own, opened and closed here. The
+                // accepted consequence, stated because it looks like an
+                // omission — the slider never enters a drag, so an
+                // alt-PRESS-AND-DRAG is inert rather than dragging on from the
+                // reset value. JUCE tolerates it (its pimpl guards every later
+                // `mouseDrag`/`mouseUp` on the drag object this never creates),
+                // and the pattern is inherited from Anamorph (ADR-0009). Making
+                // it drag would mean opening a second gesture inside the one
+                // just closed, which is the shape §5.3/§7 spent this PR
+                // untangling — a listening-pass call, not a repair.
                 if (resetParam != nullptr) resetParam->beginChangeGesture();
                 doReset();
                 if (resetParam != nullptr) resetParam->endChangeGesture();
@@ -139,6 +159,11 @@ private:
             // stock `Slider::mouseDoubleClick` can construct its own
             // `DragInProgress`. The host therefore sees one balanced
             // begin/end pair and `jassert (! isPerformingGesture)` cannot fire.
+            // Exactly two: JUCE reports 3, 4 … for a rapid multi-click, and a
+            // triple-click's third click therefore resets nothing. Matches
+            // stock `Slider::mouseDoubleClick`, which is likewise reached only
+            // on the double, and keeps one reset per intent instead of one per
+            // click after the second.
             if (e.getNumberOfClicks() != 2)
                 return;
             if (resetParam != nullptr) resetParam->beginChangeGesture();
@@ -154,9 +179,6 @@ private:
     // Raised by parameterChanged when it may NOT post (an automatable id can be
     // delivered on the audio thread); consumed by the 24 Hz tick. See both.
     std::atomic<bool> uiRefreshPending { false };
-    // The Settings tree changes under the editor (a session load rewrites it),
-    // so the boxes are re-seeded from it on the same tick.
-    void refreshInternalSettingsBoxes();
     void applyUiScale();
     void updateModeVisibility();
     void layoutAdvanced (juce::Rectangle<int> body);
@@ -184,6 +206,15 @@ private:
 
     AnabasisAudioProcessor& processor;
     abgui::AnabasisLookAndFeel lnf;
+    // Null PARENT on purpose (a desktop tooltip is not clipped to the editor),
+    // which is also why it needs `lnf` handed to it EXPLICITLY: a desktop
+    // component has no parent to inherit a look-and-feel from, so it resolves
+    // `LookAndFeel::getDefaultLookAndFeel()` and the family's `drawTooltip` /
+    // `getTooltipBounds` overrides never ran — the capsule was adapted brand
+    // code that nothing could reach. Wired in the constructor and cleared in
+    // the destructor, both beside the editor's own `setLookAndFeel`, because
+    // `lnf` is a member and must outlive every user of it. Declared AFTER
+    // `lnf` so reverse-order destruction would be right even without that.
     juce::TooltipWindow tooltips { nullptr, 600 };
 
     // -- top bar -------------------------------------------------------------

@@ -83,6 +83,17 @@ public:
 
     // Copies up to `count` most-recent frames (oldest first) into the caller's
     // buffers. Returns the number of frames actually copied.
+    //
+    // Same shape as `GrHistoryBuffer::peek` — a masked index into a ring the
+    // producer is still writing — and the reason it needs no `capacity - 1`
+    // clamp is HEADROOM, not a different mechanism, so state it rather than
+    // leave the next reader to re-derive it. The oldest frame copied sits
+    // `count` behind the head; the producer has to advance a further
+    // `capacity - count` frames before it reaches that slot. The only caller
+    // asks for 4096 of 16384, so ~12288 frames (~0.26 s at 48 kHz) must be
+    // written while one memcpy-sized loop runs. A future capacity reduction or
+    // window widening that narrows this margin needs the explicit clamp the GR
+    // ring carries; `count > capacity` alone would not catch it.
     int readLatest (float* dstL, float* dstR, int count) const noexcept
     {
         const auto w = write.load (std::memory_order_acquire);

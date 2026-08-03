@@ -11,6 +11,7 @@
 #include "../src/PluginProcessor.h"
 #include "../src/MacroEngine.h"
 #include "../src/gui/GrHistoryView.h"
+#include "../src/gui/PluginEditor.h"
 #include <array>
 #include <cstdio>
 #include <thread>
@@ -270,6 +271,47 @@ static void testDrainInsideRestoreIsSuppressed()
     proc.getMacroEngine().flushPendingMapping();
     check (juce::exactlyEqual (proc.apvts.getRawParameterValue (pid::clipDrive)->load(), 6.0f),
            "macro: the scope drops the armed mapping on exit, it does not queue it");
+}
+
+// The OTHER half of the same tick. The restore guard used to sit inside
+// `drainPendingMapping`, so a tick landing in a restore still ran the WRAPPER's
+// drain — which writes `liveDetachMask`, the plain `juce::StringArray` the
+// restore is itself replacing. On the message thread that is only wasted work;
+// on the off-message-thread `setStateInformation` VST3 permits it made the tick
+// a second concurrent writer of that array, widening KI-003's window instead of
+// leaving it as found. The guard now covers the whole tick, and the outcome is
+// unchanged either way — `replaceDetachMask` drops the staged bits — which is
+// exactly why only the mask DURING the restore can tell the two apart.
+static void testTheWholeTickIsSuppressedInsideARestore()
+{
+    AnabasisAudioProcessor proc;
+    auto* limGain = proc.apvts.getParameter (pid::limGain);
+
+    // A gestured managed edit delivered OFF the message thread: the bit is
+    // staged and `drainDetachBitsSoon` refuses to post, so only a tick can
+    // turn it into mask text.
+    std::thread offThread ([limGain]
+    {
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (2.0f));
+        limGain->endChangeGesture();
+    });
+    offThread.join();
+    check (proc.detachMask().isEmpty(), "restoreTick: (premise) the bit is staged, not in the mask");
+
+    {
+        const MacroEngine::ScopedRestore guard (proc.getMacroEngine());
+        proc.getMacroEngine().drainTick();
+        check (proc.detachMask().isEmpty(),
+               "restoreTick: a tick inside a restore does not write the detach mask either");
+    }
+
+    // Deferred, not dropped: outside the scope the same tick applies it. A
+    // real restore path clears it at `replaceDetachMask` instead, which is the
+    // step this test deliberately does not perform.
+    proc.getMacroEngine().drainTick();
+    check (proc.detachMask().contains (pid::limGain),
+           "restoreTick: …and the tick after the restore still applies it");
 }
 
 // ---------------------------------------------------------------------------
@@ -1726,6 +1768,98 @@ static void testGrRingResetEpoch()
 }
 
 // ---------------------------------------------------------------------------
+// The Settings panel's STATE→WIDGET direction. Every control there is bound to
+// `InternalState`'s tree, which `replaceFrom` rewrites wholesale on every
+// session load — so a panel left open across a load must follow. The controls
+// that CANNOT use `Value::referTo` are the ones that keep missing it: the three
+// combos map index↔value, `uiScaleBox` maps index↔percent, and the three §6.4
+// target checkboxes are three BITS of one int. Round 26 fixed the first four;
+// round 32 found the checkboxes still seeded once at construction while
+// `LoudnessMeterView` read the tree every frame, so the meter moved and the
+// boxes did not. This drives the re-seed directly (no message loop runs here,
+// so the 24 Hz tick never fires) and finds the widgets by the text the user
+// sees, which is the only handle a test outside the class has.
+//
+// The editor is CONSTRUCTED and never shown: nothing calls `setVisible` or
+// `addToDesktop`, so no window peer is created and the suite still runs with no
+// display (verified with `DISPLAY` unset — that is why the Linux job needs xvfb
+// for pluginval, which DOES open the window, and not for this).
+// The handles a test outside the class has: a Button's visible text, and the
+// accessibility TITLE the host-hidden combos were given in round 29 (their
+// tooltip, tidied) — the combos carry no other stable string until one is
+// selected, and asserting on the selection is what the test is FOR.
+static juce::Button* findButtonByText (juce::Component& root, const juce::String& text)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getButtonText() == text)
+            return b;
+        if (auto* found = findButtonByText (*c, text))
+            return found;
+    }
+    return nullptr;
+}
+
+static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::String& title)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::ComboBox*> (c); b != nullptr && b->getTitle() == title)
+            return b;
+        if (auto* found = findComboByTitle (*c, title))
+            return found;
+    }
+    return nullptr;
+}
+
+static void testTheSettingsPanelFollowsAProjectLoad()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "settingsFollow: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    juce::ToggleButton* targets[3] = {};
+    const char* names[] = { "Spotify", "Apple Music", "YouTube" };
+    for (int t = 0; t < 3; ++t)
+        targets[t] = dynamic_cast<juce::ToggleButton*> (findButtonByText (*ed, names[t]));
+    check (targets[0] != nullptr && targets[1] != nullptr && targets[2] != nullptr,
+           "settingsFollow: (premise) the three target checkboxes were found");
+    if (targets[0] == nullptr || targets[1] == nullptr || targets[2] == nullptr)
+        return;
+
+    // All three default ON (`meterTargets` = ~0), so a mask that clears the
+    // middle bit is a change in BOTH directions across the row — a re-seed that
+    // only ever turned boxes off, or only on, would still fail one of them.
+    for (int t = 0; t < 3; ++t)
+        check (targets[t]->getToggleState(), "settingsFollow: (premise) targets start on");
+
+    auto& tree = proc.internalState.state();
+    tree.setProperty (iid::meterTargets, 0b101, nullptr);      // Apple Music off
+    tree.setProperty (iid::oversample, 3, nullptr);            // 8×
+    tree.setProperty (iid::osPhase, 1, nullptr);               // linear
+    ed->refreshInternalSettingsBoxes();
+
+    check (targets[0]->getToggleState() && ! targets[1]->getToggleState()
+               && targets[2]->getToggleState(),
+           "settingsFollow: the checkboxes followed the loaded mask, bit for bit");
+    // …and the re-seed must not write back through `onStateChange`: a
+    // notifying set would put the widget's own state into the tree, which is
+    // how a one-way binding "fixes" itself into overwriting the load.
+    check ((int) tree.getProperty (iid::meterTargets) == 0b101,
+           "settingsFollow: …without the re-seed writing the mask back");
+    // The round-26 half, now guarded rather than assumed: a combo whose index
+    // is not its value follows the same load.
+    if (auto* box = findComboByTitle (*ed, "Oversampling"))
+        check (box->getSelectedItemIndex() == 3 && box->getText() == "8x",
+               "settingsFollow: the combos still follow too");
+    else
+        check (false, "settingsFollow: (premise) the oversampling combo was found by title");
+}
+
+// ---------------------------------------------------------------------------
 // The reader's other half: the WINDOW CLAMP. `peek` masks the absolute index,
 // so `head - kSize` aliases the slot the producer is filling at that instant —
 // a frame asking for the full capacity reads a half-written entry as its
@@ -2079,11 +2213,13 @@ int main (int argc, char** argv)
         testFactoryPresets();
         testMeterResetClearsSessionHolds();
         testGrRingResetEpoch();
+        testTheSettingsPanelFollowsAProjectLoad();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();
         testDrainInsideRestoreIsSuppressed();
+        testTheWholeTickIsSuppressedInsideARestore();
         testAbRawExact();
         testFrozenSlotRoundTrip();
         testFrozenTrimRestore();

@@ -42,11 +42,15 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // freezes the surface at 49, well inside the word.
     jassert (getParameters().size() <= kMaxCountedGestureIndex);
     addListener (this);                       // gesture begin/end
+    // The MANAGED nine only. The three macro ids were registered here too and
+    // `parameterChanged` discarded every one of those callbacks on its first
+    // line (`managedIndexOf` fails for a macro) — three registrations that read
+    // as load-bearing and were not, which is how a future edit comes to assume
+    // macro writes reach this handler. `MacroEngine` is the macros' listener;
+    // the wrapper hears them through the GESTURE callbacks instead, which is
+    // where §5.3's re-engage rule actually lives.
     for (const char* id : managed_params::ids)
         apvts.addParameterListener (id, this);
-    apvts.addParameterListener (pid::loudness,  this);
-    apvts.addParameterListener (pid::character, this);
-    apvts.addParameterListener (pid::tone,      this);
 }
 
 AnabasisAudioProcessor::~AnabasisAudioProcessor()
@@ -64,9 +68,6 @@ AnabasisAudioProcessor::~AnabasisAudioProcessor()
     removeListener (this);
     for (const char* id : managed_params::ids)
         apvts.removeParameterListener (id, this);
-    apvts.removeParameterListener (pid::loudness,  this);
-    apvts.removeParameterListener (pid::character, this);
-    apvts.removeParameterListener (pid::tone,      this);
 }
 
 // The three §5.3 conditions meet here. Gesture callbacks arrive with a raw
@@ -221,7 +222,10 @@ void AnabasisAudioProcessor::parameterChanged (const juce::String& parameterID, 
 {
     const int m = managedIndexOf (parameterID);
     if (m < 0)
-        return;                                   // macros route through MacroEngine
+        return;                                   // macros route through MacroEngine —
+                                                  // and are no longer REGISTERED here,
+                                                  // so this line now guards only an id
+                                                  // a future registration might add
     if ((managedGestureBits.load (std::memory_order_relaxed) & (1u << m)) == 0)
         return;                                   // ungestured: automation/restore — never detaches
     if (macroEngine->isApplyingMacro() || macroEngine->isRestoring())

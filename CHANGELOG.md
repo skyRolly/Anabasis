@@ -245,6 +245,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   that knob was written from the macro curve and only afterwards marked as detached — so it stuck
   at the macro's value instead of yours, and the session was saved that way. Every route into the
   macro update now applies your edits first.
+- **The Settings panel follows a project load completely** (2026-08-03). The oversampling, phase
+  and offline-quality drop-downs were fixed earlier in this branch; the three streaming-target
+  checkboxes were not, so a panel left open across a load kept showing the previous project's
+  targets while the loudness meter already drew the new project's target lines — and the first
+  click on a checkbox then read as toggling the wrong one.
+- **Tooltips are drawn in the product's own style** (2026-08-03): the tooltip window was created
+  without being told which look-and-feel to use, so it fell back to the JUCE default and the
+  designed capsule never appeared.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
   the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
   documented; a well-formed preset file from another plugin is refused without costing an undo
@@ -255,7 +263,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testFrozenTrimRestore` (undo + save-window cases), `testMeterResetIgnoresTheStraddlingSubBlock`,
   `testAGestureEndWithoutACountedBeginIsIgnored`,
   `testThePostedDrainAlsoTakesTheWrapperBitsFirst`,
-  `testGrHistoryWindowNeverAsksForTheHeadSlot`; all mutation-verified. [Verified]
+  `testGrHistoryWindowNeverAsksForTheHeadSlot`,
+  `testTheSettingsPanelFollowsAProjectLoad`,
+  `testTheWholeTickIsSuppressedInsideARestore`; all mutation-verified. [Verified]
 
 The first entry will be `[0.1.0]`, cut when the post-v0.1.0 fine review clears the tag.
 

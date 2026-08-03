@@ -65,7 +65,8 @@ public:
     // True while the engine itself is writing managed parameters — the §5.3
     // discriminator's "not macro-originated" half. P4's gesture bracketing is
     // the other half.
-    bool isApplyingMacro() const noexcept { return applying; }
+    bool isApplyingMacro() const noexcept
+    { return applying.load (std::memory_order_relaxed); }
 
     // §5.3 detach filter: the wrapper owns the mask (it is per-A/B-slot,
     // serialized state); the mapper only ASKS. Null = nothing detached.
@@ -194,7 +195,18 @@ private:
     }
 
     juce::AudioProcessorValueTreeState& apvts;
-    bool applying = false;
+
+    // ATOMIC for the same reason `restoreDepth` below is, and it was the one
+    // of the pair that was not. `isApplyingMacro()` is read by
+    // `AnabasisAudioProcessor::parameterChanged`, which arrives on whichever
+    // thread the host chose — including the audio thread. In the case that
+    // MATTERS the read is synchronous on the thread that set the flag (a
+    // mapping write re-entering the listener), so the discriminator was always
+    // correct; a genuinely concurrent off-thread parameter change reading it
+    // while the message thread flips it was nevertheless a formal data race,
+    // whose worst outcome is one managed parameter wrongly detaching or
+    // wrongly not. Relaxed: it gates a decision, it orders no payload.
+    std::atomic<bool> applying { false };
 
     // parameterChanged can arrive on the AUDIO thread: APVTS calls its
     // listeners on whichever thread changed the parameter, and rule 5 makes

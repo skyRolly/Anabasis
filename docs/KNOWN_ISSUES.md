@@ -76,6 +76,13 @@ message thread, so on a well-behaved host there is no race at all; they are
 the message thread a concurrent save would otherwise read a half-written
 mirror. ADR-0012's contract covers the engine-side record, not this copy.
 
+**Narrowed 2026-08-03 (review round 32), not closed:** the MacroEngine's 30 ms tick used to run
+the wrapper's drain even inside a `ScopedRestore` — the restore guard sat one level down, in
+`drainPendingMapping` — which made the tick a SECOND concurrent writer of `liveDetachMask` on this
+path. The guard now covers the whole tick, so the restore is again the only writer; the underlying
+exposure (the restore itself writing `replaceState` / `liveDetachMask` / `livePresetName` while the
+editor reads them) is untouched and still needs the thread-model decision below.
+
 A **third** member, added 2026-08-03 (review round 28): the §7 undo/redo stacks.
 `setStateInformation` clears `undoStacks`/`redoStacks`/`gesturePreState`, which
 are plain `juce::Array<juce::ValueTree>` members, while the editor reads
@@ -109,9 +116,10 @@ which one restores state.
 Evidence [Partially Verified]:
 - Source: `src/MacroEngine.h` (`ScopedRestore`), `src/PluginProcessor.cpp`
   (`setStateInformation`, `switchToSlot`, `applyPresetFile`)
-- Test:   `AnabasisStateTests` `testDrainInsideRestoreIsSuppressed` — models the
-  mid-restore drain single-threaded; the uncovered `replaceState` race is not
-  reproducible headlessly
+- Test:   `AnabasisStateTests` `testDrainInsideRestoreIsSuppressed` (the mapping
+  half) and `testTheWholeTickIsSuppressedInsideARestore` (the wrapper half, the
+  round-32 narrowing) — both model the mid-restore drain single-threaded; the
+  uncovered `replaceState` race is not reproducible headlessly
 - Commit: P1 skeleton, thread-safety pass
 
 ---

@@ -6,7 +6,61 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 31 (2026-08-03)**, whose first finding is the previous
+**Last updated:** for **review round 32 (2026-08-03)**, where the recurring shape is a
+DIRECTION or a GUARD applied to some of the things it names:
+(1) **The Settings panel's three §6.4 target checkboxes never followed a project load.** They are
+hand-built — three BITS of one int, so `Value::referTo` cannot express them — and were seeded once
+at construction, while `LoudnessMeterView` reads `int_meterTargets` from the tree every frame. A
+panel left open across a load therefore showed the previous project's targets against the new
+project's meter, and the first click read as toggling the wrong thing. Exactly the one-way shape
+round 26 removed from the three combos and `uiScaleBox`, still present one row down. Re-seeded on
+the same 24 Hz tick, and `refreshInternalSettingsBoxes()` is now public **because this direction
+has been the missing half twice**: no message loop runs in the headless suite, so the tick never
+fires there and nothing could call it. `testTheSettingsPanelFollowsAProjectLoad` is the first test
+in the tree that CONSTRUCTS the editor; it covers the round-26 combos as well, and three mutants
+kill it (drop the checkbox re-seed, drop the combo re-seed, invert the direction).
+(2) **The macro tick's restore guard covered the mapping half only.** It sat inside
+`drainPendingMapping`, so a tick landing in a `ScopedRestore` still ran the WRAPPER's drain — which
+writes `liveDetachMask`, the plain `juce::StringArray` the restore is itself replacing. Harmless on
+the message thread; on the off-message-thread `setStateInformation` VST3 permits, it made the tick
+a second concurrent writer and WIDENED the window KI-003 records. Guard moved up to `drainTick`,
+covering the whole sequence, and the outcome is unchanged (`replaceDetachMask` drops the staged
+bits either way) — which is why the test asserts on the mask DURING the restore.
+(3) **`MacroEngine::applying` was the non-atomic half of an atomic pair.** `restoreDepth` beside it
+is `std::atomic<int>` precisely because `AnabasisAudioProcessor::parameterChanged` reads the §5.3
+discriminator from whichever thread the host chose, including the audio thread; `applying` was a
+plain `bool`. In the case that matters the read is synchronous on the writing thread, so the
+discriminator was always correct — but a genuinely concurrent read was a formal data race whose
+worst outcome is one managed parameter wrongly detaching. Now `std::atomic<bool>`, relaxed.
+(4) **The wrapper registered three listeners it discarded.** `addParameterListener` for
+`loudness`/`character`/`tone` fed a `parameterChanged` whose first line rejects every non-managed
+id — three registrations that read as load-bearing and were not. Dropped; the macros' listener is
+`MacroEngine`, and the wrapper hears them through the gesture callbacks, where §5.3's rule lives.
+(5) **The family tooltip style was unreachable.** `juce::TooltipWindow tooltips { nullptr, 600 }`
+is a DESKTOP window with no parent to inherit from, so it resolved
+`LookAndFeel::getDefaultLookAndFeel()` and `AnabasisLookAndFeel::drawTooltip`/`getTooltipBounds` —
+adapted brand code under ADR-0009 — never ran. `setLookAndFeel (&lnf)` in the constructor, cleared
+in the destructor beside the editor's own. Not headlessly assertable: the pixels are a Level-5
+brand-pass item, so this is a wiring fix the human pass verifies. It also surfaced a DRIFT in the
+adapted file: `drawTooltip`'s own comment stated that "on macOS the editor marks its TooltipWindow
+non-opaque … see PluginEditor.cpp", describing a fix that came across in prose but not in code. The
+macOS `setOpaque (false)` half is now adapted from Anamorph with the rest of it (ADR-0009,
+provenance in place), so the comment describes what the tree does — and it only mattered once the
+capsule became reachable, since undefined corner pixels are invisible in a capsule nothing draws.
+Comments where a future change would break something silently: `ScopeBuffer::readLatest` now states
+that it needs no `capacity - 1` clamp because of HEADROOM (4096 of 16384 — ~12288 frames must be
+written during one copy), not because it is a different mechanism from the GR ring's `peek`, so a
+capacity reduction or window widening is recognised as needing the explicit clamp; and `Knob`
+records two accepted properties — an alt-PRESS-AND-DRAG is inert because the alt-click is a
+complete gesture opened and closed in `mouseDown`, and a triple-click's third click resets nothing
+because `getNumberOfClicks() != 2`. Reviewed and NOT changed: `AnabasisBench`'s link shape is
+identical to both test console apps (`PRIVATE AnabasisDSP` + `PUBLIC AnabasisHardening` and the two
+JUCE flag interfaces), so there is nothing to normalise; and `saveSlotFromLive`'s never-run capture,
+the factory apply's stale frozen vector, the off-thread undo-stack mutation, Copy A→B's undo
+history, name-keyed preset navigation, the dirty marker's tree-wide comparison, the menu's raw
+LookAndFeel pointer and the frozen spectrum trace are each already recorded in KI-003/KI-006/KI-007
+in the same words.
+Previous: **review round 31 (2026-08-03)**, whose first finding is the previous
 round's fix counted in prose instead of enforced in code:
 (1) **The posted drain was a FOURTH entry point.** Round 30 fixed the tick's order and wrote "all
 three paths now apply the same precedence" — while `MacroEngine::handleAsyncUpdate`, the path a

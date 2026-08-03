@@ -114,6 +114,24 @@ void MacroEngine::drainTick()
     // `drainPendingMapping()` alone, then claimed in this very comment that
     // "all three now agree". Counting the paths in prose is how the fourth one
     // was missed; there is now one sequence and three ways to ask for it.
+    //
+    // A restore in flight suppresses the WHOLE tick, not just the mapping.
+    // The guard used to sit one level down, in `drainPendingMapping`, so the
+    // wrapper's half ran anyway — and the wrapper's half writes
+    // `liveDetachMask`, a plain `juce::StringArray` that the restore is itself
+    // replacing. On the message thread that is only wasted work (the wrapper
+    // stages no bits while `isRestoring()`, and every restore path ends at
+    // `replaceDetachMask`, which drops whatever was staged before it); on the
+    // off-message-thread `setStateInformation` a host may perform, it made the
+    // tick a SECOND concurrent writer of that array, widening the window
+    // KI-003 records rather than leaving it as found. Deferring is
+    // outcome-neutral — the bits are dropped by `replaceDetachMask` exactly as
+    // they would have been had they landed and then been overwritten — and it
+    // is the same rule the mapping half already followed: a restore is not a
+    // gesture, so a gesture racing one belongs to the state being replaced.
+    if (restoreDepth.load (std::memory_order_relaxed) > 0)
+        return;
+
     if (onDrainTick)
         onDrainTick();
     drainPendingMapping();
@@ -127,15 +145,14 @@ void MacroEngine::flushPendingMapping()
 
 void MacroEngine::drainPendingMapping()
 {
-    // A restore is in flight: leave the flag ARMED and do nothing. The
-    // restore's ScopedRestore drops it on the way out, which is the §5.3
-    // outcome — "a restore is not a macro gesture" — reached without this
-    // thread writing the nine managed parameters underneath it. Consuming the
-    // flag here instead would be the same outcome by a longer route, but it
-    // would make the drain's behaviour depend on which of the two ran first.
-    if (restoreDepth.load (std::memory_order_relaxed) > 0)
-        return;
-
+    // The restore guard is in `drainTick`, the ONLY caller, and covers this
+    // half too. What it buys here, unchanged from when it sat on this line:
+    // the flag is left ARMED and the restore's ScopedRestore drops it on the
+    // way out, which is the §5.3 outcome — "a restore is not a macro gesture"
+    // — reached without this thread writing the nine managed parameters
+    // underneath it. Consuming the flag under the guard instead would be the
+    // same outcome by a longer route, but would make the drain's behaviour
+    // depend on which of the two ran first.
     if (mappingPending.exchange (false, std::memory_order_relaxed))
         applyMapping();
 }
@@ -146,7 +163,7 @@ void MacroEngine::applyMapping()
     const float c = apvts.getRawParameterValue (pid::character)->load();
     const float t = apvts.getRawParameterValue (pid::tone)->load();
 
-    applying = true;
+    applying.store (true, std::memory_order_relaxed);
     // A detached parameter is the user's until re-engage (§5.3): the mapping
     // skips it entirely rather than writing and hoping nobody noticed.
     setParam (pid::limGain,       macro_curves::limGainDb (l));
@@ -158,7 +175,7 @@ void MacroEngine::applyMapping()
     setParam (pid::dynTilt,       macro_curves::dynTiltDb (l));
     setParam (pid::eqTilt,        macro_curves::eqTiltDb (t));
     setParam (pid::colourTone,    macro_curves::colourTone (t));
-    applying = false;
+    applying.store (false, std::memory_order_relaxed);
 }
 
 void MacroEngine::setParam (const char* paramID, float denormalisedValue)

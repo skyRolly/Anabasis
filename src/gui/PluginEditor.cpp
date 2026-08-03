@@ -81,6 +81,22 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
       })
 {
     setLookAndFeel (&lnf);
+    tooltips.setLookAndFeel (&lnf);   // desktop window: nothing to inherit from — see the member
+   #if JUCE_MAC
+    // ADAPTED from Anamorph `src/PluginEditor.cpp` (ADR-0009), and owed the
+    // moment the line above made `drawTooltip` reachable at all: JUCE's
+    // TooltipWindow declares itself OPAQUE (its constructor calls
+    // `setOpaque (true)`) while the family's `drawTooltip` deliberately leaves
+    // the pixels OUTSIDE the rounded capsule unpainted — undefined pixels in a
+    // window that promised to fill its bounds. Apple-Silicon-native AppKit
+    // initialises the opaque layer-backed window with its background colour
+    // first, so those corners render as an opaque white rectangle around the
+    // tooltip. Non-opaque makes the peer create a transparent NSWindow and
+    // clear the backing to alpha-0 every paint. macOS-gated: uncomposited X11
+    // keeps the corner PRE-FILL `drawTooltip` already does for it, which is the
+    // same undefined-pixel class solved the other way round.
+    tooltips.setOpaque (false);
+   #endif
     setOpaque (true);
 
     auto& apvts = processor.apvts;
@@ -475,6 +491,7 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
 #endif
     processor.apvts.removeParameterListener (pid::advancedMode, this);
     processor.apvts.removeParameterListener (pid::bypass, this);
+    tooltips.setLookAndFeel (nullptr);   // before `lnf` dies — paired with the ctor
     setLookAndFeel (nullptr);
 }
 
@@ -991,6 +1008,26 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     reseed (oversampleBox, (int) ist.getProperty (iid::oversample, 0));
     reseed (phaseBox,      (int) ist.getProperty (iid::osPhase, 0));
     reseed (offlineBox,    (int) ist.getProperty (iid::offlineQuality, 0));
+
+    // The three §6.4 target checkboxes are the same one-way shape and were
+    // missed when the combos were fixed: they are hand-built (three BITS of one
+    // int, so `referTo` cannot express them, exactly as the combos' index↔value
+    // mapping could not) and were seeded once at construction. `LoudnessMeterView`
+    // reads `int_meterTargets` from the tree every frame, so after a project
+    // load with the panel open the METER moved and the boxes did not — and the
+    // first click then read as toggling the wrong thing. `dontSendNotification`
+    // because a display refresh should produce no state write at all — the
+    // writer below happens to be idempotent (it re-reads the mask from the tree
+    // before setting its own bit, so notifying would write the loaded value
+    // back unchanged), and that is precisely the internal detail this must not
+    // start depending on.
+    {
+        const int mask = (int) ist.getProperty (iid::meterTargets, ~0);
+        juce::ToggleButton* bits[] = { &targetSpToggle, &targetApToggle, &targetYtToggle };
+        for (int t = 0; t < 3; ++t)
+            if (const bool want = (mask & (1 << t)) != 0; bits[t]->getToggleState() != want)
+                bits[t]->setToggleState (want, juce::dontSendNotification);
+    }
 
     // uiScale is the same shape with one extra step: the box only DISPLAYS the
     // percent, so a stored change has to reach `applyUiScale()` as well or the
