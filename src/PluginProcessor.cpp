@@ -541,22 +541,36 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
             (float) (double) liveFrozenTrims.getProperty ("scHpfHz", 0.0),
             (float) (double) liveFrozenTrims.getProperty ("dynTiltDb", 0.0));
 
-    // The restored slot's mask REPLACES the live one — and the staged inputs
-    // with it. A gestured managed edit delivered off the message thread just
-    // before this leaves its bit un-drained, and the next tick (up to 30 ms
-    // later) would add that id to the mask the slot just restored: the slot
-    // would come up carrying a detach its own tree never held. Same for a
-    // racing re-engage. Dropping whatever is armed is exactly what
-    // `MacroEngine::ScopedRestore` does to a pending mapping on the way out,
-    // and for the same reason — a restore is not a gesture (§5.3), so a
-    // gesture that raced it belongs to the state being replaced.
-    pendingDetachBits.store (0, std::memory_order_relaxed);
-    pendingReengage.store (false, std::memory_order_relaxed);
-
-    liveDetachMask.clear();
+    juce::StringArray restored;
     if (const auto mask = slot.getChildWithName ("DETACH_MASK"); mask.isValid())
         for (int i = 0; i < mask.getNumChildren(); ++i)
-            liveDetachMask.add (mask.getChild (i).getProperty ("id").toString());
+            restored.add (mask.getChild (i).getProperty ("id").toString());
+    replaceDetachMask (restored);
+}
+
+// The ONLY way the detach mask is replaced, and the reason it is a function
+// rather than two lines repeated: dropping the STAGED inputs is half of
+// "replace the mask", not a courtesy beside it.
+//
+// A gestured managed edit delivered off the message thread sits in
+// `pendingDetachBits` for up to one MacroEngine tick (nothing may post from
+// that callback — see drainDetachBitsSoon), so the tick AFTER a restore, a
+// preset apply, a session load or a reset-to-macro would OR that id into the
+// mask this call just installed: a parameter silently detached in a state it
+// was never edited in, skipped by the mapper from then on, and serialized with
+// the slot. Same for a re-engage that raced the same boundary. A restore is not
+// a gesture (§5.3), so a gesture racing it belongs to the state being replaced
+// — which is exactly what `MacroEngine::ScopedRestore` does to a pending
+// mapping on the way out.
+//
+// It became a function because the rule was first written at ONE of its five
+// sites (`applySlotToLive`) and missed the other four; the mask has no other
+// writer now, so a sixth site cannot forget it.
+void AnabasisAudioProcessor::replaceDetachMask (const juce::StringArray& newMask)
+{
+    pendingDetachBits.store (0, std::memory_order_relaxed);
+    pendingReengage.store (false, std::memory_order_relaxed);
+    liveDetachMask = newMask;
 }
 
 void AnabasisAudioProcessor::switchToSlot (int newIndex)
@@ -616,7 +630,7 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
         // the bracket opens rather than here.
         if (! presetManager->applyFactoryPreset (index, mask))
             return false;
-        liveDetachMask = mask;
+        replaceDetachMask (mask);
         liveBaseline   = {};                   // defaults-based: no macro baseline survives
         livePresetName = table[index].name;
     }   // the guard drops here, DELIBERATELY before the mapping below
@@ -666,7 +680,7 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     if (! presetManager->applyPreset (file, mask))
         return false;                     // the guard still runs: a partial
                                           // apply arms the listeners too
-    liveDetachMask = mask;
+    replaceDetachMask (mask);
     livePresetName = file.getFileNameWithoutExtension();
     presetBaseline = saveSlotFromLive();       // dirty marker datum
     return true;
@@ -682,7 +696,7 @@ void AnabasisAudioProcessor::resetSlotFieldsToDefaults()
     livePresetName.clear();
     liveBaseline    = juce::ValueTree();
     liveFrozenTrims = juce::ValueTree();
-    liveDetachMask.clear();
+    replaceDetachMask ({});
     storedSlot = defaultSlot.createCopy();
     // The dirty datum is the one slot field that is NOT serialized, so a load
     // cannot restore it — it must be dropped with the rest. Kept, it described
@@ -822,10 +836,11 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
             livePresetName  = live.getProperty ("presetName").toString();
             liveBaseline    = live.getChildWithName ("BASELINE").createCopy();
             liveFrozenTrims = live.getChildWithName ("FROZEN_TRIMS").createCopy();
-            liveDetachMask.clear();
+            juce::StringArray loadedMask;
             if (const auto mask = live.getChildWithName ("DETACH_MASK"); mask.isValid())
                 for (int i = 0; i < mask.getNumChildren(); ++i)
-                    liveDetachMask.add (mask.getChild (i).getProperty ("id").toString());
+                    loadedMask.add (mask.getChild (i).getProperty ("id").toString());
+            replaceDetachMask (loadedMask);
         }
     }
 

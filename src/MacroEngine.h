@@ -81,6 +81,12 @@ public:
     // keeps one cadence instead of two. Called on the message thread only.
     std::function<void()> onDrainTick;
 
+    // Exactly what the 30 ms timer does, exposed so the ORDER inside it is
+    // testable: the two halves are ordered against each other (the wrapper's
+    // bits decide the mask the mapping reads), and an order that only exists
+    // inside a private timer callback is an order no test can pin.
+    void drainTick();
+
     // Starts the 30 ms drain. Call ONCE, after both callbacks above are
     // assigned: they are read on the tick, and the owner cannot assign them
     // until this object is constructed. Until it is called nothing drains, so

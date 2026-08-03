@@ -1370,6 +1370,93 @@ static void testARestoreDropsStagedDetachBits()
     proc.flushPendingDetach();      // …and the tick that follows must add nothing
     check (proc.detachMask().isEmpty(),
            "restoreDrop: a slot switch drops the staged bit instead of stamping it on the new slot");
+
+    // EVERY path that replaces the mask, not just the slot switch: the rule was
+    // written at one of its five sites and missed the other four, so each is
+    // exercised here through the one function they now share.
+    auto stageAnOffThreadDetach = [] (AnabasisAudioProcessor& p)
+    {
+        auto* g = p.apvts.getParameter (pid::limGain);
+        std::thread t ([g]
+        {
+            g->beginChangeGesture();
+            g->setValueNotifyingHost (g->getNormalisableRange().convertTo0to1 (5.0f));
+            g->endChangeGesture();
+        });
+        t.join();
+    };
+
+    {   // a FACTORY preset ("factory presets load nothing pre-detached")
+        AnabasisAudioProcessor p2;
+        stageAnOffThreadDetach (p2);
+        check (p2.applyFactoryPreset (1), "restoreDrop: (premise) the factory preset applies");
+        p2.flushPendingDetach();
+        check (p2.detachMask().isEmpty(),
+               "restoreDrop: a factory preset comes up with no detach the table did not carry");
+    }
+    {   // a SESSION LOAD — which rebuilds the mask inline, not via applySlotToLive
+        AnabasisAudioProcessor p3;
+        juce::MemoryBlock clean;
+        p3.getStateInformation (clean);
+        stageAnOffThreadDetach (p3);
+        p3.setStateInformation (clean.getData(), (int) clean.getSize());
+        p3.flushPendingDetach();
+        check (p3.detachMask().isEmpty(),
+               "restoreDrop: a session load comes up with no detach the session did not carry");
+    }
+    {   // and RESET-TO-MACRO, whose whole purpose is to re-engage everything
+        AnabasisAudioProcessor p4;
+        stageAnOffThreadDetach (p4);
+        p4.resetToMacro();
+        p4.flushPendingDetach();
+        check (p4.detachMask().isEmpty(),
+               "restoreDrop: reset-to-macro is not undone by a bit staged just before it");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The drain tick's own ORDER, which is a level above the precedence
+// `handleAsyncUpdate` applies internally: the wrapper's bits decide the detach
+// mask, and the mapping pass reads that mask to know which managed parameters
+// it may write. Mapping first meant a macro gesture and its value change
+// arriving together off the message thread — the only way both reach one tick
+// — mapped while the parameter was STILL detached (so the pass skipped it) and
+// cleared the mask afterwards: the parameter read as re-engaged while holding
+// the user's off-curve value, with nothing left to re-arm the mapping.
+static void testTheDrainTickReEngagesBeforeItMaps()
+{
+    AnabasisAudioProcessor proc;
+    auto* limGain  = proc.apvts.getParameter (pid::limGain);
+    auto* loudness = proc.apvts.getParameter (pid::loudness);
+    auto lim = [&] { return proc.apvts.getRawParameterValue (pid::limGain)->load(); };
+
+    // Detach limGain the ordinary way (message thread), so the mask really
+    // holds it when the tick runs.
+    limGain->beginChangeGesture();
+    limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (2.0f));
+    limGain->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.detachMask().contains (pid::limGain),
+           "tickOrder: (premise) limGain is detached before the tick");
+
+    // The macro gesture AND its value change, both off the message thread, so
+    // neither drains on arrival and both are waiting for one tick.
+    std::thread offThread ([loudness]
+    {
+        loudness->beginChangeGesture();
+        loudness->setValueNotifyingHost (
+            loudness->getNormalisableRange().convertTo0to1 (70.0f));
+        loudness->endChangeGesture();
+    });
+    offThread.join();
+    check (std::abs (lim() - 2.0f) < 1.0e-3f,
+           "tickOrder: (premise) nothing has drained yet — limGain still the user's value");
+
+    proc.getMacroEngine().drainTick();          // exactly what the 30 ms timer does
+
+    check (proc.detachMask().isEmpty(), "tickOrder: the macro gesture re-engaged the mask");
+    check (std::abs (lim() - macro_curves::limGainDb (0.7f)) < 0.05f,
+           "tickOrder: …and the SAME tick's mapping landed the curve on it");
 }
 
 // ---------------------------------------------------------------------------
@@ -1897,6 +1984,7 @@ int main (int argc, char** argv)
     testAGestureEndWithoutACountedBeginIsIgnored();
     testAMacroGestureWinsADetachRacingItInOneDrain();
     testARestoreDropsStagedDetachBits();
+    testTheDrainTickReEngagesBeforeItMaps();
     testDetachAndReengageGrammar();
     testUndoIsPerSlotGestureCoalescedAndMaskWide();
     testFactoryPresets();

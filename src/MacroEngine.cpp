@@ -76,11 +76,32 @@ void MacroEngine::handleAsyncUpdate()
 
 void MacroEngine::timerCallback()
 {
-    drainPendingMapping();
-    // The wrapper's detach/re-engage bits ride the same tick — see onDrainTick
-    // for why they must not post their own message from a listener callback.
+    drainTick();
+}
+
+void MacroEngine::drainTick()
+{
+    // ORDER IS THE CONTRACT, and it is the opposite of what this used to do.
+    // The wrapper's bits go FIRST: they decide the detach mask, and the mapping
+    // below consults that mask through `isDetached` to know which managed
+    // parameters it may write. Mapping first meant that when a macro gesture
+    // and its value change both arrived off the message thread — the only way
+    // the two can reach one tick together — the mapping SKIPPED a parameter the
+    // gesture was about to re-engage, and the mask was cleared a moment later:
+    // the parameter then read as re-engaged while still holding the user's
+    // off-curve value, and nothing re-armed the mapping, so it stayed there
+    // until some later macro move. §5.3's rule is "the next macro-knob gesture
+    // re-engages ALL detached params"; that is only true if the re-engage is
+    // visible to the pass that lands the curve.
+    //
+    // This is the same precedence `handleAsyncUpdate` applies INSIDE the drain
+    // (detach bits, then the re-engage clears over them), and the same one the
+    // message-thread path gets for free — there `drainDetachBitsSoon` clears
+    // synchronously at gesture begin, before any mapping write. All three now
+    // agree.
     if (onDrainTick)
         onDrainTick();
+    drainPendingMapping();
 }
 
 void MacroEngine::flushPendingMapping()

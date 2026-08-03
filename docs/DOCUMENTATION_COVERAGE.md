@@ -6,7 +6,35 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 29 (2026-08-03)**, a round of loose ends rather than defects
+**Last updated:** for **review round 30 (2026-08-03)**, both of whose findings were the SAME
+failure the previous rounds kept producing — a rule applied at one of its sites:
+(1) **Round 29's staged-bit drop was written at ONE of the mask's five replacement sites.**
+`applySlotToLive` got it; `applyFactoryPreset`, `applyPresetFile`, `setStateInformation` (which
+rebuilds the mask inline rather than through `applySlotToLive`) and `resetToMacro` did not — so a
+gestured edit delivered off the message thread just before a preset apply or a project load would
+be stamped onto the freshly installed mask by the next tick, leaving a parameter detached in a
+state it was never edited in, skipped by the mapper from then on, and serialized with the slot.
+This round's own documentation had already stated the rule as covering "a slot switch, preset
+apply or session load" — the sentence was right and the code was not. Fixed STRUCTURALLY rather
+than by four more copies: `replaceDetachMask()` is now the mask's only writer, so a sixth site
+cannot forget the drop. Each of the four paths has its own assertion.
+(2) **The drain tick ran the mapping BEFORE the wrapper's bits**, which undid round 27's
+precedence one level up: the wrapper's bits decide the detach mask, and the mapping pass reads
+that mask to know what it may write. When a macro gesture and its value change both arrive off the
+message thread — the only way both reach one tick — the mapping skipped a parameter the gesture
+was about to re-engage and the mask was cleared a moment later, so the parameter read as
+re-engaged while holding the user's off-curve value with nothing left to re-arm the mapping.
+Order swapped; `drainTick()` is extracted so the order is testable at all, since an order that
+exists only inside a private timer callback is an order no test can pin. All three paths
+(message-thread, tick-internal, tick-order) now apply the same precedence.
+Comments added where a future change would silently break something: the preset-exclusion
+predicate now says that a new view-tier/monitor parameter added without it will be reset by
+BROWSING factory presets (the defaults pass is what makes that predicate load-bearing); the
+spectrum publication states the assumption it rests on (both stage loops run the full chunk, so an
+early exit added later would publish stale scratch); `build.yml` notes that only the Linux job
+compiles the bench, so a platform-gated signature change could still rot it. KI-007 gains a
+seventh item: Copy A→B leaves the destination's undo history describing the state it overwrote.
+Previous: **review round 29 (2026-08-03)**, a round of loose ends rather than defects
 — most of its findings were already recorded in KI-003/006/007, and the rest were places where a
 rule this PR wrote had not been applied to itself:
 (1) **A restore replaced the detach mask but not the STAGED bits.** An off-thread gestured edit

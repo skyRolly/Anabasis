@@ -1033,6 +1033,13 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // block from the ring's viewpoint). Mono sources duplicate L into R via
     // the stage loops above writing only ch 0 — harmless for a stereo-only
     // plugin (isBusesLayoutSupported pins 2×2).
+    //
+    // What this publication ASSUMES, stated because it is invisible from here:
+    // both stage loops run the full `num` samples with no early `continue`, so
+    // every element of the scratch below `num` was written THIS chunk. An early
+    // exit added to stage A or E would publish the previous chunk's tail as if
+    // it were current — a display artefact, not a signal one, but a silent one.
+    // If such an exit is ever added, publish only the samples actually written.
     specInRing.pushBlock (specInL.data(), nCh > 1 ? specInR.data() : specInL.data(), num);
     specOutRing.pushBlock (specOutL.data(), nCh > 1 ? specOutR.data() : specOutL.data(), num);
 

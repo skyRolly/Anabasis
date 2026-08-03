@@ -239,6 +239,15 @@ bool isViewTierParam (const juce::String& paramID)
         || paramID == pid::deltaMonitor || paramID == pid::advancedMode;
 }
 
+// A NEW view-tier or monitor parameter MUST be added above (or here), and this
+// is the sentence that says why rather than leaving it to be rediscovered: the
+// factory-preset apply resets every non-excluded PARAM to its default before
+// laying the table's overrides on top (`PresetManager::applyFactoryPreset`).
+// Everything this predicate does not name is therefore reset by BROWSING
+// presets — a future "monitor solo" or a second view toggle would silently
+// flip off every time the user auditioned a preset, and the defaults pass would
+// look innocent while doing it. The exclusion set is the only thing standing
+// between that pass and the view state.
 bool isPresetExcludedParam (const juce::String& paramID)
 {
     return isViewTierParam (paramID) || paramID == pid::freeze;

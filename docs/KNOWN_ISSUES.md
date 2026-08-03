@@ -352,6 +352,14 @@ record.
    behaviour this product wants is a listening-pass call, not a repair — the fix (run the EMA
    toward the floor on an idle tick) is three lines once the answer is known.
 
+7. **Copy A→B leaves the destination slot's undo history describing the state it overwrote.**
+   `copySlotToOther()` replaces `storedSlot` (and its dirty datum) but not
+   `undoStacks[1 - activeSlot]`, and the copy itself is not an undo step — so switching to the
+   copied-into slot and pressing undo restores a pre-copy state the user never edited from the
+   copied values, silently discarding the copy AND that slot's last edit. Same family as item 3:
+   what the undo unit should do when a whole slot is replaced from outside its own history is one
+   question, and it should be answered once for undo/redo, Copy, and the dirty datum together.
+
 **For the post-v0.1.0 fine review, alongside KI-006.**
 
 ## Standing note for P1 onward

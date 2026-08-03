@@ -223,6 +223,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - **The true-peak readout turns red against YOUR ceiling** (2026-08-03), not against a fixed
   −1 dBTP: at any other ceiling — including the −0.5 the "EDM Club" preset sets — it warned at the
   wrong level, staying neutral while genuinely over or lighting up while legal.
+- **A knob is no longer wrongly marked as "taken off the macro" after loading a preset or project**
+  (2026-08-03). A knob edit arriving moments before the load could be applied to the freshly
+  loaded settings, leaving that knob stuck at the old value and no longer following
+  Loudness/Character/Tone — and the wrong state was saved with the session. Related: grabbing a
+  macro knob now re-engages the whole set within the same update, instead of leaving one
+  parameter reading as re-engaged while it still held the old value.
 - **Factory presets change the sound** (2026-08-03). A factory preset expresses itself through the
   three macro knobs, and the translation from those positions to the compressor / clipper /
   limiter / EQ settings was being cancelled as the preset loaded, so every factory preset left the

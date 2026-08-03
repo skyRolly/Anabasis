@@ -170,7 +170,7 @@ public:
     // WITHOUT moving a macro. Message thread.
     void resetToMacro()
     {
-        liveDetachMask.clear();
+        replaceDetachMask ({});      // …and drops any staged detach with it
         macroEngine->refreshMapping();
     }
 
@@ -234,6 +234,10 @@ private:
     juce::ValueTree liveBaseline;        // BASELINE (absent until a macro gesture, §5.3/P4)
     juce::ValueTree liveFrozenTrims;     // FROZEN_TRIMS (captured at save, staged at restore — ADR-0014)
     juce::StringArray liveDetachMask;
+    // The ONE writer of the mask above — every replacement path goes through
+    // it, because it also drops the staged detach/re-engage inputs. See the
+    // definition for why those two things are inseparable.
+    void replaceDetachMask (const juce::StringArray& newMask);
 
     std::atomic<bool> nonRealtimeFlag { false };
 
