@@ -6,7 +6,40 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 24 (2026-08-03)** — the first review of the v0.1.0 tree, and
+**Last updated:** for **review round 25 (2026-08-03)**, whose two flagged findings were both
+user-visible and neither reachable by any existing test:
+(1) **The three Settings combos were off by one.** `setupComboInternal` bound
+`getSelectedIdAsValue()` — a 1-based ComboBox item ID — straight onto InternalState fields whose
+encodings are 0-based and serialized that way, so picking "Off" turned oversampling ON, "Minimum"
+gave linear phase, "Follow" forced maximum offline quality, and the stored default 0 matched no
+item so the boxes opened blank. Now mapped index ↔ value explicitly, the shape `uiScaleBox` next
+to it already used. **Level-5, and stated as such**: the state suite does not construct an editor
+(doing so headlessly is what pluginval-under-xvfb is for, and it would catch a crash, not a wrong
+mapping), so this fix carries a code comment and this entry instead of a regression test.
+(2) **Factory presets were inaudible.** A factory table is defaults + a handful of intents and
+expresses itself through the MACROS; the apply ran inside `ScopedRestore`, whose destructor
+aborts the mapping those macro writes arm, and nothing re-ran it — so "EDM Club" moved `loudness`
+to 80 and left the nine managed parameters at M(0,0,0). The guard is now scoped to the
+value-landing and `refreshMapping()` runs after it, before the dirty baseline is captured (the
+existing "clean right after the apply" check turned out to guard that ordering — a mutant that
+captures the baseline first dies on it). Both directions are pinned: the factory path maps
+(against the §5.5 curves, not magic numbers, so the ⊕ tuning can move), and a FILE preset's
+managed values still survive untouched, because a file carries every parameter and its values are
+authoritative — the mutant for that one had to be written three times before it was faithful, since
+`refreshMapping()` inside a live `ScopedRestore` is inert and the first two mutants were quietly
+no-ops.
+Also this round: the wrapper no longer calls `triggerAsyncUpdate()` from a listener callback (it
+can arrive on the audio thread, where posting takes a lock and may allocate — the hard red line
+`MacroEngine` already refused for the same reason); the detach bits ride that class's existing
+30 ms tick and the `AsyncUpdater` base is removed so the route cannot be re-opened. The
+frozen-trim record's duck request moved from a second store beside the flag to a derivation at
+the consume, removing the last ordering question between them. `GrHistoryBuffer::reset`'s opening
+seqlock increment is a relaxed increment + release FENCE, since a release store orders only
+earlier writes and the bulk clear could be observed above it. **KI-007 records the three items
+this round deliberately did not fix** — the frozen vector surviving a factory apply, preset-ring
+navigation identifying entries by name, and undo not restoring the dirty baseline — because each
+is a semantics call and two of them are KI-006's question.
+Previous: **review round 24 (2026-08-03)** — the first review of the v0.1.0 tree, and
 three of its findings were live defects in code this repository shipped the day before:
 (1) **`undo`/`redo` never requested the forced duck.** DSP_POLICY invariant 8 has named the undo
 step as one of three bulk-swap routes since ADR-0004, and the code did not take it — an undo that

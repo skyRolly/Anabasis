@@ -71,6 +71,16 @@ public:
     // serialized state); the mapper only ASKS. Null = nothing detached.
     std::function<bool (const char*)> isDetached;
 
+    // The wrapper's own message-thread drain, run on THIS object's 30 ms timer
+    // tick. It exists so the wrapper never has to post its own message from a
+    // listener callback: APVTS and gesture callbacks arrive on whichever thread
+    // the host chooses, `triggerAsyncUpdate()` takes a lock (and allocates on
+    // some platforms), and that is a REALTIME_AUDIO_POLICY hard red line if the
+    // thread turns out to be the audio one. This class already refused to post
+    // for exactly that reason and already runs the timer; sharing the tick
+    // keeps one cadence instead of two. Called on the message thread only.
+    std::function<void()> onDrainTick;
+
     // True while any ScopedRestore is alive — the detach discriminator's
     // third condition (a restore lands values, it is not a user gesture).
     bool isRestoring() const noexcept

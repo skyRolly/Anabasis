@@ -259,6 +259,37 @@ session has no copy to re-stage from.
 
 **For the post-v0.1.0 fine review.**
 
+### KI-007 — Three preset/Freeze bookkeeping edges the fine review must settle together
+
+**Severity:** Low (each is display or recall bookkeeping; none changes a rendered sample on its own)
+**Status:** Recorded — raised by review round 25 (2026-08-03) and deliberately NOT fixed in that
+round, because each is a semantics question rather than a defect, and two of them are the same
+question KI-006 asks.
+
+1. **A factory-preset apply keeps the slot's frozen-trim vector.** `applyFactoryPreset` clears
+   `liveBaseline` and the detach mask but not `liveFrozenTrims`, and `freeze` is
+   preset-excluded — so a slot that was frozen carries the PREVIOUS programme's latched vector
+   across a preset change, the next save serialises it, and the next A/B or undo restore
+   re-injects it. Whether a preset should carry or clear the Freeze memory is a
+   `MODE_AND_ADAPTATION_POLICY` invariant-3 question, and it is the same question **KI-006**
+   asks about a re-prepare. Settle them together or the two answers will disagree.
+
+2. **Preset-ring navigation identifies the current entry by NAME.** `stepPreset`
+   (`src/gui/PluginEditor.cpp`) matches `currentPresetName()` against the factory table first and
+   the user files second, so a user preset saved as "EDM Club" resolves to the factory index and
+   the arrows walk from the wrong place. Robust fix is to track the last applied SOURCE (factory
+   index vs file) instead of re-deriving it from the display string — which is state the editor
+   does not currently keep, hence not a one-line change.
+
+3. **Undo/redo do not restore `presetBaseline`.** They restore the whole SLOT tree while
+   `applyFactoryPreset` / `applyPresetFile` / `savePresetFile` all reset the dirty datum, so
+   undoing a preset apply restores the state but keeps the applied preset's baseline: the top
+   bar's dirty mark can read wrong until the next apply or save. Display-only. The clean fix is to
+   decide whether the baseline belongs IN the StateSet (a schema change — ADR-0007, Hard Stop) or
+   whether undo should recompute it; that is why it is recorded rather than patched.
+
+**For the post-v0.1.0 fine review, alongside KI-006.**
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

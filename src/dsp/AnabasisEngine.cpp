@@ -224,7 +224,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const int  wantPh   = (int) p.osPhase;
     const int  wantEq   = p.eqPosition;
     const int  wantModel = juce::jlimit (0, 3, p.colourModel);
-    const bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
+    bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
 
     // Learn commands + learned-target restore, consumed at the block top. ONE
     // staged record, so the LAST restore staged before this block wins — see
@@ -263,6 +263,15 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         pendingFrozenTrims.scHpfHz        = stagedFrozen[2].load (std::memory_order_relaxed);
         pendingFrozenTrims.dynTiltDb      = stagedFrozen[3].load (std::memory_order_relaxed);
         havePendingFrozen = true;
+        // The record IS a duck request, asserted HERE rather than by a second
+        // store in restoreFrozenTrims. Two stores are two observations: this
+        // consume and `duckRequested`'s are a dozen lines apart, so a block
+        // could see the record while the request was still invisible and the
+        // vector would wait a further block (or, before the request existed at
+        // all, for an unrelated duck). Deriving it from the record removes the
+        // ordering question instead of tightening it — the bottom is the only
+        // landing site, so wanting one is a property OF the record.
+        duckAsked = true;
     }
     if (const int cmd = learnCmd.exchange (kLearnNone, std::memory_order_acquire);
         cmd != kLearnNone)

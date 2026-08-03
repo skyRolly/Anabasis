@@ -35,8 +35,7 @@
 
 class AnabasisAudioProcessor : public juce::AudioProcessor,
                                private juce::AudioProcessorListener,
-                               private juce::AudioProcessorValueTreeState::Listener,
-                               private juce::AsyncUpdater
+                               private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     AnabasisAudioProcessor();
@@ -248,7 +247,14 @@ private:
     void audioProcessorChanged (juce::AudioProcessor*, const juce::AudioProcessorListener::ChangeDetails&) override {}
     void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
     void parameterChanged (const juce::String& parameterID, float newValue) override;
-    void handleAsyncUpdate() override;
+    // The §5.3 bit drain. NOT an AsyncUpdater callback any more, and the base
+    // class is gone with it: nothing here may post to the message queue from a
+    // listener callback (drainDetachBitsSoon says why), and an unused
+    // AsyncUpdater sitting in the bases is an invitation to re-open that route.
+    // Reached from the message thread only — directly when the callback already
+    // runs there, otherwise on the MacroEngine's 30 ms tick.
+    void handleAsyncUpdate();
+    void drainDetachBitsSoon();
     std::atomic<uint32_t> managedGestureBits { 0 };   // bit n = managed_params::ids[n] mid-gesture
     std::atomic<uint32_t> pendingDetachBits  { 0 };
     std::atomic<bool>     pendingReengage    { false };

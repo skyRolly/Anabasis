@@ -644,6 +644,29 @@ static void testPresetContract()
            "preset: a locked ceiling is never moved by a preset apply");
     check (! juce::exactlyEqual (b.apvts.getRawParameterValue (pid::colourModel)->load(), 1.0f),
            "preset: unlocked parameters do land from the preset");
+
+    // The mirror of the factory-preset rule, and the reason the restore guard
+    // stays on THIS path: a file carries every parameter, MANAGED ones
+    // included, so its values are authoritative and the macro mapping must not
+    // re-derive them from the stored macro position. Saved here with a limiter
+    // gain deliberately off the §5.5 curve for the macro the file also carries.
+    {
+        AnabasisAudioProcessor c;
+        auto* gain = c.apvts.getParameter (pid::limGain);
+        auto* loud = c.apvts.getParameter (pid::loudness);
+        loud->setValueNotifyingHost (loud->getNormalisableRange().convertTo0to1 (60.0f));
+        c.getMacroEngine().flushPendingMapping();          // let the curve land first…
+        const float offCurve = macro_curves::limGainDb (0.6f) - 5.0f;   // …then leave it
+        gain->setValueNotifyingHost (gain->getNormalisableRange().convertTo0to1 (offCurve));
+        const auto handEdited = dir.getChildFile ("hand-edited.anabasis");
+        check (c.getPresetManager().savePreset (handEdited, {}), "preset: (premise) save succeeds");
+
+        AnabasisAudioProcessor d;
+        check (d.applyPresetFile (handEdited), "preset: (premise) the hand-edited file applies");
+        check (std::abs (d.apvts.getRawParameterValue (pid::limGain)->load() - offCurve) < 0.05f,
+               "preset: a FILE preset's managed values survive — the mapping does not re-derive them");
+        handEdited.deleteFile();
+    }
     file.deleteFile();
 }
 
@@ -1005,6 +1028,31 @@ static void testFactoryPresets()
            "factory: the loudness macro landed");
     check (std::abs (apvts.getRawParameterValue (pid::ceiling)->load() - (-0.5f)) < 0.01f,
            "factory: the ceiling override landed");
+
+    // …and the macro position is TRANSLATED. A factory table is defaults plus a
+    // few intents and expresses itself through the macros (PresetManager.h), so
+    // the nine §5.5 managed parameters come out of the defaults pass at their
+    // defaults and only the mapping can give the preset its sound. The apply
+    // runs inside a ScopedRestore — correct for a FILE preset, which carries
+    // every parameter itself — whose destructor aborts the mapping the macro
+    // writes armed; with nothing re-running it, "EDM Club" moved `loudness` to
+    // 80 and left the compressor, clipper, limiter and EQ at M(0,0,0).
+    // Asserted against the curves themselves, not against magic numbers: these
+    // are ⊕ drafts and the test must follow them when they are tuned.
+    {
+        const float l = apvts.getRawParameterValue (pid::loudness)->load() / 100.0f;
+        auto* gainParam = apvts.getParameter (pid::limGain);
+        const float gainDefault = gainParam->getNormalisableRange().convertFrom0to1 (
+                                      gainParam->getDefaultValue());
+        check (std::abs (macro_curves::limGainDb (l) - gainDefault) > 1.0f,
+               "factory: (premise) the mapped limiter gain differs from the default");
+        check (std::abs (apvts.getRawParameterValue (pid::limGain)->load()
+                           - macro_curves::limGainDb (l)) < 0.05f,
+               "factory: the macro position is mapped onto the managed parameters");
+        check (std::abs (apvts.getRawParameterValue (pid::compThreshold)->load()
+                           - macro_curves::compThresholdDb (l)) < 0.05f,
+               "factory: …the whole managed set, not just the one the table names");
+    }
     check (proc.detachMask().isEmpty(), "factory: nothing loads pre-detached");
     check (! proc.presetDirty(), "factory: clean right after the apply");
     check (proc.canUndo(), "factory: the apply is one undoable step");

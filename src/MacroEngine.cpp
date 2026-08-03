@@ -44,6 +44,10 @@ void MacroEngine::handleAsyncUpdate()
 void MacroEngine::timerCallback()
 {
     drainPendingMapping();
+    // The wrapper's detach/re-engage bits ride the same tick — see onDrainTick
+    // for why they must not post their own message from a listener callback.
+    if (onDrainTick)
+        onDrainTick();
 }
 
 void MacroEngine::flushPendingMapping()

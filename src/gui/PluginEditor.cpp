@@ -543,13 +543,26 @@ void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
                                                        const juce::StringArray& items,
                                                        const juce::String& tip, juce::Value value)
 {
-    box.addItemList (items, 1);
+    box.addItemList (items, 1);          // JUCE reserves item ID 0 for "nothing selected"
     box.setTooltip (tidyTip (tip));
     box.setRepaintsOnMouseActivity (true);
     passComboHoverThrough (box);
     allCombos.add (&box);
     addAndMakeVisible (box);
-    box.getSelectedIdAsValue().referTo (value);
+    // The InternalState fields are 0-BASED and their encodings are consumed
+    // (and serialized) that way — `iid::oversample` 0..4 = Off/2x/4x/8x/16x,
+    // `iid::osPhase` 0 min / 1 linear, `iid::offlineQuality` 0 Follow / 1 Force
+    // Max. Binding `getSelectedIdAsValue()` straight onto the property stored
+    // the ITEM ID, i.e. index + 1: every choice landed one step high (picking
+    // "Off" turned oversampling ON, "Minimum" phase gave linear phase, "Follow"
+    // forced maximum offline quality), and the stored default 0 matched no item
+    // so the boxes opened blank. Map index ↔ value explicitly, the same shape
+    // `uiScaleBox` uses for index ↔ percent — the encoding is contract, the
+    // widget's numbering is not.
+    box.setSelectedItemIndex (juce::jlimit (0, items.size() - 1, (int) value.getValue()),
+                              juce::dontSendNotification);
+    box.onChange = [&box, value]() mutable
+    { value.setValue (juce::jmax (0, box.getSelectedItemIndex())); };
     registerAnimated (box);
 }
 

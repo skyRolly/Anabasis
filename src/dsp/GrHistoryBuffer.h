@@ -55,7 +55,16 @@ public:
     // epoch change; within one epoch the existing SPSC contract is unchanged.
     void reset() noexcept
     {
-        resetGuard.fetch_add (1, std::memory_order_release);   // odd: clearing
+        // A seqlock's OPENING increment needs a fence, not a release store: a
+        // release orders earlier writes before itself and says nothing about
+        // later ones, so the clear below could be observed above the odd epoch
+        // — a reader would then see half-cleared entries while the epoch still
+        // read "stable", which is the one case this guard exists to exclude.
+        // Relaxed increment + release fence is the canonical writer opening;
+        // the closing increment stays a release store, where the ordering it
+        // does give (clear-before-even) is exactly the one required.
+        resetGuard.fetch_add (1, std::memory_order_relaxed);   // odd: clearing
+        std::atomic_thread_fence (std::memory_order_release);
         for (auto& e : entries)
             e = {};
         writeIndex.store (0, std::memory_order_release);

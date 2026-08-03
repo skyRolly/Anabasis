@@ -168,18 +168,15 @@ public:
         // thread (KI-003), so two stagers can in principle overlap, and a lost
         // increment would read as "already applied".
         frozenStageSeq.fetch_add (1u, std::memory_order_relaxed);
-        // The record's OWN duck request, and the reason it lives here rather
-        // than only at the four call sites: the bottom is the only place the
-        // vector can land, and the caller's `requestForcedDuck()` is a separate
-        // store from this one. A block landing between the two consumed the
-        // request, ran the whole ~34 ms duck, and returned to idle before the
-        // record was staged — after which nothing would bring the duck back and
-        // the vector waited for an unrelated one. Requesting it WITH the record
-        // makes "a staged record always gets a bottom" structural. A second
-        // request costs nothing: the duck logic already treats one seen at the
-        // bottom as "hold one more block".
-        duckRequested.store (true, std::memory_order_relaxed);
         frozenPending.store (true, std::memory_order_release);
+        // NOTE the absence of a duck request here. The bottom is the only place
+        // this vector can land, so a staged record must always get one — but
+        // the guarantee is asserted where the record is CONSUMED (process()'s
+        // block top sets `duckAsked` from it), not by a second store beside
+        // this flag. A second store would be a second thing to observe: the
+        // consumer reads `duckRequested` a dozen lines before this flag, so a
+        // block could take the record and miss the request. Deriving the
+        // request from the record cannot go out of order with it.
     }
     // "Is the engine's published trim vector still older than the last record
     // I staged?" — which is about APPLICATION, not consumption. `frozenPending`

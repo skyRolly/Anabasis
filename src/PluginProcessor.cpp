@@ -32,6 +32,10 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // serialized state and lives here.
     macroEngine->isDetached = [this] (const char* id)
     { return liveDetachMask.contains (juce::String (id)); };
+    // Off-message-thread detach/re-engage bits land on the MacroEngine's
+    // existing 30 ms tick rather than through a message post of our own
+    // (drainDetachBitsSoon explains why that route is closed).
+    macroEngine->onDrainTick = [this] { handleAsyncUpdate(); };
     // The undo gesture bookkeeping keys one bit per parameter index; ADR-0010
     // freezes the surface at 49, well inside the word.
     jassert (getParameters().size() <= kMaxCountedGestureIndex);
@@ -98,10 +102,7 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
             // clear must land before the gesture's mapping writes, and both
             // run on the message thread, so the drain below is ordered right.
             pendingReengage.store (true, std::memory_order_relaxed);
-            if (juce::MessageManager::existsAndIsCurrentThread())
-                handleAsyncUpdate();
-            else
-                triggerAsyncUpdate();
+            drainDetachBitsSoon();             // never posts off-thread — see there
         }
     }
 }
@@ -195,10 +196,25 @@ void AnabasisAudioProcessor::parameterChanged (const juce::String& parameterID, 
     if (macroEngine->isApplyingMacro() || macroEngine->isRestoring())
         return;
     pendingDetachBits.fetch_or (1u << m, std::memory_order_relaxed);
+    drainDetachBitsSoon();
+}
+
+// The bits are set from whichever thread APVTS/the host delivers the callback
+// on, and only the message thread may turn them into `liveDetachMask`. On the
+// message thread that is immediate; OFF it, the drain WAITS for the MacroEngine
+// tick — deliberately, and this is the one line that must not become
+// `triggerAsyncUpdate()`. Posting to the platform message queue takes a lock
+// and on some platforms allocates, so a callback delivered on the audio thread
+// would put both inside `processBlock`: a REALTIME_AUDIO_POLICY hard red line.
+// `MacroEngine::parameterChanged` refused to post for exactly this reason and
+// leans on its 30 ms timer instead; the detach bits now ride the same tick
+// rather than opening a second, riskier route to the same place. Cost of the
+// wait: the badge and the serialized mask lag by up to 30 ms on a host that
+// delivers gestures off-thread — display latency, never a wrong value.
+void AnabasisAudioProcessor::drainDetachBitsSoon()
+{
     if (juce::MessageManager::existsAndIsCurrentThread())
         handleAsyncUpdate();
-    else
-        triggerAsyncUpdate();
 }
 
 void AnabasisAudioProcessor::handleAsyncUpdate()
@@ -541,17 +557,37 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
         return false;                          // validated BEFORE the undo bracket
     pushUndoStep (saveSlotFromLive());
 
-    const MacroEngine::ScopedRestore guard (*macroEngine);
-    engine.requestForcedDuck();                // §2.8: a preset is a bulk swap
-
     juce::StringArray mask;
-    // Unreachable given the validation above — and deliberately still checked,
-    // because the two guards would only diverge silently if one moved.
-    if (! presetManager->applyFactoryPreset (index, mask))
-        return false;
-    liveDetachMask = mask;
-    liveBaseline   = {};                       // defaults-based: no macro baseline survives
-    livePresetName = table[index].name;
+    {
+        const MacroEngine::ScopedRestore guard (*macroEngine);
+        engine.requestForcedDuck();            // §2.8: a preset is a bulk swap
+
+        // Unreachable given the validation above — and deliberately still
+        // checked, because the two guards would only diverge silently if one
+        // moved.
+        if (! presetManager->applyFactoryPreset (index, mask))
+            return false;
+        liveDetachMask = mask;
+        liveBaseline   = {};                   // defaults-based: no macro baseline survives
+        livePresetName = table[index].name;
+    }   // the guard drops here, DELIBERATELY before the mapping below
+
+    // A FACTORY preset is not a file preset, and this is where they part.
+    // A file carries every parameter, managed ones included, so the restore
+    // guard is exactly right there: the mapping must not overwrite what the
+    // file landed. A factory table is defaults + a handful of intents, and
+    // PresetManager's contract is that it "expresses itself through the MACROS
+    // plus non-managed parameters wherever possible" — so after the defaults
+    // pass the nine §5.5 managed parameters sit at their DEFAULTS and only the
+    // macro positions describe the preset. The guard swallowed the mapping
+    // those positions armed (its destructor aborts whatever is pending) and
+    // nothing re-ran it, so "EDM Club" moved `loudness` to 80 and left the
+    // compressor, clipper, limiter and EQ at M(0,0,0): the preset was
+    // inaudible. Run the mapping once, here, exactly as `resetToMacro()` does
+    // — after the values have landed, outside the guard, and BEFORE the
+    // baseline below, or the preset would read as dirty the moment it loaded.
+    macroEngine->refreshMapping();
+
     presetBaseline = saveSlotFromLive();       // dirty marker datum
     return true;
 }

@@ -153,9 +153,15 @@ namespace
         { pid::stereoLink, 60.0f }, { pid::lookahead, 5.0f },
     };
     // Deliberate colour-forward crush; Transistor model carries the edge.
+    // `colourDepth` is deliberately NOT listed even though the intent wants it
+    // high: it is one of the nine §5.5 MANAGED parameters, so the macro mapping
+    // that runs after a factory apply owns it, and naming it here would only
+    // write a value the mapping then overwrites from Character (0.8 already
+    // drives depth). The same rule applies to any table: express the intent
+    // through the macros and the UNMANAGED parameters.
     const O kLoFiCrush[] = {
         { pid::loudness, 70.0f }, { pid::character, 0.8f }, { pid::tone, -0.3f },
-        { pid::colourModel, 3.0f }, { pid::colourDepth, 80.0f }, { pid::limStyle, 2.0f },
+        { pid::colourModel, 3.0f }, { pid::limStyle, 2.0f },
     };
 
     const PresetManager::FactoryPreset kFactory[] = {
