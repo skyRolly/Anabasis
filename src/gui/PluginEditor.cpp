@@ -511,10 +511,12 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
     cancelPendingUpdate();
     // The THIRD source, and leaving it out made the guarantee above two thirds
     // true: `animVBlank`'s callback (`stepMicroAnims`) touches `animated`,
-    // `uiAnimOn` and `lastFrameTime`, all of which are destroyed BEFORE the
-    // attachment itself is (it is declared after them). Move-assigning an empty
-    // one detaches now. Same reasoning, applied to every source rather than to
-    // the two that came to mind.
+    // `uiAnimOn` and `lastFrameTime`. It is declared BEFORE `lastFrameTime` and
+    // `uiAnimOn`, so reverse-order destruction frees those two FIRST and leaves
+    // the attachment armed over them — the direction an earlier revision of
+    // this comment had backwards. Move-assigning an empty one detaches here
+    // instead. Same reasoning, applied to every source rather than to the two
+    // that came to mind.
     animVBlank = {};
 
 #if JUCE_MAC || JUCE_WINDOWS
@@ -1284,7 +1286,18 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     files.sort();
 
     juce::PopupMenu m;
-    m.setLookAndFeel (&lnf);
+    // NO `setLookAndFeel (&lnf)`: that handed the menu a RAW pointer to an
+    // editor member, and the menu window can outlive the editor if the host
+    // tears the window down while it is open — the one part of the round-24
+    // SafePointer hardening the look-and-feel did not cover. Parenting the
+    // menu to the editor (`withParentComponent` below) closes it by
+    // CONSTRUCTION instead: JUCE's MenuWindow is then a CHILD of this
+    // component, so it cannot outlive it, and `Component::getLookAndFeel()`
+    // walks up to the editor's `lnf` on its own — the family styling arrives
+    // with no pointer to dangle. Both available alternatives were worse:
+    // `dismissAllActiveMenus()` in the destructor also closes another
+    // instance's menu, and a shared static LookAndFeel trades this for
+    // static-destruction order at DLL unload.
     int factoryCount = 0;
     const auto* factory = PresetManager::factoryPresets (factoryCount);
     m.addSectionHeader ("FACTORY");
@@ -1306,6 +1319,7 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
 
     m.showMenuAsync (juce::PopupMenu::Options()
                          .withTargetComponent (presetName)
+                         .withParentComponent (this)   // lifetime + look-and-feel; see above
                          .withMinimumWidth (228),
         // SafePointer, not a raw `this`: the menu outlives the editor if the
         // host tears the window down while it is open. JUCE dismisses with

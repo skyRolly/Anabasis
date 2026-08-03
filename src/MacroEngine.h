@@ -107,6 +107,18 @@ public:
     bool isRestoring() const noexcept
     { return restoreDepth.load (std::memory_order_relaxed) > 0; }
 
+    // Arm a mapping pass without asking for one now — the same relaxed store
+    // `parameterChanged` performs, callable from ANY thread, so a gesture
+    // callback the host may deliver off the message thread can request the
+    // curve be re-landed without touching anything but an atomic. The drain
+    // that follows (the posted update on the message thread, or the 30 ms
+    // tick) does the work. §5.3's re-engage uses it: clearing the mask and
+    // landing the curve are two halves of one rule, and the wrapper cannot
+    // call `refreshMapping()` from a gesture callback because that maps
+    // synchronously on whichever thread the callback arrived on.
+    void armMapping() noexcept
+    { mappingPending.store (true, std::memory_order_relaxed); }
+
     // §5.3 step 4, "reset to macro": re-run the mapping at the CURRENT macro
     // position (message thread). The caller clears the mask first; this is
     // what re-lands the curve values on the freshly re-engaged parameters
@@ -230,6 +242,13 @@ private:
     // thread; relaxed for the same reason as `mappingPending` — it gates a
     // message-thread action and carries no payload.
     std::atomic<int> restoreDepth { 0 };
+
+    // One-way teardown latch (see stopDraining): once the owner has begun
+    // tearing down, no trigger may reach `onDrainTick` — which calls back into
+    // members that are destroyed before this object is. Atomic because it is
+    // set from whichever thread destroys the processor and read on the message
+    // thread; relaxed because it gates a decision and carries no payload.
+    std::atomic<bool> drainStopped { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MacroEngine)
 };

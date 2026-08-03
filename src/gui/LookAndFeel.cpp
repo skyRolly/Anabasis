@@ -755,6 +755,14 @@ namespace
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // Close any bracket still open before opening the next. Assigning
+            // over a live `unique_ptr` runs the NEW constructor (begin) before
+            // the old destructor (end), so a mouse-down that never saw its
+            // mouse-up — a re-parent mid-press, a stolen capture, a synthetic
+            // event — would hand the host begin/begin/end/end and trip JUCE's
+            // `jassert (! isPerformingGesture)`. Resetting first makes the
+            // pairing unconditional; the pointer is null in the ordinary case.
+            drag.reset();
             if (auto* s = rotaryParent (getParentComponent()); s != nullptr && e.getNumberOfClicks() < 2 && ! isBeingEdited())
             {
                 downProp = s->valueToProportionOfLength (s->getValue());

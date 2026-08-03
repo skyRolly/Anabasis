@@ -88,6 +88,19 @@ public:
     {
         storedSlot = saveSlotFromLive();
         storedPresetBaseline = presetBaseline;
+        // …and the destination's history goes with the state it described.
+        // A per-slot undo stack records edits made FROM that slot's own values
+        // (§7 / ADR-0010); a Copy replaces those values wholesale from outside
+        // that history, so every entry now describes a state the slot no
+        // longer has. Leaving them, the first undo after switching to B
+        // restored a pre-copy state the user never edited from — silently
+        // discarding the copy AND B's last edit, because the copy itself is
+        // not an undo step. `setStateInformation` already clears both slots'
+        // stacks for exactly this reason ("a load starts a fresh history");
+        // a copy is that event for one slot, so it takes the same answer.
+        const int other = 1 - activeSlot;
+        undoStacks[other].clear();
+        redoStacks[other].clear();
     }
 
     // Preset apply goes through here, never through PresetManager directly:

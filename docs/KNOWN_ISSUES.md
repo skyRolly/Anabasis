@@ -96,15 +96,20 @@ elsewhere was that both halves of a premise should agree.
 
 **The construction and destruction halves of the MacroEngine drain are not
 equally strong**, recorded 2026-08-03 (review round 29) so the pair is not read
-as fully closed. `startDraining()` closes its race STRUCTURALLY — the timer
-does not exist until both callbacks are assigned, so no tick can observe a
-half-written `std::function`. `stopDraining()` only narrows its own: it stops
-the timer and clears the callbacks, but does not join a `timerCallback` that
-has ALREADY entered, because `juce::Timer` offers no such join. The remaining
-window is "a tick already executing while another thread destroys the
-processor", which needs a host that destroys a processor concurrently with its
-own message thread — the same premise class as the rest of this entry, and it
-closes with the same thread-model decision rather than separately.
+as fully closed, and NARROWED TWICE since. `startDraining()` closes its race
+STRUCTURALLY — the timer does not exist until both callbacks are assigned, so
+no tick can observe a half-written `std::function`. `stopDraining()` stops the
+timer, drops any posted update, and sets the one-way `drainStopped` latch that
+`drainTick` tests first, so the SEQUENTIAL half is structural too: no trigger —
+timer, posted update, `flushPendingMapping`, `refreshMapping` — can reach the
+owner after teardown begins (round 37; the latch replaced nulling the
+`std::function`s, which raced a tick already about to invoke one — round 36).
+What remains, and what the pair is still not symmetric about, is a
+`timerCallback` that has ALREADY entered: `juce::Timer` offers no join, so a
+tick executing while another thread destroys the processor is not waited for.
+That needs a host that destroys a processor concurrently with its own message
+thread — the same premise class as the rest of this entry, and it closes with
+the same thread-model decision rather than separately.
 
 **Workaround:** none required on the hosts tested so far — no case of an
 off-message-thread restore has been observed against this plugin. The entry
@@ -332,14 +337,16 @@ record.
    decide whether the baseline belongs IN the StateSet (a schema change — ADR-0007, Hard Stop) or
    whether undo should recompute it; that is why it is recorded rather than patched.
 
-4. **The preset menu holds a raw pointer to an editor-owned LookAndFeel.** `showPresetMenu` calls
-   `m.setLookAndFeel (&lnf)`, and `lnf` is an editor member; the async callback was given a
-   `SafePointer` in round 24 but the menu's look-and-feel was not covered by it. If a host tore the
-   window down while the menu was open, the menu window could outlive `lnf`. JUCE dismisses menus
-   in most teardown orders, so it is not clearly reachable — and both available repairs carry their
-   own risk (`dismissAllActiveMenus()` in the editor destructor also closes another instance's
-   menu; a shared static LookAndFeel trades this for static-destruction order at DLL unload), which
-   is why it is recorded rather than patched under a "no new bugs" round.
+4. **RESOLVED 2026-08-03 (round 37) — the preset menu's raw LookAndFeel pointer.** `showPresetMenu`
+   handed the menu `&lnf`, an editor member the menu window could outlive if a host tore the window
+   down while it was open — the one part of round 24's `SafePointer` hardening the look-and-feel did
+   not cover. Both repairs considered here carried their own risk (`dismissAllActiveMenus()` in the
+   destructor also closes another instance's menu; a shared static trades it for static-destruction
+   order at DLL unload), and neither was needed: the menu is now given
+   `Options::withParentComponent (this)`, so JUCE's MenuWindow is a CHILD of the editor and cannot
+   outlive it, and `getLookAndFeel()` reaches `lnf` up the parent chain with no pointer to dangle.
+   Kept numbered rather than removed so the references in `HANDOVER.md` and the coverage audit
+   still resolve.
 
 5. **The dirty marker keys on the whole slot tree, so preset-EXCLUDED parameters mark a preset as
    edited.** `presetDirty()` compares `presetBaseline` against a fresh `saveSlotFromLive()`, which
@@ -368,26 +375,27 @@ record.
    behaviour this product wants is a listening-pass call, not a repair — the fix (run the EMA
    toward the floor on an idle tick) is three lines once the answer is known.
 
-7. **Copy A→B leaves the destination slot's undo history describing the state it overwrote.**
-   `copySlotToOther()` replaces `storedSlot` (and its dirty datum) but not
-   `undoStacks[1 - activeSlot]`, and the copy itself is not an undo step — so switching to the
-   copied-into slot and pressing undo restores a pre-copy state the user never edited from the
-   copied values, silently discarding the copy AND that slot's last edit. Same family as item 3:
-   what the undo unit should do when a whole slot is replaced from outside its own history is one
-   question, and it should be answered once for undo/redo, Copy, and the dirty datum together.
+7. **RESOLVED 2026-08-03 (round 37) — Copy A→B and the destination's undo history.**
+   `copySlotToOther()` replaced `storedSlot` but not `undoStacks[1 - activeSlot]`, so switching to
+   the copied-into slot and pressing undo restored a pre-copy state the user never edited from the
+   copied values — silently discarding the copy AND that slot's last edit, because the copy itself
+   is not an undo step. It needed no new semantics: `setStateInformation` already clears both
+   slots' stacks because "a load starts a fresh history", and a Copy is that event for one slot, so
+   `copySlotToOther()` clears the destination's stacks too. What REMAINS open is only the narrower
+   question item 3 asks (whether undo should also restore the dirty baseline); the two were
+   recorded together and only the history half is settled.
 
-8. **A macro-knob gesture that moves nothing re-engages the mask without re-landing the curve.**
-   `audioProcessorParameterChangeGestureBegin` sets `pendingReengage` for `loudness`/`character`/
-   `tone` on the BEGIN, so a click-and-release on a macro knob with no value change clears the
-   detach mask — §5.3's "the next macro-knob gesture re-engages ALL detached params", read
-   literally. But no value changed, so nothing arms `mappingPending`, and the drain that follows
-   has no mapping pass to run: the freshly re-engaged parameters keep the user's off-curve values
-   until the next real macro move. `resetToMacro()` — the explicit "reset to macro" verb — clears
-   the mask AND calls `refreshMapping()`, so the two re-engagement routes end in different places.
-   Whether §5.3 intends a gesture-driven re-engage to also re-land the curve, or intends the mask
-   clear alone (leaving the curve to arrive with the next move), is the spec question; the code is
-   consistent with the sentence as written, which is why this is recorded rather than "fixed" by
-   adding a `refreshMapping()` that would change audible behaviour on a stray click.
+8. **RESOLVED 2026-08-03 (round 37) — a macro gesture that moves nothing now re-lands the curve.**
+   `audioProcessorParameterChangeGestureBegin` cleared the detach mask for a macro-knob gesture but
+   armed no mapping, so a click-and-release left the freshly re-engaged parameters holding the
+   user's off-curve values. Recorded as a spec question, and settled by the specification rather
+   than by a new choice: `MODE_AND_ADAPTATION_POLICY` invariant 3 already reads "the next macro
+   gesture re-engages every detached parameter **through the normal rate-limited glide**", and
+   round 30 had already fixed the identical "re-engaged but off-curve" shape on the tick path. The
+   begin now calls `MacroEngine::armMapping()` alongside the re-engage — a relaxed store, so it is
+   safe from whichever thread the gesture arrives on — and the two re-engagement routes (gesture
+   and `resetToMacro()`) do the same two things. Inert when nothing was detached, because
+   `setParam` skips writes that would not change the value.
 
 9. **Reset-to-macro is a nine-parameter, mask-wide change with no undo step.** `resetToMacro()`
    clears the detach mask and re-lands the curve on all nine managed parameters through

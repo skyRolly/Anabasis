@@ -35,17 +35,28 @@ void MacroEngine::stopDraining()
     // `~MacroEngine` does the same two calls, but by then the owner's members
     // are already gone.
     //
-    // It deliberately does NOT null `onDrainTick`/`isDetached` any more, and
-    // the reason is the inverse of what it looks like. The residual this
-    // cannot close is a tick ALREADY EXECUTING on the message thread while
-    // another thread destroys the processor (JUCE's Timer offers no join, and
-    // a host doing that has a larger problem than this callback). Assigning
-    // the `std::function`s made that residual strictly WORSE rather than
-    // better: such a tick has already entered `drainTick` and is about to
-    // invoke `onDrainTick`, so overwriting it is a data race on a non-atomic
-    // object — a torn read where the un-nulled version was merely a call into
-    // an owner that is still alive at that instant. Clearing bought nothing
-    // and cost a race; the objects die with `MacroEngine` either way.
+    // It deliberately does NOT null `onDrainTick`/`isDetached`, and the reason
+    // is the inverse of what it looks like. The residual this cannot close is a
+    // tick ALREADY EXECUTING on the message thread while another thread
+    // destroys the processor (JUCE's Timer offers no join, and a host doing
+    // that has a larger problem than this callback). Assigning the
+    // `std::function`s made that residual strictly WORSE: such a tick has
+    // already entered `drainTick` and is about to invoke `onDrainTick`, so
+    // overwriting it is a data race on a non-atomic object, where leaving it
+    // alone is merely a call into an owner still alive at that instant.
+    //
+    // What the nulling DID buy, and what `drainStopped` now buys without the
+    // race: the SEQUENTIAL guarantee. `drainTick`, `flushPendingMapping` and
+    // `refreshMapping` are all public, so "nothing drains after stopDraining"
+    // was a rule a future caller had to remember rather than something the
+    // object enforced — and after `~AnabasisAudioProcessor` has called this,
+    // the members `onDrainTick` reaches (`liveDetachMask`, the staged bits)
+    // are already destroyed. A one-way atomic latch, read at the top of
+    // `drainTick`, makes it structural in every build and costs a relaxed load
+    // on a path that already performs several. One way on purpose: an object
+    // whose owner has begun teardown never becomes drainable again, so there
+    // is no re-arm for a later caller to get wrong.
+    drainStopped.store (true, std::memory_order_relaxed);
     stopTimer();
     cancelPendingUpdate();
 }
@@ -134,6 +145,12 @@ void MacroEngine::drainTick()
     // they would have been had they landed and then been overwritten — and it
     // is the same rule the mapping half already followed: a restore is not a
     // gesture, so a gesture racing one belongs to the state being replaced.
+    // Teardown latch FIRST — see stopDraining(). Every trigger routes through
+    // this function, so one test here covers the timer, the posted update,
+    // `flushPendingMapping` and `refreshMapping` alike.
+    if (drainStopped.load (std::memory_order_relaxed))
+        return;
+
     if (restoreDepth.load (std::memory_order_relaxed) > 0)
         return;
 

@@ -263,6 +263,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   up from their minimum over the first few frames.
 - **Dragging a knob's number behaves like dragging the knob** (2026-08-03): the edit is now
   undoable, and on a Simple-mode macro parameter it takes that control off the macro the same way.
+- **Grabbing a macro knob puts every knob you had taken off it back on the curve** (2026-08-03),
+  even when the grab moves nothing. Previously a click-and-release re-attached them in name only:
+  they stopped showing as taken-off but kept the values you had dialled in.
+- **Copying one A/B slot over the other starts that slot's undo history fresh** (2026-08-03).
+  Before, the first undo after switching to the copied-into slot restored a state from before the
+  copy — silently discarding both the copy and that slot's last edit.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
   the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
   documented; a well-formed preset file from another plugin is refused without costing an undo
@@ -276,8 +282,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testGrHistoryWindowNeverAsksForTheHeadSlot`,
   `testTheSettingsPanelFollowsAProjectLoad`,
   `testTheWholeTickIsSuppressedInsideARestore`,
-  `testMeterResetClearsSessionHolds` (the no-audio-at-all case); all
-  mutation-verified. [Verified]
+  `testMeterResetClearsSessionHolds` (the no-audio-at-all case),
+  `testTeardownAndReengageInvariants`; all mutation-verified. [Verified]
 
 - **Changed under the same PR:** the "Transparent Master" and "Classical Dynamics" factory presets
   now select the **Clean** colour model explicitly. Both are described as untouched, and both were

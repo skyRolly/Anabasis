@@ -6,7 +6,54 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 36 (2026-08-03)**, whose first finding is the previous
+**Last updated:** for **review round 37 (2026-08-03)** — a triaged round, limited to findings that
+violate an invariant this build has already established. Four, plus one pairing hardening:
+(1) **The post-teardown drain guarantee was unenforced.** Round 36 removed the `std::function`
+nulling from `stopDraining()` for a sound reason (it raced a tick already about to invoke one) and
+in doing so dropped what the nulling also bought: `drainTick`, `flushPendingMapping` and
+`refreshMapping` are all PUBLIC, so "nothing drains after stopDraining" became a rule a future
+caller had to remember — and after `~AnabasisAudioProcessor` has called it, the members
+`onDrainTick` reaches are already destroyed. A one-way atomic latch (`drainStopped`), read at the
+top of `drainTick`, restores the structural guarantee for every trigger at once and without the
+race the nulling had. One-way on purpose: an object whose owner has begun teardown never becomes
+drainable again.
+(2) **The preset menu's raw `LookAndFeel` pointer** — the one part of round 24's `SafePointer`
+hardening the look-and-feel did not cover — is closed by CONSTRUCTION rather than by either repair
+previously weighed and rejected. `Options::withParentComponent (this)` makes JUCE's MenuWindow a
+CHILD of the editor, so it cannot outlive it, and `Component::getLookAndFeel()` reaches `lnf` up
+the parent chain: the explicit `setLookAndFeel (&lnf)` is gone and there is no pointer to dangle.
+(3) **§5.3's re-engage was half applied on the gesture path.**
+`MODE_AND_ADAPTATION_POLICY` invariant 3 already reads "the next macro gesture re-engages every
+detached parameter **through the normal rate-limited glide**", and round 30 fixed the identical
+"re-engaged but off-curve" shape on the tick path — so this was code drifting from a written
+invariant, not an open question. A macro gesture that moved NOTHING cleared the mask and armed no
+mapping, leaving the re-engaged parameters on the user's values. The begin now calls
+`MacroEngine::armMapping()` (a relaxed store, safe from whichever thread the gesture arrives on)
+beside the re-engage, so the gesture route and `resetToMacro()` do the same two things. Inert when
+nothing was detached — `setParam` skips writes that would not change the value.
+(4) **Copy A→B left the destination slot's undo history describing the state it overwrote**, so the
+first undo after switching silently discarded the copy AND that slot's last edit. It needed no new
+semantics either: `setStateInformation` already clears both slots' stacks because "a load starts a
+fresh history", and a Copy is that event for one slot.
+(5) Pairing hardening on round 36's own new code: `ValueBox::mouseDown` now calls `drag.reset()`
+before opening a bracket, because assigning over a live `unique_ptr` runs the new constructor
+(begin) before the old destructor (end) — a mouse-down that never saw its mouse-up would have
+handed the host begin/begin/end/end.
+Regression coverage is mechanical for the first, third and fourth
+(`testTeardownAndReengageInvariants`, three mutants, one per invariant); the menu parenting and the
+bracket pairing are lifetime properties with no headless observable, verified by reading the pinned
+JUCE dispatch. Documents re-checked against the implementation and synced: `MODE_AND_ADAPTATION_
+POLICY` §P5 gesture grammar (the arming is the code half of invariant 3), `THREAD_MODEL` rows 39
+and 40 (the teardown latch, the re-engage arming), `KNOWN_ISSUES` KI-003 (the stopDraining
+paragraph said "clears the callbacks", which stopped being true in round 36) and KI-007 items 4, 7
+and 8, marked RESOLVED in place so the numbering other documents cite still resolves.
+**Left documented, per the triage:** frozen-trim ownership (the never-run capture, the factory
+apply's carry-over, the freeze-OFF slot that still serialises a child), the preset dirty model, the
+undo/state-restore THREADING architecture (KI-003's third member — architectural, not introduced),
+the spectrum analyser's idle behaviour, preset-ring navigation by name, the duck's extra bottom
+hold, and the phase table now present in both `build.yml` and `TESTING_POLICY.md` (consistent
+today; collapsing it decides which file owns the number).
+Previous: **review round 36 (2026-08-03)**, whose first finding is the previous
 round's fix landing in the wrong place:
 (1) **The `vpos` seed ran BEFORE the APVTS attachment, so it stored the minimum it was meant to
 stop showing.** `setupRotary`/`setupToggle` call `registerAnimated` and the per-control helper

@@ -137,7 +137,11 @@ begin/endChangeGesture bracket, (2) not macro-originated (`isApplyingMacro`), an
 a restore (`isRestoring`) — so automation playback, preset/A-B/session restores, and the mapper's
 own writes never detach, INCLUDING when they land under a user's open gesture (the overlap cases
 are tested). The mapping skips detached parameters; the next macro-knob gesture re-engages the
-whole set through the normal glide; `resetToMacro()` re-engages in place. Discriminator callbacks
+whole set through the normal glide — the gesture BEGIN both clears the mask and arms a mapping
+pass (`MacroEngine::armMapping`), so point 3 above holds even for a gesture that moves nothing:
+without the arming, a press-and-release cleared the mask while the freshly re-engaged parameters
+kept their off-curve values, which is "re-engaged" by the mask and not by the sound. `resetToMacro()`
+re-engages in place and has always done both halves; the two routes are one rule. Discriminator callbacks
 can arrive off the message thread, so they only set lock-free bits which the message thread
 drains into the per-slot mask — the same marshalling shape as `mappingPending`, covered by the
 listener-guard row the OQ-014 resolution added (2026-08-02, reading 1). Guarded by

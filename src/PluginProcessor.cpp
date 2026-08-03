@@ -133,7 +133,21 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
             // §5.3: the NEXT macro-knob gesture re-engages everything — the
             // clear must land before the gesture's mapping writes, and both
             // run on the message thread, so the drain below is ordered right.
+            //
+            // ARM THE MAPPING TOO, and it is the same invariant round 30 fixed
+            // for the tick path: a re-engage that the curve-landing pass never
+            // sees leaves a parameter reading as re-engaged while it still
+            // holds the user's off-curve value. A gesture that moves the knob
+            // arms the mapping through the macro's own listener; a gesture
+            // that moves NOTHING — press and release, or a drag returned to
+            // where it started — armed nothing, so the mask cleared and the
+            // curve never re-landed. `resetToMacro()`, the only other
+            // re-engagement verb, clears the mask AND re-lands; these two are
+            // now the same rule rather than two readings of it. Inert when
+            // nothing was detached: `MacroEngine::setParam` skips writes that
+            // would not change the value, so the pass costs nine comparisons.
             pendingReengage.store (true, std::memory_order_relaxed);
+            macroEngine->armMapping();         // any thread — an atomic store
             drainDetachBitsSoon();             // never posts off-thread — see there
         }
     }

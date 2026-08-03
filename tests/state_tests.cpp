@@ -1574,6 +1574,84 @@ static void testThePostedDrainAlsoTakesTheWrapperBitsFirst()
            "postedDrain: …and its mapping skipped the freshly detached clipDrive");
 }
 
+// Three MECHANICAL invariants this build states in prose and now enforces in
+// code, one test each because each has exactly one observable consequence.
+static void testTeardownAndReengageInvariants()
+{
+    // (1) TEARDOWN. `drainTick`, `flushPendingMapping` and `refreshMapping` are
+    // public, so "nothing drains after stopDraining" used to be a rule a caller
+    // had to remember — and after `~AnabasisAudioProcessor` has called it, the
+    // members `onDrainTick` reaches are already destroyed. A one-way latch now
+    // enforces it for every trigger at once, since all of them route through
+    // `drainTick`.
+    {
+        AnabasisAudioProcessor proc;
+        int ticks = 0;
+        proc.getMacroEngine().onDrainTick = [&ticks] { ++ticks; };
+        proc.getMacroEngine().drainTick();
+        check (ticks == 1, "teardown: (premise) a drain reaches the owner while draining");
+        proc.getMacroEngine().stopDraining();
+        proc.getMacroEngine().drainTick();
+        proc.getMacroEngine().flushPendingMapping();
+        proc.getMacroEngine().refreshMapping();
+        check (ticks == 1, "teardown: no trigger reaches the owner after stopDraining");
+    }
+
+    // (2) §5.3 RE-ENGAGE. Round 30 settled that a re-engage the curve-landing
+    // pass never sees leaves a parameter reading as re-engaged while holding
+    // the user's off-curve value. A macro gesture that moves NOTHING is the
+    // remaining instance: it clears the mask, and until now armed no mapping.
+    {
+        AnabasisAudioProcessor proc;
+        auto* limGain  = proc.apvts.getParameter (pid::limGain);
+        auto* loudness = proc.apvts.getParameter (pid::loudness);
+        loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (60.0f));
+        proc.getMacroEngine().flushPendingMapping();
+
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (2.0f));
+        limGain->endChangeGesture();
+        proc.flushPendingDetach();
+        check (proc.detachMask().contains (pid::limGain),
+               "reengage: (premise) the gestured edit detached limGain");
+        check (std::abs (proc.apvts.getRawParameterValue (pid::limGain)->load() - 2.0f) < 1.0e-3f,
+               "reengage: (premise) …and it holds the user's off-curve value");
+
+        // The gesture with NO value change between begin and end.
+        loudness->beginChangeGesture();
+        loudness->endChangeGesture();
+        proc.getMacroEngine().flushPendingMapping();
+
+        check (proc.detachMask().isEmpty(), "reengage: the macro gesture cleared the mask");
+        check (std::abs (proc.apvts.getRawParameterValue (pid::limGain)->load()
+                           - macro_curves::limGainDb (0.6f)) < 0.05f,
+               "reengage: …and the SAME gesture re-landed the curve on it");
+    }
+
+    // (3) COPY A→B. A per-slot undo stack records edits made from that slot's
+    // own values; a Copy replaces them wholesale from outside that history, so
+    // every entry describes a state the slot no longer has —
+    // `setStateInformation` already clears both stacks for that reason.
+    {
+        AnabasisAudioProcessor proc;
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        proc.switchToSlot (1);                       // edit B so it HAS a history
+        drive->beginChangeGesture();
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (7.0f));
+        drive->endChangeGesture();
+        check (proc.canUndo(), "copyUndo: (premise) slot B has an undo step");
+        proc.switchToSlot (0);
+        proc.copySlotToOther();                      // A → B
+        proc.switchToSlot (1);
+        check (! proc.canUndo(),
+               "copyUndo: a copied-into slot starts a fresh history, as a load does");
+        check (std::abs (proc.apvts.getRawParameterValue (pid::clipDrive)->load()
+                           - drive->getNormalisableRange().convertFrom0to1 (drive->getValue()))
+                   < 1.0e-3f,
+               "copyUndo: (premise) the copy itself landed");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // §5.3 detach / re-engage — ADR-0005's P5 half, the gesture grammar. The
 // discriminator's three conditions each get the stimulus that isolates them:
@@ -2281,6 +2359,7 @@ int main (int argc, char** argv)
         testMeterPublication();
         testAGestureEndWithoutACountedBeginIsIgnored();
         testAMacroGestureWinsADetachRacingItInOneDrain();
+        testTeardownAndReengageInvariants();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
