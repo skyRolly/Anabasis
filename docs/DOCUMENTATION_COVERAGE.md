@@ -6,7 +6,51 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 39 (2026-08-03)** — correctness only, and the first item is
+**Last updated:** for **review round 40 (2026-08-03)** — a targeted hardening pass, and every item
+is a case of two mechanisms that had to agree with each other:
+(1) **A meter reset was invisible from the GUI.** `requestMeterReset()` only set the momentary-request
+flag; the DISPLAY publish that makes the clear visible with no audio running lived at the
+`setStateInformation` call site, added there at round 33 for a reason — "a project is opened with
+the transport stopped" — that is at least as true of the meter panel's click, which is when a user
+reads an integrated figure and decides to clear it. The engine half must wait for a block top; the
+display half must not. Both are now inside the request, so the two callers agree by construction.
+`THREAD_MODEL`'s meter row and momentary-request row name the message thread as a clear writer.
+(2) **The frozen vector had no stated owner, and two places were deciding it.** Stated now, in
+`MODE_AND_ADAPTATION_POLICY` and at the code: the wrapper's `liveFrozenTrims` mirror is the DURABLE
+owner (it is what serialises); the engine's `publishedTrim*()` are a faster copy that does not
+survive `AdaptiveEngine::reset()`. A latch established LIVE had no mirror — no restore ever wrote
+one — so a host rate change destroyed the only record, and the save wrote initialisation zeros
+(pre-39) or nothing at all (post-39): the round-39 fix traded an invalid vector for a missing one,
+which is quieter, not better. `prepareToPlay` captures the latch into the mirror before
+`engine.prepare` reaches the reset, and the two-clause adoption test moved into
+`engineFrozenTrimsIfLive()` so the save and the capture cannot drift. KI-006's heading, status and
+both resolution paragraphs are re-synced: the SAVE half is closed, the AUDIO half is untouched and
+remains a Freeze-semantics decision behind the Architecture Review Gate — this fix deliberately
+stops at the serialization boundary rather than re-staging to the engine.
+(3) **Three files each claimed to be the single source for pluginval strictness.** `CI_CD.md`
+correctly located the value in `build.yml` and then sent the reader to `TESTING_POLICY.md` as "the
+only document that states it"; that policy explicitly refuses to state it and points back at
+`build.yml` — while carrying a phase→strictness table and three literal `10`s in its release-gate
+bullet. Round 35 moved this duplicate rather than removing it; this time the ownership is a table
+in both documents (value → `build.yml`; requirements → the policy; wiring → the procedure), the
+policy's table and literals are gone, and `CI_CD.md`'s local-repro block reads the number out of
+the workflow instead of pasting one (it had said `5` under a comment calling it current).
+(4) **`refreshMapping()` promised what `drainTick` withheld.** The header said "this is what
+re-lands the curve values"; inside a `ScopedRestore` the tick is suppressed whole and the scope's
+exit ABORTS the arm, so nothing lands then or later. The behaviour is right — a mapping over a
+restore is the clobber the guard exists to prevent — and the one caller that discovered it
+documented the discovery at its own site (`applyFactoryPreset` drops its guard first) rather than
+at the API. The deferral is now explicit and reported: `drainTick`/`flushPendingMapping`/
+`refreshMapping` return whether the tick ran, and the ONE decision site stays in `drainTick`.
+`testMeterResetClearsSessionHolds` (extended), `testPreparedStateAndSlotOwnership` case 4,
+`testTeardownAndReengageInvariants` cases 1 and 4; four mutants, one per guard. The frozen-trim
+stimulus first failed on an exact compare of a MEASURED trim through the XML decimal round trip —
+the assertion is now the text conversion's tolerance, still separating the vector from both failure
+modes (absent child, reset child).
+**Left documented, unchanged:** the audio half of KI-006, the frozen vector surviving a factory
+apply (KI-007 item 1), the preset dirty model, KI-003, and the preset-UX/popup/spectrum-decay/
+navigation items the brief excluded.
+Previous: **review round 39 (2026-08-03)** — correctness only, and the first item is
 the previous round's safeguard failing to safeguard anything:
 (1) **`hasPublishedTrims()` was true for every prepared instance.** Round 38 set the marker inside
 `publishTrims()`, and `AdaptiveEngine::reset()` — which `prepare()` calls, so every host reaches it

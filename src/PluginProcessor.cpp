@@ -324,6 +324,24 @@ bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
 
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // ADR-0014 ownership, and it has to happen BEFORE the line below: the
+    // engine's prepare reaches `AdaptiveEngine::reset()`, which zeroes the
+    // internal trim struct and republishes the four atomics as zeros whatever
+    // Freeze says (KI-006). A vector latched LIVE in this session — the user
+    // froze while playing, so no restore ever wrote the mirror — existed ONLY
+    // in those atomics, so a host sample-rate or block-size change silently
+    // took the latch with it and the next save wrote no FROZEN_TRIMS child at
+    // all. (Before round 39 it wrote the post-reset zeros instead, which is
+    // the same loss with a worse round trip: an invalid vector re-injected on
+    // the next load.) Copying the latch into its durable owner first makes the
+    // engine's re-initialisation a matter for the AUDIO path only — where
+    // KI-006 leaves it, since changing what a re-prepare does to a latched
+    // vector is a Freeze-semantics decision and an Architecture Review Gate
+    // item, not a repair. The helper's two conditions are what keep this from
+    // clobbering a staged-but-unapplied restore.
+    if (const auto live = engineFrozenTrimsIfLive(); live.isValid())
+        liveFrozenTrims = live;
+
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
     grHistoryRing.reset();
     dbTpMaxHold = -144.0f;
@@ -498,6 +516,45 @@ void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithR
     reassertFromRaw (paramsWithRaw);
 }
 
+// ADR-0014 ownership, stated once and read twice. WHO OWNS THE FROZEN VECTOR:
+// the wrapper's `liveFrozenTrims` mirror is the DURABLE owner — it is what
+// serialises, and it survives everything the wrapper survives. The engine's
+// published trims are a faster-moving COPY that does not survive the engine's
+// own re-initialisation: `AnabasisEngine::prepare` → `AdaptiveEngine::reset`
+// zeroes the internal struct AND republishes it, whatever Freeze says
+// (KI-006). So the copy may be adopted only while it is demonstrably the
+// truth, which is exactly two conditions:
+//
+//   * no restore staged for this slot is still unapplied — between the
+//     block-top consume and the duck's silent bottom (~34 ms) the published
+//     vector is the PRE-restore one, and the mirror holds the loaded truth;
+//   * the engine has published at least one MEANINGFUL vector — on an
+//     instance that was prepared but never processed a block the four atomics
+//     sit at their initial zero, indistinguishable from a measured "no trim",
+//     and adopting that would overwrite a vector the slot genuinely holds.
+//
+// Both readers need the identical test, and they are far apart in this file:
+// `saveSlotFromLive` (is the copy newer than the mirror?) and `prepareToPlay`
+// (the copy is about to be destroyed — is it worth keeping?). Two copies of a
+// two-clause rule is the shape that produced the defect this replaces, so
+// there is one function. Freeze OFF returns nothing at all: MODE invariant 3
+// gives an unfrozen slot no latch, so there is nothing for either reader to
+// adopt (and §5.4's slew would walk away from it on the next audible block).
+juce::ValueTree AnabasisAudioProcessor::engineFrozenTrimsIfLive()
+{
+    if (apvts.getRawParameterValue (pid::freeze)->load() < 0.5f)
+        return {};
+    const auto& a = engine.adaptiveForWrapper();
+    if (engine.frozenRestorePending() || ! a.hasPublishedTrims())
+        return {};
+    juce::ValueTree ft ("FROZEN_TRIMS");
+    ft.setProperty ("releaseOctaves", (double) a.publishedTrimRelease(), nullptr);
+    ft.setProperty ("stereoLink",     (double) a.publishedTrimLink(), nullptr);
+    ft.setProperty ("scHpfHz",        (double) a.publishedTrimHpf(), nullptr);
+    ft.setProperty ("dynTiltDb",      (double) a.publishedTrimTilt(), nullptr);
+    return ft;
+}
+
 juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
 {
     // The slot serialises the FULL parameter tree, view-tier entries included;
@@ -537,26 +594,9 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     juce::ValueTree frozen;
     if (apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f)
     {
-        frozen = liveFrozenTrims;              // the staged-but-unapplied window
-        // …and the ENGINE's latch when it is the truth. `hasPublishedTrims()`
-        // is the third condition, and it was missing: on an instance that was
-        // prepared but never processed a block the four published atomics are
-        // still at their initial zero, which is indistinguishable from a
-        // measured "no trim" — so this branch overwrote a vector the slot
-        // genuinely holds with zeros, and the next load re-injected them.
-        // KI-006 records the audio half of that asymmetry; this is the save
-        // half, and it needs no answer to the audio one: a value that was
-        // never measured cannot be more truthful than the one already held.
-        const auto& a = engine.adaptiveForWrapper();
-        if (! engine.frozenRestorePending() && a.hasPublishedTrims())
-        {
-            juce::ValueTree ft ("FROZEN_TRIMS");
-            ft.setProperty ("releaseOctaves", (double) a.publishedTrimRelease(), nullptr);
-            ft.setProperty ("stereoLink",     (double) a.publishedTrimLink(), nullptr);
-            ft.setProperty ("scHpfHz",        (double) a.publishedTrimHpf(), nullptr);
-            ft.setProperty ("dynTiltDb",      (double) a.publishedTrimTilt(), nullptr);
-            frozen = ft;
-        }
+        frozen = liveFrozenTrims;              // the mirror: the durable owner
+        if (const auto live = engineFrozenTrimsIfLive(); live.isValid())
+            frozen = live;                     // …unless the engine's latch is newer
     }
     if (frozen.isValid())
         slot.appendChild (frozen.createCopy(), nullptr);
@@ -912,17 +952,13 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // is a different session's — keeping the old maximum "will read as a bug
     // the first time a meter is visible" (the reviewer's words, and correct).
     // Staged through the same momentary-request row as the GUI button, so the
-    // clear lands at a block top like every other cross-thread command — AND
-    // published here as well, because a project is ordinarily opened with the
-    // transport stopped and no block then runs at all: the request would sit
-    // pending while the open editor still showed the previous session's
-    // integrated LUFS and dBTP maximum. The engine-side clear still has to
-    // wait for its block top (it is engine state); the DISPLAY does not, and
-    // the constants are the same ones `prepareToPlay` writes for the same
-    // reason. If audio is in fact running, the next block's own publish
-    // overwrites this within one block.
+    // clear lands at a block top like every other cross-thread command. The
+    // display publish that used to sit on the next line has moved INTO
+    // `requestMeterReset` — a project is ordinarily opened with the transport
+    // stopped and no block then runs at all, and that is just as true of the
+    // meter panel's own click, which had only the flag. See the request's
+    // declaration for why the pairing belongs there rather than here.
     requestMeterReset();
-    publishSilentMeters();
 
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".

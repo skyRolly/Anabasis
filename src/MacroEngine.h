@@ -86,7 +86,14 @@ public:
     // testable: the two halves are ordered against each other (the wrapper's
     // bits decide the mask the mapping reads), and an order that only exists
     // inside a private timer callback is an order no test can pin.
-    void drainTick();
+    //
+    // Returns whether the tick actually RAN. It has two suppressors — the
+    // teardown latch and an in-flight restore — and both are silent from the
+    // outside, so the answer is reported rather than left to be inferred: this
+    // is the single decision site, and `flushPendingMapping`/`refreshMapping`
+    // do nothing but propagate it. The timer and the posted update ignore it
+    // (nothing to tell), which is why it is not `[[nodiscard]]`.
+    bool drainTick();
 
     // Starts the 30 ms drain. Call ONCE, after both callbacks above are
     // assigned: they are read on the tick, and the owner cannot assign them
@@ -129,10 +136,24 @@ public:
     // (which clears the staged bits) before reaching here, which every one of
     // them does; the alternative would be a mask write landing in the middle
     // of a preset apply.
-    void refreshMapping()
+    //
+    // IT IS NOT UNCONDITIONAL, and the sentence above reads as though it were.
+    // Inside a `ScopedRestore` this arms the flag, `drainTick` suppresses the
+    // whole tick, and the scope's exit ABORTS the flag on the way out — so the
+    // curve is not re-landed now and is not deferred to afterwards either. That
+    // is the correct §5.3 outcome (a restore lands the values it carries; a
+    // mapping over them is exactly the clobber the guard exists to prevent),
+    // which makes this an intentional deferral rather than a defect — but it
+    // was documented only at the ONE call site that had to discover it
+    // (`applyFactoryPreset` drops its guard before calling, with a paragraph
+    // explaining why), so the API promised something its implementation did
+    // not. The return value states it instead of prose: FALSE means the curve
+    // was NOT re-landed and nothing remains armed, so a caller that needs the
+    // re-land must be outside the restore. Same answer for a torn-down engine.
+    bool refreshMapping()
     {
         mappingPending.store (true, std::memory_order_relaxed);
-        flushPendingMapping();
+        return flushPendingMapping();
     }
 
     // §5.3: a state RESTORE is not a macro gesture. Every restore path
@@ -189,8 +210,10 @@ public:
     // Deterministic flush for the headless tests (no message loop runs there):
     // applies a pending mapping now, on the calling (message) thread. Goes
     // through the same guard as the timer, so a test that flushes inside a
-    // ScopedRestore models what the timer would really do there.
-    void flushPendingMapping();
+    // ScopedRestore models what the timer would really do there — and returns
+    // `drainTick`'s answer unchanged, so "did the flush do anything?" is a
+    // question with an answer rather than an inference from side effects.
+    bool flushPendingMapping();
 
     // The POSTED drain, public for the same reason `drainTick` is: it is a
     // separate entry point into the same sequence, no message loop runs in the

@@ -17,7 +17,12 @@ permissions:
 
 # ---------------------------------------------------------------------------
 # pluginval strictness escalates with the project phase, and lives in ONE place
-# so raising the bar is a one-line edit (docs/policies/TESTING_POLICY.md):
+# so raising the bar is a one-line edit. THIS BLOCK IS THAT PLACE. The two
+# documents that describe the gate defer to it and state no number of their
+# own: docs/policies/TESTING_POLICY.md owns what the gate REQUIRES (suites,
+# modes, passes, platforms) and docs/procedures/CI_CD.md owns how the pipeline
+# is WIRED. They pointed at each other for the value for one round, which is
+# how the ladder ended up copied into prose twice.
 #
 # The env var below is the value in force RIGHT NOW, unconditionally, on every
 # branch — it is not phase-gated at runtime; the phases are the history of how

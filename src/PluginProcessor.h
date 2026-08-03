@@ -241,9 +241,19 @@ private:
         // already decides for every other path.
         pendingDetachBits.store (0, std::memory_order_relaxed);
         pendingReengage.store (false, std::memory_order_relaxed);
+        // The result is deliberately not checked, and that is a statement
+        // rather than an omission: `refreshMapping()` returns false only while
+        // a restore is in flight or after teardown, and every caller of this
+        // function is outside both by construction — `applyFactoryPreset`
+        // drops its `ScopedRestore` first (its own paragraph says why),
+        // `resetToMacro` and the §5.3 re-engage never open one. If a future
+        // caller does need this inside a restore, the answer is not to check
+        // the flag here but to move the call after the guard, because the
+        // deferral is not a retry: the arm is dropped, not queued.
         macroEngine->refreshMapping();
     }
     void publishSilentMeters() noexcept;   // the six meter atomics, cleared (one list)
+    juce::ValueTree engineFrozenTrimsIfLive();   // ADR-0014 ownership test (one rule, two readers)
     juce::ValueTree copyStateWithRaw();  // APVTS copy + additive exact-`raw` per PARAM
     void adoptParamsTree (const juce::ValueTree& paramsWithRaw);   // strip → replaceState → reassert
     juce::ValueTree saveSlotFromLive();
@@ -386,8 +396,26 @@ public:
     // derivation. Two callers: the P5 meter panel's reset affordance, and
     // setStateInformation — the P5 decision THREAD_MODEL left open is taken
     // there: loading a session clears the previous programme's holds.
+    //
+    // The DISPLAY clear is part of the request, not something a caller adds
+    // beside it. The ENGINE half genuinely has to wait for a block top (it is
+    // audio-thread state); the six published atomics do not, and a request
+    // that only sets the flag is INVISIBLE until audio flows — indefinitely so
+    // if the host is stopped, which is the ordinary condition for both
+    // callers. `setStateInformation` learned that at round 33 and paired the
+    // two calls at its own site; the meter panel's click did not, so the same
+    // reset read as "the button does nothing" from the GUI while working from
+    // a session load. One caller having to remember a second call is the shape
+    // this file keeps removing: the pairing lives HERE, so both are consistent
+    // by construction and a third caller cannot get it wrong. Relaxed stores
+    // throughout (see publishSilentMeters), so this stays callable from any
+    // thread; if audio is in fact running, the next block's own publish
+    // overwrites the cleared values within one block.
     void requestMeterReset() noexcept
-    { meterResetPending.store (true, std::memory_order_relaxed); }
+    {
+        meterResetPending.store (true, std::memory_order_relaxed);
+        publishSilentMeters();
+    }
 
     // §5.4 Learn (message thread → the engine's command atomics; the P5 UI
     // adds the duck-routed engage + undo bracketing around these).

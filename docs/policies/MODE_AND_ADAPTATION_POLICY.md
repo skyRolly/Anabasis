@@ -146,6 +146,15 @@ can arrive off the message thread, so they only set lock-free bits which the mes
 drains into the per-slot mask — the same marshalling shape as `mappingPending`, covered by the
 listener-guard row the OQ-014 resolution added (2026-08-02, reading 1). Guarded by
 `testDetachAndReengageGrammar`.
+**Re-landing the curve DEFERS TO A RESTORE, and that is now in the API rather than in one call
+site's comment** (round 40): inside a `MacroEngine::ScopedRestore`, `refreshMapping()` arms the
+flag, `drainTick` suppresses the whole tick, and the scope's exit ABORTS the arm — so the curve is
+neither landed then nor queued for afterwards. That is the correct outcome (a mapping pass over a
+restore is precisely the clobber the guard exists to prevent) and it is intentional, not a missed
+case; what was wrong was the promise. `refreshMapping()`/`flushPendingMapping()`/`drainTick()` now
+RETURN whether the tick ran, so a caller that needs the re-land — as `applyFactoryPreset` does,
+which drops its guard first for exactly this reason — can see the deferral instead of inferring it
+from the parameter values. Guarded by `testTeardownAndReengageInvariants` case 4.
 The §5.4 Learn UI grammar is likewise live: explicit start/end button, a 5 s minimum pass (the
 ~1.5 s integrated features must outlast their time constant — the P4-recorded debt), a wordless
 empty-pass readout (`warn` flash: the reference did not move), and the running indicator off
@@ -204,6 +213,16 @@ frozen-trim vector — which since **ADR-0014** (2026-08-02) restores too, closi
 last gap: a freeze-ON slot's latched vector is staged on ADR-0012's record row and applied at the
 §2.8 duck's silent bottom (or the unprimed direct-adopt), after which Freeze holds it exactly, so
 a frozen slot's render is reproducible across save/load and A/B (`testFrozenTrimRestore`).
+**Who owns that vector** (stated at round 40, because two places were deciding it): the wrapper's
+`liveFrozenTrims` mirror is the DURABLE owner — it is what serialises, and it outlives everything
+the wrapper outlives — while the engine's `publishedTrim*()` atomics are a faster-moving copy that
+does NOT survive `AdaptiveEngine::reset()` (KI-006). A reader may adopt the copy only while it is
+demonstrably the truth: no staged restore still unapplied, and at least one *meaningful* vector
+published (`hasPublishedTrims()`, which an unprocessed instance's initialisation zeros do not
+satisfy). Both conditions live in `AnabasisAudioProcessor::engineFrozenTrimsIfLive()` and are read
+by the two sites that need them — the save, and `prepareToPlay`, which copies the latch into the
+mirror before the engine destroys it. Freeze OFF adopts nothing: invariant 3 gives an unfrozen
+slot no latch.
 Guarded by
 `testLearnCommitAndAdaptiveRoundTrip` (commit moves the reference; the child restores it
 byte-identically; absent restores never-learned defaults). The Learn UI grammar (duck-routed

@@ -261,10 +261,12 @@ Evidence [Verified]:
 
 ---
 
-### KI-006 — A sample-rate change silently drops a frozen slot's adaptation from the AUDIO while the readout and the save still report it
+### KI-006 — A sample-rate change silently drops a frozen slot's adaptation from the AUDIO and the readout, while the SAVE keeps it
 
 **Severity:** Medium
-**Status:** Confirmed (fix deferred — it is a Freeze-semantics decision, not a repair)
+**Status:** Confirmed — **audio half only** (fix deferred: it is a Freeze-semantics decision, not a
+repair). The save half is CLOSED (round 38, corrected in 39, completed in 40); the heading above
+describes what is left, and it used to describe the reverse.
 **Affects:** all platforms/formats. Trigger: Freeze ON with a latched trim
 vector, then any `prepareToPlay` — a host sample-rate or block-size change.
 
@@ -276,17 +278,35 @@ until 2026-08-03 — "the PUBLISHED trim atomics are NOT zeroed, and cannot be",
 reasoning from `finishBlock`'s `if (! freeze && audible)` guard and missing the
 `reset()` publish. Corrected against the code, which is the authority.)
 
-The consequence is therefore SYMMETRIC, not one-sided: after a re-prepare the
-engine applies a zero trim vector to the audio, and the Advanced overlay reads
-zeros with it. What does NOT go to zero is the wrapper's `liveFrozenTrims`
-mirror — the copy a load/A-B/undo placed — so a slot whose vector arrived that
-way still serialises the right thing. A vector latched LIVE in this session has
-no mirror, and after a re-prepare there is nothing left to save.
+The consequence was therefore SYMMETRIC, not one-sided: after a re-prepare the
+engine applies a zero trim vector to the audio, the Advanced overlay reads zeros
+with it, **and the state half went with them**. What never went to zero is the
+wrapper's `liveFrozenTrims` mirror — the copy a load/A-B/undo placed — so a slot
+whose vector arrived that way still serialised the right thing; a vector latched
+LIVE in the session had no mirror, and after a re-prepare there was nothing left
+to save (before round 39 the save wrote the post-reset zeros, an INVALID vector
+that the next load re-injected; after it, no `FROZEN_TRIMS` child at all).
 
-Which resolution that favours: "keep the trims across `reset()`" now has to
-cover the published atomics as well as the internal struct, since both are
-cleared together; "a re-prepare drops it" is what the code does today, and its
-save side is already handled (below).
+**The state half is CLOSED as of round 40 (2026-08-03), and the audio half is
+what remains.** The fix is an ownership statement rather than a Freeze decision:
+the wrapper's mirror is the DURABLE owner of the frozen vector — it is what
+serialises — and the engine's published trims are a faster-moving copy that does
+not survive the engine's own re-initialisation. `prepareToPlay` therefore copies
+that latch into the mirror **before** calling `engine.prepare`, guarded by the
+same two conditions the save already used (no restore staged-but-unapplied; the
+engine has published at least one meaningful vector), which now live in one
+function, `engineFrozenTrimsIfLive()`, read by both sites.
+Guarded by `testPreparedStateAndSlotOwnership` case 4 (`liveLatch:`), whose
+premise check asserts the engine's own copy is still gone — this closes the
+serialization path without touching what a re-prepare does to the audio.
+
+What is still open, unchanged: after a re-prepare the ENGINE applies a zero trim
+vector and the Advanced overlay reads zeros until the next load, A/B or undo
+re-injects the mirror. Closing that means "keep the trims across `reset()`",
+covering the published atomics as well as the internal struct since both are
+cleared together — which is a Freeze-semantics change, an Architecture Review
+Gate item and an AI-agent Hard Stop (`MODE_AND_ADAPTATION_POLICY` Enforcement),
+so it stays owner's business rather than a repair.
 
 **Found by** the adversarial verification pass over review round 24
 (2026-08-03), not by the review itself; it PREDATES ADR-0014 (P4 shipped the
@@ -300,9 +320,13 @@ from where it was instead of jumping to zero — but it changes what
 `MODE_AND_ADAPTATION_POLICY` invariant 3's Freeze clause promises across a
 discontinuity, which is an owner/ADR call, not a bug fix. It would also have to
 carry the PUBLISHED copy, not just the internal struct — see the correction
-above. The alternative (re-stage the vector from the wrapper at
-`prepareToPlay`) only works when `liveFrozenTrims` holds one, i.e. after a load
-— a vector latched live in this session has no copy to re-stage from.
+above. The alternative (re-stage the vector to the ENGINE from the wrapper at
+`prepareToPlay`) used to be blocked by the same asymmetry — `liveFrozenTrims`
+held one only after a load — but round 40's capture removes that objection: the
+mirror is now populated for a live latch too, so re-staging has something to
+re-stage in every case. It is still not done here, because re-staging is exactly
+the Freeze-semantics change this section defers; the capture deliberately stops
+at the serialization boundary.
 
 **The SAVE half of the same gap, added 2026-08-03 (review round 27), CLOSED 2026-08-03 (round
 38).** The description above is about the audio; the capture had the mirror-image problem.
@@ -317,8 +341,11 @@ tracks the CURRENT contents of the four atomics rather than "has one ever been p
 set by an audible `finishBlock` and by an ADR-0014 `injectTrims`, and CLEARED by `reset()` along
 with the values. Round 38 shipped it as a one-way flag set inside `publishTrims()` — which
 `reset()` also calls — so it read true for every prepared instance and the guard was inert; round
-39 made it mean what its name says. The AUDIO half above is untouched and still needs the owner
-call.
+39 made it mean what its name says. Round 40 closed the remaining save case — a latch established
+LIVE, whose only record was the atomics the re-prepare cleared — by capturing that latch into the
+mirror at `prepareToPlay`, and moved the two-clause "is the engine's copy the truth?" test into
+`engineFrozenTrimsIfLive()` so the save and the capture cannot drift apart. The AUDIO half above
+is untouched and still needs the owner call.
 
 **For the post-v0.1.0 fine review.**
 

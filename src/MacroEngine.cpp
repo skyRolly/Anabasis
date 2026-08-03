@@ -104,7 +104,7 @@ void MacroEngine::timerCallback()
     drainTick();
 }
 
-void MacroEngine::drainTick()
+bool MacroEngine::drainTick()
 {
     // ORDER IS THE CONTRACT, and it is the opposite of what this used to do.
     // The wrapper's bits go FIRST: they decide the detach mask, and the mapping
@@ -149,10 +149,10 @@ void MacroEngine::drainTick()
     // this function, so one test here covers the timer, the posted update,
     // `flushPendingMapping` and `refreshMapping` alike.
     if (drainStopped.load (std::memory_order_relaxed))
-        return;
+        return false;
 
     if (restoreDepth.load (std::memory_order_relaxed) > 0)
-        return;
+        return false;
 
     // RE-ENTRANCY, stated because routing every trigger through here created
     // it and neither site said so. `onDrainTick` is the WRAPPER's detach
@@ -169,12 +169,13 @@ void MacroEngine::drainTick()
     if (onDrainTick)
         onDrainTick();
     drainPendingMapping();
+    return true;   // neither suppressor fired: both halves ran on this thread
 }
 
-void MacroEngine::flushPendingMapping()
+bool MacroEngine::flushPendingMapping()
 {
     cancelPendingUpdate();
-    drainTick();
+    return drainTick();
 }
 
 void MacroEngine::drainPendingMapping()

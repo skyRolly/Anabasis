@@ -1623,10 +1623,12 @@ static void testTeardownAndReengageInvariants()
         proc.getMacroEngine().drainTick();
         check (ticks == 1, "teardown: (premise) a drain reaches the owner while draining");
         proc.getMacroEngine().stopDraining();
-        proc.getMacroEngine().drainTick();
-        proc.getMacroEngine().flushPendingMapping();
-        proc.getMacroEngine().refreshMapping();
+        const bool tick  = proc.getMacroEngine().drainTick();
+        const bool flush = proc.getMacroEngine().flushPendingMapping();
+        const bool fresh = proc.getMacroEngine().refreshMapping();
         check (ticks == 1, "teardown: no trigger reaches the owner after stopDraining");
+        check (! tick && ! flush && ! fresh,
+               "teardown: …and each trigger REPORTS the suppression instead of returning silently");
     }
 
     // (2) §5.3 RE-ENGAGE. Round 30 settled that a re-engage the curve-landing
@@ -1681,6 +1683,53 @@ static void testTeardownAndReengageInvariants()
                            - drive->getNormalisableRange().convertFrom0to1 (drive->getValue()))
                    < 1.0e-3f,
                "copyUndo: (premise) the copy itself landed");
+    }
+
+    // (4) `refreshMapping()`'s CONTRACT. Its header promised "this is what
+    // re-lands the curve values", unconditionally; inside a `ScopedRestore` it
+    // arms the flag, `drainTick` suppresses the whole tick, and the scope's
+    // exit ABORTS the flag — so the curve is neither landed then nor deferred
+    // to afterwards. That is the correct §5.3 outcome (a mapping over a restore
+    // is the clobber the guard exists to prevent), so the fix is to the
+    // contract: the deferral is now reported rather than silent. Only one
+    // caller had ever discovered it, and it documented the discovery at its own
+    // site (`applyFactoryPreset` drops its guard first) rather than at the API.
+    {
+        AnabasisAudioProcessor proc;
+        auto* limGain  = proc.apvts.getParameter (pid::limGain);
+        auto* loudness = proc.apvts.getParameter (pid::loudness);
+        loudness->setValueNotifyingHost (loudness->getNormalisableRange().convertTo0to1 (60.0f));
+        proc.getMacroEngine().flushPendingMapping();
+
+        // An UNGESTURED write: §5.3's discriminator needs a gesture, so this
+        // detaches nothing and the next mapping pass is free to overwrite it.
+        // That makes "did the curve re-land?" a question about the mapping
+        // alone, with the detach mask held out of it.
+        const float offCurve = 2.0f;
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (offCurve));
+        auto held = [&proc] { return proc.apvts.getRawParameterValue (pid::limGain)->load(); };
+        check (std::abs (held() - offCurve) < 1.0e-3f,
+               "contract: (premise) limGain sits off the curve, undetached");
+
+        {
+            const MacroEngine::ScopedRestore guard (proc.getMacroEngine());
+            check (! proc.getMacroEngine().refreshMapping(),
+                   "contract: refreshMapping REPORTS that a restore suppressed the re-land");
+            check (std::abs (held() - offCurve) < 1.0e-3f,
+                   "contract: …and the curve was in fact not landed");
+        }
+
+        // The arm was dropped, not queued: the next drain must not land it
+        // either, or the deferral would be a delayed clobber of the values the
+        // restore had carried.
+        proc.getMacroEngine().flushPendingMapping();
+        check (std::abs (held() - offCurve) < 1.0e-3f,
+               "contract: a suppressed re-land is aborted, never deferred past the restore");
+
+        check (proc.getMacroEngine().refreshMapping(),
+               "contract: outside a restore it reports that it ran…");
+        check (std::abs (held() - macro_curves::limGainDb (0.6f)) < 0.05f,
+               "contract: …and the curve is what the parameter now holds");
     }
 }
 
@@ -1797,6 +1846,74 @@ static void testPreparedStateAndSlotOwnership()
         drive->endChangeGesture();                         // the end lands on slot B
         check (proc.canUndo() == undoBefore,
                "slotGesture: a drag open across an A/B switch pushes no step onto the new slot");
+    }
+
+    // (4) The mirror image of (1), and the half (1)'s fix left open. In (1) the
+    // vector arrived by RESTORE, so the wrapper's `liveFrozenTrims` held a copy
+    // and the re-prepare could only threaten to overwrite it. A vector latched
+    // LIVE — the user froze while playing, which no restore path observes —
+    // existed ONLY in the engine's published atomics, and `AdaptiveEngine::
+    // reset()` zeroes the internal struct and republishes it whatever Freeze
+    // says. So a host sample-rate change took the latch with it: before round
+    // 39 the save then wrote the post-reset ZEROS (an invalid vector, re-
+    // injected on the next load); after it, the save wrote no FROZEN_TRIMS
+    // child AT ALL. Same loss, quieter. The vector's durable owner is the
+    // wrapper's mirror, so the engine's copy is captured into it at the one
+    // point where that copy is about to be destroyed.
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+
+        // Freeze OFF and audible programme: §5.4's slew is the ONLY path that
+        // publishes a measured vector, so this is what makes the latch real
+        // rather than the initialisation zeros (1) is about.
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+        check (proc.adaptiveReadout().hasPublishedTrims(),
+               "liveLatch: (premise) the engine published a measured vector");
+        const double latched = (double) proc.adaptiveReadout().publishedTrimRelease();
+        check (std::abs (latched) > 1.0e-6,
+               "liveLatch: (premise) the vector MOVED — a zero latch would pass either way");
+
+        // The latch itself. No restore has ever run on this instance, so the
+        // wrapper's mirror is empty and the atomics are the only record.
+        auto* fz = proc.apvts.getParameter (pid::freeze);
+        fz->setValueNotifyingHost (1.0f);
+
+        // A MEASURED trim is not a decimal-exact number the way (1)'s hand-built
+        // 0.25 is, and this one makes the full XML round trip, so the tolerance
+        // is the text conversion's and nothing else: 1e-9 against a ~4e-4 value
+        // still separates "the vector" from both of the failure modes (an
+        // absent child reads as the -999 default, a reset one as 0).
+        auto savedRelease = [&proc] () -> double
+        {
+            juce::MemoryBlock out;
+            proc.getStateInformation (out);
+            const auto r = juce::ValueTree::fromXml (
+                *juce::AudioProcessor::getXmlFromBinary (out.getData(), (int) out.getSize()));
+            return (double) r.getChildWithName ("AB").getChild (0)
+                             .getChildWithName ("FROZEN_TRIMS")
+                             .getProperty ("releaseOctaves", -999.0);
+        };
+        check (std::abs (savedRelease() - latched) < 1.0e-9,
+               "liveLatch: (premise) the live latch serialises while the engine still holds it");
+
+        proc.prepareToPlay (96000.0, 512);
+        check (! proc.adaptiveReadout().hasPublishedTrims(),
+               "liveLatch: (premise) the engine's own copy did not survive its re-initialisation");
+        check (std::abs (savedRelease() - latched) < 1.0e-9,
+               "liveLatch: a re-prepare cannot take a live-latched Freeze with it");
     }
 }
 
@@ -2052,6 +2169,24 @@ static void testMeterResetClearsSessionHolds()
     feedTone (0.005f, 20, (3 * warm + 8) * 512);
     check (proc.meterDbTpMax() < -40.0f,
            "meterReset: a session load cleared the previous programme's holds");
+
+    // The GUI affordance's half of the SAME row, which had nothing behind it.
+    // `LoudnessMeterView::mouseDown` calls `requestMeterReset()` and nothing
+    // else, and the display publish lived at the state-load call site — so with
+    // the transport stopped (exactly when a user reads an integrated figure and
+    // decides to clear it) the click set a flag no block ever consumed, and the
+    // panel went on showing the previous take's holds until audio ran again.
+    // The pairing now lives inside the request, so both callers get it.
+    feedTone (0.5f, warm, 4 * warm * 512);
+    check (proc.meterDbTpMax() > -8.0f, "meterReset: (premise) holds re-raised for the click");
+    feedTone (0.005f, 8, 5 * warm * 512);              // drain the loud tail, as above
+    check (proc.meterDbTpMax() > -8.0f,
+           "meterReset: (premise) the hold survives the quiet drain — nothing else cleared it");
+    proc.requestMeterReset();                          // what the meter panel's click does
+    check (proc.meterDbTpMax() < -100.0f,
+           "meterReset: a reset request publishes the cleared dBTP hold with no audio at all");
+    check (juce::exactlyEqual (proc.meterLufsI(), anabasis::LoudnessMeter::kSilentLufs),
+           "meterReset: …and the cleared integrated reading");
 }
 
 // ---------------------------------------------------------------------------

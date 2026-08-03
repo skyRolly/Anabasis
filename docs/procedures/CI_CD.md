@@ -67,9 +67,20 @@ That place is the `env:` block at the top of `.github/workflows/build.yml`
 (`ANABASIS_PLUGINVAL_STRICTNESS`), and this section deliberately does **not**
 quote its current value. It used to, and the copy went stale the moment the
 build raised the bar for P6 — in the very file whose heading promises one place
-only. Read the number there; raising it stays a one-line edit. The release gate
-is defined by `docs/policies/TESTING_POLICY.md`, which is likewise the only
-document that states it.
+only. Read the number there; raising it stays a one-line edit.
+
+The sentence that used to close this section sent readers to
+`docs/policies/TESTING_POLICY.md` as "likewise the only document that states
+it", which was a circle: that policy does **not** state the number — it
+explicitly refuses to, and points back here at `build.yml`. Three files each
+claiming to be the single source is how the value gets copied a fourth time.
+The division of labour, stated once:
+
+| Question | Answered by |
+|---|---|
+| What number is in force, and what it was per phase | `.github/workflows/build.yml` (`env:` block) — **the only source** |
+| What the gate *requires* — suites, modes, passes, platforms | `docs/policies/TESTING_POLICY.md` |
+| How the pipeline is wired to meet it — jobs, step order, artefacts, retries | this document |
 
 ## Pipeline
 
@@ -264,6 +275,10 @@ scripts/setup-linux.sh
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 scripts/run-tests.sh
-scripts/run-pluginval.sh 5 deterministic     # use the current phase strictness
-scripts/run-pluginval.sh 5 randomise
+# $STRICTNESS is ANABASIS_PLUGINVAL_STRICTNESS from .github/workflows/build.yml —
+# the literal used to be pasted here as `5`, and stayed 5 through two raises,
+# under a comment telling the reader it was current.
+STRICTNESS=$(grep -oP 'ANABASIS_PLUGINVAL_STRICTNESS:\s*\K\d+' .github/workflows/build.yml)
+scripts/run-pluginval.sh "$STRICTNESS" deterministic
+scripts/run-pluginval.sh "$STRICTNESS" randomise
 ```
