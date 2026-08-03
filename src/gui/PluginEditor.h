@@ -188,6 +188,10 @@ private:
     // caller that just CHANGED the state the mark describes passes true; the
     // 24 Hz tick is the only one that does not.
     void refreshPresetDisplay (bool recomputeNow = false);
+    // Both the constructor's seed and the 24 Hz tick, so the two cannot
+    // disagree about what "no history yet" looks like. Out of line because this
+    // header only forward-declares the processor.
+    void refreshUndoRedoEnablement();
     void showPresetMenu();
     void showSavePreset (bool);
     void showAbout (bool);

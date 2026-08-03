@@ -1910,11 +1910,96 @@ static void testPreparedStateAndSlotOwnership()
                "liveLatch: (premise) the live latch serialises while the engine still holds it");
 
         proc.prepareToPlay (96000.0, 512);
+        // The two sets part company HERE, which is the whole reason there are
+        // two: the PUBLISHED set describes what the adaptive layer is applying
+        // and is correctly zeroed with the internal struct (KI-006's audio and
+        // readout halves, untouched), while the RETAINED set is persistence
+        // state and survives, exactly as `learned`/`refOnsetRate`/`refTiltDb`
+        // always have. Asserting both is what stops a future "simplification"
+        // from collapsing them back into one.
         check (! proc.adaptiveReadout().hasPublishedTrims(),
-               "liveLatch: (premise) the engine's own copy did not survive its re-initialisation");
+               "liveLatch: (premise) the APPLIED vector did not survive re-initialisation");
+        check (proc.adaptiveReadout().hasRetainedTrims(),
+               "liveLatch: the RETAINED vector did — persistence state outlives a re-prepare");
         check (std::abs (savedRelease() - latched) < 1.0e-9,
                "liveLatch: a re-prepare cannot take a live-latched Freeze with it");
     }
+}
+
+// Round 41. The durable copy of a frozen latch must live in the LOCK-FREE
+// layer, because the two threads that need it cannot be made to take turns:
+// `prepareToPlay` is a host callback JUCE does not promise on the message
+// thread (THREADING_POLICY's PDC amendment, and the premise KI-003 and the
+// `startDraining`/`stopDraining` split both rest on), while the editor polls
+// `presetDirty()` → `saveSlotFromLive()` continuously, which reads
+// `liveFrozenTrims` and `createCopy()`s it. Round 40 rescued the latch across a
+// re-prepare by ASSIGNING that member from `prepareToPlay`: an unsynchronised
+// write to a non-thread-safe `juce::ValueTree` — a reference-counted pointer
+// swap — opposite a continuous reader, with both sides gated on Freeze being ON
+// so the two windows coincided exactly rather than being disjoint.
+//
+// The stimulus is a stress rather than a proof, and is labelled as one: it runs
+// the two callbacks concurrently for long enough that the round-40 write would
+// be reading and releasing the same object (it is a hard data race, so a
+// sanitiser build is where it is a *certain* failure), and then asserts the
+// serialised vector is still the latched one. What makes the defect impossible
+// rather than merely unlikely is structural and checked above: nothing in
+// `prepareToPlay` touches wrapper `ValueTree` state at all any more.
+static void testTheFrozenLatchNeedsNoThreadCrossing()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 60; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 997.0f * (float) (b * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    const double latched = (double) proc.adaptiveReadout().retainedTrimRelease();
+    check (std::abs (latched) > 1.0e-6, "noCrossing: (premise) a live latch exists to lose");
+
+    auto* fz = proc.apvts.getParameter (pid::freeze);
+    fz->setValueNotifyingHost (1.0f);
+    // `presetDirty()` returns early with no preset loaded, so the poll would
+    // never reach `saveSlotFromLive` and the reader half of the race would not
+    // exist. A factory apply gives it a name and a baseline; `freeze` is
+    // preset-EXCLUDED, so it stays ON across the apply.
+    check (proc.applyFactoryPreset (0), "noCrossing: (premise) a preset is loaded to compare against");
+    check (proc.apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f,
+           "noCrossing: (premise) …and the apply left Freeze ON");
+
+    std::atomic<bool> hostDone { false };
+    std::atomic<int>  polls { 0 };
+    std::thread host ([&proc, &hostDone]
+    {
+        for (int i = 0; i < 60; ++i)                     // the host changing rate
+            proc.prepareToPlay ((i & 1) != 0 ? 96000.0 : 48000.0, 512);
+        hostDone.store (true, std::memory_order_release);
+    });
+    while (! hostDone.load (std::memory_order_acquire))
+    {
+        proc.presetDirty();                              // what the editor tick does
+        polls.fetch_add (1, std::memory_order_relaxed);
+    }
+    host.join();
+    check (polls.load() > 0, "noCrossing: (premise) the poll actually ran against the re-prepares");
+
+    juce::MemoryBlock out;
+    proc.getStateInformation (out);
+    const auto r = juce::ValueTree::fromXml (
+        *juce::AudioProcessor::getXmlFromBinary (out.getData(), (int) out.getSize()));
+    const double saved = (double) r.getChildWithName ("AB").getChild (0)
+                                  .getChildWithName ("FROZEN_TRIMS")
+                                  .getProperty ("releaseOctaves", -999.0);
+    check (std::abs (saved - latched) < 1.0e-9,
+           "noCrossing: the latch survives 60 re-prepares racing the dirty poll");
 }
 
 // Round 38's state-consistency invariants: each has exactly one observable
@@ -2720,6 +2805,7 @@ int main (int argc, char** argv)
         testTeardownAndReengageInvariants();
         testStateReplacementAndHistoryConsistency();
         testPreparedStateAndSlotOwnership();
+        testTheFrozenLatchNeedsNoThreadCrossing();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();

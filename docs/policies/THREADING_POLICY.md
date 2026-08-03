@@ -59,7 +59,16 @@ Any path not in this table is a new cross-thread path → Architecture Review Ga
 - Published meter values: `memory_order_relaxed` (monotonic display data).
 - Generation / staleness counters: `memory_order_relaxed` — they gate a message-thread cache
   rebuild and transfer no payload, so they are deliberately **not** ordering primitives.
-- Scope/GR ring index: `release` on write, `acquire` on read — the one ordering-critical pair.
+- Scope/GR ring index: `release` on write, `acquire` on read — the ordering-critical pair.
+- **Publication flags: `release` on write, `acquire` on read.** A flag that ANNOUNCES other atomics
+  is not a staleness counter, and the relaxed rule above does not reach it — its whole job is to
+  tell a reader that the values beside it may now be used, which is precisely a payload. The
+  distinction is easy to lose because the two look identical at the call site, so the test is what
+  the reader does next: if observing the flag gates a read of other state, it is a publication
+  flag. In this build: `AnabasisEngine::frozenAppliedSeq` (gates `publishedTrim*`),
+  `AdaptiveEngine::pubTrimEver` and `retTrimEver` (each gates its own four trim scalars), and
+  ADR-0012's staged-record flags (each gates its payload). Unobservable on x86-TSO; real on a
+  weakly ordered target, and the cost is a compiler barrier on a path that runs once per block.
 
 ## Adaptive engine — where it runs
 

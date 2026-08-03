@@ -213,16 +213,30 @@ frozen-trim vector — which since **ADR-0014** (2026-08-02) restores too, closi
 last gap: a freeze-ON slot's latched vector is staged on ADR-0012's record row and applied at the
 §2.8 duck's silent bottom (or the unprimed direct-adopt), after which Freeze holds it exactly, so
 a frozen slot's render is reproducible across save/load and A/B (`testFrozenTrimRestore`).
-**Who owns that vector** (stated at round 40, because two places were deciding it): the wrapper's
-`liveFrozenTrims` mirror is the DURABLE owner — it is what serialises, and it outlives everything
-the wrapper outlives — while the engine's `publishedTrim*()` atomics are a faster-moving copy that
-does NOT survive `AdaptiveEngine::reset()` (KI-006). A reader may adopt the copy only while it is
-demonstrably the truth: no staged restore still unapplied, and at least one *meaningful* vector
-published (`hasPublishedTrims()`, which an unprocessed instance's initialisation zeros do not
-satisfy). Both conditions live in `AnabasisAudioProcessor::engineFrozenTrimsIfLive()` and are read
-by the two sites that need them — the save, and `prepareToPlay`, which copies the latch into the
-mirror before the engine destroys it. Freeze OFF adopts nothing: invariant 3 gives an unfrozen
-slot no latch.
+**Who owns that vector** (settled at round 41; round 40 answered it wrongly and the correction is
+instructive): the ENGINE owns it, in `AdaptiveEngine`'s **retained** trim set — four lock-free
+scalars plus a release-stored flag which `reset()` deliberately does not clear, so the vector
+outlives the engine's re-initialisation exactly as `learned` and the two reference targets do. Two
+sets exist because two different questions are being asked: `publishedTrim*()` is *what the
+adaptive layer is applying right now* and must be zeroed with the internal struct, or the P5
+overlay would report a vector the DSP is not using (KI-006's readout half); `retainedTrim*()` is
+*the vector this instance last latched*, which is persistence state.
+
+The wrapper's `liveFrozenTrims` mirror is **not** the owner. It covers exactly one window — a
+restore staged and not yet applied, where the engine's answer is one session out of date — and the
+save prefers the engine whenever `! frozenRestorePending() && hasRetainedTrims()`, both clauses
+living in `AnabasisAudioProcessor::engineFrozenTrimsIfLive()`. Freeze OFF adopts nothing:
+invariant 3 gives an unfrozen slot no latch.
+
+Round 40 declared the mirror the durable owner and had `prepareToPlay` copy the latch into it
+before the engine destroyed it. That is a **non-thread-safe `juce::ValueTree` write from a host
+callback JUCE does not deliver on the message thread**, opposite the editor's continuous
+`presetDirty()` read of the same member — with both sides gated on Freeze being ON, so the windows
+coincided exactly. ThreadSanitizer reports it as a data race on the tree's reference-counted
+pointer. Keeping the durable copy in the lock-free layer removes the rescue and the race together:
+no thread crossing is added to preserve a latch. **The general rule this instance illustrates: when
+state must survive a re-initialisation, retain it where it already lives rather than copying it
+across a thread boundary to somewhere more durable.**
 Guarded by
 `testLearnCommitAndAdaptiveRoundTrip` (commit moves the reference; the child restores it
 byte-identically; absent restores never-learned defaults). The Learn UI grammar (duck-routed

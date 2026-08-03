@@ -138,9 +138,17 @@ public:
         // already-documented empty-pass case (nothing to commit leaves the
         // existing reference alone).
         //
-        // NOT cleared: `learned`, `refOnsetRate`, `refTiltDb`. Those are
-        // session state — the answer a previous commit or a session restore
-        // established — and a rate change is not a reason to forget it.
+        // NOT cleared: `learned`, `refOnsetRate`, `refTiltDb`, and — since
+        // round 41 — the RETAINED trim set. All four are session state, the
+        // answer a previous commit, restore or Freeze established, and a rate
+        // change is not a reason to forget it. The retained set is the one that
+        // had to be argued for rather than inherited: the vector this instance
+        // last latched is persistence state and belongs here, while the
+        // PUBLISHED set below describes what the audio is applying and is
+        // therefore correctly zeroed with `trims` (KI-006's audio and readout
+        // halves, which this deliberately does not touch — what a re-prepare
+        // does to a latched Freeze IN THE AUDIO is a Freeze-semantics decision
+        // behind the Architecture Review Gate).
         learnActive.store (false, std::memory_order_release);
         learnOnsSum  = 0.0;
         learnTiltSum = 0.0;
@@ -477,11 +485,57 @@ public:
     // instance whose host has just changed the sample rate. It tracks the
     // CURRENT contents instead: set by an audible `finishBlock` and by an
     // ADR-0014 `injectTrims`, cleared by `reset()` along with the values.
-    // The ADR-0014 save capture is the reader that needs the difference —
-    // "all four read 0" is otherwise ambiguous between *measured, and the
-    // answer is no trim* and *initialisation*, and taking the second for the
-    // first serialises zeros over a vector the slot already holds.
-    bool hasPublishedTrims() const noexcept     { return pubTrimEver.load (std::memory_order_relaxed); }
+    //
+    // ITS PRODUCTION READER HAS MOVED, stated so the absence is not read as
+    // dead code: the ADR-0014 save capture asked this question until round 41
+    // and now asks `hasRetainedTrims()` instead, because it wants the vector
+    // that SURVIVES a re-prepare rather than the one being applied. What is
+    // left here is the published set's own validity marker — the honest answer
+    // to "may I show these four numbers?", which is the question a §6.3 trim
+    // readout would have to ask (there is none today; nothing in `src/gui`
+    // reads `publishedTrim*`). The state suite asserts on it to pin the moment
+    // the two sets part company, which is the invariant that keeps them two.
+    //
+    // ACQUIRE, not relaxed, and the distinction is the same one
+    // `AnabasisEngine::frozenRestorePending()` spells out: THREADING_POLICY's
+    // relaxed rule for display atomics rests on "carries no payload", and this
+    // flag is not a staleness counter — it ANNOUNCES the four values above and
+    // gates whether a reader may use them. Relaxed on both sides would let a
+    // consumer observe "a real vector exists" while still reading the stores
+    // that preceded the publication, i.e. exactly the initialisation zeros the
+    // flag exists to exclude. Unobservable on x86-TSO and real on a weakly
+    // ordered target; it pairs with the release in `publishTrims`.
+    bool hasPublishedTrims() const noexcept     { return pubTrimEver.load (std::memory_order_acquire); }
+
+    // -- The RETAINED vector: the last MEANINGFUL trim set this instance ever
+    //    held, which — unlike everything above — survives `reset()`.
+    //
+    // These exist because the two questions are different and one set of
+    // atomics cannot answer both. `publishedTrim*()` means "what the adaptive
+    // layer is applying to the audio right now", so `reset()` must zero it or
+    // the P5 overlay would report a vector the DSP is not using (KI-006's
+    // readout half). `retainedTrim*()` means "the vector this instance last
+    // latched", which is persistence state — the same category as `learned` /
+    // `refOnsetRate` / `refTiltDb`, which `reset()` has always preserved for
+    // the reason stated there: a host sample-rate change is not a reason to
+    // forget an answer the session established.
+    //
+    // The ADR-0014 save capture is the reader, and it is why the split had to
+    // exist at all: a Freeze latched LIVE has no copy anywhere else (no
+    // restore ever ran, so the wrapper's mirror is empty), so before this the
+    // latch lived only in atomics a re-prepare cleared and the next save wrote
+    // zeros — or, once that was guarded, nothing at all. Keeping it HERE keeps
+    // it lock-free: the alternative tried in round 40 was to have
+    // `prepareToPlay` copy the latch into the wrapper's `juce::ValueTree`
+    // mirror, which put a non-thread-safe write on a host callback JUCE does
+    // not deliver on the message thread, racing the editor's ~24 Hz
+    // `presetDirty()` read of that same member. Nothing crosses a thread here
+    // that did not already.
+    float retainedTrimRelease() const noexcept { return retTrimRel.load (std::memory_order_relaxed); }
+    float retainedTrimLink() const noexcept    { return retTrimLink.load (std::memory_order_relaxed); }
+    float retainedTrimHpf() const noexcept     { return retTrimHpf.load (std::memory_order_relaxed); }
+    float retainedTrimTilt() const noexcept    { return retTrimTilt.load (std::memory_order_relaxed); }
+    bool  hasRetainedTrims() const noexcept    { return retTrimEver.load (std::memory_order_acquire); }
 
 private:
     // AUDIO-THREAD ONLY, and private so that is true by construction rather
@@ -504,13 +558,28 @@ private:
     // INSIDE this function, which meant `reset()` (called by `prepare()`, and
     // therefore by every host before the first block) turned it on while
     // publishing zeros. The guard it exists for was then inert.
+    // The flag is RELEASE-stored after the four values, and `hasPublishedTrims`
+    // acquire-loads it — see there. The same pair guards the retained set.
     void publishTrims (bool meaningful) noexcept
     {
         pubTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
         pubTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
         pubTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
         pubTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
-        pubTrimEver.store (meaningful, std::memory_order_relaxed);
+        pubTrimEver.store (meaningful, std::memory_order_release);
+
+        // The retained set follows the MEANINGFUL publications only, and is
+        // never cleared. `reset()`'s zeros are not a vector this instance
+        // latched, so they must not overwrite the one it did; that is the whole
+        // difference between the two sets, and writing them unconditionally
+        // here would collapse it.
+        if (! meaningful)
+            return;
+        retTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
+        retTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
+        retTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
+        retTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
+        retTrimEver.store (true, std::memory_order_release);
     }
 
     float onePoleMs (float ms) const noexcept
@@ -555,6 +624,10 @@ private:
     std::atomic<float> pubTrimRel { 0.0f }, pubTrimLink { 0.0f },
                        pubTrimHpf { 0.0f }, pubTrimTilt { 0.0f };
     std::atomic<bool>  pubTrimEver { false };   // see hasPublishedTrims()
+    // The retained pair — same payload, different lifetime. See the accessors.
+    std::atomic<float> retTrimRel { 0.0f }, retTrimLink { 0.0f },
+                       retTrimHpf { 0.0f }, retTrimTilt { 0.0f };
+    std::atomic<bool>  retTrimEver { false };   // see hasRetainedTrims()
     std::atomic<float> pubRefOnset { kDefaultRefOnset }, pubRefTilt { kDefaultRefTilt };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaptiveEngine)

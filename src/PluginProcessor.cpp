@@ -324,24 +324,18 @@ bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
 
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // ADR-0014 ownership, and it has to happen BEFORE the line below: the
-    // engine's prepare reaches `AdaptiveEngine::reset()`, which zeroes the
-    // internal trim struct and republishes the four atomics as zeros whatever
-    // Freeze says (KI-006). A vector latched LIVE in this session — the user
-    // froze while playing, so no restore ever wrote the mirror — existed ONLY
-    // in those atomics, so a host sample-rate or block-size change silently
-    // took the latch with it and the next save wrote no FROZEN_TRIMS child at
-    // all. (Before round 39 it wrote the post-reset zeros instead, which is
-    // the same loss with a worse round trip: an invalid vector re-injected on
-    // the next load.) Copying the latch into its durable owner first makes the
-    // engine's re-initialisation a matter for the AUDIO path only — where
-    // KI-006 leaves it, since changing what a re-prepare does to a latched
-    // vector is a Freeze-semantics decision and an Architecture Review Gate
-    // item, not a repair. The helper's two conditions are what keep this from
-    // clobbering a staged-but-unapplied restore.
-    if (const auto live = engineFrozenTrimsIfLive(); live.isValid())
-        liveFrozenTrims = live;
-
+    // NOTHING of the wrapper's ValueTree state is touched here, and that is a
+    // requirement rather than an accident. `prepareToPlay` is a host callback
+    // JUCE does not promise on the message thread (the same premise
+    // THREADING_POLICY's PDC amendment and KI-003 rest on), while the editor's
+    // ~24 Hz dirty poll runs `saveSlotFromLive()` — which reads
+    // `liveFrozenTrims` and `createCopy()`s it — continuously. Round 40 rescued
+    // the frozen latch by copying it into that mirror HERE, which put an
+    // unsynchronised write to a non-thread-safe `juce::ValueTree` opposite a
+    // continuous reader, with both sides gated on Freeze being ON so the
+    // windows coincided exactly. The latch is now retained where it was already
+    // lock-free — `AdaptiveEngine`'s retained trim set, which `reset()` does not
+    // clear — so no thread crossing is added to rescue it.
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
     grHistoryRing.reset();
     dbTpMaxHold = -144.0f;
@@ -516,42 +510,45 @@ void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithR
     reassertFromRaw (paramsWithRaw);
 }
 
-// ADR-0014 ownership, stated once and read twice. WHO OWNS THE FROZEN VECTOR:
-// the wrapper's `liveFrozenTrims` mirror is the DURABLE owner — it is what
-// serialises, and it survives everything the wrapper survives. The engine's
-// published trims are a faster-moving COPY that does not survive the engine's
-// own re-initialisation: `AnabasisEngine::prepare` → `AdaptiveEngine::reset`
-// zeroes the internal struct AND republishes it, whatever Freeze says
-// (KI-006). So the copy may be adopted only while it is demonstrably the
-// truth, which is exactly two conditions:
+// ADR-0014 ownership, stated once. WHO OWNS THE FROZEN VECTOR: the ENGINE
+// does, in `AdaptiveEngine`'s RETAINED trim set — four lock-free scalars plus
+// a release-stored flag, which `reset()` deliberately does not clear, so the
+// vector outlives the engine's own re-initialisation exactly as `learned` and
+// the two reference targets do. The wrapper's `liveFrozenTrims` mirror is NOT
+// the owner and never became one; it covers precisely the window in which the
+// engine's answer is out of date, which is one condition:
 //
-//   * no restore staged for this slot is still unapplied — between the
-//     block-top consume and the duck's silent bottom (~34 ms) the published
-//     vector is the PRE-restore one, and the mirror holds the loaded truth;
-//   * the engine has published at least one MEANINGFUL vector — on an
-//     instance that was prepared but never processed a block the four atomics
-//     sit at their initial zero, indistinguishable from a measured "no trim",
-//     and adopting that would overwrite a vector the slot genuinely holds.
+//   * a restore staged for this slot is still unapplied — between the
+//     block-top consume and the duck's silent bottom (~34 ms, and unbounded if
+//     no audio runs at all) the retained vector is the PRE-restore one and the
+//     mirror holds the loaded truth.
 //
-// Both readers need the identical test, and they are far apart in this file:
-// `saveSlotFromLive` (is the copy newer than the mirror?) and `prepareToPlay`
-// (the copy is about to be destroyed — is it worth keeping?). Two copies of a
-// two-clause rule is the shape that produced the defect this replaces, so
-// there is one function. Freeze OFF returns nothing at all: MODE invariant 3
-// gives an unfrozen slot no latch, so there is nothing for either reader to
-// adopt (and §5.4's slew would walk away from it on the next audible block).
+// The second condition is about existence rather than staleness: an instance
+// that has never latched anything has `hasRetainedTrims() == false`, and the
+// four scalars sit at an initial zero indistinguishable from a measured "no
+// trim", so adopting them would write zeros over a vector the slot holds.
+//
+// Round 40 read this rule off the PUBLISHED set instead, which does not
+// survive a re-prepare, and rescued the difference by copying the latch into
+// the mirror from `prepareToPlay` — a host callback JUCE does not deliver on
+// the message thread, writing a `juce::ValueTree` the editor's dirty poll
+// reads several times a second. The retained set removes the rescue and the
+// race together: the durable copy never leaves the lock-free layer, and this
+// function reads it from whichever thread asks. Freeze OFF returns nothing at
+// all: MODE invariant 3 gives an unfrozen slot no latch (and §5.4's slew would
+// walk away from one on the next audible block).
 juce::ValueTree AnabasisAudioProcessor::engineFrozenTrimsIfLive()
 {
     if (apvts.getRawParameterValue (pid::freeze)->load() < 0.5f)
         return {};
     const auto& a = engine.adaptiveForWrapper();
-    if (engine.frozenRestorePending() || ! a.hasPublishedTrims())
+    if (engine.frozenRestorePending() || ! a.hasRetainedTrims())
         return {};
     juce::ValueTree ft ("FROZEN_TRIMS");
-    ft.setProperty ("releaseOctaves", (double) a.publishedTrimRelease(), nullptr);
-    ft.setProperty ("stereoLink",     (double) a.publishedTrimLink(), nullptr);
-    ft.setProperty ("scHpfHz",        (double) a.publishedTrimHpf(), nullptr);
-    ft.setProperty ("dynTiltDb",      (double) a.publishedTrimTilt(), nullptr);
+    ft.setProperty ("releaseOctaves", (double) a.retainedTrimRelease(), nullptr);
+    ft.setProperty ("stereoLink",     (double) a.retainedTrimLink(), nullptr);
+    ft.setProperty ("scHpfHz",        (double) a.retainedTrimHpf(), nullptr);
+    ft.setProperty ("dynTiltDb",      (double) a.retainedTrimTilt(), nullptr);
     return ft;
 }
 
@@ -594,9 +591,9 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     juce::ValueTree frozen;
     if (apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f)
     {
-        frozen = liveFrozenTrims;              // the mirror: the durable owner
+        frozen = liveFrozenTrims;              // the staged-but-unapplied window
         if (const auto live = engineFrozenTrimsIfLive(); live.isValid())
-            frozen = live;                     // …unless the engine's latch is newer
+            frozen = live;                     // …the owner, once it is current
     }
     if (frozen.isValid())
         slot.appendChild (frozen.createCopy(), nullptr);

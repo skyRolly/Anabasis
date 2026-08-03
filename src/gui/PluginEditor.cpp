@@ -489,6 +489,15 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     startTimerHz (24);
     seedAnimatedFromValues();          // after every attachment — see there
     refreshPresetDisplay (true);
+    // …and the third display datum that was waiting for a tick to become true.
+    // `undoButton`/`redoButton` are constructed enabled, so an editor opened on
+    // an empty history rendered both live for the first ~42 ms. Harmless to
+    // click (`undo()` returns on an empty stack) and purely cosmetic — but it
+    // is the same class as the preset mark and the animated knob positions,
+    // both of which are now seeded here rather than discovered a frame later,
+    // and the seeding shares the timer's function rather than repeating its
+    // two comparisons.
+    refreshUndoRedoEnablement();
     updateModeVisibility();
     applyUiScale();
 
@@ -1210,10 +1219,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
     }
 
     // -- undo/redo button states --------------------------------------------
-    if (undoButton.isEnabled() != processor.canUndo())
-        undoButton.setEnabled (processor.canUndo());
-    if (redoButton.isEnabled() != processor.canRedo())
-        redoButton.setEnabled (processor.canRedo());
+    refreshUndoRedoEnablement();
 
     // -- Advanced panel wells: per-stage GR + curve refreshes ----------------
     if (advanced)
@@ -1248,6 +1254,16 @@ void AnabasisAudioProcessorEditor::timerCallback()
         else if (! advanced)
             editedDot.setVisible (fp.isNotEmpty());
     }
+}
+
+// Guarded assignments: `setEnabled` repaints, and the tick runs 24 times a
+// second, so an unconditional write would repaint two buttons every frame.
+void AnabasisAudioProcessorEditor::refreshUndoRedoEnablement()
+{
+    if (undoButton.isEnabled() != processor.canUndo())
+        undoButton.setEnabled (processor.canUndo());
+    if (redoButton.isEnabled() != processor.canRedo())
+        redoButton.setEnabled (processor.canRedo());
 }
 
 void AnabasisAudioProcessorEditor::refreshPresetDisplay (bool recomputeNow)

@@ -6,7 +6,53 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 40 (2026-08-03)** — a targeted hardening pass, and every item
+**Last updated:** for **review round 41 (2026-08-03)** — a threading-correctness pass, and the
+first item is the previous round's fix being wrong in a way its own tests could not see:
+(1) **Round 40's frozen-trim fix introduced a data race.** It declared the wrapper's
+`liveFrozenTrims` `juce::ValueTree` the durable owner of the latch and had `prepareToPlay` assign
+it — a host callback JUCE does not deliver on the message thread, writing a non-thread-safe
+reference-counted object that the editor's `presetDirty()` poll reads and `createCopy()`s
+continuously, with both sides gated on Freeze being ON so the windows coincided exactly. The
+ownership answer was wrong, not just its placement: the durable copy belongs in the LOCK-FREE layer
+where the data already lives. `AdaptiveEngine` now keeps a RETAINED trim set — four scalars plus a
+release-stored flag — which `reset()` does not clear, joining `learned`/`refOnsetRate`/`refTiltDb`
+in that function's survivors list; the PUBLISHED set keeps its exact former meaning (what the DSP
+is applying, zeroed by `reset()`), which is what keeps KI-006's readout half honest. Nothing
+crosses a thread that did not already. `MODE_AND_ADAPTATION_POLICY` carries the corrected ownership
+statement and the general rule it illustrates; KI-006 records both the closure and the round-40
+misfire, because the shape recurs.
+(2) **`pubTrimEver` was relaxed although it gates a read of the four trim scalars.** That is the
+same shape `frozenAppliedSeq` was corrected to at round 39, whose reasoning is written out in
+`AnabasisEngine.h`: THREADING_POLICY's relaxed rule rests on "carries no payload", and a flag
+announcing other values is a payload. Both it and the new `retTrimEver` are now release-stored
+after their values and acquire-loaded. `THREADING_POLICY` gained a **publication flags** row so the
+distinction is a rule rather than four independent judgements — with the test stated (does
+observing the flag gate a read of other state?) and the four instances named.
+(3) **Freeze/preset questions reviewed, not changed.** A factory apply still leaves the slot's
+frozen vector standing (KI-007 item 1) and the dirty marker still keys on preset-EXCLUDED
+parameters (item 5); both remain spec questions. Item 5 gained the input it was missing: the
+CONTENT of `FROZEN_TRIMS` is a function of *when* Freeze was engaged, so identical parameter state
+can produce two different slot trees and two different answers to "edited?".
+(4) **Undo/redo buttons are seeded in the constructor**, alongside the preset mark and the animated
+knob positions, instead of rendering enabled over an empty stack for the first ~42 ms. The seed and
+the 24 Hz tick share `refreshUndoRedoEnablement()` rather than repeating its two comparisons.
+**Found while verifying (1), and the more serious finding: KI-008.** The suite's first two-threaded
+stimulus let ThreadSanitizer's deadlock detector see that two JUCE locks are taken in opposite
+orders on two reachable paths — the §7 pre-state snapshot calls `apvts.copyState()` from inside a
+parameter-listener callback (M0 → M1), while `APVTS::setDenormalisedValue` notifies listeners while
+holding the tree lock (M1 → M0). One thread cannot deadlock on it; the message thread starting a
+drag while a host thread restores state can. It PREDATES this review series (P6 §7 bracketing) and
+is NOT fixed here: the M0 → M1 edge is the undo grammar's snapshot point, and moving it is an
+Architecture Review Gate item, so it is recorded with its evidence rather than guessed at.
+`testTheFrozenLatchNeedsNoThreadCrossing` provides the stimulus; two mutants (the retention itself,
+and reinstating round 40's write under TSAN). The stress is honestly weak on a plain build — it
+does NOT fail against the round-40 code, because a data race is not a functional difference — and
+that is why the verification instrument is a `-fsanitize=thread` build, where the round-40 code
+reports races on `ReferenceCountedObjectPtr<ValueTree::SharedObject>::get()` and the refcount
+increment, and the current code reports none.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6, KI-003, and
+the preset-UX/popup/spectrum-decay/navigation items the brief excluded.
+Previous: **review round 40 (2026-08-03)** — a targeted hardening pass, and every item
 is a case of two mechanisms that had to agree with each other:
 (1) **A meter reset was invisible from the GUI.** `requestMeterReset()` only set the momentary-request
 flag; the DISPLAY publish that makes the clear visible with no audio running lived at the
