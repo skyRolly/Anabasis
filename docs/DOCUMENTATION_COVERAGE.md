@@ -6,7 +6,52 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 33 (2026-08-03)**, a round of second copies and deferred
+**Last updated:** for **review round 34 (2026-08-03)** — the copies this build kept finding, and
+one guarantee that was two thirds applied:
+(1) **The OQ-008 target values had three copies.** `LoudnessMeterView::kTargets` is documented as
+THE compiled table, but the meter's tooltip carried the platform names, the numbers and the "as of"
+date as free text, and the three §6.4 Settings checkboxes carried the names again. OQ-008
+prescribes a per-release refresh, which touches the table — so the copies are exactly what would
+have gone stale, leaving a tooltip quoting last year's figures. `Target` gains a `fullName`,
+`kTargetsAsOf` becomes a constant, `tooltipText()` builds the string, and the checkbox labels come
+from the table. The test rebuilds its expectation from `kTargets`, so it dies against the real
+future event: a refreshed table plus a hard-coded string.
+(2) **The editor destructor's guarantee was two thirds applied.** Round 33 added `stopTimer()` and
+`cancelPendingUpdate()` with a comment rejecting "safe by ordering"; the THIRD message-thread
+callback source, `animVBlank`, was left armed while `stepMicroAnims`'s state (`animated`,
+`uiAnimOn`, `lastFrameTime`) was destroyed around it. `animVBlank = {}` detaches it there too.
+(3) **The preset dirty mark lagged up to ~333 ms after an action that changed it.**
+`refreshPresetDisplay()` throttles the full slot-tree compare to every 8th call, which is right for
+the 24 Hz tick asking "did anything change?" — but undo/redo, the A/B toggle, a preset apply, ‹/›
+and a save all call it immediately AFTER changing the state the mark describes, and all they did
+was advance the divider. Those callers now pass `recomputeNow`.
+(4) **The Learn-command paragraph had been orphaned by the ADR-0014 block spliced above it**, so in
+a file where comments are the contract it read as if the frozen-trim consume were the Learn
+command. Moved back onto `learnCmd.exchange`.
+(5) **`publishSilentMeters()` outran its documented row.** Round 33 gave the meter atomics a
+non-audio writer (the state load) while `THREAD_MODEL`'s and `THREADING_POLICY`'s meter rows still
+scoped that publication to the audio thread. Both rows now name the clear writers and state why the
+concurrency is benign: six INDEPENDENT relaxed scalars with no ordering role, so a load-clear racing
+an end-of-block publish is last-writer-wins per scalar and the worst outcome is one display frame
+mixing pre- and post-clear values.
+(6) **Two "untouched" factory presets landed on the Tape colour model.** `colourModel`'s registered
+default is 1 = Tape, and an override table is defaults + intents — so "Transparent Master" and
+"Classical Dynamics" inherited Tape, inaudible only because the managed `colourDepth` the macro
+mapping writes from Character is ~0 there. Their intent was resting on a §5.5 curve constant that
+is ⊕ for the listening pass; both now name Clean explicitly (⊕ with the rest of the table).
+Comments where a future change would break something silently: `drainTick` and `refreshMapping`
+record the RE-ENTRANCY routing every trigger through one sequence created — `refreshMapping()` now
+runs the wrapper's detach drain synchronously from inside `applyFactoryPreset`/`resetToMacro`, safe
+because both reach `replaceDetachMask()` first and because `isApplyingMacro()` blocks the mapping's
+own writes from re-entering, and stated so that breaking either is visible; the ADR-0014 consume
+records that deriving the duck request from the record costs one extra ~11 ms bottom hold when the
+engine is ALREADY at the bottom (the alternative reopens the `duckAskedWhileOut` ordering question);
+and `build.yml` now names both bench residuals — platform-gated compilation AND the fact that
+compiling is not running, so a semantics-only break surfaces at the next human re-measure.
+Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer (KI-007 item 4 — both
+repairs carry their own risk), and the KI-003/KI-006/KI-007 restatements, already recorded in the
+same words.
+Previous: **review round 33 (2026-08-03)**, a round of second copies and deferred
 work that a stopped transport never reaches:
 (1) **A project loaded with the transport stopped showed the previous session's meters.**
 `setStateInformation` staged the meter-hold clear through the momentary-request row, and the

@@ -1838,10 +1838,13 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     if (ed == nullptr)
         return;
 
+    // Found by the table's own name, which is the point: the checkbox labels,
+    // the meter tooltip and the ticks all derive from `kTargets`, so a test
+    // that looked one of them up by a literal would be a fourth copy.
     juce::ToggleButton* targets[3] = {};
-    const char* names[] = { "Spotify", "Apple Music", "YouTube" };
     for (int t = 0; t < 3; ++t)
-        targets[t] = dynamic_cast<juce::ToggleButton*> (findButtonByText (*ed, names[t]));
+        targets[t] = dynamic_cast<juce::ToggleButton*> (
+            findButtonByText (*ed, LoudnessMeterView::kTargets[t].fullName));
     check (targets[0] != nullptr && targets[1] != nullptr && targets[2] != nullptr,
            "settingsFollow: (premise) the three target checkboxes were found");
     if (targets[0] == nullptr || targets[1] == nullptr || targets[2] == nullptr)
@@ -1874,6 +1877,19 @@ static void testTheSettingsPanelFollowsAProjectLoad()
                "settingsFollow: the combos still follow too");
     else
         check (false, "settingsFollow: (premise) the oversampling combo was found by title");
+
+    // The OQ-008 table is the ONE source for every user-visible fact about a
+    // target: the ticks, the checkbox labels, and the meter's tooltip — which
+    // carried the names, the numbers and the "as of" date as free text. The
+    // expectation is REBUILT from the table, so the guard is that a per-release
+    // refresh of `kTargets` cannot leave a display quoting the old figures.
+    const auto tip = LoudnessMeterView::tooltipText();
+    for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
+        check (tip.contains (juce::String (LoudnessMeterView::kTargets[t].fullName) + " "
+                                 + juce::String (LoudnessMeterView::kTargets[t].lufs, 0)),
+               "settingsFollow: the meter tooltip quotes the table, target by target");
+    check (tip.contains (LoudnessMeterView::kTargetsAsOf),
+           "settingsFollow: …and the table's own \"as of\" date");
 }
 
 // ---------------------------------------------------------------------------

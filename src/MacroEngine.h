@@ -111,6 +111,12 @@ public:
     // position (message thread). The caller clears the mask first; this is
     // what re-lands the curve values on the freshly re-engaged parameters
     // without the macro itself moving.
+    // NOTE it goes through `flushPendingMapping` → `drainTick`, so it also
+    // runs the WRAPPER's detach drain synchronously — see the re-entrancy
+    // paragraph in `drainTick`. Callers must have replaced the detach mask
+    // (which clears the staged bits) before reaching here, which every one of
+    // them does; the alternative would be a mask write landing in the middle
+    // of a preset apply.
     void refreshMapping()
     {
         mappingPending.store (true, std::memory_order_relaxed);

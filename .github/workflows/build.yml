@@ -189,9 +189,16 @@ jobs:
         # Building it on ONE platform costs a translation unit and makes the
         # rot a red build. It is still never RUN in CI — timings from a shared
         # runner are exactly the numbers that must not be quoted.
-        # The residual, stated so it is not mistaken for full cover: only THIS
-        # platform compiles it, so a signature change behind `#if JUCE_MAC` or
-        # `JUCE_WINDOWS` could still rot the bench unnoticed.
+        # TWO residuals, stated so this is not mistaken for full cover.
+        # (a) Only THIS platform compiles it, so a signature change behind
+        #     `#if JUCE_MAC` or `JUCE_WINDOWS` could still rot the bench.
+        # (b) Compiling is not running: a change that KEEPS every signature but
+        #     breaks the measurement's semantics — a stage that now needs a
+        #     per-sample `tick()`, say — builds green here and only surfaces
+        #     when someone re-runs the budget refresh. Cover for that is a human
+        #     re-measure, which PERFORMANCE_BUDGET.md already requires; it is
+        #     deliberately not a CI job, because the numbers a shared runner
+        #     produces are exactly the ones that must not be quoted.
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests + bench)

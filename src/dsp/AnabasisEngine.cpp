@@ -237,11 +237,6 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         else
             adaptiveEngine.clearLearnedTargets();
     }
-    // Learn: ONE atomic word, so the command the writer composed arrives whole
-    // and exactly once — a code plus a separate flag could be consumed between
-    // the writer's two stores and then re-delivered (see requestLearnStart).
-    // Commit BEFORE start within a composed command — the reverse order is the
-    // defect this replaced (startLearn zeroes the accumulator commitLearn needs).
     // ADR-0014: consume the staged frozen-trim record at the block top (the
     // ADR-0012 contract); the duck bottom below APPLIES it. Last-writer-wins:
     // a second restore before the bottom overwrites the pending copy.
@@ -271,8 +266,22 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // all, for an unrelated duck). Deriving it from the record removes the
         // ordering question instead of tightening it — the bottom is the only
         // landing site, so wanting one is a property OF the record.
+        //
+        // UNCONDITIONAL, including on a block that is ALREADY at the bottom.
+        // There the vector is injected in the bottom branch immediately and
+        // `holdForRequest` then keeps the bottom for one extra block (~11 ms)
+        // that nothing needs — a real, inaudible side effect of deriving the
+        // request from the record, stated so it is not read as an oversight.
+        // Clearing `duckAsked` after applying would remove it and reintroduce
+        // exactly the ordering question with `duckAskedWhileOut` that deriving
+        // it was meant to close: one extra silent block is the cheaper half.
         duckAsked = true;
     }
+    // Learn: ONE atomic word, so the command the writer composed arrives whole
+    // and exactly once — a code plus a separate flag could be consumed between
+    // the writer's two stores and then re-delivered (see requestLearnStart).
+    // Commit BEFORE start within a composed command — the reverse order is the
+    // defect this replaced (startLearn zeroes the accumulator commitLearn needs).
     if (const int cmd = learnCmd.exchange (kLearnNone, std::memory_order_acquire);
         cmd != kLearnNone)
     {

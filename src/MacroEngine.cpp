@@ -132,6 +132,18 @@ void MacroEngine::drainTick()
     if (restoreDepth.load (std::memory_order_relaxed) > 0)
         return;
 
+    // RE-ENTRANCY, stated because routing every trigger through here created
+    // it and neither site said so. `onDrainTick` is the WRAPPER's detach
+    // drain, so `refreshMapping()` — called by `applyFactoryPreset` and
+    // `resetToMacro` — now runs that drain synchronously from inside a wrapper
+    // method. Safe, and for a reason rather than by luck: both of those
+    // callers reach `replaceDetachMask()` first, which clears the staged bits
+    // AND the re-engage flag, so the drain below them finds nothing to apply.
+    // The mapping's own `setValueNotifyingHost` writes cannot re-enter either:
+    // they land in `AnabasisAudioProcessor::parameterChanged`, which returns
+    // before `drainDetachBitsSoon()` because `isApplyingMacro()` is true for
+    // the whole of `applyMapping`. Break either of those two and this becomes
+    // a re-entrant mask write in the middle of a preset apply.
     if (onDrainTick)
         onDrainTick();
     drainPendingMapping();

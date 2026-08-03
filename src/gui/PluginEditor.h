@@ -183,7 +183,10 @@ private:
     void updateModeVisibility();
     void layoutAdvanced (juce::Rectangle<int> body);
     void layoutSimple   (juce::Rectangle<int> body);
-    void refreshPresetDisplay();
+    // `recomputeNow`: skip the ~3 Hz throttle on the dirty compare. Every
+    // caller that just CHANGED the state the mark describes passes true; the
+    // 24 Hz tick is the only one that does not.
+    void refreshPresetDisplay (bool recomputeNow = false);
     void showPresetMenu();
     void showSavePreset (bool);
     void showAbout (bool);

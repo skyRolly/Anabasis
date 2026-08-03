@@ -95,9 +95,17 @@ namespace
     using O = PresetManager::FactoryPreset::Override;
 
     // brief §9 name 1: clean level lift, everything else stays honest.
+    // `colourModel` is NAMED here even though a table is "defaults + intents":
+    // the registered default is 1 = Tape (`PluginParameters.cpp`), so leaving it
+    // out made the two presets whose whole intent is "untouched" land on the
+    // Tape model. Inaudible today only because the managed `colourDepth` the
+    // macro mapping writes from Character is ~0 at these settings — i.e. the
+    // intent was resting on a §5.5 curve constant that is ⊕ for the listening
+    // pass. Naming Clean (index 0) decouples them. ⊕ 2026-08-03 with the rest
+    // of the table's values.
     const O kTransparentMaster[] = {
         { pid::loudness, 25.0f }, { pid::character, 0.05f }, { pid::tone, 0.0f },
-        { pid::lookahead, 3.0f }, { pid::limStyle, 0.0f },
+        { pid::lookahead, 3.0f }, { pid::limStyle, 0.0f }, { pid::colourModel, 0.0f },
     };
     // brief §9 name 2: modern pop level with a little forwardness.
     const O kLoudPop[] = {
@@ -140,7 +148,7 @@ namespace
     // Barely-touched: long lookahead, Transparent style, level lift only.
     const O kClassicalDynamics[] = {
         { pid::loudness, 15.0f }, { pid::character, 0.0f }, { pid::tone, 0.0f },
-        { pid::lookahead, 6.0f }, { pid::limStyle, 0.0f },
+        { pid::lookahead, 6.0f }, { pid::limStyle, 0.0f }, { pid::colourModel, 0.0f },
     };
     // Spoken word: HPF under the voice, presence tilt, steady level.
     const O kPodcastVoice[] = {

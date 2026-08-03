@@ -38,14 +38,31 @@ public:
     struct Target
     {
         const char* shortName;   // the §6.2 wireframe tags: Sp / Ap / YT
+        const char* fullName;    // the Settings checkbox label and the tooltip
         float lufs;
     };
+    // THE table for the OQ-008 values — and now for the NAMES and the "as of"
+    // date too. The tooltip below and the three §6.4 Settings checkboxes each
+    // used to carry their own copy of the platform names, and the tooltip
+    // carried the numbers and the date as free text, which is precisely the
+    // second-copy-that-must-agree shape this build spent ten review rounds
+    // removing elsewhere: OQ-008 prescribes a per-release refresh, and that
+    // refresh would have updated this table while leaving the tooltip quoting
+    // the old figures. Everything user-visible about a target is derived from
+    // here; `tooltipText()` builds the string.
     static constexpr Target kTargets[] = {
-        { "Sp", -14.0f },
-        { "Ap", -16.0f },
-        { "YT", -14.0f },
+        { "Sp", "Spotify",     -14.0f },
+        { "Ap", "Apple Music", -16.0f },
+        { "YT", "YouTube",     -14.0f },
     };
     static constexpr int kNumTargets = 3;
+    // The provenance the OQ-008 mechanism promises: shown next to the values so
+    // a stale table is visibly stale. Bump it WITH the table, never separately.
+    static constexpr const char* kTargetsAsOf = "2026-08";
+
+    // The §2.9 meter tooltip, derived from the table above. Static so the
+    // Settings panel and the tests can reach the same string the meter shows.
+    static juce::String tooltipText();
 
     explicit LoudnessMeterView (AnabasisAudioProcessor&);
     ~LoudnessMeterView() override = default;

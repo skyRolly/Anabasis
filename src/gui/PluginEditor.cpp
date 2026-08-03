@@ -118,7 +118,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     {
         processor.switchToSlot (1 - processor.activeSlotIndex());
         abControl.repaint();
-        refreshPresetDisplay();
+        refreshPresetDisplay (true);
     };
     addAndMakeVisible (abControl);
     registerAnimated (abControl);
@@ -129,8 +129,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
 
     undoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B6));
     redoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B7));
-    undoButton.onClick = [this] { processor.undo(); refreshPresetDisplay(); };
-    redoButton.onClick = [this] { processor.redo(); refreshPresetDisplay(); };
+    undoButton.onClick = [this] { processor.undo(); refreshPresetDisplay (true); };
+    redoButton.onClick = [this] { processor.redo(); refreshPresetDisplay (true); };
     addAndMakeVisible (undoButton);
     addAndMakeVisible (redoButton);
     registerAnimated (undoButton);
@@ -174,7 +174,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
             processor.applyFactoryPreset (idx);
         else
             processor.applyPresetFile (files.getReference (idx - factoryCount));
-        refreshPresetDisplay();
+        refreshPresetDisplay (true);
     };
     presetPrev.onClick = [stepPreset] { stepPreset (-1); };
     presetNext.onClick = [stepPreset] { stepPreset (+1); };
@@ -422,16 +422,18 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     setupToggleInternal (spectrumToggle, "Spectrum", "Spectrum",
                          ist.getPropertyAsValue (iid::spectrumOn, nullptr));
     // Target-line selection (§6.4): three bits of int_meterTargets, in the
-    // LoudnessMeterView::kTargets order. Platform names are identifiers, not
-    // invented prose.
+    // LoudnessMeterView::kTargets order — and now with the LABELS taken from
+    // that table too. Platform names are identifiers, not invented prose, and
+    // they were written out here as a third copy beside the table and the
+    // meter's tooltip; OQ-008's per-release refresh touches the table, so the
+    // copies are what would have gone stale.
     {
-        const char* names[] = { "Spotify", "Apple Music", "YouTube" };
         juce::ToggleButton* bits[] = { &targetSpToggle, &targetApToggle, &targetYtToggle };
         const int mask = (int) ist.getProperty (iid::meterTargets, ~0);
         for (int t = 0; t < 3; ++t)
         {
             auto* tog = bits[t];
-            tog->setButtonText (names[t]);
+            tog->setButtonText (LoudnessMeterView::kTargets[t].fullName);
             tog->setToggleState ((mask & (1 << t)) != 0, juce::dontSendNotification);
             tog->onStateChange = [this, t, tog]
             {
@@ -470,7 +472,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         if (processor.savePresetFile (dir.getChildFile (name + ".anabasis")))
         {
             showSavePreset (false);
-            refreshPresetDisplay();
+            refreshPresetDisplay (true);
         }
     };
     saveCancelButton.onClick = [this] { showSavePreset (false); };
@@ -486,7 +488,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     applyTooltipsEnabled();
 
     startTimerHz (24);
-    refreshPresetDisplay();
+    refreshPresetDisplay (true);
     updateModeVisibility();
     applyUiScale();
 
@@ -507,6 +509,13 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
     // say it instead.
     stopTimer();
     cancelPendingUpdate();
+    // The THIRD source, and leaving it out made the guarantee above two thirds
+    // true: `animVBlank`'s callback (`stepMicroAnims`) touches `animated`,
+    // `uiAnimOn` and `lastFrameTime`, all of which are destroyed BEFORE the
+    // attachment itself is (it is declared after them). Move-assigning an empty
+    // one detaches now. Same reasoning, applied to every source rather than to
+    // the two that came to mind.
+    animVBlank = {};
 
 #if JUCE_MAC || JUCE_WINDOWS
     glContext.detach();
@@ -1218,14 +1227,23 @@ void AnabasisAudioProcessorEditor::timerCallback()
     }
 }
 
-void AnabasisAudioProcessorEditor::refreshPresetDisplay()
+void AnabasisAudioProcessorEditor::refreshPresetDisplay (bool recomputeNow)
 {
     auto name = processor.currentPresetName();
     if (name.isEmpty())
         name = "Preset";               // §6.2 wireframe placeholder (C8: owner wording TODO)
     // The dirty compare is a full slot-tree equivalence — throttle it to
     // every 8th tick (~3 Hz) and reuse the last answer between.
-    if (++dirtyPollDivider >= 8)
+    //
+    // `recomputeNow` is what every NON-tick caller passes, and its absence was
+    // a visible lag rather than a saving: undo/redo, the A/B toggle, a preset
+    // apply, ‹/› and a save all call this straight after changing the state
+    // the mark describes, and all they did was advance the divider — so the
+    // freshly applied preset could keep rendering the PREVIOUS state's " *"
+    // for up to ~333 ms. The throttle exists for the 24 Hz tick, which asks
+    // "did anything change?" on spec; a caller that already knows it did is
+    // not what it was protecting against.
+    if (recomputeNow || ++dirtyPollDivider >= 8)
     {
         dirtyPollDivider = 0;
         shownDirty = processor.presetDirty();
@@ -1282,13 +1300,13 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             if (r >= 20001)
             {
                 safeThis->processor.applyFactoryPreset (r - 20001);
-                safeThis->refreshPresetDisplay();
+                safeThis->refreshPresetDisplay (true);
                 return;
             }
             if (r - 1 < files.size())
             {
                 safeThis->processor.applyPresetFile (files.getReference (r - 1));
-                safeThis->refreshPresetDisplay();
+                safeThis->refreshPresetDisplay (true);
             }
         });
 }
@@ -1307,7 +1325,7 @@ void AnabasisAudioProcessorEditor::showLoadPreset()
             if (safeThis != nullptr && f.existsAsFile())
             {
                 safeThis->processor.applyPresetFile (f);
-                safeThis->refreshPresetDisplay();
+                safeThis->refreshPresetDisplay (true);
             }
         });
 }

@@ -3,13 +3,20 @@
 
 using namespace abgui;
 
+juce::String LoudnessMeterView::tooltipText()
+{
+    juce::String targets;
+    for (int t = 0; t < kNumTargets; ++t)
+        targets << (t == 0 ? "" : ", ")
+                << kTargets[t].fullName << " " << juce::String (kTargets[t].lufs, 0);
+    return "Targets: " + targets + " LUFS (as of " + kTargetsAsOf
+         + "). Click to reset integrated / TP hold.";
+}
+
 LoudnessMeterView::LoudnessMeterView (AnabasisAudioProcessor& p) : processor (p)
 {
     setInterceptsMouseClicks (true, false);
-    // Tooltip carries the OQ-008 provenance the mechanism promises: the "as
-    // of" date next to the values, so a stale table is visibly stale.
-    setTooltip ("Targets: Spotify -14, Apple Music -16, YouTube -14 LUFS "
-                "(as of 2026-08). Click to reset integrated / TP hold.");
+    setTooltip (tooltipText());
 }
 
 void LoudnessMeterView::visibilityChanged()
