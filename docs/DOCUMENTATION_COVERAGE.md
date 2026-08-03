@@ -6,7 +6,44 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **v0.1.0 completion batch (2026-08-02, owner blanket approval)**
+**Last updated:** for **review round 24 (2026-08-03)** — the first review of the v0.1.0 tree, and
+three of its findings were live defects in code this repository shipped the day before:
+(1) **`undo`/`redo` never requested the forced duck.** DSP_POLICY invariant 8 has named the undo
+step as one of three bulk-swap routes since ADR-0004, and the code did not take it — an undo that
+moved no discrete stage never reached a silent bottom, so after ADR-0014 the frozen-trim vector it
+stages sat pending indefinitely and was injected at the next unrelated duck, into whatever slot
+was live by then. Both halves are now tested (`testUndoRequestsDuck` for the dip, the
+`frozenRestore/undo` case for the vector), each killed by the same mutant.
+(2) **The frozen-trim capture's "pending" test was off by one step.** It read the ADR-0012 record
+flag, which the block top clears — but the vector is only published at the duck bottom up to
+~34 ms later, and the editor's ~3 Hz dirty-marker poll reaches that window in ordinary use, so a
+save there serialised the PRE-restore trims and (because the capture also rewrote the mirror)
+destroyed the loaded vector permanently. Fixed with a stage/applied generation pair advanced only
+by `injectTrims`, and the capture now writes a LOCAL — a display query must not rewrite
+serialisable state. The generation pair is mutation-verified; the local is structural (with the
+counters in place the write-back is benign, and it is removed so a future caller cannot make it
+harmful again — recorded rather than given a synthetic test).
+(3) **The meter-reset watermark admitted the straddling sub-block.** `subCount + 4` lets the first
+fresh gating block average the sub-block that was PARTIALLY FILLED at the reset — up to 100 ms of
+the old programme at a quarter of the block's energy, which the −10 LU relative gate then turns
+into "the integrated figure stays pinned to the previous material", the exact failure the
+watermark exists to prevent. The wrapper-level test could not see it (its stimulus drains quiet
+audio before the reset, so the straddler was already quiet); the new
+`testMeterResetIgnoresTheStraddlingSubBlock` drives the meter directly, where "old programme" and
+"lookahead tail" cannot be confused, and the two readings are ~30 dB apart.
+Also fixed, smaller: the gesture-end counter was asymmetric (a host delivering begin off-thread
+and end on the message thread closed a different open drag, pushing its step mid-gesture — now
+keyed per parameter, `testAGestureEndWithoutACountedBeginIsIgnored` with the off-thread begin as
+the real stimulus); the preset gate accepted any well-formed XML, so a foreign root cost an undo
+step for a guaranteed no-op (both gate and apply now read through
+`PresetManager::parsePresetFile`); `prepare()` no longer inherits an ADR-0013 auto-release scale;
+the editor's async menu/file-chooser callbacks hold a `SafePointer`; the spectrum taps' L/R
+assumption is a `static_assert` instead of a comment; the factory-index validation no longer hides
+in a comma expression. **The lesson of the round, recorded because it recurs:** every one of the
+three real defects was a *second* mechanism that had to agree with a first — the duck request with
+the staging site, the capture guard with the application site, the watermark with the sub-block
+that was mid-flight. Each first half was tested and correct; nothing tested the agreement.
+Previous: the **v0.1.0 completion batch (2026-08-02, owner blanket approval)**
 (PR #5): the two owed ADRs are written and registered — **ADR-0013** (OQ-016: the release trim
 scales the auto poles; `MODE_AND_ADAPTATION_POLICY.md`'s "three of four audible" scope note
 rewritten to four) and **ADR-0014** (OQ-013: the frozen-trim restore; the Hard Stop banners in

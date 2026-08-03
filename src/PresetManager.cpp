@@ -50,11 +50,19 @@ static void applyOnePresetValue (juce::AudioProcessorValueTreeState& apvts,
                 param->getNormalisableRange().snapToLegalValue (value)));
 }
 
+std::unique_ptr<juce::XmlElement> PresetManager::parsePresetFile (const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName ("AnabasisPreset"))
+        return nullptr;   // foreign/corrupt input is a no-op, never a crash (schema read rules)
+    return xml;
+}
+
 bool PresetManager::applyPreset (const juce::File& file, juce::StringArray& detachMaskOut)
 {
-    const auto xml = juce::XmlDocument::parse (file);
-    if (xml == nullptr || ! xml->hasTagName ("AnabasisPreset"))
-        return false;   // foreign/corrupt input is a no-op, never a crash (schema read rules)
+    const auto xml = parsePresetFile (file);
+    if (xml == nullptr)
+        return false;
 
     // Ceiling lock is a SKIP, not a write-then-revert: a revert leaves a
     // window in which an audio block snapshots the preset's ceiling and the

@@ -20,7 +20,7 @@ headless Linux machine, no IDE.
   true-peak lookahead limiter · oversampling to 16× · dither) behind the POD engine boundary on
   the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn, and schema-v1 state
-  with A/B slots — verified by `tests/` (**381 checks** — re-count from the suites' own output when editing,
+  with A/B slots — verified by `tests/` (**398 checks** — re-count from the suites' own output when editing,
   the same rule HANDOVER's status row carries — green on Linux together with pluginval L5 in
   both modes ×3; see [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the

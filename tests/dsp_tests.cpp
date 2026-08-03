@@ -2927,6 +2927,76 @@ static void testAutoReleaseFollowsTheTrimScale()
            "autoScale: (premise) scale 1 is mid-recovery after one slow time constant");
     check (slow < fast - 0.02f,
            "autoScale: scale 2 is clearly behind — the trim reaches the auto poles");
+
+    // prepare() is a clean-state contract: the trim scale is per-block engine
+    // state, not a prepared setting, so a limiter carrying a scale into a
+    // prepare must come out neutral. Only AnabasisEngine::process rewrites it
+    // per block, so a standalone user (the bench's limiter section) would
+    // otherwise inherit whatever the previous owner last set.
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (48000.0, 96 + 3);
+        lim.setAutoRelease (true);
+        lim.setStereoLink (1.0f);
+        lim.setTransientPreserve (0.0f);
+        lim.setTruePeakMode (false);
+        lim.setAutoReleaseScale (2.0f);
+        lim.prepare (48000.0, 96 + 3);            // …and the scale goes with it
+        float gains[2] = { 1.0f, 1.0f };
+        for (int n = 0; n < 480 + 28800; ++n)
+        {
+            const float v = n < 480 ? 2.0f : 0.1f;
+            float frame[2] = { v, v };
+            lim.processSample (frame, 2, 96, 0.891f, gains);
+        }
+        check (std::abs (gains[0] - fast) < 1.0e-6f,
+               "autoScale: prepare() resets the scale — a re-prepared limiter recovers like scale 1");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The meter-reset watermark's OFF-BY-ONE half, which the wrapper-level test
+// cannot see: gating blocks are assembled from the last four 100 ms
+// sub-blocks, and at the instant of the reset one sub-block is PARTIALLY
+// FILLED with pre-reset material. Admitting the first block at subCount + 4
+// includes that straddler — a quarter of a gating block's energy taken from
+// the old programme — and through the −10 LU relative gate one loud block
+// then excludes every quieter block measured afterwards, which is the exact
+// failure the watermark was added to prevent.
+//
+// Driven at the meter directly: no lookahead line, so "old programme" and
+// "in-flight audio" cannot be confused, and the reset lands mid-sub-block by
+// construction (2.5 sub-blocks of loud material).
+static void testMeterResetIgnoresTheStraddlingSubBlock()
+{
+    anabasis::LoudnessMeter meter;
+    meter.prepare (48000.0);
+
+    auto feed = [&] (float amp, int frames, int t0)
+    {
+        for (int i = 0; i < frames; ++i)
+        {
+            const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 997.0f * (float) (t0 + i) / 48000.0f);
+            float frame[2] = { v, v };
+            meter.processFrame (frame, 2);
+        }
+    };
+
+    // 4.5 sub-blocks: four complete ones make the first gating block exist (a
+    // block needs 400 ms), and the half sub-block is the straddler under test.
+    feed (0.5f, 21600, 0);
+    check (meter.integratedLufs() > -20.0f,
+           "meterWatermark: (premise) the loud programme is measured before the reset");
+
+    meter.resetIntegrated();
+    feed (0.005f, 144000, 21600);               // 3 s of ~-46 LUFS
+
+    // With the straddler admitted the first fresh gating block reads ≈ -15
+    // LUFS and the relative gate then drops every -46 block after it, pinning
+    // the integrated figure to the old programme. Disjoint by ~30 dB.
+    check (meter.integratedLufs() < -40.0f,
+           "meterWatermark: the partially-filled sub-block at the reset stays out of the histogram");
 }
 
 // ---------------------------------------------------------------------------
@@ -3602,6 +3672,7 @@ int main()
     testFreezeLatchesTrims();
     testTrimBounds();
     testAutoReleaseFollowsTheTrimScale();
+    testMeterResetIgnoresTheStraddlingSubBlock();
     testSpectrumRingsCarryTheTaps();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();

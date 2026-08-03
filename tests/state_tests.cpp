@@ -12,6 +12,7 @@
 #include "../src/MacroEngine.h"
 #include <array>
 #include <cstdio>
+#include <thread>
 
 static int failures = 0;
 static int checks   = 0;
@@ -479,6 +480,63 @@ static void testFrozenTrimRestore()
                "frozenRestore: a no-audio load then save keeps the loaded vector, not the stale latch");
     }
 
+    // (5a) UNDO/REDO stage the vector too — and an undo is a bulk swap, so it
+    //      must request the duck that is the vector's only landing site. An
+    //      undo whose step moves no discrete stage never reaches a bottom by
+    //      itself: the vector then sat pending indefinitely and was injected
+    //      at the next unrelated duck, into whatever slot was live by then.
+    //      Vector V is latched into an undo step, the trims are then moved to
+    //      W with Freeze off and re-latched, and the undo must bring V back.
+    {
+        auto* gain = a.apvts.getParameter (pid::limGain);
+        gain->beginChangeGesture();          // the step's pre-state carries V
+        gain->setValueNotifyingHost (gain->getNormalisableRange().convertTo0to1 (3.0f));
+        gain->endChangeGesture();
+        check (a.canUndo(), "frozenRestore/undo: (premise) the drag pushed a step");
+
+        set (a, pid::freeze, 0.0f);           // let the vector move to W…
+        feed (a, 200, 800 * 512, 0);
+        set (a, pid::freeze, 1.0f);           // …and latch it there
+        feed (a, 4, 1000 * 512, 0);
+        const auto latchedW = trimsOf (a);
+        check (! sameVector (latchedW, saved),
+               "frozenRestore/undo: (premise) the vector really moved before the undo");
+
+        a.undo();
+        feed (a, 30, 1004 * 512, 0);          // through the duck the undo owes
+        check (sameVector (trimsOf (a), saved),
+               "frozenRestore/undo: an undo restores the step's frozen vector (it ducks for it)");
+    }
+
+    // (5b) The MIRROR WINDOW. `frozenPending` is cleared by the block-top
+    //      consume, but the vector is only published at the duck bottom a
+    //      block or more later. A save landing in between read the engine's
+    //      PRE-restore trims — and, because the capture also rewrote the
+    //      mirror, permanently replaced the loaded vector with them. The
+    //      editor polls saveSlotFromLive() through presetDirty() at ~3 Hz, so
+    //      this window is reached in ordinary use, not only under a test.
+    {
+        AnabasisAudioProcessor mid;
+        mid.prepareToPlay (48000.0, 512);
+        feed (mid, 12, 0, 4800);                       // primed, own vector ≠ saved
+        mid.setStateInformation (state.getData(), (int) state.getSize());
+        feed (mid, 1, 12 * 512, 4800);                 // consumed at the block top…
+        check (! sameVector (trimsOf (mid), saved),
+               "frozenRestore/window: (premise) one block in, the vector has not landed yet");
+
+        juce::MemoryBlock inWindow;
+        mid.getStateInformation (inWindow);            // …and a save lands here
+        const auto ft = parse (inWindow).getChildWithName ("AB").getChildWithName ("SLOT")
+                            .getChildWithName ("FROZEN_TRIMS");
+        check (ft.isValid()
+                 && std::abs ((float) (double) ft.getProperty ("releaseOctaves") - saved[0]) < 1.0e-6f,
+               "frozenRestore/window: a save between the consume and the duck bottom keeps the loaded vector");
+
+        feed (mid, 30, 13 * 512, 4800);
+        check (sameVector (trimsOf (mid), saved),
+               "frozenRestore/window: and the restore still lands afterwards");
+    }
+
     // (5) The SAME session with the freeze parameter flipped off must stage
     //     nothing: after one block the trims are still near zero, nowhere
     //     near the saved latch a wrongly-staged inject would have published.
@@ -814,6 +872,63 @@ static void testAbSwitchRequestsDuck()
 }
 
 // ---------------------------------------------------------------------------
+// The THIRD bulk-swap route DSP_POLICY invariant 8 enumerates — "a preset
+// load, an A/B switch, or an undo step, three routes through the same forced
+// duck, each owed its own test". The undo route was the one the code did not
+// take: it restores a whole StateSet (discrete rewires included) and, since
+// ADR-0014, stages the frozen-trim vector whose only landing site is the
+// bottom. The edited parameter here is deliberately INAUDIBLE at this
+// stimulus (compressor knee, nothing over threshold), so the only thing that
+// can produce near-silence is the duck itself.
+static void testUndoRequestsDuck()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    std::vector<float> out;
+    auto runBlock = [&] (int blockIdx)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 300.0f * (float) (blockIdx * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+        for (int n = 0; n < 512; ++n)
+            out.push_back (buf.getSample (0, n));
+    };
+
+    auto* knee = proc.apvts.getParameter (pid::compKnee);
+    knee->beginChangeGesture();
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (9.0f));
+    knee->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.canUndo(), "undoDuck: (premise) the drag pushed a step");
+
+    for (int b = 0; b < 10; ++b) runBlock (b);
+    proc.undo();
+    for (int b = 10; b < 30; ++b) runBlock (b);
+
+    float minEnv = 1.0f, tailPeak = 0.0f;
+    for (size_t n = 10 * 512; n < 10 * 512 + 2000; n += 60)
+    {
+        float peak = 0.0f;
+        for (size_t k = n; k < n + 240; ++k)
+            peak = juce::jmax (peak, std::abs (out[k]));
+        minEnv = juce::jmin (minEnv, peak);
+    }
+    for (size_t n = out.size() - 2400; n < out.size(); ++n)
+        tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+
+    check (minEnv < 0.02f,  "undoDuck: an undo step dips through the silent bottom");
+    check (tailPeak > 0.3f, "undoDuck: and the stream recovers");
+}
+
+// ---------------------------------------------------------------------------
 // §2.9 meter publication: the wrapper measures the OUTPUT and publishes once
 // per block through the THREAD_MODEL meter atomics. A −20 dBFS 997 Hz tone
 // must read −20 LUFS momentary/integrated, ~−20 dBTP (sine ISP ≈ sample peak
@@ -1012,8 +1127,20 @@ static void testUndoIsPerSlotGestureCoalescedAndMaskWide()
     check (! proc.applyPresetFile (bad), "undo: (premise) the bad file fails");
     check (! proc.canUndo(),
            "undo: a failed parse cost no undo step (parse before the bracket)");
+
+    // The gate's other half, and the one an is-it-XML test let through: a
+    // WELL-FORMED document with a foreign root parses fine, so it opened the
+    // bracket and then applied nothing — an undo step for a guaranteed no-op.
+    // The gate reads through PresetManager's own predicate, so the two cannot
+    // disagree about what "readable" means.
+    auto foreign = dir.getChildFile ("anabasis_undo_foreign.anabasis");
+    foreign.replaceWithText ("<SomeOtherPlugin><PARAM id=\"limGain\" value=\"3\"/></SomeOtherPlugin>");
+    check (! proc.applyPresetFile (foreign), "undo: (premise) a foreign root is refused");
+    check (! proc.canUndo(),
+           "undo: well-formed XML with a foreign root costs no undo step either");
     good.deleteFile();
     bad.deleteFile();
+    foreign.deleteFile();
 
     // 6. A session LOAD clears the stacks (never serialized).
     juce::MemoryBlock state;
@@ -1021,6 +1148,45 @@ static void testUndoIsPerSlotGestureCoalescedAndMaskWide()
     proc.setStateInformation (state.getData(), (int) state.getSize());
     check (! proc.canUndo() && ! proc.canRedo(),
            "undo: a session load starts a fresh history");
+}
+
+// ---------------------------------------------------------------------------
+// §7 undo, the gesture bookkeeping's SYMMETRY: a begin is counted only on the
+// message thread (an off-thread gesture folds into the automation path by
+// design), so the matching end must be ignored too. VST3 gesture threading is
+// host-defined, and a host that delivers begin off-thread and end on it made a
+// bare `--openGestureCount` close a DIFFERENT, still-open drag — pushing that
+// drag's step mid-gesture and clearing the snapshot, so its real end pushed
+// nothing and the drag became unundoable.
+//
+// The stimulus is the real thing rather than a synthesised callback: the
+// foreign begin runs on a worker thread, which is exactly the condition the
+// wrapper discriminates on, and it leaves JUCE's own gesture bookkeeping
+// balanced so the later end travels the normal path.
+static void testAGestureEndWithoutACountedBeginIsIgnored()
+{
+    AnabasisAudioProcessor proc;
+    auto* limGain = proc.apvts.getParameter (pid::limGain);
+    auto* foreign = proc.apvts.getParameter (pid::ceiling);
+    const float before = proc.apvts.getRawParameterValue (pid::limGain)->load();
+
+    std::thread offThread ([foreign] { foreign->beginChangeGesture(); });
+    offThread.join();                          // uncounted: not the message thread
+
+    limGain->beginChangeGesture();             // the real drag, counted
+    limGain->setValueNotifyingHost (
+        limGain->getNormalisableRange().convertTo0to1 (7.0f));
+
+    foreign->endChangeGesture();               // …and its end arrives here
+    check (! proc.canUndo(),
+           "gestureSymmetry: an end whose begin was never counted does not close the open drag");
+
+    limGain->endChangeGesture();               // the drag's own end
+    proc.flushPendingDetach();
+    check (proc.canUndo(), "gestureSymmetry: the drag's own end still pushes its step");
+    proc.undo();
+    check (std::abs (proc.apvts.getRawParameterValue (pid::limGain)->load() - before) < 1.0e-3f,
+           "gestureSymmetry: and that step is the whole drag");
 }
 
 // ---------------------------------------------------------------------------
@@ -1543,7 +1709,9 @@ int main (int argc, char** argv)
         testAbSlotsAndTiers();
         testMacroRestoreDoesNotClobber();
         testAbSwitchRequestsDuck();
+        testUndoRequestsDuck();
         testMeterPublication();
+    testAGestureEndWithoutACountedBeginIsIgnored();
     testDetachAndReengageGrammar();
     testUndoIsPerSlotGestureCoalescedAndMaskWide();
     testFactoryPresets();

@@ -251,6 +251,11 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         pendingFrozenTrims.stereoLink     = stagedFrozen[1].load (std::memory_order_relaxed);
         pendingFrozenTrims.scHpfHz        = stagedFrozen[2].load (std::memory_order_relaxed);
         pendingFrozenTrims.dynTiltDb      = stagedFrozen[3].load (std::memory_order_relaxed);
+        // Remember WHICH generation this copy is: the writer's settled test is
+        // stageSeq == appliedSeq, and only the application below may advance
+        // the applied side. Read after the acquire-exchange, so a stage that
+        // lands later this block leaves stageSeq ahead and stays pending.
+        pendingFrozenSeq  = frozenStageSeq.load (std::memory_order_relaxed);
         havePendingFrozen = true;
     }
     if (const int cmd = learnCmd.exchange (kLearnNone, std::memory_order_acquire);
@@ -300,6 +305,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         if (havePendingFrozen)
         {
             adaptiveEngine.injectTrims (pendingFrozenTrims);   // ADR-0014
+            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_relaxed);
             havePendingFrozen = false;
         }
         duckState = DuckState::idle;
@@ -349,6 +355,9 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             // ON in the slot that staged it, so finishBlock holds the vector
             // from here on — this is the per-slot Freeze memory restoring.
             adaptiveEngine.injectTrims (pendingFrozenTrims);
+            // Only NOW is the published vector the restored one — the writer's
+            // capture guard reads this, not the block-top flag.
+            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_relaxed);
             havePendingFrozen = false;
         }
 
@@ -597,7 +606,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             float s = juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn;
             if (! std::isfinite (s))
                 s = 0.0f;                      // filter state must never eat a NaN
-            // §2.9 spectrum tap 1: post-InputGain, pre-everything-else.
+            // §2.9 spectrum tap 1: post-InputGain, pre-everything-else. Both
+            // taps select L/R by channel index, which is exhaustive only while
+            // the engine is at most stereo — `nCh` is clamped to kMaxChannels
+            // in prepare(), so widening that constant without giving the taps
+            // real per-channel scratch would fold every extra channel into the
+            // right trace. Made a build error rather than a silent one.
+            static_assert (kMaxChannels == 2,
+                           "spectrum taps assume L/R; widen the scratch first");
             (ch == 0 ? specInL : specInR)[(size_t) n] = s;
             if (eqPre)
                 s = eq.processSample (ch, s);

@@ -33,6 +33,14 @@ public:
     bool savePreset (const juce::File& file, const juce::StringArray& detachMask) const;
     bool applyPreset (const juce::File& file, juce::StringArray& detachMaskOut);
 
+    // The single answer to "is this a preset file this build can apply?".
+    // `applyPreset` reads through it, and so does the wrapper's pre-parse undo
+    // gate — two independent readability tests could disagree, and did: the
+    // gate accepted any well-formed XML, so a foreign root passed it, opened an
+    // undo bracket, and then applied nothing. Returns the parsed document (the
+    // caller re-parses; a preset apply is a user action, not a hot path).
+    static std::unique_ptr<juce::XmlElement> parsePresetFile (const juce::File& file);
+
     // -- factory presets (DESIGN §7: compiled-in override tables) ------------
     // The five names come VERBATIM from the brief (§9 names them — they are
     // owner wording, not invented); the VALUES are ⊕ drafts with the same

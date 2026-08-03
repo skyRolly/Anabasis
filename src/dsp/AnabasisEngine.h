@@ -161,10 +161,33 @@ public:
         stagedFrozen[1].store (link,   std::memory_order_relaxed);
         stagedFrozen[2].store (hpf,    std::memory_order_relaxed);
         stagedFrozen[3].store (tilt,   std::memory_order_relaxed);
+        // Stage generation, stored BEFORE the flag so the consumer's acquire
+        // orders it with the payload. See frozenRestorePending() for why the
+        // flag alone cannot answer the writer's question.
+        frozenStageSeq.store (frozenStageSeq.load (std::memory_order_relaxed) + 1u,
+                              std::memory_order_relaxed);
         frozenPending.store (true, std::memory_order_release);
     }
+    // "Is the engine's published trim vector still older than the last record
+    // I staged?" — which is about APPLICATION, not consumption. `frozenPending`
+    // is cleared by the block-top exchange, but the vector is only injected
+    // (and therefore published) at the duck's silent bottom up to ~34 ms later;
+    // a save landing in that window read the PRE-restore trims and overwrote
+    // the loaded copy with them. The two counters close it exactly: the
+    // consumer remembers the generation it took and stores it back only after
+    // injectTrims, so equality means "published == last staged".
+    //
+    // Relaxed on both sides — THREADING_POLICY's generation/staleness-counter
+    // row: they carry no payload, they gate a message-thread decision, and the
+    // payload's own ordering is the release/acquire pair above. A record staged
+    // and then dropped by prepare()/reset() cannot strand this: those clear
+    // neither `havePendingFrozen` nor the flag, and the unprimed direct-adopt
+    // branch applies the pending copy on the first block after either.
     bool frozenRestorePending() const noexcept
-    { return frozenPending.load (std::memory_order_acquire); }
+    {
+        return frozenStageSeq.load (std::memory_order_relaxed)
+            != frozenAppliedSeq.load (std::memory_order_relaxed);
+    }
 
     // Learned-target restore (session load, ADAPTIVE child): host-hidden
     // session state through the mirror pattern — consumed at the block top.
@@ -324,7 +347,11 @@ private:
     // per DESIGN §7 — two steps, both audio-thread).
     std::atomic<float> stagedFrozen[4] = { {0.0f}, {0.0f}, {0.0f}, {0.0f} };
     std::atomic<bool>  frozenPending { false };
+    // Written by the message thread (stage) / audio thread (apply); read by the
+    // message thread. Equal ⇒ the published vector is the last staged one.
+    std::atomic<uint32_t> frozenStageSeq { 0 }, frozenAppliedSeq { 0 };
     AdaptiveEngine::Trims pendingFrozenTrims;
+    uint32_t pendingFrozenSeq = 0;     // the generation `pendingFrozenTrims` holds
     bool havePendingFrozen = false;
     // kLearnNone is the "nothing pending" value, which is what lets the code
     // and the flag be the same word — see requestLearnStart above.

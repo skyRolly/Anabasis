@@ -41,9 +41,24 @@ latched vector renders differently from the slot that was saved.
 
 **Capture (message thread, `saveSlotFromLive`).** With Freeze ON the latched vector IS the
 published one, so the save reads the four published-trim atomics into `FROZEN_TRIMS` — unless a
-staged restore is still unconsumed (`frozenRestorePending()`, a load-then-save with no audio
-between), where the engine's published trims are one session stale and the previously loaded
-`liveFrozenTrims` copy is serialized instead: the same mirror rule the ADAPTIVE child follows.
+staged restore has not been APPLIED yet (`frozenRestorePending()`), where the engine's published
+trims are stale and the previously loaded `liveFrozenTrims` copy is serialized instead: the same
+mirror rule the ADAPTIVE child follows. The capture result goes into a local, never back into
+`liveFrozenTrims`; the mirror is written by the restore paths only, because this same function is
+the dirty-marker compare the editor polls at ~3 Hz and a display query must not rewrite
+serialisable state.
+
+**"Not applied yet" is a generation pair, not the record flag** (corrected 2026-08-03, review
+round 24). The obvious reading — "pending == the ADR-0012 flag is still up" — is wrong by one
+step: the block top clears `frozenPending` with its `exchange`, but the vector is only injected
+(and therefore published) at the duck bottom up to ~34 ms later, and every `saveSlotFromLive()`
+landing in that window read the PRE-restore trims. `restoreFrozenTrims` therefore also bumps
+`frozenStageSeq`; the block-top consume records which generation its pending copy holds; and only
+`injectTrims` stores that generation into `frozenAppliedSeq`. `frozenRestorePending()` is
+`stageSeq != appliedSeq` — relaxed on both sides (THREADING_POLICY's generation-counter row: no
+payload, and the payload's own ordering is still the release/acquire pair). A stage that lands
+between the consume and the apply leaves `stageSeq` ahead, so it stays pending and is applied at
+the next bottom; ADR-0012 §Known-limits-3's one-block payload tear is unchanged.
 
 **Transport (ADR-0012's row, second instance).** `AnabasisEngine::restoreFrozenTrims` stores the
 four scalars relaxed, then release-stores one `frozenPending` flag; the block top consumes it
@@ -62,6 +77,14 @@ surface: `applySlotToLive` (A/B switch, undo/redo, preset bracket) and `setState
 (session load). The freeze value is read from the freshly adopted APVTS surface, never from the
 raw incoming tree — the read rules have already run. A freeze-OFF slot stages nothing (option B's
 rejection, enforced).
+
+**Every stager must request the duck**, because the bottom is the vector's only landing site. That
+was already true of `switchToSlot`, `applyFactoryPreset`, `applyPresetFile` and
+`setStateInformation`; `undo`/`redo` did not duck and were corrected on 2026-08-03 (review round
+24). An undo whose step moves no discrete stage never reaches a bottom on its own, so the staged
+vector sat pending indefinitely and was injected at the next unrelated duck — an A/B switch, say —
+into whatever slot was live by then. Ducking an undo is independently owed: DSP_POLICY invariant
+8's click-free enumeration names the undo step as one of the three bulk swaps (ADR-0004).
 
 **Degradation, stated not hidden.** If Freeze is turned off between stage and consumption, the
 injected vector publishes once and the next audible block slews away from it — the documented
@@ -89,7 +112,8 @@ last-writer-wins degradation of ADR-0012, not a fault.
 Evidence [Verified]:
 - Source: the files above
 - Test: `AnabasisStateTests` `testFrozenTrimRestore` — capture premise, unprimed-load
-  (direct-adopt), primed-load (duck bottom), A/B away-and-back, no-audio load→save mirror, and
-  freeze-off-stages-nothing; seven mutants (each application site, each staging site, the
-  capture, the mirror guard, the freeze condition) each killed by a distinct check.
-  `testFrozenSlotRoundTrip` still pins the byte-transport half.
+  (direct-adopt), primed-load (duck bottom), A/B away-and-back, **undo restores the step's
+  vector**, **the consume→bottom save window keeps the loaded vector**, no-audio load→save
+  mirror, and freeze-off-stages-nothing; nine mutants (each application site, each staging site,
+  the capture, the mirror guard, the freeze condition, the undo duck, the generation pair) each
+  killed by a distinct check. `testFrozenSlotRoundTrip` still pins the byte-transport half.

@@ -74,6 +74,12 @@ public:
             wedgeIndices[ch].assign ((size_t) maxWindowSamples + 3, 0);
         }
         truePeak.prepare();
+        // prepare() means "clean state": the ADR-0013 trim scale is per-block
+        // engine state, not a prepared setting, so it starts neutral and
+        // AnabasisEngine::process rewrites it before the first audible sample.
+        // Inheriting the last session's scale here would give a standalone user
+        // of this class (the bench's limiter section) a silently scaled release.
+        autoScale = 1.0f;
         aRelFast = onePoleMs (kAutoFastMs * autoScale);
         aRelSlow = onePoleMs (kAutoSlowMs * autoScale);
         linkSm.reset (sampleRate, 0.020);

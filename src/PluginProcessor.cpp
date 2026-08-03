@@ -32,6 +32,9 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // serialized state and lives here.
     macroEngine->isDetached = [this] (const char* id)
     { return liveDetachMask.contains (juce::String (id)); };
+    // The undo gesture bookkeeping keys one bit per parameter index; ADR-0010
+    // freezes the surface at 49, well inside the word.
+    jassert (getParameters().size() <= kMaxCountedGestureIndex);
     addListener (this);                       // gesture begin/end
     for (const char* id : managed_params::ids)
         apvts.addParameterListener (id, this);
@@ -57,10 +60,24 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
     // §7 undo: the FIRST open gesture snapshots the pre-state the eventual
     // step will restore. Message thread only — an off-thread gesture (host
     // UI) skips this and its edit folds silently, the automation rule.
-    if (juce::MessageManager::existsAndIsCurrentThread())
+    //
+    // The count is keyed by PARAMETER, not just incremented: VST3 gesture
+    // threading is host-defined (the same premise this class's off-thread
+    // degradation path rests on), so a host can deliver a begin off the message
+    // thread — uncounted here — and its end on it. A bare `--` would then close
+    // a DIFFERENT, still-open drag: that drag's step got pushed mid-gesture,
+    // `gesturePreState` was cleared, and its real end pushed nothing. Only ends
+    // whose begin was counted may decrement.
+    if (juce::MessageManager::existsAndIsCurrentThread()
+        && parameterIndex >= 0 && parameterIndex < kMaxCountedGestureIndex)
     {
-        if (openGestureCount++ == 0)
-            gesturePreState = saveSlotFromLive();
+        const uint64_t bit = 1ull << parameterIndex;
+        if ((countedGestureBits & bit) == 0)
+        {
+            countedGestureBits |= bit;
+            if (openGestureCount++ == 0)
+                gesturePreState = saveSlotFromLive();
+        }
     }
 
     if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (
@@ -91,8 +108,14 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
         if (const int m = managedIndexOf (p->getParameterID()); m >= 0)
             managedGestureBits.fetch_and (~(1u << m), std::memory_order_relaxed);
 
-    if (juce::MessageManager::existsAndIsCurrentThread() && openGestureCount > 0)
+    // Symmetric with the begin above: an end whose begin was never counted
+    // (delivered off the message thread) must not close someone else's drag.
+    const uint64_t bit = parameterIndex >= 0 && parameterIndex < kMaxCountedGestureIndex
+                             ? 1ull << parameterIndex : 0ull;
+    if (juce::MessageManager::existsAndIsCurrentThread()
+        && bit != 0 && (countedGestureBits & bit) != 0 && openGestureCount > 0)
     {
+        countedGestureBits &= ~bit;
         if (--openGestureCount == 0 && gesturePreState.isValid())
         {
             // One step per completed drag, and only if something CHANGED —
@@ -113,6 +136,14 @@ void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
     redoStacks[activeSlot].clear();      // a new edit invalidates the redo line
 }
 
+// §2.8: an undo step is a bulk swap exactly like an A/B switch or a preset
+// apply — DSP_POLICY invariant 8's click-free enumeration names it explicitly
+// (ADR-0004). It restores a whole StateSet, so it can rewire the discrete
+// stages (EQ position, colour model, OS factor), and since ADR-0014 it also
+// STAGES the frozen-trim vector, which is only ever applied at the silent
+// bottom. Without the request an undo that happens to move no rewire never
+// reaches a bottom at all: the staged vector then sat pending indefinitely and
+// was injected at the next unrelated duck, into whatever slot was live by then.
 void AnabasisAudioProcessor::undo()
 {
     auto& stack = undoStacks[activeSlot];
@@ -121,6 +152,7 @@ void AnabasisAudioProcessor::undo()
     redoStacks[activeSlot].add (saveSlotFromLive());
     const auto prev = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3: not a gesture
+    engine.requestForcedDuck();
     applySlotToLive (prev);
 }
 
@@ -132,6 +164,7 @@ void AnabasisAudioProcessor::redo()
     undoStacks[activeSlot].add (saveSlotFromLive());
     const auto next = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);
+    engine.requestForcedDuck();                              // §2.8, as undo()
     applySlotToLive (next);
 }
 
@@ -358,10 +391,18 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     if (liveBaseline.isValid())
         slot.appendChild (liveBaseline.createCopy(), nullptr);
     // ADR-0014 capture: with Freeze ON the latched vector IS the published
-    // one, so the save reads it live — unless a restore is still staged and
-    // unconsumed (a load-then-save with no audio between), where the engine's
-    // published trims are STALE and the restored copy is the truth: the same
-    // mirror rule the ADAPTIVE child follows.
+    // one, so the save reads it live — unless a restore staged for this slot
+    // has not been APPLIED yet (a load-then-save with no audio between, or the
+    // ~34 ms between the block-top consume and the duck bottom), where the
+    // engine's published trims are STALE and the restored copy is the truth:
+    // the same mirror rule the ADAPTIVE child follows.
+    //
+    // The result goes into a LOCAL, never back into `liveFrozenTrims`: this
+    // function is also the dirty-marker compare (`presetDirty()`, polled at
+    // ~3 Hz by the editor), and a display query that rewrites the mirror would
+    // destroy the loaded vector the moment it ran inside that window — the
+    // mirror is written by the restore paths only.
+    juce::ValueTree frozen = liveFrozenTrims;
     if (apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f
         && ! engine.frozenRestorePending())
     {
@@ -371,10 +412,10 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
         ft.setProperty ("stereoLink",     (double) a.publishedTrimLink(), nullptr);
         ft.setProperty ("scHpfHz",        (double) a.publishedTrimHpf(), nullptr);
         ft.setProperty ("dynTiltDb",      (double) a.publishedTrimTilt(), nullptr);
-        liveFrozenTrims = ft;
+        frozen = ft;
     }
-    if (liveFrozenTrims.isValid())
-        slot.appendChild (liveFrozenTrims.createCopy(), nullptr);
+    if (frozen.isValid())
+        slot.appendChild (frozen.createCopy(), nullptr);
     juce::ValueTree mask ("DETACH_MASK");
     for (const auto& id : liveDetachMask)
     {
@@ -478,7 +519,8 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
 bool AnabasisAudioProcessor::applyFactoryPreset (int index)
 {
     int count = 0;
-    if (index < 0 || index >= (PresetManager::factoryPresets (count), count))
+    const auto* table = PresetManager::factoryPresets (count);
+    if (index < 0 || index >= count)
         return false;                          // validated BEFORE the undo bracket
     pushUndoStep (saveSlotFromLive());
 
@@ -486,11 +528,13 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
     engine.requestForcedDuck();                // §2.8: a preset is a bulk swap
 
     juce::StringArray mask;
+    // Unreachable given the validation above — and deliberately still checked,
+    // because the two guards would only diverge silently if one moved.
     if (! presetManager->applyFactoryPreset (index, mask))
         return false;
     liveDetachMask = mask;
     liveBaseline   = {};                       // defaults-based: no macro baseline survives
-    livePresetName = PresetManager::factoryPresets (count)[index].name;
+    livePresetName = table[index].name;
     presetBaseline = saveSlotFromLive();       // dirty marker datum
     return true;
 }
@@ -500,9 +544,11 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     // §7 preset bracketing: parse BEFORE the bracket opens — an unreadable
     // file must not cost the user an undo step. A partial apply after a
     // successful parse still pushes: the pre-state is exactly what undo
-    // should restore in that case.
-    if (! file.existsAsFile()
-        || juce::ValueTree::fromXml (file.loadFileAsString()).isValid() == false)
+    // should restore in that case. The readability test is PresetManager's own
+    // (root tag included), so this gate and the apply cannot disagree — an
+    // is-it-XML gate let a foreign root through and charged an undo step for a
+    // guaranteed no-op.
+    if (! file.existsAsFile() || PresetManager::parsePresetFile (file) == nullptr)
         return false;
     pushUndoStep (saveSlotFromLive());
 
@@ -621,8 +667,9 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         undoStacks[slot].clear();
         redoStacks[slot].clear();
     }
-    openGestureCount = 0;
-    gesturePreState = {};
+    openGestureCount   = 0;
+    countedGestureBits = 0;      // paired with openGestureCount, always
+    gesturePreState    = {};
     // The P5 decision THREAD_MODEL left open, taken: a state load CLEARS the
     // session-cumulative meter holds. The integrated LUFS and the dBTP hold
     // describe the programme measured so far, and after a load the programme

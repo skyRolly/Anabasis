@@ -147,7 +147,13 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    step, three routes through the same forced duck, each owed its own test** — must produce no
    click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
    ducked. *(Amended by ADR-0004, 2026-07-31.)*
-   Guarded by: the click-free transition tests (one per switchable path).
+   Guarded by: the click-free transition tests (one per switchable path) — the three bulk-swap
+   routes by `testAbSwitchRequestsDuck`, `testUndoRequestsDuck` and the preset bracket's duck
+   request. **The undo route was a code drift against this text, found by review and wired on
+   2026-08-03:** `undo`/`redo` restored a whole StateSet without requesting the duck, so an undo
+   that moved no discrete stage never reached a silent bottom — and after ADR-0014 that also
+   stranded the frozen-trim vector it stages. This wording was already correct; the enumeration is
+   what caught the omission.
 
    **Lookahead is named explicitly because it is the one switchable path with neither a duck nor a
    latch** (ADR-0004 made reported latency constant in it, so it is an ordinary smoothed change).

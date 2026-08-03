@@ -99,6 +99,14 @@ public:
     // state the named preset landed. Message thread; the compare is a full
     // slot-tree equivalence, so callers poll it at display rate, not per
     // frame. No preset loaded = never dirty (there is nothing to differ from).
+    //
+    // The const_cast is JUCE's, not ours: `APVTS::copyState()` is non-const, so
+    // the snapshot cannot be taken through a const path. `saveSlotFromLive()`
+    // itself mutates NOTHING — it builds the tree and returns it — and that is
+    // load-bearing rather than incidental: while it also wrote back
+    // `liveFrozenTrims`, this ~3 Hz display poll could overwrite a just-loaded
+    // frozen vector with the engine's pre-restore trims (ADR-0014's mirror
+    // window). Keep it a pure read.
     bool presetDirty() const
     {
         if (livePresetName.isEmpty() || ! presetBaseline.isValid())
@@ -183,6 +191,14 @@ private:
     juce::ValueTree gesturePreState;     // armed at first gesture-begin
     juce::ValueTree presetBaseline;      // the state the named preset landed
     int  openGestureCount = 0;
+    // One bit per parameter index whose gesture-BEGIN was counted, so a
+    // gesture-end can only close its own drag (see the callbacks). The
+    // parameter surface is 49 wide and frozen by ADR-0010, so one word covers
+    // it with room to spare; a hypothetical index past the word degrades to the
+    // uncounted (automation) path rather than mis-keying, and the constructor
+    // asserts the width so the degradation cannot go unnoticed in a debug run.
+    static constexpr int kMaxCountedGestureIndex = 64;
+    uint64_t countedGestureBits = 0;
     void pushUndoStep (juce::ValueTree preState);
     static constexpr int kUndoCap = 128;
     juce::ValueTree defaultSlot;         // pristine defaults, for the missing-AB read rule

@@ -1109,16 +1109,27 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     m.showMenuAsync (juce::PopupMenu::Options()
                          .withTargetComponent (presetName)
                          .withMinimumWidth (228),
-        [this, files] (int r)
+        // SafePointer, not a raw `this`: the menu outlives the editor if the
+        // host tears the window down while it is open. JUCE dismisses with
+        // result 0 in that case, so the early return already covered the
+        // common path — this covers it by construction instead of by
+        // dismissal ordering, and the same shape guards the file chooser.
+        [safeThis = juce::Component::SafePointer<AnabasisAudioProcessorEditor> (this),
+         files] (int r)
         {
-            if (r == 0) return;
-            if (r == 10001) { showSavePreset (true); return; }
-            if (r == 10002) { showLoadPreset(); return; }
-            if (r >= 20001) { processor.applyFactoryPreset (r - 20001); refreshPresetDisplay(); return; }
+            if (r == 0 || safeThis == nullptr) return;
+            if (r == 10001) { safeThis->showSavePreset (true); return; }
+            if (r == 10002) { safeThis->showLoadPreset(); return; }
+            if (r >= 20001)
+            {
+                safeThis->processor.applyFactoryPreset (r - 20001);
+                safeThis->refreshPresetDisplay();
+                return;
+            }
             if (r - 1 < files.size())
             {
-                processor.applyPresetFile (files.getReference (r - 1));
-                refreshPresetDisplay();
+                safeThis->processor.applyPresetFile (files.getReference (r - 1));
+                safeThis->refreshPresetDisplay();
             }
         });
 }
@@ -1130,13 +1141,14 @@ void AnabasisAudioProcessorEditor::showLoadPreset()
     fileChooser = std::make_unique<juce::FileChooser> ("Load Preset", dir, "*.anabasis");
     fileChooser->launchAsync (juce::FileBrowserComponent::openMode
                                   | juce::FileBrowserComponent::canSelectFiles,
-        [this] (const juce::FileChooser& fc)
+        [safeThis = juce::Component::SafePointer<AnabasisAudioProcessorEditor> (this)]
+        (const juce::FileChooser& fc)
         {
             const auto f = fc.getResult();
-            if (f.existsAsFile())
+            if (safeThis != nullptr && f.existsAsFile())
             {
-                processor.applyPresetFile (f);
-                refreshPresetDisplay();
+                safeThis->processor.applyPresetFile (f);
+                safeThis->refreshPresetDisplay();
             }
         });
 }

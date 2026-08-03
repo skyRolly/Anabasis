@@ -199,6 +199,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   `testFrozenTrimRestore` (seven mutants), `testFactoryPresets`; ADR-0013/ADR-0014;
   OQ-007/OQ-013/OQ-014/OQ-016 → Resolved. [Verified]
 
+### Fixed
+
+- **Undo and redo are click-free, and they restore a frozen slot's remembered adaptation**
+  (2026-08-03). An undo step is a bulk swap like a preset load or an A/B switch and now dips
+  through the same silent transition; before this it stepped, and on a frozen slot the remembered
+  adaptation was not restored at all — the values could instead surface later, at the next A/B
+  switch, changing the sound of a different setting.
+- **Saving a project just after loading a frozen setting keeps the right remembered values**
+  (2026-08-03). A save landing in the short window between the load being picked up and taking
+  effect wrote the previous values and discarded the loaded ones permanently; the editor's own
+  preset-dirty polling reached that window in ordinary use.
+- **The meter reset no longer lets a slice of the previous, louder material into the fresh
+  integrated reading** (2026-08-03): the measurement window that was in progress at the moment of
+  the reset is now excluded, which is what the reset was always documented to do.
+- Smaller: a host that reports control gestures across threads can no longer split one drag into
+  the wrong undo steps; a well-formed preset file from another plugin is refused without costing
+  an undo step.
+  Evidence Source: **PR #6** (`skyRolly/Anabasis`) — `testUndoRequestsDuck`,
+  `testFrozenTrimRestore` (undo + save-window cases), `testMeterResetIgnoresTheStraddlingSubBlock`,
+  `testAGestureEndWithoutACountedBeginIsIgnored`; all mutation-verified. [Verified]
+
 The first entry will be `[0.1.0]`, cut when the post-v0.1.0 fine review clears the tag.
 
 ---

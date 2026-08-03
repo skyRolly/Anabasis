@@ -123,7 +123,19 @@ public:
         // measured after it, so the "reset" integrated figure reads the OLD
         // programme's loudness for the rest of the session. Only gating
         // blocks whose four sub-blocks all post-date the reset may enter.
-        integratedFrom = subCount + 4;
+        //
+        // The +1 is the sub-block IN PROGRESS, and it is the whole difference
+        // between the rule above and the rule this used to implement: at this
+        // instant `subCount` sub-blocks are complete and sub-block number
+        // `subCount` is accumulating with `subFill` pre-reset samples already
+        // in it (deliberately not cleared — dropping them would notch the
+        // rolling windows). A watermark of subCount + 4 admits the gating block
+        // at subCount + 4, which averages sub-blocks subCount+3 … subCount —
+        // the straddling one included, i.e. up to 100 ms of the old programme
+        // at a quarter of the block's energy, which is exactly the bias the
+        // watermark exists to prevent. Land the reset on a sub-block boundary
+        // (subFill == 0) and there is no straddler, so +4 is right there.
+        integratedFrom = subCount + 4 + (subFill > 0 ? 1 : 0);
     }
 
     // One frame (all channels of one sample step).
