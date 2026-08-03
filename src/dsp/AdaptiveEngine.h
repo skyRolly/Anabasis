@@ -535,7 +535,32 @@ public:
     float retainedTrimLink() const noexcept    { return retTrimLink.load (std::memory_order_relaxed); }
     float retainedTrimHpf() const noexcept     { return retTrimHpf.load (std::memory_order_relaxed); }
     float retainedTrimTilt() const noexcept    { return retTrimTilt.load (std::memory_order_relaxed); }
-    bool  hasRetainedTrims() const noexcept    { return retTrimEver.load (std::memory_order_acquire); }
+
+    // A COUNTER rather than a flag, and it replaced one, because the wrapper
+    // needs two different answers from the same publication and a bool can only
+    // give the first:
+    //
+    //   * "is there a retained vector at all?" — `generation != 0`, which is
+    //     `hasRetainedTrims()` below;
+    //   * "has one been established SINCE some earlier moment?" — which is what
+    //     tells the wrapper whether this engine-wide vector belongs to the slot
+    //     that is currently live. This class knows nothing about A/B slots and
+    //     should not: it publishes when it latches, and the wrapper compares the
+    //     number against the one it recorded when slot ownership last changed.
+    //
+    // ACQUIRE on the read, RELEASE on the write, for the reason the flag it
+    // replaced carried: it announces the four scalars above, so it is a
+    // publication flag on THREADING_POLICY's release/acquire row and not a
+    // staleness counter on the relaxed one. Incremented only by a MEANINGFUL
+    // publication, so it is also the "ever" answer without a second atomic.
+    //
+    // Wrap: `uint32` at one increment per block is ~1.4 years of continuous
+    // adaptation at 48 kHz/512, and a wrap would additionally have to land
+    // exactly on a recorded comparand to matter. Stated rather than guarded,
+    // the same way `frozenStageSeq` states it.
+    juce::uint32 retainedTrimGeneration() const noexcept
+    { return retTrimSeq.load (std::memory_order_acquire); }
+    bool hasRetainedTrims() const noexcept { return retainedTrimGeneration() != 0; }
 
 private:
     // AUDIO-THREAD ONLY, and private so that is true by construction rather
@@ -579,7 +604,12 @@ private:
         retTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
         retTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
         retTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
-        retTrimEver.store (true, std::memory_order_release);
+        // Read-modify-write with a plain load: this is the ONLY writer (the
+        // audio thread, from `finishBlock` or the block-top `injectTrims`), so
+        // no `fetch_add` is owed — but the store must be RELEASE, because it
+        // publishes the four values above.
+        retTrimSeq.store (retTrimSeq.load (std::memory_order_relaxed) + 1u,
+                          std::memory_order_release);
     }
 
     float onePoleMs (float ms) const noexcept
@@ -627,7 +657,7 @@ private:
     // The retained pair — same payload, different lifetime. See the accessors.
     std::atomic<float> retTrimRel { 0.0f }, retTrimLink { 0.0f },
                        retTrimHpf { 0.0f }, retTrimTilt { 0.0f };
-    std::atomic<bool>  retTrimEver { false };   // see hasRetainedTrims()
+    std::atomic<juce::uint32> retTrimSeq { 0 };   // see retainedTrimGeneration()
     std::atomic<float> pubRefOnset { kDefaultRefOnset }, pubRefTilt { kDefaultRefTilt };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaptiveEngine)

@@ -14,6 +14,31 @@ static juce::String tidyTip (const juce::String& tip) { return tip.trim(); }
 static constexpr int kScaleSteps[]  = { 80, 90, 100, 125, 150, 175, 200 };
 static constexpr int kNumScaleSteps = (int) (sizeof (kScaleSteps) / sizeof (kScaleSteps[0]));
 
+// The ONE reading of `iid::uiScale`, because three sites derived a step from it
+// with three different fallbacks and could therefore disagree about the same
+// stored number. A percent that is not a legal step — hand-edited state, a
+// session written by a build whose list has since changed — used to be silently
+// IGNORED rather than clamped: `applyUiScale` left `scale` at 1.0, the
+// constructor showed 100 %, and `refreshInternalSettingsBoxes` kept whatever the
+// box already had. That last one is the divergence that matters, because it is
+// the path a project load takes: the window rendered at 100 % while the Settings
+// panel went on displaying the previously selected step.
+//
+// Clamping to the NEAREST step is the read rule the rest of this tree already
+// uses for persisted values (`adoptParamsTree`'s missing/aliased-field rules,
+// `setupComboInternal`'s `jlimit`), and it is a strict generalisation of a range
+// clamp: 110 → 100, 50 → 80, 300 → 200. Returning an INDEX rather than a scale
+// is what makes the rendered transform and the displayed selection the same
+// decision instead of two decisions that happen to agree.
+static int nearestScaleIndex (int pct) noexcept
+{
+    int best = 0, bestDist = std::abs (pct - kScaleSteps[0]);
+    for (int i = 1; i < kNumScaleSteps; ++i)
+        if (const int d = std::abs (pct - kScaleSteps[i]); d < bestDist)
+        { best = i; bestDist = d; }
+    return best;
+}
+
 // ============================================================================
 //  Backdrop / ABControl paint — family grammar (provenance in the header).
 // ============================================================================
@@ -372,13 +397,9 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // int_uiScale stores PERCENT; the combo maps index<->percent through the
     // step list, so the stored value stays meaningful outside this editor.
     uiScaleBox.addItemList ({ "80%", "90%", "100%", "125%", "150%", "175%", "200%" }, 1);
-    {
-        const int pct = (int) ist.getProperty (iid::uiScale, 100);
-        int idx = 2;
-        for (int i = 0; i < kNumScaleSteps; ++i)
-            if (kScaleSteps[i] == pct) idx = i;
-        uiScaleBox.setSelectedItemIndex (idx, juce::dontSendNotification);
-    }
+    uiScaleBox.setSelectedItemIndex (
+        nearestScaleIndex ((int) ist.getProperty (iid::uiScale, 100)),
+        juce::dontSendNotification);
     uiScaleBox.onChange = [this, &ist]
     {
         ist.setProperty (iid::uiScale,
@@ -1095,11 +1116,7 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     // uiScale is the same shape with one extra step: the box only DISPLAYS the
     // percent, so a stored change has to reach `applyUiScale()` as well or the
     // panel would read 150 % while the window stayed at 100 %.
-    const int pct = (int) ist.getProperty (iid::uiScale, 100);
-    int wantScaleIdx = uiScaleBox.getSelectedItemIndex();
-    for (int i = 0; i < kNumScaleSteps; ++i)
-        if (kScaleSteps[i] == pct)
-            wantScaleIdx = i;
+    const int wantScaleIdx = nearestScaleIndex ((int) ist.getProperty (iid::uiScale, 100));
     if (wantScaleIdx != uiScaleBox.getSelectedItemIndex())
     {
         uiScaleBox.setSelectedItemIndex (wantScaleIdx, juce::dontSendNotification);
@@ -1109,11 +1126,11 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
 
 void AnabasisAudioProcessorEditor::applyUiScale()
 {
-    const int pct = (int) processor.internalState.state().getProperty (iid::uiScale, 100);
-    float scale = 1.0f;
-    for (int i = 0; i < kNumScaleSteps; ++i)
-        if (kScaleSteps[i] == pct)
-            scale = (float) pct / 100.0f;
+    // Same reading as the box's, so the transform and the selection cannot
+    // describe different steps — that was the whole defect.
+    const float scale = (float) kScaleSteps[nearestScaleIndex (
+                            (int) processor.internalState.state()
+                                .getProperty (iid::uiScale, 100))] / 100.0f;
 
     setSize (kWidth, advanced ? kAdvancedH : kSimpleH);
     setTransform (juce::AffineTransform::scale (hostScale * scale));

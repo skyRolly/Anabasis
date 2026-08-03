@@ -83,16 +83,24 @@ path. The guard now covers the whole tick, so the restore is again the only writ
 exposure (the restore itself writing `replaceState` / `liveDetachMask` / `livePresetName` while the
 editor reads them) is untouched and still needs the thread-model decision below.
 
-A **third** member, added 2026-08-03 (review round 28): the §7 undo/redo stacks.
-`setStateInformation` clears `undoStacks`/`redoStacks`/`gesturePreState`, which
-are plain `juce::Array<juce::ValueTree>` members, while the editor reads
-`canUndo()`/`canRedo()` on its 24 Hz tick and `undo()`/`redo()` pop from them on
-the message thread — so an off-thread load with the window open can race a
-`clear()` against a `removeAndReturn()`. It is the same exposure as
-`replaceState`, `liveDetachMask.clear()` and `livePresetName` on this path, and
-it closes with the same thread-model decision rather than separately; recorded
-because the stacks are NEW state added at P6, and this round's standard
-elsewhere was that both halves of a premise should agree.
+A **third** member, added 2026-08-03 (review round 28) and **CLOSED 2026-08-03
+(round 42)**: the §7 undo/redo stacks. `setStateInformation` used to clear
+`undoStacks`/`redoStacks`/`gesturePreState`, plain `juce::Array<juce::ValueTree>`
+members, while the editor read `canUndo()`/`canRedo()` on its 24 Hz tick and
+`undo()`/`redo()` popped from them on the message thread — so an off-thread load
+with the window open could race a `clear()` against a `removeAndReturn()`.
+
+It closed WITHOUT the thread-model decision the rest of this entry waits on,
+because it did not need one: the containers have exactly one legal thread, and
+the fix is to stop the other one touching them. The loader now only bumps
+`historyEpoch`, a relaxed counter, and the message thread does the clearing
+itself at the next `syncHistory()` — the single reconciliation point every read
+and write of the history passes through (`canUndo`/`canRedo`, `undo`/`redo`,
+`pushUndoStep`, both gesture callbacks' message-thread branches,
+`copySlotToOther`). No lock, and nothing blocks in a host callback. What remains
+unclosed here is the state the restore genuinely must write — `replaceState`,
+`liveDetachMask`, `livePresetName` — which has no such option and still needs
+the decision below.
 
 **The construction and destruction halves of the MacroEngine drain are not
 equally strong**, recorded 2026-08-03 (review round 29) so the pair is not read
@@ -287,8 +295,8 @@ LIVE in the session had no mirror, and after a re-prepare there was nothing left
 to save (before round 39 the save wrote the post-reset zeros, an INVALID vector
 that the next load re-injected; after it, no `FROZEN_TRIMS` child at all).
 
-**The state half is CLOSED (round 40, re-implemented correctly at round 41) and
-the audio half is what remains.** The fix is an ownership statement rather than
+**The state half is CLOSED (round 40, re-implemented correctly at round 41,
+slot-scoped at round 42) and the audio half is what remains.** The fix is an ownership statement rather than
 a Freeze decision: the ENGINE owns the durable copy, in `AdaptiveEngine`'s
 **retained** trim set — four lock-free scalars plus a release-stored flag that
 `reset()` does not clear, so the latched vector outlives a re-prepare exactly as
@@ -300,6 +308,18 @@ keeps the overlay honest. The save prefers the engine whenever
 staged-but-unapplied window, which is the only window the mirror covers.
 Guarded by `testPreparedStateAndSlotOwnership` case 4 (`liveLatch:`), which
 asserts the two sets part company at the re-prepare.
+
+**Round 42 added the slot scope the retained set could not carry by itself.**
+`FROZEN_TRIMS` is per-slot; the retained vector is engine-wide and knows nothing
+about A/B. After a switch into a freeze-ON slot holding no vector of its own,
+nothing stages a restore (the stage is gated on the mirror being valid), the
+generation pair stays equal, and the incoming slot's next save serialised the
+OUTGOING slot's latch as its own — after which the next A/B or undo restore
+injected it. The retained set is a runtime CACHE of the last latch and may only
+answer for the slot it was filled under, so the wrapper records the retained
+GENERATION whenever the live surface's frozen ownership changes
+(`adoptFrozenMirror`, the single writer of the mirror) and adopts the engine's
+answer only when the generation has advanced past it. `testAFrozenLatchDoesNotFollowTheSlotSwitch`.
 
 **Round 40's version of this fix was itself a defect, recorded because the shape
 recurs:** it declared the wrapper's `juce::ValueTree` mirror the durable owner

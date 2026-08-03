@@ -54,6 +54,34 @@ void CurveView::paint (juce::Graphics& g)
     auto& apvts = processor.apvts;
     auto raw = [&apvts] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
 
+    // The curve is REBUILT only when one of its two inputs moved, and painted
+    // every time. `refresh()` already computes the fingerprint that decides
+    // whether the parameters or the sample rate changed and repaints on it — but
+    // the build ran unconditionally in here, so any repaint the fingerprint did
+    // NOT ask for paid for it anyway: a host-driven expose, an overlay being
+    // dismissed, a window move, a `resized()`. For the EQ well that is a full
+    // `prepare()` (reset plus five filters' worth of RBJ coefficients) followed
+    // by one `magnitudeDbAt` per pixel column — transcendental-heavy work on the
+    // message thread, for a picture identical to the one already on screen.
+    //
+    // The bounds join the fingerprint because they are the other input: the
+    // path is in component coordinates, so a resize must rebuild it even when
+    // nothing about the DSP changed. Caching against the SAME fingerprint
+    // `refresh()` gates the repaint with is what makes the two consistent —
+    // there is no state in which a repaint is requested and the cache is not
+    // rebuilt, which is what would have turned this optimisation into a stale
+    // curve. No visual change: the rebuild produces the same path it always did.
+    const auto bounds = getLocalBounds();
+    if (pathFingerprint == shownFingerprint && pathBounds == bounds && ! cachedPath.isEmpty())
+    {
+        paintStatic (g, area);
+        g.setColour (colours::accent);
+        g.strokePath (cachedPath, juce::PathStrokeType (1.4f));
+        return;
+    }
+    pathFingerprint = shownFingerprint;
+    pathBounds      = bounds;
+
     juce::Path path;
 
     if (mode == Mode::clipTransfer)
@@ -74,9 +102,6 @@ void CurveView::paint (juce::Graphics& g)
             if (cx == 0) path.startNewSubPath (px, py);
             else         path.lineTo (px, py);
         }
-        // Unity reference diagonal, dim.
-        g.setColour (colours::outline);
-        g.drawLine (area.getX(), area.getBottom(), area.getRight(), area.getY(), 1.0f);
     }
     else
     {
@@ -114,11 +139,26 @@ void CurveView::paint (juce::Graphics& g)
             if (cx == 0) path.startNewSubPath (px, py);
             else         path.lineTo (px, py);
         }
-        // 0 dB reference, dim.
-        g.setColour (colours::outline);
-        g.drawLine (area.getX(), area.getCentreY(), area.getRight(), area.getCentreY(), 1.0f);
     }
 
+    cachedPath = path;
+    paintStatic (g, area);
     g.setColour (colours::accent);
     g.strokePath (path, juce::PathStrokeType (1.4f));
+}
+
+// The mode's reference line — the clip well's unity diagonal, the EQ well's
+// 0 dB horizontal. Split out because it is the one part of the picture that is
+// NOT in the cached path: both are pure functions of the bounds, they cost two
+// `drawLine`s, and leaving them inside the rebuilt branch would have made the
+// cached frame silently different from the uncached one — which is exactly the
+// class of defect a paint cache introduces if the split is drawn in the wrong
+// place.
+void CurveView::paintStatic (juce::Graphics& g, juce::Rectangle<float> area) const
+{
+    g.setColour (colours::outline);
+    if (mode == Mode::clipTransfer)
+        g.drawLine (area.getX(), area.getBottom(), area.getRight(), area.getY(), 1.0f);
+    else
+        g.drawLine (area.getX(), area.getCentreY(), area.getRight(), area.getCentreY(), 1.0f);
 }

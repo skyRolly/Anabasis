@@ -6,7 +6,52 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 41 (2026-08-03)** — a threading-correctness pass, and the
+**Last updated:** for **review round 42 (2026-08-03)** — ownership and synchronisation, six items:
+(1) **The retained frozen-trim set is engine-wide; `FROZEN_TRIMS` is per-slot.** The engine latches
+*a vector*, not "slot A's vector", so after an A/B switch into a freeze-ON slot holding none of its
+own — where nothing stages a restore, so the generation pair stays equal — the incoming slot's next
+save serialised the OUTGOING slot's latch as its own, and the next A/B or undo restore injected it.
+The retained set is a runtime CACHE and may only answer for the slot it was filled under: the
+wrapper records the retained generation whenever the live surface's frozen ownership changes and
+adopts the engine's answer only once it has advanced past that base. `adoptFrozenMirror()` is now
+the single writer of `liveFrozenTrims` for the same reason `replaceDetachMask()` is the mask's —
+replacing the vector and re-basing the comparand are two halves of one rule, and three call sites
+had only the first half. The retained *flag* became a *counter* to carry both questions (does one
+exist / was it latched since) without a second atomic. Schema, ADR-0007 and ADR-0014 untouched.
+(2) **Publication ordering re-verified and carried onto the counter.** `retTrimSeq` is
+release-stored after its four scalars and acquire-loaded, as `pubTrimEver` already was; the new
+`slotFrozenBase` is deliberately RELAXED, because it is only ever compared against that counter and
+announces nothing itself. `THREADING_POLICY`'s publication-flag row names both.
+(3) **§7 history ownership — KI-003's third member CLOSED without the thread-model decision.**
+`setStateInformation`, which VST3 does not promise on the message thread, was clearing four
+`juce::Array<juce::ValueTree>` stacks and a `ValueTree` that the editor reads at display rate and
+pops from. It now only bumps `historyEpoch`; the message thread reconciles at `syncHistory()`, the
+one point every read and write of the history passes through. The containers have exactly one legal
+thread again, no lock was added, and nothing blocks in a host callback.
+(4) **Persisted UI scale normalises once.** Three sites read `iid::uiScale` with three different
+fallbacks, so a percent that is not a legal step was silently ignored rather than clamped — and on
+a project load the window rendered at 100 % while the Settings panel kept displaying the previously
+selected step. One `nearestScaleIndex()` answers for the transform and the combo, clamping to the
+nearest step the way the tree's other persisted-value read rules do.
+(5) **Initial UI state** was seeded at round 41 (undo/redo beside the preset mark and the animated
+knob positions); re-checked, nothing else waits for a tick.
+(6) **`CurveView::paint` rebuilt its curve on every repaint** — a full `MasteringEQ::prepare` plus
+one `magnitudeDbAt` per pixel column — although `refresh()` already gates the repaint on a
+fingerprint. The built path is cached against that same fingerprint, so a host-driven expose, an
+overlay dismissal or a window move no longer pays for it. The two reference lines moved to a helper
+the cached path also calls, because leaving them inside the rebuilt branch would have made the
+cached frame differ from the uncached one — the defect a paint cache introduces if the split is
+drawn in the wrong place.
+Four mutants, one per behavioural guard. Two test-quality corrections worth recording: the curve
+test first fished a `CurveView` out of the editor and returned early on zero bounds — the Advanced
+panel is not laid out headlessly, so it asserted NOTHING while reporting a pass, and it could also
+have driven the clip-transfer well with EQ parameters; it now constructs its own component and names
+the mode. And the bounds half of the cache key is deliberately left uncovered: every stimulus for it
+is also satisfied by a cache that ignores bounds, and a check that cannot fail is worse than none.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6 (including
+the factory-apply and dirty-marker questions this round re-reviewed and did not change), and the
+preset-menu/visualiser/navigation items the brief excluded.
+Previous: **review round 41 (2026-08-03)** — a threading-correctness pass, and the
 first item is the previous round's fix being wrong in a way its own tests could not see:
 (1) **Round 40's frozen-trim fix introduced a data race.** It declared the wrapper's
 `liveFrozenTrims` `juce::ValueTree` the durable owner of the latch and had `prepareToPlay` assign

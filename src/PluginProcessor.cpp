@@ -119,7 +119,10 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
         // Arming on 0 → non-zero is what makes one drag (or several
         // overlapping ones) exactly one step.
         if (openGestureBits.fetch_or (bit, std::memory_order_relaxed) == 0)
+        {
+            syncHistory();               // message thread — see the declaration
             gesturePreState = saveSlotFromLive();
+        }
     }
 
     if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (
@@ -179,13 +182,17 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
     // that step is lost, which is the documented automation-path degradation,
     // and the next message-thread begin re-arms from 0 rather than inheriting
     // a stale snapshot.
-    if (prevOpen == bit
-        && juce::MessageManager::existsAndIsCurrentThread()
-        && gesturePreState.isValid())
+    if (prevOpen == bit && juce::MessageManager::existsAndIsCurrentThread())
     {
+        // The snapshot's validity is tested AFTER the reconcile, not with it:
+        // a load that landed mid-drag has already invalidated this pre-state,
+        // and `syncHistory()` is what drops it. Testing first would have read
+        // a snapshot belonging to the previous session.
+        syncHistory();
         // One step per completed drag, and only if something CHANGED —
         // an aborted gesture (press, no move) pushes nothing.
-        if (! gesturePreState.isEquivalentTo (saveSlotFromLive()))
+        if (gesturePreState.isValid()
+            && ! gesturePreState.isEquivalentTo (saveSlotFromLive()))
             pushUndoStep (gesturePreState);
         gesturePreState = {};
     }
@@ -208,6 +215,7 @@ static void pushCapped (Stack& stack, Entry entry, int cap)
 
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
 {
+    syncHistory();
     // `presetBaseline` is read HERE rather than passed in, and every caller
     // makes that correct: a gesture does not touch the datum, and the preset
     // applies push BEFORE they replace it, so what this reads is always the
@@ -227,6 +235,7 @@ void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
 // was injected at the next unrelated duck, into whatever slot was live by then.
 void AnabasisAudioProcessor::undo()
 {
+    syncHistory();
     auto& stack = undoStacks[activeSlot];
     if (stack.isEmpty())
         return;
@@ -245,6 +254,7 @@ void AnabasisAudioProcessor::undo()
 
 void AnabasisAudioProcessor::redo()
 {
+    syncHistory();
     auto& stack = redoStacks[activeSlot];
     if (stack.isEmpty())
         return;
@@ -524,9 +534,29 @@ void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithR
 //     mirror holds the loaded truth.
 //
 // The second condition is about existence rather than staleness: an instance
-// that has never latched anything has `hasRetainedTrims() == false`, and the
-// four scalars sit at an initial zero indistinguishable from a measured "no
-// trim", so adopting them would write zeros over a vector the slot holds.
+// that has never latched anything has generation 0, and the four scalars sit at
+// an initial zero indistinguishable from a measured "no trim", so adopting them
+// would write zeros over a vector the slot holds.
+//
+// The THIRD condition is SLOT OWNERSHIP, and it is the one this function was
+// missing. `FROZEN_TRIMS` is per-slot state; the retained set is engine-wide and
+// carries no slot identity — the engine latches a vector, not "slot A's vector".
+// So after an A/B switch into a freeze-ON slot that carries NO child of its own,
+// nothing stages a restore (the stage is gated on the mirror being valid), the
+// generation pair stays equal, and the next save for the INCOMING slot happily
+// serialised the OUTGOING slot's latch as if it owned it — and the next restore
+// then injected it. The retained set is a runtime CACHE of the last latch; the
+// per-slot child is the persistent record, and a cache may only answer for the
+// slot it was filled under. `slotFrozenBase` is the generation at the moment the
+// live surface's frozen ownership last changed, so `generation != base` means
+// "this engine has latched something since this slot became live", which is
+// exactly the question. Equal ⇒ whatever the engine holds belongs to somebody
+// else, and the mirror (or nothing at all) is the honest answer.
+//
+// Relaxed on the base, deliberately: unlike the generation it is compared
+// against, it announces no payload — it is a comparand recorded by the same
+// thread that replaced the ownership, and the values it gates are already
+// ordered by the generation's own acquire.
 //
 // Round 40 read this rule off the PUBLISHED set instead, which does not
 // survive a re-prepare, and rescued the difference by copying the latch into
@@ -537,12 +567,33 @@ void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithR
 // function reads it from whichever thread asks. Freeze OFF returns nothing at
 // all: MODE invariant 3 gives an unfrozen slot no latch (and §5.4's slew would
 // walk away from one on the next audible block).
+// The ONLY way `liveFrozenTrims` is written, for the reason `replaceDetachMask`
+// is the only way the mask is: replacing the live surface's frozen vector and
+// re-basing the slot-ownership comparand are two halves of ONE rule, not a
+// courtesy beside it. Three call sites had the first half — `applySlotToLive`
+// (A/B, undo, redo), `resetSlotFieldsToDefaults`, and `setStateInformation`'s
+// own read of the AB child — and a fourth would have had to remember it.
+//
+// Re-basing to the CURRENT generation says "nothing the engine holds belongs to
+// this surface yet". A restore staged a line later re-establishes ownership the
+// moment it is applied (`injectTrims` publishes, which advances the generation
+// past the base); audio on the new slot does the same through `finishBlock`.
+// Both are the right answer for the same reason: ownership follows the latch.
+void AnabasisAudioProcessor::adoptFrozenMirror (juce::ValueTree frozen)
+{
+    liveFrozenTrims = std::move (frozen);
+    slotFrozenBase.store (engine.adaptiveForWrapper().retainedTrimGeneration(),
+                          std::memory_order_relaxed);
+}
+
 juce::ValueTree AnabasisAudioProcessor::engineFrozenTrimsIfLive()
 {
     if (apvts.getRawParameterValue (pid::freeze)->load() < 0.5f)
         return {};
     const auto& a = engine.adaptiveForWrapper();
-    if (engine.frozenRestorePending() || ! a.hasRetainedTrims())
+    const auto gen = a.retainedTrimGeneration();          // ACQUIRE: gates the four reads below
+    if (gen == 0 || gen == slotFrozenBase.load (std::memory_order_relaxed)
+        || engine.frozenRestorePending())
         return {};
     juce::ValueTree ft ("FROZEN_TRIMS");
     ft.setProperty ("releaseOctaves", (double) a.retainedTrimRelease(), nullptr);
@@ -649,7 +700,7 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
 
     livePresetName  = slot.getProperty ("presetName").toString();
     liveBaseline    = slot.getChildWithName ("BASELINE").createCopy();
-    liveFrozenTrims = slot.getChildWithName ("FROZEN_TRIMS").createCopy();
+    adoptFrozenMirror (slot.getChildWithName ("FROZEN_TRIMS").createCopy());
     // ADR-0014 (OQ-013 resolved 2026-08-02, owner-approved — the Hard Stop
     // this banner used to carry is LIFTED): a freeze-ON slot's vector is
     // staged to the engine on ADR-0012's row and lands at the duck's silent
@@ -833,7 +884,7 @@ void AnabasisAudioProcessor::resetSlotFieldsToDefaults()
     activeSlot = 0;
     livePresetName.clear();
     liveBaseline    = juce::ValueTree();
-    liveFrozenTrims = juce::ValueTree();
+    adoptFrozenMirror ({});
     replaceDetachMask ({});
     storedSlot = defaultSlot.createCopy();
     // The dirty datum is the one slot field that is NOT serialized, so a load
@@ -924,14 +975,13 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();   // §2.8: a session load is the biggest bulk swap of all
     // §7: undo stacks are session-local and never serialized — a load starts
-    // a fresh history for both slots.
-    for (int slot = 0; slot < anabasis::kNumAbSlots; ++slot)
-    {
-        undoStacks[slot].clear();
-        redoStacks[slot].clear();
-    }
+    // a fresh history for both slots. It is announced rather than performed:
+    // this function is not promised on the message thread, and the stacks are
+    // plain containers the editor reads at display rate and pops from. The
+    // counter is the whole message; `syncHistory()` does the clearing on the
+    // one thread allowed to touch them. See `historyEpoch`.
+    historyEpoch.fetch_add (1u, std::memory_order_relaxed);
     openGestureBits.store (0, std::memory_order_relaxed);
-    gesturePreState = {};
     // …and the THIRD member of the gesture-state family, which the load did
     // not reset. `managedGestureBits` is set and cleared on ANY thread (an
     // off-thread drag detaches), so a BEGIN delivered off-thread with the
@@ -989,7 +1039,7 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
             // slot's non-parameter fields (name/baseline/trims/mask) from AB.
             livePresetName  = live.getProperty ("presetName").toString();
             liveBaseline    = live.getChildWithName ("BASELINE").createCopy();
-            liveFrozenTrims = live.getChildWithName ("FROZEN_TRIMS").createCopy();
+            adoptFrozenMirror (live.getChildWithName ("FROZEN_TRIMS").createCopy());
             juce::StringArray loadedMask;
             if (const auto mask = live.getChildWithName ("DETACH_MASK"); mask.isValid())
                 for (int i = 0; i < mask.getNumChildren(); ++i)

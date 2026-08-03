@@ -39,6 +39,12 @@ private:
     anabasis::MasteringEQ scratchEq;   // GUI-side scratch; never the audio one
     juce::uint64 shownFingerprint = 0;
 
+    // The built curve, and the two inputs it was built from — see paint().
+    void paintStatic (juce::Graphics&, juce::Rectangle<float> area) const;
+    juce::Path cachedPath;
+    juce::uint64 pathFingerprint = 0;
+    juce::Rectangle<int> pathBounds;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CurveView)
 };
 

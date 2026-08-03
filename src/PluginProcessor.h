@@ -98,6 +98,7 @@ public:
         // not an undo step. `setStateInformation` already clears both slots'
         // stacks for exactly this reason ("a load starts a fresh history");
         // a copy is that event for one slot, so it takes the same answer.
+        syncHistory();
         const int other = 1 - activeSlot;
         undoStacks[other].clear();
         redoStacks[other].clear();
@@ -174,8 +175,13 @@ public:
     // Message-thread only; off-thread gesture callbacks skip the snapshot,
     // which degrades to the automation path (folded silently) rather than
     // touching ValueTrees from a foreign thread.
-    bool canUndo() const noexcept { return ! undoStacks[activeSlot].isEmpty(); }
-    bool canRedo() const noexcept { return ! redoStacks[activeSlot].isEmpty(); }
+    //
+    // NOT const, and that is the point rather than an oversight: every reader
+    // and every writer of the four stacks goes through `syncHistory()` first,
+    // which is the ONE place the message thread reconciles a session load. See
+    // `historyEpoch`.
+    bool canUndo() noexcept { syncHistory(); return ! undoStacks[activeSlot].isEmpty(); }
+    bool canRedo() noexcept { syncHistory(); return ! redoStacks[activeSlot].isEmpty(); }
     void undo();
     void redo();
 
@@ -253,7 +259,14 @@ private:
         macroEngine->refreshMapping();
     }
     void publishSilentMeters() noexcept;   // the six meter atomics, cleared (one list)
-    juce::ValueTree engineFrozenTrimsIfLive();   // ADR-0014 ownership test (one rule, two readers)
+    void adoptFrozenMirror (juce::ValueTree frozen);   // the ONLY writer of liveFrozenTrims
+    juce::ValueTree engineFrozenTrimsIfLive();   // ADR-0014 ownership test (one rule, one reader)
+    // The retained-trim generation at the moment the live surface's frozen
+    // ownership last changed — see `engineFrozenTrimsIfLive`. Atomic because the
+    // writers are the restore paths (message OR host thread) and the reader is
+    // `saveSlotFromLive`, which the editor poll and `getStateInformation` both
+    // reach; relaxed because it is a comparand, not a publication.
+    std::atomic<juce::uint32> slotFrozenBase { 0 };
     juce::ValueTree copyStateWithRaw();  // APVTS copy + additive exact-`raw` per PARAM
     void adoptParamsTree (const juce::ValueTree& paramsWithRaw);   // strip → replaceState → reassert
     juce::ValueTree saveSlotFromLive();
@@ -290,6 +303,55 @@ private:
     juce::Array<UndoEntry> undoStacks[anabasis::kNumAbSlots],
                            redoStacks[anabasis::kNumAbSlots];
     juce::ValueTree gesturePreState;     // armed at first gesture-begin
+
+    // §7 history ownership, settled at round 42. The four stacks and the
+    // gesture snapshot are plain `juce::Array<ValueTree>` / `ValueTree`, so they
+    // have exactly one legal thread — and `setStateInformation` used to CLEAR
+    // them, from a callback VST3 does not promise on the message thread (the
+    // premise KI-003, `restoreFrozenTrims` and the `stopDraining` split all
+    // rest on), while the editor read `canUndo()` at 24 Hz and `undo()` popped
+    // from the same arrays. A load could therefore race a `clear()` against a
+    // `removeAndReturn()`.
+    //
+    // The fix is ownership, not a lock: the loader now only BUMPS this counter,
+    // which is the whole message ("the session you have is not the session I
+    // just installed"), and the message thread does the clearing itself at the
+    // next `syncHistory()`. No thread but the message thread touches the
+    // containers, so there is nothing left to race — and nothing blocks in a
+    // host callback, which a mutex here would have done on every load.
+    //
+    // RELAXED on both sides, and that is this build's own test applied rather
+    // than laziness (THREADING_POLICY's publication-flag row): observing this
+    // counter gates a CLEAR, not a read of state the loader wrote, so it
+    // announces no payload. The session data the loader writes beside it —
+    // `apvts.replaceState`, `liveDetachMask`, `livePresetName` — is unordered
+    // against the editor for reasons KI-003 owns and that no ordering here
+    // would fix.
+    std::atomic<juce::uint32> historyEpoch { 0 };
+    juce::uint32 historyEpochSeen = 0;    // message thread only, hence not atomic
+
+    // Message thread ONLY. Idempotent, and cheap in the common case: one
+    // relaxed load and a compare. Called at the top of every path that reads or
+    // writes the history, so "the stacks are reconciled before use" is one rule
+    // with one enforcement point rather than a condition each caller repeats.
+    void syncHistory() noexcept
+    {
+        const auto epoch = historyEpoch.load (std::memory_order_relaxed);
+        if (epoch == historyEpochSeen)
+            return;
+        historyEpochSeen = epoch;
+        for (int slot = 0; slot < anabasis::kNumAbSlots; ++slot)
+        {
+            undoStacks[slot].clear();
+            redoStacks[slot].clear();
+        }
+        // The in-flight snapshot goes with them: it describes a session that is
+        // no longer loaded, so a drag still open across the load must not push
+        // it. (`openGestureBits` is an atomic and the loader clears it directly,
+        // so the end would match nothing anyway — this is the second half of
+        // the same statement, kept beside the first.)
+        gesturePreState = {};
+    }
     // The state the named preset landed, PER SLOT — it is the datum
     // `presetDirty()` compares against, and `livePresetName` is per-slot state,
     // so a single engine-wide copy described the wrong slot the moment the user

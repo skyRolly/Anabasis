@@ -12,6 +12,7 @@
 #include "../src/MacroEngine.h"
 #include "../src/gui/GrHistoryView.h"
 #include "../src/gui/PluginEditor.h"
+#include "../src/gui/CurveView.h"
 #include <array>
 #include <cstdio>
 #include <thread>
@@ -1926,6 +1927,113 @@ static void testPreparedStateAndSlotOwnership()
     }
 }
 
+// Round 42. `FROZEN_TRIMS` is PER-SLOT; the engine's retained vector is
+// engine-wide and carries no slot identity. The two meet in
+// `engineFrozenTrimsIfLive()`, and without a third condition the meeting is
+// wrong: after an A/B switch into a freeze-ON slot that holds no vector of its
+// own, nothing stages a restore (the stage is gated on the mirror being valid),
+// so the generation pair stays equal and the incoming slot's next save
+// serialised the OUTGOING slot's latch as if it owned it — after which the next
+// A/B or undo restore injected it. A runtime cache may only answer for the slot
+// it was filled under, which is what the base comparand records.
+static void testAFrozenLatchDoesNotFollowTheSlotSwitch()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 60; ++b)                     // slot A latches a real vector
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 997.0f * (float) (b * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    auto* fz = proc.apvts.getParameter (pid::freeze);
+    fz->setValueNotifyingHost (1.0f);
+    const double latched = (double) proc.adaptiveReadout().retainedTrimRelease();
+    check (std::abs (latched) > 1.0e-6, "slotIsolation: (premise) slot A latched a vector");
+
+    // Read a named slot out of a full save. Child 0 is ALWAYS slot 0 and child 1
+    // slot 1 — `getStateInformation` orders them by index, not by which is live.
+    auto savedRelease = [&proc] (int slot) -> double
+    {
+        juce::MemoryBlock out;
+        proc.getStateInformation (out);
+        const auto r = juce::ValueTree::fromXml (
+            *juce::AudioProcessor::getXmlFromBinary (out.getData(), (int) out.getSize()));
+        return (double) r.getChildWithName ("AB").getChild (slot)
+                         .getChildWithName ("FROZEN_TRIMS")
+                         .getProperty ("releaseOctaves", -999.0);
+    };
+    check (std::abs (savedRelease (0) - latched) < 1.0e-9,
+           "slotIsolation: (premise) slot A serialises the vector it latched");
+
+    // Into slot B, which is at defaults and has never latched anything. Freeze
+    // goes ON *after* the switch, so B is freeze-ON with no FROZEN_TRIMS child —
+    // the exact shape that made the capture speak for the wrong slot.
+    proc.switchToSlot (1);
+    check (proc.apvts.getRawParameterValue (pid::freeze)->load() < 0.5f,
+           "slotIsolation: (premise) the defaults slot arrives with Freeze OFF");
+    fz->setValueNotifyingHost (1.0f);
+
+    check (juce::exactlyEqual (savedRelease (1), -999.0),
+           "slotIsolation: a slot that never latched serialises no vector of another slot's");
+    check (std::abs (savedRelease (0) - latched) < 1.0e-9,
+           "slotIsolation: …and slot A's own record is untouched by the switch");
+
+    // Back to A: its vector arrives through the mirror and a staged restore,
+    // which is the branch that owns the window before the restore lands.
+    proc.switchToSlot (0);
+    check (std::abs (savedRelease (0) - latched) < 1.0e-9,
+           "slotIsolation: switching back restores slot A's own vector");
+}
+
+// Round 42. The §7 history is message-thread-owned: `setStateInformation` may
+// arrive on any thread, so it announces the session change with a counter and
+// the message thread does the clearing. The externally observable half is that
+// a load must still start a fresh history — including for a drag that was open
+// across it, whose pre-state describes a session that is no longer loaded.
+static void testHistoryOwnershipAcrossAStateLoad()
+{
+    AnabasisAudioProcessor proc;
+    auto* drive = proc.apvts.getParameter (pid::clipDrive);
+    auto set = [drive] (float v)
+    { drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (v)); };
+
+    drive->beginChangeGesture();
+    set (7.0f);
+    drive->endChangeGesture();
+    check (proc.canUndo(), "historyEpoch: (premise) a completed drag pushed a step");
+
+    juce::MemoryBlock state;
+    proc.getStateInformation (state);
+
+    // A drag OPEN across the load. Its pre-state belongs to the outgoing
+    // session, so the end must push nothing — and the stacks must read empty
+    // from the first query, not from whenever a clear happens to run.
+    drive->beginChangeGesture();
+    set (9.0f);
+    proc.setStateInformation (state.getData(), (int) state.getSize());
+    check (! proc.canUndo() && ! proc.canRedo(),
+           "historyEpoch: a load starts a fresh history for both slots");
+    set (3.0f);
+    drive->endChangeGesture();
+    check (! proc.canUndo(),
+           "historyEpoch: a drag open across the load pushes no step from the old session");
+
+    // …and the history works again afterwards: the epoch is reconciled once,
+    // not latched into a permanently empty state.
+    drive->beginChangeGesture();
+    set (5.0f);
+    drive->endChangeGesture();
+    check (proc.canUndo(), "historyEpoch: the next completed drag pushes normally");
+}
+
 // Round 41. The durable copy of a frozen latch must live in the LOCK-FREE
 // layer, because the two threads that need it cannot be made to take turns:
 // `prepareToPlay` is a host callback JUCE does not promise on the message
@@ -2360,6 +2468,116 @@ static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::Stri
             return found;
     }
     return nullptr;
+}
+
+// Round 42. A persisted `uiScale` that is not one of the seven legal steps —
+// hand-edited state, or a session written when the list differed — used to be
+// IGNORED by three sites with three different fallbacks: `applyUiScale` left the
+// transform at 1.0, the constructor showed 100 %, and `refreshInternalSettingsBoxes`
+// kept whatever the box already had. The last is the one that diverges on a
+// project load: the window renders at one step while the panel displays another.
+// One `nearestScaleIndex()` now answers for both, so they cannot disagree, and
+// an out-of-list value CLAMPS the way every other persisted value in this tree
+// does rather than being silently discarded.
+static void testAnOutOfListUiScaleClampsConsistently()
+{
+    AnabasisAudioProcessor proc;
+    // 130 is not a step, and its nearest is 125 rather than the 100 a
+    // "fall back to default" reading would give — so this separates clamping
+    // from ignoring, which a value like 101 would not.
+    proc.internalState.state().setProperty (iid::uiScale, 130, nullptr);
+
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "uiScaleClamp: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+    auto* box = findComboByTitle (*ed, "UI scale");
+    check (box != nullptr, "uiScaleClamp: (premise) the UI-scale box was found");
+    if (box == nullptr)
+        return;
+
+    // `getScaleFactor()` is the X scale of the transform applyUiScale set;
+    // hostScale is 1 in the headless suite, so it IS the persisted step.
+    auto rendered = [ed] { return ed->getTransform().getScaleFactor(); };
+    check (std::abs (rendered() - 1.25f) < 1.0e-4f,
+           "uiScaleClamp: an out-of-list percent renders at the NEAREST step, not at 100 %");
+    check (box->getText() == "125%",
+           "uiScaleClamp: …and the panel displays the same step it rendered");
+
+    // The load direction, which is where the two used to part company: the box
+    // holds a legal selection and the stored value changes to an illegal one.
+    proc.internalState.state().setProperty (iid::uiScale, 175, nullptr);
+    ed->refreshInternalSettingsBoxes();
+    check (box->getText() == "175%" && std::abs (rendered() - 1.75f) < 1.0e-4f,
+           "uiScaleClamp: (premise) a legal stored step reaches both halves");
+    proc.internalState.state().setProperty (iid::uiScale, 130, nullptr);
+    ed->refreshInternalSettingsBoxes();
+    check (box->getText() == "125%",
+           "uiScaleClamp: an illegal value arriving by LOAD moves the box off the stale step");
+    check (std::abs (rendered() - 1.25f) < 1.0e-4f,
+           "uiScaleClamp: …to the same step the window renders at");
+}
+
+// Round 42. `CurveView::paint` rebuilt its curve on every repaint — a full
+// `MasteringEQ::prepare` plus one `magnitudeDbAt` per pixel column — although
+// `refresh()` already gates the repaint on a fingerprint of the parameters and
+// the sample rate. Caching against THAT fingerprint is only safe if the cached
+// frame is pixel-identical to the rebuilt one, which is what this asserts: the
+// cache is invisible, or it is a bug.
+static void testTheCurveWellCachesWithoutChangingWhatItDraws()
+{
+    AnabasisAudioProcessor proc;
+    // Constructed DIRECTLY rather than fished out of the editor, for two
+    // reasons the first version of this test got wrong: the Advanced panel is
+    // not laid out in the headless editor, so the well had zero bounds and the
+    // test returned before asserting anything (an early return with no check —
+    // it reported nothing and proved nothing); and `findChildOfType` returns
+    // whichever well comes first, so a stimulus aimed at the EQ parameters
+    // might have been driving the clip-transfer curve. Both disappear when the
+    // test owns the component and names the mode.
+    CurveView curve (proc, CurveView::Mode::eqResponse);
+    curve.setBounds (0, 0, 220, 90);
+
+    auto snapshot = [&curve]
+    {
+        juce::Image img (juce::Image::ARGB, curve.getWidth(), curve.getHeight(), true);
+        juce::Graphics g (img);
+        curve.paint (g);
+        return img;
+    };
+    auto identical = [] (const juce::Image& a, const juce::Image& b)
+    {
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+                if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                    return false;
+        return true;
+    };
+
+    curve.refresh();                          // fingerprint the current state
+    const auto first  = snapshot();           // builds
+    const auto second = snapshot();           // must come from the cache
+    check (identical (first, second),
+           "curveCache: a repaint with nothing moved draws exactly what it drew before");
+
+    // …and the cache is not stale: a parameter move plus the refresh that
+    // fingerprints it must change the picture. Without this the previous check
+    // is satisfied by a cache that never updates at all.
+    auto* tilt = proc.apvts.getParameter (pid::eqTilt);
+    tilt->setValueNotifyingHost (tilt->getNormalisableRange().convertTo0to1 (4.0f));
+    curve.refresh();
+    const auto moved = snapshot();
+    check (! identical (first, moved),
+           "curveCache: a parameter move rebuilds it — the cache follows the fingerprint");
+
+    // The bounds are the OTHER half of the cache key — the path is in component
+    // coordinates, so a resize must rebuild it even though no DSP input moved.
+    // Deliberately NOT asserted here: every stimulus I could write for it is
+    // satisfied by a cache that ignores bounds too (the drawn curve stays inside
+    // the region both geometries share), and a check that cannot fail is worse
+    // than none. The term is defensive and cheap; a resize test belongs with a
+    // laid-out editor, which the headless suite does not have.
 }
 
 static void testTheSettingsPanelFollowsAProjectLoad()
@@ -2806,6 +3024,8 @@ int main (int argc, char** argv)
         testStateReplacementAndHistoryConsistency();
         testPreparedStateAndSlotOwnership();
         testTheFrozenLatchNeedsNoThreadCrossing();
+        testAFrozenLatchDoesNotFollowTheSlotSwitch();
+        testHistoryOwnershipAcrossAStateLoad();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
@@ -2815,6 +3035,8 @@ int main (int argc, char** argv)
         testMeterResetClearsSessionHolds();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
+        testAnOutOfListUiScaleClampsConsistently();
+        testTheCurveWellCachesWithoutChangingWhatItDraws();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();

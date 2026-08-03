@@ -66,7 +66,7 @@ Any path not in this table is a new cross-thread path → Architecture Review Ga
   distinction is easy to lose because the two look identical at the call site, so the test is what
   the reader does next: if observing the flag gates a read of other state, it is a publication
   flag. In this build: `AnabasisEngine::frozenAppliedSeq` (gates `publishedTrim*`),
-  `AdaptiveEngine::pubTrimEver` and `retTrimEver` (each gates its own four trim scalars), and
+  `AdaptiveEngine::pubTrimEver` and `retTrimSeq` (each gates its own four trim scalars — the second is a counter, and is on this row rather than the relaxed one because it announces a payload; the wrapper's `slotFrozenBase`, which is only ever COMPARED against it, is correctly relaxed), and
   ADR-0012's staged-record flags (each gates its payload). Unobservable on x86-TSO; real on a
   weakly ordered target, and the cost is a compiler barrier on a path that runs once per block.
 

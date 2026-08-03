@@ -223,9 +223,18 @@ overlay would report a vector the DSP is not using (KI-006's readout half); `ret
 *the vector this instance last latched*, which is persistence state.
 
 The wrapper's `liveFrozenTrims` mirror is **not** the owner. It covers exactly one window — a
-restore staged and not yet applied, where the engine's answer is one session out of date — and the
-save prefers the engine whenever `! frozenRestorePending() && hasRetainedTrims()`, both clauses
-living in `AnabasisAudioProcessor::engineFrozenTrimsIfLive()`. Freeze OFF adopts nothing:
+restore staged and not yet applied, where the engine's answer is one session out of date.
+
+**The retained set is engine-wide; `FROZEN_TRIMS` is per-slot, and the gap between those two facts
+is the third clause** (round 42). The engine latches *a vector*, not "slot A's vector", so after an
+A/B switch into a freeze-ON slot that holds none of its own — where nothing stages a restore and the
+generation pair therefore stays equal — the incoming slot's next save serialised the outgoing slot's
+latch as if it owned it. A runtime cache may only answer for the slot it was filled under: the
+wrapper records the retained GENERATION each time the live surface's frozen ownership changes, and
+adopts the engine's answer only once that generation has advanced past it. All three clauses live in
+`AnabasisAudioProcessor::engineFrozenTrimsIfLive()`; the re-basing lives in `adoptFrozenMirror()`,
+which is the single writer of the mirror precisely so the two halves of "replace the frozen
+ownership" cannot be performed separately. Freeze OFF adopts nothing:
 invariant 3 gives an unfrozen slot no latch.
 
 Round 40 declared the mirror the durable owner and had `prepareToPlay` copy the latch into it
