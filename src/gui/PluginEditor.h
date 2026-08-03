@@ -127,6 +127,12 @@ private:
     void timerCallback() override;
     void parameterChanged (const juce::String&, float) override;  // advancedMode / bypass
     void handleAsyncUpdate() override;                            // → mode/dim refresh
+    // Raised by parameterChanged when it may NOT post (an automatable id can be
+    // delivered on the audio thread); consumed by the 24 Hz tick. See both.
+    std::atomic<bool> uiRefreshPending { false };
+    // The Settings tree changes under the editor (a session load rewrites it),
+    // so the boxes are re-seeded from it on the same tick.
+    void refreshInternalSettingsBoxes();
     void applyUiScale();
     void updateModeVisibility();
     void layoutAdvanced (juce::Rectangle<int> body);

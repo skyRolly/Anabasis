@@ -8,6 +8,12 @@ using namespace abgui;
 // invented here — the mechanism ships, the copy lands when specified.
 static juce::String tidyTip (const juce::String& tip) { return tip.trim(); }
 
+// The UI-scale step list, in ONE place: the combo builds its item list from it,
+// `applyUiScale` maps the stored percent back through it, and the settings
+// re-seed compares against it. Three private copies is how the three drift.
+static constexpr int kScaleSteps[]  = { 80, 90, 100, 125, 150, 175, 200 };
+static constexpr int kNumScaleSteps = (int) (sizeof (kScaleSteps) / sizeof (kScaleSteps[0]));
+
 // ============================================================================
 //  Backdrop / ABControl paint — family grammar (provenance in the header).
 // ============================================================================
@@ -350,18 +356,18 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // int_uiScale stores PERCENT; the combo maps index<->percent through the
     // step list, so the stored value stays meaningful outside this editor.
     uiScaleBox.addItemList ({ "80%", "90%", "100%", "125%", "150%", "175%", "200%" }, 1);
-    static constexpr int kScaleSteps[] = { 80, 90, 100, 125, 150, 175, 200 };
     {
         const int pct = (int) ist.getProperty (iid::uiScale, 100);
         int idx = 2;
-        for (int i = 0; i < 7; ++i)
+        for (int i = 0; i < kNumScaleSteps; ++i)
             if (kScaleSteps[i] == pct) idx = i;
         uiScaleBox.setSelectedItemIndex (idx, juce::dontSendNotification);
     }
     uiScaleBox.onChange = [this, &ist]
     {
         ist.setProperty (iid::uiScale,
-                         kScaleSteps[juce::jlimit (0, 6, uiScaleBox.getSelectedItemIndex())],
+                         kScaleSteps[juce::jlimit (0, kNumScaleSteps - 1,
+                                                   uiScaleBox.getSelectedItemIndex())],
                          nullptr);
         applyUiScale();
     };
@@ -948,12 +954,51 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
         editedDot.setVisible (false);   // Advanced shows per-control badges instead
 }
 
+// The Settings boxes are written by the user through `onChange` and read back
+// here, because the InternalState tree changes UNDER them too: a session load
+// runs `InternalState::replaceFrom`, which rewrites the same tree object the
+// editor is bound to. The round-25 off-by-one fix replaced a two-way
+// `Value::referTo` with a one-shot seed plus a writer, which left the
+// widget→state direction working and state→widget silent — a panel left open
+// across a project load then showed the PREVIOUS project's oversampling, phase
+// and offline quality, and "correcting" one of them would have written back a
+// setting that was already active. Re-seeding on the existing 24 Hz tick keeps
+// the explicit index↔value mapping (the thing the referTo could not express)
+// and restores the missing direction; it only touches a box whose selection
+// actually differs, so it is a comparison per tick in the steady state.
+void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
+{
+    const auto& ist = processor.internalState.state();
+    auto reseed = [] (juce::ComboBox& box, int wantIndex)
+    {
+        wantIndex = juce::jlimit (0, juce::jmax (0, box.getNumItems() - 1), wantIndex);
+        if (box.getSelectedItemIndex() != wantIndex)
+            box.setSelectedItemIndex (wantIndex, juce::dontSendNotification);
+    };
+    reseed (oversampleBox, (int) ist.getProperty (iid::oversample, 0));
+    reseed (phaseBox,      (int) ist.getProperty (iid::osPhase, 0));
+    reseed (offlineBox,    (int) ist.getProperty (iid::offlineQuality, 0));
+
+    // uiScale is the same shape with one extra step: the box only DISPLAYS the
+    // percent, so a stored change has to reach `applyUiScale()` as well or the
+    // panel would read 150 % while the window stayed at 100 %.
+    const int pct = (int) ist.getProperty (iid::uiScale, 100);
+    int wantScaleIdx = uiScaleBox.getSelectedItemIndex();
+    for (int i = 0; i < kNumScaleSteps; ++i)
+        if (kScaleSteps[i] == pct)
+            wantScaleIdx = i;
+    if (wantScaleIdx != uiScaleBox.getSelectedItemIndex())
+    {
+        uiScaleBox.setSelectedItemIndex (wantScaleIdx, juce::dontSendNotification);
+        applyUiScale();
+    }
+}
+
 void AnabasisAudioProcessorEditor::applyUiScale()
 {
-    static constexpr int kScaleSteps[] = { 80, 90, 100, 125, 150, 175, 200 };
     const int pct = (int) processor.internalState.state().getProperty (iid::uiScale, 100);
     float scale = 1.0f;
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < kNumScaleSteps; ++i)
         if (kScaleSteps[i] == pct)
             scale = (float) pct / 100.0f;
 
@@ -973,11 +1018,26 @@ void AnabasisAudioProcessorEditor::setScaleFactor (float newScale)
 
 void AnabasisAudioProcessorEditor::parameterChanged (const juce::String&, float)
 {
-    triggerAsyncUpdate();   // may arrive off the message thread (APVTS rule)
+    // Both ids this listens to — advancedMode and bypass — are AUTOMATABLE, and
+    // APVTS delivers on whichever thread wrote the value, so a host automating
+    // Bypass calls this FROM THE AUDIO THREAD. `triggerAsyncUpdate()` posts to
+    // the platform message queue, which takes a lock and on some platforms
+    // allocates: the REALTIME_AUDIO_POLICY hard red line that
+    // `MacroEngine::parameterChanged` refuses and that the wrapper's
+    // `drainDetachBitsSoon` was rewritten to avoid. Post ONLY when already on
+    // the message thread — where posting is free and the refresh stays exactly
+    // as immediate as it was. Otherwise raise a flag the 24 Hz timer consumes,
+    // which costs ≤ ~42 ms on a path that is host automation rather than a user
+    // gesture (and the timer already re-derives the bypass dim independently,
+    // so the visible half never waited on this).
+    uiRefreshPending.store (true, std::memory_order_relaxed);
+    if (juce::MessageManager::existsAndIsCurrentThread())
+        triggerAsyncUpdate();
 }
 
 void AnabasisAudioProcessorEditor::handleAsyncUpdate()
 {
+    uiRefreshPending.store (false, std::memory_order_relaxed);
     updateModeVisibility();
     applyUiScale();
     dimOverlay.setVisible (processor.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f);
@@ -986,6 +1046,11 @@ void AnabasisAudioProcessorEditor::handleAsyncUpdate()
 
 void AnabasisAudioProcessorEditor::timerCallback()
 {
+    // The off-message-thread half of parameterChanged (see there) — and the
+    // only consumer of that flag, since the on-thread half posts normally.
+    if (uiRefreshPending.exchange (false, std::memory_order_relaxed))
+        handleAsyncUpdate();
+    refreshInternalSettingsBoxes();
     refreshPresetDisplay();
     const bool bypassed = processor.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f;
     if (bypassed != dimOverlay.isVisible())

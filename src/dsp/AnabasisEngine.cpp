@@ -621,14 +621,10 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             float s = juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn;
             if (! std::isfinite (s))
                 s = 0.0f;                      // filter state must never eat a NaN
-            // §2.9 spectrum tap 1: post-InputGain, pre-everything-else. Both
-            // taps select L/R by channel index, which is exhaustive only while
-            // the engine is at most stereo — `nCh` is clamped to kMaxChannels
-            // in prepare(), so widening that constant without giving the taps
-            // real per-channel scratch would fold every extra channel into the
-            // right trace. Made a build error rather than a silent one.
-            static_assert (kMaxChannels == 2,
-                           "spectrum taps assume L/R; widen the scratch first");
+            // §2.9 spectrum tap 1: post-InputGain, pre-everything-else. The
+            // L/R selection is exhaustive only while the engine is at most
+            // stereo; the static_assert that says so lives beside the scratch
+            // declarations in the header, where a widening would start.
             (ch == 0 ? specInL : specInR)[(size_t) n] = s;
             if (eqPre)
                 s = eq.processSample (ch, s);

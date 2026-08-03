@@ -6,9 +6,25 @@ MacroEngine::MacroEngine (juce::AudioProcessorValueTreeState& apvtsIn) : apvts (
     apvts.addParameterListener (pid::loudness,  this);
     apvts.addParameterListener (pid::character, this);
     apvts.addParameterListener (pid::tone,      this);
+    // The timer is NOT started here — see startDraining(). Everything the
+    // listener above can do before then is set a flag; nothing reads the
+    // std::function members until a drain runs.
+}
+
+void MacroEngine::startDraining()
+{
     // Drains a flag set from a thread that may not post messages safely. 30 ms
     // is well inside the message-thread-rate mapping the macro layer promises
     // (ADR-0005 §5.2) and costs an atomic load when idle.
+    //
+    // Deliberately separate from the constructor: the tick reads `isDetached`
+    // (through applyMapping) and `onDrainTick`, and the owner can only assign
+    // those AFTER this object exists. Starting the timer in the constructor
+    // left a window in which the message thread could run a tick while the
+    // constructing thread was still assigning a std::function — and the
+    // constructing thread is not promised to be the message thread (VST3 does
+    // not promise it for `setStateInformation` either; KI-003). Owner calls
+    // this once, after wiring.
     startTimer (30);
 }
 

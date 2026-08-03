@@ -106,6 +106,21 @@ deliberately left alone (the frozen vector surviving a factory apply, preset-rin
 name, undo not restoring the dirty baseline) — semantics calls for the fine review, two of them
 KI-006's question. Suites: 230 + 179.
 
+**Review round 26 (2026-08-03).** Two regressions from the rounds before it and one ADR drift.
+(1) Round 25's combo fix restored the encoding but dropped the state→widget direction, so a
+project loaded with the Settings panel open showed the previous project's oversampling, phase and
+offline quality; the boxes (and `uiScaleBox`) are now re-seeded from the tree on the 24 Hz tick.
+(2) The EDITOR still called `triggerAsyncUpdate()` from a parameter callback while listening to
+two automatable ids — the same red line round 25 removed from the wrapper, one class over; it now
+posts only when already on the message thread and otherwise waits for the tick. (3) **ADR-0014
+described a duck request the code deliberately does not make** — the round-24 store was replaced
+by a derivation at the consume in round 25 and the ADR was not updated with it; corrected, and the
+same ADR gained two known-limits entries (the generation pair is engine-wide while the mirror is
+per-slot; the wrong-slot injection window is any live-slot change inside the duck, not only a
+Freeze toggle). Also: `MacroEngine::startDraining()` moves the 30 ms timer out of the constructor
+so it cannot read the callbacks mid-assignment; `TESTING_POLICY.md` no longer restates the
+pluginval strictness in prose (`build.yml` is the single place, and the copy had gone stale).
+
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The editor: family frame (46 px top bar — wordmark→About, preset browser, A/B, Copy,
@@ -147,8 +162,8 @@ is in with `docs/architecture/PERFORMANCE_BUDGET.md`: the budget case — 48 kHz
 working — measures **3.0 % of one core** on a 2.1 GHz Xeon against the ≈5 %-of-a-desktop-core
 target; 16× reads 9.2 % (48 k) / 20.2 % (96 k) as the stated quality extreme. Whole-engine
 numbers; the per-stage ⊕ allocation stays unclaimed pending a profiler pass. **pluginval L10
-passed locally ×3 in BOTH modes** — the P6 bar holds on Linux; CI stays at 8 until the phase
-formally turns.
+passed locally ×3 in BOTH modes** — the P6 bar holds on Linux; CI stayed at 8 at the time of this
+note and was raised to 10 later the same day (see the v0.1.0 completion summary above).
 
 **P6 progress, continued (2026-08-02, later).** The factory-preset MECHANISM is in (DESIGN §7's
 compiled-in override tables — defaults first, then the intents, through the same lock/exclusion

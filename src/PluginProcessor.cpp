@@ -36,6 +36,8 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // existing 30 ms tick rather than through a message post of our own
     // (drainDetachBitsSoon explains why that route is closed).
     macroEngine->onDrainTick = [this] { handleAsyncUpdate(); };
+    // Both callbacks are wired; only now may the tick that reads them run.
+    macroEngine->startDraining();
     // The undo gesture bookkeeping keys one bit per parameter index; ADR-0010
     // freezes the surface at 49, well inside the word.
     jassert (getParameters().size() <= kMaxCountedGestureIndex);
@@ -80,6 +82,15 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
     // Only message-thread begins set a bit: an off-thread gesture is invisible
     // to undo by design (it folds into the automation path), and letting it
     // occupy the mask would suppress a concurrent real drag's step.
+    //
+    // NOTE the deliberate asymmetry with `managedGestureBits` below, which is
+    // set and cleared on ANY thread: an off-thread drag DOES detach but does
+    // NOT produce an undo step. The two masks answer different questions and
+    // §5.3/§7 word them differently on purpose — detachment keys on "the change
+    // was gesture-bracketed", which is true whoever delivered it, while an undo
+    // step keys on a message-thread drag, because pushing one means copying
+    // ValueTrees and that may not happen off the message thread. Stated here
+    // because the two lines sit three apart and look like an oversight.
     if (juce::MessageManager::existsAndIsCurrentThread()
         && parameterIndex >= 0 && parameterIndex < kMaxCountedGestureIndex)
     {
@@ -564,7 +575,14 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
 
         // Unreachable given the validation above — and deliberately still
         // checked, because the two guards would only diverge silently if one
-        // moved.
+        // moved. The early return leaves the pushed undo step and the requested
+        // duck standing, exactly as `applyPresetFile`'s does and for the same
+        // reason: a failed apply may already have written part of the defaults
+        // pass, so those values must land under the duck, and the pre-state is
+        // precisely what the undo step should restore. Spending a step and a
+        // dip on a partial apply is the correct trade; spending them on a
+        // rejected INDEX is not, which is why the index is validated before
+        // the bracket opens rather than here.
         if (! presetManager->applyFactoryPreset (index, mask))
             return false;
         liveDetachMask = mask;

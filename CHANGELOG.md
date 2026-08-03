@@ -213,9 +213,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - **The meter reset no longer lets a slice of the previous, louder material into the fresh
   integrated reading** (2026-08-03): the measurement window that was in progress at the moment of
   the reset is now excluded, which is what the reset was always documented to do.
-- **The Settings drop-downs select what they say** (2026-08-03). Oversampling, phase and
-  offline-render quality were each off by one — picking "Off" turned oversampling on, "Minimum"
-  gave linear phase, "Follow" forced maximum quality — and all three opened blank until touched.
+- **The Settings drop-downs select what they say, and keep showing it** (2026-08-03).
+  Oversampling, phase and offline-render quality were each off by one — picking "Off" turned
+  oversampling on, "Minimum" gave linear phase, "Follow" forced maximum quality — and all three
+  opened blank until touched. They also now follow the stored setting, so a project loaded with
+  the Settings panel open no longer leaves them showing the previous project's choices.
+- **Automating Bypass with the window open no longer risks an audio dropout** (2026-08-03): the
+  window asked the message queue for work from inside the audio callback, which can take a lock.
 - **Factory presets change the sound** (2026-08-03). A factory preset expresses itself through the
   three macro knobs, and the translation from those positions to the compressor / clipper /
   limiter / EQ settings was being cancelled as the preset loaded, so every factory preset left the

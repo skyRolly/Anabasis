@@ -331,6 +331,14 @@ private:
     // once per chunk with a single release-store each) + the two SPSC rings
     // the GUI FFTs from. Scratch is sized in prepare(); no audio-thread
     // allocation.
+    // Per-chunk scratch for the two §2.9 spectrum taps. Both tap sites select
+    // L or R by channel index, which is exhaustive only while the engine is at
+    // most stereo — `numChans` is clamped to kMaxChannels in prepare(), so
+    // widening that constant WITHOUT giving the taps real per-channel scratch
+    // would fold every extra channel into the right trace. The assertion lives
+    // here, beside the declaration a widening would have to change, rather than
+    // inside the per-sample loop that consumes it.
+    static_assert (kMaxChannels == 2, "spectrum taps assume L/R; widen this scratch first");
     std::vector<float> specInL, specInR, specOutL, specOutR;
     ScopeBuffer specInRing, specOutRing;
 

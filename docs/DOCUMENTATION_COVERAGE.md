@@ -6,7 +6,43 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 25 (2026-08-03)**, whose two flagged findings were both
+**Last updated:** for **review round 26 (2026-08-03)**, which caught two REGRESSIONS from the two
+rounds before it and one drift in the highest-authority document in the tree:
+(1) **The round-25 combo fix broke the other direction.** Replacing the two-way `Value::referTo`
+with an explicit seed + `onChange` writer fixed the off-by-one but left state→widget silent, so a
+project loaded with the Settings panel open showed the PREVIOUS project's oversampling, phase and
+offline quality (`InternalState::replaceFrom` rewrites the same tree object the editor is bound
+to) — and "correcting" one would have written back a setting that was already active. The boxes
+are now re-seeded from the tree on the existing 24 Hz tick, keeping the explicit index↔value
+mapping the `referTo` could not express. `uiScaleBox` is re-seeded with them, including the
+`applyUiScale()` its display alone would not reach; the step list it shares with two other sites
+is now one file-scope constant instead of three copies.
+(2) **The editor still had the red line the wrapper removed in round 25.** Its `parameterChanged`
+called `triggerAsyncUpdate()` unconditionally while listening to two AUTOMATABLE ids
+(`advancedMode`, `bypass`), so automating Bypass could post to the message queue — lock, and an
+allocation on some platforms — from inside the audio callback. Same shape as the wrapper's fix:
+post only when already on the message thread, otherwise raise a flag the 24 Hz tick consumes. The
+lesson recorded rather than the fix: when a rule is enforced at one site, grep for the construct
+before calling the round done — the wrapper and the editor implement the same listener interface.
+(3) **ADR-0014 described a duck request the code deliberately does not make.** The round-24
+hardening added `duckRequested` beside the record flag; round 25 replaced it with a derivation at
+the consume (one mechanism instead of two observations) and updated the code comment and this
+file — but not the ADR, which outranks DESIGN.md. Corrected, with the history kept: an ADR that
+describes a mechanism that is not there invites a future change to "restore" it.
+Also this round: `MacroEngine::startDraining()` splits the 30 ms timer out of the constructor, so
+the tick cannot read `isDetached`/`onDrainTick` while the owner is still assigning them (the owner
+is not promised to construct on the message thread — KI-003's premise); ADR-0014 gains two
+known-limits entries (the generation pair is engine-wide while the mirror is per-slot; and the
+"vector lands in whatever slot is live at the bottom" degradation is any live-slot change inside
+the duck, not only a Freeze toggle); the spectrum `static_assert` moved from the per-sample loop
+to the scratch declaration a widening would actually touch; `TESTING_POLICY.md` stopped restating
+the pluginval strictness in the present tense (`build.yml` holds it in one place, and the prose
+copy had already gone stale by a day) and HANDOVER's P6 note reads as history. Comments added for
+the two asymmetries a reader would otherwise read as oversights: `managedGestureBits` is
+maintained on any thread while `openGestureBits` is armed only on the message thread (detachment
+keys on "gesture-bracketed", an undo step on "message-thread drag"), and the factory-preset early
+return leaves its undo step and duck standing for the same reason `applyPresetFile`'s does.
+Previous: **review round 25 (2026-08-03)**, whose two flagged findings were both
 user-visible and neither reachable by any existing test:
 (1) **The three Settings combos were off by one.** `setupComboInternal` bound
 `getSelectedIdAsValue()` — a 1-based ComboBox item ID — straight onto InternalState fields whose

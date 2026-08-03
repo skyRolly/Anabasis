@@ -81,6 +81,12 @@ public:
     // keeps one cadence instead of two. Called on the message thread only.
     std::function<void()> onDrainTick;
 
+    // Starts the 30 ms drain. Call ONCE, after both callbacks above are
+    // assigned: they are read on the tick, and the owner cannot assign them
+    // until this object is constructed. Until it is called nothing drains, so
+    // a mapping armed in between simply waits — the flag is never lost.
+    void startDraining();
+
     // True while any ScopedRestore is alive — the detach discriminator's
     // third condition (a restore lands values, it is not a user gesture).
     bool isRestoring() const noexcept

@@ -86,19 +86,45 @@ vector sat pending indefinitely and was injected at the next unrelated duck — 
 into whatever slot was live by then. Ducking an undo is independently owed: DSP_POLICY invariant
 8's click-free enumeration names the undo step as one of the three bulk swaps (ADR-0004).
 
-**The record carries its OWN duck request** (`restoreFrozenTrims` raises `duckRequested` beside
-the flag), which is what makes the paragraph above structural instead of a rule four call sites
-must remember. The caller's request and the stage are separate stores with a whole parameter
-restore between them — `adoptParamsTree` replaces the state and re-asserts every raw value — so an
-audio block landing in that gap consumes the request, runs the entire ~34 ms duck and returns to
-idle *before the record exists*. Adversarial verification of the round-24 fix found this; without
-the record's own request the strand survives on a path with no rewire to bring the duck back. A
-duplicate request costs nothing: one seen at the bottom holds it a further block, which is the
-behaviour the transition layer already implements.
+**The duck request is DERIVED FROM THE RECORD, at the consume.** The block top that takes the
+record sets the same `duckAsked` a `requestForcedDuck()` would have set, and `restoreFrozenTrims`
+deliberately raises nothing itself — the comment there says so. That is what makes the paragraph
+above structural instead of a rule four call sites must remember: the caller's request and the
+stage are separate stores with a whole parameter restore between them (`adoptParamsTree` replaces
+the state and re-asserts every raw value), so an audio block landing in that gap consumes the
+request, runs the entire ~34 ms duck and returns to idle *before the record exists*. Adversarial
+verification of the round-24 fix found that strand, and the first repair added a second store
+beside the flag — which review round 26 then corrected to this derivation, because two stores are
+two things to observe and the consumer reads them a dozen lines apart, so a block could take the
+record and miss the request. Deriving it cannot go out of order with the record it comes from.
+Every duck state reaches a bottom from there: `idle`/`in` start a fresh out-leg, `out` carries the
+ask through `duckAskedWhileOut`, `bottom` applies the pending copy in its own branch, and the
+unprimed/offline branch applies it directly.
 
-**Degradation, stated not hidden.** If Freeze is turned off between stage and consumption, the
-injected vector publishes once and the next audible block slews away from it — the documented
-last-writer-wins degradation of ADR-0012, not a fault.
+*(This paragraph described the second-store version for one commit. The code always carried the
+`NOTE the absence of a duck request here` comment explaining the derivation, so the drift was
+visible in the tree rather than only in review — but an ADR outranks DESIGN.md, so a stale one is
+the most expensive kind of stale document there is.)*
+
+**Degradation, stated not hidden.** A vector staged for one slot lands wherever the engine is when
+the bottom arrives — the stage is engine-wide, the slot is a wrapper concept. If Freeze is turned
+off between stage and consumption, the injected vector publishes once and the next audible block
+slews away from it. The same is true of anything else that changes the live slot inside the duck
+window: an A/B switch, a preset apply or an undo landing there injects the OUTGOING slot's vector
+into the incoming one, transiently, and the next audible block slews away unless the incoming slot
+is itself frozen. Both are the documented last-writer-wins degradation of ADR-0012, not faults —
+recorded with the full window (any live-slot change, not only a Freeze toggle) because the earlier
+wording named only the toggle and read as if it were narrower.
+
+**Known limit: the generation pair is engine-wide, the mirror is per-slot.**
+`frozenRestorePending()` answers "has the last record staged *to the engine* been applied", with
+no notion of which slot staged it, while `liveFrozenTrims` is the active slot's tree. So: slot A
+(freeze ON) stages a restore; the user switches to slot B before the bottom; B is freeze-ON but
+carries no `FROZEN_TRIMS`, so `applySlotToLive` stages nothing and the counters stay unequal from
+A's record. A save of B inside that ~34 ms window takes the mirror branch and finds B's invalid
+tree, so it serialises no vector even though B has a published latch. Bounded to that window and
+to a slot with no previously loaded vector; the next save is correct. Closing it means keying the
+generation pair by slot, which buys a per-slot counter to fix one window's worth of one field.
 
 ## Consequences
 
