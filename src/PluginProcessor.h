@@ -193,8 +193,17 @@ private:
     // here so a third one inherits the check instead of the trap.
     void relandMacroCurve()
     {
+        // The jassert states the intent; the two stores ENFORCE it, in every
+        // build. An assert alone is debug-only, so a future third caller that
+        // skipped `replaceDetachMask()` would have shipped a release binary
+        // applying staged detach bits in the middle of its own apply — the
+        // enforcement would have been weaker than the sentence above it.
+        // Dropping them is what `replaceDetachMask` already did, so this is a
+        // no-op for both existing callers and idempotent by construction.
         jassert (pendingDetachBits.load (std::memory_order_relaxed) == 0
                  && ! pendingReengage.load (std::memory_order_relaxed));
+        pendingDetachBits.store (0, std::memory_order_relaxed);
+        pendingReengage.store (false, std::memory_order_relaxed);
         macroEngine->refreshMapping();
     }
     void publishSilentMeters() noexcept;   // the six meter atomics, cleared (one list)

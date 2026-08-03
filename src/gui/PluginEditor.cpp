@@ -487,6 +487,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     applyTooltipsEnabled();
 
     startTimerHz (24);
+    seedAnimatedFromValues();          // after every attachment — see there
     refreshPresetDisplay (true);
     updateModeVisibility();
     applyUiScale();
@@ -723,6 +724,16 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
 
 void AnabasisAudioProcessorEditor::resized()
 {
+    // `layoutAdvanced`/`layoutSimple` dereference the view unique_ptrs, and
+    // they are safe today only because nothing sets a size before the views
+    // exist — the first `setSize` is `applyUiScale()` at the end of the
+    // constructor. That is "safe by ordering" again: a `setSize` moved up, or a
+    // host-driven `setScaleFactor` during construction, would crash here rather
+    // than lay out nothing. One guard says what the layout requires.
+    if (meterView == nullptr || grView == nullptr || spectrumView == nullptr
+        || clipCurve == nullptr || eqCurve == nullptr)
+        return;
+
     auto bounds = getLocalBounds();
     auto bar = bounds.removeFromTop (kBarH);
 
@@ -1384,21 +1395,37 @@ void AnabasisAudioProcessorEditor::registerAnimated (juce::Component& c)
     w.toggle = dynamic_cast<juce::ToggleButton*> (&c);
     animated.add (w);
 
+    // Only the hover/press pair here: they start at rest by definition. The
+    // VALUE-derived properties (`vpos`, `onA`) cannot be seeded at this point
+    // — `setupRotary`/`setupToggle` register the widget BEFORE `attachSlider`/
+    // `attachToggle` construct the APVTS attachment, so the control still has
+    // JUCE's default 0..10 range and value 0. Seeding here recorded exactly the
+    // minimum this was meant to stop showing. `seedAnimatedFromValues()` does
+    // it once, after every attachment exists.
     auto& props = c.getProperties();
     props.set ("hovA", 0.0);
     props.set ("actA", 0.0);
-    if (w.toggle != nullptr)
-        props.set ("onA", w.toggle->getToggleState() ? 1.0 : 0.0);
-    // `vpos` needs seeding for the same reason the three above do, and it was
-    // the one left out. `stepMicroAnims` eases `props["vpos"]` toward the
-    // slider's real proportion, and an UNSET var reads as 0.0 — while
-    // `drawRotarySlider` prefers `vpos` whenever the control is not being
-    // dragged. Every knob therefore swept up from its minimum over the first
-    // frames after the editor opened instead of being drawn where it already
-    // was. `Knob::doReset` seeds the same property before a reset sweep, which
-    // is exactly the case where the sweep IS wanted.
-    if (auto* s = dynamic_cast<juce::Slider*> (&c))
-        props.set ("vpos", (double) s->valueToProportionOfLength (s->getValue()));
+}
+
+void AnabasisAudioProcessorEditor::seedAnimatedFromValues()
+{
+    // ONE pass over the registry, called at the end of the constructor — the
+    // only point at which every attachment has run. `stepMicroAnims` eases
+    // `vpos` toward the slider's real proportion and `onA` toward the toggle's
+    // state; an unset `var` reads as 0.0, and `drawRotarySlider` prefers `vpos`
+    // whenever the control is not being dragged, so an unseeded editor opened
+    // with every knob sweeping up from its minimum and every ON toggle fading
+    // in. `Knob::doReset` seeds the same `vpos` before a reset — that is the
+    // case where the sweep IS wanted, and the reason this is a separate pass
+    // rather than something the ease could do for itself.
+    for (auto& w : animated)
+    {
+        auto& props = w.comp->getProperties();
+        if (w.slider != nullptr)
+            props.set ("vpos", (double) w.slider->valueToProportionOfLength (w.slider->getValue()));
+        if (w.toggle != nullptr)
+            props.set ("onA", w.toggle->getToggleState() ? 1.0 : 0.0);
+    }
 }
 
 void AnabasisAudioProcessorEditor::stepMicroAnims (double dt)

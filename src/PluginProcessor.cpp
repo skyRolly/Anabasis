@@ -177,12 +177,23 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
     }
 }
 
+// The ONE place a StateSet joins either stack, so `kUndoCap` is applied to
+// whichever it is. `undo()`/`redo()` push onto the opposite stack too, and the
+// cap was written here alone: bounded in PRACTICE, because a redo entry can
+// only come from popping a capped undo stack so the pair never exceeds the cap
+// in total — but that is an invariant living in two places, and a future path
+// that pushed a redo entry directly would grow without limit. One function,
+// one bound.
+static void pushCapped (juce::Array<juce::ValueTree>& stack, juce::ValueTree entry, int cap)
+{
+    stack.add (std::move (entry));
+    while (stack.size() > cap)
+        stack.remove (0);            // oldest first: the cap trims history, not the present
+}
+
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
 {
-    auto& stack = undoStacks[activeSlot];
-    stack.add (preState.createCopy());
-    while (stack.size() > kUndoCap)
-        stack.remove (0);
+    pushCapped (undoStacks[activeSlot], preState.createCopy(), kUndoCap);
     redoStacks[activeSlot].clear();      // a new edit invalidates the redo line
 }
 
@@ -199,7 +210,7 @@ void AnabasisAudioProcessor::undo()
     auto& stack = undoStacks[activeSlot];
     if (stack.isEmpty())
         return;
-    redoStacks[activeSlot].add (saveSlotFromLive());
+    pushCapped (redoStacks[activeSlot], saveSlotFromLive(), kUndoCap);
     const auto prev = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3: not a gesture
     engine.requestForcedDuck();
@@ -211,7 +222,7 @@ void AnabasisAudioProcessor::redo()
     auto& stack = redoStacks[activeSlot];
     if (stack.isEmpty())
         return;
-    undoStacks[activeSlot].add (saveSlotFromLive());
+    pushCapped (undoStacks[activeSlot], saveSlotFromLive(), kUndoCap);
     const auto next = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();                              // §2.8, as undo()

@@ -195,6 +195,11 @@ private:
     void applyTooltipsEnabled();
     void stepMicroAnims (double dt);
     void registerAnimated (juce::Component&);
+    // Seeds the VALUE-derived animation properties (`vpos`, `onA`) for every
+    // registered widget. Separate from `registerAnimated` because the setup
+    // helpers register BEFORE the APVTS attachments run: at registration a
+    // control still carries JUCE's default range and value.
+    void seedAnimatedFromValues();
 
     void setupRotary (juce::Slider&, juce::Label&, const juce::String& name,
                       const juce::String& tip);

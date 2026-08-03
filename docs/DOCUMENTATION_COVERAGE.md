@@ -6,7 +6,50 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 35 (2026-08-03)** — two documentation drifts this PR itself
+**Last updated:** for **review round 36 (2026-08-03)**, whose first finding is the previous
+round's fix landing in the wrong place:
+(1) **The `vpos` seed ran BEFORE the APVTS attachment, so it stored the minimum it was meant to
+stop showing.** `setupRotary`/`setupToggle` call `registerAnimated` and the per-control helper
+attaches SECOND, so at registration a slider still carries JUCE's default 0..10 range and value 0 —
+`valueToProportionOfLength (getValue())` is 0.0, and every knob still swept up from its minimum
+when the window opened. The same ordering hit `onA` on toggles. The value-derived seeding moved
+out of `registerAnimated` into `seedAnimatedFromValues()`, ONE pass over the registry called at the
+end of the constructor, which is the only point at which every attachment exists. The test asserts
+it over EVERY registered slider — with a guard that at least one default sits off its minimum, so
+the sweep would be visible — and dies against both the unseeded state AND the round-35 placement.
+(2) **The value box's drag wrote the parameter without gesture brackets.** `ValueBox::mouseDrag`
+calls `setValue (…, sendNotificationSync)` directly, so dragging the numeric readout of a managed
+parameter neither DETACHED it (§5.3 keys on gesture-bracketed) nor produced an undo step (§7 keys
+on a completed message-thread drag) — the same asymmetry the double-click fix removed one control
+over. Bracketed with `juce::Slider::ScopedDragNotification`, the stock RAII pair the attachment
+already listens to, opened on mouse-down and closed unconditionally on mouse-up so a press that
+moves nothing still balances. Not headlessly asserted: the box is a LookAndFeel-created child and
+driving it needs synthetic mouse events, so this one is verified by reading the JUCE dispatch and
+by the Level-5 pass.
+(3) **`stopDraining()` nulled two `std::function`s, making its own residual worse.** The window it
+cannot close is a tick ALREADY EXECUTING while another thread destroys the processor; such a tick
+has entered `drainTick` and is about to invoke `onDrainTick`, so assigning it is a data race on a
+non-atomic object where leaving it alone was merely a call into an owner still alive at that
+instant. Both assignments dropped; `stopTimer()` + `cancelPendingUpdate()` do the work, and the
+objects die with the engine.
+(4) **Round 35's enforcement was debug-only.** `relandMacroCurve()` asserted the staged detach bits
+were clear, so a future third caller would have shipped a RELEASE binary applying them in the
+middle of its own apply. It now clears them as well — a no-op for both existing callers, since
+`replaceDetachMask` already did it, and enforcement in every build.
+(5) **`resized()` dereferenced five view `unique_ptr`s, safe only by construction order** (nothing
+sets a size before they exist). One guard states the requirement instead.
+(6) **The redo cap lived in the undo path.** `pushUndoStep` capped `undoStacks`; `undo()`/`redo()`
+pushed onto the opposite stack uncapped, bounded only transitively. One `pushCapped` helper is now
+the single place a StateSet joins either stack.
+Documentation: `THREADING_POLICY`'s SPSC row said the index is published "once per block", while
+the spectrum taps publish inside `processChunk` and therefore several times when a host block
+exceeds the prepared size. Re-worded around the COMMITTED UNIT — a block for the GR history, a
+chunk for the spectrum — because the guarantee the row exists for ("every frame below the acquired
+index is complete") holds identically either way and only the reader's cadence differs; the
+publication site carries the same note.
+Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer (KI-007 item 4), and
+the KI-003/KI-006/KI-007 restatements, already recorded in the same words.
+Previous: **review round 35 (2026-08-03)** — two documentation drifts this PR itself
 caused, and three more copies:
 (1) **The pluginval strictness had a second copy that still said 5.** Round 29 collapsed the
 duplicate rows inside `build.yml` and wrote that the block "is cited as the single authority for

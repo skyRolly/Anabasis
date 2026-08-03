@@ -741,12 +741,24 @@ namespace
     struct ValueBox : public juce::Label
     {
         double downProp = 0.0;
+        // The drag below writes the parameter, so it is a GESTURE and must be
+        // bracketed like every other one. Unbracketed it was neither an undo
+        // step (§7 keys on a completed message-thread drag) nor a DETACH (§5.3
+        // keys on "gesture-bracketed"), so dragging a managed parameter's
+        // numeric readout behaved differently from dragging its knob — the
+        // same asymmetry the double-click fix removed one control over.
+        // `Slider::ScopedDragNotification` is the stock RAII bracket: it calls
+        // `startedDragging`/`stoppedDragging`, which is exactly what the
+        // SliderAttachment listens to in order to open and close the host
+        // gesture, so this needs no knowledge of the parameter itself.
+        std::unique_ptr<juce::Slider::ScopedDragNotification> drag;
 
         void mouseDown (const juce::MouseEvent& e) override
         {
             if (auto* s = rotaryParent (getParentComponent()); s != nullptr && e.getNumberOfClicks() < 2 && ! isBeingEdited())
             {
                 downProp = s->valueToProportionOfLength (s->getValue());
+                drag = std::make_unique<juce::Slider::ScopedDragNotification> (*s);
                 s->getProperties().set ("dragging", true); // knob shows press feedback (#10)
                 s->repaint();
             }
@@ -754,6 +766,12 @@ namespace
         }
         void mouseUp (const juce::MouseEvent& e) override
         {
+            // Closed here rather than in `mouseDrag`'s branch: a press with no
+            // movement must still balance the begin, and an aborted gesture
+            // that changed nothing pushes no undo step anyway (§7 compares the
+            // pre-state). Reset unconditionally — the pointer is null unless
+            // `mouseDown` opened one.
+            drag.reset();
             if (auto* s = dynamic_cast<juce::Slider*> (getParentComponent()))
             {
                 s->getProperties().set ("dragging", false);

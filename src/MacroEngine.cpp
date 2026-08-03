@@ -30,19 +30,24 @@ void MacroEngine::startDraining()
 
 void MacroEngine::stopDraining()
 {
-    // Order matters: stop the repeating tick, then drop any single posted
-    // update, then release the callbacks — after this returns, no path from
-    // this object reaches the owner. `~MacroEngine` does the same two calls,
-    // but by then the owner's members are already gone, which is the window
-    // this closes. Residual, stated rather than implied: a tick already
-    // EXECUTING on the message thread while this runs on another one is not
-    // waited for — JUCE's Timer has no such join, and a host that destroys a
-    // processor concurrently with its own message thread has a larger problem
-    // than this callback.
+    // Stop the repeating tick, then drop any single posted update — after
+    // this returns no NEW tick can start, which is the window this closes.
+    // `~MacroEngine` does the same two calls, but by then the owner's members
+    // are already gone.
+    //
+    // It deliberately does NOT null `onDrainTick`/`isDetached` any more, and
+    // the reason is the inverse of what it looks like. The residual this
+    // cannot close is a tick ALREADY EXECUTING on the message thread while
+    // another thread destroys the processor (JUCE's Timer offers no join, and
+    // a host doing that has a larger problem than this callback). Assigning
+    // the `std::function`s made that residual strictly WORSE rather than
+    // better: such a tick has already entered `drainTick` and is about to
+    // invoke `onDrainTick`, so overwriting it is a data race on a non-atomic
+    // object — a torn read where the un-nulled version was merely a call into
+    // an owner that is still alive at that instant. Clearing bought nothing
+    // and cost a race; the objects die with `MacroEngine` either way.
     stopTimer();
     cancelPendingUpdate();
-    onDrainTick = nullptr;
-    isDetached  = nullptr;
 }
 
 MacroEngine::~MacroEngine()

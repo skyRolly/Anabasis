@@ -1044,9 +1044,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             dryReadPos = 0;
     }
 
-    // §2.9 spectrum publication: one release-store per ring per chunk (the
-    // SPSC ring row's once-per-block index rule; a chunk IS the processed
-    // block from the ring's viewpoint). Mono sources duplicate L into R via
+    // §2.9 spectrum publication: one release-store per ring per CHUNK, which is
+    // more than once per host block whenever the host delivers more than the
+    // prepared size — the caller runs this ⌈blockSize / preparedMax⌉ times.
+    // THREADING_POLICY's SPSC row is worded around the committed unit for
+    // exactly this reason: the guarantee is "every frame below the acquired
+    // index is complete", which holds per chunk as it does per block, since the
+    // payload is written before the index is released. What differs is only the
+    // reader's "has anything new arrived?" cadence. Mono sources duplicate L into R via
     // the stage loops above writing only ch 0 — harmless for a stereo-only
     // plugin (isBusesLayoutSupported pins 2×2).
     //

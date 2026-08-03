@@ -261,6 +261,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   save** (2026-08-03), instead of keeping the previous state's mark for up to a third of a second.
 - **Knobs are drawn where they are the moment the window opens** (2026-08-03), instead of sweeping
   up from their minimum over the first few frames.
+- **Dragging a knob's number behaves like dragging the knob** (2026-08-03): the edit is now
+  undoable, and on a Simple-mode macro parameter it takes that control off the macro the same way.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
   the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
   documented; a well-formed preset file from another plugin is refused without costing an undo

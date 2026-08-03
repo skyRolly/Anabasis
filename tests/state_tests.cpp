@@ -1817,6 +1817,18 @@ static juce::Button* findButtonByText (juce::Component& root, const juce::String
     return nullptr;
 }
 
+static int countSliders (juce::Component& root)
+{
+    int n = 0;
+    for (auto* c : root.getChildren())
+    {
+        if (dynamic_cast<juce::Slider*> (c) != nullptr)
+            ++n;
+        n += countSliders (*c);
+    }
+    return n;
+}
+
 static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::String& title)
 {
     for (auto* c : root.getChildren())
@@ -1883,6 +1895,37 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     // carried the names, the numbers and the "as of" date as free text. The
     // expectation is REBUILT from the table, so the guard is that a per-release
     // refresh of `kTargets` cannot leave a display quoting the old figures.
+    // The micro-animation seed. `stepMicroAnims` eases `vpos` toward each
+    // slider's real proportion and `drawRotarySlider` prefers `vpos` whenever
+    // the control is not being dragged, so an unseeded editor opens with every
+    // knob sweeping up from its minimum. The seed HAS to run after the APVTS
+    // attachments: the setup helpers register the widget first, and at that
+    // point the slider still carries JUCE's default 0..10 range and value 0 —
+    // which is how the first attempt at this stored exactly the minimum it was
+    // meant to stop showing. Asserted over EVERY registered slider rather than
+    // a chosen one, with a guard that at least one sits off its minimum so the
+    // sweep would actually be visible.
+    int seeded = 0, offMinimum = 0;
+    std::function<void (juce::Component&)> walk = [&] (juce::Component& root)
+    {
+        for (auto* c : root.getChildren())
+        {
+            if (auto* sl = dynamic_cast<juce::Slider*> (c))
+            {
+                const auto want = (double) sl->valueToProportionOfLength (sl->getValue());
+                const auto got  = (double) sl->getProperties()["vpos"];
+                if (std::abs (got - want) < 1.0e-6) ++seeded;
+                if (want > 1.0e-3) ++offMinimum;
+            }
+            walk (*c);
+        }
+    };
+    walk (*ed);
+    check (offMinimum > 0,
+           "settingsFollow: (premise) some knob's default sits off its minimum");
+    check (seeded > 0 && seeded == countSliders (*ed),
+           "settingsFollow: every knob's animated position starts where the value already is");
+
     const auto tip = LoudnessMeterView::tooltipText();
     for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
         check (tip.contains (juce::String (LoudnessMeterView::kTargets[t].fullName) + " "
