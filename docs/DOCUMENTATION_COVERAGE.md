@@ -6,7 +6,54 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 38 (2026-08-03)** — a triaged round of five state-consistency
+**Last updated:** for **review round 39 (2026-08-03)** — correctness only, and the first item is
+the previous round's safeguard failing to safeguard anything:
+(1) **`hasPublishedTrims()` was true for every prepared instance.** Round 38 set the marker inside
+`publishTrims()`, and `AdaptiveEngine::reset()` — which `prepare()` calls, so every host reaches it
+before the first block — publishes too, and publishes ZEROS. The guard was therefore entered
+exactly as often as before it existed. The marker now describes the CURRENT contents of the four
+atomics rather than "has one ever been published": `publishTrims (bool meaningful)` takes the
+decision as a parameter so no publication can skip it, `reset()` passes false with the
+initialisation zeros, and an audible `finishBlock` and an ADR-0014 `injectTrims` pass true. The
+reachable case the guard exists for is a host sample-rate change on a frozen slot — `reset()`
+zeroes and republishes, the restore is no longer pending, and the next save wrote those zeros over
+the slot's latch.
+(2) **KI-006 asserted the opposite of the code.** It read "the PUBLISHED trim atomics are NOT
+zeroed, and cannot be", reasoning from `finishBlock`'s `if (! freeze && audible)` guard and missing
+`reset()`'s publish. Corrected against the tree: the consequence of a re-prepare is SYMMETRIC (the
+audio, the Advanced overlay and the capture all read zeros), what survives is the wrapper's
+`liveFrozenTrims` mirror, and the entry now says which of its two proposed resolutions that
+changes — "keep the trims across `reset()`" has to carry the published copy too.
+(3) **The GR ring's seqlock comment argued from the wrong primitive.** The CODE is the canonical
+write-begin (relaxed increment + release fence, the `seq++; smp_wmb();` shape) and is unchanged;
+the justification described what a release STORE gives. Restated as what the FENCE gives — a
+StoreStore+LoadStore barrier, so accesses sequenced before it cannot be reordered after any store
+sequenced after it, which is exactly "odd before the clear" — and it now also states what the
+barrier does NOT buy: the reader's entry reads are plain, so a racing batch can still observe a
+torn value and the epoch re-check DISCARDS it. That is the seqlock bargain, and it was the part the
+comment left implicit.
+(4) **The spectrum rings survived a re-prepare.** `prepare()` resized their scratch and left the
+rings, so a host sample-rate change left up to 4096 frames captured at the old rate readable while
+`SpectrumView` maps bins through the CURRENT rate. The GR history ring has been cleared at
+`prepareToPlay` since P3; these two were the analyser state that did not follow. `ScopeBuffer::reset()`
+rewinds the published INDEX only — `readLatest` copies strictly below it, so every stale frame
+becomes unreachable and clearing 2 × 16384 floats would buy nothing observable.
+(5) **A §7 pre-state could cross an A/B switch.** `switchToSlot` swapped the baseline but left
+`gesturePreState` and the open-drag bits, so a drag open across a switch had its snapshot taken
+from the OLD slot while the gesture-end compared it against the NEW slot's values — the difference
+is the slot change itself, and the end pushed a step onto the new slot's stack describing a state
+that slot never held. Both halves are dropped at the switch, matching what per-slot history already
+means. `managedGestureBits` deliberately stays: it decides §5.3 DETACHMENT, and a drag continuing
+after the switch is editing the new slot's value.
+`testPreparedStateAndSlotOwnership` covers (1), (4) and (5); three mutants, one per guard, each
+calibrated to the reachable case (the first two stimuli initially passed against their own mutants
+— a restore still pending shadowed the marker, and two identical slots gave the gesture-end nothing
+to push).
+**Left documented, unchanged:** the frozen vector surviving a factory apply (KI-007 item 1), the
+preset dirty model's preset-EXCLUDED half and its trim-content input, the undo/state-restore
+threading architecture (KI-003), the duck's cost on a frozen-slot restore, and the
+analyser/menu/navigation/CI items the brief excluded.
+Previous: **review round 38 (2026-08-03)** — a triaged round of five state-consistency
 items, each the minimal change consistent with the model already in the tree:
 (1) **A debug build could abort while browsing presets.** `relandMacroCurve()` asserted that no
 detach bit was staged, in the one function written to cope with one being staged.

@@ -146,7 +146,7 @@ public:
         learnTiltSum = 0.0;
         learnBlocks  = 0;
 
-        publishTrims();
+        publishTrims (false);      // initialisation zeros, NOT a measurement
         pubCrestDb.store (0.0f, std::memory_order_relaxed);
         pubTiltDb.store (0.0f, std::memory_order_relaxed);
         pubOnsetRate.store (0.0f, std::memory_order_relaxed);
@@ -165,7 +165,7 @@ public:
         trims.stereoLink     = juce::jlimit (-0.2f, 0.2f, v.stereoLink);
         trims.scHpfHz        = juce::jlimit (0.0f, 30.0f, v.scHpfHz);
         trims.dynTiltDb      = juce::jlimit (0.0f, 0.5f, v.dynTiltDb);
-        publishTrims();
+        publishTrims (true);       // a restored vector is as real as a measured one
     }
 
     // Invariant 9, the unconditional half. Called once per block by the
@@ -361,7 +361,7 @@ public:
             step (trims.stereoLink,     target.stereoLink,     0.01f);
             step (trims.scHpfHz,        target.scHpfHz,        1.0f);
             step (trims.dynTiltDb,      target.dynTiltDb,      0.02f);
-            publishTrims();
+            publishTrims (true);   // the measured path — the only one that slews
         }
         blockFill = 0;
     }
@@ -471,14 +471,16 @@ public:
     float publishedTrimLink() const noexcept    { return pubTrimLink.load (std::memory_order_relaxed); }
     float publishedTrimHpf() const noexcept     { return pubTrimHpf.load (std::memory_order_relaxed); }
     float publishedTrimTilt() const noexcept    { return pubTrimTilt.load (std::memory_order_relaxed); }
-    // Has ANY block ever published a vector? The four atomics above start at
-    // zero and stay there until `finishBlock` publishes — which it only does
-    // while un-frozen and audible — so "all four read 0" is ambiguous between
-    // "measured, and the answer is no trim" and "never measured". The ADR-0014
-    // save capture needs the difference: reading the published atomics on an
-    // instance that was prepared but never processed a block would serialise
-    // an all-zero FROZEN_TRIMS over a vector the slot already holds. Relaxed,
-    // one-way, and set beside the values it describes.
+    // Do the four atomics above currently hold a REAL vector? Not "has one
+    // ever been published" — `reset()` publishes too, and publishes zeros, so
+    // a one-way flag would read true for every prepared instance and for every
+    // instance whose host has just changed the sample rate. It tracks the
+    // CURRENT contents instead: set by an audible `finishBlock` and by an
+    // ADR-0014 `injectTrims`, cleared by `reset()` along with the values.
+    // The ADR-0014 save capture is the reader that needs the difference —
+    // "all four read 0" is otherwise ambiguous between *measured, and the
+    // answer is no trim* and *initialisation*, and taking the second for the
+    // first serialises zeros over a vector the slot already holds.
     bool hasPublishedTrims() const noexcept     { return pubTrimEver.load (std::memory_order_relaxed); }
 
 private:
@@ -493,13 +495,22 @@ private:
     friend class AnabasisEngine;
     const Trims& currentTrims() const noexcept { return trims; }
 
-    void publishTrims() noexcept
+    // `meaningful` says whether the four values being published are a REAL
+    // vector — measured by an audible block, or injected by an ADR-0014
+    // restore — as opposed to the initialisation zeros `reset()` publishes.
+    // It is a parameter rather than a store at the call sites so that no
+    // publication can silently skip the decision: `hasPublishedTrims()` is the
+    // save capture's discriminator, and the previous revision set the flag
+    // INSIDE this function, which meant `reset()` (called by `prepare()`, and
+    // therefore by every host before the first block) turned it on while
+    // publishing zeros. The guard it exists for was then inert.
+    void publishTrims (bool meaningful) noexcept
     {
         pubTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
         pubTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
         pubTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
         pubTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
-        pubTrimEver.store (true, std::memory_order_relaxed);
+        pubTrimEver.store (meaningful, std::memory_order_relaxed);
     }
 
     float onePoleMs (float ms) const noexcept

@@ -55,14 +55,25 @@ public:
     // epoch change; within one epoch the existing SPSC contract is unchanged.
     void reset() noexcept
     {
-        // A seqlock's OPENING increment needs a fence, not a release store: a
-        // release orders earlier writes before itself and says nothing about
-        // later ones, so the clear below could be observed above the odd epoch
-        // — a reader would then see half-cleared entries while the epoch still
-        // read "stable", which is the one case this guard exists to exclude.
-        // Relaxed increment + release fence is the canonical writer opening;
-        // the closing increment stays a release store, where the ordering it
-        // does give (clear-before-even) is exactly the one required.
+        // ORDERING, stated as what the barrier actually gives rather than as
+        // what a release STORE would give. The opening needs the odd value
+        // visible BEFORE the clear; a release store orders earlier accesses
+        // before ITSELF, which is the wrong direction here. `atomic_thread_
+        // fence(release)` is a StoreStore+LoadStore barrier: accesses
+        // sequenced before it cannot be reordered after any store sequenced
+        // after it — so the relaxed increment above cannot sink past the clear
+        // below. Relaxed increment + release fence is the canonical seqlock
+        // write-begin (the same shape as the kernel's `seq++; smp_wmb();`).
+        // The closing increment is a release STORE, and there the direction is
+        // right: it orders the clear before the even value.
+        //
+        // What this does NOT claim: the entry reads on the reader side are
+        // plain, non-atomic reads of a struct the writer may be clearing, so a
+        // racing batch can observe a torn value. Nothing here prevents that —
+        // the epoch re-check DISCARDS such a batch instead, which is the
+        // seqlock bargain and the reason `resetEpoch()` must be sampled on
+        // both sides of a batch. The barrier's job is only to keep "odd" from
+        // arriving after the writes it is meant to announce.
         resetGuard.fetch_add (1, std::memory_order_relaxed);   // odd: clearing
         std::atomic_thread_fence (std::memory_order_release);
         for (auto& e : entries)

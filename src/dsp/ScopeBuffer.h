@@ -40,6 +40,22 @@ public:
     ScopeBuffer() : left ((size_t) capacity, 0.0f), right ((size_t) capacity, 0.0f)
     { write.store (0, std::memory_order_relaxed); }
 
+    // Host thread (prepare, audio stopped). Rewinds the published index so no
+    // reader can reach a frame captured under the PREVIOUS configuration.
+    // `readLatest` returns the newest N frames and the analyser maps their
+    // bins through the CURRENT sample rate, so frames captured at the old rate
+    // are drawn at the wrong frequencies until they age out. The GR history
+    // ring has been cleared at `prepareToPlay` since P3 for the same reason;
+    // these two were the analyser state that survived a re-prepare.
+    //
+    // Deliberately only the INDEX, not the samples: `readLatest` copies
+    // strictly below the acquired index, so rewinding it makes every stale
+    // frame unreachable, and the reader's own `count > w` clamp then returns
+    // fewer frames until the ring refills. Clearing 2 × 16384 floats on a
+    // re-prepare would buy nothing a reader can observe.
+    void reset() noexcept
+    { write.store (0, std::memory_order_release); }
+
     // --- audio thread ----------------------------------------------------
     // Writes a whole block and publishes it with ONE release-store on the
     // write index (S9). Readers acquire the index and only copy frames

@@ -39,6 +39,15 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     specInR.resize ((size_t) maxBlock);
     specOutL.resize ((size_t) maxBlock);
     specOutR.resize ((size_t) maxBlock);
+    // …and rewind the two spectrum rings with them. The scratch was resized
+    // here from the start; the RINGS were not touched, so a host sample-rate
+    // change left up to 4096 frames captured at the old rate readable, and
+    // `SpectrumView` maps bins through the CURRENT rate — the trace was drawn
+    // at the wrong frequencies until the ring refilled (~85 ms of audio). The
+    // wrapper already clears `grHistoryRing` at `prepareToPlay` for exactly
+    // this reason; these two were the analyser state that survived.
+    specInRing.reset();
+    specOutRing.reset();
 
     using OS = juce::dsp::Oversampling<float>;
     osTableMatchesJuce = true;

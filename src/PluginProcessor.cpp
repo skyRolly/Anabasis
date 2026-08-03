@@ -688,6 +688,21 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     // applying a preset in B, switching back to A marked A's name against B's
     // baseline.
     std::swap (presetBaseline, storedPresetBaseline);
+    // The in-flight §7 gesture snapshot does NOT swap — it is dropped. A drag
+    // open across an A/B switch had its pre-state captured from the OLD slot,
+    // and the eventual gesture-end compares it against the NEW slot's live
+    // values: the difference is the slot change itself, so the end pushed a
+    // step onto `undoStacks[activeSlot]` — the new slot's stack — describing a
+    // state the new slot never held. Undo would then "restore" the other
+    // slot's values. Per-slot history means a pre-state belongs to the slot it
+    // was taken in, and once that slot is no longer active there is nothing it
+    // can correctly restore, so both halves go: the open-drag bits (an END
+    // that matches nothing pushes nothing — the documented degradation) and
+    // the snapshot itself. `managedGestureBits` is deliberately NOT cleared:
+    // it decides §5.3 DETACHMENT, and a drag continuing after the switch is
+    // now editing the new slot's value, which should detach in the new slot.
+    openGestureBits.store (0, std::memory_order_relaxed);
+    gesturePreState = {};
     activeSlot = newIndex;
 }
 

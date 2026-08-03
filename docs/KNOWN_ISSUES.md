@@ -269,14 +269,24 @@ Evidence [Verified]:
 vector, then any `prepareToPlay` — a host sample-rate or block-size change.
 
 `AnabasisEngine::prepare` calls `AdaptiveEngine::prepare` → `reset()`, which
-zeroes the internal `trims` struct along with the features. The PUBLISHED trim
-atomics are NOT zeroed, and cannot be: `finishBlock` only publishes inside
-`if (! freeze && audible)`, which is exactly what "Freeze latches the vector"
-means. So after the re-prepare the engine applies a zero trim vector to the
-audio while `publishedTrim*()` — the Advanced overlay, and the ADR-0014 save
-capture — still report the latched one. The slot's serialized `FROZEN_TRIMS`
-therefore stays correct; the sound does not match it until the vector is
-restored by some later path (an A/B switch back, a session reload).
+zeroes the internal `trims` struct along with the features **and republishes
+them**: `reset()`'s last step is a `publishTrims` call, so all four published
+atomics go to zero too, whatever Freeze says. (This entry asserted the opposite
+until 2026-08-03 — "the PUBLISHED trim atomics are NOT zeroed, and cannot be",
+reasoning from `finishBlock`'s `if (! freeze && audible)` guard and missing the
+`reset()` publish. Corrected against the code, which is the authority.)
+
+The consequence is therefore SYMMETRIC, not one-sided: after a re-prepare the
+engine applies a zero trim vector to the audio, and the Advanced overlay reads
+zeros with it. What does NOT go to zero is the wrapper's `liveFrozenTrims`
+mirror — the copy a load/A-B/undo placed — so a slot whose vector arrived that
+way still serialises the right thing. A vector latched LIVE in this session has
+no mirror, and after a re-prepare there is nothing left to save.
+
+Which resolution that favours: "keep the trims across `reset()`" now has to
+cover the published atomics as well as the internal struct, since both are
+cleared together; "a re-prepare drops it" is what the code does today, and its
+save side is already handled (below).
 
 **Found by** the adversarial verification pass over review round 24
 (2026-08-03), not by the review itself; it PREDATES ADR-0014 (P4 shipped the
@@ -288,10 +298,11 @@ resolution — the trim vector is a bounded, rate-independent control value, not
 signal state, and carrying it would also make an un-frozen re-prepare re-slew
 from where it was instead of jumping to zero — but it changes what
 `MODE_AND_ADAPTATION_POLICY` invariant 3's Freeze clause promises across a
-discontinuity, which is an owner/ADR call, not a bug fix. The alternative
-(re-stage the vector from the wrapper at `prepareToPlay`) only works when
-`liveFrozenTrims` holds one, i.e. after a load — a vector latched live in this
-session has no copy to re-stage from.
+discontinuity, which is an owner/ADR call, not a bug fix. It would also have to
+carry the PUBLISHED copy, not just the internal struct — see the correction
+above. The alternative (re-stage the vector from the wrapper at
+`prepareToPlay`) only works when `liveFrozenTrims` holds one, i.e. after a load
+— a vector latched live in this session has no copy to re-stage from.
 
 **The SAVE half of the same gap, added 2026-08-03 (review round 27), CLOSED 2026-08-03 (round
 38).** The description above is about the audio; the capture had the mirror-image problem.
@@ -299,10 +310,15 @@ session has no copy to re-stage from.
 on an instance that was prepared but had never PROCESSED a block, those atomics are all zero, so
 the session serialised an all-zero `FROZEN_TRIMS` for a slot the user believes holds a latched
 vector and the next load injected zeros. It needed no answer to the audio half after all: the
-capture now also requires `AdaptiveEngine::hasPublishedTrims()`, a one-way flag set beside the four
-values, because "all four read 0" is otherwise indistinguishable between *measured, and the answer
-is no trim* and *never measured* — and a value that was never measured cannot be more truthful than
-the one the slot already holds. The AUDIO half above is untouched and still needs the owner call.
+capture now also requires `AdaptiveEngine::hasPublishedTrims()`, because "all four read 0" is
+otherwise indistinguishable between *measured, and the answer is no trim* and *initialisation* —
+and a value nothing measured cannot be more truthful than the one the slot already holds. The flag
+tracks the CURRENT contents of the four atomics rather than "has one ever been published": it is
+set by an audible `finishBlock` and by an ADR-0014 `injectTrims`, and CLEARED by `reset()` along
+with the values. Round 38 shipped it as a one-way flag set inside `publishTrims()` — which
+`reset()` also calls — so it read true for every prepared instance and the guard was inert; round
+39 made it mean what its name says. The AUDIO half above is untouched and still needs the owner
+call.
 
 **For the post-v0.1.0 fine review.**
 

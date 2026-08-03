@@ -1684,6 +1684,122 @@ static void testTeardownAndReengageInvariants()
     }
 }
 
+// Round 39: three mechanical invariants, one stimulus each.
+static void testPreparedStateAndSlotOwnership()
+{
+    // (1) A prepared instance that has processed NO block must not serialise a
+    // frozen vector built from the published atomics — they are still at their
+    // initialisation zeros, and writing them over `liveFrozenTrims` replaces a
+    // vector the slot holds with values nothing ever measured. The marker that
+    // discriminates the two was set inside `publishTrims()`, which `reset()`
+    // also calls, so it read true for every prepared instance.
+    {
+        AnabasisAudioProcessor proc;
+        // A loaded frozen vector, via the same path a session load uses.
+        juce::MemoryBlock blank;
+        proc.getStateInformation (blank);
+        auto root = juce::ValueTree::fromXml (
+            *juce::AudioProcessor::getXmlFromBinary (blank.getData(), (int) blank.getSize()));
+        auto setFreezeOn = [] (juce::ValueTree params)
+        {
+            if (auto fz = params.getChildWithProperty ("id", "freeze"); fz.isValid())
+            {
+                fz.setProperty ("value", 1.0, nullptr);
+                fz.setProperty ("raw",   1.0, nullptr);
+            }
+        };
+        setFreezeOn (root.getChildWithName ("ANABASIS"));
+        auto slot = root.getChildWithName ("AB").getChild (0);
+        setFreezeOn (slot.getChildWithName ("ANABASIS"));
+        juce::ValueTree trims ("FROZEN_TRIMS");
+        trims.setProperty ("releaseOctaves", 0.25, nullptr);
+        trims.setProperty ("stereoLink",     -0.1, nullptr);
+        trims.setProperty ("scHpfHz",         3.0, nullptr);
+        trims.setProperty ("dynTiltDb",       0.4, nullptr);
+        slot.appendChild (trims, nullptr);
+
+        juce::MemoryBlock in;
+        juce::AudioProcessor::copyXmlToBinary (*root.createXml(), in);
+        proc.setStateInformation (in.getData(), (int) in.getSize());
+
+        // Run the restore all the way in, so `frozenRestorePending()` is false
+        // and the capture branch is the one that decides. Without that the
+        // mirror wins for a different reason and the marker is untested.
+        proc.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int n = 0; n < 512; ++n) { buf.setSample (0, n, 0.2f); buf.setSample (1, n, 0.2f); }
+        for (int b = 0; b < 24; ++b)
+            proc.processBlock (buf, midi);
+
+        auto savedRelease = [&proc]
+        {
+            juce::MemoryBlock out;
+            proc.getStateInformation (out);
+            const auto r = juce::ValueTree::fromXml (
+                *juce::AudioProcessor::getXmlFromBinary (out.getData(), (int) out.getSize()));
+            return r.getChildWithName ("AB").getChild (0).getChildWithName ("FROZEN_TRIMS")
+                    .getProperty ("releaseOctaves");
+        };
+        check (juce::exactlyEqual ((double) savedRelease(), 0.25),
+               "preparedSave: (premise) the restored vector is applied and saved back");
+
+        // A host sample-rate change. `AdaptiveEngine::reset()` zeroes `trims`
+        // AND republishes them, so the four published atomics are back at
+        // their initialisation values — with the restore no longer pending,
+        // the next save read them and wrote zeros over the slot's latch.
+        proc.prepareToPlay (96000.0, 512);
+        check (juce::exactlyEqual ((double) savedRelease(), 0.25),
+               "preparedSave: a re-prepare cannot overwrite the held vector with initialisation zeros");
+    }
+
+    // (2) The spectrum rings are analyser state that must not survive a
+    // re-prepare: `SpectrumView` maps bins through the CURRENT sample rate, so
+    // frames captured at the previous one are drawn at the wrong frequencies.
+    // The GR history ring has been cleared at `prepareToPlay` since P3.
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int n = 0; n < 512; ++n) { buf.setSample (0, n, 0.25f); buf.setSample (1, n, 0.25f); }
+        for (int b = 0; b < 4; ++b)
+            proc.processBlock (buf, midi);
+        check (proc.spectrumInRing().writeCount() > 0 && proc.spectrumOutRing().writeCount() > 0,
+               "spectrumPrepare: (premise) both rings captured frames");
+        proc.prepareToPlay (96000.0, 512);
+        check (proc.spectrumInRing().writeCount() == 0 && proc.spectrumOutRing().writeCount() == 0,
+               "spectrumPrepare: a re-prepare leaves no frame from the previous rate readable");
+    }
+
+    // (3) A §7 pre-state belongs to the slot it was taken in. A drag open
+    // across an A/B switch had its snapshot captured from the OLD slot, and
+    // the gesture-end then compared it against the NEW slot's values — the
+    // difference is the slot change itself, so the end pushed a step onto the
+    // new slot's stack describing a state that slot never held.
+    {
+        AnabasisAudioProcessor proc;
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        auto set = [drive] (float v)
+        { drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (v)); };
+
+        // Slot B must differ from slot A, or the gesture-end compares two
+        // equivalent trees, pushes nothing for that reason instead, and the
+        // guard reads as passing while enforcing nothing.
+        proc.switchToSlot (1);
+        set (11.0f);
+        proc.switchToSlot (0);
+
+        drive->beginChangeGesture();                       // open on slot A
+        set (7.0f);
+        proc.switchToSlot (1);                             // …and switch under it
+        const bool undoBefore = proc.canUndo();
+        drive->endChangeGesture();                         // the end lands on slot B
+        check (proc.canUndo() == undoBefore,
+               "slotGesture: a drag open across an A/B switch pushes no step onto the new slot");
+    }
+}
+
 // Round 38's state-consistency invariants: each has exactly one observable
 // consequence, so each gets exactly one stimulus.
 static void testStateReplacementAndHistoryConsistency()
@@ -2468,6 +2584,7 @@ int main (int argc, char** argv)
         testAMacroGestureWinsADetachRacingItInOneDrain();
         testTeardownAndReengageInvariants();
         testStateReplacementAndHistoryConsistency();
+        testPreparedStateAndSlotOwnership();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
