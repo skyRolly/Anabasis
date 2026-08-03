@@ -87,6 +87,14 @@ public:
     // a mapping armed in between simply waits — the flag is never lost.
     void startDraining();
 
+    // The symmetric half, and it is owed for the symmetric reason: the tick
+    // calls back INTO the owner, whose members are destroyed before this
+    // object is (it is declared early, and members die in reverse declaration
+    // order). The owner calls this FIRST in its destructor, so no tick can
+    // reach a half-destroyed owner. Splitting the construction race out and
+    // leaving the destruction one would have been half a fix.
+    void stopDraining();
+
     // True while any ScopedRestore is alive — the detach discriminator's
     // third condition (a restore lands values, it is not a user gesture).
     bool isRestoring() const noexcept

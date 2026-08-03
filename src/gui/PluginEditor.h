@@ -119,7 +119,19 @@ private:
         }
         void mouseDoubleClick (const juce::MouseEvent& e) override
         {
-            if (e.getNumberOfClicks() == 2) doReset();
+            // BRACKETED, exactly like the alt-click path above: the two are the
+            // same gesture as far as the user is concerned, and since P6 the
+            // bracket decides two things — whether the reset becomes an undo
+            // step (§7 keys on a completed message-thread drag) and whether a
+            // managed parameter DETACHES from its macro (§5.3 keys on
+            // "gesture-bracketed"). Unbracketed, a double-click reset silently
+            // did neither, so the next macro pass took the value straight back
+            // while an alt-click reset held.
+            if (e.getNumberOfClicks() != 2)
+                return;
+            if (resetParam != nullptr) resetParam->beginChangeGesture();
+            doReset();
+            if (resetParam != nullptr) resetParam->endChangeGesture();
         }
     };
 

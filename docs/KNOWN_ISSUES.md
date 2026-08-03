@@ -257,6 +257,16 @@ discontinuity, which is an owner/ADR call, not a bug fix. The alternative
 `liveFrozenTrims` holds one, i.e. after a load — a vector latched live in this
 session has no copy to re-stage from.
 
+**The SAVE half of the same gap, added 2026-08-03 (review round 27).** The description above is
+about the audio; the capture has the mirror-image problem. `saveSlotFromLive` reads
+`publishedTrim*()` whenever Freeze is on and no restore is pending — and on an instance that was
+prepared but has never PROCESSED a block, those atomics are all zero. Such a session serialises an
+all-zero `FROZEN_TRIMS` for a slot the user believes holds a latched vector, and the next load
+injects zeros. The two halves want one answer: if the resolution is "the trim vector survives a
+re-prepare", the published atomics stay meaningful and the capture is right as written; if it is
+"a re-prepare drops it", the capture needs a has-ever-published discriminator. Do not settle one
+half alone.
+
 **For the post-v0.1.0 fine review.**
 
 ### KI-007 — Three preset/Freeze bookkeeping edges the fine review must settle together
@@ -287,6 +297,15 @@ question KI-006 asks.
    bar's dirty mark can read wrong until the next apply or save. Display-only. The clean fix is to
    decide whether the baseline belongs IN the StateSet (a schema change — ADR-0007, Hard Stop) or
    whether undo should recompute it; that is why it is recorded rather than patched.
+
+4. **The preset menu holds a raw pointer to an editor-owned LookAndFeel.** `showPresetMenu` calls
+   `m.setLookAndFeel (&lnf)`, and `lnf` is an editor member; the async callback was given a
+   `SafePointer` in round 24 but the menu's look-and-feel was not covered by it. If a host tore the
+   window down while the menu was open, the menu window could outlive `lnf`. JUCE dismisses menus
+   in most teardown orders, so it is not clearly reachable — and both available repairs carry their
+   own risk (`dismissAllActiveMenus()` in the editor destructor also closes another instance's
+   menu; a shared static LookAndFeel trades this for static-destruction order at DLL unload), which
+   is why it is recorded rather than patched under a "no new bugs" round.
 
 **For the post-v0.1.0 fine review, alongside KI-006.**
 

@@ -1083,6 +1083,40 @@ static void testFactoryPresets()
     while (proc.canUndo()) proc.undo();
     check (! proc.applyFactoryPreset (99), "factory: (premise) bad index refused");
     check (! proc.canUndo(), "factory: a refused index cost no undo step");
+
+    // The dirty datum is PER SLOT, and it is not serialized. `livePresetName`
+    // is per-slot state, so one engine-wide baseline described the wrong slot
+    // the moment the user switched — and survived a session load, which cannot
+    // restore it (a session records which preset a slot holds, never whether it
+    // had been edited since).
+    // BOTH slots must hold a NAMED preset, or `presetDirty()` early-returns on
+    // the empty name and the stimulus never reaches the datum at all (the first
+    // version of this test did exactly that and the mutant strolled past it).
+    {
+        AnabasisAudioProcessor p2;
+        check (p2.applyFactoryPreset (1), "dirtyDatum: (premise) slot A takes a preset");
+        const auto nameA = p2.currentPresetName();
+        juce::MemoryBlock sessionWithA;
+        p2.getStateInformation (sessionWithA);       // A, clean, saved for the load case
+
+        p2.switchToSlot (1);
+        check (p2.applyFactoryPreset (2), "dirtyDatum: (premise) slot B takes a DIFFERENT preset");
+        check (! p2.presetDirty(), "dirtyDatum: (premise) B is clean right after its apply");
+
+        p2.switchToSlot (0);                         // back to A, untouched since its apply
+        check (p2.currentPresetName() == nameA, "dirtyDatum: (premise) A's name came back");
+        check (! p2.presetDirty(),
+               "dirtyDatum: A is clean — its own baseline came back with it, not B's");
+
+        // A load cannot restore the datum (a session records WHICH preset a
+        // slot holds, never whether it had been edited since), so it must be
+        // dropped rather than left describing the preset applied before it.
+        check (p2.applyFactoryPreset (2), "dirtyDatum: (premise) apply a different preset first");
+        p2.setStateInformation (sessionWithA.getData(), (int) sessionWithA.getSize());
+        check (p2.currentPresetName() == nameA, "dirtyDatum: (premise) the load restored A's name");
+        check (! p2.presetDirty(),
+               "dirtyDatum: a session load drops the datum instead of marking the loaded name");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1266,6 +1300,47 @@ static void testAGestureEndWithoutACountedBeginIsIgnored()
         check (std::abs (p2.apvts.getRawParameterValue (pid::limGain)->load() - mid) < 1.0e-3f,
                "gestureSymmetry: and the recovered step is the new drag, not the lost one");
     }
+}
+
+// ---------------------------------------------------------------------------
+// §5.3's precedence rule when a detach and a re-engage land in the SAME drain:
+// "the next macro-knob gesture re-engages ALL detached params", so the macro
+// gesture wins. That means the detach bits are applied FIRST and the re-engage
+// clears over them — the opposite order leaves the parameter detached through
+// the very gesture that is supposed to re-engage it.
+//
+// The two can only coexist off the message thread: on it, `drainDetachBitsSoon`
+// drains synchronously per callback, so each lands alone. The stimulus is
+// therefore the real asymmetry — the managed drag is delivered from a worker
+// thread (uncounted, undrained), and the macro gesture then arrives on the
+// message thread and drains both at once.
+static void testAMacroGestureWinsADetachRacingItInOneDrain()
+{
+    AnabasisAudioProcessor proc;
+    auto* limGain = proc.apvts.getParameter (pid::limGain);      // managed (§5.5)
+    auto* loudness = proc.apvts.getParameter (pid::loudness);    // a macro
+
+    // A gestured managed edit, entirely off the message thread: the gesture
+    // bracket is what makes it a DETACH (§5.3 keys on gesture-bracketed, on
+    // any thread), and being off-thread is what leaves the bit undrained.
+    std::thread offThread ([limGain]
+    {
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (
+            limGain->getNormalisableRange().convertTo0to1 (7.0f));
+        limGain->endChangeGesture();
+    });
+    offThread.join();
+    check (proc.detachMask().isEmpty(),
+           "drainOrder: (premise) the off-thread detach has not been drained yet");
+
+    // …and now the macro gesture, on the message thread, which drains both.
+    loudness->beginChangeGesture();
+    loudness->endChangeGesture();
+    proc.flushPendingDetach();
+
+    check (proc.detachMask().isEmpty(),
+           "drainOrder: a macro gesture re-engages a detach that raced it into the same drain");
 }
 
 // ---------------------------------------------------------------------------
@@ -1791,6 +1866,7 @@ int main (int argc, char** argv)
         testUndoRequestsDuck();
         testMeterPublication();
     testAGestureEndWithoutACountedBeginIsIgnored();
+    testAMacroGestureWinsADetachRacingItInOneDrain();
     testDetachAndReengageGrammar();
     testUndoIsPerSlotGestureCoalescedAndMaskWide();
     testFactoryPresets();

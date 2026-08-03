@@ -225,9 +225,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   limiter / EQ settings was being cancelled as the preset loaded, so every factory preset left the
   processing at its defaults. User presets were never affected (they carry every value themselves)
   and still land exactly as saved.
+- **The preset name's edited mark tells the truth after a project load or an A/B switch**
+  (2026-08-03). The record of "what this preset landed" is now kept per A/B slot and dropped on a
+  load, so a freshly loaded preset no longer shows as edited and slot A is no longer marked
+  against a preset applied in slot B.
+- **Double-clicking a knob to reset it now behaves exactly like alt-clicking it** (2026-08-03): it
+  is undoable, and on a Simple-mode macro parameter it detaches from the macro the same way.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
-  the wrong undo steps; a well-formed preset file from another plugin is refused without costing
-  an undo step.
+  the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
+  documented; a well-formed preset file from another plugin is refused without costing an undo
+  step; the transfer/EQ curve display follows a host sample-rate change; closing the plugin can no
+  longer race its own background housekeeping.
   Evidence Source: **PR #6** (`skyRolly/Anabasis`) — `testUndoRequestsDuck`,
   `testFrozenTrimRestore` (undo + save-window cases), `testMeterResetIgnoresTheStraddlingSubBlock`,
   `testAGestureEndWithoutACountedBeginIsIgnored`; all mutation-verified. [Verified]

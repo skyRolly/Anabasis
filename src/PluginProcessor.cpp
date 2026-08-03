@@ -49,6 +49,12 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     apvts.addParameterListener (pid::tone,      this);
 }
 
+AnabasisAudioProcessor::~AnabasisAudioProcessor()
+{
+    // FIRST, before any member is destroyed — see the declaration.
+    macroEngine->stopDraining();
+}
+
 // The three §5.3 conditions meet here. Gesture callbacks arrive with a raw
 // parameter INDEX; the managed set is matched by ID so a layout reorder can
 // never silently re-key the discriminator.
@@ -230,14 +236,22 @@ void AnabasisAudioProcessor::drainDetachBitsSoon()
 
 void AnabasisAudioProcessor::handleAsyncUpdate()
 {
-    // Message thread. Re-engage first: a macro gesture that raced a detach
-    // should win (§5.3 — the gesture re-engages, then maps).
-    if (pendingReengage.exchange (false, std::memory_order_relaxed))
-        liveDetachMask.clear();
+    // Message thread. §5.3: "the next macro-knob gesture re-engages ALL
+    // detached params", so a macro gesture that raced a detach WINS — which
+    // means the detaches are applied FIRST and the re-engage clears over them,
+    // not the other way round. The two orders differ only when both are
+    // pending in the same drain, and on a host that delivers callbacks on the
+    // message thread that never happens (drainDetachBitsSoon runs one per
+    // callback). Off-thread they coexist inside one 30 ms tick — and the
+    // previous order let the DETACH win there, leaving a parameter detached
+    // through the very gesture the rule says re-engages it. The comment here
+    // claimed the correct precedence while the code did the opposite.
     if (auto bits = pendingDetachBits.exchange (0, std::memory_order_relaxed))
         for (int i = 0; i < managed_params::kCount; ++i)
             if ((bits & (1u << i)) != 0)
                 liveDetachMask.addIfNotAlreadyThere (managed_params::ids[i]);
+    if (pendingReengage.exchange (false, std::memory_order_relaxed))
+        liveDetachMask.clear();
 }
 
 juce::AudioProcessorParameter* AnabasisAudioProcessor::getBypassParameter() const
@@ -557,6 +571,11 @@ void AnabasisAudioProcessor::switchToSlot (int newIndex)
     auto newlyStored = saveSlotFromLive();
     applySlotToLive (storedSlot);
     storedSlot = std::move (newlyStored);
+    // The dirty datum swaps WITH the slot: `livePresetName` is per-slot, so a
+    // single engine-wide baseline described the wrong slot from here on — after
+    // applying a preset in B, switching back to A marked A's name against B's
+    // baseline.
+    std::swap (presetBaseline, storedPresetBaseline);
     activeSlot = newIndex;
 }
 
@@ -653,6 +672,15 @@ void AnabasisAudioProcessor::resetSlotFieldsToDefaults()
     liveFrozenTrims = juce::ValueTree();
     liveDetachMask.clear();
     storedSlot = defaultSlot.createCopy();
+    // The dirty datum is the one slot field that is NOT serialized, so a load
+    // cannot restore it — it must be dropped with the rest. Kept, it described
+    // a preset applied in the PREVIOUS session and the freshly loaded name
+    // rendered as edited (or, as wrongly, as clean). Absent, `presetDirty()`
+    // returns false until the next apply or save, which is the honest answer:
+    // a session records which preset a slot holds, never whether it had been
+    // edited since.
+    presetBaseline       = juce::ValueTree();
+    storedPresetBaseline = juce::ValueTree();
 }
 
 void AnabasisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)

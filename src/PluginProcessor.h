@@ -39,7 +39,14 @@ class AnabasisAudioProcessor : public juce::AudioProcessor,
 {
 public:
     AnabasisAudioProcessor();
-    ~AnabasisAudioProcessor() override = default;
+    // NOT `= default`: the MacroEngine's 30 ms tick calls back into this object
+    // (`onDrainTick` → `handleAsyncUpdate` → `liveDetachMask`), and
+    // `macroEngine` is declared BEFORE those members, so reverse-order
+    // destruction frees everything the tick touches while the timer is still
+    // armed. The body stops the drain first. Same premise as the split that
+    // moved `startTimer` out of MacroEngine's constructor: the destroying
+    // thread is not promised to be the message thread (KI-003).
+    ~AnabasisAudioProcessor() override;
 
     // -- AudioProcessor -----------------------------------------------------
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -75,7 +82,13 @@ public:
     // Top-bar Copy (§6.1): the INACTIVE slot becomes a snapshot of the live
     // state. No duck and no engine involvement — nothing audible changes, the
     // copy lands where the next A/B switch will read it.
-    void copySlotToOther() { storedSlot = saveSlotFromLive(); }
+    // Copy A→B (or B→A): the dirty datum travels with the values, or the
+    // copy would land looking edited against whatever the other slot held.
+    void copySlotToOther()
+    {
+        storedSlot = saveSlotFromLive();
+        storedPresetBaseline = presetBaseline;
+    }
 
     // Preset apply goes through here, never through PresetManager directly:
     // the wrapper lands the slot-level fields (name, detach mask) and drops
@@ -192,7 +205,16 @@ private:
     juce::Array<juce::ValueTree> undoStacks[anabasis::kNumAbSlots],
                                  redoStacks[anabasis::kNumAbSlots];
     juce::ValueTree gesturePreState;     // armed at first gesture-begin
-    juce::ValueTree presetBaseline;      // the state the named preset landed
+    // The state the named preset landed, PER SLOT — it is the datum
+    // `presetDirty()` compares against, and `livePresetName` is per-slot state,
+    // so a single engine-wide copy described the wrong slot the moment the user
+    // switched: after applying a preset in B and switching back to A, A's name
+    // was marked against B's baseline. Deliberately NOT serialized and NOT part
+    // of the ADR-0007 StateSet: it is a display datum, and a session records
+    // which preset a slot holds, never whether it had been edited since.
+    // Cleared with the other slot fields on a load, for the same reason.
+    juce::ValueTree presetBaseline;      // active slot's
+    juce::ValueTree storedPresetBaseline;// the inactive slot's, swapped by switchToSlot
     // One bit per parameter index with an OPEN message-thread gesture, so an
     // end can only close its own drag and cannot leak one (see the callbacks
     // for both asymmetries). Atomic because the END clears it on whichever

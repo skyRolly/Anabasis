@@ -28,6 +28,23 @@ void MacroEngine::startDraining()
     startTimer (30);
 }
 
+void MacroEngine::stopDraining()
+{
+    // Order matters: stop the repeating tick, then drop any single posted
+    // update, then release the callbacks — after this returns, no path from
+    // this object reaches the owner. `~MacroEngine` does the same two calls,
+    // but by then the owner's members are already gone, which is the window
+    // this closes. Residual, stated rather than implied: a tick already
+    // EXECUTING on the message thread while this runs on another one is not
+    // waited for — JUCE's Timer has no such join, and a host that destroys a
+    // processor concurrently with its own message thread has a larger problem
+    // than this callback.
+    stopTimer();
+    cancelPendingUpdate();
+    onDrainTick = nullptr;
+    isDetached  = nullptr;
+}
+
 MacroEngine::~MacroEngine()
 {
     stopTimer();

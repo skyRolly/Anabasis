@@ -22,7 +22,15 @@ void CurveView::refresh()
         return u;
     };
 
-    juce::uint64 fp = 0;
+    // The SAMPLE RATE is part of the fingerprint because paint() re-prepares
+    // its scratch EQ at `processor.getSampleRate()`, and the RBJ coefficients —
+    // so the drawn response, most visibly for the shelves and bells near
+    // Nyquist — depend on it. Hashing only the parameters meant a host rate
+    // change with no knob movement left the well showing the old rate's curve
+    // until some unrelated repaint. Rounded to an int: the rate is integral in
+    // practice, and hashing a double's bits would repaint on a value that
+    // cannot change the curve.
+    juce::uint64 fp = (juce::uint64) juce::roundToInt (processor.getSampleRate());
     if (mode == Mode::clipTransfer)
         for (const char* id : { pid::clipShape, pid::clipDrive })
             fp = fp * 1099511628211ull + rawBits (id);

@@ -6,7 +6,36 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 26 (2026-08-03)**, which caught two REGRESSIONS from the two
+**Last updated:** for **review round 27 (2026-08-03)**:
+(1) **The preset dirty datum was engine-wide while the name it describes is per-slot.**
+`presetBaseline` survived a session load (which cannot restore it — a session records WHICH preset
+a slot holds, never whether it had been edited since) and did not travel across an A/B switch, so
+after applying a preset in B and switching back, A's name was marked against B's baseline. Now one
+per slot, swapped by `switchToSlot`, copied by `copySlotToOther`, and dropped with the other slot
+fields on a load. **The first version of the test was uncalibrated and the mutant walked past it**
+— slot B had no preset NAME, so `presetDirty()` early-returned before reaching the datum at all;
+both slots must hold a named preset for the stimulus to touch the defect. Recorded because it is
+the same lesson as round 25's three-attempt mutant: a passing mutant is as often a weak stimulus
+as a correct guard.
+(2) **Teardown was not symmetric with round 26's construction fix.** `startDraining()` was split
+out of MacroEngine's constructor so the tick could not read half-assigned callbacks; the
+destructor side went unhandled, and `macroEngine` is declared BEFORE every member
+`handleAsyncUpdate()` touches — reverse-order destruction frees them all while the timer is still
+armed. `stopDraining()` + an explicit `~AnabasisAudioProcessor` closes it. Half a fix is its own
+category of bug: the premise that justified the first half justified the second equally.
+(3) **The drain applied detach bits after the re-engage clear**, so a detach that raced a macro
+gesture WON — the opposite of §5.3's "the next macro-knob gesture re-engages ALL detached params",
+and the opposite of what the comment three lines above it claimed. Only reachable when both land in
+one 30 ms tick, i.e. off-thread delivery; the new test builds exactly that (a gestured managed edit
+from a worker thread, then a macro gesture on the message thread).
+Also: the double-click knob reset is gesture-bracketed like the alt-click path — unbracketed it
+produced neither an undo step nor a detach, so two gestures the UI presents as identical behaved
+differently; `CurveView`'s repaint fingerprint includes the sample rate, whose coefficients the
+drawn response depends on. KI-006 gains the SAVE half of its gap (an instance that never processed
+a block captures all-zero published trims into `FROZEN_TRIMS`) and KI-007 the menu's raw
+LookAndFeel pointer — both recorded rather than patched, the latter because each available repair
+carries a risk of its own.
+Previous: **review round 26 (2026-08-03)**, which caught two REGRESSIONS from the two
 rounds before it and one drift in the highest-authority document in the tree:
 (1) **The round-25 combo fix broke the other direction.** Replacing the two-way `Value::referTo`
 with an explicit seed + `onChange` writer fixed the off-by-one but left state→widget silent, so a
