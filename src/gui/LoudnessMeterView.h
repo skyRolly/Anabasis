@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <iterator>
 #include "LookAndFeel.h"
 #include "FrameClock.h"
 
@@ -55,7 +56,11 @@ public:
         { "Ap", "Apple Music", -16.0f },
         { "YT", "YouTube",     -14.0f },
     };
-    static constexpr int kNumTargets = 3;
+    // DERIVED, not restated: a fourth entry (OQ-008 leaves the club/CD line
+    // open, so a fourth is the change most likely to be made) must reach the
+    // ticks, the penalty rows, the Settings checkboxes and the tooltip by
+    // adding ONE row above.
+    static constexpr int kNumTargets = (int) std::size (kTargets);
     // The provenance the OQ-008 mechanism promises: shown next to the values so
     // a stale table is visibly stale. Bump it WITH the table, never separately.
     static constexpr const char* kTargetsAsOf = "2026-08";

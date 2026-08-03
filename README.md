@@ -11,25 +11,30 @@ headless Linux machine, no IDE.
 
 ## Project status
 
-- **Version 0.1.0 (pre-release), phases P1–P4 complete** (P4 minus the one OQ-013-blocked restore
-  path); **P5 (GUI) is next**. P0 closed on 2026-07-31 with the owner's sign-off of
-  [`docs/DESIGN.md`](docs/DESIGN.md); the eleven ADRs it authorised are Accepted and registered in
-  [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md).
+- **Version 0.1.0 (pre-release) — CODE COMPLETE** (2026-08-02, under the owner's blanket
+  approval; what remains is the post-v0.1.0 human fine review — the brand pass, the DAW matrix
+  audition and the listening pass over every constant marked ⊕). P0 closed on 2026-07-31 with the
+  owner's sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the **fourteen** ADRs now registered in
+  [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md)
+  govern the implementation, and that index is the count of record rather than this sentence.
+  [`docs/HANDOVER.md`](docs/HANDOVER.md) carries the status of record.
 - **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 49-parameter
   surface, the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
   true-peak lookahead limiter · oversampling to 16× · dither) behind the POD engine boundary on
   the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
-  §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn, and schema-v1 state
-  with A/B slots — verified by `tests/` (**458 checks** — re-count from the suites' own output when editing,
-  the same rule HANDOVER's status row carries — green on Linux together with pluginval L5 in
-  both modes ×3; see [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers).
+  §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
+  frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
+  display) and the P6 per-slot undo / 12-preset factory bank / performance bench — verified by
+  `tests/` (**458 checks** — re-count from the suites' own output when editing, the same rule
+  HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
+  `.github/workflows/build.yml` sets, in both modes ×3; see
+  [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and
+  `docs/policies/TESTING_POLICY.md` for the gate, which is deliberately stated in one place).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
-- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development), the
-  frozen-trim-vector restore (OQ-013 — **ADR-0012 settled its transport**; what stays open is
-  whether a restored vector may be injected into a running engine at all, so the Hard Stop
-  stands), and **the remaining entries in
+- **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development) and
+  **the remaining entries in
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)** — which is the list of record, so this
   sentence cannot drift out of date. None of them may be guessed at. Resolved entries
   stay in that file's `Resolved` section; they are decisions, not choices to revisit.

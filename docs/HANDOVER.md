@@ -255,6 +255,27 @@ re-entrancy that routing every trigger through `drainTick` created (and the two 
 the extra ~11 ms bottom hold when a frozen-trim record arrives at a bottom already reached, and the
 bench's second CI residual — compiling is not running. Suites: 230 + 228.
 
+**Review round 35 (2026-08-03).** Two documentation drifts this PR itself caused, plus three more
+copies. (1) The pluginval strictness had a SECOND copy: round 29 collapsed the duplicate rows
+inside `build.yml` and declared that block "the single authority", while `CI_CD.md` kept its own
+`env:` snippet saying 5 under a heading reading "in one place" — the duplicate had moved, not gone,
+and the lifecycle policy makes that sync mandatory. `CI_CD.md` now names where the number lives and
+quotes nothing, and its pipeline section finally records the Linux job's `-DANABASIS_BUILD_BENCH=ON`.
+(2) The README still described the pre-P5 project — "P5 (GUI) is next", "the eleven ADRs",
+"pluginval L5", OQ-013's Hard Stop "stands" — in the first document a reader opens, while
+`CLAUDE.md` and this file were updated in the same commits. (3) The target-line CARDINALITY was
+still duplicated three ways after round 34 removed the names and numbers (`kNumTargets = 3`, two
+fixed toggle arrays, three hand-placed rows); OQ-008 leaves a fourth line open, so `kNumTargets` is
+now `std::size (kTargets)`, the toggles are one `std::array` sized from it, and the row divides
+itself. (4) The editor's badge table wrote the nine managed ids out again instead of indexing
+`managed_params::ids`; it now indexes that list against a parallel `Knob*` array whose fixed size
+makes a mismatch a compile error. (5) The ADAPTIVE-mirror comment had been orphaned from its members
+by the §5.3 block spliced between them — round 34's Learn-paragraph defect, one file over. (6)
+`registerAnimated` seeded every animated property except `vpos`, so every knob swept up from its
+minimum over the first frames after the editor opened. Enforcement rather than a comment: both
+`refreshMapping()` callers now go through `relandMacroCurve()`, which asserts the staged detach bits
+are clear — the invariant round 34 stated and nothing checked. Suites: 230 + 228.
+
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The editor: family frame (46 px top bar — wordmark→About, preset browser, A/B, Copy,

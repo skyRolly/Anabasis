@@ -9,6 +9,7 @@
 #include "GrHistoryView.h"
 #include "SpectrumView.h"
 #include "CurveView.h"
+#include <array>
 
 class AnabasisAudioProcessor;
 
@@ -312,7 +313,10 @@ private:
     juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox;
     juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel;
     juce::ToggleButton animToggle, tooltipsToggle, tpMeterToggle;
-    juce::ToggleButton targetSpToggle, targetApToggle, targetYtToggle;
+    // One per `LoudnessMeterView::kTargets` entry, sized FROM that table:
+    // three named members meant the count lived here as well as there, and
+    // in the two loops and the layout row that walked them.
+    std::array<juce::ToggleButton, (size_t) LoudnessMeterView::kNumTargets> targetToggles;
     juce::ToggleButton spectrumToggle;
 
     // -- Save-preset overlay -------------------------------------------------

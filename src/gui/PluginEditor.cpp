@@ -428,11 +428,10 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // meter's tooltip; OQ-008's per-release refresh touches the table, so the
     // copies are what would have gone stale.
     {
-        juce::ToggleButton* bits[] = { &targetSpToggle, &targetApToggle, &targetYtToggle };
         const int mask = (int) ist.getProperty (iid::meterTargets, ~0);
-        for (int t = 0; t < 3; ++t)
+        for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
         {
-            auto* tog = bits[t];
+            auto* tog = &targetToggles[(size_t) t];
             tog->setButtonText (LoudnessMeterView::kTargets[t].fullName);
             tog->setToggleState ((mask & (1 << t)) != 0, juce::dontSendNotification);
             tog->onStateChange = [this, t, tog]
@@ -692,16 +691,21 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
 
         // §5.3 / §6.3: per-parameter detach badges — an accent dot on each
         // control the user has taken off its macro curve.
-        const std::pair<const char*, const juce::Slider*> badged[] = {
-            { "limGain", &limGainK },   { "compThreshold", &thresholdK },
-            { "compRatio", &ratioK },   { "clipDrive", &driveK },
-            { "clipShape", &shapeK },   { "colourDepth", &depthK },
-            { "dynTilt", &dynTiltK },   { "eqTilt", &eqTiltK },
-            { "colourTone", &colToneK },
+        // The ids come from `managed_params::ids` — the ONE list the mapper and
+        // the wrapper's detach discriminator already share — rather than being
+        // written out again here, which is what this table used to do. The
+        // knobs are a PARALLEL array in that list's order, and its fixed size
+        // is the check: a tenth managed parameter fails to compile here instead
+        // of silently drawing eight badges out of nine while the mask, the
+        // mapper and the serialized slot all track ten.
+        const juce::Slider* badged[managed_params::kCount] = {
+            &limGainK, &thresholdK, &ratioK, &driveK, &shapeK,
+            &depthK,   &dynTiltK,   &eqTiltK, &colToneK,
         };
         g.setColour (colours::accent);
-        for (const auto& [id, k] : badged)
-            if (processor.detachMask().contains (juce::String (id)))
+        for (int i = 0; i < managed_params::kCount; ++i)
+            if (const auto* k = badged[i];
+                processor.detachMask().contains (managed_params::ids[i]))
                 g.fillEllipse ((float) k->getRight() - 10.0f, (float) k->getY() + 2.0f,
                                7.0f, 7.0f);
     }
@@ -772,10 +776,14 @@ void AnabasisAudioProcessorEditor::resized()
         tooltipsToggle.setBounds (row (26));
         tpMeterToggle.setBounds (row (26));
         spectrumToggle.setBounds (row (26));
+        // Evenly divided rather than three hand-picked widths, so a fourth
+        // target lays itself out. The last takes the remainder.
         auto tr = row (26);
-        targetSpToggle.setBounds (tr.removeFromLeft (110));
-        targetApToggle.setBounds (tr.removeFromLeft (130));
-        targetYtToggle.setBounds (tr);
+        for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
+            targetToggles[(size_t) t].setBounds (
+                t == LoudnessMeterView::kNumTargets - 1
+                    ? tr : tr.removeFromLeft (tr.getWidth()
+                                              / (LoudnessMeterView::kNumTargets - t)));
     }
     {
         auto sp = savePresetBackdrop.panel.reduced (20, 16);
@@ -1054,10 +1062,12 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     // start depending on.
     {
         const int mask = (int) ist.getProperty (iid::meterTargets, ~0);
-        juce::ToggleButton* bits[] = { &targetSpToggle, &targetApToggle, &targetYtToggle };
-        for (int t = 0; t < 3; ++t)
-            if (const bool want = (mask & (1 << t)) != 0; bits[t]->getToggleState() != want)
-                bits[t]->setToggleState (want, juce::dontSendNotification);
+        for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
+        {
+            auto& tog = targetToggles[(size_t) t];
+            if (const bool want = (mask & (1 << t)) != 0; tog.getToggleState() != want)
+                tog.setToggleState (want, juce::dontSendNotification);
+        }
     }
 
     // uiScale is the same shape with one extra step: the box only DISPLAYS the
@@ -1379,6 +1389,16 @@ void AnabasisAudioProcessorEditor::registerAnimated (juce::Component& c)
     props.set ("actA", 0.0);
     if (w.toggle != nullptr)
         props.set ("onA", w.toggle->getToggleState() ? 1.0 : 0.0);
+    // `vpos` needs seeding for the same reason the three above do, and it was
+    // the one left out. `stepMicroAnims` eases `props["vpos"]` toward the
+    // slider's real proportion, and an UNSET var reads as 0.0 — while
+    // `drawRotarySlider` prefers `vpos` whenever the control is not being
+    // dragged. Every knob therefore swept up from its minimum over the first
+    // frames after the editor opened instead of being drawn where it already
+    // was. `Knob::doReset` seeds the same property before a reset sweep, which
+    // is exactly the case where the sweep IS wanted.
+    if (auto* s = dynamic_cast<juce::Slider*> (&c))
+        props.set ("vpos", (double) s->valueToProportionOfLength (s->getValue()));
 }
 
 void AnabasisAudioProcessorEditor::stepMicroAnims (double dt)

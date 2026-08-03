@@ -6,7 +6,54 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 34 (2026-08-03)** — the copies this build kept finding, and
+**Last updated:** for **review round 35 (2026-08-03)** — two documentation drifts this PR itself
+caused, and three more copies:
+(1) **The pluginval strictness had a second copy that still said 5.** Round 29 collapsed the
+duplicate rows inside `build.yml` and wrote that the block "is cited as the single authority for
+the number, so it carries no duplicate rows" — while `CI_CD.md` kept its own fenced `env:` block
+quoting 5, under a heading reading "Strictness escalates by phase — **in one place**". The
+duplicate had not been removed, it had moved one file over, and
+`DOCUMENTATION_LIFECYCLE_POLICY.md` makes CI workflow → `CI_CD.md` a mandatory sync. The section
+now names where the number lives and quotes nothing; the same section gained the
+`-DANABASIS_BUILD_BENCH=ON` configure flag the Linux job has carried since round 29 and this
+document never recorded.
+(2) **The README still advertised the pre-P5 project.** "phases P1–P4 complete … P5 (GUI) is
+next", "the eleven ADRs", "pluginval L5", and OQ-013's Hard Stop "stands" — every one of them
+invalidated by this PR, in the first document a reader opens, while `CLAUDE.md` and `HANDOVER.md`
+were updated in the same commits. Rewritten to v0.1.0 CODE COMPLETE with the P5/P6 work named, the
+ADR count pointed at `ADR_INDEX.md` as the count of record, the strictness pointed at `build.yml`
+and `TESTING_POLICY.md` (which is where the number belongs at all), and OQ-013 dropped from the
+open list.
+(3) **The target-line CARDINALITY was still duplicated three ways** after round 34 removed the
+names and numbers: `kNumTargets = 3` written out beside the table it counts, two fixed
+`{ &targetSpToggle, &targetApToggle, &targetYtToggle }` arrays, and three hand-placed rows in
+`resized()`. OQ-008 explicitly leaves a fourth line (club/CD) pending an owner decision, so a
+fourth entry is the change most likely to be made — and it would have drawn a fourth tick and a
+fourth penalty row with no checkbox to switch it off. `kNumTargets` is now `std::size (kTargets)`,
+the three named toggles are one `std::array` sized from it, and the Settings row divides itself.
+(4) **The nine managed ids were written out again in the editor's badge table.**
+`managed_params::ids` is introduced in this PR as THE list the mapper and the wrapper's detach
+discriminator share; the Advanced-view badges paired their own string literals with the knobs, so a
+tenth managed parameter would have left one knob silently un-badged while the mask, the mapper and
+the serialized slot all tracked it. The badges now index that list against a parallel `Knob*` array
+whose FIXED size makes a mismatch a compile error.
+(5) **The ADAPTIVE-mirror comment had been orphaned from its members** by the §5.3 block spliced
+between them — the same defect round 34 fixed for the Learn paragraph, one file over, so the
+relaxed-atomic justification read as if it belonged to `managedGestureBits`/`pendingDetachBits`.
+Moved back onto `stagedAdaptiveLearned`/`stagedRefOnset`/`stagedRefTilt`.
+(6) **`registerAnimated` seeded every animated property except `vpos`.** `stepMicroAnims` eases
+`props["vpos"]` toward the slider's real proportion and an unset `var` reads as 0.0, while
+`drawRotarySlider` prefers `vpos` whenever the control is not being dragged — so every knob swept
+up from its minimum over the first frames after the editor opened. Seeded from
+`valueToProportionOfLength`, which is what `Knob::doReset` already does for the case where the
+sweep IS wanted.
+Enforcement rather than a comment: round 34 recorded that "every `refreshMapping()` caller must
+have replaced the mask first" and nothing checked it. Both callers now go through
+`AnabasisAudioProcessor::relandMacroCurve()`, which asserts the staged bits are clear before
+refreshing — so a third caller inherits the check instead of the trap.
+Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer (KI-007 item 4), and
+the KI-003/KI-006/KI-007 restatements, already recorded in the same words.
+Previous: **review round 34 (2026-08-03)** — the copies this build kept finding, and
 one guarantee that was two thirds applied:
 (1) **The OQ-008 target values had three copies.** `LoudnessMeterView::kTargets` is documented as
 THE compiled table, but the meter's tooltip carried the platform names, the numbers and the "as of"

@@ -259,6 +259,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   session's readings for as long as it stayed stopped.
 - **The preset name's edited mark updates immediately after undo, redo, A/B, a preset change or a
   save** (2026-08-03), instead of keeping the previous state's mark for up to a third of a second.
+- **Knobs are drawn where they are the moment the window opens** (2026-08-03), instead of sweeping
+  up from their minimum over the first few frames.
 - Smaller: a host that reports control gestures across threads can no longer split one drag into
   the wrong undo steps, and a macro knob grabbed right after such an edit re-engages it as
   documented; a well-formed preset file from another plugin is refused without costing an undo

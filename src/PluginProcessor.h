@@ -171,7 +171,7 @@ public:
     void resetToMacro()
     {
         replaceDetachMask ({});      // …and drops any staged detach with it
-        macroEngine->refreshMapping();
+        relandMacroCurve();
     }
 
     // Deterministic drain for the headless tests (mirrors flushPendingMapping):
@@ -184,6 +184,19 @@ public:
 
 private:
     void updateLatency();               // the single setLatencySamples call site
+    // `MacroEngine::refreshMapping()` behind the invariant it states but
+    // cannot check for itself. Since every drain trigger routes through
+    // `drainTick`, refreshing the mapping also runs THIS class's detach drain
+    // re-entrantly — harmless only because the caller has already replaced the
+    // mask, which zeroes the staged bits the nested drain would otherwise
+    // apply in the middle of the caller's own apply. Both callers go through
+    // here so a third one inherits the check instead of the trap.
+    void relandMacroCurve()
+    {
+        jassert (pendingDetachBits.load (std::memory_order_relaxed) == 0
+                 && ! pendingReengage.load (std::memory_order_relaxed));
+        macroEngine->refreshMapping();
+    }
     void publishSilentMeters() noexcept;   // the six meter atomics, cleared (one list)
     juce::ValueTree copyStateWithRaw();  // APVTS copy + additive exact-`raw` per PARAM
     void adoptParamsTree (const juce::ValueTree& paramsWithRaw);   // strip → replaceState → reassert
@@ -249,12 +262,6 @@ private:
     // plugin state, save without transport) would otherwise serialize that
     // stale answer and drop the loaded session's Learn.
     //
-    // Atomic, though both writer and reader are nominally the message thread:
-    // VST3 does not promise which thread delivers setStateInformation
-    // (KNOWN_ISSUES KI-003), so a concurrent save could otherwise read a
-    // half-written mirror. Relaxed is enough — the three are independent
-    // scalars whose fallback (the engine's own atomics) is coherent, and
-    // ADR-0012's known-limits section already scopes the record's coherence.
     // -- §5.3 detach discriminator (ADR-0005's P5 half) ---------------------
     // A managed parameter detaches when a change arrives that is
     //   (1) gesture-bracketed — a real user drag, begin/endChangeGesture —
@@ -286,6 +293,12 @@ private:
     std::atomic<uint32_t> pendingDetachBits  { 0 };
     std::atomic<bool>     pendingReengage    { false };
 
+    // Atomic, though both writer and reader are nominally the message thread:
+    // VST3 does not promise which thread delivers setStateInformation
+    // (KNOWN_ISSUES KI-003), so a concurrent save could otherwise read a
+    // half-written mirror. Relaxed is enough — the three are independent
+    // scalars whose fallback (the engine's own atomics) is coherent, and
+    // ADR-0012's known-limits section already scopes the record's coherence.
     std::atomic<bool>  stagedAdaptiveLearned { false };
     std::atomic<float> stagedRefOnset { anabasis::AdaptiveEngine::kDefaultRefOnset };
     std::atomic<float> stagedRefTilt  { anabasis::AdaptiveEngine::kDefaultRefTilt };

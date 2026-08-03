@@ -63,13 +63,13 @@ non-zero pluginval exit fails the job everywhere.
 
 ## Strictness escalates by phase — in one place
 
-```yaml
-env:
-  ANABASIS_PLUGINVAL_STRICTNESS: 5   # P1–P2: 5 · P3–P5: 8 · P6/release: 10
-```
-
-Raising the bar is a one-line edit to `build.yml`. The release gate is **10**
-(`docs/policies/TESTING_POLICY.md`).
+That place is the `env:` block at the top of `.github/workflows/build.yml`
+(`ANABASIS_PLUGINVAL_STRICTNESS`), and this section deliberately does **not**
+quote its current value. It used to, and the copy went stale the moment the
+build raised the bar for P6 — in the very file whose heading promises one place
+only. Read the number there; raising it stays a one-line edit. The release gate
+is defined by `docs/policies/TESTING_POLICY.md`, which is likewise the only
+document that states it.
 
 ## Pipeline
 
@@ -82,8 +82,15 @@ Common to all three:
 2. **Configure** — `cmake -B build [-G Ninja] -DCMAKE_BUILD_TYPE=Release
    -DANABASIS_BUILD_NUMBER=${{ github.run_number }}` (the run number becomes the About-box build
    number). Windows uses the default VS generator; macOS adds
-   `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` and a deployment target.
-3. **Build** — `cmake --build build --config Release`.
+   `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` and a deployment target. **Linux additionally passes
+   `-DANABASIS_BUILD_BENCH=ON`** — the bench is OFF by default so it cannot be run casually and
+   quoted without its machine (`PERFORMANCE_BUDGET.md`), but OFF everywhere meant `tests/bench.cpp`
+   was compiled by no job at all and its DSP calls would rot silently. One platform compiling it
+   makes that rot a red build; `build.yml`'s own comment records the two residuals (only this
+   platform, and compiling is not running).
+3. **Build** — `cmake --build build --config Release` (Linux therefore also builds `AnabasisBench`,
+   which is never RUN in CI — shared-runner timings are exactly the numbers that must not be
+   quoted).
 
 Then:
 

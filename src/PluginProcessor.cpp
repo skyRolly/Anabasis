@@ -675,7 +675,7 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
     // inaudible. Run the mapping once, here, exactly as `resetToMacro()` does
     // — after the values have landed, outside the guard, and BEFORE the
     // baseline below, or the preset would read as dirty the moment it loaded.
-    macroEngine->refreshMapping();
+    relandMacroCurve();                        // the mask-replaced invariant lives there
 
     presetBaseline = saveSlotFromLive();       // dirty marker datum
     return true;
