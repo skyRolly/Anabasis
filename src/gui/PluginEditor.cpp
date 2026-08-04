@@ -1200,9 +1200,38 @@ void AnabasisAudioProcessorEditor::applyUiScale()
 {
     // Same reading as the box's, so the transform and the selection cannot
     // describe different steps — that was the whole defect.
-    const float scale = (float) kScaleSteps[nearestScaleIndex (
-                            (int) processor.internalState.state()
-                                .getProperty (iid::uiScale, 100))] / 100.0f;
+    auto ist = processor.internalState.state();
+    const int stored = (int) ist.getProperty (iid::uiScale, 100);
+    const int step   = kScaleSteps[nearestScaleIndex (stored)];
+
+    // …and the stored value CONVERGES on the step it renders as. Clamping on
+    // read fixed the divergence between the transform and the combo, but left
+    // an illegal value (a hand-edited session, a step list that has since
+    // changed) sitting in `InternalState` for ever: `getStateInformation`
+    // re-serialised it every save, so the session never healed and every future
+    // reader had to re-derive the same clamp. Normalising here — the point where
+    // the scale is APPLIED — is the state model's own read-rule discipline,
+    // matching `adoptParamsTree`'s treatment of out-of-range parameter values.
+    //
+    // Deliberately NOT in `refreshInternalSettingsBoxes`, which is the 24 Hz
+    // display poll: this runs from the constructor, from a host DPI change,
+    // from the user's own selection, and from the refresh ONLY on the branch
+    // where the stored value actually changed. It converges at most once per
+    // illegal value — afterwards the stored value IS the step,
+    // `nearestScaleIndex` returns it unchanged, and there is nothing left to
+    // write. A legal value is never altered, so a user's chosen scale is
+    // untouched.
+    //
+    // The `stored != step` test states that intent rather than providing it:
+    // `ValueTree::setProperty` already compares before it assigns, so an
+    // unconditional write would also be a no-op for a legal value and sends no
+    // change message. Kept explicit because a reader should not have to know
+    // that to see that this cannot disturb a valid setting — and mutation-
+    // checked, so it is recorded as belt-and-braces rather than as the guard.
+    if (stored != step)
+        ist.setProperty (iid::uiScale, step, nullptr);
+
+    const float scale = (float) step / 100.0f;
 
     setSize (kWidth, advanced ? kAdvancedH : kSimpleH);
     setTransform (juce::AffineTransform::scale (hostScale * scale));

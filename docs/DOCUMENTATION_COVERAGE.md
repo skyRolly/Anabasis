@@ -6,7 +6,43 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 47 (2026-08-03)** — two lifecycle orderings made structural,
+**Last updated:** for **review round 48 (2026-08-03)** — one verification that ended in "keep it",
+one state-model convergence, one guard made structural:
+(1) **The frozen-trim ownership boundary was VERIFIED and deliberately left as it is.**
+`adoptFrozenMirror()` writes the mirror and then reads the retained generation, and the two cannot
+be made atomic without a lock — the audio thread can publish in the gap (only with Freeze OFF, since
+`finishBlock` stops publishing while frozen), so the boundary can be one generation off. The
+direction is what matters and it is NOT symmetric. Reading AFTER, as the code does, can only make
+the boundary too LATE: a publication in the gap is attributed to the OUTGOING slot and the new slot
+withholds a latch for ~10 ms of audio, writing nothing wrong. Reading BEFORE would make it too
+EARLY, and a publication in the gap would then satisfy `gen != base` for the INCOMING slot —
+serialising a vector measured while the outgoing slot was live, which is the cross-slot leak round
+42 closed. The skew is therefore deliberately biased toward silence rather than toward borrowing
+another slot's latch. **Reported honestly: no test catches a swap** — the distinguishing case needs a
+publication to land between two adjacent statements, and the suite is single-threaded; I ran the
+swap and all 307 checks passed. The ordering is now stated at the site with the consequence of
+inverting it, because a comment is the only guard available.
+(2) **An illegal persisted `uiScale` never converged.** Clamping on read (round 42) fixed the
+divergence between the transform and the combo but left the illegal value in `InternalState` for
+ever: `getStateInformation` re-serialised it on every save, so the session never healed. It is now
+normalised where the scale is APPLIED — the state model's own read-rule discipline, matching
+`adoptParamsTree`'s treatment of out-of-range parameter values — and deliberately not on the 24 Hz
+display poll: `applyUiScale()` runs from the constructor, a host DPI change, the user's own
+selection, and the refresh only on the branch where the stored value changed. A legal value is never
+altered. Two checks added; the no-write-back mutant dies. The `stored != step` test is recorded as
+belt-and-braces rather than as the mechanism — `ValueTree::setProperty` already compares before
+assigning, which the unconditional-write mutant demonstrated by passing.
+(3) **`drainDetachBitsSoon()` bypassed the whole-tick restore guard.** `drainTick` suppresses both
+halves of the drain inside a `ScopedRestore` because a restore is replacing `liveDetachMask`
+wholesale; this entry point reached the same `handleAsyncUpdate()` directly, so the suppression
+rested on nobody calling it during a restore. It is genuinely unreachable today —
+`parameterChanged` returns early when `isRestoring()`, and the macro gesture-begin path cannot run
+concurrently with a message-thread restore — but that is a reachability argument about two callers,
+and the third would not know. Behaviour is unchanged for every existing path. MacroEngine itself is
+untouched.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 47 (2026-08-03)** — two lifecycle orderings made structural,
 one predicate unified, and one documentation overstatement corrected. No behaviour change:
 (1) **`macroEngine->startDraining()` ran several statements before the constructor finished**, so
 the 30 ms tick — which reaches back into the wrapper through `onDrainTick` →

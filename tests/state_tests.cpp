@@ -2657,6 +2657,22 @@ static void testAnOutOfListUiScaleClampsConsistently()
            "uiScaleClamp: an illegal value arriving by LOAD moves the box off the stale step");
     check (std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …to the same step the window renders at");
+
+    // …and the STORED value converges on the step it renders as. Clamping on
+    // read left an illegal value in `InternalState` for ever — every save
+    // re-serialised it, so the session never healed. The write happens where
+    // the scale is applied, not on the display poll, and only when the stored
+    // value is not already a legal step.
+    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 125,
+           "uiScaleClamp: an illegal stored value is normalised, not just clamped on read");
+
+    // A LEGAL value is never rewritten — the convergence must not disturb a
+    // scale the user actually chose.
+    proc.internalState.state().setProperty (iid::uiScale, 90, nullptr);
+    ed->refreshInternalSettingsBoxes();
+    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 90
+            && std::abs (rendered() - 0.90f) < 1.0e-4f,
+           "uiScaleClamp: a legal stored step is left exactly as the user set it");
 }
 
 // Round 42. `CurveView::paint` rebuilt its curve on every repaint — a full

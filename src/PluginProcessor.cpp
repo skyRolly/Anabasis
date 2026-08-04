@@ -317,6 +317,24 @@ void AnabasisAudioProcessor::parameterChanged (const juce::String& parameterID, 
 // delivers gestures off-thread — display latency, never a wrong value.
 void AnabasisAudioProcessor::drainDetachBitsSoon()
 {
+    // The RESTORE guard, which this entry point did not have. `drainTick`
+    // suppresses both halves of the drain inside a `ScopedRestore` — the
+    // mapping AND the wrapper's detach drain — because a restore is replacing
+    // `liveDetachMask` wholesale and a drain landing in the middle of it is a
+    // second writer of the array the restore is installing. This function
+    // reaches the same `handleAsyncUpdate()` directly, so it was the one path
+    // where that suppression depended on nobody calling it during a restore
+    // rather than on the call refusing.
+    //
+    // It IS unreachable today: `parameterChanged` returns before getting here
+    // when `isRestoring()`, and the macro gesture-begin path cannot run
+    // concurrently with a message-thread restore. That is a reachability
+    // argument about two callers, and reachability arguments are what this PR
+    // has spent its rounds converting into structure — the third caller is the
+    // one that would not know. Behaviour is unchanged for every path that
+    // exists now; what changes is that a future one cannot get it wrong.
+    if (macroEngine->isRestoring())
+        return;
     if (juce::MessageManager::existsAndIsCurrentThread())
         handleAsyncUpdate();
 }
@@ -602,8 +620,35 @@ void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithR
 void AnabasisAudioProcessor::adoptFrozenMirror (juce::ValueTree frozen)
 {
     liveFrozenTrims = std::move (frozen);
-    slotFrozenBase.store (engine.adaptiveForWrapper().retainedTrimGeneration(),
-                          std::memory_order_relaxed);
+
+    // THE ORDER OF THESE TWO IS LOAD-BEARING, and it is not symmetric — read
+    // this before "tidying" them, because no test catches a swap (the
+    // distinguishing case needs an audio publication to land BETWEEN them, and
+    // the headless suite is single-threaded).
+    //
+    // The two are not one atomic operation and cannot be made one without a
+    // lock: a `juce::ValueTree` assignment and an atomic load do not combine.
+    // The audio thread can publish in the gap — only with Freeze OFF, since
+    // `finishBlock` stops publishing while frozen — so the boundary can be one
+    // generation off. WHICH WAY it is off is the whole question:
+    //
+    //   * Reading AFTER the mirror write (what this does) can only make the
+    //     boundary too LATE. A publication that lands in the gap is folded into
+    //     the base, i.e. attributed to the OUTGOING slot, and the new slot
+    //     withholds a latch it arguably owns until the next publication — ~10 ms
+    //     of audio away, and it writes nothing wrong in the meantime.
+    //   * Reading BEFORE it would make the boundary too EARLY, and a
+    //     publication in the gap would then satisfy `gen != base` for the
+    //     INCOMING slot — serialising a vector measured while the outgoing slot
+    //     was still live. That is precisely the cross-slot leak round 42
+    //     existed to close, re-opened in miniature.
+    //
+    // So the skew is deliberately biased toward silence rather than toward
+    // borrowing another slot's latch, which is the same trade every other
+    // clause of this rule makes. The boundary means: "no latch published up to
+    // and including this point belongs to this slot."
+    const auto ownershipBoundary = engine.adaptiveForWrapper().retainedTrimGeneration();
+    slotFrozenBase.store (ownershipBoundary, std::memory_order_relaxed);
 }
 
 juce::ValueTree AnabasisAudioProcessor::engineFrozenTrimsIfLive()
