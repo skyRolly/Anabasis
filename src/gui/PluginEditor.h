@@ -188,6 +188,21 @@ private:
     // caller that just CHANGED the state the mark describes passes true; the
     // 24 Hz tick is the only one that does not.
     void refreshPresetDisplay (bool recomputeNow = false);
+
+    // Which preset this editor last APPLIED, so ‹/› can walk from where the
+    // user actually is. Names are not unique across the two sources — a user
+    // preset called "EDM Club" is indistinguishable from the factory entry by
+    // the display string alone — and re-deriving the position from that string
+    // walked from the wrong place. This is a HINT, not a record of truth: the
+    // name still has to confirm it, because a session load, an undo or an A/B
+    // switch changes what is showing without going through either setter.
+    void rememberPresetSource (int factoryIndex)
+    { lastPresetWasFactory = true; lastPresetFactoryIdx = factoryIndex; lastPresetFile = juce::File(); }
+    void rememberPresetSource (const juce::File& f)
+    { lastPresetWasFactory = false; lastPresetFactoryIdx = -1; lastPresetFile = f; }
+    bool lastPresetWasFactory = false;
+    int  lastPresetFactoryIdx = -1;
+    juce::File lastPresetFile;
     // Both the constructor's seed and the 24 Hz tick, so the two cannot
     // disagree about what "no history yet" looks like. Out of line because this
     // header only forward-declares the processor.

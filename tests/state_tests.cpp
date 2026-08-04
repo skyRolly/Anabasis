@@ -2479,6 +2479,49 @@ static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::Stri
 // One `nearestScaleIndex()` now answers for both, so they cannot disagree, and
 // an out-of-list value CLAMPS the way every other persisted value in this tree
 // does rather than being silently discarded.
+// Round 44. The Settings callbacks are STORED closures invoked long after the
+// constructor that built them has returned, and two of them captured a local
+// reference variable (`ist`) / a reference parameter (`box`) by reference —
+// which captures the variable, not the referent, so calling them afterwards is
+// UB by [expr.prim.lambda.capture] even though every compiler resolves it
+// through to the long-lived object.
+//
+// What this test is and is not: it drives the widget→state direction AFTER
+// construction, so it covers the refactor (the closure still reaches the live
+// tree, and reaches the RIGHT one). It cannot kill the pre-fix form — that is
+// the nature of UB that happens to work, and pretending otherwise would be the
+// kind of check that proves an impossible state. The value here is regression
+// coverage for a direction the suite otherwise only drove state→widget.
+static void testTheSettingsCallbacksReachTheLiveTree()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "settingsWrite: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+    auto* scale = findComboByTitle (*ed, "UI scale");
+    auto* os    = findComboByTitle (*ed, "Oversampling");
+    check (scale != nullptr && os != nullptr,
+           "settingsWrite: (premise) both Settings combos were found");
+    if (scale == nullptr || os == nullptr)
+        return;
+
+    // The hand-built combo (index ↔ PERCENT), whose closure re-fetches the tree.
+    scale->setSelectedItemIndex (5, juce::sendNotificationSync);        // "175%"
+    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 175,
+           "settingsWrite: the UI-scale closure writes the live InternalState tree");
+    check (std::abs (ed->getTransform().getScaleFactor() - 1.75f) < 1.0e-4f,
+           "settingsWrite: …and applies it, so the window follows the selection");
+
+    // The helper-built combo (index ↔ 0-BASED value), whose closure captures the
+    // widget by pointer. The encoding is contract — index 3 is "8x" and stores 3,
+    // not the item ID 4.
+    os->setSelectedItemIndex (3, juce::sendNotificationSync);
+    check ((int) proc.internalState.state().getProperty (iid::oversample, -1) == 3,
+           "settingsWrite: the helper-built closure stores the 0-based value it names");
+}
+
 static void testAnOutOfListUiScaleClampsConsistently()
 {
     AnabasisAudioProcessor proc;
@@ -3035,6 +3078,7 @@ int main (int argc, char** argv)
         testMeterResetClearsSessionHolds();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
+        testTheSettingsCallbacksReachTheLiveTree();
         testAnOutOfListUiScaleClampsConsistently();
         testTheCurveWellCachesWithoutChangingWhatItDraws();
         testGrHistoryWindowNeverAsksForTheHeadSlot();

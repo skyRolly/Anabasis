@@ -270,11 +270,18 @@ These are the rules, not incidental details — each blocks a specific way a bad
 
 ## Reproducing CI locally
 
-The first line is Linux-only; everything below it runs on all three gate platforms
-(`run-pluginval.ps1 -Strictness $STRICTNESS -Mode deterministic` on Windows).
+**Two blocks, because the shells genuinely differ.** The POSIX one covers Linux and
+macOS; Windows gets its own, since the CI job there drives `run-pluginval.ps1` from
+PowerShell and neither `sed` nor `${VAR:?}` is available in a stock `cmd`/PowerShell
+environment. Round 43 fixed the strictness lookup for macOS and then described the
+result as running "on all three gate platforms", which moved the same defect one
+platform along rather than removing it. Both blocks read the number from the same
+single authority, `.github/workflows/build.yml`, and neither restates it.
+
+**Linux / macOS:**
 
 ```bash
-scripts/setup-linux.sh          # Linux only — macOS/Windows need no dependency step
+scripts/setup-linux.sh          # Linux only — macOS needs no dependency step
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 scripts/run-tests.sh
@@ -295,4 +302,25 @@ STRICTNESS=$(sed -n 's/^  ANABASIS_PLUGINVAL_STRICTNESS:[[:space:]]*\([0-9][0-9]
 : "${STRICTNESS:?could not read ANABASIS_PLUGINVAL_STRICTNESS from build.yml}"
 scripts/run-pluginval.sh "$STRICTNESS" deterministic
 scripts/run-pluginval.sh "$STRICTNESS" randomise
+```
+
+**Windows** (PowerShell — what the `windows` job itself runs):
+
+```powershell
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+# There is no `run-tests.ps1`: the `windows` job inlines its binary discovery so
+# it can REFUSE an ambiguous multi-config match rather than guess (see the job's
+# own comment). Locally the paths are fixed, so run them directly.
+build/AnabasisTests_artefacts/Release/AnabasisTests.exe
+build/AnabasisStateTests_artefacts/Release/AnabasisStateTests.exe
+# Same single authority, read with PowerShell's own regex rather than sed. The
+# `^  ` anchor pins the match to the `env:` assignment, so the
+# `${{ env.ANABASIS_PLUGINVAL_STRICTNESS }}` references in the job steps cannot
+# contribute a second value — the same reasoning as the POSIX block above.
+$Strictness = (Select-String -Path .github/workflows/build.yml `
+                 -Pattern '^  ANABASIS_PLUGINVAL_STRICTNESS:\s*(\d+)').Matches[0].Groups[1].Value
+if (-not $Strictness) { throw 'could not read ANABASIS_PLUGINVAL_STRICTNESS from build.yml' }
+scripts/run-pluginval.ps1 -Strictness $Strictness -Mode deterministic
+scripts/run-pluginval.ps1 -Strictness $Strictness -Mode randomise
 ```

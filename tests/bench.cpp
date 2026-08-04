@@ -19,7 +19,14 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdlib>
 #include <thread>
+
+#if JUCE_MAC || JUCE_IOS
+ #include <sys/sysctl.h>
+#elif JUCE_WINDOWS
+ #include <windows.h>
+#endif
 
 namespace
 {
@@ -41,22 +48,83 @@ namespace
         }
     }
 
+    // The MACHINE half of C2 ("a number without its machine and method is not a
+    // measurement", PERFORMANCE_BUDGET.md). `ANABASIS_BUILD_BENCH` is a plain
+    // CMake option with no platform guard, so this has to answer on every
+    // platform a developer can configure it on — and the refresh rule
+    // prescribes exactly the workflow that is NOT the CI Linux job: a local
+    // re-measure before quoting a number. Reading `/proc/cpuinfo` and returning
+    // "(unknown cpu)" everywhere else made C2 fail silently, producing a
+    // results table that looks complete and identifies nothing.
+    //
+    // One lookup per platform, each the platform's own canonical source, and
+    // NO silent fallback — see `main`.
     std::string cpuModel()
     {
+       #if JUCE_LINUX || JUCE_BSD
         std::ifstream in ("/proc/cpuinfo");
         std::string line;
         while (std::getline (in, line))
             if (line.rfind ("model name", 0) == 0)
                 return line.substr (line.find (':') + 2);
-        return "(unknown cpu)";
+       #elif JUCE_MAC || JUCE_IOS
+        // sysctl's own name for the part, which is what Apple's own tools quote.
+        std::size_t len = 0;
+        if (sysctlbyname ("machdep.cpu.brand_string", nullptr, &len, nullptr, 0) == 0 && len > 1)
+        {
+            std::string out (len - 1, '\0');
+            if (sysctlbyname ("machdep.cpu.brand_string", out.data(), &len, nullptr, 0) == 0)
+                return out;
+        }
+       #elif JUCE_WINDOWS
+        // The registry string the CPUID brand feeds; available without COM or
+        // a WMI query, which a bench harness has no business taking on.
+        HKEY key {};
+        if (RegOpenKeyExA (HKEY_LOCAL_MACHINE,
+                           "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                           0, KEY_READ, &key) == ERROR_SUCCESS)
+        {
+            char buf[256] {};
+            DWORD size = sizeof (buf), type = 0;
+            const bool ok = RegQueryValueExA (key, "ProcessorNameString", nullptr, &type,
+                                              reinterpret_cast<LPBYTE> (buf), &size) == ERROR_SUCCESS
+                            && type == REG_SZ;
+            RegCloseKey (key);
+            if (ok)
+                return std::string (buf);
+        }
+       #endif
+        return {};   // EMPTY means "not identified" — main() refuses to run
     }
 
 } // namespace
 
 int main()
 {
+    // C2, enforced rather than hoped for: a table whose machine line is empty
+    // is not a measurement, and the failure mode this replaces was that it
+    // still PRINTED — a complete-looking result identifying nothing, which is
+    // worse than no result because it can be pasted into the budget document.
+    // Refuse loudly, name the platform, and say what to do instead.
+    const auto cpu = cpuModel();
+    if (cpu.empty())
+    {
+        std::fprintf (stderr,
+                      "AnabasisBench: could not identify this CPU, so the run would violate "
+                      "PERFORMANCE_BUDGET.md C2 (a number without its machine is not a "
+                      "measurement).\nAdd a lookup for this platform in cpuModel(), or set "
+                      "ANABASIS_BENCH_CPU to the model string and re-run.\n");
+        if (const char* forced = std::getenv ("ANABASIS_BENCH_CPU"); forced != nullptr && *forced != 0)
+            std::fprintf (stderr, "…using ANABASIS_BENCH_CPU=\"%s\"\n\n", forced);
+        else
+            return 2;
+    }
+    const char* envCpu = std::getenv ("ANABASIS_BENCH_CPU");
+    const std::string machine = cpu.empty() ? std::string (envCpu != nullptr ? envCpu : "")
+                                            : cpu;
+
     std::printf ("AnabasisBench — machine: %s, %d cores, %s %s\n",
-                 cpuModel().c_str(),
+                 machine.c_str(),
                  (int) std::thread::hardware_concurrency(),
 #if defined (__clang__)
                  "clang", __clang_version__

@@ -186,9 +186,27 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         const int total = factoryCount + files.size();
         if (total == 0)
             return;
+        // WHERE ARE WE? The display NAME cannot answer on its own: names are not
+        // unique across the two sources, so a user preset saved as "EDM Club"
+        // resolved to the factory entry and the arrows walked from the wrong
+        // place. What the name can do is CONFIRM a remembered source — so the
+        // last preset this editor applied is consulted first, and only trusted
+        // while it still describes what the processor is showing. Anything that
+        // changed the name behind us (a session load, an undo, an A/B switch)
+        // fails that test and falls through to the name search, which is the
+        // best answer available once the source is genuinely unknown.
         int idx = -1;
-        for (int i = 0; i < factoryCount; ++i)
-            if (processor.currentPresetName() == factory[i].name) { idx = i; break; }
+        if (lastPresetWasFactory && lastPresetFactoryIdx >= 0 && lastPresetFactoryIdx < factoryCount
+            && processor.currentPresetName() == factory[lastPresetFactoryIdx].name)
+            idx = lastPresetFactoryIdx;
+        else if (! lastPresetWasFactory && lastPresetFile != juce::File()
+                 && processor.currentPresetName() == lastPresetFile.getFileNameWithoutExtension())
+            for (int i = 0; i < files.size(); ++i)
+                if (files.getReference (i) == lastPresetFile) { idx = factoryCount + i; break; }
+
+        if (idx < 0)
+            for (int i = 0; i < factoryCount; ++i)
+                if (processor.currentPresetName() == factory[i].name) { idx = i; break; }
         if (idx < 0)
             for (int i = 0; i < files.size(); ++i)
                 if (files.getReference (i).getFileNameWithoutExtension()
@@ -196,9 +214,16 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
                     { idx = factoryCount + i; break; }
         idx = (idx < 0 ? (dir > 0 ? 0 : total - 1) : (idx + dir + total) % total);
         if (idx < factoryCount)
+        {
             processor.applyFactoryPreset (idx);
+            rememberPresetSource (idx);
+        }
         else
-            processor.applyPresetFile (files.getReference (idx - factoryCount));
+        {
+            const auto f = files.getReference (idx - factoryCount);
+            processor.applyPresetFile (f);
+            rememberPresetSource (f);
+        }
         refreshPresetDisplay (true);
     };
     presetPrev.onClick = [stepPreset] { stepPreset (-1); };
@@ -400,9 +425,18 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     uiScaleBox.setSelectedItemIndex (
         nearestScaleIndex ((int) ist.getProperty (iid::uiScale, 100)),
         juce::dontSendNotification);
-    uiScaleBox.onChange = [this, &ist]
+    // `[this]`, NOT `[this, &ist]`. `ist` is a local REFERENCE VARIABLE whose
+    // lifetime ends when this constructor returns, and capturing a reference
+    // variable by reference captures the variable, not the referent
+    // ([expr.prim.lambda.capture]) — so invoking the closure afterwards is UB by
+    // the letter of the standard, even though every compiler resolves it
+    // through to the long-lived `InternalState` tree and it has always worked.
+    // Re-fetching inside is the form the §6.4 toggle callback below already
+    // uses; the two now agree, so a reader does not have to re-derive why one
+    // of them is benign.
+    uiScaleBox.onChange = [this]
     {
-        ist.setProperty (iid::uiScale,
+        processor.internalState.state().setProperty (iid::uiScale,
                          kScaleSteps[juce::jlimit (0, kNumScaleSteps - 1,
                                                    uiScaleBox.getSelectedItemIndex())],
                          nullptr);
@@ -521,6 +555,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     refreshUndoRedoEnablement();
     updateModeVisibility();
     applyUiScale();
+    // …and lay out explicitly. `applyUiScale()` reaches `setSize`, but
+    // `setSize` is a NO-OP when the dimensions are unchanged, so the layout is
+    // not guaranteed by that call alone — see the guard at the top of
+    // `resized()`. Idempotent, and it costs one layout pass at construction.
+    resized();
 
 #if JUCE_MAC || JUCE_WINDOWS
     glContext.attachTo (*this);    // §6.1: GPU compositing on these two only
@@ -653,8 +692,14 @@ void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
     // widget's numbering is not.
     box.setSelectedItemIndex (juce::jlimit (0, items.size() - 1, (int) value.getValue()),
                               juce::dontSendNotification);
-    box.onChange = [&box, value]() mutable
-    { value.setValue (juce::jmax (0, box.getSelectedItemIndex())); };
+    // `b = &box` rather than `&box`: `box` is a reference PARAMETER, so capturing
+    // it by reference has the same lifetime defect as the `ist` capture above —
+    // the parameter dies with this call, the closure outlives it. The pointer is
+    // captured by value and the ComboBox it names is an editor member, which is
+    // what actually keeps it alive. (`value` is a `juce::Value`, a refcounted
+    // handle, and is correctly captured by copy already.)
+    box.onChange = [b = &box, value]() mutable
+    { value.setValue (juce::jmax (0, b->getSelectedItemIndex())); };
     registerAnimated (box);
     // The accessibility name. `setupCombo` (the APVTS path) sets one from the
     // parameter's registry name; these host-hidden combos had none, and unlike
@@ -762,9 +807,22 @@ void AnabasisAudioProcessorEditor::resized()
     // constructor. That is "safe by ordering" again: a `setSize` moved up, or a
     // host-driven `setScaleFactor` during construction, would crash here rather
     // than lay out nothing. One guard says what the layout requires.
+    //
+    // The `jassert` is the other half, added round 44: without it the guard
+    // turned a crash into a SILENTLY blank window, which is strictly harder to
+    // diagnose. `juce::Component::setSize` is a no-op when the size is
+    // unchanged, so an early return here followed by the constructor's
+    // `applyUiScale()` — which passes the very dimensions the guard left in
+    // place — would never re-enter this function, and every child would stay at
+    // zero bounds with nothing reported. The constructor now also calls
+    // `resized()` unconditionally at its end, so the layout no longer depends on
+    // `setSize` observing a change.
     if (meterView == nullptr || grView == nullptr || spectrumView == nullptr
         || clipCurve == nullptr || eqCurve == nullptr)
+    {
+        jassertfalse;   // a size arrived before the views existed — see above
         return;
+    }
 
     auto bounds = getLocalBounds();
     auto bar = bounds.removeFromTop (kBarH);
@@ -1368,12 +1426,14 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             if (r >= 20001)
             {
                 safeThis->processor.applyFactoryPreset (r - 20001);
+                safeThis->rememberPresetSource (r - 20001);
                 safeThis->refreshPresetDisplay (true);
                 return;
             }
             if (r - 1 < files.size())
             {
                 safeThis->processor.applyPresetFile (files.getReference (r - 1));
+                safeThis->rememberPresetSource (files.getReference (r - 1));
                 safeThis->refreshPresetDisplay (true);
             }
         });
@@ -1393,6 +1453,7 @@ void AnabasisAudioProcessorEditor::showLoadPreset()
             if (safeThis != nullptr && f.existsAsFile())
             {
                 safeThis->processor.applyPresetFile (f);
+                safeThis->rememberPresetSource (f);
                 safeThis->refreshPresetDisplay (true);
             }
         });

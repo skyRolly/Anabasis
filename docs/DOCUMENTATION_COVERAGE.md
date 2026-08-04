@@ -6,7 +6,46 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 43 (2026-08-03)** — two maintenance items, both cases of a
+**Last updated:** for **review round 44 (2026-08-03)** — undefined behaviour, platform guarantees
+and three consistency repairs:
+(1) **Two stored GUI closures captured a reference variable by reference.** `uiScaleBox.onChange`
+captured the constructor-local `auto& ist`, and `setupComboInternal`'s captured its reference
+PARAMETER `box`. Both entities die when their scope returns, and the closures outlive them:
+[expr.prim.lambda.capture] captures the *variable*, not the referent, so invoking them afterwards is
+UB even though every compiler resolves it through to the long-lived object. Normalised on the safe
+forms the surrounding code already used — `[this]` plus a re-fetch (what the §6.4 toggle callback
+does) and `[b = &box]` (a pointer by value, naming an editor member).
+(2) **The bench's machine line was Linux-only while `ANABASIS_BUILD_BENCH` is platform-agnostic**,
+so a local re-measure on macOS or Windows — exactly the workflow the refresh rule prescribes —
+produced a results table identifying nothing, which is `PERFORMANCE_BUDGET.md` C2 failing silently.
+`cpuModel()` now has a lookup per platform (`/proc/cpuinfo`, `sysctlbyname
+machdep.cpu.brand_string`, the `ProcessorNameString` registry value) and, where none answers,
+`main` REFUSES rather than printing: an incomplete table is worse than no table because it can be
+pasted into the budget document. `ANABASIS_BENCH_CPU` is the documented override.
+(3) **The local-repro block claimed three platforms while being a POSIX pipeline.** Round 43 fixed
+the strictness lookup for macOS and then described the result as running everywhere, moving the same
+defect one platform along. Split into a POSIX block (Linux/macOS) and a PowerShell block that
+mirrors what the `windows` job actually runs, both reading the number from `build.yml` and neither
+restating it. The Windows block does not invent a `run-tests.ps1` — there is none, and it says so.
+(4) **Three GUI consistency repairs.** The `ValueBox` drag predicate was a STYLE test used by
+`mouseDown`/`mouseDrag` while `mouseUp` cleared through a wider `dynamic_cast` — two predicates for
+one begin/end pairing, and the style test also left a linear slider's readout unbracketed, which is
+the defect the bracket exists to prevent, waiting for the first linear slider. One `sliderParent()`
+now serves all three; behaviour is unchanged today because `setupRotary` builds every ValueBox and
+builds only rotary sliders. `stepPreset` re-derived its position from the display NAME, which is not
+unique across the two sources, so a user preset called "EDM Club" walked from the factory index; the
+editor now remembers the source it last applied and uses it only while the name still confirms it,
+falling back to the name search when anything else changed the name. And `resized()`'s early-return
+guard gained a `jassertfalse` plus an unconditional `resized()` at the end of the constructor,
+because `setSize` is a no-op on an unchanged size — so the guard could have produced a silently
+blank window rather than a diagnosable failure.
+`testTheSettingsCallbacksReachTheLiveTree` (two mutants) covers the closure refactor's direction —
+honestly labelled as regression coverage, since no test can kill UB that happens to work. No test
+was written for `stepPreset`: reaching it needs a file in the real user preset directory plus a
+synchronous button click, and the check would cost more in fragility than it buys.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6, and the
+popup-menu/visualiser/MacroEngine/bench-CI items the brief excluded.
+Previous: **review round 43 (2026-08-03)** — two maintenance items, both cases of a
 statement and its implementation disagreeing:
 (1) **The documented local-validation command could not run on one of the three gate platforms.**
 `CI_CD.md`'s repro block read the strictness with `grep -oP … \K`, and `-P`/`\K` are GNU

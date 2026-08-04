@@ -718,14 +718,22 @@ void AnabasisLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
 // which still parses unit/k-suffixed input (#36 / #37 / #29).
 namespace
 {
-    static juce::Slider* rotaryParent (juce::Component* c) noexcept
+    // ONE predicate for all three handlers, which is the point of it. It was a
+    // STYLE test before round 44, and only `mouseDown`/`mouseDrag` used it:
+    // `mouseUp` cleared the "dragging" property through a plain
+    // `dynamic_cast<juce::Slider*>`, a WIDER test than the one that set it. Two
+    // predicates for one pairing is how a begin ends up without its end.
+    //
+    // The style test also scoped the drag BRACKET to rotary parents, so a value
+    // box on a linear slider would have written the parameter unbracketed —
+    // exactly the defect the bracket was added to remove, waiting for the first
+    // linear slider to be added. `setupRotary` builds every ValueBox in the tree
+    // (the one `new ValueBox()` below) and builds only rotary sliders, so
+    // widening this to "any slider parent" changes NOTHING today; it means the
+    // trap cannot be re-armed by adding a control.
+    static juce::Slider* sliderParent (juce::Component* c) noexcept
     {
-        auto* s = dynamic_cast<juce::Slider*> (c);
-        if (s == nullptr) return nullptr;
-        const auto st = s->getSliderStyle();
-        const bool rotary = (st == juce::Slider::Rotary || st == juce::Slider::RotaryHorizontalDrag
-                          || st == juce::Slider::RotaryVerticalDrag || st == juce::Slider::RotaryHorizontalVerticalDrag);
-        return rotary ? s : nullptr;
+        return dynamic_cast<juce::Slider*> (c);
     }
 
     static juce::String rawEditText (juce::Slider& s)
@@ -776,7 +784,7 @@ namespace
             // `jassert (! isPerformingGesture)`. Resetting first makes the
             // pairing unconditional; the pointer is null in the ordinary case.
             drag.reset();
-            if (auto* s = rotaryParent (getParentComponent()); s != nullptr && e.getNumberOfClicks() < 2 && ! isBeingEdited())
+            if (auto* s = sliderParent (getParentComponent()); s != nullptr && e.getNumberOfClicks() < 2 && ! isBeingEdited())
             {
                 downProp = s->valueToProportionOfLength (s->getValue());
                 drag = std::make_unique<juce::Slider::ScopedDragNotification> (*s);
@@ -793,7 +801,7 @@ namespace
             // pre-state). Reset unconditionally — the pointer is null unless
             // `mouseDown` opened one.
             drag.reset();
-            if (auto* s = dynamic_cast<juce::Slider*> (getParentComponent()))
+            if (auto* s = sliderParent (getParentComponent()))
             {
                 s->getProperties().set ("dragging", false);
                 s->repaint();
@@ -805,7 +813,7 @@ namespace
             // Directly map vertical drag to the value (respecting any skew). This
             // is robust regardless of event routing -- the previous forwarding
             // approach didn't take (feedback #28).
-            if (auto* s = rotaryParent (getParentComponent()); s != nullptr && ! isBeingEdited())
+            if (auto* s = sliderParent (getParentComponent()); s != nullptr && ! isBeingEdited())
             {
                 const double prop = juce::jlimit (0.0, 1.0, downProp + (-e.getDistanceFromDragStartY()) / 180.0);
                 s->setValue (s->proportionOfLengthToValue (prop), juce::sendNotificationSync);
