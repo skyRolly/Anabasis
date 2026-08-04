@@ -412,6 +412,18 @@ evaluates one magnitude per pixel column. `testAFrozenLatchDoesNotFollowTheSlotS
 `testHistoryOwnershipAcrossAStateLoad`, `testAnOutOfListUiScaleClampsConsistently`,
 `testTheCurveWellCachesWithoutChangingWhatItDraws`; four mutants; TSAN re-run clean. Suites: 230 + 295.
 
+**Review round 43 (2026-08-03) — two maintenance items.** (1) `CI_CD.md`'s local-validation block
+read the pluginval strictness with `grep -oP`, a GNU-only form that BSD grep rejects — so on macOS,
+one of the three platforms the gate is required on, `STRICTNESS` came out empty and the validator
+ran with no strictness argument at all. Replaced with POSIX `sed` anchored to the `env:` assignment,
+plus a `${VAR:?}` guard so an unreadable workflow fails loudly; ownership unchanged, and the block
+now marks its one Linux-only line. (2) `resetSweep` was read by both slider draw paths and set
+nowhere; removed rather than wired, because `stepMicroAnims` already snaps `vpos` while the button
+is down, so the flag could not have delivered the sweep-while-held its comment described. Doing that
+properly needs three sites to agree and is a listening-pass call. Behaviour-identical by
+construction. Suites: 230 + 295 (unchanged — neither item is testable without a check that cannot
+fail).
+
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The editor: family frame (46 px top bar — wordmark→About, preset browser, A/B, Copy,

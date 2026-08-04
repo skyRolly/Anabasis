@@ -31,12 +31,24 @@ void AnabasisLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     // Draw at the EASED visual position when the micro-anim driver is publishing
     // one (preset / A-B sweep, #5); during a hand drag use the live position so
     // the pointer tracks 1:1 with no lag.
-    // A reset sweep (double-click / alt-click) draws at the eased vpos even while the
-    // button is still held; a hand drag draws at the live pos so it tracks 1:1.
-    const bool resetSweep = (bool) s.getProperties().getWithDefault ("resetSweep", false);
-    const bool dragging = ! resetSweep
-                       && (s.isMouseButtonDown()
-                           || (bool) s.getProperties().getWithDefault ("dragging", false));
+    //
+    // There was a third term here — a `resetSweep` property meant to keep the
+    // eased draw while a reset's button was still held — and it was REMOVED at
+    // round 43 rather than wired, which is the opposite of what its own comment
+    // asked for, so here is the reason. Nothing in the tree ever set it (the
+    // same half-ported Anamorph state round 28 removed for `allCombos`/`hov`),
+    // and setting it here would not have produced the sweep it describes: the
+    // driver reaches the same conclusion one level up, where `stepMicroAnims`
+    // SNAPS `vpos` straight to the target while `isMouseButtonDown()`. With the
+    // source of the ease already collapsed, honouring the flag in the draw path
+    // would only have drawn the un-eased value by a second route. Delivering
+    // "sweep while held" needs all three sites to agree, which is new behaviour
+    // and a listening-pass call — not a repair, and not something a dead read
+    // was silently providing. The reachable reset gesture is unaffected either
+    // way: `mouseDoubleClick` is dispatched from `internalMouseUp`, so the
+    // button is already released and the ease runs.
+    const bool dragging = s.isMouseButtonDown()
+                       || (bool) s.getProperties().getWithDefault ("dragging", false);
     if (! dragging)
         if (const auto* v = s.getProperties().getVarPointer ("vpos"))
             pos = juce::jlimit (0.0f, 1.0f, (float) (double) *v);
@@ -159,9 +171,10 @@ void AnabasisLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int
     // Eased visual position (#7): a preset / A-B switch sweeps the fill + thumb
     // instead of teleporting. During a hand drag we keep the real `pos` so the
     // thumb tracks the cursor exactly 1:1 (the inset lives in getSliderLayout).
-    // A reset sweep draws at the eased vpos even while the button is held (see the
-    // rotary path); a live hand drag keeps the real pos so the thumb tracks 1:1.
-    if (! interacting || (bool) s.getProperties().getWithDefault ("resetSweep", false))
+    // The `resetSweep` disjunct that used to widen this test went with its rotary
+    // twin at round 43 — dead in both paths, and see there for why wiring it
+    // would not have worked.
+    if (! interacting)
         if (const auto* v = s.getProperties().getVarPointer ("vpos"))
         {
             const float vp = juce::jlimit (0.0f, 1.0f, (float) (double) *v);

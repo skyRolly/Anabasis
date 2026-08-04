@@ -270,15 +270,29 @@ These are the rules, not incidental details — each blocks a specific way a bad
 
 ## Reproducing CI locally
 
+The first line is Linux-only; everything below it runs on all three gate platforms
+(`run-pluginval.ps1 -Strictness $STRICTNESS -Mode deterministic` on Windows).
+
 ```bash
-scripts/setup-linux.sh
+scripts/setup-linux.sh          # Linux only — macOS/Windows need no dependency step
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 scripts/run-tests.sh
-# $STRICTNESS is ANABASIS_PLUGINVAL_STRICTNESS from .github/workflows/build.yml —
-# the literal used to be pasted here as `5`, and stayed 5 through two raises,
-# under a comment telling the reader it was current.
-STRICTNESS=$(grep -oP 'ANABASIS_PLUGINVAL_STRICTNESS:\s*\K\d+' .github/workflows/build.yml)
+# $STRICTNESS is ANABASIS_PLUGINVAL_STRICTNESS, read from the ONE place that
+# holds it (.github/workflows/build.yml) rather than pasted: the literal used to
+# be `5` here and stayed 5 through two raises, under a comment telling the reader
+# it was current.
+#
+# POSIX `sed`, not `grep -oP`: `-P` and `\K` are GNU extensions that BSD grep —
+# /usr/bin/grep on macOS, one of the three platforms this gate is REQUIRED on —
+# rejects outright. The failure was silent rather than loud: STRICTNESS came out
+# empty and the two commands below ran with no strictness argument at all, so the
+# local gate did not match CI. The `^  ` anchor pins the match to the `env:`
+# assignment, so the `${{ env.ANABASIS_PLUGINVAL_STRICTNESS }}` references in the
+# job steps cannot contribute a second value.
+STRICTNESS=$(sed -n 's/^  ANABASIS_PLUGINVAL_STRICTNESS:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+             .github/workflows/build.yml)
+: "${STRICTNESS:?could not read ANABASIS_PLUGINVAL_STRICTNESS from build.yml}"
 scripts/run-pluginval.sh "$STRICTNESS" deterministic
 scripts/run-pluginval.sh "$STRICTNESS" randomise
 ```

@@ -6,7 +6,33 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 42 (2026-08-03)** — ownership and synchronisation, six items:
+**Last updated:** for **review round 43 (2026-08-03)** — two maintenance items, both cases of a
+statement and its implementation disagreeing:
+(1) **The documented local-validation command could not run on one of the three gate platforms.**
+`CI_CD.md`'s repro block read the strictness with `grep -oP … \K`, and `-P`/`\K` are GNU
+extensions that BSD grep — `/usr/bin/grep` on macOS — rejects outright. The failure was SILENT
+rather than loud: `STRICTNESS` came out empty and the two commands below it ran with no strictness
+argument, so a developer following the documented procedure on macOS validated against nothing and
+could pass work CI rejects. Replaced with POSIX `sed`, anchored to the `env:` assignment so the
+`${{ env.… }}` references in the job steps cannot contribute a second value, plus a `${VAR:?}`
+guard that turns an unreadable workflow into a diagnosable failure instead of an empty argument.
+The ownership model is unchanged — the value still comes from `build.yml` and appears nowhere else
+— and the block now says which of its lines is Linux-only, since that was the other reason it did
+not describe a macOS run. Verified by executing the documented pipeline, not by reading it.
+(2) **`resetSweep` was read in two draw paths and written nowhere** — the half-ported Anamorph
+state round 28 removed for `allCombos`/`hov`. REMOVED rather than wired, which is the opposite of
+what its own comment asked for, so the reasoning is recorded at the site: honouring the flag in the
+draw path would not have produced the sweep it describes, because `stepMicroAnims` reaches the same
+conclusion one level up and SNAPS `vpos` to the target while the button is down. With the ease
+already collapsed at its source, the draw-path branch could only have drawn the un-eased value by a
+second route. "Sweep while held" needs all three sites to agree — new behaviour, and a listening-pass
+call rather than a repair. The reachable reset gesture is unaffected either way: `mouseDoubleClick`
+is dispatched from `internalMouseUp`, so the button is already released and the ease runs. The
+removal is behaviour-identical by construction (a property that is never set reads false), which is
+why it carries no new test — a check that cannot distinguish the two states would be noise.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6, and the
+preset-menu/visualiser/bench-coverage/`resized()`-guard items the brief excluded.
+Previous: **review round 42 (2026-08-03)** — ownership and synchronisation, six items:
 (1) **The retained frozen-trim set is engine-wide; `FROZEN_TRIMS` is per-slot.** The engine latches
 *a vector*, not "slot A's vector", so after an A/B switch into a freeze-ON slot holding none of its
 own — where nothing stages a restore, so the generation pair stays equal — the incoming slot's next
