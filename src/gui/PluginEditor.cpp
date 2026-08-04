@@ -495,12 +495,29 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
             auto* tog = &targetToggles[(size_t) t];
             tog->setButtonText (LoudnessMeterView::kTargets[t].fullName);
             tog->setToggleState ((mask & (1 << t)) != 0, juce::dontSendNotification);
+            // `onStateChange`, not `onClick`, because the state can also be set
+            // programmatically — but it fires from `sendStateMessage()` on EVERY
+            // button-state transition, including normal→over and over→down. The
+            // handler then wrote the widget's view of its bit back into the
+            // tree, so merely hovering a checkbox stamped that bit. Harmless
+            // while the two agree; not harmless in the ≤~42 ms after a project
+            // load, where a mouse-enter could stamp the previous project's bit
+            // over the freshly loaded mask before the next re-seed.
+            //
+            // The write is now gated on the bit actually differing, which is the
+            // only condition under which there is anything to persist. Hover and
+            // press leave the toggle state alone, so they compute the mask they
+            // already found and write nothing; a real toggle differs and writes.
+            // The load direction is untouched: `setToggleState` above uses
+            // `dontSendNotification`, so a re-seed never reaches this lambda.
             tog->onStateChange = [this, t, tog]
             {
-                auto& tree = processor.internalState.state();
-                int m2 = (int) tree.getProperty (iid::meterTargets, ~0);
-                m2 = tog->getToggleState() ? (m2 | (1 << t)) : (m2 & ~(1 << t));
-                tree.setProperty (iid::meterTargets, m2, nullptr);
+                auto tree = processor.internalState.state();
+                const int current = (int) tree.getProperty (iid::meterTargets, ~0);
+                const int wanted  = tog->getToggleState() ? (current | (1 << t))
+                                                          : (current & ~(1 << t));
+                if (wanted != current)
+                    tree.setProperty (iid::meterTargets, wanted, nullptr);
             };
             settingsBackdrop.addAndMakeVisible (*tog);
             registerAnimated (*tog);
@@ -797,14 +814,24 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
         // The ids come from `managed_params::ids` — the ONE list the mapper and
         // the wrapper's detach discriminator already share — rather than being
         // written out again here, which is what this table used to do. The
-        // knobs are a PARALLEL array in that list's order, and its fixed size
-        // is the check: a tenth managed parameter fails to compile here instead
-        // of silently drawing eight badges out of nine while the mask, the
-        // mapper and the serialized slot all track ten.
-        const juce::Slider* badged[managed_params::kCount] = {
+        // knobs are a PARALLEL array in that list's order.
+        //
+        // THE SIZE IS NOW ACTUALLY CHECKED. This array was declared with an
+        // explicit `[managed_params::kCount]` bound and the comment claimed a
+        // mismatch was a compile error. It was not: aggregate initialisation
+        // with FEWER initialisers than the bound is legal C++ and
+        // value-initialises the rest, so raising `kCount` to 10 without adding a
+        // tenth knob compiled cleanly and then dereferenced a null
+        // `juce::Slider*` in this very loop — a crash at paint time instead of a
+        // build failure, which is the opposite of what the comment promised.
+        // The bound is deduced now and the `static_assert` is the check; the
+        // matching one for `ids` vs `kCount` lives beside their declarations.
+        const juce::Slider* const badged[] = {
             &limGainK, &thresholdK, &ratioK, &driveK, &shapeK,
             &depthK,   &dynTiltK,   &eqTiltK, &colToneK,
         };
+        static_assert (std::size (badged) == (std::size_t) managed_params::kCount,
+                       "the badge table must carry exactly one knob per managed parameter");
         g.setColour (colours::accent);
         for (int i = 0; i < managed_params::kCount; ++i)
             if (const auto* k = badged[i];

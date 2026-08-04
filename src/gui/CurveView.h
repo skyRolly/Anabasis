@@ -34,10 +34,23 @@ public:
     void refresh();   // editor timer: recompute + repaint when inputs moved
 
 private:
+    // EVERYTHING a curve is a function of, plus the fingerprint of exactly
+    // those values. The two are produced by one pass (`readInputs`), which is
+    // what makes the paint cache's label true by construction rather than by a
+    // rule about call order — see paint().
+    struct Inputs
+    {
+        juce::uint64 fingerprint = 0;
+        double sampleRate = 48000.0;
+        float clipShape = 0.0f, clipDrive = 0.0f;   // Mode::clipTransfer
+        anabasis::EngineParameters eq {};           // Mode::eqResponse
+    };
+    Inputs readInputs() const;
+
     AnabasisAudioProcessor& processor;
     const Mode mode;
     anabasis::MasteringEQ scratchEq;   // GUI-side scratch; never the audio one
-    juce::uint64 shownFingerprint = 0;
+    juce::uint64 shownFingerprint = 0;   // refresh()'s edge detector, nothing else
 
     // The built curve, and the two inputs it was built from — see paint().
     void paintStatic (juce::Graphics&, juce::Rectangle<float> area) const;

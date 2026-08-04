@@ -36,6 +36,12 @@ namespace managed_params
         "colourDepth", "dynTilt", "eqTilt", "colourTone",
     };
     inline constexpr int kCount = 9;
+    // The two must agree, and until round 51 nothing said so: `kCount` is hand
+    // written while `ids` deduces its bound, so adding a tenth id without
+    // bumping the count compiled and silently under-scanned every loop keyed on
+    // `kCount`, and bumping the count without adding an id ran one past the end.
+    static_assert (std::size (ids) == (std::size_t) kCount,
+                   "managed_params::kCount must equal the length of managed_params::ids");
 }
 
 namespace macro_curves

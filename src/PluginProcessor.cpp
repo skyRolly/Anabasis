@@ -388,9 +388,12 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // NOTHING of the wrapper's ValueTree state is touched here, and that is a
     // requirement rather than an accident. `prepareToPlay` is a host callback
     // JUCE does not promise on the message thread (the same premise
-    // THREADING_POLICY's PDC amendment and KI-003 rest on), while the editor's
-    // ~24 Hz dirty poll runs `saveSlotFromLive()` — which reads
-    // `liveFrozenTrims` and `createCopy()`s it — continuously. Round 40 rescued
+    // THREADING_POLICY's PDC amendment and KI-003 rest on), while the editor
+    // polled `saveSlotFromLive()` — which reads `liveFrozenTrims` and
+    // `createCopy()`s it — continuously. (That poll is now the far narrower
+    // `presetShapeFromLive()`, which touches no ValueTree at all; the rule here
+    // is unchanged, because `getStateInformation` and the A/B swap still reach
+    // the mirror and neither is promised on the message thread.) Round 40 rescued
     // the frozen latch by copying it into that mirror HERE, which put an
     // unsynchronised write to a non-thread-safe `juce::ValueTree` opposite a
     // continuous reader, with both sides gated on Freeze being ON so the
@@ -703,11 +706,14 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     // engine's published trims are STALE and the restored copy is the truth:
     // the same mirror rule the ADAPTIVE child follows.
     //
-    // The result goes into a LOCAL, never back into `liveFrozenTrims`: this
-    // function is also the dirty-marker compare (`presetDirty()`, polled at
-    // ~3 Hz by the editor), and a display query that rewrites the mirror would
-    // destroy the loaded vector the moment it ran inside that window — the
-    // mirror is written by the restore paths only.
+    // The result goes into a LOCAL, never back into `liveFrozenTrims`: the
+    // mirror is written by the restore paths only, and a query that rewrote it
+    // would destroy a just-loaded vector the moment it ran inside ADR-0014's
+    // window. That rule was originally forced by `presetDirty()` reaching here
+    // ~3 Hz; the dirty marker now compares `presetShapeFromLive()` and never
+    // enters this function, so the remaining callers are the deliberate ones
+    // (A/B swap, undo push, `getStateInformation`). Keep it a pure read anyway:
+    // the callers that remain are exactly the ones a rewrite would corrupt.
     //
     // FREEZE OFF ⇒ NO CHILD AT ALL. `frozen` used to start from the mirror
     // unconditionally, so a slot that was frozen, loaded, then UN-frozen kept
@@ -735,6 +741,61 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     }
     slot.appendChild (mask, nullptr);
     return slot;
+}
+
+juce::ValueTree AnabasisAudioProcessor::presetShapeFromLive() const
+{
+    // THE LIVE STATE PROJECTED ONTO WHAT A PRESET CAN CARRY — the non-excluded
+    // parameters at their snapped preset values plus the §5.3 detach mask,
+    // which is exactly `PresetManager::savePreset`'s content, built through the
+    // same two shared rules (`isPresetExcludedParam`, `presetValueOf`).
+    //
+    // The dirty marker used to compare SLOT trees, and that was the wrong datum
+    // for the question it answers. A slot carries the full parameter surface
+    // (view-tier entries included), the exact-`raw` attribute, BASELINE and
+    // FROZEN_TRIMS — and a preset file stores none of those. So resizing the
+    // editor, switching the Advanced panel, toggling Freeze, or a macro gesture
+    // writing a baseline lit "edited" on a preset whose file would have been
+    // byte-identical, and re-saving could not honestly clear it: the mark
+    // claimed a difference the format cannot express. It also went the other
+    // way — a mid-step `raw` move on a discrete parameter marked edited while
+    // the snapped value a preset stores had not moved at all. Projecting first
+    // makes the marker mean what the top bar says it means.
+    //
+    // A second consequence, and the reason this is a function rather than a
+    // filter inside `presetDirty()`: the editor's ~3 Hz poll no longer runs
+    // `saveSlotFromLive()`. That call reached `apvts.copyState()` (the APVTS
+    // tree lock — the M1 half of KI-008's inversion), `liveFrozenTrims` and
+    // `liveBaseline` (non-thread-safe ValueTrees an off-message-thread
+    // `setStateInformation` can write — KI-003). This projection touches
+    // neither: the parameter LIST is fixed for the processor's lifetime and
+    // each value is an atomic load, so the poll is now lock-free and
+    // ValueTree-free. `liveDetachMask` remains — a StringArray with the same
+    // KI-003 exposure it always had, unchanged rather than newly introduced.
+    juce::ValueTree shape ("PRESET_SHAPE");
+    for (auto* p : getParameters())
+    {
+        auto* param = dynamic_cast<juce::RangedAudioParameter*> (p);
+        if (param == nullptr)
+            continue;
+        const auto id = param->getParameterID();
+        if (isPresetExcludedParam (id))
+            continue;
+        juce::ValueTree node ("PARAM");
+        node.setProperty ("id", id, nullptr);
+        node.setProperty ("value", PresetManager::presetValueOf (*param), nullptr);
+        shape.appendChild (node, nullptr);
+    }
+
+    juce::ValueTree mask ("DETACH_MASK");
+    for (const auto& id : liveDetachMask)
+    {
+        juce::ValueTree m ("PARAM");
+        m.setProperty ("id", id, nullptr);
+        mask.appendChild (m, nullptr);
+    }
+    shape.appendChild (mask, nullptr);
+    return shape;
 }
 
 void AnabasisAudioProcessor::reassertFromRaw (const juce::ValueTree& apvtsTree)
@@ -918,7 +979,7 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
     // baseline below, or the preset would read as dirty the moment it loaded.
     relandMacroCurve();                        // the mask-replaced invariant lives there
 
-    presetBaseline = saveSlotFromLive();       // dirty marker datum
+    presetBaseline = presetShapeFromLive();    // dirty marker datum
     return true;
 }
 
@@ -955,8 +1016,19 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
         return false;                     // the guard still runs: a partial
                                           // apply arms the listeners too
     replaceDetachMask (mask);
+    // SYMMETRIC WITH THE FACTORY PATH, and for the identical reason: a preset
+    // file cannot carry BASELINE. The two apply paths are the same conceptual
+    // operation — replace the whole parameter surface from a stored patch — and
+    // the factory one has always dropped the macro baseline, while this one
+    // left the PREVIOUS state's baseline standing beside a surface it no longer
+    // describes. That stale vector then travelled: into the SLOT tree, so A/B
+    // and the session save recorded a §5.5 baseline captured against parameter
+    // values the slot no longer holds. Undo is unaffected — the pre-state
+    // pushed above still carries the old baseline, so undoing the apply
+    // restores it with everything else.
+    liveBaseline   = {};
     livePresetName = file.getFileNameWithoutExtension();
-    presetBaseline = saveSlotFromLive();       // dirty marker datum
+    presetBaseline = presetShapeFromLive();    // dirty marker datum
     return true;
 }
 

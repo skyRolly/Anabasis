@@ -9,38 +9,65 @@ CurveView::CurveView (AnabasisAudioProcessor& p, Mode m) : processor (p), mode (
     scratchEq.prepare (48000.0);   // display-only; re-prepared per refresh below
 }
 
-// A cheap fingerprint of the parameters this curve depends on: recompute only
-// when one moved (the editor timer calls this at 24 Hz).
-void CurveView::refresh()
+// Reads the inputs this mode's curve is built from and fingerprints them IN
+// THE SAME PASS. That coupling is the point: a value cannot enter the drawn
+// curve without entering the hash, and the hash cannot describe a value the
+// caller did not receive, so no separate "these are the ids the fingerprint
+// covers" list exists to fall out of step with the build below.
+//
+// The SAMPLE RATE is part of the fingerprint because paint() prepares its
+// scratch EQ at this rate, and the RBJ coefficients — so the drawn response,
+// most visibly for the shelves and bells near Nyquist — depend on it. Hashing
+// only the parameters meant a host rate change with no knob movement left the
+// well showing the old rate's curve until some unrelated repaint. Rounded to
+// an int: the rate is integral in practice, and hashing a double's bits would
+// repaint on a value that cannot change the curve. The unprepared 0 is folded
+// to the same 48 kHz fallback the build uses, so the pre-prepare picture and a
+// subsequent prepare at 48 kHz hash alike — they ARE the same curve.
+CurveView::Inputs CurveView::readInputs() const
 {
+    Inputs in;
+    in.sampleRate = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+    in.fingerprint = (juce::uint64) juce::roundToInt (in.sampleRate);
+
     auto& apvts = processor.apvts;
-    auto rawBits = [&apvts] (const char* id) -> juce::uint64
+    auto take = [&apvts, &in] (const char* id) -> float
     {
         const float v = apvts.getRawParameterValue (id)->load();
         juce::uint32 u;
         std::memcpy (&u, &v, 4);
-        return u;
+        in.fingerprint = in.fingerprint * 1099511628211ull + u;
+        return v;
     };
 
-    // The SAMPLE RATE is part of the fingerprint because paint() re-prepares
-    // its scratch EQ at `processor.getSampleRate()`, and the RBJ coefficients —
-    // so the drawn response, most visibly for the shelves and bells near
-    // Nyquist — depend on it. Hashing only the parameters meant a host rate
-    // change with no knob movement left the well showing the old rate's curve
-    // until some unrelated repaint. Rounded to an int: the rate is integral in
-    // practice, and hashing a double's bits would repaint on a value that
-    // cannot change the curve.
-    juce::uint64 fp = (juce::uint64) juce::roundToInt (processor.getSampleRate());
     if (mode == Mode::clipTransfer)
-        for (const char* id : { pid::clipShape, pid::clipDrive })
-            fp = fp * 1099511628211ull + rawBits (id);
+    {
+        in.clipShape = take (pid::clipShape);
+        in.clipDrive = take (pid::clipDrive);
+    }
     else
-        for (const char* id : { pid::eqTilt, pid::eqLowShelfFreq, pid::eqLowShelfGain,
-                                pid::eqHighShelfFreq, pid::eqHighShelfGain,
-                                pid::eqBell1Freq, pid::eqBell1Gain, pid::eqBell1Q,
-                                pid::eqBell2Freq, pid::eqBell2Gain, pid::eqBell2Q })
-            fp = fp * 1099511628211ull + rawBits (id);
+    {
+        in.eq.eqTiltDb          = take (pid::eqTilt);
+        in.eq.eqLowShelfFreqHz  = take (pid::eqLowShelfFreq);
+        in.eq.eqLowShelfGainDb  = take (pid::eqLowShelfGain);
+        in.eq.eqHighShelfFreqHz = take (pid::eqHighShelfFreq);
+        in.eq.eqHighShelfGainDb = take (pid::eqHighShelfGain);
+        in.eq.eqBell1FreqHz     = take (pid::eqBell1Freq);
+        in.eq.eqBell1GainDb     = take (pid::eqBell1Gain);
+        in.eq.eqBell1Q          = take (pid::eqBell1Q);
+        in.eq.eqBell2FreqHz     = take (pid::eqBell2Freq);
+        in.eq.eqBell2GainDb     = take (pid::eqBell2Gain);
+        in.eq.eqBell2Q          = take (pid::eqBell2Q);
+    }
+    return in;
+}
 
+// Recompute + repaint only when an input moved (the editor timer calls this at
+// 24 Hz). The values themselves are discarded here — this is an edge detector,
+// and paint() takes its own read.
+void CurveView::refresh()
+{
+    const auto fp = readInputs().fingerprint;
     if (fp != shownFingerprint)
     {
         shownFingerprint = fp;
@@ -51,8 +78,6 @@ void CurveView::refresh()
 void CurveView::paint (juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat().reduced (6.0f, 4.0f);
-    auto& apvts = processor.apvts;
-    auto raw = [&apvts] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
 
     // The curve is REBUILT only when one of its two inputs moved, and painted
     // every time. `refresh()` already computes the fingerprint that decides
@@ -66,35 +91,37 @@ void CurveView::paint (juce::Graphics& g)
     //
     // The bounds join the fingerprint because they are the other input: the
     // path is in component coordinates, so a resize must rebuild it even when
-    // nothing about the DSP changed. Caching against the SAME fingerprint
-    // `refresh()` gates the repaint with is what makes the two consistent —
-    // there is no state in which a repaint is requested and the cache is not
-    // rebuilt, which is what would have turned this optimisation into a stale
-    // curve. No visual change: the rebuild produces the same path it always did.
+    // nothing about the DSP changed. No visual change from the caching itself:
+    // the rebuild produces the same path it always did.
     //
-    // BE PRECISE ABOUT WHAT THAT GUARANTEES, because the sentence above is
-    // stronger than the code. `shownFingerprint` is advanced only by
-    // `refresh()`, which the editor ticks only while Advanced is showing — so a
-    // repaint can arrive that no `refresh()` preceded (a host expose, a
-    // `resized()` between ticks). The path built then reads the CURRENT
-    // parameter values while being stamped with the fingerprint `refresh()` last
-    // computed, so the cache can be LABELLED with a fingerprint it was not built
-    // from. It is self-correcting — the next `refresh()` sees a different
-    // fingerprint and rebuilds — so no stale curve survives a tick, and in
-    // Simple mode the views are hidden and the mode switch changes the bounds,
-    // which invalidates on the other half of the key. What actually holds is
-    // therefore: "no stale curve persists beyond one refresh", not "every
-    // repaint rebuilds". Recorded rather than fixed: the cache strategy is a
-    // deferred item, and this is a comment that overstated it.
+    // THE LABEL IS THE READ, which is what makes the sentence above true rather
+    // than nearly true. The key used to be `shownFingerprint` — a member only
+    // `refresh()` advances, and the editor ticks `refresh()` only while Advanced
+    // is showing. A repaint no `refresh()` preceded (a host expose, a
+    // `resized()` between ticks) therefore built the path from the CURRENT
+    // parameter values and stamped it with the fingerprint of the values
+    // `refresh()` last saw: a cache entry labelled with a state it was not built
+    // from. It self-corrected on the next tick, so no stale curve survived long,
+    // but "the label describes the geometry" was not an invariant — it was an
+    // outcome that happened to hold at 24 Hz, and a caching rule that is only
+    // eventually true is the kind that breaks when the tick that repairs it
+    // stops running.
+    //
+    // Now paint() takes its own `readInputs()` and both COMPARES and STAMPS with
+    // that, then builds the path from the very values it hashed. The label is
+    // exact by construction, at every entry to paint(), with or without a
+    // preceding refresh. `shownFingerprint` keeps only the job it can actually
+    // do: telling `refresh()` when to ask for a repaint.
     const auto bounds = getLocalBounds();
-    if (pathFingerprint == shownFingerprint && pathBounds == bounds && ! cachedPath.isEmpty())
+    const auto in = readInputs();
+    if (pathFingerprint == in.fingerprint && pathBounds == bounds && ! cachedPath.isEmpty())
     {
         paintStatic (g, area);
         g.setColour (colours::accent);
         g.strokePath (cachedPath, juce::PathStrokeType (1.4f));
         return;
     }
-    pathFingerprint = shownFingerprint;
+    pathFingerprint = in.fingerprint;
     pathBounds      = bounds;
 
     juce::Path path;
@@ -103,9 +130,8 @@ void CurveView::paint (juce::Graphics& g)
     {
         // The audio path's exact arithmetic: y = f(x·g, w) / g (level-
         // compensated drive), through ClipSat::transfer itself.
-        const float w = raw (pid::clipShape);
-        const float driveDb = raw (pid::clipDrive);
-        const float gLin = std::pow (10.0f, driveDb * (1.0f / 20.0f));
+        const float w = in.clipShape;
+        const float gLin = std::pow (10.0f, in.clipDrive * (1.0f / 20.0f));
         const int cols = juce::jmax (2, (int) area.getWidth());
         for (int cx = 0; cx <= cols; ++cx)
         {
@@ -123,23 +149,8 @@ void CurveView::paint (juce::Graphics& g)
         // The audio recompute itself, on the scratch instance: reset() drops
         // `primed`, so setTargets SNAPS and recomputes — the display always
         // shows the coefficients the audio side would land on.
-        anabasis::EngineParameters snap;
-        snap.eqTiltDb          = raw (pid::eqTilt);
-        snap.eqLowShelfFreqHz  = raw (pid::eqLowShelfFreq);
-        snap.eqLowShelfGainDb  = raw (pid::eqLowShelfGain);
-        snap.eqHighShelfFreqHz = raw (pid::eqHighShelfFreq);
-        snap.eqHighShelfGainDb = raw (pid::eqHighShelfGain);
-        snap.eqBell1FreqHz     = raw (pid::eqBell1Freq);
-        snap.eqBell1GainDb     = raw (pid::eqBell1Gain);
-        snap.eqBell1Q          = raw (pid::eqBell1Q);
-        snap.eqBell2FreqHz     = raw (pid::eqBell2Freq);
-        snap.eqBell2GainDb     = raw (pid::eqBell2Gain);
-        snap.eqBell2Q          = raw (pid::eqBell2Q);
-
-        const double sr = processor.getSampleRate() > 0.0 ? processor.getSampleRate()
-                                                          : 48000.0;
-        scratchEq.prepare (sr);        // reset → unprimed → setTargets snaps
-        scratchEq.setTargets (snap);
+        scratchEq.prepare (in.sampleRate);   // reset → unprimed → setTargets snaps
+        scratchEq.setTargets (in.eq);
 
         const float dbSpan = 15.0f;    // ±15 dB display window
         const float fLo = 20.0f, fHi = 20000.0f;

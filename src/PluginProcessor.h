@@ -121,31 +121,30 @@ public:
     // detach mask) belong to the wrapper, not to PresetManager's file I/O.
     const juce::String& currentPresetName() const noexcept { return livePresetName; }
 
-    // Preset dirty marker (Anamorph grammar): the live slot differs from the
-    // state the named preset landed. Message thread; the compare is a full
-    // slot-tree equivalence, so callers poll it at display rate, not per
-    // frame. No preset loaded = never dirty (there is nothing to differ from).
+    // Preset dirty marker (Anamorph grammar): the live state differs from the
+    // state the named preset landed, MEASURED IN WHAT A PRESET CAN CARRY —
+    // `presetShapeFromLive()` owns that projection and explains why it is not
+    // the slot tree. Message thread; the compare walks the projection, so
+    // callers poll it at display rate, not per frame. No preset loaded = never
+    // dirty (there is nothing to differ from).
     //
-    // The const_cast is JUCE's, not ours: `APVTS::copyState()` is non-const, so
-    // the snapshot cannot be taken through a const path. `saveSlotFromLive()`
-    // itself mutates NOTHING — it builds the tree and returns it — and that is
-    // load-bearing rather than incidental: while it also wrote back
-    // `liveFrozenTrims`, this ~3 Hz display poll could overwrite a just-loaded
-    // frozen vector with the engine's pre-restore trims (ADR-0014's mirror
-    // window). Keep it a pure read.
+    // Genuinely const now, and not by a cast: the projection reads the fixed
+    // parameter list and their atomic values, so no `APVTS::copyState()` (whose
+    // non-constness forced the old const_cast) and no ValueTree member is
+    // touched. Both baseline and comparand come from the SAME function, so the
+    // two sides cannot describe different shapes.
     bool presetDirty() const
     {
         if (livePresetName.isEmpty() || ! presetBaseline.isValid())
             return false;
-        return ! presetBaseline.isEquivalentTo (
-                   const_cast<AnabasisAudioProcessor*> (this)->saveSlotFromLive());
+        return ! presetBaseline.isEquivalentTo (presetShapeFromLive());
     }
     bool savePresetFile (const juce::File& file)
     {
         if (! presetManager->savePreset (file, liveDetachMask))
             return false;
         livePresetName = file.getFileNameWithoutExtension();
-        presetBaseline = saveSlotFromLive();   // a just-saved preset is clean
+        presetBaseline = presetShapeFromLive();   // a just-saved preset is clean
         return true;
     }
     // Read-only view of the §5.3 detach mask, for the Advanced macro row's
@@ -270,6 +269,10 @@ private:
     juce::ValueTree copyStateWithRaw();  // APVTS copy + additive exact-`raw` per PARAM
     void adoptParamsTree (const juce::ValueTree& paramsWithRaw);   // strip → replaceState → reassert
     juce::ValueTree saveSlotFromLive();
+    // The live state reduced to preset content — the dirty marker's datum on
+    // BOTH sides of its compare. See the definition for why the slot tree is
+    // not that datum.
+    juce::ValueTree presetShapeFromLive() const;
     void applySlotToLive (const juce::ValueTree& slot);
     void reassertFromRaw (const juce::ValueTree& apvtsTree);
     void resetSlotFieldsToDefaults();

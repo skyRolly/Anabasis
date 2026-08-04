@@ -30,6 +30,18 @@ public:
                    .getChildFile ("RollyTech").getChildFile ("Anabasis").getChildFile ("Presets");
     }
 
+    // The exact number a preset stores for one parameter: the SNAPPED
+    // denormalised value (ADR-0007 — snap-equivalence is the preset contract,
+    // raw-exactness is the host-session one). `savePreset` writes it and the
+    // wrapper's dirty-marker projection re-derives it, so it lives here rather
+    // than twice: two copies of this rule disagreeing would make the "edited"
+    // mark describe a file different from the one save would write.
+    static double presetValueOf (const juce::RangedAudioParameter& param)
+    {
+        const auto& r = param.getNormalisableRange();
+        return (double) r.snapToLegalValue (r.convertFrom0to1 (param.getValue()));
+    }
+
     bool savePreset (const juce::File& file, const juce::StringArray& detachMask) const;
     bool applyPreset (const juce::File& file, juce::StringArray& detachMaskOut);
     // The same apply, against a document the CALLER already parsed. Added so

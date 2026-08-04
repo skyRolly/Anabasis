@@ -112,6 +112,25 @@ message-thread-only writer: `adoptFrozenMirror()` is still reached from
 — reduced to its pre-round-40 shape, not eliminated. `MODE_AND_ADAPTATION_POLICY`
 carries the same qualification beside its ownership statement.
 
+**Round 51 re-examined that boundary and narrowed the OPPOSING side of it,
+without touching the thread model.** The question asked was whether the transfer
+between state loading, audio processing and state saving still exposes an
+inconsistent snapshot. It does, and the answer is unchanged in kind: the writer
+is `adoptFrozenMirror()` reached from `setStateInformation`, and the readers are
+`saveSlotFromLive()` (the A/B swap, the §7 undo push, `getStateInformation`) and
+the ADR-0014 restore branch. What changed is who else was reading. The editor's
+~3 Hz dirty poll used to run `saveSlotFromLive()` continuously, which made it a
+permanent concurrent reader of `liveFrozenTrims` and `liveBaseline` for as long
+as the window was open; the marker now compares `presetShapeFromLive()`, which
+reads only the fixed parameter list and their atomics and no ValueTree member at
+all. The remaining readers are all deliberate, host-initiated operations rather
+than a display timer, so the window is now as narrow as it can be made without
+the decision below. It is not closed: an off-message-thread `setStateInformation`
+concurrent with a `getStateInformation` or an A/B switch still races the tree's
+refcounted pointer, and closing THAT needs a lock or a marshalling path on the
+state route — an Architecture Review Gate item and an AI-agent Hard Stop,
+deliberately not attempted.
+
 **The construction and destruction halves of the MacroEngine drain are not
 equally strong**, recorded 2026-08-03 (review round 29) so the pair is not read
 as fully closed, and NARROWED TWICE since. `startDraining()` closes its race
@@ -128,6 +147,21 @@ tick executing while another thread destroys the processor is not waited for.
 That needs a host that destroys a processor concurrently with its own message
 thread — the same premise class as the rest of this entry, and it closes with
 the same thread-model decision rather than separately.
+
+**Stated more exactly, and made CHECKABLE, round 51.** `timerCallback` and
+`handleAsyncUpdate` both run on the message thread, so destroying the object ON
+that thread leaves no residual at all — one thread cannot be inside a drain and
+inside `~MacroEngine` at once, and `stopTimer()`/`cancelPendingUpdate()`
+returning therefore means no drain is executing and none can start. The residual
+above exists only for a host that destroys the processor OFF the message thread,
+which is precisely this entry's premise. `~MacroEngine` now asserts
+`juce::MessageManager::existsAndIsCurrentThread()`, so that host is reported at
+the point of violation instead of surfacing as a use-after-free downstream. An
+assertion rather than a spin-join deliberately: joining would block a teardown
+thread on the message thread, which deadlocks whenever that message thread is
+itself waiting on the caller — a worse failure than the one it removes, and a
+lock on a path `THREADING_POLICY` keeps lock-free. Debug-only, so the Release
+build the pluginval gate gets is unchanged.
 
 **Workaround:** none required on the hosts tested so far — no case of an
 off-message-thread restore has been observed against this plugin. The entry
@@ -335,9 +369,10 @@ answer only when the generation has advanced past it. `testAFrozenLatchDoesNotFo
 recurs:** it declared the wrapper's `juce::ValueTree` mirror the durable owner
 and had `prepareToPlay` copy the latch into it. `prepareToPlay` is a host
 callback JUCE does not deliver on the message thread, and the editor's
-`presetDirty()` poll reads and `createCopy()`s that same member continuously —
-both sides gated on Freeze being ON, so the windows coincided exactly rather
-than being disjoint. ThreadSanitizer reports it as a data race on
+`presetDirty()` poll read and `createCopy()`d that same member continuously (it
+went through `saveSlotFromLive()` until round 51 moved the marker onto
+`presetShapeFromLive()`, which touches no ValueTree at all) — both sides gated
+on Freeze being ON, so the windows coincided exactly rather than being disjoint. ThreadSanitizer reports it as a data race on
 `ReferenceCountedObjectPtr<ValueTree::SharedObject>::get()` plus one on the
 refcount increment; the current code is TSAN-clean on the same stimulus
 (`testTheFrozenLatchNeedsNoThreadCrossing`). The lesson is general: state that
@@ -439,8 +474,23 @@ record.
    Kept numbered rather than removed so the references in `HANDOVER.md` and the coverage audit
    still resolve.
 
-5. **The dirty marker keys on the whole slot tree, so preset-EXCLUDED parameters mark a preset as
-   edited.** `presetDirty()` compares `presetBaseline` against a fresh `saveSlotFromLive()`, which
+5. **RESOLVED 2026-08-04 (round 51) — the dirty marker keyed on the whole slot tree, so
+   preset-EXCLUDED parameters marked a preset as edited.** The spec question this item held open
+   is answered, and by the code that already knew the answer: `presetShapeFromLive()` projects the
+   live state onto exactly what `PresetManager::savePreset` writes — the non-excluded parameters at
+   their SNAPPED preset values (`PresetManager::presetValueOf`, now shared by the writer and the
+   projection so the two cannot drift) plus the `DETACH_MASK`, which presets do carry. `BASELINE`,
+   `FROZEN_TRIMS`, the exact-`raw` attribute and every preset-excluded id are dropped, which
+   settles the "second input" below with them: trim CONTENT cannot reach the comparison because
+   `FROZEN_TRIMS` cannot. Dropping `raw` also fixed the converse case nobody had recorded — a
+   mid-step raw move on a discrete parameter marked a preset edited although the value a preset
+   stores had not moved. `testTheDirtyMarkerMeasuresOnlyWhatAPresetCanCarry`. A second consequence
+   is threading rather than display: the editor's ~3 Hz poll no longer reaches `saveSlotFromLive()`,
+   so it no longer takes the APVTS tree lock (see KI-008) or reads the wrapper's ValueTree members
+   (KI-003) — it walks the fixed parameter list and their atomics.
+   The original text is kept below because two other entries reference its reasoning.
+
+   `presetDirty()` compared `presetBaseline` against a fresh `saveSlotFromLive()`, which
    carries the FULL parameter set plus the `FROZEN_TRIMS` child. `freeze` is preset-excluded
    (`isPresetExcludedParam`), so no preset can ever have carried it — yet toggling Freeze changes
    the slot tree twice over (the `freeze` PARAM node, and the appearance of `FROZEN_TRIMS` once
@@ -534,16 +584,20 @@ They are acquired in **both** orders:
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
 while a host thread restores state and writes P.
 
-**The editor is a CONTINUOUS acquirer of M1, which raises the practical exposure** (recorded round
-49): `refreshPresetDisplay` polls `presetDirty()` on the 24 Hz tick, throttled to every 8th tick,
-and that reaches `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()` — which flushes
-pending parameter values and takes M1. So with the window open the message thread acquires M1 at
-~3 Hz all the time, plus immediately on every user action (the `recomputeNow` path). This does not
-add an edge to the inversion above; it makes the M0 → M1 side of it something the plugin does
+**The editor WAS a continuous acquirer of M1 — that half is closed** (recorded round 49, removed
+round 51). `refreshPresetDisplay` polls `presetDirty()` on the 24 Hz tick, throttled to every 8th
+tick, and that used to reach `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`,
+which flushes pending parameter values and takes M1 — so with the window open the message thread
+acquired M1 at ~3 Hz all the time, plus immediately on every user action (the `recomputeNow` path).
+It never added an EDGE to the inversion; it made the M0 → M1 side something the plugin did
 continuously rather than only at a gesture-begin, which is what a probability estimate for this
-entry should be based on. That is exactly the interleaving KI-003 is about,
-and the §5.3 machinery exists *because* gestures and parameter writes on the same managed parameter
-do overlap across threads.
+entry rests on. The marker now compares `presetShapeFromLive()`, which reads the fixed parameter
+list and each parameter's own atomic and takes no tree lock at all, so the only M1 acquisition left
+on the message thread is the gesture-begin snapshot itself — back to "at a gesture-begin", which is
+the rate this entry was originally scoped for. **The inversion is unchanged and the entry stays
+open:** the two edges are exactly as tabulated above, and the fix is still the §7 snapshot-point
+decision. That is the interleaving KI-003 is about, and the §5.3 machinery exists *because*
+gestures and parameter writes on the same managed parameter do overlap across threads.
 
 **Why it is not fixed here.** The M0 → M1 edge is the §7 undo grammar's pre-state snapshot, and it
 has to be taken *at* gesture begin — deferring it to the next drain tick would capture a state the

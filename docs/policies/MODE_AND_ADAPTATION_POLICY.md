@@ -250,8 +250,12 @@ than copying it across a thread boundary to somewhere more durable.**
 **What it does NOT remove, stated because the paragraph above reads as though the crossing were gone
 outright — it is not.** `adoptFrozenMirror()` is a single writer, and a single writer is not a
 message-thread-only writer: it is still reached from `setStateInformation`, which VST3 does not
-promise on the message thread, while the editor's `presetDirty()` poll runs `saveSlotFromLive()` and
-`createCopy()`s the same member several times a second. The refcounted-pointer race ThreadSanitizer
+promise on the message thread, while `getStateInformation`, the A/B swap and the §7 undo push read
+the same member through `saveSlotFromLive()`. (Until round 51 the editor's `presetDirty()` poll ran
+`saveSlotFromLive()` several times a second too, which made the opposing reader continuous rather
+than host-initiated; the marker now compares `presetShapeFromLive()`, which touches no ValueTree.
+That narrows the window — it does not remove it, because the readers named above remain.)
+The refcounted-pointer race ThreadSanitizer
 reported for the round-40 code therefore still exists **on the load path**, exactly as it does for
 `apvts.replaceState()`, `liveDetachMask` and `livePresetName` written from the same function. That
 is the residual `KNOWN_ISSUES.md` KI-003 keeps open and which closes with the thread-model decision,

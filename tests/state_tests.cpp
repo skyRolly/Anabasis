@@ -1197,6 +1197,133 @@ static void testFactoryPresets()
 }
 
 // ---------------------------------------------------------------------------
+// BASELINE is runtime-only §5.5 state and a preset file cannot store one, so
+// neither apply path may leave a baseline standing after replacing the
+// parameter surface it was captured against. The FACTORY path has always
+// cleared it ("defaults-based: no macro baseline survives"); the FILE path did
+// not, so a preset loaded over a state that carried a baseline kept the
+// previous state's vector — and it travelled, into the SLOT tree that A/B
+// swaps and `getStateInformation` writes. The two are the same conceptual
+// operation and now leave the same internal state.
+static void testAPresetApplyDropsTheMacroBaselineOnBothPaths()
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getChildFile ("anabasis-test-presets");
+    dir.createDirectory();
+    const auto file = dir.getChildFile ("baseline-drop.anabasis");
+    {
+        AnabasisAudioProcessor src;
+        auto* gain = src.apvts.getParameter (pid::limGain);
+        gain->setValueNotifyingHost (gain->getNormalisableRange().convertTo0to1 (2.0f));
+        check (src.getPresetManager().savePreset (file, {}),
+               "baselineDrop: (premise) a preset file exists");
+    }
+
+    // Nothing in this build WRITES a baseline yet (P4 owns the capture), so it
+    // is seeded the only way a shipped state can carry one: through a loaded
+    // session whose slot has the child.
+    auto seeded = [] (AnabasisAudioProcessor& p)
+    {
+        juce::MemoryBlock blank;
+        p.getStateInformation (blank);
+        auto root = juce::ValueTree::fromXml (
+            *juce::AudioProcessor::getXmlFromBinary (blank.getData(), (int) blank.getSize()));
+        auto slot = root.getChildWithName ("AB").getChild (0);
+        juce::ValueTree baseline ("BASELINE");
+        baseline.setProperty ("limGain", 3.5, nullptr);
+        slot.appendChild (baseline, nullptr);
+        juce::MemoryBlock in;
+        juce::AudioProcessor::copyXmlToBinary (*root.createXml(), in);
+        p.setStateInformation (in.getData(), (int) in.getSize());
+    };
+    auto slotHasBaseline = [] (AnabasisAudioProcessor& p)
+    {
+        juce::MemoryBlock mb;
+        p.getStateInformation (mb);
+        auto root = juce::ValueTree::fromXml (
+            *juce::AudioProcessor::getXmlFromBinary (mb.getData(), (int) mb.getSize()));
+        return root.getChildWithName ("AB").getChild (p.activeSlotIndex())
+                   .getChildWithName ("BASELINE").isValid();
+    };
+
+    AnabasisAudioProcessor viaFile;
+    seeded (viaFile);
+    check (slotHasBaseline (viaFile), "baselineDrop: (premise) the seeded baseline survives a load");
+    check (viaFile.applyPresetFile (file), "baselineDrop: (premise) the file applies");
+    check (! slotHasBaseline (viaFile), "baselineDrop: a FILE preset apply drops the macro baseline");
+
+    AnabasisAudioProcessor viaFactory;
+    seeded (viaFactory);
+    check (slotHasBaseline (viaFactory), "baselineDrop: (premise) seeded for the factory path too");
+    check (viaFactory.applyFactoryPreset (1), "baselineDrop: (premise) the factory preset applies");
+    check (! slotHasBaseline (viaFactory),
+           "baselineDrop: …and a FACTORY apply does the same, as it always did");
+}
+
+// ---------------------------------------------------------------------------
+// The "edited" mark answers one question — does the live state differ from the
+// named preset IN A WAY A PRESET FILE COULD RECORD? — so the datum it compares
+// has to be preset content. It used to be the SLOT tree, which additionally
+// carries the view tier, Freeze, the exact-`raw` attribute, BASELINE and
+// FROZEN_TRIMS; a `.anabasis` file stores none of those, so each stimulus below
+// lit a mark that no amount of re-saving could honestly clear.
+static void testTheDirtyMarkerMeasuresOnlyWhatAPresetCanCarry()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+    check (proc.applyFactoryPreset (1), "dirtyShape: (premise) a preset is loaded");
+    check (! proc.presetDirty(), "dirtyShape: (premise) clean right after the apply");
+
+    // View tier. Switching Simple↔Advanced is the user looking at the plugin
+    // differently, not editing the preset — and `isPresetExcludedParam` already
+    // says so on the SAVE side, which is precisely the asymmetry: the file
+    // omitted it while the marker counted it.
+    auto* advanced = apvts.getParameter (pid::advancedMode);
+    advanced->setValueNotifyingHost (advanced->getValue() >= 0.5f ? 0.0f : 1.0f);
+    check (! proc.presetDirty(), "dirtyShape: a view-tier move is not a preset edit");
+
+    // Freeze — excluded by the same shared predicate, and its ON state grows a
+    // FROZEN_TRIMS child on the slot tree as well, so the old compare had two
+    // independent reasons to call this an edit.
+    auto* freeze = apvts.getParameter (pid::freeze);
+    freeze->setValueNotifyingHost (1.0f);
+    check (! proc.presetDirty(), "dirtyShape: engaging Freeze is not a preset edit");
+    freeze->setValueNotifyingHost (0.0f);
+    check (! proc.presetDirty(), "dirtyShape: …nor is releasing it again");
+
+    // A mid-step `raw` move on a discrete parameter: the host-session contract
+    // keeps it exactly (ADR-0007), the PRESET contract stores the snapped value,
+    // and this move does not change that value. The slot compare saw the `raw`
+    // attribute differ and called it an edit.
+    auto* model = apvts.getParameter (pid::colourModel);
+    const auto& mr = model->getNormalisableRange();
+    const float snappedBefore = mr.snapToLegalValue (mr.convertFrom0to1 (model->getValue()));
+    model->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, model->getValue() + 0.02f));
+    if (juce::exactlyEqual (mr.snapToLegalValue (mr.convertFrom0to1 (model->getValue())),
+                            snappedBefore))
+        check (! proc.presetDirty(),
+               "dirtyShape: a mid-step raw move that snaps to the same value is not an edit");
+
+    // …and the mark still fires for something a preset DOES carry, or every
+    // check above is satisfied by a marker that is simply never dirty.
+    auto* knee = apvts.getParameter (pid::compKnee);
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (1.0f));
+    check (proc.presetDirty(), "dirtyShape: a stored parameter still marks it edited");
+
+    // The detach mask is preset content too (§5.3 travels in the file), so it
+    // must be on the other side of the line from the view tier.
+    AnabasisAudioProcessor p2;
+    check (p2.applyFactoryPreset (1), "dirtyShape: (premise) second instance takes a preset");
+    check (! p2.presetDirty(), "dirtyShape: (premise) clean");
+    auto* g = p2.apvts.getParameter (pid::limGain);
+    g->beginChangeGesture();
+    g->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, g->getValue() + 0.1f));
+    g->endChangeGesture();
+    check (! p2.detachMask().isEmpty(), "dirtyShape: (premise) the gesture detached it");
+    check (p2.presetDirty(), "dirtyShape: a §5.3 detach is a preset edit");
+}
+
+// ---------------------------------------------------------------------------
 // §7 per-slot undo: the undo unit is the five-field SLOT tree, coalescing is
 // gesture-gated, automation folds silently, a preset apply brackets as one
 // step, stacks are per slot and a session load clears them. The detach-mask
@@ -2863,6 +2990,20 @@ static void testTheCurveWellCachesWithoutChangingWhatItDraws()
     check (! identical (first, moved),
            "curveCache: a parameter move rebuilds it — the cache follows the fingerprint");
 
+    // THE LABEL IS THE READ. `refresh()` is what the editor timer calls, but it
+    // is not what paints: a host expose, an overlay dismissal or a `resized()`
+    // reaches `paint()` with no `refresh()` in front of it. When the cache key
+    // was the fingerprint `refresh()` last stored, such a repaint compared the
+    // new state against a label from the old one, matched, and served geometry
+    // built from parameters that had since moved — a stale curve, self-correcting
+    // only because the 24 Hz tick came round again. So: move a parameter and
+    // paint WITHOUT refreshing.
+    auto* bell = proc.apvts.getParameter (pid::eqBell1Gain);
+    bell->setValueNotifyingHost (bell->getNormalisableRange().convertTo0to1 (10.0f));
+    const auto unrefreshed = snapshot();      // deliberately no curve.refresh()
+    check (! identical (moved, unrefreshed),
+           "curveCache: a repaint with no preceding refresh draws the values it hashed");
+
     // The bounds are the OTHER half of the cache key — the path is in component
     // coordinates, so a resize must rebuild it even though no DSP input moved.
     // Deliberately NOT asserted here: every stimulus I could write for it is
@@ -3344,6 +3485,8 @@ int main (int argc, char** argv)
         testFrozenTrimRestore();
         testAbToleranceRules();
         testPresetContract();
+        testTheDirtyMarkerMeasuresOnlyWhatAPresetCanCarry();
+        testAPresetApplyDropsTheMacroBaselineOnBothPaths();
         testMissingChildrenReadAsDefaults();
         testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();

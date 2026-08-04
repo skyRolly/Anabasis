@@ -19,11 +19,11 @@ bool PresetManager::savePreset (const juce::File& file, const juce::StringArray&
         // SNAPPED denormalised value only — the preset contract (ADR-0007).
         // The tree's `value` is convertFrom0to1(getValue()) UNSNAPPED for the
         // Raw* discrete classes (they deliberately hold mid-step raw values),
-        // so snap through the range here rather than copying the property.
-        const auto& r = param->getNormalisableRange();
+        // so snap through the range (`presetValueOf`) rather than copying the
+        // property.
         auto* p = root.createNewChildElement ("PARAM");
         p->setAttribute ("id", id);
-        p->setAttribute ("value", (double) r.snapToLegalValue (r.convertFrom0to1 (param->getValue())));
+        p->setAttribute ("value", presetValueOf (*param));
     }
 
     auto* mask = root.createNewChildElement ("DETACH_MASK");

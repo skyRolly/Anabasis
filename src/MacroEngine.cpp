@@ -72,10 +72,28 @@ MacroEngine::~MacroEngine()
     // Idempotent: the latch is one-way and `stopTimer`/`cancelPendingUpdate`
     // are no-ops the second time.
     //
-    // What this does NOT close, stated so it is not read as closed: a
-    // `timerCallback` that has ALREADY passed the latch check is not waited
-    // for — `juce::Timer` offers no join — so the residual in KI-003 stands
-    // exactly as written.
+    // WHAT THIS CLOSES, STATED EXACTLY, because "the residual stands" was both
+    // true and imprecise. `timerCallback` and `handleAsyncUpdate` run on the
+    // MESSAGE thread. Destroy this object on that same thread and neither can
+    // be in flight — a thread cannot be inside a callback and inside this
+    // destructor at once — so `stopTimer()`/`cancelPendingUpdate()` returning
+    // means no drain is executing and none will start: the window is shut, not
+    // narrowed. The residual exists only for a host that destroys the processor
+    // OFF the message thread, where a drain already past the latch check is not
+    // waited for (`juce::Timer` offers no join) and can still reach owner state
+    // being torn down. That is the KI-003 premise, and it is now CHECKABLE
+    // rather than merely written down: the assertion below names the condition
+    // the guarantee rests on, so a host that violates it is reported at the
+    // point of violation instead of surfacing as a teardown crash somewhere
+    // downstream.
+    //
+    // An assertion rather than a spin-join deliberately. Joining would mean
+    // blocking a teardown thread on the message thread, which is the classic
+    // deadlock when that message thread is itself waiting on the caller — a new
+    // failure mode, worse than the one it removes, and it would put a lock on a
+    // path THREADING_POLICY keeps lock-free. Debug-only by construction, so the
+    // Release build the pluginval gate runs is bit-identical to before.
+    jassert (juce::MessageManager::existsAndIsCurrentThread());
     stopDraining();
     apvts.removeParameterListener (pid::loudness,  this);
     apvts.removeParameterListener (pid::character, this);

@@ -6,7 +6,70 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 50 (2026-08-03)** — four fixes and one assessment that
+**Last updated:** for **review round 51 (2026-08-04)** — five fixes, and two investigations that
+ended in a documentation correction rather than a redesign:
+(1) **A comment promised a compile-time guarantee the language does not give.** The badge table in
+`PluginEditor::paint` was declared `const juce::Slider* badged[managed_params::kCount]` beside a
+comment saying a mismatch was a build error. Aggregate initialisation with FEWER initialisers than
+the bound is legal C++ and value-initialises the remainder, so raising `kCount` to 10 without adding
+a tenth knob compiled cleanly and then dereferenced a null `juce::Slider*` in that very loop — a
+crash at paint time, the opposite of what the comment promised. The array deduces its bound and
+`static_assert`s against `kCount`. The same audit found the count itself unchecked:
+`managed_params::kCount` is hand-written while `ids` deduces its own bound, so the two could
+disagree in either direction (a tenth id silently under-scanned every `kCount` loop; a bumped count
+ran one past the end). A `static_assert` at the declaration ties them.
+(2) **Widget state was written on non-toggle transitions.** The meter-target checkboxes wrote
+`iid::meterTargets` from `onStateChange`, which `juce::Button::sendStateMessage()` fires for every
+button-state change — normal→over, over→down — not only for a logical toggle. Hovering a checkbox
+therefore stamped that widget's current bit into the live tree, and inside the ~42 ms before the
+next re-seed that could overwrite a mask a preset or session load had just installed. The callback
+computes the wanted mask and writes only when it differs from the stored one, so hover and press are
+no-ops. The load direction was never the problem and is untouched: the re-seed uses
+`juce::dontSendNotification`.
+(3) **A paint cache labelled its geometry with a fingerprint it was not built from.** `CurveView`
+compared and stamped `pathFingerprint` against `shownFingerprint`, a member only `refresh()`
+advances — and the editor ticks `refresh()` only while Advanced is showing. Any repaint that no
+refresh preceded (a host expose, an overlay dismissal, a `resized()`) built the path from the
+CURRENT parameter values and stamped it with the previous tick's label; a subsequent repaint in the
+same state then served that geometry as if it described the new one. It self-corrected within a
+tick, which is why the previous round recorded it as "no stale curve persists beyond one refresh"
+rather than fixing it — but an invariant that only holds because a timer keeps repairing it is not
+an invariant. `readInputs()` now reads the mode's parameters and accumulates their fingerprint in a
+single pass, so a value cannot enter the curve without entering the hash; `paint()` takes its own
+`readInputs()`, compares and stamps with that, and builds from those very values. Exact by
+construction, with or without a preceding refresh.
+(4) **The dirty marker measured a state no preset can hold.** `presetDirty()` compared SLOT trees,
+which carry the full parameter surface (view tier included), the exact-`raw` attribute, `BASELINE`
+and `FROZEN_TRIMS`; a `.anabasis` file stores none of those. Resizing the window, switching
+Simple↔Advanced, toggling Freeze, or a mid-step raw move on a discrete parameter therefore lit
+"edited" on a preset whose file would have been byte-identical, and no re-save could honestly clear
+it. `presetShapeFromLive()` projects the live state onto exactly `PresetManager::savePreset`'s
+content — non-excluded parameters at their snapped preset values plus the `DETACH_MASK` — through a
+`presetValueOf` the writer and the projection now share, so the two cannot drift. This closes KI-007
+item 5, the spec question that entry had held open since round 28, and answers it the way the
+entry's own text proposed. It also removes the KI-008 exposure recorded at round 49: the ~3 Hz poll
+no longer reaches `apvts.copyState()` (the M1 half of the inversion) or any wrapper `ValueTree`,
+so the message thread's only remaining M1 acquisition is the gesture-begin snapshot. The inversion
+itself is unchanged and KI-008 stays open.
+(5) **Two paths for the same operation left different internal state.** `applyFactoryPreset` cleared
+`liveBaseline` ("defaults-based: no macro baseline survives"); `applyPresetFile` did not, although a
+preset file cannot carry `BASELINE` either. A preset loaded over a state that held a baseline kept
+the previous state's vector, and it travelled — into the SLOT tree that A/B swaps and
+`getStateInformation` writes. The file path clears it too. Undo is unaffected: the pre-state pushed
+before the bracket still carries the old baseline.
+**Investigated, and NOT redesigned — with the reason recorded rather than the conclusion assumed:**
+the MacroEngine teardown window, and the frozen-trim mirror boundary. For the first, the honest
+statement is stronger than the one the code carried: `timerCallback` and `handleAsyncUpdate` both
+run on the message thread, so a destructor running there cannot be concurrent with either, and
+`stopTimer()`/`cancelPendingUpdate()` shut the window completely rather than narrowing it. The
+residual is exactly the off-message-thread host KI-003 is about, and it is now checkable — a
+`jassert` on the message thread, not a spin-join, which would block a teardown thread on the message
+thread and deadlock whenever that thread is waiting on the caller. For the second, writer
+(`adoptFrozenMirror` from `setStateInformation`) and readers (`saveSlotFromLive` via
+`getStateInformation`, the A/B swap, the §7 undo push) are unchanged; what changed is that the
+display poll is no longer among the readers, which narrows the window without a thread-model
+decision. Closing it needs one, and that is an Architecture Review Gate item.
+Previous: **review round 50 (2026-08-03)** — four fixes and one assessment that
 changed nothing:
 (1) **The UI-scale ladder had two representations.** `kScaleSteps` was introduced as the single
 source, and the combo's item strings wrote the same seven values out again as labels. They agreed;
