@@ -37,8 +37,19 @@ public:
     static constexpr int kSize  = 1 << kOrder;
     static constexpr int kBins  = kSize / 2;
 
-private:
+    // PUBLIC only so the headless suite can drive it: the `FrameClock` needs a
+    // vblank that never arrives there, so the analyser's one behavioural edge —
+    // a ring rewound by a re-prepare must drop the trace it can no longer
+    // justify — would otherwise have no way to be exercised. Same reasoning as
+    // `AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes` and
+    // `MacroEngine::drainTick`: a direction nothing can call is a direction
+    // nothing can guard.
     void tick (double dt);
+
+    // Read-only view of the smoothed analysis, for the same reason.
+    const std::vector<float>& analysedInDb() const noexcept { return inDb; }
+
+private:
     void analyse (const anabasis::ScopeBuffer&, std::vector<float>& smoothedDb, double dt);
 
     AnabasisAudioProcessor& processor;

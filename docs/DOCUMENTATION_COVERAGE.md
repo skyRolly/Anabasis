@@ -6,7 +6,46 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 48 (2026-08-03)** — one verification that ended in "keep it",
+**Last updated:** for **review round 49 (2026-08-03)** — one real display defect, two duplicated
+numbers removed, and three comments brought back to what the code actually does:
+(1) **A re-prepare left the OLD spectrum analysis on screen, drawn against the NEW rate's bin
+mapping.** Round 39 rewound the rings at `prepare` so stale frames become unreachable; that was
+half of it. The reader owns its own smoothed copy, and `SpectrumView::analyse` returns immediately
+when `readLatest` yields nothing — exactly the post-rewind state — so `inDb`/`outDb` kept the
+previous lifecycle's EMA and went on being drawn. The rewind is observable from the reader as a
+write count that went BACKWARDS, so that edge now clears the trace the ring can no longer justify.
+Deliberately the edge only: the "should an idle analyser decay to the floor?" branch is the early
+return above it, a listening-pass call, and untouched (KI-007 item 6).
+`testARewoundSpectrumRingDropsThePreviousTrace`; two mutants — removing the clear, and clearing
+unconditionally. The second needed a sharper stimulus than the first attempt: clearing and then
+analysing in the same tick rebuilds instantly (the EMA's attack is a straight assignment), so
+"still above the floor" could not see it; the check now observes the DECAY a spurious clear would
+destroy.
+(2) **The per-stage performance figures were published twice, and the second copy was the stale
+one.** `TEST_REPORT.md` still carried the pre-correction values that `PERFORMANCE_BUDGET.md` had
+already re-measured and labelled wrong in the unsafe direction. The second copy is gone and the
+report points at the authority; the "not yet measured (do not cite): CPU/performance" line directly
+above it — which had contradicted its own next section since the bench landed — is corrected too.
+(3) **`CLAUDE.md` restated the pluginval strictness** that this PR's own rule confines to
+`build.yml`. It is the first file every contributor and agent reads, so it is the copy most likely
+to be trusted and exactly the one the rule exists to protect; it now describes the gate and names
+where the number lives. `HANDOVER`'s two PRESENT-TENSE restatements go the same way; its dated
+phase-history mentions stay, being narrative about when the bar moved.
+(4) **Three comments corrected to what the code guarantees.** `CurveView`'s cache claimed "there is
+no state in which a repaint is requested and the cache is not rebuilt" — the cache can be LABELLED
+with a fingerprint it was not built from, and what actually holds is "no stale curve persists beyond
+one refresh"; recorded, not fixed, since the cache strategy is deferred. The spectrum publication's
+"what this ASSUMES" list gained its second assumption (it publishes before the invariant-9 self-heal
+decides the chunk was contaminated — display-only, nothing non-finite escapes). And the macro
+mapping's "the pass costs nine comparisons" was an understatement, because `isDetached` built a
+`juce::String` per call — nine heap allocations per pass; it takes a `StringRef` now, so the claim is
+true rather than the comment being wrong.
+KI-008 gained an exposure paragraph: the editor's ~3 Hz dirty poll makes the message thread a
+CONTINUOUS acquirer of the APVTS lock, which is what a probability estimate for that inversion
+should be based on. The decision itself is untouched.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 48 (2026-08-03)** — one verification that ended in "keep it",
 one state-model convergence, one guard made structural:
 (1) **The frozen-trim ownership boundary was VERIFIED and deliberately left as it is.**
 `adoptFrozenMirror()` writes the mirror and then reads the retained generation, and the two cannot

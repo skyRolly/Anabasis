@@ -30,8 +30,18 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // §5.3 detach discriminator (ADR-0005's P5 half — see the header block).
     // The mapper asks the wrapper, never the reverse: the mask is per-slot
     // serialized state and lives here.
+    // `juce::StringRef`, NOT `juce::String`. `juce::String` has no small-string
+    // optimisation, so constructing one here heap-allocated on every call — and
+    // this is called once per managed parameter by `MacroEngine::setParam`, i.e.
+    // nine allocations per mapping pass, ~300/s at the 30 ms tick. Harmless on
+    // the message thread and well inside budget, but the comments around the
+    // re-engage path describe that pass as costing "nine comparisons", which was
+    // an understatement rather than a description. `StringRef` wraps the literal
+    // without owning it (JUCE_STRING_UTF_TYPE is 8 on every platform this
+    // builds for, so it stores a bare `CharPointer_UTF8`), and
+    // `StringArray::contains` takes one directly. The claim is now true.
     macroEngine->isDetached = [this] (const char* id)
-    { return liveDetachMask.contains (juce::String (id)); };
+    { return liveDetachMask.contains (juce::StringRef (id)); };
     // Off-message-thread detach/re-engage bits land on the MacroEngine's
     // existing 30 ms tick rather than through a message post of our own
     // (drainDetachBitsSoon explains why that route is closed).
@@ -168,7 +178,10 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
             // re-engagement verb, clears the mask AND re-lands; these two are
             // now the same rule rather than two readings of it. Inert when
             // nothing was detached: `MacroEngine::setParam` skips writes that
-            // would not change the value, so the pass costs nine comparisons.
+            // would not change the value, so the pass costs nine mask
+            // comparisons — allocation-free since the `isDetached` lambda takes
+            // a `StringRef` (see its definition; it used to build a
+            // `juce::String` per call, which made this sentence untrue).
             pendingReengage.store (true, std::memory_order_relaxed);
             macroEngine->armMapping();         // any thread — an atomic store
             drainDetachBitsSoon();             // never posts off-thread — see there

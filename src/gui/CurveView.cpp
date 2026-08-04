@@ -71,6 +71,21 @@ void CurveView::paint (juce::Graphics& g)
     // there is no state in which a repaint is requested and the cache is not
     // rebuilt, which is what would have turned this optimisation into a stale
     // curve. No visual change: the rebuild produces the same path it always did.
+    //
+    // BE PRECISE ABOUT WHAT THAT GUARANTEES, because the sentence above is
+    // stronger than the code. `shownFingerprint` is advanced only by
+    // `refresh()`, which the editor ticks only while Advanced is showing — so a
+    // repaint can arrive that no `refresh()` preceded (a host expose, a
+    // `resized()` between ticks). The path built then reads the CURRENT
+    // parameter values while being stamped with the fingerprint `refresh()` last
+    // computed, so the cache can be LABELLED with a fingerprint it was not built
+    // from. It is self-correcting — the next `refresh()` sees a different
+    // fingerprint and rebuilds — so no stale curve survives a tick, and in
+    // Simple mode the views are hidden and the mode switch changes the bounds,
+    // which invalidates on the other half of the key. What actually holds is
+    // therefore: "no stale curve persists beyond one refresh", not "every
+    // repaint rebuilds". Recorded rather than fixed: the cache strategy is a
+    // deferred item, and this is a comment that overstated it.
     const auto bounds = getLocalBounds();
     if (pathFingerprint == shownFingerprint && pathBounds == bounds && ! cachedPath.isEmpty())
     {

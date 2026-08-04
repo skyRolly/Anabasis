@@ -66,6 +66,26 @@ void SpectrumView::tick (double dt)
     const auto co = out.writeCount();
     if (ci == shownInCount && co == shownOutCount)
         return;                                           // idle: nothing new
+
+    // A count that went BACKWARDS is `ScopeBuffer::reset()` — the rewind
+    // `AnabasisEngine::prepare` performs so frames captured at the previous
+    // sample rate become unreachable. Making them unreachable was only half of
+    // it: `analyse` returns immediately when `readLatest` yields nothing, which
+    // is exactly the post-rewind state, so `inDb`/`outDb` kept the PREVIOUS
+    // lifecycle's EMA and went on being drawn — the old analysis rendered
+    // against the new rate's bin mapping, which is the artefact the rewind was
+    // added to remove. The reader owns its own smoothed copy, so the reader has
+    // to drop it; the ring cannot do it from the other side.
+    //
+    // Only on the rewind EDGE, deliberately. This is not the "should an idle
+    // analyser decay to the floor?" question — that is the early return above,
+    // it is a listening-pass call, and it stays exactly as it was
+    // (`KNOWN_ISSUES` KI-007 item 6).
+    if (ci < shownInCount)
+        std::fill (inDb.begin(), inDb.end(), -120.0f);
+    if (co < shownOutCount)
+        std::fill (outDb.begin(), outDb.end(), -120.0f);
+
     shownInCount = ci;
     shownOutCount = co;
     analyse (in, inDb, dt);

@@ -13,6 +13,7 @@
 #include "../src/gui/GrHistoryView.h"
 #include "../src/gui/PluginEditor.h"
 #include "../src/gui/CurveView.h"
+#include "../src/gui/SpectrumView.h"
 #include <array>
 #include <cstdio>
 #include <thread>
@@ -2681,6 +2682,69 @@ static void testAnOutOfListUiScaleClampsConsistently()
 // the sample rate. Caching against THAT fingerprint is only safe if the cached
 // frame is pixel-identical to the rebuilt one, which is what this asserts: the
 // cache is invisible, or it is a bug.
+// Round 49. `AnabasisEngine::prepare` rewinds the spectrum rings so frames
+// captured at the previous sample rate become unreachable (round 39). That was
+// only half of it: `SpectrumView::analyse` returns immediately when
+// `readLatest` yields nothing — exactly the post-rewind state — so the view
+// kept its previous EMA and went on drawing the OLD analysis against the NEW
+// rate's bin mapping, which is the artefact the rewind was added to remove.
+//
+// This is the LIFECYCLE edge only. The "should an idle analyser decay?"
+// question is a different branch and a listening-pass call (KI-007 item 6); it
+// is untouched, and this test says nothing about it.
+static void testARewoundSpectrumRingDropsThePreviousTrace()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    SpectrumView view (proc);
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto feed = [&] (int blocks, float amp)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                * 1000.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+
+    // Enough frames to fill the 4096-point window and pull the EMA well off the
+    // floor, then let the view analyse them.
+    feed (32, 0.5f);
+    view.tick (0.05);
+    const auto& inDb = view.analysedInDb();
+    const float loudest = *std::max_element (inDb.begin(), inDb.end());
+    check (loudest > -100.0f,
+           "spectrumReset: (premise) the analyser has a real trace to lose");
+
+    // A FORWARD count change must NOT clear. Asserting only "still above the
+    // floor" cannot see the difference — a clear followed by `analyse` in the
+    // same tick rebuilds instantly, because the EMA's attack is a straight
+    // assignment (`db > s ? db : …`). What a spurious clear DOES destroy is the
+    // decay: feed material 40 dB quieter and the trace must be found part-way
+    // down from the loud reading, not sitting at the quiet one.
+    feed (16, 0.005f);
+    view.tick (0.05);
+    const float decaying = *std::max_element (inDb.begin(), inDb.end());
+    check (decaying > loudest - 30.0f,
+           "spectrumReset: a forward count change decays the trace, it does not reset it");
+
+    // The lifecycle transition. `prepareToPlay` rewinds both rings; the very
+    // next tick must not still be showing the pre-prepare analysis.
+    proc.prepareToPlay (96000.0, 512);
+    view.tick (0.05);
+    const float afterReset = *std::max_element (inDb.begin(), inDb.end());
+    check (afterReset <= -120.0f,
+           "spectrumReset: a re-prepare drops the trace the rewound ring can no longer justify");
+}
+
 static void testTheCurveWellCachesWithoutChangingWhatItDraws()
 {
     AnabasisAudioProcessor proc;
@@ -3195,6 +3259,7 @@ int main (int argc, char** argv)
         testTheSettingsCallbacksReachTheLiveTree();
         testAnOutOfListUiScaleClampsConsistently();
         testTheCurveWellCachesWithoutChangingWhatItDraws();
+        testARewoundSpectrumRingDropsThePreviousTrace();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();

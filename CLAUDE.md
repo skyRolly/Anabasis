@@ -31,8 +31,12 @@ engine with Learn AND the ADR-0014 frozen-trim restore, the P5 UI, and the P6 un
 work are all in the tree. Implementation is governed by the **fourteen** Accepted ADRs in
 [`docs/architecture/design-decisions/`](docs/architecture/design-decisions/ADR_INDEX.md) — read
 `ADR_INDEX.md` before writing code; an ADR outranks `DESIGN.md`, which is now superseded section by
-section as the real architecture set lands. pluginval gates at **L10** (both modes ×3, editor
-under xvfb) locally and in CI. Every decision dated 2026-08-02 is ⊕ pending the fine review; the
+section as the real architecture set lands. pluginval gates in both modes ×3 with the editor
+under xvfb, locally and in CI, at the strictness held in one place —
+`ANABASIS_PLUGINVAL_STRICTNESS` in `.github/workflows/build.yml`
+(`docs/policies/TESTING_POLICY.md` owns what the gate requires; this file
+deliberately quotes no number, being the first file every contributor reads and
+so the copy whose staleness the rule exists to prevent). Every decision dated 2026-08-02 is ⊕ pending the fine review; the
 brand checklist is provisionally passed with its Level-5 boxes deliberately unchecked
 (`docs/BRAND_CONSISTENCY_CHECKLIST.md`). `docs/HANDOVER.md` carries the status of record.
 

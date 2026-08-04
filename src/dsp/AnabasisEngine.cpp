@@ -1070,6 +1070,15 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // exit added to stage A or E would publish the previous chunk's tail as if
     // it were current — a display artefact, not a signal one, but a silent one.
     // If such an exit is ever added, publish only the samples actually written.
+    // A SECOND thing this publication assumes, beside the no-early-exit one
+    // above: that the chunk it publishes is one the engine will keep. It runs
+    // BEFORE the invariant-9 self-heal below, so a chunk the heal then decides
+    // was contaminated has already reached the GUI. Nothing non-finite gets
+    // through — the taps are individually scrubbed (stage A's `s = 0.0f`, stage
+    // E's `isFinite(render) ? render : 0.0f`), so the FFT cannot be poisoned —
+    // what reaches it is a chunk of substituted zeros for audio that is about to
+    // be reset. Display-only and self-correcting within one analysis window;
+    // recorded here so the assumption list is complete rather than half-stated.
     specInRing.pushBlock (specInL.data(), nCh > 1 ? specInR.data() : specInL.data(), num);
     specOutRing.pushBlock (specOutL.data(), nCh > 1 ? specOutR.data() : specOutL.data(), num);
 

@@ -532,7 +532,16 @@ They are acquired in **both** orders:
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
-while a host thread restores state and writes P. That is exactly the interleaving KI-003 is about,
+while a host thread restores state and writes P.
+
+**The editor is a CONTINUOUS acquirer of M1, which raises the practical exposure** (recorded round
+49): `refreshPresetDisplay` polls `presetDirty()` on the 24 Hz tick, throttled to every 8th tick,
+and that reaches `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()` — which flushes
+pending parameter values and takes M1. So with the window open the message thread acquires M1 at
+~3 Hz all the time, plus immediately on every user action (the `recomputeNow` path). This does not
+add an edge to the inversion above; it makes the M0 → M1 side of it something the plugin does
+continuously rather than only at a gesture-begin, which is what a probability estimate for this
+entry should be based on. That is exactly the interleaving KI-003 is about,
 and the §5.3 machinery exists *because* gestures and parameter writes on the same managed parameter
 do overlap across threads.
 
