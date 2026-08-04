@@ -467,6 +467,21 @@ drag is unchanged, the knob is unchanged, and the write is still bracketed.
 agreement; the ~46-notification burst per preset step is now a DAW-matrix checklist line.
 Suites: 230 + 307.
 
+**Review round 47 (2026-08-03) — two lifecycle orderings made structural, no behaviour change.**
+(1) `macroEngine->startDraining()` was armed several statements before the processor constructor
+finished — before `addListener(this)` and the managed-parameter registrations — so a tick reaching
+`handleAsyncUpdate()` could have landed a mapping pass the wrapper had not yet subscribed to.
+Nothing can deliver such a tick (Timer callbacks come from the message loop), which is exactly the
+ordering argument the startDraining/stopDraining split exists to retire; arming is now the
+constructor's last statement. (2) `animVBlank` was constructed in the member-initialiser list,
+before the `lastFrameTime`/`uiAnimOn` its callback reads and before `animated` was filled; it is now
+assigned at the end of the constructor, matching the destructor's existing "clear it first"
+discipline. (3) `ValueBox` recorded `downProp` under one predicate and consumed it under another; a
+`downArmed` flag makes them one (latent, untested by design — the divergent case is unreachable).
+(4) The MODE policy, THREAD_MODEL's retained row and KI-003 now state that the frozen-mirror thread
+crossing was REDUCED to its pre-round-40 shape, not eliminated: `adoptFrozenMirror()` is a single
+writer but is still reached from `setStateInformation`. Suites: 230 + 307 (unchanged).
+
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The editor: family frame (46 px top bar — wordmark→About, preset browser, A/B, Copy,

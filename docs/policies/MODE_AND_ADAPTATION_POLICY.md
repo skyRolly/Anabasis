@@ -242,10 +242,22 @@ before the engine destroyed it. That is a **non-thread-safe `juce::ValueTree` wr
 callback JUCE does not deliver on the message thread**, opposite the editor's continuous
 `presetDirty()` read of the same member — with both sides gated on Freeze being ON, so the windows
 coincided exactly. ThreadSanitizer reports it as a data race on the tree's reference-counted
-pointer. Keeping the durable copy in the lock-free layer removes the rescue and the race together:
-no thread crossing is added to preserve a latch. **The general rule this instance illustrates: when
-state must survive a re-initialisation, retain it where it already lives rather than copying it
-across a thread boundary to somewhere more durable.**
+pointer. Keeping the durable copy in the lock-free layer removes THAT rescue and THAT race: no
+thread crossing is added *in order to preserve a latch*. **The general rule this instance
+illustrates: when state must survive a re-initialisation, retain it where it already lives rather
+than copying it across a thread boundary to somewhere more durable.**
+
+**What it does NOT remove, stated because the paragraph above reads as though the crossing were gone
+outright — it is not.** `adoptFrozenMirror()` is a single writer, and a single writer is not a
+message-thread-only writer: it is still reached from `setStateInformation`, which VST3 does not
+promise on the message thread, while the editor's `presetDirty()` poll runs `saveSlotFromLive()` and
+`createCopy()`s the same member several times a second. The refcounted-pointer race ThreadSanitizer
+reported for the round-40 code therefore still exists **on the load path**, exactly as it does for
+`apvts.replaceState()`, `liveDetachMask` and `livePresetName` written from the same function. That
+is the residual `KNOWN_ISSUES.md` KI-003 keeps open and which closes with the thread-model decision,
+not separately. What rounds 41–42 changed is that the mirror is no longer written from a SECOND
+host callback (`prepareToPlay`) as well — the exposure is back to the one path KI-003 already owned,
+not eliminated.
 Guarded by
 `testLearnCommitAndAdaptiveRoundTrip` (commit moves the reference; the child restores it
 byte-identically; absent restores never-learned defaults). The Learn UI grammar (duck-routed

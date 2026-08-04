@@ -773,6 +773,7 @@ namespace
         // SliderAttachment listens to in order to open and close the host
         // gesture, so this needs no knowledge of the parameter itself.
         std::unique_ptr<juce::Slider::ScopedDragNotification> drag;
+        bool downArmed = false;   // did THIS press record `downProp`? see mouseDown
 
         void mouseDown (const juce::MouseEvent& e) override
         {
@@ -784,11 +785,29 @@ namespace
             // `jassert (! isPerformingGesture)`. Resetting first makes the
             // pairing unconditional; the pointer is null in the ordinary case.
             drag.reset();
+            downArmed = false;
             if (auto* s = sliderParent (getParentComponent()); s != nullptr && e.getNumberOfClicks() < 2 && ! isBeingEdited())
             {
                 // The drag ORIGIN and the press feedback are recorded here; the
                 // gesture is NOT opened until the pointer actually moves — see
                 // `mouseDrag`.
+                //
+                // `downArmed` is what makes the recording and the consuming ONE
+                // predicate. `mouseDrag` used to re-derive its own, narrower
+                // condition (`sliderParent && ! isBeingEdited()`), which is not
+                // the condition under which `downProp` was written: on a text
+                // box that is NOT editable a double-click opens no editor, so
+                // `isBeingEdited()` stays false and the drag would have run
+                // against a `downProp` captured at the FIRST click while
+                // `getDistanceFromDragStartY()` measured from the second press.
+                // Inert today — `createSliderTextBox` makes every box editable
+                // when its slider is (`setEditable (false, s.isTextBoxEditable(),
+                // false)`), and `setupRotary` builds them all editable, so a
+                // double-click always opens the editor and the drag falls
+                // through to `juce::Label` — but "one path records under a
+                // predicate another path does not check" is the exact asymmetry
+                // this file spent several rounds removing.
+                downArmed = true;
                 downProp = s->valueToProportionOfLength (s->getValue());
                 s->getProperties().set ("dragging", true); // knob shows press feedback (#10)
                 s->repaint();
@@ -803,6 +822,7 @@ namespace
             // pre-state). Reset unconditionally — the pointer is null unless
             // `mouseDown` opened one.
             drag.reset();
+            downArmed = false;
             if (auto* s = sliderParent (getParentComponent()))
             {
                 s->getProperties().set ("dragging", false);
@@ -815,7 +835,7 @@ namespace
             // Directly map vertical drag to the value (respecting any skew). This
             // is robust regardless of event routing -- the previous forwarding
             // approach didn't take (feedback #28).
-            if (auto* s = sliderParent (getParentComponent()); s != nullptr && ! isBeingEdited())
+            if (auto* s = sliderParent (getParentComponent()); s != nullptr && downArmed && ! isBeingEdited())
             {
                 // THE GESTURE OPENS HERE, on the first movement, not on
                 // mouse-down. It was opened in `mouseDown`, which made a plain

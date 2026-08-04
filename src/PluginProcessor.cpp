@@ -36,8 +36,6 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // existing 30 ms tick rather than through a message post of our own
     // (drainDetachBitsSoon explains why that route is closed).
     macroEngine->onDrainTick = [this] { handleAsyncUpdate(); };
-    // Both callbacks are wired; only now may the tick that reads them run.
-    macroEngine->startDraining();
     // The undo gesture bookkeeping keys one bit per parameter index; ADR-0010
     // freezes the surface at 49, well inside the word.
     jassert (getParameters().size() <= kMaxCountedGestureIndex);
@@ -51,6 +49,28 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // where §5.3's re-engage rule actually lives.
     for (const char* id : managed_params::ids)
         apvts.addParameterListener (id, this);
+
+    // LAST STATEMENT IN THE CONSTRUCTOR, deliberately, and this is the third
+    // time this object's lifecycle has had to be made structural rather than
+    // ordered. `startDraining()` used to run right after the two callbacks were
+    // assigned, several statements above — with a comment saying "only now may
+    // the tick that reads them run", which was true of the callbacks and not of
+    // everything else the tick reaches. `onDrainTick` is
+    // `AnabasisAudioProcessor::handleAsyncUpdate`, which drains the staged
+    // detach bits, can call `replaceDetachMask` and can land a mapping pass —
+    // and a mapping pass writes parameters, whose callbacks the listener
+    // registrations above had not yet subscribed to. A tick arriving in that
+    // window would have run a macro apply the wrapper could not hear.
+    //
+    // Nothing could deliver such a tick today: `juce::Timer` fires from the
+    // message loop, which cannot run inside a constructor executing on the
+    // message thread. That is exactly the "safe by ordering" argument the
+    // startDraining/stopDraining split exists to stop relying on — the same
+    // reasoning that put `stopDraining()` first in the destructor and, since
+    // round 45, inside `~MacroEngine` itself. Arming last costs nothing and
+    // makes the guarantee a property of this function rather than of the
+    // platform's dispatch rules.
+    macroEngine->startDraining();
 }
 
 AnabasisAudioProcessor::~AnabasisAudioProcessor()

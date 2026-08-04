@@ -96,15 +96,10 @@ void AnabasisAudioProcessorEditor::ABControl::paint (juce::Graphics& g)
 //  Construction
 // ============================================================================
 AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcessor& p)
-    : juce::AudioProcessorEditor (p), processor (p),
-      animVBlank (this, [this]
-      {
-          const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
-          const double dt  = juce::jlimit (0.0, 0.05, now - lastFrameTime);
-          lastFrameTime = now;
-          stepMicroAnims (dt);
-      })
+    : juce::AudioProcessorEditor (p), processor (p)
 {
+    // `animVBlank` is deliberately NOT in the initialiser list — see the end of
+    // this constructor.
     setLookAndFeel (&lnf);
     tooltips.setLookAndFeel (&lnf);   // desktop window: nothing to inherit from — see the member
    #if JUCE_MAC
@@ -564,6 +559,25 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
 #if JUCE_MAC || JUCE_WINDOWS
     glContext.attachTo (*this);    // §6.1: GPU compositing on these two only
 #endif
+
+    // THE ANIMATION CLOCK STARTS LAST, and the placement is the point. It was
+    // constructed in the member-initialiser list, where it ran BEFORE
+    // `lastFrameTime` and `uiAnimOn` — both declared after it in the header, so
+    // both still uninitialised at that instant — and its callback
+    // (`stepMicroAnims`) reads all three of those and `animated`, which the
+    // `registerAnimated` calls above fill. Unreachable today, because vblank
+    // callbacks are delivered on the message thread and cannot preempt a
+    // constructor running there; but that is the same platform-dispatch
+    // argument the destructor already refuses to rely on one screen down
+    // (`animVBlank = {}` runs FIRST there, so the callback cannot outlive the
+    // state it reads). The two ends of the lifetime now say the same thing.
+    animVBlank = juce::VBlankAttachment (this, [this]
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+        const double dt  = juce::jlimit (0.0, 0.05, now - lastFrameTime);
+        lastFrameTime = now;
+        stepMicroAnims (dt);
+    });
 }
 
 AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()

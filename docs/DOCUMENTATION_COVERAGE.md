@@ -6,7 +6,44 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 46 (2026-08-03)** — a measurement defect, a gesture-model
+**Last updated:** for **review round 47 (2026-08-03)** — two lifecycle orderings made structural,
+one predicate unified, and one documentation overstatement corrected. No behaviour change:
+(1) **`macroEngine->startDraining()` ran several statements before the constructor finished**, so
+the 30 ms tick — which reaches back into the wrapper through `onDrainTick` →
+`handleAsyncUpdate()`, and can drain detach bits, replace the mask and land a mapping pass — was
+armed before `addListener(this)` and the nine managed-parameter registrations. A tick in that window
+would have run a macro apply the wrapper could not hear. Nothing can deliver one (a `juce::Timer`
+fires from the message loop, which cannot run inside a constructor executing on that thread), and
+that is precisely the "safe by ordering" argument the startDraining/stopDraining split exists to
+retire. Arming is now the constructor's last statement, so the guarantee belongs to the function
+rather than to the platform's dispatch rules. Its old comment said "only now may the tick that reads
+them run" — true of the two callbacks, not of everything else the tick reaches.
+(2) **`animVBlank` was constructed in the member-initialiser list**, i.e. before `lastFrameTime` and
+`uiAnimOn`, which are declared after it and which its callback reads — and before the
+`registerAnimated` calls that fill `animated`. The destructor already refuses to rely on the same
+platform argument (`animVBlank = {}` runs first there); the two ends of the lifetime now say the
+same thing. The attachment is assigned at the end of the constructor; animation behaviour is
+unchanged.
+(3) **`ValueBox` recorded `downProp` under one predicate and consumed it under another.**
+`mouseDown` wrote it only when `numberOfClicks < 2 && ! isBeingEdited()`; `mouseDrag` proceeded on
+`! isBeingEdited()` alone, so on a NON-editable text box (where a double-click opens no editor) a
+drag would have used the origin captured at the first click while the distance was measured from the
+second press. Latent — `createSliderTextBox` makes every box editable when its slider is, and
+`setupRotary` builds them all editable — but it is the asymmetry this file has removed repeatedly.
+A `downArmed` flag makes recording and consuming one predicate. Deliberately NOT tested: the
+divergent case is unreachable, so any check would pass identically before and after.
+(4) **The MODE policy read as though the frozen-mirror thread crossing had been removed outright.**
+It has not. `adoptFrozenMirror()` is a single writer, and a single writer is not a
+message-thread-only writer — it is still reached from `setStateInformation`, which VST3 does not
+promise on the message thread, while `presetDirty()` reads and `createCopy()`s the same member
+several times a second. What rounds 41–42 actually did was remove the SECOND writer round 40 had
+added in `prepareToPlay`: the exposure is back to the one KI-003 already owns, reduced to its
+pre-round-40 shape rather than eliminated. `MODE_AND_ADAPTATION_POLICY`, `THREAD_MODEL`'s retained
+row and KI-003 (which now names `liveFrozenTrims` in its list of restore-written state) all say so.
+No guarantee was weakened to make the texts agree — the correction runs the other way.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 46 (2026-08-03)** — a measurement defect, a gesture-model
 defect, and one investigation that ended in "leave it":
 (1) **The per-stage bench timed its own stimulus generator.** `stageRow` computed an LCG step and a
 `std::sin` per sample INSIDE the timed span, while the method line and the matrix section both

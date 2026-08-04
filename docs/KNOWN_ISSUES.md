@@ -99,8 +99,18 @@ and write of the history passes through (`canUndo`/`canRedo`, `undo`/`redo`,
 `pushUndoStep`, both gesture callbacks' message-thread branches,
 `copySlotToOther`). No lock, and nothing blocks in a host callback. What remains
 unclosed here is the state the restore genuinely must write — `replaceState`,
-`liveDetachMask`, `livePresetName` — which has no such option and still needs
-the decision below.
+`liveDetachMask`, `livePresetName` and **`liveFrozenTrims`** — which has no such
+option and still needs the decision below.
+
+`liveFrozenTrims` is named explicitly because two rounds of work around it could
+otherwise read as having closed it. Round 40 added a SECOND writer of that member
+from `prepareToPlay`, which ThreadSanitizer reported as a data race against the
+editor's `presetDirty()` poll; rounds 41–42 removed that second writer and routed
+the remaining one through `adoptFrozenMirror()`. A single writer is not a
+message-thread-only writer: `adoptFrozenMirror()` is still reached from
+`setStateInformation`, so the exposure is back to the one this entry already owns
+— reduced to its pre-round-40 shape, not eliminated. `MODE_AND_ADAPTATION_POLICY`
+carries the same qualification beside its ownership statement.
 
 **The construction and destruction halves of the MacroEngine drain are not
 equally strong**, recorded 2026-08-03 (review round 29) so the pair is not read
