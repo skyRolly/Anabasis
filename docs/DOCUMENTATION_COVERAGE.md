@@ -6,7 +6,49 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 45 (2026-08-03)** — four small hardening items, no behaviour
+**Last updated:** for **review round 46 (2026-08-03)** — a measurement defect, a gesture-model
+defect, and one investigation that ended in "leave it":
+(1) **The per-stage bench timed its own stimulus generator.** `stageRow` computed an LCG step and a
+`std::sin` per sample INSIDE the timed span, while the method line and the matrix section both
+promise stimulus generation is outside the stamps. A `sinf` is comparable to — for the cheap stages
+larger than — the stage being measured, so every row of the per-stage table carried an unlabelled
+constant overhead, in a table used to argue each §9 allocation row is inside budget: wrong in the
+unsafe direction. The stimulus is now pre-generated per run outside the stamps (regenerated each
+run, because the callbacks mutate their frame in place), leaving one indexed call per sample inside
+the timed region. Re-measured on the machine the table already names: EQ 0.16 → 0.10 %, Compressor
+0.15 → 0.10 %, Metering 0.18 → 0.10 %, Limiter 0.44 → 0.42 %, Clipper unchanged at 0.21 %. That the
+two expensive stages barely moved is the corroboration — their own cost dominated the harness. No
+verdict changed. The whole-engine matrix is untouched: it already stamped only `process()`.
+(2) **"Worst block" was ambiguous, and stays conservative.** `worstUs` is the maximum over all five
+runs rather than the worst block of the median run. That is the right number for a real-time budget
+— a dropout is caused by the worst block that ever happens — so the implementation is unchanged and
+both the bench's own method line and `PERFORMANCE_BUDGET.md` now say which it is, including that it
+is ~5× more exposed to the scheduler noise the caveat already warns about.
+(3) **A click on a macro's numeric readout re-engaged every detached parameter.** `ValueBox` opened
+its `ScopedDragNotification` on mouse-DOWN, and a gesture-begin on one of the three §5.5 macros is
+not neutral: it takes the macro branch, clears the whole §5.3 detach mask and re-lands the curve. So
+clicking the number under Loudness to read it — or as the first half of a double-click to type into
+it — discarded every manual Advanced edit. §5.3 makes a macro gesture "the clear notice" that the
+user chooses the macro over their edits; pressing on a numeric readout is not that notice. The
+bracket now opens on the first MOVEMENT, which is the line the code already drew one event later
+(`mouseDown` refuses the bracket on a double-click for exactly the "about to type" reason). A real
+drag still opens it before its first write, so the imbalance the bracket exists to prevent cannot
+return, and the knob is untouched — `juce::Slider` opens its gesture on press, and that is a genuine
+macro grab. `testAValueBoxClickIsNotAMacroGesture` drives the real ValueBox through synthesised
+mouse events and pins both halves; two mutants (press-opens-gesture, never-opens).
+(4) **Preset application through `setValueNotifyingHost`: investigated, left unchanged.** Notifying
+is not stylistic — it is the only write that keeps the host's cached values, the APVTS tree and the
+editor attachments in agreement, and every other value-landing path uses it (`applyMapping`,
+`reassertFromRaw`, `applyOnePresetValue`), so silencing this one would leave exactly one restore the
+host never learns about. The real observation is the volume: ~46 notifications per ‹/› step, which
+some hosts record or dirty on. That is host behaviour, not correctness, and changing it would change
+automation semantics — so it is now a DAW-matrix line in `RELEASE_COMPATIBILITY_CHECKLIST.md` with
+the reasoning at the code site.
+Item 3 of the brief (the Windows PowerShell guard) was already fixed at round 45 — `$m` is tested
+before it is indexed — and needed no further change; verified against the current file.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 45 (2026-08-03)** — four small hardening items, no behaviour
 change and no deferred question touched:
 (1) **The bench printed a C2 refusal even when the documented override answered.** `ANABASIS_BENCH_CPU`
 is the supported way to run on a platform whose lookup is not written yet, so it must not read as a

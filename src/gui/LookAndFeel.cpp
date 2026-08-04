@@ -786,8 +786,10 @@ namespace
             drag.reset();
             if (auto* s = sliderParent (getParentComponent()); s != nullptr && e.getNumberOfClicks() < 2 && ! isBeingEdited())
             {
+                // The drag ORIGIN and the press feedback are recorded here; the
+                // gesture is NOT opened until the pointer actually moves — see
+                // `mouseDrag`.
                 downProp = s->valueToProportionOfLength (s->getValue());
-                drag = std::make_unique<juce::Slider::ScopedDragNotification> (*s);
                 s->getProperties().set ("dragging", true); // knob shows press feedback (#10)
                 s->repaint();
             }
@@ -815,6 +817,29 @@ namespace
             // approach didn't take (feedback #28).
             if (auto* s = sliderParent (getParentComponent()); s != nullptr && ! isBeingEdited())
             {
+                // THE GESTURE OPENS HERE, on the first movement, not on
+                // mouse-down. It was opened in `mouseDown`, which made a plain
+                // CLICK on the number a complete host gesture — and on the three
+                // §5.5 macros a gesture-begin is not a neutral event: it takes
+                // the macro branch of `audioProcessorParameterChangeGestureBegin`,
+                // which clears the WHOLE detach mask and re-lands the curve. So
+                // clicking the number under Loudness to read it, or as the first
+                // half of a double-click to type into it, discarded every manual
+                // Advanced edit the user had made. §5.3 makes a macro gesture
+                // "the clear notice" that the user is choosing the macro over
+                // their edits; pressing on a numeric readout is not that notice.
+                //
+                // Moving it here draws the line the code already drew one event
+                // later: `mouseDown` refuses the bracket on a double-click for
+                // exactly the "about to type" reason, and a press that never
+                // moves is the same case. What is unchanged: a real drag opens
+                // the bracket BEFORE its first write, so every parameter write
+                // still happens inside it — the imbalance the bracket was added
+                // to remove cannot come back — and the knob's own behaviour is
+                // untouched, since `juce::Slider` opens its gesture on press and
+                // that is a genuine macro grab.
+                if (drag == nullptr)
+                    drag = std::make_unique<juce::Slider::ScopedDragNotification> (*s);
                 const double prop = juce::jlimit (0.0, 1.0, downProp + (-e.getDistanceFromDragStartY()) / 180.0);
                 s->setValue (s->proportionOfLengthToValue (prop), juce::sendNotificationSync);
             }

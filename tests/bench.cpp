@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <thread>
 
@@ -141,7 +142,9 @@ int main()
 #endif
                  );
     std::printf ("method: 5 runs/cell, 1 s audio each, median ns/sample of the "
-                 "per-block timed region; worst block = max single process() call\n\n");
+                 "per-block timed region; worst block = max single process() call ACROSS ALL 5 "
+                 "RUNS, not the worst of the median run — deliberately the conservative figure, "
+                 "and correspondingly more exposed to scheduler noise\n\n");
     std::printf ("| SR | block | OS | mode | ns/sample (median) | worst block (us) | %% of realtime |\n");
     std::printf ("|---|---|---|---|---|---|---|\n");
 
@@ -159,6 +162,19 @@ int main()
                     Cell c { sr, block, os, working };
 
                     std::vector<double> nsPerSample;
+                    // Deliberately OUTSIDE the run loop: the reported worst
+                    // block is the maximum over all five runs — 5 s of audio —
+                    // rather than the worst block of whichever run supplied the
+                    // median. That is the conservative reading and the one an
+                    // RT budget wants (a dropout is caused by the worst block
+                    // that ever happens, not by an average one), but it is NOT
+                    // what "the worst block of the median run" would mean, and
+                    // pairing it with a median column invites exactly that
+                    // reading — so the method line above now says which it is.
+                    // Consequence, stated rather than discovered: this column is
+                    // ~5x more exposed to a scheduler preemption than a per-run
+                    // figure, which is why PERFORMANCE_BUDGET.md tells the
+                    // reader to treat the median column as load-bearing.
                     double worstUs = 0.0;
                     for (int r = 0; r < 5; ++r)
                     {
@@ -228,23 +244,41 @@ int main()
     std::printf ("\n| stage (48 kHz, standalone) | ns/sample (median) | %% of realtime |\n");
     std::printf ("|---|---|---|\n");
 
+    // STIMULUS OUTSIDE THE STAMPS, which is what the method line promises and
+    // what the matrix section above already does. This helper used to compute an
+    // LCG step and a `std::sin` per sample INSIDE the timed span: a `sinf` is
+    // comparable to — often larger than — the stage being measured (the EQ row
+    // is quoted at 0.16 % of realtime), so every published per-stage figure
+    // carried a constant harness overhead it did not label. The table is used to
+    // argue each §9 allocation row is inside budget, so the overhead was not
+    // merely untidy; it made the numbers wrong in the unsafe direction.
+    //
+    // The buffer is REGENERATED per run rather than generated once, because the
+    // stage callbacks mutate their frame in place: a second run over an already-
+    // processed buffer is a different measurement (a limiter fed its own output
+    // is not the limiter fed programme). Regeneration is outside the stamps, so
+    // it costs wall-clock and not accuracy. What remains inside the timed region
+    // is one indexed call per sample and nothing else.
     auto stageRow = [] (const char* name, auto&& perSampleFn)
     {
+        constexpr int n = 48000;
+        std::vector<std::array<float, 2>> buf ((std::size_t) n);
         std::vector<double> med;
         for (int r = 0; r < 5; ++r)
         {
             uint32_t rng = 0x9876u;
-            constexpr int n = 48000;
-            const auto t0 = std::chrono::steady_clock::now();
             for (int i = 0; i < n; ++i)
             {
                 rng = rng * 1664525u + 1013904223u;
                 const float noise = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.05f;
                 const float tone  = 0.2f * std::sin (2.0f * juce::MathConstants<float>::pi
                                                      * 220.0f * (float) i / 48000.0f);
-                float frame[2] = { tone + noise, tone - noise };
-                perSampleFn (frame, i);
+                buf[(std::size_t) i] = { tone + noise, tone - noise };
             }
+
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < n; ++i)
+                perSampleFn (buf[(std::size_t) i].data(), i);
             const auto t1 = std::chrono::steady_clock::now();
             med.push_back ((double) std::chrono::duration_cast<std::chrono::nanoseconds> (
                                t1 - t0).count() / (double) n);

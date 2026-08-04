@@ -2458,6 +2458,27 @@ static int countSliders (juce::Component& root)
     return n;
 }
 
+static juce::Slider* findSliderByTitle (juce::Component& root, const juce::String& title)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* sl = dynamic_cast<juce::Slider*> (c); sl != nullptr && sl->getTitle() == title)
+            return sl;
+        if (auto* found = findSliderByTitle (*c, title))
+            return found;
+    }
+    return nullptr;
+}
+
+// The slider's own text box, which the LookAndFeel makes a `ValueBox`.
+static juce::Label* findChildLabel (juce::Component& parent)
+{
+    for (auto* c : parent.getChildren())
+        if (auto* l = dynamic_cast<juce::Label*> (c))
+            return l;
+    return nullptr;
+}
+
 static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::String& title)
 {
     for (auto* c : root.getChildren())
@@ -2492,6 +2513,78 @@ static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::Stri
 // the nature of UB that happens to work, and pretending otherwise would be the
 // kind of check that proves an impossible state. The value here is regression
 // coverage for a direction the suite otherwise only drove state→widget.
+// Round 46. A gesture-begin on one of the three §5.5 macros is not a neutral
+// event: `audioProcessorParameterChangeGestureBegin` takes the macro branch,
+// clears the WHOLE §5.3 detach mask and re-lands the curve. `ValueBox` opened
+// its `ScopedDragNotification` on mouse-DOWN, so a plain click on the number
+// under Loudness — to read it, or as the first half of a double-click to type
+// into it — discarded every manual Advanced edit the user had made.
+//
+// The bracket now opens on the first movement instead. This drives the real
+// ValueBox through synthesised events, because the whole point is which mouse
+// event opens the gesture: a press-and-release must not re-engage, a drag must.
+static void testAValueBoxClickIsNotAMacroGesture()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "valueBoxGesture: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    // The macro knob by its registry name, and its text box — the LookAndFeel
+    // gives every rotary one through `createSliderTextBox`.
+    auto* macroParam = proc.apvts.getParameter (pid::loudness);
+    check (macroParam != nullptr, "valueBoxGesture: (premise) the macro parameter exists");
+    if (macroParam == nullptr)
+        return;
+    juce::Slider* knob = findSliderByTitle (*ed, macroParam->getName (24));
+    check (knob != nullptr, "valueBoxGesture: (premise) the macro knob was found");
+    if (knob == nullptr)
+        return;
+    juce::Label* box = findChildLabel (*knob);
+    check (box != nullptr, "valueBoxGesture: (premise) its numeric readout was found");
+    if (box == nullptr)
+        return;
+
+    auto detachOne = [&proc]
+    {
+        auto* lim = proc.apvts.getParameter (pid::limGain);
+        lim->beginChangeGesture();
+        lim->setValueNotifyingHost (lim->getNormalisableRange().convertTo0to1 (2.0f));
+        lim->endChangeGesture();
+        proc.flushPendingDetach();
+    };
+    auto ev = [box] (juce::Point<float> pos, juce::Point<float> downPos)
+    {
+        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
+                                 pos, juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 box, box, juce::Time::getCurrentTime(), downPos,
+                                 juce::Time::getCurrentTime(), 1, false);
+    };
+
+    // (1) PRESS AND RELEASE on the number: no movement, so no macro gesture.
+    detachOne();
+    check (proc.detachMask().contains (pid::limGain),
+           "valueBoxGesture: (premise) a gestured edit detached limGain");
+    juce::Component* boxComp = box;   // Label::mouseUp is protected; Component's is not
+    boxComp->mouseDown (ev ({ 10.0f, 7.0f }, { 10.0f, 7.0f }));
+    boxComp->mouseUp   (ev ({ 10.0f, 7.0f }, { 10.0f, 7.0f }));
+    proc.getMacroEngine().flushPendingMapping();
+    check (proc.detachMask().contains (pid::limGain),
+           "valueBoxGesture: a click on the macro's readout does not re-engage the mask");
+
+    // (2) DRAG on the number: a real macro move, so §5.3's rule applies exactly
+    // as it does for the knob. Without this the first check is satisfied by a
+    // readout that never gestures at all.
+    boxComp->mouseDown (ev ({ 10.0f, 7.0f }, { 10.0f, 7.0f }));
+    boxComp->mouseDrag (ev ({ 10.0f, -25.0f }, { 10.0f, 7.0f }));
+    boxComp->mouseUp   (ev ({ 10.0f, -25.0f }, { 10.0f, 7.0f }));
+    proc.getMacroEngine().flushPendingMapping();
+    check (proc.detachMask().isEmpty(),
+           "valueBoxGesture: …but dragging it re-engages, exactly as the knob does");
+}
+
 static void testTheSettingsCallbacksReachTheLiveTree()
 {
     AnabasisAudioProcessor proc;
@@ -3082,6 +3175,7 @@ int main (int argc, char** argv)
         testMeterResetClearsSessionHolds();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
+        testAValueBoxClickIsNotAMacroGesture();
         testTheSettingsCallbacksReachTheLiveTree();
         testAnOutOfListUiScaleClampsConsistently();
         testTheCurveWellCachesWithoutChangingWhatItDraws();

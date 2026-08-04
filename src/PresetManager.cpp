@@ -205,6 +205,27 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
     // skipping the reset would blend two presets. Locked/excluded parameters
     // go through the same shared core as every file preset.
     //
+    // WHY `setValueNotifyingHost` AND NOT A SILENT WRITE, investigated at round
+    // 46 and deliberately left as it is. Notifying is not a stylistic choice
+    // here — it is the only write that keeps the host, the APVTS tree and the
+    // editor attachments agreeing: the host caches parameter values and reads
+    // them back for automation and its own displays, and a non-notifying write
+    // updates neither that cache nor the `value` property the attachments and
+    // the serialiser read. Every other value-landing path in this build uses the
+    // same call for the same reason — `MacroEngine::applyMapping`,
+    // `reassertFromRaw` (ADR-0007's raw-exact session restore) and
+    // `applyOnePresetValue` below — so making this one path silent would leave
+    // exactly one restore whose values the host never learns about.
+    //
+    // THE COST, recorded rather than argued away: a factory apply writes every
+    // non-excluded parameter, so browsing presets with the ‹/› arrows emits up
+    // to ~46 host notifications per step. Some hosts record those as automation
+    // or mark the project dirty. That is a host-behaviour question, not a
+    // correctness one, and changing it would change automation semantics — so it
+    // is a DAW-matrix check (`RELEASE_COMPATIBILITY_CHECKLIST.md`), not a patch.
+    // Each notification re-enters `AnabasisAudioProcessor::parameterChanged`,
+    // where the nine managed ids are discarded because `isRestoring()` is true.
+    //
     // This ITERATES the APVTS tree while WRITING it: `setValueNotifyingHost`
     // has APVTS write the `value` property of the very node being visited.
     // Safe with juce::ValueTree's iterator because a property write neither

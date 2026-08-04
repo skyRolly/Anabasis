@@ -63,6 +63,14 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       render + state restoration. Minimum: **Reaper (Windows)** and **Logic Pro (macOS / AU)**.
       Requires manual DAW testing.
 
+- [ ] **Preset browsing checked against host automation recording** — a factory apply writes every
+      non-excluded parameter through `setValueNotifyingHost` (required: it is what keeps the host's
+      cached values, the APVTS tree and the editor attachments in agreement, and every other
+      value-landing path in the build uses it). Stepping presets with ‹/› therefore emits up to ~46
+      host notifications per step. Confirm in each target host that this does not record unwanted
+      automation or mark the project dirty in a way the user would not expect. Investigated at
+      round 46 and left unchanged: a silent write would make preset recall the one restore the host
+      never sees.
 - [ ] **Automation playback verified** — recorded automation on host-visible parameters plays back
       with unchanged meaning.
 

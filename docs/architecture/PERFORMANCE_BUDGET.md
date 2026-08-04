@@ -6,20 +6,29 @@ needs a profiler pass and is NOT claimed by the whole-engine numbers here.
 
 ## Allocation (DESIGN §9 targets), now with measured standalone costs
 
-Measured 2026-08-02 with the `AnabasisBench` per-stage section (same machine/method as the
-matrix below; each module standalone at 48 kHz base rate in its working configuration, median of
-5×1 s runs). **Standalone cost is not in-chain attribution** — cache locality and inlining differ
+Measured with the `AnabasisBench` per-stage section (same machine as the matrix below; each module
+standalone at 48 kHz base rate in its working configuration, median of 5×1 s runs).
+**Re-measured 2026-08-03 after a method fix, and the previous figures were wrong in the unsafe
+direction**: the per-stage helper generated its stimulus — an LCG step and a `std::sin` per sample
+— INSIDE the timed region, while the header line and the matrix section both promise that stimulus
+generation is outside the stamps. A `sinf` is comparable to, and for the cheap stages larger than,
+the stage being measured, so every row carried an unlabelled constant overhead in a table used to
+argue each allocation row is inside budget. The stimulus is now pre-generated per run outside the
+stamps (regenerated each run, because the stage callbacks mutate their frame in place), leaving one
+indexed call per sample inside the timed region. EQ moved 0.16 → 0.10 %, Compressor 0.15 → 0.10 %,
+Metering 0.18 → 0.10 %; Clipper and Limiter barely moved, which is itself the corroboration — their
+own cost dominated the harness. **No verdict changed.** **Standalone cost is not in-chain attribution** — cache locality and inlining differ
 inside the running engine, and the region stages (clipper, limiter) execute at the OS rate — so
 the whole-engine matrix stays the budget authority; this table answers "is any single stage out
 of line with its allocation", and none is:
 
 | Stage | §9 allocation | measured standalone (48 kHz) | verdict |
 |---|---|---|---|
-| EQ (six sections engaged) | ≤0.3 % | 0.16 % | inside |
-| Compressor (RMS + HPF) | ≤0.3 % | 0.15 % | inside |
+| EQ (six sections engaged) | ≤0.3 % | 0.10 % | inside |
+| Compressor (RMS + HPF) | ≤0.3 % | 0.10 % | inside |
 | Clipper/ADAA + colour + tame | ≤0.8 % | 0.21 % (×OS rate in-chain) | inside |
-| Limiter + TP detector | ≤1.5 % | 0.44 % (×OS rate in-chain) | inside |
-| Metering + features | ≤0.5 % | 0.18 % for one meter + TP + adaptive; the chain runs three meters — still ≈0.5 % worst case | inside (at the line) |
+| Limiter + TP detector | ≤1.5 % | 0.42 % (×OS rate in-chain) | inside |
+| Metering + features | ≤0.5 % | 0.10 % for one meter + TP + adaptive; the chain runs three meters — ≈0.3 % worst case | inside |
 | OS resampling | ≤1.5 % | not separable standalone — the matrix difference (4× working − Off working ≈ 1.5 %) BUNDLES the region stages' rate multiplication, so this row is bounded, not isolated | inside by the bundle bound |
 | Headroom | ≥0.1 % | the budget case totals 3.0 % of the ≈5 % target | ample |
 
@@ -31,7 +40,10 @@ OFF-by-default `AnabasisBench` target (`-DANABASIS_BUILD_BENCH=ON`) compiles the
 directly; 5 runs per cell of 1 s audio each (220 Hz tone + noise at ≈−12 dBFS); **ns/sample is
 the median over runs of the per-block timed region** (`process()` only — stimulus generation is
 outside the stamps); worst block is the maximum single `process()` call; "% of realtime" =
-ns/sample × SR / 10⁷. `working` = the §5.5 macro at loudness ≈ 50 with EQ and colour engaged
+ns/sample × SR / 10⁷. **"Worst block" is the maximum single `process()` call across ALL FIVE
+runs**, not the worst block of the run that supplied the median — deliberately the conservative
+figure, since a dropout is caused by the worst block that ever happens rather than a typical one,
+and correspondingly ~5× more exposed to the scheduler noise the caveat below describes. `working` = the §5.5 macro at loudness ≈ 50 with EQ and colour engaged
 (every stage off its exact-skip path); `defaults` = the factory null path.
 
 | SR | block | OS | mode | ns/sample (median) | worst block (us) | % of realtime |
