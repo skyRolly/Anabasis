@@ -475,8 +475,27 @@ public:
     // overwrites the cleared values within one block.
     void requestMeterReset() noexcept
     {
-        meterResetPending.store (true, std::memory_order_relaxed);
+        // PUBLISH FIRST, ANNOUNCE SECOND, and the order is the fix rather than
+        // a preference. The other way round, the audio thread could consume the
+        // flag and complete a whole block — clearing `dbTpMaxHold`, running the
+        // engine, publishing fresh readings — in the gap between the two
+        // statements, after which this thread's `publishSilentMeters()` wrote
+        // the silent placeholders OVER readings that were already post-reset.
+        // The display then showed a blank meter that the audio had already
+        // restarted, which is the one transient a reset should never produce.
+        //
+        // Reversed, the worst case is the opposite and benign: a block already
+        // past its top publishes pre-reset values after the silence, and the
+        // NEXT block top consumes the flag and clears again — the reset lands
+        // one frame late instead of the display going stale-blank.
+        //
+        // RELEASE on the flag, ACQUIRE on the `exchange` that consumes it, for
+        // the reason THREADING_POLICY's publication-flag row gives: all six
+        // meter atomics are relaxed and carry no ordering of their own, so
+        // source order alone would not stop the consumer observing the flag
+        // before the values. The flag announces them, so it orders them.
         publishSilentMeters();
+        meterResetPending.store (true, std::memory_order_release);
     }
 
     // §5.4 Learn (message thread → the engine's command atomics; the P5 UI

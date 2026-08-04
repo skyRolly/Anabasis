@@ -32,6 +32,14 @@ public:
 
     bool savePreset (const juce::File& file, const juce::StringArray& detachMask) const;
     bool applyPreset (const juce::File& file, juce::StringArray& detachMaskOut);
+    // The same apply, against a document the CALLER already parsed. Added so
+    // the wrapper's readability gate and the apply operate on ONE document:
+    // `applyPresetFile` used to parse for the gate, discard the result, and let
+    // this class parse the file again, so a file rewritten between the two
+    // passed the gate and then applied different content — and the preset ring
+    // walks this path on every ‹/› press. The `File` overload above is kept for
+    // callers that have no document yet; it parses and delegates here.
+    bool applyPreset (const juce::XmlElement& parsed, juce::StringArray& detachMaskOut);
 
     // The single answer to "is this a preset file this build can apply?".
     // `applyPreset` reads through it, and so does the wrapper's pre-parse undo

@@ -416,7 +416,18 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
                         "Offline render", ist.getPropertyAsValue (iid::offlineQuality, nullptr));
     // int_uiScale stores PERCENT; the combo maps index<->percent through the
     // step list, so the stored value stays meaningful outside this editor.
-    uiScaleBox.addItemList ({ "80%", "90%", "100%", "125%", "150%", "175%", "200%" }, 1);
+    // Built FROM `kScaleSteps`, not written out beside it. The literal list
+    // that used to live here was the same seven values a second time: they
+    // agreed, but adding or removing a step in the ladder without editing this
+    // line would have left the displayed label describing a different scale
+    // from the applied transform — the exact second-copy shape this file
+    // removed for the meter target table and the badge ids.
+    {
+        juce::StringArray items;
+        for (int i = 0; i < kNumScaleSteps; ++i)
+            items.add (juce::String (kScaleSteps[i]) + "%");
+        uiScaleBox.addItemList (items, 1);
+    }
     uiScaleBox.setSelectedItemIndex (
         nearestScaleIndex ((int) ist.getProperty (iid::uiScale, 100)),
         juce::dontSendNotification);

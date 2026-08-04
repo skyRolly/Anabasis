@@ -6,7 +6,46 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 49 (2026-08-03)** — one real display defect, two duplicated
+**Last updated:** for **review round 50 (2026-08-03)** — four fixes and one assessment that
+changed nothing:
+(1) **The UI-scale ladder had two representations.** `kScaleSteps` was introduced as the single
+source, and the combo's item strings wrote the same seven values out again as labels. They agreed;
+adding or removing a step without editing the literal list would have left the displayed label
+naming a different scale from the applied transform. The labels are built from the ladder now. The
+test had to be strengthened to see it: checking that a label's number round-trips to its own index
+passes even with a wrong label, because the clamp maps it back onto the nearest step — so each item
+is now SELECTED and the rendered transform compared against the label.
+(2) **A preset file was parsed twice.** `applyPresetFile` parsed for the readability gate, discarded
+the document, and `applyPreset` parsed the same file again — so a file rewritten between the two
+(the ‹/› ring walks this path on every press) passed the gate and then applied different content.
+`PresetManager::applyPreset` gained an overload taking the parsed document; the `File` overload
+parses and delegates, so both entry points share one readability answer.
+(3) **The meter-reset request announced before it published.** The audio thread could consume the
+flag and complete an entire block — clearing the hold, running the engine, publishing fresh readings
+— between the flag store and `publishSilentMeters()`, after which the message thread wrote silence
+over readings that were already post-reset: a blank meter the audio had already restarted. Publish
+first, announce second; the flag is release-stored and the block-top `exchange` acquires, because
+the six meter atomics are relaxed and source order alone would not stop the consumer seeing the flag
+first. **No test catches this** — the interleaving needs a concurrent audio block and the suite is
+single-threaded; the swap is recorded at the site, as with the frozen-trim ownership boundary.
+(4) **A factory apply wrote every overridden parameter twice.** Defaults first, intents second, so
+the host was told about a value the preset never wanted and the surface passed through a state no
+preset describes. The apply now computes each parameter's final value and writes once, with the
+exclusion and ceiling-lock rules applied in one place instead of once per pass. `setValueNotifyingHost`
+is kept — it is what keeps host, APVTS and attachments in agreement — but it is no longer called for
+a value that does not move. Automation correctness is unchanged: a host that is not told about a
+value that did not change still holds the right value.
+(5) **The parented preset menu was assessed and left alone.** The z-order concern is unreachable:
+each overlay is `setBounds (getLocalBounds())`, `setAlwaysOnTop (true)` and intercepts mouse clicks
+(its `mouseDown` dismisses), so while one is showing a click on the preset name hits the backdrop,
+not the button — the menu cannot be opened behind an overlay. The scaling concern does not follow
+either: the menu is a child of the editor, so the transform scales menu and window together and the
+logical space available is 720 px at every scale. What remains is a user with enough saved presets
+to exceed that, where JUCE falls back to a scrolling menu — standard behaviour, not a defect.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the frozen-trim ownership model, the
+MacroEngine teardown architecture, the visualiser FrameClock criteria and the CurveView cache
+strategy.
+Previous: **review round 49 (2026-08-03)** — one real display defect, two duplicated
 numbers removed, and three comments brought back to what the code actually does:
 (1) **A re-prepare left the OLD spectrum analysis on screen, drawn against the NEW rate's bin
 mapping.** Round 39 rewound the rings at `prepare` so stale frames become unreachable; that was

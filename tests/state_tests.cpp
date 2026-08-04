@@ -2616,6 +2616,62 @@ static void testTheSettingsCallbacksReachTheLiveTree()
            "settingsWrite: the helper-built closure stores the 0-based value it names");
 }
 
+// Round 50. A factory apply used to write every non-excluded parameter TWICE
+// when the preset overrode it — once to its default in the first pass, once to
+// the preset's value in the second — so the host was told about a value the
+// preset never wanted, and the whole surface passed through a state no preset
+// describes. The apply now computes each parameter's final value and writes it
+// once.
+//
+// Measured on a parameter the preset overrides and the macro re-land does NOT
+// touch: `lookahead` is not one of the nine §5.5 managed ids, so every
+// notification it receives during an apply came from the preset path. A
+// managed parameter would legitimately be notified again by `relandMacroCurve`
+// afterwards, which is a different phase and not what this pins.
+static void testAFactoryApplyWritesEachParameterOnce()
+{
+    struct CountingListener : juce::AudioProcessorListener
+    {
+        void audioProcessorParameterChanged (juce::AudioProcessor*, int i, float) override
+        { if (i == watched) ++hits; }
+        void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails&) override {}
+        int watched = -1, hits = 0;
+    };
+
+    AnabasisAudioProcessor proc;
+    int lookaheadIndex = -1;
+    for (int i = 0; i < proc.getParameters().size(); ++i)
+        if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (proc.getParameters()[i]);
+            p != nullptr && p->getParameterID() == pid::lookahead)
+            lookaheadIndex = i;
+    check (lookaheadIndex >= 0, "presetNotify: (premise) the probe parameter was found");
+    if (lookaheadIndex < 0)
+        return;
+
+    // Preset 0 overrides lookahead, and the probe is parked away from BOTH its
+    // default and the preset's value first. That third position is what makes
+    // the count interesting: with the parameter already at its default the old
+    // two-pass apply also wrote once (the defaults pass had nothing to move),
+    // so the defect only shows from a state a user actually reaches — a knob
+    // they moved before browsing presets.
+    auto* look = proc.apvts.getParameter (pid::lookahead);
+    look->setValueNotifyingHost (look->getNormalisableRange().convertTo0to1 (7.5f));
+    const float before = look->getValue();
+    check (! juce::exactlyEqual (before, look->getDefaultValue()),
+           "presetNotify: (premise) the probe starts away from its default");
+
+    CountingListener counter;
+    counter.watched = lookaheadIndex;
+    proc.addListener (&counter);
+    check (proc.applyFactoryPreset (0), "presetNotify: (premise) the apply succeeds");
+    proc.removeListener (&counter);
+
+    check (! juce::exactlyEqual (look->getValue(), before),
+           "presetNotify: (premise) the preset really moves the probe parameter");
+    check (counter.hits == 1,
+           "presetNotify: an overridden parameter is announced ONCE, at its final value");
+}
+
 static void testAnOutOfListUiScaleClampsConsistently()
 {
     AnabasisAudioProcessor proc;
@@ -2645,6 +2701,22 @@ static void testAnOutOfListUiScaleClampsConsistently()
            "uiScaleClamp: an out-of-list percent renders at the NEAREST step, not at 100 %");
     check (box->getText() == "125%",
            "uiScaleClamp: …and the panel displays the same step it rendered");
+
+    // The item LABELS come from the same ladder the transform does. Checking
+    // that a label's number round-trips to its own INDEX is not enough — the
+    // clamp maps a wrong label back onto the nearest step, so the index still
+    // matches. What has to hold is that the label names the scale the window
+    // actually renders at, so each item is SELECTED and the transform read.
+    bool labelsMatchTransform = true;
+    for (int i = 0; i < box->getNumItems(); ++i)
+    {
+        box->setSelectedItemIndex (i, juce::sendNotificationSync);
+        const float labelled = (float) box->getItemText (i).dropLastCharacters (1).getIntValue();
+        if (std::abs (rendered() * 100.0f - labelled) > 0.5f)
+            labelsMatchTransform = false;
+    }
+    check (labelsMatchTransform,
+           "uiScaleClamp: every combo label names the scale that item actually renders at");
 
     // The load direction, which is where the two used to part company: the box
     // holds a legal selection and the stored value changes to an illegal one.
@@ -3257,6 +3329,7 @@ int main (int argc, char** argv)
         testTheSettingsPanelFollowsAProjectLoad();
         testAValueBoxClickIsNotAMacroGesture();
         testTheSettingsCallbacksReachTheLiveTree();
+        testAFactoryApplyWritesEachParameterOnce();
         testAnOutOfListUiScaleClampsConsistently();
         testTheCurveWellCachesWithoutChangingWhatItDraws();
         testARewoundSpectrumRingDropsThePreviousTrace();

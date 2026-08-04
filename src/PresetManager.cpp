@@ -36,6 +36,31 @@ bool PresetManager::savePreset (const juce::File& file, const juce::StringArray&
 
 // The shared apply core: both file and factory presets go through the same
 // lock/exclusion/snap semantics, so the two cannot drift.
+// One write, one rule: notify the host only when the value actually moves.
+//
+// `setValueNotifyingHost` is REQUIRED for a preset apply — it is what keeps the
+// host's cached value, the APVTS `value` property and the editor attachments in
+// agreement, and every value-landing path in this build uses it. What it is not
+// required for is a parameter that is already where the preset wants it: that
+// notification carries no information, and a host is free to record it as an
+// automation point or to mark the project dirty. A factory apply writes the
+// whole default patch before laying the overrides on top, so browsing presets
+// with ‹/› emitted up to ~46 notifications per step, most of them for values
+// that did not change — and the two-pass shape meant every overridden parameter
+// was notified twice, once to its default and once to the preset's value.
+//
+// EXACT comparison on the NORMALISED value, after the snap, because that is the
+// number the host is told: if the bits are identical the write is a no-op by
+// construction, so skipping it cannot lose an update. Automation correctness is
+// unchanged (a host that never hears about a value that did not move still
+// holds the right value) and preset semantics are unchanged (the parameter ends
+// at the same place either way).
+static void setParamIfMoved (juce::RangedAudioParameter& param, float normalised)
+{
+    if (! juce::exactlyEqual (param.getValue(), normalised))
+        param.setValueNotifyingHost (normalised);
+}
+
 static void applyOnePresetValue (juce::AudioProcessorValueTreeState& apvts,
                                  bool ceilingLocked,
                                  const juce::String& id, float value)
@@ -45,9 +70,9 @@ static void applyOnePresetValue (juce::AudioProcessorValueTreeState& apvts,
     if (ceilingLocked && id == pid::ceiling)
         return;                                     // §4.2: a locked ceiling is never written
     if (auto* param = apvts.getParameter (id))      // unknown ids ignored
-        param->setValueNotifyingHost (
-            param->getNormalisableRange().convertTo0to1 (
-                param->getNormalisableRange().snapToLegalValue (value)));
+        setParamIfMoved (*param,
+                         param->getNormalisableRange().convertTo0to1 (
+                             param->getNormalisableRange().snapToLegalValue (value)));
 }
 
 std::unique_ptr<juce::XmlElement> PresetManager::parsePresetFile (const juce::File& file)
@@ -63,6 +88,19 @@ bool PresetManager::applyPreset (const juce::File& file, juce::StringArray& deta
     const auto xml = parsePresetFile (file);
     if (xml == nullptr)
         return false;
+    return applyPreset (*xml, detachMaskOut);
+}
+
+bool PresetManager::applyPreset (const juce::XmlElement& xmlDoc, juce::StringArray& detachMaskOut)
+{
+    // Re-checked HERE and not only at the `File` overload: this is public, and
+    // "the caller already validated it" is exactly the kind of precondition a
+    // second caller does not know about. `parsePresetFile` is the one
+    // readability answer (root tag included), so asking it again costs a tag
+    // comparison and keeps the two entry points impossible to disagree.
+    if (! xmlDoc.hasTagName ("AnabasisPreset"))
+        return false;
+    const auto* xml = &xmlDoc;
 
     // Ceiling lock is a SKIP, not a write-then-revert: a revert leaves a
     // window in which an audio block snapshots the preset's ceiling and the
@@ -217,12 +255,17 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
     // `applyOnePresetValue` below — so making this one path silent would leave
     // exactly one restore whose values the host never learns about.
     //
-    // THE COST, recorded rather than argued away: a factory apply writes every
-    // non-excluded parameter, so browsing presets with the ‹/› arrows emits up
-    // to ~46 host notifications per step. Some hosts record those as automation
-    // or mark the project dirty. That is a host-behaviour question, not a
-    // correctness one, and changing it would change automation semantics — so it
-    // is a DAW-matrix check (`RELEASE_COMPATIBILITY_CHECKLIST.md`), not a patch.
+    // THE COST, and how much of it survived. This pass writes every
+    // non-excluded parameter, so a factory apply used to emit up to ~46 host
+    // notifications per ‹/› step — most of them for values already at the
+    // default, plus a second one for every parameter the overrides then moved.
+    // Round 50 removed the ones that carry no information: `setParamIfMoved`
+    // notifies only when the normalised value actually changes (see there for
+    // why that cannot lose an update). What remains is one notification per
+    // parameter the preset genuinely moves, which is the contract — a host
+    // learns about a change because there was one. Whether even that burst
+    // reads as automation in a given DAW stays a matrix check
+    // (`RELEASE_COMPATIBILITY_CHECKLIST.md`).
     // Each notification re-enters `AnabasisAudioProcessor::parameterChanged`,
     // where the nine managed ids are discarded because `isRestoring()` is true.
     //
@@ -241,12 +284,33 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
         const auto id = node.getProperty ("id").toString();
         if (isPresetExcludedParam (id) || (locked && id == pid::ceiling))
             continue;
-        if (auto* param = apvts.getParameter (id))
-            param->setValueNotifyingHost (param->getDefaultValue());
+        auto* param = apvts.getParameter (id);
+        if (param == nullptr)
+            continue;
+
+        // ONE write per parameter, at its FINAL value. This used to be two
+        // passes — every non-excluded parameter to its default, then the
+        // table's intents over the top — which meant a parameter the preset
+        // overrides was written twice and announced to the host twice, the
+        // first time to a value the preset never wanted. It also put the whole
+        // surface through a default state that no preset describes, for the
+        // window between the passes.
+        //
+        // The override lookup is a linear scan of a table whose length is the
+        // preset's own intent count (a handful), inside a loop over 49
+        // parameters, on the message thread — cheaper than the second pass of
+        // `setValueNotifyingHost` calls it replaces, and it needs no container.
+        // The exclusion and ceiling-lock rules are applied ONCE here rather
+        // than once per pass, which is also why they cannot now disagree
+        // between the two.
+        float target = param->getDefaultValue();
+        for (int i = 0; i < table[index].numOverrides; ++i)
+            if (id == table[index].overrides[i].id)
+                target = param->getNormalisableRange().convertTo0to1 (
+                             param->getNormalisableRange().snapToLegalValue (
+                                 table[index].overrides[i].value));
+        setParamIfMoved (*param, target);
     }
-    for (int i = 0; i < table[index].numOverrides; ++i)
-        applyOnePresetValue (apvts, locked, table[index].overrides[i].id,
-                             table[index].overrides[i].value);
 
     detachMaskOut.clear();     // factory presets load nothing pre-detached
     return true;

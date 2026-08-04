@@ -465,7 +465,7 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     // rather than left to the post-process publish: a short-circuited block
     // (zero-length) returns before that publish, and the reset must not sit
     // invisible until real audio arrives. Same publish set as prepareToPlay.
-    if (meterResetPending.exchange (false, std::memory_order_relaxed))
+    if (meterResetPending.exchange (false, std::memory_order_acquire))
     {
         engine.resetMeterHolds();
         dbTpMaxHold = -144.0f;
@@ -931,7 +931,14 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     // (root tag included), so this gate and the apply cannot disagree — an
     // is-it-XML gate let a foreign root through and charged an undo step for a
     // guaranteed no-op.
-    if (! file.existsAsFile() || PresetManager::parsePresetFile (file) == nullptr)
+    // ONE parse, used by both halves. The gate used to parse and throw the
+    // document away, leaving `applyPreset` to read the file again — so a file
+    // rewritten between the two (the ring walks this path on every ‹/› press)
+    // could pass the gate and then apply different content. The gate's meaning
+    // is unchanged: `parsePresetFile` is still the single readability answer,
+    // root tag included.
+    const auto parsed = file.existsAsFile() ? PresetManager::parsePresetFile (file) : nullptr;
+    if (parsed == nullptr)
         return false;
     pushUndoStep (saveSlotFromLive());
 
@@ -944,7 +951,7 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     engine.requestForcedDuck();                               // §2.8, as above
 
     juce::StringArray mask;
-    if (! presetManager->applyPreset (file, mask))
+    if (! presetManager->applyPreset (*parsed, mask))
         return false;                     // the guard still runs: a partial
                                           // apply arms the listeners too
     replaceDetachMask (mask);
