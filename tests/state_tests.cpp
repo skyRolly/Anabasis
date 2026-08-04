@@ -2511,7 +2511,7 @@ static void testTheSettingsCallbacksReachTheLiveTree()
     scale->setSelectedItemIndex (5, juce::sendNotificationSync);        // "175%"
     check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 175,
            "settingsWrite: the UI-scale closure writes the live InternalState tree");
-    check (std::abs (ed->getTransform().getScaleFactor() - 1.75f) < 1.0e-4f,
+    check (std::abs (ed->getTransform().mat00 - 1.75f) < 1.0e-4f,
            "settingsWrite: …and applies it, so the window follows the selection");
 
     // The helper-built combo (index ↔ 0-BASED value), whose closure captures the
@@ -2542,7 +2542,11 @@ static void testAnOutOfListUiScaleClampsConsistently()
 
     // `getScaleFactor()` is the X scale of the transform applyUiScale set;
     // hostScale is 1 in the headless suite, so it IS the persisted step.
-    auto rendered = [ed] { return ed->getTransform().getScaleFactor(); };
+    // `mat00`, not the deprecated `getScaleFactor()`: JUCE deprecated the latter
+    // because it is wrong for transforms carrying a rotation, and this build is
+    // warning-free under the recommended flags. `applyUiScale` sets a PURE
+    // scale, so the X scale IS the term.
+    auto rendered = [ed] { return ed->getTransform().mat00; };
     check (std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: an out-of-list percent renders at the NEAREST step, not at 100 %");
     check (box->getText() == "125%",

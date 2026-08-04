@@ -548,6 +548,22 @@ public:
     //     should not: it publishes when it latches, and the wrapper compares the
     //     number against the one it recorded when slot ownership last changed.
     //
+    // WHAT IT COUNTS, because the word "generation" invites the wrong reading:
+    // MEANINGFUL PUBLICATIONS, not Freeze latches. `publishTrims(true)` is
+    // reached from `finishBlock`'s `if (! freeze && audible)` branch, so this
+    // increments on essentially every audible block — ~90/s at 48 kHz with a
+    // 512-frame block — plus once per ADR-0014 `injectTrims`. It is therefore
+    // NOT a count of latches, NOT a rate, and NOT an interval: deriving elapsed
+    // time or "how many times has the user frozen" from a difference of two
+    // readings would be wrong, and wrong quietly.
+    //
+    // The only supported use is INEQUALITY against a previously recorded value,
+    // which is all `engineFrozenTrimsIfLive()` does. That reader consults it
+    // only with Freeze ON — the state in which the `! freeze` branch has stopped
+    // publishing altogether — so what it actually observes is "did anything get
+    // latched between the moment this slot took ownership and now?", which the
+    // counter answers correctly however fast it moves while unfrozen.
+    //
     // ACQUIRE on the read, RELEASE on the write, for the reason the flag it
     // replaced carried: it announces the four scalars above, so it is a
     // publication flag on THREADING_POLICY's release/acquire row and not a

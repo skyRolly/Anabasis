@@ -32,8 +32,8 @@ void MacroEngine::stopDraining()
 {
     // Stop the repeating tick, then drop any single posted update — after
     // this returns no NEW tick can start, which is the window this closes.
-    // `~MacroEngine` does the same two calls, but by then the owner's members
-    // are already gone.
+    // `~MacroEngine` calls THIS function rather than repeating its tail, so the
+    // latch below is set whether or not an owner asked; see there.
     //
     // It deliberately does NOT null `onDrainTick`/`isDetached`, and the reason
     // is the inverse of what it looks like. The residual this cannot close is a
@@ -63,8 +63,20 @@ void MacroEngine::stopDraining()
 
 MacroEngine::~MacroEngine()
 {
-    stopTimer();
-    cancelPendingUpdate();
+    // `stopDraining()` rather than its two tail calls, so the one-way latch is
+    // set by the OBJECT being destroyed instead of by the owner remembering to
+    // ask first. `~AnabasisAudioProcessor` does ask — that ordering is what
+    // makes `onDrainTick` safe, and it is unchanged — but round 37's whole
+    // point was to stop a structural guarantee resting on a rule a caller has
+    // to remember, and a second owner would have had to remember this one.
+    // Idempotent: the latch is one-way and `stopTimer`/`cancelPendingUpdate`
+    // are no-ops the second time.
+    //
+    // What this does NOT close, stated so it is not read as closed: a
+    // `timerCallback` that has ALREADY passed the latch check is not waited
+    // for — `juce::Timer` offers no join — so the residual in KI-003 stands
+    // exactly as written.
+    stopDraining();
     apvts.removeParameterListener (pid::loudness,  this);
     apvts.removeParameterListener (pid::character, this);
     apvts.removeParameterListener (pid::tone,      this);

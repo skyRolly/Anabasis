@@ -438,6 +438,19 @@ from a non-unique display name; `resized()`'s guard asserts and the constructor 
 unconditionally, since `setSize` no-ops on an unchanged size.
 `testTheSettingsCallbacksReachTheLiveTree`, two mutants. Suites: 230 + 300.
 
+**Review round 45 (2026-08-03) — four hardening items, no behaviour change.** (1) The bench emitted
+its C2 refusal before accepting `ANABASIS_BENCH_CPU`, so the documented override read as a failure;
+the two identity sources are now tried in order and the refusal fires only when neither answers
+(verified: override path writes nothing to stderr, no-override path still exits 2). (2) The
+documented Windows repro block indexed `Select-String`'s result before its guard, so an unreadable
+workflow threw a PowerShell error instead of the intended message; tested before indexed, same
+single source. (3) `~MacroEngine` calls `stopDraining()` so the one-way latch is set by the object
+rather than by the owner remembering — the owner still calls it first and that ordering is
+unchanged; the already-executing-tick residual in KI-003 is untouched and restated at the site.
+(4) `retTrimSeq`'s comment now states that it counts meaningful PUBLICATIONS (~90/s while adapting),
+not Freeze latches, and that only inequality against a recorded value is supported. Also cleared two
+`getScaleFactor()` deprecation warnings from round 44's test. Suites: 230 + 300 (unchanged).
+
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The editor: family frame (46 px top bar — wordmark→About, preset browser, A/B, Copy,

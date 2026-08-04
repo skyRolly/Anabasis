@@ -6,7 +6,43 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 44 (2026-08-03)** — undefined behaviour, platform guarantees
+**Last updated:** for **review round 45 (2026-08-03)** — four small hardening items, no behaviour
+change and no deferred question touched:
+(1) **The bench printed a C2 refusal even when the documented override answered.** `ANABASIS_BENCH_CPU`
+is the supported way to run on a platform whose lookup is not written yet, so it must not read as a
+failure — the previous shape emitted the whole refusal to stderr and *then* accepted the override,
+telling an operator following the documentation that something had gone wrong when nothing had. The
+two identity sources are now tried in order (automatic, then the override) and the refusal belongs
+to exactly one state: neither answered. Verified by execution on both paths — with a suppressed
+lookup the override run writes **zero bytes** to stderr, and the no-override run still exits 2
+before printing any table.
+(2) **The documented Windows repro block failed obscurely when the workflow could not be read.**
+`(Select-String …).Matches[0]` indexes before the guard runs, so a renamed env var or a moved
+workflow produced a PowerShell property-not-found error instead of the intended message — the same
+class of failure round 43 fixed for the POSIX block with `${VAR:?}`. The match is now tested before
+it is indexed. The value still comes from `build.yml` and is duplicated nowhere.
+(3) **`~MacroEngine` now sets the teardown latch itself** by calling `stopDraining()` rather than
+repeating its two tail calls. `~AnabasisAudioProcessor` still calls it first and that ordering is
+unchanged — it is what makes `onDrainTick` safe — but round 37's point was to stop a structural
+guarantee resting on a rule a caller has to remember, and this was the last place it did. No lock,
+no join, no timer-model change. The residual is unchanged and restated at the site: a
+`timerCallback` that has already passed the latch check is not waited for, because `juce::Timer`
+offers no join. KI-003 stands exactly as written.
+(4) **`retTrimSeq`'s comment now says what it counts.** The value is correct and the name stays, but
+"generation" invited the wrong reading: it increments on every MEANINGFUL publication — ~90/s at
+48 kHz/512 from `finishBlock`'s audible branch, plus once per `injectTrims` — not once per Freeze
+latch. The comment now states that a difference of two readings is not a rate, not an interval and
+not a latch count, and that the only supported use is inequality against a recorded value, which is
+all `engineFrozenTrimsIfLive()` does (and it consults it only with Freeze ON, when publication has
+stopped).
+Also cleared: two `AffineTransform::getScaleFactor()` deprecation warnings introduced by round 44's
+test — JUCE deprecated it for transforms carrying a rotation, and the editor's is a pure scale, so
+the assertions read `mat00`. The build is documented as warning-free and now is again.
+No new tests: the destructor latch is unobservable after the object is gone, the bench is a separate
+console binary verified by running it, and the other two are documentation. **Left documented,
+unchanged:** KI-008, KI-006 (both halves), KI-007 items 1/2/5/6, popup-menu ownership, the
+MacroEngine re-entrancy architecture, and the visualiser lifecycle criteria.
+Previous: **review round 44 (2026-08-03)** — undefined behaviour, platform guarantees
 and three consistency repairs:
 (1) **Two stored GUI closures captured a reference variable by reference.** `uiScaleBox.onChange`
 captured the constructor-local `auto& ist`, and `setupComboInternal`'s captured its reference

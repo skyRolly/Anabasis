@@ -318,9 +318,15 @@ build/AnabasisStateTests_artefacts/Release/AnabasisStateTests.exe
 # `^  ` anchor pins the match to the `env:` assignment, so the
 # `${{ env.ANABASIS_PLUGINVAL_STRICTNESS }}` references in the job steps cannot
 # contribute a second value — the same reasoning as the POSIX block above.
-$Strictness = (Select-String -Path .github/workflows/build.yml `
-                 -Pattern '^  ANABASIS_PLUGINVAL_STRICTNESS:\s*(\d+)').Matches[0].Groups[1].Value
-if (-not $Strictness) { throw 'could not read ANABASIS_PLUGINVAL_STRICTNESS from build.yml' }
+# The match is TESTED before it is indexed. `(Select-String …).Matches[0]`
+# dereferences a `$null` when the pattern misses — a renamed env var, a moved
+# workflow — and PowerShell then throws a property-not-found error before the
+# guard below can say what is actually wrong. Same class of failure the POSIX
+# block's `${VAR:?}` exists to prevent.
+$m = Select-String -Path .github/workflows/build.yml `
+       -Pattern '^  ANABASIS_PLUGINVAL_STRICTNESS:\s*(\d+)'
+if (-not $m) { throw 'could not read ANABASIS_PLUGINVAL_STRICTNESS from .github/workflows/build.yml' }
+$Strictness = $m.Matches[0].Groups[1].Value
 scripts/run-pluginval.ps1 -Strictness $Strictness -Mode deterministic
 scripts/run-pluginval.ps1 -Strictness $Strictness -Mode randomise
 ```

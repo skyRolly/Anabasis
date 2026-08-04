@@ -105,23 +105,29 @@ int main()
     // is not a measurement, and the failure mode this replaces was that it
     // still PRINTED — a complete-looking result identifying nothing, which is
     // worse than no result because it can be pasted into the budget document.
-    // Refuse loudly, name the platform, and say what to do instead.
-    const auto cpu = cpuModel();
-    if (cpu.empty())
+    //
+    // TWO identity sources, tried in order, and the ORDER is the fix: the
+    // automatic lookup, then `ANABASIS_BENCH_CPU`. The override is the
+    // documented, supported way to run on a platform whose lookup is not
+    // written yet, so it must not read as a failure — the previous shape
+    // printed the whole C2 refusal to stderr and *then* accepted the override,
+    // which tells an operator following the documentation that something went
+    // wrong when nothing did. The refusal now belongs to exactly one state:
+    // neither source answered.
+    std::string machine = cpuModel();
+    if (machine.empty())
+        if (const char* forced = std::getenv ("ANABASIS_BENCH_CPU"); forced != nullptr && *forced != 0)
+            machine = forced;
+
+    if (machine.empty())
     {
         std::fprintf (stderr,
                       "AnabasisBench: could not identify this CPU, so the run would violate "
                       "PERFORMANCE_BUDGET.md C2 (a number without its machine is not a "
                       "measurement).\nAdd a lookup for this platform in cpuModel(), or set "
                       "ANABASIS_BENCH_CPU to the model string and re-run.\n");
-        if (const char* forced = std::getenv ("ANABASIS_BENCH_CPU"); forced != nullptr && *forced != 0)
-            std::fprintf (stderr, "…using ANABASIS_BENCH_CPU=\"%s\"\n\n", forced);
-        else
-            return 2;
+        return 2;
     }
-    const char* envCpu = std::getenv ("ANABASIS_BENCH_CPU");
-    const std::string machine = cpu.empty() ? std::string (envCpu != nullptr ? envCpu : "")
-                                            : cpu;
 
     std::printf ("AnabasisBench — machine: %s, %d cores, %s %s\n",
                  machine.c_str(),
