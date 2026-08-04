@@ -541,6 +541,17 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     saveTitle.setColour (juce::Label::textColourId, colours::textDim);
     savePresetBackdrop.addAndMakeVisible (saveTitle);
     saveNameEditor.setSelectAllWhenFocused (true);
+    // THE ARMING SITE the LookAndFeel's focus-glow branch was written for, and
+    // never had. `fillTextEditorBackground`/`drawTextEditorOutline` both key on
+    // this property and fall through to the JUCE default without it, so the
+    // rounded accent-lit border the family design language specifies (#11) was
+    // unreachable and this field rendered as a stock rectangle. The property is
+    // the right mechanism rather than styling every `TextEditor`: the OTHER
+    // editors in this tree are the ValueBox labels' edit fields, which the
+    // LookAndFeel deliberately leaves at the default outline — the branch is a
+    // choice between two kinds of field in THIS editor, not migrated Anamorph
+    // state, so it is wired rather than deleted.
+    saveNameEditor.getProperties().set ("glow", true);
     savePresetBackdrop.addAndMakeVisible (saveNameEditor);
     saveOkButton.onClick = [this]
     {

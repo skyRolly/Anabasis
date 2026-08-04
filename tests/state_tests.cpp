@@ -2764,6 +2764,18 @@ static juce::Label* findChildLabel (juce::Component& parent)
     return nullptr;
 }
 
+static juce::TextEditor* findTextEditor (juce::Component& root)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* e = dynamic_cast<juce::TextEditor*> (c))
+            return e;
+        if (auto* found = findTextEditor (*c))
+            return found;
+    }
+    return nullptr;
+}
+
 static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::String& title)
 {
     for (auto* c : root.getChildren())
@@ -2774,6 +2786,35 @@ static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::Stri
             return found;
     }
     return nullptr;
+}
+
+// The Save-Preset name field's focus glow is a two-part contract: the
+// LookAndFeel draws the accent-lit rounded border only for a `TextEditor`
+// carrying a "glow" property, and the owning component has to set it. For the
+// whole of P5 only the first half existed, so `fillTextEditorBackground` and
+// `drawTextEditorOutline` fell through to the JUCE default and the designed
+// border was unreachable — a styling branch guarded by a flag no owner armed,
+// the same shape as `allCombos`/`hov` and `resetSweep`. Pinning the ARMING side
+// is what a test can do here; the pixels are a brand-pass question.
+static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "saveGlow: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    // The ONLY `juce::TextEditor` the editor constructs is `saveNameEditor` —
+    // the ValueBox edit fields are created on demand by `juce::Label`, so they
+    // do not exist in a freshly built tree. If that ever changes this premise
+    // fails loudly rather than the check silently finding the wrong field.
+    auto* name = findTextEditor (*ed);
+    check (name != nullptr, "saveGlow: (premise) the save-preset name field exists");
+    if (name == nullptr)
+        return;
+    check ((bool) name->getProperties().getWithDefault ("glow", false),
+           "saveGlow: the name field carries the property its focus styling keys on");
 }
 
 // Round 42. A persisted `uiScale` that is not one of the seven legal steps —
@@ -3644,6 +3685,7 @@ int main (int argc, char** argv)
         testAValueBoxClickIsNotAMacroGesture();
         testTheSettingsCallbacksReachTheLiveTree();
         testAFactoryApplyWritesEachParameterOnce();
+        testTheSavePresetNameFieldIsTaggedForItsFocusGlow();
         testAnOutOfListUiScaleClampsConsistently();
         testTheCurveWellCachesWithoutChangingWhatItDraws();
         testARewoundSpectrumRingDropsThePreviousTrace();

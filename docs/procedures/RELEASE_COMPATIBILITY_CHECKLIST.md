@@ -33,9 +33,11 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       *Partially automated:* the state suite proves save→reload structural equality + exclusion
       rules + factory loadability; "sound identical" remains a Level-5 check.
 
-- [ ] **Pluginval passed (both modes)** — `scripts/run-pluginval.sh 10 deterministic` **and**
-      `scripts/run-pluginval.sh 10 randomise` pass at strictness 10 on all three platforms.
-      Ref: `docs/procedures/TESTING.md`.
+- [ ] **Pluginval passed (both modes)** — `run-pluginval.sh <strictness> deterministic` **and**
+      `run-pluginval.sh <strictness> randomise` pass on all three platforms, where `<strictness>`
+      is `ANABASIS_PLUGINVAL_STRICTNESS` from `.github/workflows/build.yml` — the one copy of the
+      number. A literal here is a release checkbox that can be ticked against the wrong bar after a
+      raise. Ref: `docs/procedures/TESTING.md` for the extraction snippet.
 
 - [ ] **Latency reporting verified** — reported PDC matches the actual chain delay across the
       **lookahead × oversampling** matrix. The impulse must land at exactly `maxLookahead + OS` for

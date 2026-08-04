@@ -130,15 +130,26 @@ parameters automated at audio rate.
 ## pluginval (VST3 conformance)
 
 ```bash
-scripts/run-pluginval.sh 10 deterministic   # strictness 10, fixed nonzero seed (release gate, mode A)
-scripts/run-pluginval.sh 10 randomise        # strictness 10, --randomise x3 (release gate, mode B)
-scripts/run-pluginval.sh 5                   # development bar (P1–P2 default), deterministic
-scripts/run-pluginval.sh                     # default strictness 8
+# The GATE value comes out of the one place that holds it, never pasted — same
+# extraction README.md and CI_CD.md use, and for the reason CI_CD documents
+# against itself: a literal here would go stale on the next raise while the
+# comment beside it still claimed to be current.
+STRICTNESS=$(sed -n 's/^  ANABASIS_PLUGINVAL_STRICTNESS:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+             .github/workflows/build.yml)
+: "${STRICTNESS:?could not read ANABASIS_PLUGINVAL_STRICTNESS from build.yml}"
+scripts/run-pluginval.sh "$STRICTNESS" deterministic   # fixed nonzero seed (gate, mode A)
+scripts/run-pluginval.sh "$STRICTNESS" randomise       # --randomise x3    (gate, mode B)
+
+scripts/run-pluginval.sh                    # no argument: the SCRIPT's own default (8) — a
+                                            # convenience for a quick local pass, NOT the gate
 ```
 
-Strictness targets: **5** development (P1–P2), **8** standard gate (P3–P5), **10** pre-release gold
-(P6/release). Each mode runs **3 consecutive** passes; both modes must pass on all three platforms
-at the release bar. Windows uses `run-pluginval.ps1`.
+The strictness ladder and the current value live in `ANABASIS_PLUGINVAL_STRICTNESS` at the top of
+`.github/workflows/build.yml`, which carries the phase→strictness rows; `TESTING_POLICY.md` owns
+what the gate REQUIRES and deliberately restates no number. This page used to spell the ladder out
+as a third copy — correct at the time of writing, which is precisely how the README's copy survived
+two raises. Each mode runs **3 consecutive** passes; both modes must pass on all three platforms at
+the phase strictness. Windows uses `run-pluginval.ps1`.
 
 The randomise mode exercises state restoration under randomised test order and an unpinned,
 per-run seed — defects a fixed seed reproducibly misses.

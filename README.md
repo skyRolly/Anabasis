@@ -14,9 +14,12 @@ headless Linux machine, no IDE.
 - **Version 0.1.0 (pre-release) — CODE COMPLETE** (2026-08-02, under the owner's blanket
   approval; what remains is the post-v0.1.0 human fine review — the brand pass, the DAW matrix
   audition and the listening pass over every constant marked ⊕). P0 closed on 2026-07-31 with the
-  owner's sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the **fourteen** ADRs now registered in
+  owner's sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the Accepted ADRs registered in
   [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md)
-  govern the implementation, and that index is the count of record rather than this sentence.
+  govern the implementation. **No count is written here on purpose** — the same rule the pluginval
+  strictness follows, and for the same reason: this file is the first one a contributor opens, so
+  it is the copy whose staleness costs most. Two numerals in this document disagreed with each
+  other for exactly one round; the index is the registry.
   [`docs/HANDOVER.md`](docs/HANDOVER.md) carries the status of record.
 - **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 49-parameter
   surface, the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
@@ -25,7 +28,7 @@ headless Linux machine, no IDE.
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
   display) and the P6 per-slot undo / 12-preset factory bank / performance bench — verified by
-  `tests/` (**584 checks** — re-count from the suites' own output when editing, the same rule
+  `tests/` (**587 checks** — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
   [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and
@@ -77,9 +80,19 @@ cmake --build build --config Release        # ...or: scripts/build.sh
 # 3. Run the headless self-tests (DSP + state compatibility)
 scripts/run-tests.sh
 
-# 4. Validate the VST3 with pluginval — strictness escalates by phase (5 → 8 → 10)
-scripts/run-pluginval.sh 5 deterministic
-scripts/run-pluginval.sh 5 randomise
+# 4. Validate the VST3 with pluginval, at the strictness CI ENFORCES.
+#    Read out of the one place that holds it rather than pasted: the literal
+#    here was `5`, and stayed 5 through two raises, under a comment claiming it
+#    was current — so the front page told contributors to validate at a weaker
+#    bar than the build actually requires. `docs/procedures/CI_CD.md` carries
+#    this same snippet with the full reasoning (POSIX `sed`, not `grep -oP`,
+#    which BSD grep rejects; the `^  ` anchor pins the match to the `env:`
+#    assignment so the job steps' references cannot supply a second value).
+STRICTNESS=$(sed -n 's/^  ANABASIS_PLUGINVAL_STRICTNESS:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+             .github/workflows/build.yml)
+: "${STRICTNESS:?could not read ANABASIS_PLUGINVAL_STRICTNESS from build.yml}"
+scripts/run-pluginval.sh "$STRICTNESS" deterministic
+scripts/run-pluginval.sh "$STRICTNESS" randomise
 ```
 
 To build without network (JUCE already on disk):
@@ -99,9 +112,13 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)
 - **Rules (binding):** [`docs/policies/`](docs/policies/) — real-time audio, threading, DSP,
   mode/adaptation, compatibility, AI-agent, testing, release, dependency, code style
-- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) — **twelve Accepted
-  ADRs**: ADR-0001…0011 (all dated 2026-07-31) plus **ADR-0012** (2026-08-01, the GUI→Audio staged
-  record, ratifying the learned-target restore per OQ-015).
+- **Architecture & decisions:** [`docs/architecture/`](docs/architecture/) — the Accepted ADRs,
+  enumerated in
+  [`ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md) and **nowhere else**. This
+  bullet used to spell the list out ("twelve Accepted ADRs: ADR-0001…0011 plus ADR-0012") and went
+  stale the moment ADR-0013 and ADR-0014 were accepted, contradicting the status section of this
+  same file two screens up — in the one document that tells a contributor which decisions bind
+  them. The index is the registry; this line points at it.
   `DESIGN.md` ranks *below* the ADRs it spawned and loses to them on any disagreement — see
   `docs/SOURCE_OF_TRUTH.md` §"Where `DESIGN.md` sits"
 - **How-to:** [`docs/procedures/`](docs/procedures/) (build, development, CI/CD, testing, release)
@@ -119,7 +136,7 @@ investigation records that are never cited as policy. See `docs/SOURCE_OF_TRUTH.
 |---|---|---|
 | 1 | Compiler warnings, CodeQL, MSVC `/analyze` | scaffolded, activates at P1 |
 | 2–3 | Headless DSP + state-compatibility self-tests | activates at P1 |
-| 4 | pluginval — both modes ×3, blocking on all three platforms; strictness 5 → 8 → **10** by phase | activates at P1 |
+| 4 | pluginval — both modes ×3, blocking on all three platforms, editor under `xvfb`; strictness is `ANABASIS_PLUGINVAL_STRICTNESS` in `.github/workflows/build.yml`, which carries the phase ladder and is the only copy | activates at P1 |
 | 5 | Manual audition in a DAW | required for release sign-off; not headlessly reproducible |
 
 A green build + pluginval pass is **"ready to audition," not final sign-off**

@@ -151,35 +151,19 @@ public:
                                            juce::Rectangle<int> parentArea) override;
 };
 
-// A variant with a smaller pop-up list, applied only to the compact Input
-// Channel / M/S Solo combos so their lists feel balanced (#12).
-class CompactComboLookAndFeel : public AnabasisLookAndFeel
-{
-public:
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (12.0f)); }
-    juce::Font getPopupMenuFont() override                { return juce::Font (juce::FontOptions (12.0f)); }
-    void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
-                                    int standardHeight, int& w, int& h) override
-    {
-        AnabasisLookAndFeel::getIdealPopupMenuItemSize (text, isSeparator, standardHeight, w, h);
-        if (! isSeparator) h = 19;
-    }
-};
-
-// A larger-text variant for the two Simple-mode Widen combos (algorithm +
-// Style/Focus) so their text scales up with the rest of the enlarged Simple
-// controls; the pop-up list rows grow to match (#17).
-class SimpleComboLookAndFeel : public AnabasisLookAndFeel
-{
-public:
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (15.5f)); }
-    juce::Font getPopupMenuFont() override                { return juce::Font (juce::FontOptions (15.0f)); }
-    void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
-                                    int standardHeight, int& w, int& h) override
-    {
-        AnabasisLookAndFeel::getIdealPopupMenuItemSize (text, isSeparator, standardHeight, w, h);
-        if (! isSeparator) h = 27;
-    }
-};
+// `CompactComboLookAndFeel` and `SimpleComboLookAndFeel` used to sit here — two
+// `AnabasisLookAndFeel` subclasses varying the combo font and pop-up row
+// height. Removed at review round 53 as unported migration state, and the
+// evidence was in their own comments: they named the controls they were "applied
+// only to" as the compact Input Channel / M/S Solo combos and the two
+// Simple-mode Widen combos (algorithm + Style/Focus). Those are the SIBLING
+// product's controls. Anabasis has no Widen stage, no input-channel selector and
+// no M/S solo, nothing in `src/gui` ever instantiated either class, and the
+// editor holds one `abgui::AnabasisLookAndFeel lnf` for every combo in the tree.
+// Left standing they invited a reader to assume a compact/large combo variant
+// was wired and to style a new control by "just using the existing variant" —
+// the same trap `allCombos`/`hov` (round 28) and `resetSweep` (round 43) were
+// removed for. A genuine size variant, if the §6.2/§6.3 layout ever wants one,
+// is a five-line subclass written against the control that needs it.
 
 } // namespace abgui

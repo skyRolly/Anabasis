@@ -740,17 +740,18 @@ namespace
     {
         // Mirror the displayed value exactly (what's outside is what you edit),
         // just without the unit (#3/#4/#5). Derive from the display string.
-        const juce::String unit = s.getProperties().getWithDefault ("unit", "").toString();
+        //
+        // A `"unit" == "bal"` branch used to sit here, decoding an "L 25" /
+        // "C" / "R 30" display into a signed number. It was unreachable — no
+        // slider in this tree ever set a `"unit"` property — and it was also
+        // unnecessary: it decodes the sibling product's stereo Balance format,
+        // and Anabasis's `colourBalance` registers
+        // `[](float v, int) { return juce::String (v, 2); }`, a plain signed
+        // decimal that the generic path below already passes through untouched.
+        // Removed rather than wired, because wiring it would have taught the
+        // editor to parse a display string this product does not produce.
         juce::String disp = s.getTextFromValue (s.getValue()).trim();
 
-        if (unit == "bal")
-        {
-            if (disp.startsWithIgnoreCase ("C")) return "0";
-            // Left (L) or Mid (M) read as the negative side; Right (R) / Side (S) positive.
-            const bool left = disp.startsWithIgnoreCase ("L") || disp.startsWithIgnoreCase ("M");
-            const juce::String num = disp.retainCharacters ("0123456789.");
-            return (left ? "-" : "") + num;
-        }
         if (disp.endsWithIgnoreCase ("kHz"))                            // "5.55 kHz" -> "5.55k"
             return disp.dropLastCharacters (3).trim() + "k";
         const int sp = disp.lastIndexOfChar (' ');                      // strip a trailing unit word

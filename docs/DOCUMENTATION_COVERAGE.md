@@ -6,7 +6,59 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 52 (2026-08-04)** — three fixes and one investigation that
+**Last updated:** for **review round 53 (2026-08-04)** — a cleanup pass: two single-authority
+repairs in the README, two unreachable styling paths resolved in opposite directions, two unported
+LookAndFeel subclasses removed, and one deliberately-retained atomic given the reasoning it needed:
+(1) **The front page told contributors to validate at the OLD strictness.** Rounds 35/40/43 made
+`ANABASIS_PLUGINVAL_STRICTNESS` in `.github/workflows/build.yml` the single authority and reworked
+`TESTING_POLICY` and `CI_CD` to quote no literal — `CI_CD` reads it out with `sed` and documents the
+failure against itself ("the literal used to be `5` here and stayed 5 through two raises, under a
+comment telling the reader it was current"). The README's quick-start block was the one site the
+sweep missed, so it still passed `5` to both `run-pluginval.sh` invocations under a comment naming
+the ladder — the exact failure, left standing in the first document a reader opens. It now runs the
+same `sed` extraction, and the validation-gate table points at the workflow instead of spelling
+`5 → 8 → 10` out again.
+(2) **The README contradicted itself about the binding decision set.** The status section (updated
+last round) said fourteen ADRs; the Documentation section two screens down still read "twelve
+Accepted ADRs: ADR-0001…0011 plus ADR-0012", so a contributor following `CLAUDE.md`'s instruction to
+read the registry before writing code could miss ADR-0013 and ADR-0014 entirely. The enumeration is
+gone and BOTH numerals with it: `ADR_INDEX.md` is the registry, and the README carries no count for
+the same reason it carries no strictness number.
+(3) **The Save-Preset name field's focus glow was WIRED, not deleted** — the opposite call to
+`resetSweep`, and the difference is which side was missing. `fillTextEditorBackground` and
+`drawTextEditorOutline` both key on a `"glow"` component property and fall through to the JUCE
+default without it, and nothing set it, so the accent-lit rounded border the family design language
+specifies (#11) was unreachable. What makes this a wiring job rather than a removal is the fallback
+branch's own comment — "value boxes unchanged": the property discriminates between two kinds of text
+field IN THIS editor (the name box and the ValueBox edit fields), which is a design statement about
+Anabasis, not migrated state describing a control that does not exist here. The owner sets it at
+construction; `testTheSavePresetNameFieldIsTaggedForItsFocusGlow` pins the arming side.
+(4) **`rawEditText`'s balance branch was REMOVED**, and the same test decided it. It read a `"unit"`
+slider property nothing set, and took a dedicated path when it equalled `"bal"` to decode an
+"L 25" / "C" / "R 30" display into a signed number. That is the sibling product's stereo Balance
+format: Anabasis registers `colourBalance` with `[](float v, int) { return juce::String (v, 2); }`,
+a plain signed decimal the generic path already passes through untouched. Wiring it would have
+taught the editor to parse a display string this product cannot produce. The `"unit"` read went with
+it — it had no other reader.
+(5) **`CompactComboLookAndFeel` and `SimpleComboLookAndFeel` removed.** Their own comments named the
+controls they were "applied only to" — the compact Input Channel / M/S Solo combos, and the two
+Simple-mode Widen combos (algorithm + Style/Focus). Anabasis has no Widen stage, no input-channel
+selector and no M/S solo; nothing in `src/gui` instantiated either class, and the editor holds one
+`AnabasisLookAndFeel` for every combo. Left standing they invited a reader to assume a size variant
+was wired and to style a new control by reusing it.
+(6) **`hasPublishedTrims()` / `pubTrimEver` KEPT, with the reservation made explicit.** The review is
+right that the production reader is gone — the ADR-0014 save capture moved to `hasRetainedTrims()`
+at round 41 — and "an atomic only a test reads" is exactly the shape items 4 and 5 above just
+removed, so the difference had to be written down rather than inferred. Two things are load-bearing:
+it is the published set's VALIDITY marker, the question a §6.3 trim readout must ask and cannot
+answer from the values (all four read 0 both when nothing was measured and when the measurement was
+"no trim"); and it is the ONLY observation of the published/retained SPLIT, which is the whole of
+KI-006's two halves — delete it and `testPreparedStateAndSlotOwnership`'s "the APPLIED vector did not
+survive re-initialisation / the RETAINED one did" pair collapses to one assertion, after which
+nothing stops a future simplification merging the two sets. A contradiction was fixed alongside: the
+private section asserted "the P5 UI reads publishedTrim*() like every other display value", which
+the accessor's own comment two screens up correctly denied.
+Previous: **review round 52 (2026-08-04)** — three fixes and one investigation that
 confirmed the behaviour under review and pinned it instead of changing it:
 (1) **A state invariant was conditional on a branch that does not always run.** `applyUiScale()`
 owned the write-back that converges an illegal persisted `iid::uiScale` onto a ladder step, and

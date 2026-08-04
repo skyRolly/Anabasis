@@ -517,15 +517,37 @@ public:
     // CURRENT contents instead: set by an audible `finishBlock` and by an
     // ADR-0014 `injectTrims`, cleared by `reset()` along with the values.
     //
-    // ITS PRODUCTION READER HAS MOVED, stated so the absence is not read as
-    // dead code: the ADR-0014 save capture asked this question until round 41
-    // and now asks `hasRetainedTrims()` instead, because it wants the vector
-    // that SURVIVES a re-prepare rather than the one being applied. What is
-    // left here is the published set's own validity marker — the honest answer
-    // to "may I show these four numbers?", which is the question a §6.3 trim
-    // readout would have to ask (there is none today; nothing in `src/gui`
-    // reads `publishedTrim*`). The state suite asserts on it to pin the moment
-    // the two sets part company, which is the invariant that keeps them two.
+    // IT HAS NO PRODUCTION READER TODAY, AND IS DELIBERATELY KEPT. Stated in
+    // full, because "an atomic only a test reads" is exactly the shape this
+    // codebase has removed three times (`allCombos`/`hov`, `resetSweep`, the
+    // `"unit"` slider property), and the difference has to be visible or the
+    // next cleanup pass deletes it.
+    //
+    // The ADR-0014 save capture asked this question until round 41 and now asks
+    // `hasRetainedTrims()`, because it wants the vector that SURVIVES a
+    // re-prepare rather than the one being applied. Two things are left, and
+    // both are load-bearing:
+    //
+    //   * It is the published set's own VALIDITY MARKER — the honest answer to
+    //     "may I show these four numbers?", which is the question a §6.3 trim
+    //     readout must ask and cannot answer from the values themselves (all
+    //     four read 0 both when nothing has been measured and when the measured
+    //     answer is no trim). The readout does not exist yet — nothing in
+    //     `src/gui` reads `publishedTrim*` — so this is a reservation, named as
+    //     one rather than left to be inferred from an unused accessor.
+    //   * It is the ONLY observation of the published/retained SPLIT. That
+    //     split is the whole of KI-006's two halves: the published set describes
+    //     what the DSP is applying and `reset()` must zero it, while the
+    //     retained set is persistence state and must survive. `hasRetainedTrims`
+    //     alone cannot show the pair diverging, and the values alone cannot
+    //     either — zeros are ambiguous, which is the point above. Delete this
+    //     flag and `testPreparedStateAndSlotOwnership`'s "the APPLIED vector did
+    //     not survive re-initialisation / the RETAINED one did" pair collapses
+    //     to a single assertion, after which nothing stops a future
+    //     simplification merging the two sets back into one.
+    //
+    // The runtime cost is one release store per publication, on a path that
+    // already performs eight relaxed ones.
     //
     // ACQUIRE, not relaxed, and the distinction is the same one
     // `AnabasisEngine::frozenRestorePending()` spells out: THREADING_POLICY's
@@ -616,8 +638,13 @@ private:
     // object to message-thread callers (adaptiveReadout). Everything public
     // above is an atomic; a plain-struct getter beside them is the shape that
     // produced the `learned` and `learnActive` races. The engine — the only
-    // in-tree caller, on the audio thread — reaches it through this friendship;
-    // the P5 UI reads publishedTrim*() like every other display value.
+    // in-tree caller, on the audio thread — reaches it through this friendship.
+    // A message-thread reader would go through `publishedTrim*()` like every
+    // other display value; the P5 UI has no trim readout yet, so today those
+    // accessors serve the DSP suite and the §6.3 reservation `hasPublishedTrims`
+    // records. (This sentence used to assert the P5 UI already read them, which
+    // contradicted the accessor's own comment two screens up — corrected round
+    // 53 rather than left as two answers to one question.)
     friend class AnabasisEngine;
     const Trims& currentTrims() const noexcept { return trims; }
 
