@@ -428,9 +428,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
             items.add (juce::String (kScaleSteps[i]) + "%");
         uiScaleBox.addItemList (items, 1);
     }
-    uiScaleBox.setSelectedItemIndex (
-        nearestScaleIndex ((int) ist.getProperty (iid::uiScale, 100)),
-        juce::dontSendNotification);
+    // Through `normalisedUiScale()` like every other read of this property, so
+    // the initial seed converges an illegal stored percent too. `applyUiScale()`
+    // at the end of the constructor would reach it anyway; going through the one
+    // reader means no future ordering change can quietly take that away.
+    uiScaleBox.setSelectedItemIndex (nearestScaleIndex (normalisedUiScale()),
+                                     juce::dontSendNotification);
     // `[this]`, NOT `[this, &ist]`. `ist` is a local REFERENCE VARIABLE whose
     // lifetime ends when this constructor returns, and capturing a reference
     // variable by reference captures the variable, not the referent
@@ -1226,7 +1229,14 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     // uiScale is the same shape with one extra step: the box only DISPLAYS the
     // percent, so a stored change has to reach `applyUiScale()` as well or the
     // panel would read 150 % while the window stayed at 100 %.
-    const int wantScaleIdx = nearestScaleIndex ((int) ist.getProperty (iid::uiScale, 100));
+    //
+    // The read NORMALISES (see `normalisedUiScale`), and it happens before the
+    // branch rather than inside it — that ordering is the fix, not an
+    // arrangement. When the branch owned the convergence, a stored value whose
+    // nearest step equalled the displayed one (110 against a box showing 100 %)
+    // was clamped on every read and written back on none, so the session
+    // re-serialised the illegal percent for ever.
+    const int wantScaleIdx = nearestScaleIndex (normalisedUiScale());
     if (wantScaleIdx != uiScaleBox.getSelectedItemIndex())
     {
         uiScaleBox.setSelectedItemIndex (wantScaleIdx, juce::dontSendNotification);
@@ -1234,42 +1244,56 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     }
 }
 
+// THE ONE READ of `iid::uiScale`, and it normalises what it reads. Clamping on
+// read fixed the divergence between the transform and the combo, but left an
+// illegal value (a hand-edited session, a step list that has since changed)
+// sitting in `InternalState` for ever: `getStateInformation` re-serialised it
+// every save, so the session never healed and every future reader had to
+// re-derive the same clamp. Normalising at the read is the state model's own
+// read-rule discipline, matching `adoptParamsTree`'s treatment of out-of-range
+// parameter values.
+//
+// IT LIVES HERE, not in `applyUiScale`, because putting it there made the
+// invariant conditional on a branch that does not always run. The settings
+// re-seed only called `applyUiScale()` when the nearest step DIFFERED from the
+// combo's current selection — so a session carrying 110 while the box already
+// showed 100 % never converged, and every save re-serialised 110. Nothing was
+// visibly wrong (the rendered transform and the displayed selection still
+// agreed), which is exactly why it survived: the claim "the value converges
+// where the scale is applied" was stronger than the code, and only the write
+// the code skipped could tell. Both call sites now read through this function,
+// so convergence follows from reading the value at all.
+//
+// It is deliberately NOT `applyUiScale()` that the re-seed gained: that path
+// also calls `setSize`/`setTransform` (no-ops on unchanged values) and
+// `glContext.triggerRepaint()` (NOT a no-op), which on the 24 Hz display poll
+// would be a GL repaint request every tick. Separating the state rule from the
+// application of it is what lets the poll enforce the first without paying for
+// the second.
+//
+// The `stored != step` test states the intent rather than providing it:
+// `ValueTree::setProperty` already compares before it assigns, so an
+// unconditional write would also be a no-op for a legal value and sends no
+// change message. Kept explicit because a reader should not have to know that
+// to see that this cannot disturb a valid setting — and mutation-checked, so it
+// is recorded as belt-and-braces rather than as the guard. It converges at most
+// once per illegal value: afterwards the stored value IS the step, and there is
+// nothing left to write.
+int AnabasisAudioProcessorEditor::normalisedUiScale()
+{
+    auto ist = processor.internalState.state();
+    const int stored = (int) ist.getProperty (iid::uiScale, 100);
+    const int step   = kScaleSteps[nearestScaleIndex (stored)];
+    if (stored != step)
+        ist.setProperty (iid::uiScale, step, nullptr);
+    return step;
+}
+
 void AnabasisAudioProcessorEditor::applyUiScale()
 {
     // Same reading as the box's, so the transform and the selection cannot
     // describe different steps — that was the whole defect.
-    auto ist = processor.internalState.state();
-    const int stored = (int) ist.getProperty (iid::uiScale, 100);
-    const int step   = kScaleSteps[nearestScaleIndex (stored)];
-
-    // …and the stored value CONVERGES on the step it renders as. Clamping on
-    // read fixed the divergence between the transform and the combo, but left
-    // an illegal value (a hand-edited session, a step list that has since
-    // changed) sitting in `InternalState` for ever: `getStateInformation`
-    // re-serialised it every save, so the session never healed and every future
-    // reader had to re-derive the same clamp. Normalising here — the point where
-    // the scale is APPLIED — is the state model's own read-rule discipline,
-    // matching `adoptParamsTree`'s treatment of out-of-range parameter values.
-    //
-    // Deliberately NOT in `refreshInternalSettingsBoxes`, which is the 24 Hz
-    // display poll: this runs from the constructor, from a host DPI change,
-    // from the user's own selection, and from the refresh ONLY on the branch
-    // where the stored value actually changed. It converges at most once per
-    // illegal value — afterwards the stored value IS the step,
-    // `nearestScaleIndex` returns it unchanged, and there is nothing left to
-    // write. A legal value is never altered, so a user's chosen scale is
-    // untouched.
-    //
-    // The `stored != step` test states that intent rather than providing it:
-    // `ValueTree::setProperty` already compares before it assigns, so an
-    // unconditional write would also be a no-op for a legal value and sends no
-    // change message. Kept explicit because a reader should not have to know
-    // that to see that this cannot disturb a valid setting — and mutation-
-    // checked, so it is recorded as belt-and-braces rather than as the guard.
-    if (stored != step)
-        ist.setProperty (iid::uiScale, step, nullptr);
-
-    const float scale = (float) step / 100.0f;
+    const float scale = (float) normalisedUiScale() / 100.0f;
 
     setSize (kWidth, advanced ? kAdvancedH : kSimpleH);
     setTransform (juce::AffineTransform::scale (hostScale * scale));

@@ -3533,6 +3533,55 @@ static void testSelfHealDoesNotSnapTheEnvelope()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0014's boundary contract, taken literally: a RESTORED frozen-trim vector
+// is the one externally authored thing that reaches the adaptive state, and the
+// ADR says it is "clamped at the boundary … holds against hostile state". A
+// clamp built from `juce::jlimit` does not hold against a NaN — both of its
+// comparisons are false, so the value passes through untouched — and past the
+// boundary it is published (so the wrapper can serialise it back out) and fed to
+// `std::pow` in the release mapping. `sanitiseState()` catches it a block later;
+// that is a bounded recovery, not the contract the ADR states.
+static void testHostileFrozenTrimsCannotEnterTheAdaptiveState()
+{
+    anabasis::AdaptiveEngine a;
+    a.prepare (48000.0, 512);
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+
+    // Every field poisoned differently, plus one ordinary out-of-range value so
+    // the check cannot pass by rejecting the whole vector.
+    anabasis::AdaptiveEngine::Trims hostile;
+    hostile.releaseOctaves = nan;
+    hostile.stereoLink     = -inf;
+    hostile.scHpfHz        = inf;
+    hostile.dynTiltDb      = 7.5f;      // legitimately out of range: must CLAMP, not reset
+    a.injectTrims (hostile);
+
+    check (std::isfinite (a.retainedTrimRelease()) && std::isfinite (a.retainedTrimLink())
+            && std::isfinite (a.retainedTrimHpf()) && std::isfinite (a.retainedTrimTilt()),
+           "hostileTrims: a non-finite restored trim never reaches the published vector");
+    check (std::abs (a.retainedTrimTilt() - 0.5f) < 1.0e-6f,
+           "hostileTrims: …and a merely out-of-range field is still clamped, not discarded");
+
+    // Per field, not whole-struct: three good values must survive one bad one,
+    // which is the opposite of `sanitiseState`'s choice and deliberately so —
+    // there the four members share one poisoned pipeline, here they are four
+    // independent document properties.
+    anabasis::AdaptiveEngine::Trims oneBad;
+    oneBad.releaseOctaves = 0.5f;
+    oneBad.stereoLink     = 0.1f;
+    oneBad.scHpfHz        = nan;
+    oneBad.dynTiltDb      = 0.25f;
+    a.injectTrims (oneBad);
+    check (std::abs (a.retainedTrimRelease() - 0.5f) < 1.0e-6f
+            && std::abs (a.retainedTrimLink() - 0.1f) < 1.0e-6f
+            && std::abs (a.retainedTrimTilt() - 0.25f) < 1.0e-6f
+            && juce::exactlyEqual (a.retainedTrimHpf(), 0.0f),
+           "hostileTrims: one unreadable field takes its reset seed and the rest are kept");
+}
+
+// ---------------------------------------------------------------------------
 // inv 7 second half: bypass is a delay-aligned bit-exact copy once the §2.8
 // crossfade has settled.
 static void testBypassNull()
@@ -3739,6 +3788,7 @@ int main()
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();
     testALearnPassThatOverflowedIsNotCommitted();
+    testHostileFrozenTrimsCannotEnterTheAdaptiveState();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
 

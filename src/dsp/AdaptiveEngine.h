@@ -167,12 +167,43 @@ public:
     // exactly (freeze skips the slew; that is what "latched" means). With
     // Freeze off the next audible block would simply slew away from it, which
     // is the documented last-writer-wins degradation, not a fault.
+    //
+    // FINITE-CHECKED BEFORE CLAMPED, which is what makes ADR-0014's "clamped at
+    // the boundary … holds against hostile state" true rather than nearly true.
+    // `juce::jlimit` is `v < lo ? lo : (hi < v ? hi : v)`, and EVERY comparison
+    // against NaN is false, so a NaN takes neither branch and lands in `trims`
+    // unchanged — a clamp that bounds an ordinary out-of-range number and waves
+    // a non-numeric one straight through. This is the only boundary an
+    // externally authored vector crosses: the wrapper reads four `FROZEN_TRIMS`
+    // properties out of a session or slot tree, and a hand-edited or corrupt one
+    // is exactly the hostile input the ADR names. Past here a NaN would reach
+    // `publishTrims`, so the wrapper could serialise it back out, and reach
+    // `AnabasisEngine::process`, which feeds `releaseOctaves` to `std::pow`.
+    //
+    // `sanitiseState()` does catch it — but a block LATER, and only after the
+    // NaN has been the live vector for the remainder of the block it was
+    // injected in (the injection sites are the duck bottom and the direct
+    // adopt, both of which run after that block's sanitise). Bounded, and not
+    // the same thing as never entering. That recovery path is unchanged; this
+    // simply means it has nothing to recover from on this route.
+    //
+    // PER FIELD rather than whole-struct, which is the opposite of
+    // `sanitiseState`'s choice and deliberately so: there, all four members
+    // descend from one poisoned feature pipeline, so one bad member means the
+    // set is meaningless. Here they are four independent properties parsed from
+    // a document, and one corrupt attribute is no reason to discard three sound
+    // ones. A rejected field takes its reset() seed — "no trim", which is
+    // exactly what an unreadable value tells us.
     void injectTrims (const Trims& v) noexcept
     {
-        trims.releaseOctaves = juce::jlimit (-1.0f, 1.0f, v.releaseOctaves);
-        trims.stereoLink     = juce::jlimit (-0.2f, 0.2f, v.stereoLink);
-        trims.scHpfHz        = juce::jlimit (0.0f, 30.0f, v.scHpfHz);
-        trims.dynTiltDb      = juce::jlimit (0.0f, 0.5f, v.dynTiltDb);
+        constexpr Trims seed {};
+        auto take = [] (float x, float lo, float hi, float fallback) noexcept
+        { return std::isfinite (x) ? juce::jlimit (lo, hi, x) : fallback; };
+
+        trims.releaseOctaves = take (v.releaseOctaves, -1.0f,  1.0f,  seed.releaseOctaves);
+        trims.stereoLink     = take (v.stereoLink,     -0.2f,  0.2f,  seed.stereoLink);
+        trims.scHpfHz        = take (v.scHpfHz,         0.0f, 30.0f,  seed.scHpfHz);
+        trims.dynTiltDb      = take (v.dynTiltDb,       0.0f,  0.5f,  seed.dynTiltDb);
         publishTrims (true);       // a restored vector is as real as a measured one
     }
 

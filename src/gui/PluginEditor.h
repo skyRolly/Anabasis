@@ -180,6 +180,12 @@ private:
     // Raised by parameterChanged when it may NOT post (an automatable id can be
     // delivered on the audio thread); consumed by the 24 Hz tick. See both.
     std::atomic<bool> uiRefreshPending { false };
+    // Reads the persisted UI scale AND normalises it: an illegal percent is
+    // written back as the ladder step it renders at. Returns that step. Every
+    // reader of `iid::uiScale` goes through here, which is what makes "the
+    // stored value is always a legal step after a read" a property of the read
+    // rather than a rule each call site has to remember — see the definition.
+    int  normalisedUiScale();
     void applyUiScale();
     void updateModeVisibility();
     void layoutAdvanced (juce::Rectangle<int> body);

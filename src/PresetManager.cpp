@@ -6,25 +6,19 @@ bool PresetManager::savePreset (const juce::File& file, const juce::StringArray&
     juce::XmlElement root ("AnabasisPreset");
     root.setAttribute ("schemaVersion", 1);
 
-    for (const auto node : apvts.state)
+    // SNAPPED denormalised values only — the preset contract (ADR-0007). The
+    // tree's `value` is convertFrom0to1(getValue()) UNSNAPPED for the Raw*
+    // discrete classes (they deliberately hold mid-step raw values), so the
+    // shared walk snaps through the range (`presetValueOf`) rather than copying
+    // the property. It also owns the exclusion test and the traversal, so this
+    // writer and the wrapper's dirty-marker projection cannot come to describe
+    // different content — see `forEachPresetParameter`.
+    forEachPresetParameter (apvts, [&root] (const juce::String& id, double value)
     {
-        if (! node.hasType ("PARAM"))
-            continue;
-        const auto id = node.getProperty ("id").toString();
-        if (isPresetExcludedParam (id))
-            continue;
-        auto* param = apvts.getParameter (id);
-        if (param == nullptr)
-            continue;
-        // SNAPPED denormalised value only — the preset contract (ADR-0007).
-        // The tree's `value` is convertFrom0to1(getValue()) UNSNAPPED for the
-        // Raw* discrete classes (they deliberately hold mid-step raw values),
-        // so snap through the range (`presetValueOf`) rather than copying the
-        // property.
         auto* p = root.createNewChildElement ("PARAM");
         p->setAttribute ("id", id);
-        p->setAttribute ("value", presetValueOf (*param));
-    }
+        p->setAttribute ("value", value);
+    });
 
     auto* mask = root.createNewChildElement ("DETACH_MASK");
     for (const auto& id : detachMask)

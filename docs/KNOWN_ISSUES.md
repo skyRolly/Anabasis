@@ -488,6 +488,18 @@ record.
    is threading rather than display: the editor's ~3 Hz poll no longer reaches `saveSlotFromLive()`,
    so it no longer takes the APVTS tree lock (see KI-008) or reads the wrapper's ValueTree members
    (KI-003) — it walks the fixed parameter list and their atomics.
+   **Round 52 made the "exactly `savePreset`'s content" claim structural rather than factual.**
+   Round 51 shared the two RULES (`isPresetExcludedParam`, `presetValueOf`) but left the two WALKS
+   distinct — the writer over `apvts.state`'s PARAM children, the projection over
+   `getParameters()`. They agreed only because APVTS happens to create one tree child per
+   parameter, which is a fact about JUCE rather than an invariant of this code: a parameter
+   registered without a node (or a node without a parameter) would have put content in the file the
+   marker could not see, or the reverse. `PresetManager::forEachPresetParameter` is now the single
+   traversal both run, visiting in id order so the bytes of existing `.anabasis` files are
+   unchanged (`getParameters()` is registration order; the tree's was id order, and registration
+   order would also churn again on any future layout reshuffle).
+   `testThePresetWriterAndTheDirtyMarkerCoverTheSameParameters` checks both directions — the two
+   collections against each other, and every id the file carries against the marker.
    The original text is kept below because two other entries reference its reasoning.
 
    `presetDirty()` compared `presetBaseline` against a fresh `saveSlotFromLive()`, which

@@ -746,9 +746,16 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
 juce::ValueTree AnabasisAudioProcessor::presetShapeFromLive() const
 {
     // THE LIVE STATE PROJECTED ONTO WHAT A PRESET CAN CARRY — the non-excluded
-    // parameters at their snapped preset values plus the §5.3 detach mask,
-    // which is exactly `PresetManager::savePreset`'s content, built through the
-    // same two shared rules (`isPresetExcludedParam`, `presetValueOf`).
+    // parameters at their snapped preset values plus the §5.3 detach mask.
+    // "Exactly `PresetManager::savePreset`'s content" is now true BY
+    // CONSTRUCTION rather than by value: both run `forEachPresetParameter`, so
+    // there is one traversal, one exclusion test and one value rule between
+    // them. Round 51 shared the two rules but left the two walks distinct — this
+    // one over `getParameters()`, the writer's over `apvts.state`'s PARAM
+    // children — which agreed only because APVTS happens to create one tree
+    // child per parameter. That is a fact about JUCE, not an invariant of this
+    // code, and a parameter registered without a node (or the reverse) would
+    // have put content in the file the marker could not see.
     //
     // The dirty marker used to compare SLOT trees, and that was the wrong datum
     // for the question it answers. A slot carries the full parameter surface
@@ -773,19 +780,14 @@ juce::ValueTree AnabasisAudioProcessor::presetShapeFromLive() const
     // ValueTree-free. `liveDetachMask` remains — a StringArray with the same
     // KI-003 exposure it always had, unchanged rather than newly introduced.
     juce::ValueTree shape ("PRESET_SHAPE");
-    for (auto* p : getParameters())
-    {
-        auto* param = dynamic_cast<juce::RangedAudioParameter*> (p);
-        if (param == nullptr)
-            continue;
-        const auto id = param->getParameterID();
-        if (isPresetExcludedParam (id))
-            continue;
-        juce::ValueTree node ("PARAM");
-        node.setProperty ("id", id, nullptr);
-        node.setProperty ("value", PresetManager::presetValueOf (*param), nullptr);
-        shape.appendChild (node, nullptr);
-    }
+    PresetManager::forEachPresetParameter (apvts,
+        [&shape] (const juce::String& id, double value)
+        {
+            juce::ValueTree node ("PARAM");
+            node.setProperty ("id", id, nullptr);
+            node.setProperty ("value", value, nullptr);
+            shape.appendChild (node, nullptr);
+        });
 
     juce::ValueTree mask ("DETACH_MASK");
     for (const auto& id : liveDetachMask)

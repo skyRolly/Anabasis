@@ -134,6 +134,23 @@ generation pair by slot, which buys a per-slot counter to fix one window's worth
   are lifted and replaced by references to this ADR.
 - `injectTrims` is audio-thread API with clamping at the boundary: a hand-edited session cannot
   push a trim outside its declared bound (`MODE` invariant 4 holds against hostile state).
+  **Amended 2026-08-04 (review round 52) — the clamp alone did not deliver that.** `juce::jlimit`
+  is two comparisons, and every comparison against a NaN is false, so a non-finite property took
+  neither branch and entered the trim vector unchanged — from where it would be published (and so
+  serialised back out by the wrapper) and fed to `std::pow` in the release mapping.
+  `AdaptiveEngine::sanitiseState()` did catch it, but a block later and only after the value had
+  been live for the remainder of the block it was injected in. Each field is now finite-checked
+  before it is clamped, per field rather than whole-struct (they are four independent document
+  properties, not one poisoned pipeline as in `sanitiseState`), with a rejected field taking its
+  `reset()` seed. `AnabasisTests` `testHostileFrozenTrimsCannotEnterTheAdaptiveState`.
+- A preset apply does **not** clear the frozen latch, and that is consistent with — not an
+  exception to — the preset ownership model: `freeze` is preset-EXCLUDED, so an apply never
+  changes whether the slot is frozen, the engine's latch is untouched and is still exactly what
+  the DSP applies, and the slot's record of it stays true. `liveFrozenTrims` is only the fallback
+  answer for the staged-but-not-yet-applied window, so clearing it there would make a save report
+  "no latch" while a vector was staged and about to land at the next duck bottom. Contrast
+  `BASELINE`, which a preset apply *does* clear: that one is derived from the parameter surface the
+  apply replaces. `AnabasisStateTests` `testAPresetApplyKeepsTheFrozenLatchItDidNotChange`.
 - ADR-0007's evidence row upgrades — the FROZEN_TRIMS inject half is no longer unwired.
 
 ## Related code

@@ -6,7 +6,60 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 51 (2026-08-04)** — five fixes, and two investigations that
+**Last updated:** for **review round 52 (2026-08-04)** — three fixes and one investigation that
+confirmed the behaviour under review and pinned it instead of changing it:
+(1) **A state invariant was conditional on a branch that does not always run.** `applyUiScale()`
+owned the write-back that converges an illegal persisted `iid::uiScale` onto a ladder step, and
+`refreshInternalSettingsBoxes` reached it only when `nearestScaleIndex(stored)` differed from the
+combo's current selection. A session carrying 92 while the box already showed 90 % therefore
+clamped on every read and healed on none: the transform and the displayed percent still agreed, so
+nothing looked wrong, and the only observable was that `getStateInformation` re-serialised 92 for
+ever. The round-48 claim that the value "converges where the scale is applied" was stronger than
+the code by exactly the write the code skipped. `normalisedUiScale()` now owns the rule and every
+reader of the property goes through it, so convergence is a property of reading the value.
+Deliberately NOT "call `applyUiScale()` unconditionally from the re-seed": that path also calls
+`glContext.triggerRepaint()`, which is not a no-op, and the re-seed is the 24 Hz display poll —
+separating the state rule from the application of it is what lets the poll enforce the first without
+paying for the second.
+(2) **A boundary clamp did not hold against the input it was written for.**
+`AdaptiveEngine::injectTrims` bounds a restored frozen-trim vector with `juce::jlimit`, which is
+`v < lo ? lo : (hi < v ? hi : v)` — and every comparison against a NaN is false, so a non-finite
+value took neither branch and entered the trim state unchanged. This is the one externally authored
+thing that reaches the adaptive state (four properties read out of a session or slot tree), so
+ADR-0014's "clamped at the boundary … holds against hostile state" was the claim under test, and it
+did not hold: past the boundary the value is published — the wrapper can serialise it back out —
+and reaches `std::pow` in the release mapping. `sanitiseState()` does catch it, but a block later
+and only after it had been the live vector for the remainder of the block it was injected in, which
+is a bounded recovery rather than the stated contract. Each field is finite-checked before it is
+clamped, PER FIELD rather than whole-struct — the opposite of `sanitiseState`'s choice and
+deliberately so, since there the four members descend from one poisoned pipeline while here they are
+four independent document properties, and one corrupt attribute is no reason to discard three sound
+ones. The recovery path is untouched; it simply has nothing to recover from on this route.
+(3) **Two derivations of one answer walked two collections.** Round 51 gave the preset writer and
+the dirty-marker projection the same exclusion predicate and the same value rule, but left them
+iterating `apvts.state`'s PARAM children and `getParameters()` respectively. Every value agreed,
+because APVTS creates one tree child per parameter — a fact about JUCE, not an invariant of this
+code, and a parameter registered without a node (or the reverse) would have put content in the file
+the marker could not see. `PresetManager::forEachPresetParameter` is the single traversal now. It
+visits in ID ORDER, which is a serialisation decision rather than tidiness: the tree order the
+writer inherited was JUCE's id-keyed one, so that is the order every `.anabasis` file on disk was
+written in, while `getParameters()` is registration order — moving the writer onto it unsorted would
+have re-ordered every element of every file on its next save for no semantic gain (`applyPreset`
+looks each id up and has never depended on position) and would churn again on any future layout
+reshuffle. The test checks both directions and the order.
+(4) **Investigated and deliberately NOT changed: a preset apply keeps the frozen latch.** The
+review asked whether runtime-only frozen adaptation state should survive a factory preset change,
+reading the cleared `BASELINE` beside the kept `FROZEN_TRIMS` as an inconsistency. It is not one,
+and the two differ for a stateable reason: `BASELINE` is derived from the parameter surface the
+apply replaces, so it describes nothing afterwards; the trims are derived from the AUDIO, `freeze`
+is preset-EXCLUDED so the apply never changes whether the slot is frozen, and the engine's latch is
+untouched and still exactly what the DSP is applying — so the slot's record of it stays true.
+Clearing `liveFrozenTrims` would not clear that latch either; it is only the fallback answer for
+ADR-0014's staged-but-not-yet-applied window, so a save inside that window would report "no latch"
+while a vector was staged and about to land at the next duck bottom. That loses the vector rather
+than tidying it. Recorded in ADR-0014 and pinned by
+`testAPresetApplyKeepsTheFrozenLatchItDidNotChange`, so the question does not have to be re-derived.
+Previous: **review round 51 (2026-08-04)** — five fixes, and two investigations that
 ended in a documentation correction rather than a redesign:
 (1) **A comment promised a compile-time guarantee the language does not give.** The badge table in
 `PluginEditor::paint` was declared `const juce::Slider* badged[managed_params::kCount]` beside a

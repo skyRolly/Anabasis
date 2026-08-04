@@ -2,6 +2,9 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "InternalState.h"
+#include "PluginParameters.h"   // isPresetExcludedParam — the shared exclusion predicate
+#include <algorithm>
+#include <vector>
 
 // ============================================================================
 //  PresetManager — user presets as `.anabasis` XML (ADR-0007 §Presets).
@@ -40,6 +43,69 @@ public:
     {
         const auto& r = param.getNormalisableRange();
         return (double) r.snapToLegalValue (r.convertFrom0to1 (param.getValue()));
+    }
+
+    // THE preset parameter set — one traversal, one exclusion test, one value
+    // rule — visited in a fixed order and handed to the caller as (id, value).
+    //
+    // `savePreset` writes the file from it and the wrapper's dirty-marker
+    // projection (`presetShapeFromLive`) rebuilds the same content from it.
+    // Those two used to walk DIFFERENT collections for the same answer: the
+    // writer iterated `apvts.state`'s PARAM children, the projection iterated
+    // `getParameters()`. Every value agreed, because APVTS creates one tree
+    // child per parameter — but "agree" was a fact about today's JUCE rather
+    // than a property of the code, and a parameter registered without a tree
+    // node (or a stray node without a parameter) would have put content in the
+    // file that the marker could not see, or the reverse. Sharing the walk
+    // makes the two the same set by construction.
+    //
+    // The PARAMETERS are the collection, not the tree, and that choice carries
+    // a second guarantee: the marker runs on the editor's ~3 Hz poll, and this
+    // walk touches no `juce::ValueTree` at all — the parameter list is fixed for
+    // the processor's lifetime and each value is an atomic load. That is what
+    // keeps the poll off the APVTS tree lock (KI-008) and away from the wrapper
+    // state an off-message-thread restore writes (KI-003).
+    //
+    // Restricted to parameters APVTS owns: `getParameters()` is the processor's
+    // list, so a future non-APVTS parameter would otherwise silently start
+    // appearing in preset files.
+    //
+    // VISITED IN ID ORDER, and that is a serialisation decision rather than
+    // tidiness. `savePreset` used to inherit the order of `apvts.state`'s
+    // children, which JUCE keys by id and therefore hands back alphabetically;
+    // `getParameters()` is REGISTRATION order, so moving the writer onto it
+    // would have re-ordered every `<PARAM>` element in every file on its next
+    // save — a diff across the whole preset bank for no semantic gain, since
+    // `applyPreset` looks each id up and has never depended on position. Worse,
+    // registration order is not stable: it changes whenever the parameter
+    // layout is re-arranged, so the file would churn again on any future
+    // reshuffle. Sorting by id keeps the bytes exactly as they were AND makes
+    // the order independent of the layout. `String::compare` is a plain UTF-8
+    // lexicographic compare, which is the collation the tree order already had
+    // for this ASCII id set.
+    template <typename Fn>
+    static void forEachPresetParameter (const juce::AudioProcessorValueTreeState& apvts, Fn&& fn)
+    {
+        std::vector<juce::RangedAudioParameter*> ordered;
+        ordered.reserve ((size_t) apvts.processor.getParameters().size());
+
+        for (auto* p : apvts.processor.getParameters())
+        {
+            auto* param = dynamic_cast<juce::RangedAudioParameter*> (p);
+            if (param == nullptr)
+                continue;
+            const auto id = param->getParameterID();
+            if (isPresetExcludedParam (id) || apvts.getParameter (id) == nullptr)
+                continue;
+            ordered.push_back (param);
+        }
+
+        std::sort (ordered.begin(), ordered.end(),
+                   [] (const juce::RangedAudioParameter* a, const juce::RangedAudioParameter* b)
+                   { return a->getParameterID().compare (b->getParameterID()) < 0; });
+
+        for (auto* param : ordered)
+            fn (param->getParameterID(), presetValueOf (*param));
     }
 
     bool savePreset (const juce::File& file, const juce::StringArray& detachMask) const;

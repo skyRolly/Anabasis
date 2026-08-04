@@ -1197,6 +1197,163 @@ static void testFactoryPresets()
 }
 
 // ---------------------------------------------------------------------------
+// The preset WRITER and the dirty MARKER must describe the same set. They share
+// `forEachPresetParameter` now, but the invariant is worth pinning from outside
+// that function, because until round 52 they walked different collections —
+// `apvts.state`'s PARAM children and `getParameters()` — and agreed only because
+// APVTS creates one tree child per parameter. Both directions are checked: the
+// file's ids against the tree-derived set (the two collections), and every id
+// the file carries against the marker (the two consumers).
+static void testThePresetWriterAndTheDirtyMarkerCoverTheSameParameters()
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getChildFile ("anabasis-test-presets");
+    dir.createDirectory();
+    const auto file = dir.getChildFile ("shape-parity.anabasis");
+
+    AnabasisAudioProcessor proc;
+    check (proc.getPresetManager().savePreset (file, {}), "shapeParity: (premise) save succeeds");
+    const auto xml = juce::XmlDocument::parse (file);
+    check (xml != nullptr, "shapeParity: (premise) the file parses");
+    if (xml == nullptr)
+        return;
+
+    juce::StringArray written;
+    for (auto* p : xml->getChildWithTagNameIterator ("PARAM"))
+        written.add (p->getStringAttribute ("id"));
+
+    // The OTHER collection, derived independently here so the check does not
+    // simply re-run the shared walk.
+    juce::StringArray fromTree;
+    for (const auto node : proc.apvts.state)
+        if (node.hasType ("PARAM"))
+            if (const auto id = node.getProperty ("id").toString();
+                ! isPresetExcludedParam (id) && proc.apvts.getParameter (id) != nullptr)
+                fromTree.add (id);
+
+    auto sorted = [] (juce::StringArray a) { a.sort (true); return a; };
+    check (sorted (written) == sorted (fromTree),
+           "shapeParity: the file carries exactly the non-excluded parameters the tree holds");
+    check (! written.isEmpty(), "shapeParity: (premise) the set is not empty");
+
+    // ORDER too, which is a serialisation guarantee rather than tidiness. The
+    // writer's traversal moved to `getParameters()` (registration order) to
+    // share the walk with the marker; the tree order it left behind is JUCE's
+    // id-keyed one, and that is what every `.anabasis` file already on disk was
+    // written in. `forEachPresetParameter` sorts by id so the bytes are
+    // unchanged — nothing semantic depends on position (`applyPreset` looks each
+    // id up), but re-saving the whole preset bank into a different element order
+    // for no reason is a diff nobody asked for, and registration order would
+    // churn again on any future layout reshuffle.
+    check (written == fromTree,
+           "shapeParity: …in the id order existing preset files were written in");
+
+    // …and every one of them is an id the marker watches. A parameter a preset
+    // stores but the marker ignores would mean a saved file that differs from
+    // the live state while the top bar calls the preset clean.
+    // One reported check for the whole sweep, with the offending ids named:
+    // ~46 separate checks would drown the suite output and say nothing more.
+    // The per-parameter premise (a fresh apply leaves the preset clean) is
+    // folded into `notClean` so a broken fixture cannot masquerade as a pass.
+    juce::StringArray unnoticed, notClean;
+    for (const auto& id : written)
+    {
+        auto* param = proc.apvts.getParameter (id);
+        if (param == nullptr)
+        {
+            unnoticed.add (id);
+            continue;
+        }
+        if (! proc.applyFactoryPreset (1) || proc.presetDirty())
+        {
+            notClean.add (id);
+            continue;
+        }
+        // To the far end of the range from wherever the preset left it, so the
+        // move is real for every parameter class including the discrete ones.
+        param->setValueNotifyingHost (param->getValue() > 0.5f ? 0.0f : 1.0f);
+        if (! proc.presetDirty())
+            unnoticed.add (id);
+    }
+    // The failing ids go INTO the message (kept alive in a local) — a bare
+    // "some parameter is unwatched" would send the next reader back to a
+    // 46-way bisect.
+    const juce::String cleanMsg = "shapeParity: (premise) a fresh apply leaves the preset clean "
+                                  "for every id (" + notClean.joinIntoString (", ") + ")";
+    const juce::String seenMsg  = "shapeParity: every id a preset FILE stores is one the dirty "
+                                  "marker watches (" + unnoticed.joinIntoString (", ") + ")";
+    check (notClean.isEmpty(), cleanMsg.toRawUTF8());
+    check (unnoticed.isEmpty(), seenMsg.toRawUTF8());
+}
+
+// ---------------------------------------------------------------------------
+// A preset apply must NOT clear the frozen-trim state, and the reason is the
+// opposite of the BASELINE rule below rather than an exception to it. `freeze`
+// is preset-EXCLUDED, so an apply never changes whether the slot is frozen; the
+// engine's latch is untouched and is still exactly what the DSP is applying, so
+// the slot's record of it stays true. `liveFrozenTrims` is only the FALLBACK
+// that answers for the staged-but-not-yet-applied window (ADR-0014) — clearing
+// it there would make a save report "no latch" while the engine had one staged
+// and about to land at the next duck bottom, which loses the vector rather than
+// tidying it. BASELINE is different because it is derived from the parameter
+// surface the apply replaces; the trims are derived from the audio.
+static void testAPresetApplyKeepsTheFrozenLatchItDidNotChange()
+{
+    AnabasisAudioProcessor proc;
+
+    // A frozen slot, seeded the way a shipped state produces one: Freeze ON on
+    // BOTH surfaces (the live root tree and the AB slot copy) with a
+    // FROZEN_TRIMS child beside it — the fixture shape `testFrozenSlotRoundTrip`
+    // settled, since a freeze-OFF slot serialises no child at all.
+    juce::MemoryBlock blank;
+    proc.getStateInformation (blank);
+    auto root = juce::ValueTree::fromXml (
+        *juce::AudioProcessor::getXmlFromBinary (blank.getData(), (int) blank.getSize()));
+    auto slot = root.getChildWithName ("AB").getChild (0);
+    auto setFreezeOn = [] (juce::ValueTree params)
+    {
+        if (auto fz = params.getChildWithProperty ("id", "freeze"); fz.isValid())
+        {
+            fz.setProperty ("value", 1.0, nullptr);
+            fz.setProperty ("raw",   1.0, nullptr);
+        }
+    };
+    setFreezeOn (root.getChildWithName ("ANABASIS"));
+    setFreezeOn (slot.getChildWithName ("ANABASIS"));
+    juce::ValueTree trims ("FROZEN_TRIMS");
+    trims.setProperty ("releaseOctaves", 0.25, nullptr);
+    trims.setProperty ("stereoLink",     -0.1, nullptr);
+    trims.setProperty ("scHpfHz",        3.0,  nullptr);
+    trims.setProperty ("dynTiltDb",      0.4,  nullptr);
+    slot.appendChild (trims, nullptr);
+    juce::MemoryBlock in;
+    juce::AudioProcessor::copyXmlToBinary (*root.createXml(), in);
+    proc.setStateInformation (in.getData(), (int) in.getSize());
+
+    auto savedTrims = [&proc]
+    {
+        juce::MemoryBlock mb;
+        proc.getStateInformation (mb);
+        auto r = juce::ValueTree::fromXml (
+            *juce::AudioProcessor::getXmlFromBinary (mb.getData(), (int) mb.getSize()));
+        return r.getChildWithName ("AB").getChild (proc.activeSlotIndex())
+                .getChildWithName ("FROZEN_TRIMS");
+    };
+    check (savedTrims().isValid(), "frozenKept: (premise) the frozen slot round-trips its vector");
+    check (proc.apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f,
+           "frozenKept: (premise) the loaded surface is frozen");
+
+    check (proc.applyFactoryPreset (1), "frozenKept: (premise) the factory preset applies");
+    check (proc.apvts.getRawParameterValue (pid::freeze)->load() >= 0.5f,
+           "frozenKept: a preset apply never moves Freeze — it is preset-excluded");
+    const auto after = savedTrims();
+    check (after.isValid()
+            && std::abs ((double) after.getProperty ("releaseOctaves") - 0.25) < 1.0e-6
+            && std::abs ((double) after.getProperty ("dynTiltDb") - 0.4) < 1.0e-6,
+           "frozenKept: the latched vector survives a FACTORY apply unchanged");
+}
+
+// ---------------------------------------------------------------------------
 // BASELINE is runtime-only §5.5 state and a preset file cannot store one, so
 // neither apply path may leave a baseline standing after replacing the
 // parameter surface it was captured against. The FACTORY path has always
@@ -2873,6 +3030,22 @@ static void testAnOutOfListUiScaleClampsConsistently()
     check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 90
             && std::abs (rendered() - 0.90f) < 1.0e-4f,
            "uiScaleClamp: a legal stored step is left exactly as the user set it");
+
+    // THE CASE THE CONVERGENCE USED TO MISS, and the reason it was invisible:
+    // an illegal value whose nearest step is the one ALREADY DISPLAYED. 92 sits
+    // nearer 90 than 100 (and unambiguously so — 95 would be a tie the ladder
+    // resolves by order, which is a different thing to test), so with the box
+    // showing 90 % the re-seed's "has the selection changed?" branch is false —
+    // and while that branch owned the write-back, nothing converged. The
+    // rendered transform and the shown percent still agreed, so no symptom; the
+    // only observable was that `getStateInformation` re-serialised 92 for ever.
+    // Normalising at the READ rather than inside the branch is what closes it.
+    proc.internalState.state().setProperty (iid::uiScale, 92, nullptr);
+    ed->refreshInternalSettingsBoxes();
+    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 90,
+           "uiScaleClamp: an illegal value converges even when the DISPLAYED step does not move");
+    check (box->getText() == "90%" && std::abs (rendered() - 0.90f) < 1.0e-4f,
+           "uiScaleClamp: …and the box and the transform are undisturbed by that write");
 }
 
 // Round 42. `CurveView::paint` rebuilt its curve on every repaint — a full
@@ -3486,6 +3659,8 @@ int main (int argc, char** argv)
         testAbToleranceRules();
         testPresetContract();
         testTheDirtyMarkerMeasuresOnlyWhatAPresetCanCarry();
+        testThePresetWriterAndTheDirtyMarkerCoverTheSameParameters();
+        testAPresetApplyKeepsTheFrozenLatchItDidNotChange();
         testAPresetApplyDropsTheMacroBaselineOnBothPaths();
         testMissingChildrenReadAsDefaults();
         testLatencyNotifyIsBatchedAcrossARead();
