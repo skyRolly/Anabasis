@@ -59,7 +59,11 @@ private:
         juce::dsp::WindowingFunction<float>::hann };
 
     std::vector<float> scratchL, scratchR, fftData, inDb, outDb;
+    // `shownInCount`/`shownOutCount` answer "are there new frames?" and nothing
+    // else. Detecting a RESET is the generations' job — see tick(), where the
+    // counter comparison that used to carry both duties is explained.
     uint64_t shownInCount = 0, shownOutCount = 0;
+    uint32_t shownInGen = 0, shownOutGen = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumView)
 };

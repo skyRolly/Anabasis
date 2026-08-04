@@ -6,7 +6,33 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 53 (2026-08-04)** — a cleanup pass: two single-authority
+**Last updated:** for **review round 54 (2026-08-04)** — the single-authority sweep finished, and
+one reset invariant raised to the standard the rest of the tree already holds:
+(1) **Four documents still carried an ADR count or roster.** Round 53 fixed the README; the same
+duplication survived in `CLAUDE.md` ("the **fourteen** Accepted ADRs"), `REPOSITORY_MAP.md` (twice —
+"the eleven ADRs it spawned", and a file-tree line reading "ADR_INDEX.md + ADR-0001…0012, 0001–0011
+Accepted 2026-07-31") and `SOURCE_OF_TRUTH.md` ("Level 3 is populated: **ADR-0001…0011 are
+Accepted**"). Three of the four were already WRONG — they had gone stale through ADR-0012, 0013 and
+0014 — and the fourth was one acceptance away from it. All four now name `ADR_INDEX.md` and no
+number; `SOURCE_OF_TRUTH.md` names the LEVEL rather than its membership, which is the distinction
+that makes it stale-proof. `CHANGELOG.md`'s "twelve presets" was deliberately left: a changelog
+entry records what a released version did, and freezing that is the point of the file.
+(2) **The spectrum reset was inferred, not announced.** `SpectrumView::tick` decided a ring had been
+rewound by `writeCount()` going backwards, which is true only while the observed count is still
+below the one the last tick stored. Let the producer republish past that value between two ticks —
+one suspended message thread, one debugger stop, one host batching redraws — and the reset is missed
+OUTRIGHT and permanently, because every count from then on is larger again. The symptom is silent
+and is exactly what the rewind exists to prevent: the previous lifecycle's EMA drawn against the new
+sample rate's bin mapping. Ordering two counters cannot express "a reset happened". `GrHistoryBuffer`
+had already answered the same question with an epoch, so the rings gained a generation counter,
+bumped release-after the index rewind, and `SpectrumView` samples it on both sides of its analysis
+batch — the pre-batch sample catches a reset since the last tick, the post-batch one catches a reset
+that landed mid-batch, whose frames may straddle two configurations. A plain generation, NOT the GR
+buffer's odd/even seqlock: that class clears 4096 entries a reader can observe half-done, while
+`ScopeBuffer::reset()` writes one atomic and touches no sample, so the extra fence pair would buy
+nothing. The test now includes the case the counter predicate could not see, and it fails against a
+mutant restoring that predicate.
+Previous: **review round 53 (2026-08-04)** — a cleanup pass: two single-authority
 repairs in the README, two unreachable styling paths resolved in opposite directions, two unported
 LookAndFeel subclasses removed, and one deliberately-retained atomic given the reasoning it needed:
 (1) **The front page told contributors to validate at the OLD strictness.** Rounds 35/40/43 made

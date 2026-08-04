@@ -3156,6 +3156,41 @@ static void testARewoundSpectrumRingDropsThePreviousTrace()
     const float afterReset = *std::max_element (inDb.begin(), inDb.end());
     check (afterReset <= -120.0f,
            "spectrumReset: a re-prepare drops the trace the rewound ring can no longer justify");
+
+    // THE CASE A BACKWARDS-COUNT PREDICATE CANNOT SEE, and the reason the rings
+    // carry a reset generation. `ci < shownInCount` is true only while the
+    // observed count is still below the one the last tick stored; feed enough
+    // audio between the reset and the next tick and the count is LARGER again,
+    // so the rewind is missed outright and no later tick can notice, because
+    // every count from then on is larger still. One delayed tick is all it
+    // takes — the message thread suspended, a debugger stop, a host that
+    // batches redraws — and the symptom is the pre-reset EMA drawn against the
+    // new rate's bin mapping, silently, for the rest of the session.
+    //
+    // Reproduced exactly: build a real trace, re-prepare, then push MORE frames
+    // than the pre-reset count before ticking, so the count the tick observes is
+    // LARGER than the one it stored. Only the generation says a reset happened.
+    //
+    // The post-reset material is 40 dB QUIETER, for the round-49 reason the
+    // forward-change check above spells out: "still above the floor" cannot
+    // separate the two outcomes, because a clear followed by `analyse` in the
+    // same tick rebuilds instantly (the EMA's attack is a straight assignment).
+    // What separates them is where the trace LANDS — cleared, it takes the
+    // quiet material's level directly; missed, it decays one step from the loud
+    // reading and stays near it.
+    feed (32, 0.5f);
+    view.tick (0.05);
+    const float before = *std::max_element (inDb.begin(), inDb.end());
+    check (before > -100.0f, "spectrumReset: (premise) a trace to lose again");
+    const auto countBefore = proc.spectrumInRing().writeCount();
+
+    proc.prepareToPlay (48000.0, 512);
+    feed (64, 0.005f);     // > the pre-reset frame count: the counter never dips
+    check (proc.spectrumInRing().writeCount() > countBefore,
+           "spectrumReset: (premise) the observed count is HIGHER than before the reset");
+    view.tick (0.05);
+    check (*std::max_element (inDb.begin(), inDb.end()) < before - 30.0f,
+           "spectrumReset: a reset is caught even when the count never goes backwards");
 }
 
 static void testTheCurveWellCachesWithoutChangingWhatItDraws()

@@ -98,6 +98,19 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
   (`SpectrumView`), reading stateless `readLatest` peeks; nothing on the audio thread windows,
   transforms or allocates. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
   tap-content equality).
+  **`prepare` rewinds both rings, and the rewind is ANNOUNCED on a generation counter**
+  (`ScopeBuffer::resetGeneration()`, bumped release-after the index store; the generation-counter
+  row). The rewind makes pre-rate-change frames unreachable; the reader owns the smoothed EMA the
+  ring cannot reach, so it has to drop that itself, and until round 54 it inferred the reset from
+  `writeCount()` going backwards. That predicate holds only while the observed count is still
+  below the reader's last one — a single delayed tick lets the producer republish past it, after
+  which the reset is missed permanently and the pre-reset analysis is drawn against the new rate's
+  bin mapping. `SpectrumView` samples the generation on **both sides** of its analysis batch, the
+  same reader contract `GrHistoryBuffer::resetEpoch()` states; it is a plain generation rather than
+  that class's odd/even seqlock because `ScopeBuffer::reset()` writes one atomic and touches no
+  sample, so there is nothing for a reader to observe half-done.
+  `testARewoundSpectrumRingDropsThePreviousTrace` covers both edges, including the
+  count-never-dips case the old predicate could not see.
 - **Command atomics — the meter-hold reset is now IMPLEMENTED (P5, 2026-08-02)**, joining the
   forced-duck request and the Learn command on the momentary-request row:
   `AnabasisAudioProcessor::requestMeterReset()` → `meterResetPending`, consumed with `exchange`

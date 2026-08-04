@@ -53,8 +53,39 @@ public:
     // frame unreachable, and the reader's own `count > w` clamp then returns
     // fewer frames until the ring refills. Clearing 2 × 16384 floats on a
     // re-prepare would buy nothing a reader can observe.
+    //
+    // The generation is bumped with it, and that is the ANNOUNCEMENT half.
+    // Rewinding the index is how a reset works; it is not a reliable way to
+    // TELL a reader one happened. `SpectrumView` used to infer it from
+    // `writeCount()` going backwards, which is true only while the observed
+    // count is still below the reader's last one — let the producer republish
+    // past that value between two reader ticks and the reset is missed
+    // outright, silently, with the reader's own EMA state left describing a
+    // configuration the ring no longer holds. A monotonic counter the reader
+    // compares against its own copy has no such window: any reset between two
+    // observations changes it, however far the index has since travelled.
+    //
+    // Published AFTER the rewind, with release, so a reader that has ACQUIRED
+    // the new generation cannot then read the pre-reset index. The opposite
+    // skew (new index, old generation) is possible and is why the reader
+    // samples the generation on BOTH sides of its batch — the same contract
+    // `GrHistoryBuffer::resetEpoch()` states for the same question. It is a
+    // plain generation, NOT that class's odd/even seqlock, because there is
+    // nothing here for a reader to observe half-done: this function writes one
+    // atomic and touches no sample.
     void reset() noexcept
-    { write.store (0, std::memory_order_release); }
+    {
+        write.store (0, std::memory_order_release);
+        resetGen.fetch_add (1, std::memory_order_release);
+    }
+
+    // --- gui thread ------------------------------------------------------
+    // Reader side of the contract above. Monotonic across the instance's life
+    // (one bump per `prepare`, so it cannot realistically wrap or alias);
+    // sample it before and after a batch of reads and treat ANY change as
+    // "the frames I just read may straddle a reset".
+    uint32_t resetGeneration() const noexcept
+    { return resetGen.load (std::memory_order_acquire); }
 
     // --- audio thread ----------------------------------------------------
     // Writes a whole block and publishes it with ONE release-store on the
@@ -131,6 +162,7 @@ public:
 private:
     std::vector<float> left, right;
     std::atomic<uint64_t>       write { 0 };
+    std::atomic<uint32_t>       resetGen { 0 };   // see reset() / resetGeneration()
 };
 
 } // namespace anabasis

@@ -62,34 +62,72 @@ void SpectrumView::tick (double dt)
 {
     const anabasis::ScopeBuffer& in  = processor.spectrumInRing();
     const anabasis::ScopeBuffer& out = processor.spectrumOutRing();
-    const auto ci = in.writeCount();
-    const auto co = out.writeCount();
-    if (ci == shownInCount && co == shownOutCount)
+    // THE RESET IS ANNOUNCED, NOT INFERRED. `AnabasisEngine::prepare` rewinds
+    // both rings so frames captured at the previous sample rate become
+    // unreachable; making them unreachable is only half of it, because
+    // `analyse` returns immediately when `readLatest` yields nothing — exactly
+    // the post-rewind state — so `inDb`/`outDb` would keep the PREVIOUS
+    // lifecycle's EMA and go on being drawn, the old analysis rendered against
+    // the new rate's bin mapping, which is the artefact the rewind exists to
+    // remove. The reader owns its smoothed copy, so the reader must drop it;
+    // the ring cannot do it from the other side.
+    //
+    // This used to key on `writeCount()` going BACKWARDS, and that predicate is
+    // weaker than the guarantee the comment claimed. It holds only while the
+    // observed count is still below the one the last tick stored: let the
+    // producer republish past that value between two ticks — one tick delayed
+    // past ~1 s of audio, a suspended message thread, a debugger stop — and the
+    // rewind is missed OUTRIGHT, permanently, with no later tick able to notice,
+    // because every subsequent count is larger again. The failure is silent and
+    // its symptom is the exact artefact this code exists to prevent. Ordering
+    // two counters cannot express "a reset happened"; a generation can, and
+    // `GrHistoryBuffer` already answered the same question with an epoch rather
+    // than a counter comparison. The rings now carry one too.
+    //
+    // Sampled on BOTH sides of the analysis batch, which is `resetEpoch()`'s
+    // documented reader contract and closes the remaining skew: the pre-batch
+    // sample catches a reset that landed since the last tick, the post-batch one
+    // catches a reset that landed DURING this tick's reads, whose frames may
+    // straddle two configurations. Either way the answer is the same — drop to
+    // the floor and re-anchor — so a straddling batch costs no display frame
+    // rather than one.
+    const auto gi0 = in.resetGeneration();
+    const auto go0 = out.resetGeneration();
+    const auto ci  = in.writeCount();
+    const auto co  = out.writeCount();
+
+    // The generations join the idle test, or a reset landing on a tick with no
+    // new frames would early-return past the clear below.
+    if (ci == shownInCount && co == shownOutCount
+        && gi0 == shownInGen && go0 == shownOutGen)
         return;                                           // idle: nothing new
 
-    // A count that went BACKWARDS is `ScopeBuffer::reset()` — the rewind
-    // `AnabasisEngine::prepare` performs so frames captured at the previous
-    // sample rate become unreachable. Making them unreachable was only half of
-    // it: `analyse` returns immediately when `readLatest` yields nothing, which
-    // is exactly the post-rewind state, so `inDb`/`outDb` kept the PREVIOUS
-    // lifecycle's EMA and went on being drawn — the old analysis rendered
-    // against the new rate's bin mapping, which is the artefact the rewind was
-    // added to remove. The reader owns its own smoothed copy, so the reader has
-    // to drop it; the ring cannot do it from the other side.
-    //
-    // Only on the rewind EDGE, deliberately. This is not the "should an idle
+    const bool resetIn  = gi0 != shownInGen;
+    const bool resetOut = go0 != shownOutGen;
+
+    // Only on the reset EDGE, deliberately. This is not the "should an idle
     // analyser decay to the floor?" question — that is the early return above,
     // it is a listening-pass call, and it stays exactly as it was
     // (`KNOWN_ISSUES` KI-007 item 6).
-    if (ci < shownInCount)
-        std::fill (inDb.begin(), inDb.end(), -120.0f);
-    if (co < shownOutCount)
-        std::fill (outDb.begin(), outDb.end(), -120.0f);
+    if (resetIn)  std::fill (inDb.begin(),  inDb.end(),  -120.0f);
+    if (resetOut) std::fill (outDb.begin(), outDb.end(), -120.0f);
 
-    shownInCount = ci;
-    shownOutCount = co;
     analyse (in, inDb, dt);
     analyse (out, outDb, dt);
+
+    // The second sample. A generation that moved while the batch ran means the
+    // frames just folded into the EMA may span the rewind, so the EMA is not a
+    // description of either configuration — the post-reset state is the floor,
+    // which is what a reset leaves in any case.
+    const auto gi1 = in.resetGeneration();
+    const auto go1 = out.resetGeneration();
+    if (gi1 != gi0) std::fill (inDb.begin(),  inDb.end(),  -120.0f);
+    if (go1 != go0) std::fill (outDb.begin(), outDb.end(), -120.0f);
+
+    shownInGen   = gi1;
+    shownOutGen  = go1;
+    shownInCount = ci;
+    shownOutCount = co;
     repaint();
 }
 

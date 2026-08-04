@@ -28,9 +28,10 @@ product **Anamorph**. Open decisions live in [`docs/OPEN_QUESTIONS.md`](docs/OPE
 post-v0.1.0 human fine review is what remains.** `docs/DESIGN.md` was **signed off 2026-07-31**,
 closing P0; the full §2 chain, the §2.8 transition layer, §2.7/§2.9 metering, the §5.4 adaptive
 engine with Learn AND the ADR-0014 frozen-trim restore, the P5 UI, and the P6 undo/preset/budget
-work are all in the tree. Implementation is governed by the **fourteen** Accepted ADRs in
+work are all in the tree. Implementation is governed by the Accepted ADRs in
 [`docs/architecture/design-decisions/`](docs/architecture/design-decisions/ADR_INDEX.md) — read
-`ADR_INDEX.md` before writing code; an ADR outranks `DESIGN.md`, which is now superseded section by
+`ADR_INDEX.md` before writing code, and take the COUNT from there too: this file quotes no number,
+for the same reason it quotes no pluginval strictness. An ADR outranks `DESIGN.md`, which is now superseded section by
 section as the real architecture set lands. pluginval gates in both modes ×3 with the editor
 under xvfb, locally and in CI, at the strictness held in one place —
 `ANABASIS_PLUGINVAL_STRICTNESS` in `.github/workflows/build.yml`

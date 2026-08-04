@@ -126,7 +126,10 @@ known-issue claim.
 
 Levels 1, 2 and 5 are **empty** — no `src/`, no `tests/`, no descriptive architecture set exists
 yet — **except that `docs/DESIGN.md` now occupies level 5**, having been signed off on
-2026-07-31 (see §"Where `DESIGN.md` sits"). Level 3 is populated: **ADR-0001…0011 are Accepted**.
+2026-07-31 (see §"Where `DESIGN.md` sits"). Level 3 is populated: the Accepted set is whatever
+`docs/architecture/design-decisions/ADR_INDEX.md` registers — this file names the LEVEL, never its
+membership, so an accepted ADR cannot leave it stale (it read "ADR-0001…0011 are Accepted" through
+three later acceptances).
 Levels 1 and 2 stay empty until P1 lands `src/` and `tests/`, so every statement about Anabasis's
 *runtime* behaviour remains `Unverified` by construction and must be written as such. The policies in `docs/policies/`
 state the invariants the future code **must** satisfy; they carry no compliance evidence yet, and
