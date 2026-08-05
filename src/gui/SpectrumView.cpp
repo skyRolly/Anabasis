@@ -21,12 +21,50 @@ void SpectrumView::visibilityChanged()
         clock.stop();
 }
 
+// The dismiss affordance's hit-area (brief §6 "visible until dismissed"): the
+// top-right corner. ONE definition, because `hitTest` and `mouseDown` both key
+// on it and a click this view accepts but then ignores is exactly the swallowing
+// the hitTest below removes — reintroduced one pixel at a time if the two
+// rectangles were computed separately.
+//
+// Deliberately LARGER than the drawn glyph (`paint` puts the × at
+// `getWidth() - 24, 4, 18 × 18`): the surplus is the touch target, and it is
+// unchanged from the predicate this replaces — `x > getWidth() - 26 && y < 24`
+// is the same set of in-bounds points as this rectangle.
+juce::Rectangle<int> SpectrumView::dismissHitArea() const noexcept
+{
+    return { getWidth() - 25, 0, 25, 24 };
+}
+
+// ONLY the × is interactive. Leaving JUCE's default (hit-test true everywhere)
+// made this overlay consume every click in the metering strip and do nothing
+// with it — the one region of the editor that took a click with no affordance
+// and no effect. `GrHistoryView` and `CurveView` opt out wholesale with
+// `setInterceptsMouseClicks (false, false)`; this view cannot, because it owns
+// the dismiss ×, so it opts out per-pixel instead, which is what `hitTest` is
+// for. `LoudnessMeterView` stays intercepting because its WHOLE surface is the
+// affordance (click = meter reset).
+//
+// ONE VISIBLE CONSEQUENCE, stated because it is inseparable from the fix rather
+// than an addition to it: hit-testing is also what makes a component "under the
+// mouse", so the `setTooltip ("Spectrum")` identifier now appears over the ×
+// only, not over the whole trace. There is no way to stop claiming clicks in a
+// region while still claiming the pointer there. The wording is a C8
+// owner-supplied TODO, so the scoping is a brand-pass call if it is wanted back.
+bool SpectrumView::hitTest (int x, int y)
+{
+    return dismissHitArea().contains (x, y);
+}
+
 void SpectrumView::mouseDown (const juce::MouseEvent& e)
 {
-    // The dismiss affordance (brief §6 "visible until dismissed"): the ×
-    // hit-area in the top-right corner. Re-enabled from Settings, which owns
-    // the same int_spectrumOn field.
-    if (e.getPosition().getX() > getWidth() - 26 && e.getPosition().getY() < 24)
+    // Re-enabled from Settings, which owns the same int_spectrumOn field.
+    //
+    // The test is now unreachable-false — `hitTest` already refused every click
+    // outside the area — and is kept rather than trimmed so this function is
+    // correct standing alone instead of correct because of what another
+    // function happens to return.
+    if (dismissHitArea().contains (e.getPosition()))
         processor.internalState.state().setProperty (iid::spectrumOn, false, nullptr);
 }
 

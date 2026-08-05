@@ -6,7 +6,31 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 58 (2026-08-05)** — two accuracy fixes, neither of which
+**Last updated:** for **review round 59 (2026-08-05)** — one UI interaction fix:
+**`SpectrumView` consumed clicks it had no use for.** It left `setInterceptsMouseClicks` at JUCE's
+default, so it hit-tested true across its whole area while acting only on clicks in the top-right
+26×24 × region. Every other click inside the overlay was swallowed with no affordance and no effect
+— the one region of the editor that took a click and did nothing. The fix is `hitTest`, which is
+what JUCE provides for a PARTLY interactive component: `GrHistoryView` and `CurveView` opt out
+wholesale with `setInterceptsMouseClicks (false, false)` and this view cannot, because it owns the
+dismiss ×; `LoudnessMeterView` stays intercepting everywhere because its whole surface IS the
+affordance (click = meter reset). So this one opts out per-pixel, and now sits correctly between the
+two existing models rather than outside both.
+The hit-area moved into a single `dismissHitArea()` that `hitTest` and `mouseDown` share. That is
+part of the fix rather than tidying beside it: two separately computed rectangles could accept a
+click and then ignore it, which is the same swallowing reintroduced one pixel at a time. The
+rectangle matches exactly the set of in-bounds points the old predicate (`x > getWidth() - 26 &&
+y < 24`) accepted, so the touch target — deliberately larger than the 18×18 glyph `paint` draws — is
+unchanged, and `paint` is untouched.
+**One visible consequence, recorded because it is inseparable from the fix rather than added to
+it:** hit-testing is also what makes a component "under the mouse", so the `setTooltip ("Spectrum")`
+identifier now appears over the × only, not over the whole trace. There is no way to stop claiming
+clicks in a region while still claiming the pointer there. That wording carries an explicit C8
+owner-supplied TODO, so the narrower scoping is a brand-pass call if it is wanted back.
+`testTheSpectrumOverlayOnlyClaimsItsDismissCorner` pins both halves — a click over the trace is not
+claimed, and the × still dismisses through the real `MouseEvent` path — and a mutant restoring
+JUCE's hit-test-everything default fails the pass-through checks.
+Previous: **review round 58 (2026-08-05)** — two accuracy fixes, neither of which
 changes behaviour:
 (1) **An invariant comment described the wrong execution order.** The round-52 note on `injectTrims`
 justified its per-field finite check by saying `sanitiseState()` catches a poisoned trim "a block
