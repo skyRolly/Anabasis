@@ -6,7 +6,31 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the self-coverage drift repair (2026-08-05)** — the change the canary
+**Last updated:** for **the third-party attribution landing (2026-08-05)** — the factual half of
+the legal class, produced by the method `RELEASE_POLICY.md` §"Third-party attribution" itself
+prescribes (which had been *requiring* these files with every binary distribution since
+bootstrap, while neither existed — a policy-vs-tree drift this closes):
+(1) **`NOTICE` + `THIRD_PARTY_LICENSES.md` (root)** — inventory read from the pinned JUCE
+`LICENSE.md` plus a walk of the compiled TUs (which is what catches FreeType and stb, vendored
+transitively inside PlutoVG and absent from JUCE's own list); compiled-in status verified by
+`nm` probes on **this build's per-TU object files**, because the linked image is LTO'd with
+`--gc-sections` and hides most static C symbols — a probe against the `.so` reported almost
+everything absent, which is the wrong answer arrived at honestly and is why the method sentence
+in the inventory names the objects as the evidence; exclusions (MP3, LV2, AAX, ASIO, Oboe,
+CHOC, Box2D) confirmed by their compile gates *and* symbol absence. Structure and protocol
+adapted from the sibling under ADR-0009 with provenance stated in-file; **findings re-derived,
+not copied** — the sibling's own rule, and this repository's (C7). One genuine delta from the
+sibling's record: Anabasis's Linux `.so` carries only seven `DT_NEEDED` entries — JUCE 9 loads
+the X11/GL stack dynamically — so §5 records direct-vs-runtime linkage as two lists instead of
+one `ldd` closure.
+(2) **The obligation now travels with the binaries**: all three `build.yml` staging steps copy
+both files into the customer artifact (the IJG/BSD notices attach to binary redistribution, and
+CI artifacts reach beta testers), and the three adjacent "added at P6 (packaging/)" comments now
+cite OQ-007 — the same passed-phase staleness the drift repair fixed elsewhere.
+(3) Synced: README §Licensing (pointers to both files), the legal self-coverage row (factual
+half Present; owner-legal half — EULA/PRIVACY/TRADEMARKS — stays absent on C8/OQ-002, stated
+per the sibling delta: Anabasis has no EULA even as a draft), HANDOVER's post-v0.1.0 section.
+Previous: **the self-coverage drift repair (2026-08-05)** — the change the canary
 entry queued, applied row by row against the tree rather than wholesale:
 (1) **The audit's own tail was a ~P2-era snapshot**, in the file whose job is noticing exactly
 that. Repaired with evidence per row: the code-module table gains the two rows the v0.1.0 tree
@@ -5175,7 +5199,7 @@ landed — the staleness the same date's audit entry reports.)
 | docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
 | user | — | **Absent — P6 closed without it** and no replacement target is recorded; when it lands it is written against the finished v0.1.0 surface (the class is derived, `SOURCE_OF_TRUTH.md`). Flagged to the owner rather than silently re-dated (C7) |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
-| root — legal | — | The "produced against a real dependency tree" precondition is now met (one pinned JUCE, nothing else). The **factual attribution half** (`NOTICE`, `THIRD_PARTY_LICENSES.md`) is producible from evidence; the **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) additionally waits on OQ-002 (licence tier) and owner wording — never invented (C8) |
+| root — legal | `NOTICE`, `THIRD_PARTY_LICENSES.md` | **Factual attribution half Present (2026-08-05)** — produced against the actually-pinned JUCE tree per `RELEASE_POLICY.md`'s own prescription: inventory from JUCE's `LICENSE.md` plus a compiled-TU walk, compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides them), exclusions from their gates plus symbol absence; CI copies both files into every customer artifact. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) stays absent — waits on OQ-002 and owner wording, never invented (C8) |
 | root — internal/testing | — | SUPPORT.md ships with the first tester build (none has left the repository — Release Status row, `HANDOVER.md`) |
 | .github | workflows/{build,codeql,msvc,dependency-review,cxx23-canary}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present (release.yml deferred to the first commercial release — OQ-007, resolved 2026-08-02) |
 | scripts | setup-linux, build, run-tests, run-pluginval.{sh,ps1} | Present |

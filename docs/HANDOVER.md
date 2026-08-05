@@ -66,6 +66,20 @@ first scheduled or dispatched run — rehearse via `workflow_dispatch` after mer
 running" (P1 summary), silently unreported at P2–P6 closes. This entry is the status of record
 until the next phase summary.
 
+**Same date, the third-party attribution landing.** `RELEASE_POLICY.md` §"Third-party
+attribution" had required `NOTICE` + `THIRD_PARTY_LICENSES.md` with every binary distribution
+since bootstrap while neither file existed. Both now exist, produced by that section's own
+prescription — inventory from the pinned JUCE `LICENSE.md` plus a compiled-TU walk (FreeType and
+stb arrive transitively inside PlutoVG and are missed by every manifest-only reading),
+compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides the
+symbols — probing the `.so` says "absent" for components that are demonstrably in it),
+exclusions confirmed by gate + symbol absence, structure adapted from the sibling under ADR-0009
+with the findings re-derived rather than copied. All three `build.yml` staging steps now copy
+both files into the customer artifact, so the obligation travels with the binaries — including
+the beta zips testers get. The owner-legal half (EULA / PRIVACY / TRADEMARKS) is deliberately
+NOT produced: no draft exists here (unlike the sibling), the wording is owner-supplied (C8), and
+OQ-002 gates the whole commercial question. Coverage's legal row carries the split.
+
 ## v0.1.0 completion summary (2026-08-02, under the owner's blanket approval)
 
 **The directive.** Every human-review/owner-decision gate is pre-approved so the complete first

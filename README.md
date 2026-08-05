@@ -163,6 +163,12 @@ be in place before commercial distribution. Commercial VST3 distribution require
 Steinberg's licensing requirements separately. The licence tier this project ships under is an
 open decision — `docs/OPEN_QUESTIONS.md` OQ-002.
 
+Third-party attribution: [`NOTICE`](NOTICE) carries the notices that must accompany a binary
+distribution, and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) is the complete verified
+inventory (component, purpose, licence, and the exact file each licence was read from). CI
+copies both into every customer artifact (`docs/policies/RELEASE_POLICY.md` §"Third-party
+attribution").
+
 Contributors and AI agents: read **[`CLAUDE.md`](CLAUDE.md)** and
 `docs/policies/AI_AGENT_POLICY.md` before changing code — some changes (parameter IDs,
 serialization, threading, DSP order, latency) are hard-stop, human-review-required.
