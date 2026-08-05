@@ -219,11 +219,11 @@ Session state — saved with your DAW project, never in presets, invisible to au
 |---|---|---|
 | **Oversampling** | Off / 2× / 4× / 8× / 16× | For the nonlinear stages and true-peak accuracy. Higher = cleaner at higher CPU cost; adds host-compensated latency (§6). |
 | **Phase** | Minimum / Linear | Minimum phase = lowest latency; linear phase = symmetric ringing, more latency. |
-| **Offline quality** | Follow / Force Max | Force Max renders your bounce at maximum oversampling regardless of the live setting. |
-| **UI scale** | 80 – 200 % | Seven steps. |
-| **UI animation** | on/off | Default on. Off never changes behaviour, only motion. |
+| **Offline Render** | Follow Online / Force Max | Force Max renders your bounce at maximum oversampling regardless of the live setting; Follow Online uses whatever the live setting is. |
+| **UI Scale** | XS / S / M / L / XL | Five steps; **M** is the original size, everything scales in proportion. |
+| **UI Animations** | on/off | Default on. Off never changes behaviour, only motion. |
 | **Tooltips** | on/off | Default off. |
-| **True-peak meter** | on/off | Shows/hides the TP row. |
+| **True-Peak Meter** | on/off | Shows/hides the TP row. Default off. |
 | **Spectrum** | on/off | Shows/hides the spectrum overlay (the overlay's × sets this too). |
 
 The **Ceiling LOCK** lives next to the Ceiling knob itself, not here — but like these

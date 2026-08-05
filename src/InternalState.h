@@ -28,7 +28,7 @@ namespace iid
     inline const juce::Identifier osPhase        { "int_osPhase" };        // 0 min, 1 linear
     inline const juce::Identifier offlineQuality { "int_offlineQuality" }; // 0 Follow, 1 Force Max
     inline const juce::Identifier ceilingLock    { "int_ceilingLock" };    // bool
-    inline const juce::Identifier uiScale        { "int_uiScale" };        // percent: 80..200
+    inline const juce::Identifier uiScale        { "int_uiScale" };        // percent; legal set = ui_scale::steps
     inline const juce::Identifier tooltipsOn     { "int_tooltipsOn" };     // bool
     inline const juce::Identifier uiAnimations   { "int_uiAnimations" };   // bool
     inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool (dismissible, brief §6)
@@ -49,8 +49,17 @@ namespace iid
 // selection ONE decision instead of two that happen to agree.
 namespace ui_scale
 {
-    inline constexpr int steps[]  = { 80, 90, 100, 125, 150, 175, 200 };
+    // The SIBLING'S ladder, adopted 2026-08-05 (owner directive): five steps
+    // shown as XS/S/M/L/XL with M the original size — the percents are
+    // Anamorph's `applyUiScale` scales ×100. The field stays a PERCENT in the
+    // schema; only the legal set and the display changed. A session written by
+    // the old seven-step ladder converges through `nearest` like any other
+    // out-of-list value (80→75, 90→85, 175/200→150).
+    inline constexpr int steps[]  = { 75, 85, 100, 125, 150 };
+    inline constexpr const char* names[] = { "XS", "S", "M", "L", "XL" };
     inline constexpr int numSteps = (int) (sizeof (steps) / sizeof (steps[0]));
+    static_assert (sizeof (names) / sizeof (names[0]) == (size_t) numSteps,
+                   "one display name per ladder step");
 
     inline constexpr int nearestIndex (int pct) noexcept
     {

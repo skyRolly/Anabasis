@@ -3038,7 +3038,7 @@ static void testTheSettingsCallbacksReachTheLiveTree()
     check (ed != nullptr, "settingsWrite: (premise) the editor was created");
     if (ed == nullptr)
         return;
-    auto* scale = findComboByTitle (*ed, "UI scale");
+    auto* scale = findComboByTitle (*ed, "UI Scale");
     auto* os    = findComboByTitle (*ed, "Oversampling");
     check (scale != nullptr && os != nullptr,
            "settingsWrite: (premise) both Settings combos were found");
@@ -3046,10 +3046,10 @@ static void testTheSettingsCallbacksReachTheLiveTree()
         return;
 
     // The hand-built combo (index ↔ PERCENT), whose closure re-fetches the tree.
-    scale->setSelectedItemIndex (5, juce::sendNotificationSync);        // "175%"
-    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 175,
+    scale->setSelectedItemIndex (4, juce::sendNotificationSync);        // "XL" = 150 %
+    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 150,
            "settingsWrite: the UI-scale closure writes the live InternalState tree");
-    check (std::abs (ed->getTransform().mat00 - 1.75f) < 1.0e-4f,
+    check (std::abs (ed->getTransform().mat00 - 1.50f) < 1.0e-4f,
            "settingsWrite: …and applies it, so the window follows the selection");
 
     // The helper-built combo (index ↔ 0-BASED value), whose closure captures the
@@ -3129,7 +3129,7 @@ static void testAnOutOfListUiScaleClampsConsistently()
     check (ed != nullptr, "uiScaleClamp: (premise) the editor was created");
     if (ed == nullptr)
         return;
-    auto* box = findComboByTitle (*ed, "UI scale");
+    auto* box = findComboByTitle (*ed, "UI Scale");
     check (box != nullptr, "uiScaleClamp: (premise) the UI-scale box was found");
     if (box == nullptr)
         return;
@@ -3143,34 +3143,34 @@ static void testAnOutOfListUiScaleClampsConsistently()
     auto rendered = [ed] { return ed->getTransform().mat00; };
     check (std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: an out-of-list percent renders at the NEAREST step, not at 100 %");
-    check (box->getText() == "125%",
+    check (box->getText() == "L",
            "uiScaleClamp: …and the panel displays the same step it rendered");
 
-    // The item LABELS come from the same ladder the transform does. Checking
-    // that a label's number round-trips to its own INDEX is not enough — the
-    // clamp maps a wrong label back onto the nearest step, so the index still
-    // matches. What has to hold is that the label names the scale the window
-    // actually renders at, so each item is SELECTED and the transform read.
+    // The item LABELS are the XS..XL names (2026-08-05, the sibling's
+    // display); each name is index-locked to `ui_scale::steps` by the
+    // static_assert beside them, so the guard is that selecting item i really
+    // renders at steps[i] — the label→index→transform chain, with the percent
+    // read from the ladder rather than parsed out of the label.
     bool labelsMatchTransform = true;
     for (int i = 0; i < box->getNumItems(); ++i)
     {
         box->setSelectedItemIndex (i, juce::sendNotificationSync);
-        const float labelled = (float) box->getItemText (i).dropLastCharacters (1).getIntValue();
-        if (std::abs (rendered() * 100.0f - labelled) > 0.5f)
+        if (box->getItemText (i) != ui_scale::names[i]
+            || std::abs (rendered() * 100.0f - (float) ui_scale::steps[i]) > 0.5f)
             labelsMatchTransform = false;
     }
     check (labelsMatchTransform,
-           "uiScaleClamp: every combo label names the scale that item actually renders at");
+           "uiScaleClamp: every combo label names the step that item actually renders at");
 
     // The load direction, which is where the two used to part company: the box
     // holds a legal selection and the stored value changes to an illegal one.
-    proc.internalState.state().setProperty (iid::uiScale, 175, nullptr);
+    proc.internalState.state().setProperty (iid::uiScale, 150, nullptr);
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "175%" && std::abs (rendered() - 1.75f) < 1.0e-4f,
+    check (box->getText() == "XL" && std::abs (rendered() - 1.50f) < 1.0e-4f,
            "uiScaleClamp: (premise) a legal stored step reaches both halves");
     proc.internalState.state().setProperty (iid::uiScale, 130, nullptr);
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "125%",
+    check (box->getText() == "L",
            "uiScaleClamp: an illegal value arriving by LOAD moves the box off the stale step");
     check (std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …to the same step the window renders at");
@@ -3201,33 +3201,34 @@ static void testAnOutOfListUiScaleClampsConsistently()
     check (storedScale() == 125,
            "uiScaleClamp: an illegal stored value is normalised at adoption, not just clamped on read");
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "125%" && std::abs (rendered() - 1.25f) < 1.0e-4f,
+    check (box->getText() == "L" && std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …and the editor shows the step it converged on");
 
     // A LEGAL value is never rewritten — the convergence must not disturb a
     // scale the user actually chose.
-    loadWithScale (90);
-    check (storedScale() == 90, "uiScaleClamp: a legal stored step is left exactly as the user set it");
+    loadWithScale (85);
+    check (storedScale() == 85, "uiScaleClamp: a legal stored step is left exactly as the user set it");
     ed->refreshInternalSettingsBoxes();
-    check (std::abs (rendered() - 0.90f) < 1.0e-4f, "uiScaleClamp: …and renders at it");
+    check (std::abs (rendered() - 0.85f) < 1.0e-4f, "uiScaleClamp: …and renders at it");
 
     // THE CASE A BRANCH-OWNED CONVERGENCE MISSED, kept because it is the one
     // that made the old defect invisible: an illegal value whose nearest step is
-    // the one ALREADY DISPLAYED. 92 sits nearer 90 than 100 (unambiguously — 95
-    // would be a tie the ladder resolves by order, a different thing to test),
-    // so the re-seed's "has the selection changed?" branch is false, and while
-    // that branch owned the write-back nothing converged. Adoption does not
-    // consult the display at all, so the case is no longer special.
+    // the one ALREADY DISPLAYED. 92 sits nearer 85 than 100 on the 2026-08-05
+    // ladder (unambiguously — a midpoint would be a tie the ladder resolves by
+    // order, a different thing to test), so the re-seed's "has the selection
+    // changed?" branch is false, and while that branch owned the write-back
+    // nothing converged. Adoption does not consult the display at all, so the
+    // case is no longer special.
     loadWithScale (92);
-    check (storedScale() == 90,
+    check (storedScale() == 85,
            "uiScaleClamp: an illegal value converges even when the DISPLAYED step does not move");
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "90%" && std::abs (rendered() - 0.90f) < 1.0e-4f,
+    check (box->getText() == "S" && std::abs (rendered() - 0.85f) < 1.0e-4f,
            "uiScaleClamp: …and the box and the transform agree with the converged value");
 
     // MISSING FIELD → THE DEFAULT, which is §4.4's read rule and the one case
     // the ladder can get wrong in a way that looks plausible: an absent property
-    // reads as `var()`, `var()` converts to 0, and 0's NEAREST step is 80 — so a
+    // reads as `var()`, `var()` converts to 0, and 0's NEAREST step is 75 — so a
     // read without a stated default turns "not present" into the smallest legal
     // scale rather than the default one. Reachable from a hand-edited session or
     // one written before the field existed.
@@ -3256,7 +3257,7 @@ static void testAnOutOfListUiScaleClampsConsistently()
     ed->refreshInternalSettingsBoxes();
     check (storedScale() == 130,
            "uiScaleClamp: the display poll does not write the InternalState tree");
-    check (box->getText() == "125%" && std::abs (rendered() - 1.25f) < 1.0e-4f,
+    check (box->getText() == "L" && std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …and still renders and displays the clamped step");
 }
 

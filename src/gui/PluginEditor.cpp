@@ -483,8 +483,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     };
     settingsRow (oversampleLabel, "Oversampling");
     settingsRow (phaseLabel,      "Phase");
-    settingsRow (offlineLabel,    "Offline render");
-    settingsRow (uiScaleLabel,    "UI scale");
+    settingsRow (offlineLabel,    "Offline Render");
+    settingsRow (uiScaleLabel,    "UI Scale");
 
     setupComboInternal (oversampleBox, { "Off", "2x", "4x", "8x", "16x" },
                         "Oversampling", ist.getPropertyAsValue (iid::oversample, nullptr));
@@ -492,8 +492,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     setupComboInternal (phaseBox, { "Minimum", "Linear" },
                         "Phase. Linear phase adds latency (reported to the host).",
                         ist.getPropertyAsValue (iid::osPhase, nullptr));
-    setupComboInternal (offlineBox, { "Follow", "Force Max" },
-                        "Offline render", ist.getPropertyAsValue (iid::offlineQuality, nullptr));
+    setupComboInternal (offlineBox, { "Follow Online", "Force Max" },
+                        "Offline Render", ist.getPropertyAsValue (iid::offlineQuality, nullptr));
     // int_uiScale stores PERCENT; the combo maps index<->percent through the
     // step list, so the stored value stays meaningful outside this editor.
     // Built FROM `kScaleSteps`, not written out beside it. The literal list
@@ -503,9 +503,13 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // from the applied transform — the exact second-copy shape this file
     // removed for the meter target table and the badge ids.
     {
+        // XS..XL — the sibling's display (owner directive 2026-08-05); the
+        // stored value stays a percent, `ui_scale::names` is index-locked to
+        // `steps` by its static_assert, so label and transform still cannot
+        // disagree.
         juce::StringArray items;
         for (int i = 0; i < kNumScaleSteps; ++i)
-            items.add (juce::String (kScaleSteps[i]) + "%");
+            items.add (ui_scale::names[i]);
         uiScaleBox.addItemList (items, 1);
     }
     // Through `normalisedUiScale()` like every other read of this property, so
@@ -539,7 +543,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // tail calls: without registerAnimated its hover lift skipped the easing
     // every other combo has, and without a title it had no accessibility name.
     registerAnimated (uiScaleBox);
-    uiScaleBox.setTitle ("UI scale");
+    uiScaleBox.setTitle ("UI Scale");
     for (auto* b : { &oversampleBox, &phaseBox, &offlineBox })
     {
         removeChildComponent (b);
@@ -557,11 +561,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // `juce::Value` delivers its change asynchronously through the message
     // loop, which the headless suite does not run, so
     // `testTheSettingsPanelFollowsAProjectLoad` covers the re-seeded half only.
-    setupToggleInternal (animToggle, "UI animation", "UI animation",
+    setupToggleInternal (animToggle, "UI Animations", "UI Animations",
                          ist.getPropertyAsValue (iid::uiAnimations, nullptr));
     setupToggleInternal (tooltipsToggle, "Tooltips", "Tooltips",
                          ist.getPropertyAsValue (iid::tooltipsOn, nullptr));
-    setupToggleInternal (tpMeterToggle, "True-peak meter", "True-peak meter",
+    setupToggleInternal (tpMeterToggle, "True-Peak Meter", "True-Peak Meter",
                          ist.getPropertyAsValue (iid::tpMeterOn, nullptr));
     setupToggleInternal (spectrumToggle, "Spectrum", "Spectrum",
                          ist.getPropertyAsValue (iid::spectrumOn, nullptr));
@@ -1015,8 +1019,9 @@ void AnabasisAudioProcessorEditor::resized()
         saveNameEditor.setBounds (sp.removeFromTop (28));
         sp.removeFromTop (10);
         auto btns = sp.removeFromTop (26);
-        saveCancelButton.setBounds (btns.removeFromLeft (btns.getWidth() / 2).reduced (4, 0));
-        saveOkButton.setBounds (btns.reduced (4, 0));
+        // Save LEFT, Cancel RIGHT (owner directive 2026-08-05).
+        saveOkButton.setBounds (btns.removeFromLeft (btns.getWidth() / 2).reduced (4, 0));
+        saveCancelButton.setBounds (btns.reduced (4, 0));
     }
 
     if (advanced)

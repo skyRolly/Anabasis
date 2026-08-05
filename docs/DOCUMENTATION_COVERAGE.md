@@ -6,7 +6,17 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 item 5 — streaming-platform analysis removed outright
+**Last updated:** for **round-2 items 12/13/14 — Settings polish (2026-08-05, owner
+directive)**. The UI-scale ladder is now the SIBLING'S: five steps 75/85/100/125/150 % shown
+as **XS/S/M/L/XL** (M = the original size; `ui_scale::names` index-locked to `steps` by a
+`static_assert`), keeping the field a percent so the schema's meaning is unchanged — an old
+seven-step session converges through `nearest` like any other out-of-list value, which the
+uiScaleClamp test now exercises with the new ladder's own numbers (92→85 keeps the
+displayed-step-doesn't-move property). Terminology to Title Case and the sibling's names:
+"Offline Render", "UI Scale", "UI Animations", "True-Peak Meter", and the vague "Follow" mode
+is now "**Follow Online**". The Save-Preset dialog's buttons swapped: **Save left, Cancel
+right**. Manual Settings table and both inventories synced.
+Previous: **round-2 item 5 — streaming-platform analysis removed outright
 (2026-08-05, owner directive; OQ-008 → Resolved-by-supersession)**. Gone together, because they
 were one feature: `LoudnessMeterView`'s `kTargets` table + tick overlay + penalty rows + the
 "as of" tooltip, the three §6.4 Settings checkboxes, and the `int_meterTargets` field itself —
