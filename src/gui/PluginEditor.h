@@ -298,6 +298,13 @@ private:
     Knob bigLoudnessK, simpleCharacterK, simpleToneK, simpleCeilingK;
     juce::Label bigLoudnessL, simpleCharacterL, simpleToneL, simpleCeilingL;
     juce::ToggleButton ceilingLockToggle;          // int_ceilingLock (§4.2)
+    // The SECOND attachment on pid::truePeakMode (the limiter zone's tpToggle
+    // is the other): the ceiling is dBTP-aware only while TP mode is ON, so
+    // the switch that decides it sits beside the Ceiling knob in the DEFAULT
+    // view (owner directive 2026-08-05 — "a highly visible True Peak switch
+    // in the main UI"). Two ButtonAttachments on one parameter are the JUCE
+    // pattern for one value with two homes; they cannot disagree.
+    juce::ToggleButton tpSimpleToggle;
     juce::TextButton   learnButton { "LEARN" };    // §5.4 explicit start/end
     juce::Label outLufsCaption, outLufsValue;      // live render short-term
 
@@ -343,7 +350,6 @@ private:
     juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox;
     juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel;
     juce::ToggleButton animToggle, tooltipsToggle, tpMeterToggle;
-    juce::ToggleButton spectrumToggle;
 
     // -- Save-preset overlay -------------------------------------------------
     juce::Label      saveTitle;

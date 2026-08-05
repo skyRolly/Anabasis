@@ -21,28 +21,28 @@ void SpectrumView::visibilityChanged()
         clock.stop();
 }
 
-// The dismiss affordance's hit-area (brief §6 "visible until dismissed"): the
-// top-right corner. ONE definition, because `hitTest` and `mouseDown` both key
-// on it and a click this view accepts but then ignores is exactly the swallowing
-// the hitTest below removes — reintroduced one pixel at a time if the two
-// rectangles were computed separately.
+// The mode chip's hit-area (the corner affordance that flips the graph well to
+// the GR history — formerly the dismiss ×): the top-right corner. ONE
+// definition, because `hitTest` and `mouseDown` both key on it and a click this
+// view accepts but then ignores is exactly the swallowing the hitTest below
+// removes — reintroduced one pixel at a time if the two rectangles were
+// computed separately.
 //
-// Deliberately LARGER than the drawn glyph (`paint` puts the × at
-// `getWidth() - 24, 4, 18 × 18`): the surplus is the touch target, and it is
-// unchanged from the predicate this replaces — `x > getWidth() - 26 && y < 24`
-// is the same set of in-bounds points as this rectangle.
-juce::Rectangle<int> SpectrumView::dismissHitArea() const noexcept
+// Deliberately LARGER than the drawn chip (`paint` puts "GR" at
+// `getWidth() - 26, 4, 22 × 16`): the surplus is the touch target.
+juce::Rectangle<int> SpectrumView::chipHitArea() const noexcept
 {
-    return { getWidth() - 25, 0, 25, 24 };
+    return { getWidth() - 27, 0, 27, 24 };
 }
 
-// ONLY the × is interactive. Leaving JUCE's default (hit-test true everywhere)
-// made this overlay consume every click in the metering strip and do nothing
-// with it — the one region of the editor that took a click with no affordance
-// and no effect. `GrHistoryView` and `CurveView` opt out wholesale with
+// ONLY the chip is interactive. Leaving JUCE's default (hit-test true
+// everywhere) made this overlay consume every click in the metering strip and
+// do nothing with it — the one region of the editor that took a click with no
+// affordance and no effect. `CurveView` opts out wholesale with
 // `setInterceptsMouseClicks (false, false)`; this view cannot, because it owns
-// the dismiss ×, so it opts out per-pixel instead, which is what `hitTest` is
-// for. `LoudnessMeterView` stays intercepting because its WHOLE surface is the
+// the mode chip, so it opts out per-pixel instead, which is what `hitTest` is
+// for — and `GrHistoryView` now does exactly the same for its mirrored "SPEC"
+// chip. `LoudnessMeterView` stays intercepting because its WHOLE surface is the
 // affordance (click = meter reset).
 //
 // TWO CONSEQUENCES, both inseparable from the fix rather than additions to it —
@@ -71,18 +71,20 @@ juce::Rectangle<int> SpectrumView::dismissHitArea() const noexcept
 //      opposite ends.
 bool SpectrumView::hitTest (int x, int y)
 {
-    return dismissHitArea().contains (x, y);
+    return chipHitArea().contains (x, y);
 }
 
 void SpectrumView::mouseDown (const juce::MouseEvent& e)
 {
-    // Re-enabled from Settings, which owns the same int_spectrumOn field.
-    //
-    // The test is now unreachable-false — `hitTest` already refused every click
+    // The test is unreachable-false — `hitTest` already refused every click
     // outside the area — and is kept rather than trimmed so this function is
     // correct standing alone instead of correct because of what another
     // function happens to return.
-    if (dismissHitArea().contains (e.getPosition()))
+    if (chipHitArea().contains (e.getPosition()))
+        // Since 2026-08-05 this is a MODE SWITCH, not a dismissal: the well
+        // flips to the GR history (the chip names what you switch TO), and the
+        // GR view carries the mirrored chip back. Same corner, same hit-area
+        // discipline (clicks over the trace still pass through).
         processor.internalState.state().setProperty (iid::spectrumOn, false, nullptr);
 }
 
@@ -194,17 +196,61 @@ void SpectrumView::paint (juce::Graphics& g)
     const float fLo = 20.0f, fHi = 20000.0f;
     const float dbLo = -90.0f, dbHi = 0.0f;
 
+    // Column reads: the two-regime rule adapted from Anamorph's SpectrumImager
+    // (ADR-0009 provenance: Anamorph src/gui/SpectrumImager.cpp, `magCubic` /
+    // `magForColumn`). On a log-f axis the low end packs many pixel columns
+    // into few FFT bins, so the nearest-bin read this replaces quantised the
+    // LF trace into a staircase. Instead, each column spans [cx−½, cx+½]:
+    // where that covers fewer than 1.5 bins, the value is a Catmull-Rom
+    // interpolation across the four surrounding bins; where it covers 1.5 bins
+    // or more (the HF end, many bins per column), it averages every covered
+    // bin. Adapted to this analyser's state: Anamorph interpolates LINEAR
+    // magnitudes before its dB conversion, but here the smoothed arrays
+    // already hold dB (the EMA runs in dB — see `analyse`), so both regimes
+    // read dB directly. The clamp floor stays at bin 1 — the nearest-bin read
+    // never showed DC and this port keeps that exclusion.
+    const float binHz = (float) (sr / (double) kSize);
+    auto binAt = [&] (const std::vector<float>& bins, int j)
+    {
+        return bins[(size_t) juce::jlimit (1, kBins - 1, j)];
+    };
+    auto dbCubic = [&] (const std::vector<float>& bins, float binPos)
+    {
+        const int   i = (int) std::floor (binPos);
+        const float u = binPos - (float) i;
+        const float m0 = binAt (bins, i - 1), m1 = binAt (bins, i);
+        const float m2 = binAt (bins, i + 1), m3 = binAt (bins, i + 2);
+        return 0.5f * ((2.0f * m1) + (-m0 + m2) * u
+                       + (2.0f * m0 - 5.0f * m1 + 4.0f * m2 - m3) * u * u
+                       + (-m0 + 3.0f * m1 - 3.0f * m2 + m3) * u * u * u);
+    };
+    auto dbForColumn = [&] (const std::vector<float>& bins, float fa, float fb)
+    {
+        const float span = (fb - fa) / binHz;
+        if (span < 1.5f)
+            return dbCubic (bins, 0.5f * (fa + fb) / binHz);
+        const int ka = juce::jlimit (1, kBins - 1, (int) std::floor (fa / binHz));
+        const int kb = juce::jlimit (1, kBins - 1, (int) std::ceil  (fb / binHz));
+        float sum = 0.0f;
+        for (int k = ka; k <= kb; ++k)
+            sum += bins[(size_t) k];
+        return sum / (float) (kb - ka + 1);
+    };
+
     auto traceOf = [&] (const std::vector<float>& bins, juce::Path& path)
     {
         bool started = false;
         const int cols = juce::jmax (1, (int) area.getWidth());
+        auto freqAt = [&] (float cx)
+        {
+            return fLo * std::pow (fHi / fLo, cx / (float) cols);
+        };
         for (int cx = 0; cx <= cols; ++cx)
         {
-            const float t = (float) cx / (float) cols;
-            const float f = fLo * std::pow (fHi / fLo, t);
-            const int bin = juce::jlimit (1, kBins - 1,
-                                          (int) std::round (f * (double) kSize / sr));
-            const float db = juce::jlimit (dbLo, dbHi, bins[(size_t) bin]);
+            const float t  = (float) cx / (float) cols;
+            const float fa = freqAt ((float) cx - 0.5f);
+            const float fb = freqAt ((float) cx + 0.5f);
+            const float db = juce::jlimit (dbLo, dbHi, dbForColumn (bins, fa, fb));
             const float x = area.getX() + t * area.getWidth();
             const float y = area.getBottom()
                           - (db - dbLo) / (dbHi - dbLo) * area.getHeight();
@@ -221,9 +267,8 @@ void SpectrumView::paint (juce::Graphics& g)
     g.setColour (colours::accent);
     g.strokePath (pout, juce::PathStrokeType (1.3f));
 
-    // Dismiss × (top-right).
+    // Corner mode chip (top-right): names the view you switch TO.
     g.setColour (colours::textDim.withAlpha (0.7f));
-    g.setFont (juce::Font (juce::FontOptions (13.0f)));
-    g.drawText (juce::String::charToString ((juce::juce_wchar) 0x00D7),
-                getWidth() - 24, 4, 18, 18, juce::Justification::centred);
+    g.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.1f));
+    g.drawText ("GR", getWidth() - 26, 4, 22, 16, juce::Justification::centred);
 }

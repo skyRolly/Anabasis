@@ -3369,14 +3369,15 @@ static void testARewoundSpectrumRingDropsThePreviousTrace()
            "spectrumReset: a reset is caught even when the count never goes backwards");
 }
 
-// The spectrum overlay is interactive over its dismiss × and INERT everywhere
-// else. It used to leave `setInterceptsMouseClicks` at JUCE's default, so it
-// hit-tested true across its whole area and consumed every click in the metering
-// strip with no affordance and no effect — the one region of the editor that
-// took a click and did nothing. `GrHistoryView`/`CurveView` opt out wholesale;
-// this view cannot, because it owns the ×, so it opts out per-pixel through
-// `hitTest`. Both halves are checked: a click elsewhere must not be claimed, and
-// the dismiss must still work.
+// The graph-well views are interactive over their corner mode chips and INERT
+// everywhere else. The spectrum view used to leave `setInterceptsMouseClicks`
+// at JUCE's default, so it hit-tested true across its whole area and consumed
+// every click in the metering strip with no affordance and no effect — the one
+// region of the editor that took a click and did nothing; it opts out per-pixel
+// through `hitTest`, and since the combined well (2026-08-05) `GrHistoryView`
+// carries the mirrored "SPEC" chip and does the same (`CurveView` still opts
+// out wholesale). Both halves are checked for BOTH views: a click elsewhere
+// must not be claimed, and the chip must flip `int_spectrumOn` its way.
 // The About overlay opened BLANK: `Backdrop::aboutText` had one reader — the
 // dismiss-anywhere branch in `mouseDown` — so the flag named a panel whose copy
 // nothing painted, and `ANABASIS_VERSION_STRING`/`ANABASIS_BUILD_NUMBER` had no
@@ -3511,38 +3512,60 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
            "about: the panel paints product copy, not an empty glass rectangle");
 }
 
-static void testTheSpectrumOverlayOnlyClaimsItsDismissCorner()
+static void testTheGraphWellViewsOnlyClaimTheirModeChips()
 {
     AnabasisAudioProcessor proc;
-    SpectrumView view (proc);
-    view.setBounds (0, 0, 300, 120);
-
-    check (view.hitTest (view.getWidth() - 10, 10),
-           "spectrumClicks: (premise) the dismiss corner is still hit-tested");
-    check (! view.hitTest (10, 60),
-           "spectrumClicks: a click over the trace is not claimed by the overlay");
-    check (! view.hitTest (view.getWidth() - 10, 60),
-           "spectrumClicks: …nor one below the corner, in the same column");
-
-    // The dismiss itself, through the real event path. `int_spectrumOn` starts
-    // true, so a successful dismiss is observable as the property going false.
     auto& ist = proc.internalState.state();
-    ist.setProperty (iid::spectrumOn, true, nullptr);
-    juce::Component* comp = &view;
-    auto ev = [comp] (juce::Point<float> pos)
+
+    auto eventFor = [] (juce::Component& c, juce::Point<float> pos)
     {
         return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
                                  pos, juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                 comp, comp, juce::Time::getCurrentTime(), pos,
+                                 &c, &c, juce::Time::getCurrentTime(), pos,
                                  juce::Time::getCurrentTime(), 1, false);
     };
 
-    comp->mouseDown (ev ({ 10.0f, 60.0f }));
-    check ((bool) ist.getProperty (iid::spectrumOn, false),
-           "spectrumClicks: a press over the trace does not dismiss it");
-    comp->mouseDown (ev ({ (float) view.getWidth() - 10.0f, 10.0f }));
-    check (! (bool) ist.getProperty (iid::spectrumOn, true),
-           "spectrumClicks: a press on the × still dismisses the overlay");
+    // Spectrum → GR: the "GR" chip sets int_spectrumOn false.
+    {
+        SpectrumView view (proc);
+        view.setBounds (0, 0, 300, 120);
+
+        check (view.hitTest (view.getWidth() - 10, 10),
+               "spectrumClicks: (premise) the chip corner is hit-tested");
+        check (! view.hitTest (10, 60),
+               "spectrumClicks: a click over the trace is not claimed by the overlay");
+        check (! view.hitTest (view.getWidth() - 10, 60),
+               "spectrumClicks: …nor one below the corner, in the same column");
+
+        ist.setProperty (iid::spectrumOn, true, nullptr);
+        view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
+        check ((bool) ist.getProperty (iid::spectrumOn, false),
+               "spectrumClicks: a press over the trace does not switch the mode");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
+        check (! (bool) ist.getProperty (iid::spectrumOn, true),
+               "spectrumClicks: a press on the chip switches the well to GR");
+    }
+
+    // GR → spectrum: the mirrored "SPEC" chip sets int_spectrumOn true.
+    {
+        GrHistoryView view (proc);
+        view.setBounds (0, 0, 300, 120);
+
+        check (view.hitTest (view.getWidth() - 10, 10),
+               "grChip: (premise) the chip corner is hit-tested");
+        check (! view.hitTest (10, 60),
+               "grChip: a click over the history trace is not claimed");
+        check (! view.hitTest (view.getWidth() - 10, 60),
+               "grChip: …nor one below the corner, in the same column");
+
+        ist.setProperty (iid::spectrumOn, false, nullptr);
+        view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
+        check (! (bool) ist.getProperty (iid::spectrumOn, true),
+               "grChip: a press over the trace does not switch the mode");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
+        check ((bool) ist.getProperty (iid::spectrumOn, false),
+               "grChip: a press on the chip switches the well back to the spectrum");
+    }
 }
 
 static void testTheCurveWellCachesWithoutChangingWhatItDraws()
@@ -4175,7 +4198,7 @@ int main (int argc, char** argv)
         testARewoundSpectrumRingDropsThePreviousTrace();
         testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
         testTheAboutPanelShowsTheBuildItIsRunning();
-        testTheSpectrumOverlayOnlyClaimsItsDismissCorner();
+        testTheGraphWellViewsOnlyClaimTheirModeChips();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();

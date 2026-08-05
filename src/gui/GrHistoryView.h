@@ -13,6 +13,13 @@ class AnabasisAudioProcessor;
 //  waveform peaks filled from the baseline, the gain-reduction trace hanging
 //  from the top, over a 10–30 s window.
 //
+//  Since 2026-08-05 this is one of the TWO MODES of the shared graph well
+//  (`int_spectrumOn` is the mode flag; both views hold identical bounds and
+//  only visibility flips). It carries the top-right "SPEC" corner chip that
+//  switches back to the spectrum — the mirror of `SpectrumView`'s "GR" chip,
+//  with the same hit-area discipline: interactive over the chip ONLY, inert
+//  everywhere else, so clicks over the trace pass through.
+//
 //  Reader contract (THREAD_MODEL, decided at the P5 opening): stateless
 //  `peek`s against `available()`, and the RESET EPOCH sampled before and
 //  after every batch — odd or moved means the batch raced a host-thread
@@ -36,6 +43,10 @@ public:
     ~GrHistoryView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;   // top-right chip → spectrum
+    // Interactive ONLY over the chip; everything else falls through — the same
+    // per-pixel opt-out `SpectrumView::hitTest` documents at length.
+    bool hitTest (int x, int y) override;
     void visibilityChanged() override;
 
     // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band.
@@ -58,6 +69,9 @@ public:
     }
 
 private:
+    // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
+    // agree about it — the rule `SpectrumView::dismissHitArea` states.
+    juce::Rectangle<int> chipHitArea() const noexcept;
     void tick (double dt);
 
     AnabasisAudioProcessor& processor;

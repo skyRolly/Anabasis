@@ -6,7 +6,26 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 items 3/10 — the sibling's icons, About layout and A/B oval
+**Last updated:** for **round-2 items 8/9 — the Simple-view TP switch and the combined
+Spectrum/GR graph well (2026-08-05, owner directive)**. Item 8: `truePeakMode` gets the
+"highly visible" main-UI switch the directive asked for — a second attachment (`tpSimpleToggle`)
+in the Simple ceiling cell, stacked **TP above LOCK** (dual attachments to one parameter are
+ordinary APVTS practice; the Advanced limiter zone's TP is unchanged). Item 9: ONE graph well,
+both editor modes, two switchable views — `int_spectrumOn` is now the MODE flag (true =
+spectrum, false = GR history), both views hold identical bounds and only visibility flips, and
+the switch lives on the graph itself as corner chips that name the view you switch TO ("GR" on
+the spectrum, "SPEC" on the history; `GrHistoryView` moved from wholesale mouse opt-out to the
+same per-pixel `hitTest` discipline the spectrum uses, so trace clicks still fall through). The
+Settings "Spectrum" toggle is REMOVED; the editor tick's mode follow is a visibility flip, not
+the old `resized()` re-partition. The sibling's LF spectrum smoothing is ported into the trace
+read (ADR-0009 provenance: `SpectrumImager::magForColumn`/`magCubic` two-regime rule — columns
+spanning <1.5 bins take a Catmull-Rom across the four surrounding bins, wider columns average
+every covered bin; adapted to this analyser's dB-domain EMA, and the DC-bin exclusion kept).
+The §6.2 "GR-only Simple strip" wireframe is superseded (recorded at the layout site). Tests:
+the spectrum-corner test generalised to both views' chips (`…OnlyClaimTheirModeChips`, 5 new
+checks; suites 233 + 399). Manual §3.2/§3.4/§3.5, PARAMETER_REGISTRY's host-hidden inventory,
+HANDOVER's Test Status row and README's count synced.
+Previous: **round-2 items 3/10 — the sibling's icons, About layout and A/B oval
 (2026-08-05, owner directive)**. Undo/redo carry the sibling's circle arrows (U+21BA/U+21BB) —
 the half-arrows they replace inverted their reading under the icon treatment's 180° rotation,
 which is what the "ugly icons" report was; the glyph test now pins the new pair and records

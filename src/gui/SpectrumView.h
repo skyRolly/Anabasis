@@ -39,10 +39,11 @@ public:
     ~SpectrumView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;   // top-right × dismisses
-    // Interactive ONLY over that ×; everything else falls through to whatever
+    void mouseDown (const juce::MouseEvent&) override;   // top-right chip → GR history
+    // Interactive ONLY over that chip; everything else falls through to whatever
     // is beneath. See the definition — this is how a partly-interactive overlay
-    // opts out, where `GrHistoryView`/`CurveView` opt out wholesale.
+    // opts out. `GrHistoryView` mirrors it for its own chip; `CurveView` opts
+    // out wholesale.
     bool hitTest (int x, int y) override;
     void visibilityChanged() override;
 
@@ -63,9 +64,9 @@ public:
     const std::vector<float>& analysedInDb() const noexcept { return inDb; }
 
 private:
-    // The × hit-area, in ONE place because `hitTest` and `mouseDown` must agree
-    // about it — see the definition.
-    juce::Rectangle<int> dismissHitArea() const noexcept;
+    // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
+    // agree about it — see the definition.
+    juce::Rectangle<int> chipHitArea() const noexcept;
     void analyse (const anabasis::ScopeBuffer&, std::vector<float>& smoothedDb, double dt);
 
     AnabasisAudioProcessor& processor;

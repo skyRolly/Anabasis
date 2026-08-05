@@ -159,7 +159,7 @@ Universal gestures:
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −0.1 | The true-peak output limit. The **LOCK** toggle beside it keeps it fixed while you browse presets. |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The true-peak output limit. Two toggles sit beside it: **TP** engages true-peak detection in the limiter (the same parameter as the Advanced limiter zone's TP switch, §3.3 — default off), and **LOCK** keeps the ceiling fixed while you browse presets. |
 | **Character** | 0 … 1 | Clean ↔ Colour: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -203,10 +203,14 @@ Always along the bottom:
   in Settings).
 - **PLR** — peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics
   at-a-glance number.
-- **GR history** — a scrolling trace of recent gain reduction, the fastest way to see how
-  hard and how often the limiter is working.
-- **Spectrum** (Advanced view) — an input/output spectrum overlay. Dismiss it with the
-  **×** in its top-right corner; bring it back with **Spectrum** in Settings.
+- **The graph well** — one panel, two switchable views, in both Simple and Advanced:
+  - **Spectrum** — the input/output spectrum overlay (input dim, output in the accent).
+  - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see
+    how hard and how often the limiter is working.
+
+  The small chip in the graph's top-right corner names the view you switch **to** —
+  click **GR** on the spectrum to see the gain-reduction history, click **SPEC** on the
+  history to return. The choice is session state, saved with your project.
 
 **Click the LUFS/TP/PLR panel to reset** the integrated measurement and the held maxima —
 do it after changing the section you are judging.
@@ -224,7 +228,8 @@ Session state — saved with your DAW project, never in presets, invisible to au
 | **UI Animations** | on/off | Default on. Off never changes behaviour, only motion. |
 | **Tooltips** | on/off | Default off. |
 | **True-Peak Meter** | on/off | Shows/hides the TP row. Default off. |
-| **Spectrum** | on/off | Shows/hides the spectrum overlay (the overlay's × sets this too). |
+
+(The Spectrum/GR choice is *not* here: switch it with the chip on the graph itself — §3.4.)
 
 The **Ceiling LOCK** lives next to the Ceiling knob itself, not here — but like these
 settings it is session state, so browsing presets never moves a locked ceiling.

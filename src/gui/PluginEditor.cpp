@@ -377,6 +377,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     setupToggle (compToggle, pid::loudnessComp, "COMP", paramName (pid::loudnessComp));
     setupToggle (deltaToggle, pid::deltaMonitor, "DELTA", paramName (pid::deltaMonitor));
     setupToggle (freezeToggle, pid::freeze, "FREEZE", paramName (pid::freeze));
+    setupToggle (tpSimpleToggle, pid::truePeakMode, "TP", paramName (pid::truePeakMode));
 
     // -- macro row (read-only in Advanced, §6.3: the macros are driven from
     //    the Simple view; here they display position + detach badges) --------
@@ -453,8 +454,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addChildComponent (compGrMeter);
     addChildComponent (limGrMeter);
     addAndMakeVisible (*meterView);
-    addAndMakeVisible (*grView);
-    addChildComponent (*spectrumView);   // Advanced strip only; int_spectrumOn gates
+    // The two modes of the shared graph well (both views, both editor modes) —
+    // `int_spectrumOn` picks one; every layout pass and the 24 Hz tick keep the
+    // visibility pair in step, starting with the first `resized()`.
+    addChildComponent (*grView);
+    addChildComponent (*spectrumView);
 
     // -- overlays ------------------------------------------------------------
     addChildComponent (dimOverlay);
@@ -584,14 +588,15 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
                          ist.getPropertyAsValue (iid::tooltipsOn, nullptr));
     setupToggleInternal (tpMeterToggle, "True-Peak Meter", "True-Peak Meter",
                          ist.getPropertyAsValue (iid::tpMeterOn, nullptr));
-    setupToggleInternal (spectrumToggle, "Spectrum", "Spectrum",
-                         ist.getPropertyAsValue (iid::spectrumOn, nullptr));
+    // The Spectrum toggle left Settings 2026-08-05: the graph well itself
+    // carries the GR/SPEC switch now (owner directive — the control lives on
+    // the thing it controls).
     // The §6.4 streaming-target checkboxes stood here until 2026-08-05, when
     // the owner removed streaming-platform analysis outright (platforms
     // normalise; a modern master is pushed against the ceiling, not a
     // platform figure). `int_meterTargets` left the schema with them — an
     // old session carrying it is ignored by the §4.4 unknown-field rule.
-    for (auto* t : { &animToggle, &tooltipsToggle, &tpMeterToggle, &spectrumToggle })
+    for (auto* t : { &animToggle, &tooltipsToggle, &tpMeterToggle })
     {
         removeChildComponent (t);
         settingsBackdrop.addAndMakeVisible (t);
@@ -1029,7 +1034,6 @@ void AnabasisAudioProcessorEditor::resized()
         animToggle.setBounds (row (26));
         tooltipsToggle.setBounds (row (26));
         tpMeterToggle.setBounds (row (26));
-        spectrumToggle.setBounds (row (26));
     }
     {
         auto sp = savePresetBackdrop.panel.reduced (20, 16);
@@ -1160,18 +1164,19 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         place (cell(), macroToneK, macroToneL);
     }
 
-    // §6.3 shared metering strip: GR history left · spectrum middle
-    // (dismissible — GR widens into its share when it is off) · loudness
-    // block right.
+    // §6.3 shared metering strip: ONE graph well (GR history / spectrum,
+    // switched by the corner chip on the graph itself — int_spectrumOn is the
+    // mode) · loudness block right. The two views share the SAME bounds and
+    // only visibility flips, so a mode switch needs no relayout.
     auto strip = juce::Rectangle<int> (0, kBarH + kPanelRowH + kUtilityH + kMacroRowH,
                                        getWidth(), kMeterRowH).reduced (8, 6);
     meterView->setBounds (strip.removeFromRight (300));
+    spectrumView->setBounds (strip);
+    grView->setBounds (strip);
     const bool spectrumOn = (bool) processor.internalState.state()
                                 .getProperty (iid::spectrumOn, true);
     spectrumView->setVisible (spectrumOn);
-    if (spectrumOn)
-        spectrumView->setBounds (strip.removeFromRight (strip.getWidth() / 2));
-    grView->setBounds (strip);
+    grView->setVisible (! spectrumOn);
 
     juce::ignoreUnused (body);
 }
@@ -1198,7 +1203,15 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     place (macroRow.removeFromLeft (w), simpleCharacterK, simpleCharacterL);
     place (macroRow.removeFromLeft (w), simpleToneK, simpleToneL);
     auto ceilCell = macroRow;
-    ceilingLockToggle.setBounds (ceilCell.removeFromRight (54).withSizeKeepingCentre (52, 20));
+    // The ceiling's two mode switches stack in the right column: TP above
+    // LOCK — TP decides what the ceiling MEANS (dBTP vs sample peak), the
+    // lock decides whether presets may move it.
+    {
+        auto col = ceilCell.removeFromRight (54);
+        tpSimpleToggle.setBounds (col.removeFromTop (col.getHeight() / 2)
+                                     .withSizeKeepingCentre (52, 20));
+        ceilingLockToggle.setBounds (col.withSizeKeepingCentre (52, 20));
+    }
     place (ceilCell, simpleCeilingK, simpleCeilingL);
 
     // Toggle row: [Loudness Comp] [Delta] [Freeze] [Learn] + out LUFS.
@@ -1210,12 +1223,22 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     outLufsValue.setBounds (toggles.removeFromRight (72));
     outLufsCaption.setBounds (toggles.removeFromRight (70));
 
-    // §6.2 wells: the right meter panel and the bottom GR strip.
-    spectrumView->setVisible (false);    // §6.2: the Simple strip is GR-only
+    // §6.2 wells: the right meter panel and the bottom graph well — since
+    // 2026-08-05 the SAME switchable GR/spectrum well as Advanced (the §6.2
+    // "GR-only Simple strip" wireframe is superseded by the owner's combined-
+    // view directive; DESIGN is superseded section by section as built).
+    {
+        const bool spectrumOn = (bool) processor.internalState.state()
+                                    .getProperty (iid::spectrumOn, true);
+        spectrumView->setVisible (spectrumOn);
+        grView->setVisible (! spectrumOn);
+    }
     meterView->setBounds (juce::Rectangle<int> (getWidth() - 300, kBarH + 8,
                                                 292, kSimpleH - kBarH - 128 - 16));
-    grView->setBounds (juce::Rectangle<int> (0, kSimpleH - 120, getWidth(), 120)
-                           .reduced (8, 6));
+    const auto well = juce::Rectangle<int> (0, kSimpleH - 120, getWidth(), 120)
+                          .reduced (8, 6);
+    grView->setBounds (well);
+    spectrumView->setBounds (well);
 }
 
 // ============================================================================
@@ -1256,7 +1279,7 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
     juce::Component* simpleOnly[] = {
         &bigLoudnessK, &bigLoudnessL, &simpleCharacterK, &simpleCharacterL,
         &simpleToneK, &simpleToneL, &simpleCeilingK, &simpleCeilingL,
-        &ceilingLockToggle, &learnButton, &outLufsCaption, &outLufsValue,
+        &ceilingLockToggle, &tpSimpleToggle, &learnButton, &outLufsCaption, &outLufsValue,
     };
     for (auto* c : simpleOnly)
         c->setVisible (! adv);
@@ -1462,15 +1485,18 @@ void AnabasisAudioProcessorEditor::timerCallback()
         eqCurve->refresh();
     }
 
-    // -- spectrum visibility follows int_spectrumOn (dismiss / Settings) -----
+    // -- graph-well mode follows int_spectrumOn (the corner chips) -----------
     {
         const bool on = (bool) processor.internalState.state()
                             .getProperty (iid::spectrumOn, true);
         if (on != shownSpectrumOn)
         {
             shownSpectrumOn = on;
-            resized();                       // the strip re-partitions
-            repaint();
+            // Both views hold the SAME bounds (set unconditionally by both
+            // layouts), so a mode switch is a visibility flip, not the
+            // `resized()` this used to trigger when the strip re-partitioned.
+            spectrumView->setVisible (on);
+            grView->setVisible (! on);
         }
     }
 
