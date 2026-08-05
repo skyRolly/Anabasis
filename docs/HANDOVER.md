@@ -66,6 +66,14 @@ first scheduled or dispatched run — rehearse via `workflow_dispatch` after mer
 running" (P1 summary), silently unreported at P2–P6 closes. This entry is the status of record
 until the next phase summary.
 
+**Same date, `LATENCY_MODEL.md` lands** — the other contract authority
+`COMPATIBILITY_POLICY.md` cited without it existing. Thin on purpose where `Latency.h` is
+already the single source (the measured os tables are quoted nowhere in it); what it adds is
+the map: the two-term contract, what never moves PDC versus what does, the measurement tap's
+zero contribution, the five recompute triggers plus the load's documented no-op sixth, and
+the property→test verification table. With it and the serialization ledger, every authority
+document a binding policy points at now exists.
+
 **Same date, `SERIALIZATION_REGISTRY.md` lands** — the schema ledger `COMPATIBILITY_POLICY.md`
 has cited since bootstrap, written from the code with every node cited. Its evidence pass
 produced two catches: `BASELINE` has **no originator in this build** (adopted, carried and

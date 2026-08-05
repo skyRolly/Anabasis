@@ -6,7 +6,18 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **`SERIALIZATION_REGISTRY.md` landing (2026-08-05)** — the schema-v1
+**Last updated:** for **`LATENCY_MODEL.md` landing (2026-08-05)** — the second of the two
+documents `COMPATIBILITY_POLICY.md` cites as contract authorities that did not exist. The
+model is deliberately thin where `src/dsp/Latency.h` is already the single source: the
+`kOsLatMin`/`kOsLatLin` values are quoted **nowhere in the document** (they are measured
+against the pinned JUCE tree, so a prose copy is a stale copy the day the pin moves —
+the same reasoning as the pluginval strictness); what the document adds is the map — the
+two-term contract, what never moves PDC (the lookahead knob, presets, A/B, undo, loads)
+versus what does (OS factor/phase, the offline Force-Max flip), the ADR-0003 measurement
+tap contributing zero with RISK-008's measured resolution, the five recompute triggers plus
+the load's deliberately redundant sixth call (documented as a no-op at its own site), the
+one-latency-event-per-load batch, and the verification map from property to named test.
+Previous: **`SERIALIZATION_REGISTRY.md` landing (2026-08-05)** — the schema-v1
 ledger `COMPATIBILITY_POLICY.md` has cited as the serialization authority since bootstrap,
 now real: the session blob's full tree (root/children/properties in write order, each cited
 to `PluginProcessor.cpp`), the raw-vs-value fidelity split, the SLOT StateSet shape and its
@@ -5308,9 +5319,9 @@ These are **deliberate**, not oversights. Each names what would close it.
   absent list 2026-08-05 — it had sat here for three days after landing),
   `SERIALIZATION_REGISTRY.md` on 2026-08-05 — another absent document a binding policy already
   cited as an authority (`COMPATIBILITY_POLICY.md` §"Where each contract is specified"), the
-  same class as the attribution files and the matrix. Still absent:
+  same class as the attribution files and the matrix; `LATENCY_MODEL.md` (the other
+  policy-cited one) landed the same day. Still absent:
   `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`,
-  `LATENCY_MODEL.md` (also policy-cited — the next of the set to land),
   `DSP_ALGORITHMS.md`, `API_REFERENCE.md`, `STATE_SERIALIZATION.md` (the
   last two were listed in `REPOSITORY_MAP.md`'s planned set but omitted here — the two lists
   described the same set with different membership until the 2026-08-05 verification round
