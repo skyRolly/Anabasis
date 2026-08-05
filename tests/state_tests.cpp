@@ -4002,6 +4002,140 @@ static void testCachedParamsMapping()
     check (near (e.ceilingDbTp, -3.0f),                                          "cache: shared/output fields");
 }
 
+// ============================================================================
+//  Both channels carry audio through the REAL wrapper (processBlock), at
+//  defaults and with the macro push engaged. Written to reproduce a field
+//  report of a silent LEFT channel; the DSP suite proves the ENGINE stereo
+//  path, but nothing before this drove the wrapper's processBlock and measured
+//  BOTH output channels.
+// ============================================================================
+static void testBothChannelsCarryAudioThroughTheWrapper()
+{
+    auto run = [] (float loudness, const char* tag)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        if (loudness > 0.0f)
+        {
+            auto* par = proc.apvts.getParameter (pid::loudness);
+            par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (loudness));
+        }
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        double sumSq[2] = { 0.0, 0.0 };
+        const int blocks = 60;                      // ~640 ms: latency + smoothing well cleared
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                // DIFFERENT frequencies per channel, so a channel swap or a
+                // sum-into-one-channel defect cannot masquerade as health.
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) t / 48000.0f));
+                buf.setSample (1, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 330.0f * (float) t / 48000.0f));
+            }
+            proc.processBlock (buf, midi);
+            if (b >= blocks / 2)                    // measure the settled half only
+                for (int n = 0; n < 512; ++n)
+                {
+                    sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                    sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                }
+        }
+        const double rmsL = std::sqrt (sumSq[0] / (256.0 * 512.0));
+        const double rmsR = std::sqrt (sumSq[1] / (256.0 * 512.0));
+        juce::String msg;
+        msg << "stereoWrapper (" << tag << "): LEFT carries audio (rmsL="
+            << (float) rmsL << " rmsR=" << (float) rmsR << ")";
+        check (rmsL > 0.05, msg.toRawUTF8());
+        msg.clear();
+        msg << "stereoWrapper (" << tag << "): RIGHT carries audio (rmsR=" << (float) rmsR << ")";
+        check (rmsR > 0.05, msg.toRawUTF8());
+        msg.clear();
+        msg << "stereoWrapper (" << tag << "): channels within 6 dB of each other";
+        check (rmsL < rmsR * 2.0 && rmsR < rmsL * 2.0, msg.toRawUTF8());
+    };
+    run (0.0f,  "defaults");
+    run (50.0f, "loudness 50");
+
+    // The configurations the plain run above does NOT cover, each a candidate
+    // for a channel-asymmetric defect the DSP suite would miss: the editor
+    // alive while audio runs, the oversampler engaged (its polyphase state is
+    // per channel), a factory preset applied, and a session round-trip.
+    // setup returns a keep-alive token so a configuration can hold an object
+    // (the editor) LIVE across the processing loop, not merely construct it.
+    auto runWith = [] (const char* tag,
+                       std::function<std::shared_ptr<void> (AnabasisAudioProcessor&)> setup)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto keepAlive = setup (proc);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        double sumSq[2] = { 0.0, 0.0 };
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) t / 48000.0f));
+                buf.setSample (1, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 330.0f * (float) t / 48000.0f));
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n)
+                {
+                    sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                    sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                }
+        }
+        const double rmsL = std::sqrt (sumSq[0] / (30.0 * 512.0));
+        const double rmsR = std::sqrt (sumSq[1] / (30.0 * 512.0));
+        juce::String msg;
+        msg << "stereoWrapper (" << tag << "): both channels carry audio (L="
+            << (float) rmsL << " R=" << (float) rmsR << ")";
+        check (rmsL > 0.05 && rmsR > 0.05, msg.toRawUTF8());
+    };
+
+    runWith ("editor attached", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        // The editor stays ALIVE through the whole processing loop via the
+        // keep-alive token; the deleter runs editorBeingDeleted first, per the
+        // JUCE ownership contract.
+        auto* ed = p.createEditor();
+        return std::shared_ptr<void> (ed, [&p, ed] (void*)
+        {
+            p.editorBeingDeleted (ed);
+            delete ed;
+        });
+    });
+    runWith ("oversampling 16x linear", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        p.internalState.state().setProperty (iid::oversample, 4, nullptr);
+        p.internalState.state().setProperty (iid::osPhase, 1, nullptr);
+        p.prepareToPlay (48000.0, 512);      // re-prepare builds the OS chain
+        return nullptr;
+    });
+    runWith ("factory preset applied", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        p.applyFactoryPreset (1);            // Loud Pop — macro push engaged
+        return nullptr;
+    });
+    runWith ("after a session round-trip", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        juce::MemoryBlock blob;
+        p.getStateInformation (blob);
+        p.setStateInformation (blob.getData(), (int) blob.getSize());
+        return nullptr;
+    });
+}
+
 int main (int argc, char** argv)
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -4030,6 +4164,7 @@ int main (int argc, char** argv)
         testTheFrozenLatchNeedsNoThreadCrossing();
         testAFrozenLatchDoesNotFollowTheSlotSwitch();
         testHistoryOwnershipAcrossAStateLoad();
+        testBothChannelsCarryAudioThroughTheWrapper();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
