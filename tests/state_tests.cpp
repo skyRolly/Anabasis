@@ -2841,6 +2841,18 @@ static juce::TextEditor* findTextEditor (juce::Component& root)
     return nullptr;
 }
 
+static juce::Button* findButtonById (juce::Component& root, const juce::String& id)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getComponentID() == id)
+            return b;
+        if (auto* found = findButtonById (*c, id))
+            return found;
+    }
+    return nullptr;
+}
+
 static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::String& title)
 {
     for (auto* c : root.getChildren())
@@ -3283,6 +3295,60 @@ static void testARewoundSpectrumRingDropsThePreviousTrace()
 // this view cannot, because it owns the ×, so it opts out per-pixel through
 // `hitTest`. Both halves are checked: a click elsewhere must not be claimed, and
 // the dismiss must still work.
+// The About overlay opened BLANK: `Backdrop::aboutText` had one reader — the
+// dismiss-anywhere branch in `mouseDown` — so the flag named a panel whose copy
+// nothing painted, and `ANABASIS_VERSION_STRING`/`ANABASIS_BUILD_NUMBER` had no
+// consumer in the tree at all while `CI_CD.md` still described the run number as
+// "the About-box build number".
+//
+// Asserted as HORIZONTAL VARIATION rather than a pixel count or a glyph match,
+// which is what makes it font-independent: the empty panel is a vertical glass
+// gradient, so every row is near-constant across x, while any rendered copy
+// breaks that. A blank panel therefore fails no matter which font the host
+// machine resolves, and the check needs no threshold tuned to one of them.
+static void testTheAboutPanelShowsTheBuildItIsRunning()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "about: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    // Through the real path: the wordmark's invisible hit-area button, found by
+    // the component ID the LookAndFeel already keys on.
+    auto* title = findButtonById (*ed, "ghost");
+    check (title != nullptr && title->onClick != nullptr,
+           "about: (premise) the wordmark opens the panel");
+    if (title == nullptr || title->onClick == nullptr)
+        return;
+    title->onClick();
+
+    // The same expression `resized()` centres the panel with.
+    const auto panel = ed->getLocalBounds().withSizeKeepingCentre (400, 232);
+    const auto copyArea = panel.reduced (30, 26).withTrimmedBottom (232 - 26 - 150);
+    const auto shot = ed->createComponentSnapshot (copyArea, false);
+    check (shot.getWidth() == copyArea.getWidth() && shot.getHeight() > 0,
+           "about: (premise) the panel's copy area rendered");
+
+    int texturedRows = 0;
+    for (int y = 0; y < shot.getHeight(); ++y)
+    {
+        int lo = 255, hi = 0;
+        for (int x = 0; x < shot.getWidth(); ++x)
+        {
+            const int b = shot.getPixelAt (x, y).getBrightness() > 0.0f
+                            ? (int) (shot.getPixelAt (x, y).getBrightness() * 255.0f) : 0;
+            lo = juce::jmin (lo, b);
+            hi = juce::jmax (hi, b);
+        }
+        if (hi - lo > 30)
+            ++texturedRows;
+    }
+    check (texturedRows >= 20,
+           "about: the panel paints product copy, not an empty glass rectangle");
+}
+
 static void testTheSpectrumOverlayOnlyClaimsItsDismissCorner()
 {
     AnabasisAudioProcessor proc;
@@ -3848,6 +3914,7 @@ int main (int argc, char** argv)
         testAnOutOfListUiScaleClampsConsistently();
         testTheCurveWellCachesWithoutChangingWhatItDraws();
         testARewoundSpectrumRingDropsThePreviousTrace();
+        testTheAboutPanelShowsTheBuildItIsRunning();
         testTheSpectrumOverlayOnlyClaimsItsDismissCorner();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();

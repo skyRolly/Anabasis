@@ -6,7 +6,34 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 59 (2026-08-05)** — one UI interaction fix:
+**Last updated:** for **review round 60 (2026-08-05)** — a lost-functionality regression restored:
+**The About overlay opened blank.** `Backdrop::aboutText` had exactly ONE reader — the
+dismiss-anywhere branch in `Backdrop::mouseDown` — so the flag named a panel whose copy nothing
+painted: clicking the wordmark produced an empty glass rectangle with only the hyperlink in it, and
+a user or tester had no way to see which version or build they were running. The compile definitions
+were orphaned with it: `ANABASIS_VERSION_STRING` and `ANABASIS_BUILD_NUMBER` are set by
+`CMakeLists.txt` for the plugin AND the state-test target, and `CI_CD.md` still describes the run
+number as "the About-box build number", but a repo-wide grep found no consumer in `src/` at all.
+`resized()` had even kept the space — the panel is 400×232 with the link at `withTrimmedTop (176)`,
+so the top 176 px were reserved for copy that was never drawn.
+`Backdrop::paint` now renders it, in the panel rather than in a new child component, because that is
+where every other overlay's content already lives. The strings are ones this product already owns:
+the wordmark and the `MASTERING MAXIMIZER` subtitle the top bar paints (at the top bar's own accent
+tracking, so the panel reads as that wordmark enlarged rather than a second one), `COMPANY_NAME`
+from `CMakeLists.txt`, and the two build definitions. The `#ifndef` fallbacks are for a build that
+bypasses CMake and are deliberately not a release number, so a stale one cannot masquerade as
+shipped.
+**No prose description, and that is where this departs from the sibling's About.** Anamorph's panel
+carries a product sentence because its owner supplied one; free prose here is owner-supplied wording
+(C8), which `PluginEditor.cpp`'s own header says is not invented in code. The panel identifies the
+build completely without it, and a description is a one-line addition when the copy lands.
+`testTheAboutPanelShowsTheBuildItIsRunning` opens the panel through the REAL path — the wordmark's
+ghost hit-area button, found by the component id the LookAndFeel already keys on — and asserts the
+copy area shows HORIZONTAL variation. That formulation is the point: an empty panel is a vertical
+glass gradient, so every row is near-constant across x, and any rendered copy breaks that. The check
+therefore needs no pixel count or glyph match tuned to one machine's font, which is what would have
+made an editor-rendering test a platform flake. A mutant restoring the blank paint fails it.
+Previous: **review round 59 (2026-08-05)** — one UI interaction fix:
 **`SpectrumView` consumed clicks it had no use for.** It left `setInterceptsMouseClicks` at JUCE's
 default, so it hit-tested true across its whole area while acting only on clicks in the top-right
 26×24 × region. Every other click inside the overlay was swallowed with no affordance and no effect

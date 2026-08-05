@@ -8,6 +8,18 @@ using namespace abgui;
 // invented here — the mechanism ships, the copy lands when specified.
 static juce::String tidyTip (const juce::String& tip) { return tip.trim(); }
 
+// The build system defines both (CMakeLists `target_compile_definitions`, for the
+// plugin AND the state-test target that constructs this editor). The fallbacks
+// are for a build that bypasses CMake, and are deliberately NOT a release number
+// so a stale one cannot masquerade as shipped — the same guard the sibling
+// product carries.
+#ifndef ANABASIS_VERSION_STRING
+ #define ANABASIS_VERSION_STRING "0.0.0-dev"
+#endif
+#ifndef ANABASIS_BUILD_NUMBER
+ #define ANABASIS_BUILD_NUMBER "0"
+#endif
+
 // The UI-scale step list, in ONE place: the combo builds its item list from it,
 // `applyUiScale` maps the stored percent back through it, and the settings
 // re-seed compares against it. Three private copies is how the three drift.
@@ -57,6 +69,55 @@ void AnabasisAudioProcessorEditor::Backdrop::paint (juce::Graphics& g)
         }
 
     glass::fillPanel (g, pf, 12.0f, colours::bgPanel, 1.0f);
+
+    if (! aboutText)
+        return;
+
+    // THE ABOUT COPY. `aboutText` had exactly one reader — `mouseDown`, where it
+    // makes a click anywhere dismiss — so the flag named a panel whose content
+    // nothing drew: the overlay opened blank but for the hyperlink, and the
+    // `ANABASIS_VERSION_STRING` / `ANABASIS_BUILD_NUMBER` definitions
+    // `CMakeLists.txt` sets (and `CI_CD.md` describes as "the run number becomes
+    // the About-box build number") had no consumer in the tree at all. Restored
+    // here rather than in a new child component: `resized()` already reserves
+    // this space — the panel is 400×232 with the link at `withTrimmedTop (176)`
+    // — and every other overlay's content is likewise painted by its Backdrop.
+    //
+    // The strings are the ones this product already owns: the wordmark and
+    // subtitle the top bar paints, `COMPANY_NAME` from `CMakeLists.txt`, and the
+    // two build definitions. NO PROSE DESCRIPTION, deliberately — the sibling's
+    // About carries one because its owner supplied it, and free prose here is
+    // owner-supplied wording (C8), which this file's header says is not invented
+    // in the code. Identification is complete without it; a description is a
+    // one-line addition once the copy lands.
+    const auto copyright = juce::String::charToString ((juce::juce_wchar) 0x00A9);  // © , not mojibake
+
+    auto r = panel.reduced (30, 26);
+    g.setColour (colours::text);
+    g.setFont (juce::Font (juce::FontOptions (28.0f)).withExtraKerningFactor (0.16f));
+    g.drawText ("ANABASIS", r.removeFromTop (38), juce::Justification::topLeft);
+
+    // The accent subtitle at the top bar's own tracking (`paint`, 10 px / 0.25),
+    // so the panel reads as the same wordmark enlarged rather than a second one.
+    g.setColour (colours::accent);
+    g.setFont (juce::Font (juce::FontOptions (12.0f)).withExtraKerningFactor (0.25f));
+    g.drawText ("MASTERING MAXIMIZER", r.removeFromTop (20), juce::Justification::topLeft);
+
+    r.removeFromTop (14);
+    g.setColour (colours::textDim);
+    g.setFont (juce::Font (juce::FontOptions (13.0f)));
+    g.drawText (juce::String ("Version ") + ANABASIS_VERSION_STRING
+                    + "   build " + ANABASIS_BUILD_NUMBER,
+                r.removeFromTop (18), juce::Justification::topLeft);
+    g.drawText ("RollyTech", r.removeFromTop (18), juce::Justification::topLeft);
+
+    // Above the link band, not below it: the link is centred 180 px wide, so a
+    // bottom-left notice would run under it at this panel width.
+    r.removeFromTop (10);
+    g.setColour (colours::textDim.withAlpha (0.7f));
+    g.setFont (juce::Font (juce::FontOptions (11.0f)));
+    g.drawText (copyright + " 2026 RollyTech. All rights reserved.",
+                r.removeFromTop (16), juce::Justification::topLeft);
 }
 
 void AnabasisAudioProcessorEditor::ABControl::paint (juce::Graphics& g)
