@@ -102,9 +102,7 @@ toggle row, and the metering strip.
    better, keep going; if it only sounded better because it was louder, you just found out.
 4. Press **DELTA** to hear exactly what is being removed — transient tops, mostly. Short,
    dry ticks are healthy; tone or vocal body in the delta means you are pushing too hard.
-5. Check the **Ceiling** (default −0.1 dBTP) against your delivery target, and note the
-   streaming target lines on the LUFS meter — the tooltip shows each platform's reference
-   level and how far above it you are.
+5. Check the **Ceiling** (default −0.1 dBTP) against your delivery spec.
 6. **Bypass** in the top bar A/Bs against the untouched signal — with COMP on, that
    comparison is loudness-matched too.
 
@@ -200,11 +198,7 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 
 Always along the bottom:
 
-- **LUFS** — Momentary / Short-term / Integrated bars (BS.1770-4, gated) with the
-  **streaming target lines** ticked on them. The panel tooltip lists each platform's
-  reference level with its "as of" date — the practical reading is the **loudness
-  penalty**: how far above a platform's line you are is how far that platform will turn
-  your track down.
+- **LUFS** — Momentary / Short-term / Integrated bars (BS.1770-4, gated).
 - **TP** — true peak in dBTP with a max hold (hidden if you turn the true-peak meter off
   in Settings).
 - **PLR** — peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics
@@ -231,7 +225,6 @@ Session state — saved with your DAW project, never in presets, invisible to au
 | **Tooltips** | on/off | Default off. |
 | **True-peak meter** | on/off | Shows/hides the TP row. |
 | **Spectrum** | on/off | Shows/hides the spectrum overlay (the overlay's × sets this too). |
-| **Target lines** | Spotify / Apple Music / YouTube | Which streaming target ticks the LUFS bars show. |
 
 The **Ceiling LOCK** lives next to the Ceiling knob itself, not here — but like these
 settings it is session state, so browsing presets never moves a locked ceiling.
@@ -359,8 +352,8 @@ step. Both slots travel with your DAW session.
 2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work.
 3. **COMP on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.
-4. Compare candidates with **A/B** + **Copy**, judge PLR and the target lines, and undo
-   freely — history is per slot.
+4. Compare candidates with **A/B** + **Copy**, judge PLR, and undo freely — history
+   is per slot.
 
 ### Competitive loudness (pop/EDM)
 
@@ -370,17 +363,15 @@ step. Both slots travel with your DAW session.
 3. In Advanced, try Limiter **Style → Loud**, and raise **Oversampling** (4× and up) —
    at heavy clipping it audibly cleans the top end. **Offline quality → Force Max**
    renders the bounce at 16× regardless.
-4. Watch **DELTA** for pumping or vocal damage, and the penalty tooltip for how far the
-   platforms will pull you back down.
+4. Watch **DELTA** for pumping or vocal damage.
 
 ### Spoken word / podcast
 
 1. Start from *Podcast Voice*. Modest **Loudness**; the compressor does most of the work.
 2. **LEARN** on a representative minute of the actual voice, then let it settle and
    **FREEZE** — one consistent sound for the whole episode, saved with the session.
-3. Target the platform line you deliver to (−14 to −16 LUFS integrated) rather than
-   maximum loudness; reset the integrated meter (click the panel), play the episode
-   through, and read **I**.
+3. Aim for your distributor's integrated-loudness spec rather than maximum loudness;
+   reset the integrated meter (click the panel), play the episode through, and read **I**.
 
 ---
 

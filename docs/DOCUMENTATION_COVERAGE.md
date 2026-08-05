@@ -6,7 +6,19 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 item 6 — the "Default" preset (2026-08-05, owner directive,
+**Last updated:** for **round-2 item 5 — streaming-platform analysis removed outright
+(2026-08-05, owner directive; OQ-008 → Resolved-by-supersession)**. Gone together, because they
+were one feature: `LoudnessMeterView`'s `kTargets` table + tick overlay + penalty rows + the
+"as of" tooltip, the three §6.4 Settings checkboxes, and the `int_meterTargets` field itself —
+a pre-ship schema removal, free by the contract's own terms; an old session carrying the field
+is ignored by the §4.4 unknown-field rule (the registries record the removal rather than
+pretending the field never existed). The meter tooltip is now the click-to-reset line alone.
+Tests: the target-checkbox and tooltip-quotes-the-table sections of `settingsFollow` removed
+with the feature (suite 404 → 394); the TP-row comment's stale "EDM Club ships −0.5" example
+fixed in passing. Manual (five sites), README's planned-scope bullet (which now names the
+directive rather than silently contradicting the brief), HANDOVER's three OQ-008 rows and both
+registries synced.
+Previous: **round-2 item 6 — the "Default" preset (2026-08-05, owner directive,
 the sibling's pattern)**. Factory index 0 is now `{ "Default", nullptr, 0 }` — "defaults +
 intents" with zero intents IS the default patch — and the fresh-constructed state carries its
 identity: `livePresetName` seeds to "Default" before the default slot is captured (so both A/B

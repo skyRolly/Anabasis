@@ -565,47 +565,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
                          ist.getPropertyAsValue (iid::tpMeterOn, nullptr));
     setupToggleInternal (spectrumToggle, "Spectrum", "Spectrum",
                          ist.getPropertyAsValue (iid::spectrumOn, nullptr));
-    // Target-line selection (§6.4): three bits of int_meterTargets, in the
-    // LoudnessMeterView::kTargets order — and now with the LABELS taken from
-    // that table too. Platform names are identifiers, not invented prose, and
-    // they were written out here as a third copy beside the table and the
-    // meter's tooltip; OQ-008's per-release refresh touches the table, so the
-    // copies are what would have gone stale.
-    {
-        const int mask = (int) ist.getProperty (iid::meterTargets, ~0);
-        for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
-        {
-            auto* tog = &targetToggles[(size_t) t];
-            tog->setButtonText (LoudnessMeterView::kTargets[t].fullName);
-            tog->setToggleState ((mask & (1 << t)) != 0, juce::dontSendNotification);
-            // `onStateChange`, not `onClick`, because the state can also be set
-            // programmatically — but it fires from `sendStateMessage()` on EVERY
-            // button-state transition, including normal→over and over→down. The
-            // handler then wrote the widget's view of its bit back into the
-            // tree, so merely hovering a checkbox stamped that bit. Harmless
-            // while the two agree; not harmless in the ≤~42 ms after a project
-            // load, where a mouse-enter could stamp the previous project's bit
-            // over the freshly loaded mask before the next re-seed.
-            //
-            // The write is now gated on the bit actually differing, which is the
-            // only condition under which there is anything to persist. Hover and
-            // press leave the toggle state alone, so they compute the mask they
-            // already found and write nothing; a real toggle differs and writes.
-            // The load direction is untouched: `setToggleState` above uses
-            // `dontSendNotification`, so a re-seed never reaches this lambda.
-            tog->onStateChange = [this, t, tog]
-            {
-                auto tree = processor.internalState.state();
-                const int current = (int) tree.getProperty (iid::meterTargets, ~0);
-                const int wanted  = tog->getToggleState() ? (current | (1 << t))
-                                                          : (current & ~(1 << t));
-                if (wanted != current)
-                    tree.setProperty (iid::meterTargets, wanted, nullptr);
-            };
-            settingsBackdrop.addAndMakeVisible (*tog);
-            registerAnimated (*tog);
-        }
-    }
+    // The §6.4 streaming-target checkboxes stood here until 2026-08-05, when
+    // the owner removed streaming-platform analysis outright (platforms
+    // normalise; a modern master is pushed against the ceiling, not a
+    // platform figure). `int_meterTargets` left the schema with them — an
+    // old session carrying it is ignored by the §4.4 unknown-field rule.
     for (auto* t : { &animToggle, &tooltipsToggle, &tpMeterToggle, &spectrumToggle })
     {
         removeChildComponent (t);
@@ -1043,14 +1007,6 @@ void AnabasisAudioProcessorEditor::resized()
         tooltipsToggle.setBounds (row (26));
         tpMeterToggle.setBounds (row (26));
         spectrumToggle.setBounds (row (26));
-        // Evenly divided rather than three hand-picked widths, so a fourth
-        // target lays itself out. The last takes the remainder.
-        auto tr = row (26);
-        for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
-            targetToggles[(size_t) t].setBounds (
-                t == LoudnessMeterView::kNumTargets - 1
-                    ? tr : tr.removeFromLeft (tr.getWidth()
-                                              / (LoudnessMeterView::kNumTargets - t)));
     }
     {
         auto sp = savePresetBackdrop.panel.reduced (20, 16);
@@ -1315,27 +1271,7 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     reseed (phaseBox,      (int) ist.getProperty (iid::osPhase, 0));
     reseed (offlineBox,    (int) ist.getProperty (iid::offlineQuality, 0));
 
-    // The three §6.4 target checkboxes are the same one-way shape and were
-    // missed when the combos were fixed: they are hand-built (three BITS of one
-    // int, so `referTo` cannot express them, exactly as the combos' index↔value
-    // mapping could not) and were seeded once at construction. `LoudnessMeterView`
-    // reads `int_meterTargets` from the tree every frame, so after a project
-    // load with the panel open the METER moved and the boxes did not — and the
-    // first click then read as toggling the wrong thing. `dontSendNotification`
-    // because a display refresh should produce no state write at all — the
-    // writer below happens to be idempotent (it re-reads the mask from the tree
-    // before setting its own bit, so notifying would write the loaded value
-    // back unchanged), and that is precisely the internal detail this must not
-    // start depending on.
-    {
-        const int mask = (int) ist.getProperty (iid::meterTargets, ~0);
-        for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
-        {
-            auto& tog = targetToggles[(size_t) t];
-            if (const bool want = (mask & (1 << t)) != 0; tog.getToggleState() != want)
-                tog.setToggleState (want, juce::dontSendNotification);
-        }
-    }
+
 
     // uiScale is the same shape with one extra step: the box only DISPLAYS the
     // percent, so a stored change has to reach `applyUiScale()` as well or the

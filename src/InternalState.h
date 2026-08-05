@@ -32,7 +32,6 @@ namespace iid
     inline const juce::Identifier tooltipsOn     { "int_tooltipsOn" };     // bool
     inline const juce::Identifier uiAnimations   { "int_uiAnimations" };   // bool
     inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool (dismissible, brief §6)
-    inline const juce::Identifier meterTargets   { "int_meterTargets" };   // bitmask, all on
     inline const juce::Identifier tpMeterOn      { "int_tpMeterOn" };      // bool
 }
 
@@ -94,7 +93,6 @@ public:
         tree.setProperty (iid::tooltipsOn,     false, nullptr);
         tree.setProperty (iid::uiAnimations,   true,  nullptr);
         tree.setProperty (iid::spectrumOn,     true,  nullptr);
-        tree.setProperty (iid::meterTargets,   ~0,    nullptr);
         tree.setProperty (iid::tpMeterOn,      false, nullptr);
     }
 

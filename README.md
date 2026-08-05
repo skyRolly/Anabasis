@@ -51,8 +51,9 @@ headless Linux machine, no IDE.
 - **Advanced mode:** per-stage control over the same parameter model — switching modes must not
   change the sound.
 - **Metering:** LUFS (momentary / short-term / integrated, BS.1770-4 gated), true peak (dBTP),
-  PLR, gain-reduction history, input/output spectrum, streaming-target lines with a
-  loudness-penalty estimate.
+  PLR, gain-reduction history, input/output spectrum. (The brief's streaming-target lines were
+  removed by owner directive 2026-08-05 — platforms normalise; a master is pushed against the
+  ceiling, not a platform figure.)
 - **Formats:** VST3 (all platforms), **AU** (macOS, for Logic Pro), Standalone (debugging).
   **AAX is not supported.**
 - **Platforms:** Linux x86-64 (headless CI build), Windows x86-64, macOS universal (arm64 + x86_64).

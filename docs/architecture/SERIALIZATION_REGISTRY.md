@@ -31,7 +31,7 @@ There are **two formats**, deliberately different in fidelity (ADR-0007 option H
 AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, PluginProcessor.cpp:7)
 ├── ANABASIS                      the APVTS tree — the LIVE parameter surface
 │   └── PARAM ×49                 id · value (denormalised) · raw (normalised double, additive)
-├── ANABASIS_INTERNAL             host-hidden session state (10 int_* properties)
+├── ANABASIS_INTERNAL             host-hidden session state (9 int_* properties)
 ├── AB                            active = 0|1
 │   ├── SLOT                      (slot 0)
 │   │     presetName (string)
@@ -114,7 +114,7 @@ placement was rejected for the trims, not for this (ADR-0007 §Options D).
 
 ### 1.6 `ANABASIS_INTERNAL`
 
-The ten host-hidden fields (`src/InternalState.h` — inventory in
+The host-hidden fields (`src/InternalState.h` — inventory in
 `PARAMETER_REGISTRY.md` §Host-hidden state). Read by `InternalState::replaceFrom`:
 **defaults first**, then overlay only properties the schema knows (unknown ignored), the
 `int_uiScale` ladder normalisation applied at adoption with the default as the read

@@ -29,7 +29,17 @@ terms separately.
 
 ---
 
-## OQ-008 — Loudness-penalty reference values · `Open`
+## OQ-008 — Loudness-penalty reference values · `Resolved 2026-08-05 (superseded by removal)`
+
+**Decision (2026-08-05, owner directive, round 2).** **The feature this question served no
+longer exists.** The owner removed streaming-platform analysis outright — target lines, penalty
+rows, the Settings checkboxes and the `int_meterTargets` field — on the reasoning that platforms
+normalise audio themselves and a modern master is pushed against the **ceiling**, not against a
+platform figure. With no compiled table left to refresh, both of this entry's open halves
+(release-time first-party verification; the club/CD reference level) are moot. The mechanism
+this entry ratified (one compiled table, per-value citation, "as of" date in the tooltip) is
+recorded below as the shape any future reintroduction should take — reintroduction would be a
+new decision, not a reopening of this one. The original entry follows as the record.
 
 **Question.** §6 requires streaming-target lines (Spotify −14, Apple Music −16, YouTube −14,
 club/CD) **plus a loudness-penalty estimate in dB per platform**.

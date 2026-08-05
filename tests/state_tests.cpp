@@ -3618,38 +3618,10 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     if (ed == nullptr)
         return;
 
-    // Found by the table's own name, which is the point: the checkbox labels,
-    // the meter tooltip and the ticks all derive from `kTargets`, so a test
-    // that looked one of them up by a literal would be a fourth copy.
-    juce::ToggleButton* targets[3] = {};
-    for (int t = 0; t < 3; ++t)
-        targets[t] = dynamic_cast<juce::ToggleButton*> (
-            findButtonByText (*ed, LoudnessMeterView::kTargets[t].fullName));
-    check (targets[0] != nullptr && targets[1] != nullptr && targets[2] != nullptr,
-           "settingsFollow: (premise) the three target checkboxes were found");
-    if (targets[0] == nullptr || targets[1] == nullptr || targets[2] == nullptr)
-        return;
-
-    // All three default ON (`meterTargets` = ~0), so a mask that clears the
-    // middle bit is a change in BOTH directions across the row — a re-seed that
-    // only ever turned boxes off, or only on, would still fail one of them.
-    for (int t = 0; t < 3; ++t)
-        check (targets[t]->getToggleState(), "settingsFollow: (premise) targets start on");
-
     auto& tree = proc.internalState.state();
-    tree.setProperty (iid::meterTargets, 0b101, nullptr);      // Apple Music off
     tree.setProperty (iid::oversample, 3, nullptr);            // 8×
     tree.setProperty (iid::osPhase, 1, nullptr);               // linear
     ed->refreshInternalSettingsBoxes();
-
-    check (targets[0]->getToggleState() && ! targets[1]->getToggleState()
-               && targets[2]->getToggleState(),
-           "settingsFollow: the checkboxes followed the loaded mask, bit for bit");
-    // …and the re-seed must not write back through `onStateChange`: a
-    // notifying set would put the widget's own state into the tree, which is
-    // how a one-way binding "fixes" itself into overwriting the load.
-    check ((int) tree.getProperty (iid::meterTargets) == 0b101,
-           "settingsFollow: …without the re-seed writing the mask back");
     // The round-26 half, now guarded rather than assumed: a combo whose index
     // is not its value follows the same load.
     if (auto* box = findComboByTitle (*ed, "Oversampling"))
@@ -3658,11 +3630,6 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     else
         check (false, "settingsFollow: (premise) the oversampling combo was found by title");
 
-    // The OQ-008 table is the ONE source for every user-visible fact about a
-    // target: the ticks, the checkbox labels, and the meter's tooltip — which
-    // carried the names, the numbers and the "as of" date as free text. The
-    // expectation is REBUILT from the table, so the guard is that a per-release
-    // refresh of `kTargets` cannot leave a display quoting the old figures.
     // The micro-animation seed. `stepMicroAnims` eases `vpos` toward each
     // slider's real proportion and `drawRotarySlider` prefers `vpos` whenever
     // the control is not being dragged, so an unseeded editor opens with every
@@ -3694,13 +3661,8 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     check (seeded > 0 && seeded == countSliders (*ed),
            "settingsFollow: every knob's animated position starts where the value already is");
 
-    const auto tip = LoudnessMeterView::tooltipText();
-    for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
-        check (tip.contains (juce::String (LoudnessMeterView::kTargets[t].fullName) + " "
-                                 + juce::String (LoudnessMeterView::kTargets[t].lufs, 0)),
-               "settingsFollow: the meter tooltip quotes the table, target by target");
-    check (tip.contains (LoudnessMeterView::kTargetsAsOf),
-           "settingsFollow: …and the table's own \"as of\" date");
+    // The streaming-target table and its tooltip checks stood here until the
+    // 2026-08-05 removal (owner directive; the view's header carries the why).
 }
 
 // ---------------------------------------------------------------------------
