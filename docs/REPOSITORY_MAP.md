@@ -107,11 +107,12 @@ docs/
 │                   here). THREAD_MODEL.md (implemented model, from ADR-0011)
 │                   and PARAMETER_REGISTRY.md (the surface ledger, from ADR-0010 +
 │                   the frozen snapshot) exist since P1 close;
-│                   REALTIME_SAFETY_AUDIT.md since P2 close. [P3+] the rest of the
-│                   descriptive set: ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE,
+│                   REALTIME_SAFETY_AUDIT.md since P2 close; PERFORMANCE_BUDGET.md
+│                   since P6; COMPATIBILITY_MATRIX.md since 2026-08-05 (the
+│                   DAW-audition target list). Still planned, no date claimed:
+│                   ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE,
 │                   DSP_ALGORITHMS, API_REFERENCE, SERIALIZATION_REGISTRY,
-│                   STATE_SERIALIZATION, LATENCY_MODEL, PERFORMANCE_BUDGET,
-│                   COMPATIBILITY_MATRIX
+│                   STATE_SERIALIZATION, LATENCY_MODEL
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. [P6] PACKAGING
 └── policies/       REALTIME_AUDIO, THREADING, DSP, MODE_AND_ADAPTATION, COMPATIBILITY family,

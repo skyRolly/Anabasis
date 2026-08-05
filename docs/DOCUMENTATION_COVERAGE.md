@@ -6,7 +6,23 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the third-party attribution landing (2026-08-05)** — the factual half of
+**Last updated:** for **`COMPATIBILITY_MATRIX.md` landing (2026-08-05)** — the descriptive doc
+the fine review could not start without: `OQ-011` directed its supported-OS claim to be
+"restated in COMPATIBILITY_MATRIX.md when that document lands", and HANDOVER's Pending Tasks
+row points the DAW-matrix audition at "`COMPATIBILITY_MATRIX.md` targets" — while the document
+did not exist, references to a plan mistaken for a deliverable. It now exists at the sibling's
+location (`docs/architecture/`, ADR-0009 structure, findings re-derived): formats (AAX Not
+Supported per the brief's own exclusion), the three blocking platform gates (quoting no
+strictness number — the single-place rule), the OQ-011 macOS floor restated with its evidence
+and **no invented Windows/Linux floor** (C7), stereo→stereo as the only accepted layout
+(`isBusesLayoutSupported`, with the mono delta from the sibling stated as a scope decision),
+the audition target rows A1–A3 (all `Unverified`, with the rule that no host flips without
+per-host evidence — the ~46-notification preset burst check stays owned by
+`RELEASE_COMPATIBILITY_CHECKLIST.md`), and the pins (JUCE SHA, C++20 + the 20/23 canary seam,
+pluginval deliberately recorded as unpinned). `REPOSITORY_MAP.md`'s architecture row now says
+which descriptive docs exist with dates and which remain planned with none claimed; the gaps
+list and self-coverage row updated in step.
+Previous: **the third-party attribution landing (2026-08-05)** — the factual half of
 the legal class, produced by the method `RELEASE_POLICY.md` §"Third-party attribution" itself
 prescribes (which had been *requiring* these files with every binary distribution since
 bootstrap, while neither existed — a policy-vs-tree drift this closes):
@@ -5195,7 +5211,7 @@ landed — the staleness the same date's audit entry reports.)
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING moved with the installer set to the first commercial release — **OQ-007**, resolved 2026-08-02; no longer a P6 item) |
-| architecture | `design-decisions/ADR_INDEX.md` — **the registry**: take the ADR set and each entry's confidence from it, never from a row here (this row enumerated "ADR-0001…0012" and went stale the moment ADR-0013/0014 were Accepted — the same staleness the round-53 README fix removed, in the file whose job is noticing it). Descriptive set: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2), `PERFORMANCE_BUDGET.md` (P6) | Decisions registered in the index; remaining descriptive docs — see the gaps list below |
+| architecture | `design-decisions/ADR_INDEX.md` — **the registry**: take the ADR set and each entry's confidence from it, never from a row here (this row enumerated "ADR-0001…0012" and went stale the moment ADR-0013/0014 were Accepted — the same staleness the round-53 README fix removed, in the file whose job is noticing it). Descriptive set: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2), `PERFORMANCE_BUDGET.md` (P6), `COMPATIBILITY_MATRIX.md` (2026-08-05) | Decisions registered in the index; remaining descriptive docs — see the gaps list below |
 | docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
 | user | — | **Absent — P6 closed without it** and no replacement target is recorded; when it lands it is written against the finished v0.1.0 surface (the class is derived, `SOURCE_OF_TRUTH.md`). Flagged to the owner rather than silently re-dated (C7) |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
@@ -5212,11 +5228,11 @@ These are **deliberate**, not oversights. Each names what would close it.
   with P1, `REALTIME_SAFETY_AUDIT.md` with P2, `PERFORMANCE_BUDGET.md` with P6 (struck from the
   absent list 2026-08-05 — it had sat here for three days after landing). Still absent:
   `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`, `SERIALIZATION_REGISTRY.md`,
-  `LATENCY_MODEL.md`, `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`. The "closed by P5–P6"
-  target has **passed unmet** for these; no replacement date is invented (C7). One of them is
-  not like the others: `COMPATIBILITY_MATRIX.md` is what `OQ-011` and `HANDOVER.md`'s Pending
-  Tasks row point the DAW-matrix audition AT — the fine review needs it to exist to record
-  results against, so it is owed *before* that audition, not merely eventually.
+  `LATENCY_MODEL.md`, `DSP_ALGORITHMS.md`. The "closed by P5–P6" target has **passed unmet**
+  for these; no replacement date is invented (C7). `COMPATIBILITY_MATRIX.md` — the one that was
+  load-bearing, being what `OQ-011` and `HANDOVER.md`'s Pending Tasks row point the DAW-matrix
+  audition at — **landed 2026-08-05**, so the audition has its target document; every host row
+  in it is deliberately `Unverified` until the audition supplies evidence.
 - **`REALTIME_SAFETY_AUDIT.md`'s audited revision is the P2 commit (2026-08-01)** — stated in
   the audit itself. The P3–P6 audio-thread additions entered through `THREADING_POLICY.md`'s
   permitted-path table and the round-41/42 TSAN passes, but the document has not been

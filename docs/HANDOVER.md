@@ -66,6 +66,14 @@ first scheduled or dispatched run — rehearse via `workflow_dispatch` after mer
 running" (P1 summary), silently unreported at P2–P6 closes. This entry is the status of record
 until the next phase summary.
 
+**Same date, `COMPATIBILITY_MATRIX.md` lands** — the document this file's own Pending Tasks row
+was already pointing the DAW-matrix audition at, and which `OQ-011` directed its supported-OS
+restatement to. The audition now has a target list: rows A1 (REAPER/Windows/VST3) and A2
+(Logic/macOS/AU) are the brief's §10 minimum, A3 is discretionary depth, and every host row is
+`Unverified` until the audition records per-host evidence — the matrix states the C7 rule that
+no row flips without it. Formats, platforms, the stereo-only I/O contract and the dependency
+pins are cited to their evidence; no pluginval strictness number is quoted (single-place rule).
+
 **Same date, the third-party attribution landing.** `RELEASE_POLICY.md` §"Third-party
 attribution" had required `NOTICE` + `THIRD_PARTY_LICENSES.md` with every binary distribution
 since bootstrap while neither file existed. Both now exist, produced by that section's own
