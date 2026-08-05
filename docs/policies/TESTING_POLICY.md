@@ -14,15 +14,22 @@ Repository Governance Policy. Test acceptance levels and the release gate.
 
 ## Phase-escalating strictness (`DEVELOPMENT_BRIEF.md` §2, §11)
 
-pluginval strictness escalates with the project phase. It is set in **one place** — the
-`ANABASIS_PLUGINVAL_STRICTNESS` env at the top of `.github/workflows/build.yml` — so raising it is
-a one-line change:
+pluginval strictness escalates with the project phase. **The ladder and the current value are
+NOT in this document.** Both live in one place — the `ANABASIS_PLUGINVAL_STRICTNESS` env block at
+the top of `.github/workflows/build.yml`, which carries the phase→strictness rows and their
+rationale as the comment directly above the value — so raising the bar is a one-line change and
+there is nothing here to raise with it.
 
-| Phase | Strictness | Rationale |
-|---|---|---|
-| P1–P2 (skeleton, DSP core) | **5** | development bar; catches gross conformance breakage without blocking on polish |
-| P3–P5 (metering, adaptive, UI) | **8** | the standard gate |
-| P6 / any release | **10** | pre-release gold standard — **required**, both modes ×3, all three platforms |
+This split is the ownership rule, not a formatting preference, and it is stated because two
+earlier revisions broke it in opposite directions: this policy carried a phase table AND the
+release number in the same breath as the sentence saying it carried neither, while
+`CI_CD.md` pointed readers *here* for the value it had just correctly located in `build.yml`.
+
+| Question | Answered by |
+|---|---|
+| What number is in force, and what it was per phase | `.github/workflows/build.yml` (`env:` block) — **the only source** |
+| What the gate *requires* — which suites, which modes, how many passes, which platforms | this policy (below) |
+| How the pipeline is wired to meet it — jobs, step order, artefacts | `docs/procedures/CI_CD.md` |
 
 Lowering strictness below the phase value is a deliberate act that must be justified in the PR.
 
@@ -31,14 +38,15 @@ Lowering strictness below the phase value is a deliberate act that must be justi
 - **Level 2/3 self-tests must pass** — the headless gate (`scripts/run-tests.sh`) runs **both**
   `AnabasisTests` and `AnabasisStateTests` fail-closed: a *missing* binary fails the gate, so a
   broken build cannot silently pass by producing nothing.
-- **pluginval must pass at strictness 10 in BOTH modes on ALL THREE platforms** (Linux, Windows,
-  macOS), each mode run as **3 consecutive passes**:
-  - **deterministic** (`run-pluginval.sh 10 deterministic`) — a **fixed, nonzero** `--random-seed`,
+- **pluginval must pass at the phase strictness in BOTH modes on ALL THREE platforms** (Linux,
+  Windows, macOS), each mode run as **3 consecutive passes**. `<strictness>` below is that value,
+  read from `build.yml` rather than restated:
+  - **deterministic** (`run-pluginval.sh <strictness> deterministic`) — a **fixed, nonzero** `--random-seed`,
     so the run is reproducible. **`--random-seed 0` does not pin anything**: pluginval documents 0
     as "generate a random seed" (`Source/PluginTests.h`) and only forwards the flag when it differs
     from that default, so passing 0 is identical to passing nothing. The scripts pass a nonzero
     constant; changing it to 0 silently deletes this mode's only distinguishing property.
-  - **randomise** (`run-pluginval.sh 10 randomise`, `--randomise`) — randomised test order, and no
+  - **randomise** (`run-pluginval.sh <strictness> randomise`, `--randomise`) — randomised test order, and no
     pinned seed, so each run also draws a fresh one. The two flags are independent: the seed feeds
     the RNG the tests draw from, `--randomise` only shuffles their order. Together they exercise
     state restoration in ways a fixed seed cannot.
@@ -122,5 +130,13 @@ its methodology is not permitted (constraint C2).
 
 ## Current status
 
-**TODO (no code yet).** No test exists; the gate activates at P1. This section is updated with the
-real suite sizes and their evidence as the phases land.
+**P1–P5 in the tree (updated 2026-08-02; this section had read "TODO (no code yet)" since P0 —
+four phases of drift, reported in `DOCUMENTATION_COVERAGE.md` and corrected here as the smallest
+re-syncing edit).** Two suites run on every build: `AnabasisTests` (DSP acceptance, the
+invariant→test map in `DSP_POLICY.md`) and `AnabasisStateTests` (state/compatibility + the
+behavioural macro/mode guards). Counts are read from the suites' own output — the same
+re-count-don't-trust rule `HANDOVER.md` and `README.md` carry — and pluginval runs at the phase
+strictness in both modes, three consecutive passes, with the editor opening under `xvfb` since P5.
+The strictness itself is **not restated here**, not even parenthetically: see the ownership table
+under *Phase-escalating strictness* above. A number copied into prose is a number that goes stale
+— this sentence carried "8 at P3–P5" in the present tense for a day after CI had moved past it.

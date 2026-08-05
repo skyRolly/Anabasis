@@ -58,9 +58,10 @@
 //  FREEZE latches the vector: while frozen the four values hold exactly
 //  (bit-repeatable behaviour thereafter — policy inv 3's Freeze clause) and
 //  the capture side (serialization into the per-slot FROZEN_TRIMS) reads the
-//  published atomics once the latch has settled. The RESTORE transport —
-//  message → audio injection of a saved vector — is OQ-013 and remains a
-//  Hard Stop: nothing here consumes FROZEN_TRIMS.
+//  published atomics once the latch has settled. The RESTORE side is
+//  injectTrims() below — ADR-0014 (OQ-013 resolved 2026-08-02): the engine
+//  calls it at the duck's silent bottom with the staged FROZEN_TRIMS vector,
+//  and the freeze latch is what makes the injection a restoration.
 //
 //  The trim MAPPING constants are ⊕ P4 drafts (tuned by ear before v0.1.0,
 //  like the §5.5 curves); the SHAPE — bounded, slewed, deadbanded, frozen —
@@ -137,18 +138,119 @@ public:
         // already-documented empty-pass case (nothing to commit leaves the
         // existing reference alone).
         //
-        // NOT cleared: `learned`, `refOnsetRate`, `refTiltDb`. Those are
-        // session state — the answer a previous commit or a session restore
-        // established — and a rate change is not a reason to forget it.
+        // NOT cleared: `learned`, `refOnsetRate`, `refTiltDb`, and — since
+        // round 41 — the RETAINED trim set. All four are session state, the
+        // answer a previous commit, restore or Freeze established, and a rate
+        // change is not a reason to forget it. The retained set is the one that
+        // had to be argued for rather than inherited: the vector this instance
+        // last latched is persistence state and belongs here, while the
+        // PUBLISHED set below describes what the audio is applying and is
+        // therefore correctly zeroed with `trims` (KI-006's audio and readout
+        // halves, which this deliberately does not touch — what a re-prepare
+        // does to a latched Freeze IN THE AUDIO is a Freeze-semantics decision
+        // behind the Architecture Review Gate).
         learnActive.store (false, std::memory_order_release);
         learnOnsSum  = 0.0;
         learnTiltSum = 0.0;
         learnBlocks  = 0;
 
-        publishTrims();
+        publishTrims (false);      // initialisation zeros, NOT a measurement
         pubCrestDb.store (0.0f, std::memory_order_relaxed);
         pubTiltDb.store (0.0f, std::memory_order_relaxed);
         pubOnsetRate.store (0.0f, std::memory_order_relaxed);
+    }
+
+    // ADR-0014 (resolves OQ-013): adopt a restored frozen-trim vector as the
+    // CURRENT vector, clamped to the declared bounds. The engine calls this at
+    // the §2.8 duck's silent bottom (or the offline direct-adopt), and only
+    // the wrapper ever stages one — with Freeze ON, so finishBlock holds it
+    // exactly (freeze skips the slew; that is what "latched" means). With
+    // Freeze off the next audible block would simply slew away from it, which
+    // is the documented last-writer-wins degradation, not a fault.
+    //
+    // FINITE-CHECKED BEFORE CLAMPED, which is what makes ADR-0014's "clamped at
+    // the boundary … holds against hostile state" true rather than nearly true.
+    // `juce::jlimit` is `v < lo ? lo : (hi < v ? hi : v)`, and EVERY comparison
+    // against NaN is false, so a NaN takes neither branch and lands in `trims`
+    // unchanged — a clamp that bounds an ordinary out-of-range number and waves
+    // a non-numeric one straight through. This is the only boundary an
+    // externally authored vector crosses: the wrapper reads four `FROZEN_TRIMS`
+    // properties out of a session or slot tree, and a hand-edited or corrupt one
+    // is exactly the hostile input the ADR names.
+    //
+    // WHAT `sanitiseState()` COVERS, and what it cannot. Both injection sites
+    // — the unprimed direct adopt and the §2.8 duck's silent bottom — run
+    // inside `AnabasisEngine::process` BEFORE its `adaptiveEngine
+    // .sanitiseState()` call, and the first read of `currentTrims()` comes
+    // after it, in the same call. So on the AUDIO path the existing recovery is
+    // already complete: a poisoned vector is repaired before any block consumes
+    // it, and `std::pow (releaseOctaves)` never sees it. (An earlier revision
+    // of this comment claimed the repair arrived a block late; it does not, and
+    // the ordering is worth stating exactly, because "recovery latency" is what
+    // a future reader would try to reason about here.)
+    //
+    // The hole is on the PUBLICATION path, which `sanitiseState` does not
+    // touch. `publishTrims (true)` below writes the four published atomics AND
+    // the retained set at injection time; `sanitiseState` repairs the plain
+    // `trims` struct and never re-publishes, and nothing else will: an ADR-0014
+    // restore is staged only for a freeze-ON surface, and `finishBlock` holds
+    // while frozen — that is what "latched" means. A NaN would therefore sit in
+    // the wrapper-visible atomics indefinitely, and `engineFrozenTrimsIfLive()`
+    // would serialise it into the saved session, outliving the block, the
+    // session and the file. That is the exposure this check closes, and it is
+    // not one the per-block sanitiser could ever have closed.
+    //
+    // It also differs in KIND from the recovery, not only in timing:
+    // `sanitiseState` resets the whole struct when any member is non-finite, so
+    // relying on it would discard three sound values for one corrupt document
+    // property. See the per-field note below.
+    //
+    // PER FIELD rather than whole-struct, which is the opposite of
+    // `sanitiseState`'s choice and deliberately so: there, all four members
+    // descend from one poisoned feature pipeline, so one bad member means the
+    // set is meaningless. Here they are four independent properties parsed from
+    // a document, and one corrupt attribute is no reason to discard three sound
+    // ones. A rejected field takes its reset() seed — "no trim", which is
+    // exactly what an unreadable value tells us.
+    void injectTrims (const Trims& v) noexcept
+    {
+        constexpr Trims seed {};
+        auto take = [] (float x, float lo, float hi, float fallback) noexcept
+        { return std::isfinite (x) ? juce::jlimit (lo, hi, x) : fallback; };
+
+        trims.releaseOctaves = take (v.releaseOctaves, -1.0f,  1.0f,  seed.releaseOctaves);
+        trims.stereoLink     = take (v.stereoLink,     -0.2f,  0.2f,  seed.stereoLink);
+        trims.scHpfHz        = take (v.scHpfHz,         0.0f, 30.0f,  seed.scHpfHz);
+        trims.dynTiltDb      = take (v.dynTiltDb,       0.0f,  0.5f,  seed.dynTiltDb);
+
+        // `true`, AND THE WRAPPER'S SLOT OWNERSHIP DEPENDS ON IT. Read this
+        // before "correcting" the argument to mean "measured": the flag decides
+        // whether `publishTrims` also writes the RETAINED set and advances
+        // `retTrimSeq`, and a restore has to do both.
+        //
+        // `AnabasisAudioProcessor::adoptFrozenMirror()` re-bases
+        // `slotFrozenBase` to the CURRENT generation whenever the live surface's
+        // frozen ownership changes — an A/B switch, an undo, a session load —
+        // which is how it says "nothing the engine holds belongs to this slot
+        // yet". `engineFrozenTrimsIfLive()` then answers with the engine's
+        // vector only once the generation has moved PAST that base. For a
+        // freeze-ON slot restored from disk, this injection is the only thing
+        // that moves it: the wrapper stages the vector, the duck bottom lands it
+        // here, and the bump is what hands ownership to the incoming slot.
+        //
+        // Publish without counting and the failure is silent and stopped-
+        // transport-only: the restored slot never claims its own latch, so every
+        // save falls back to the mirror until the next AUDIBLE block publishes —
+        // which on a stopped transport is never. The slot would keep
+        // re-serialising the vector it loaded rather than the one the engine is
+        // applying, and the two only differ once anything else has moved.
+        //
+        // So a future change to publish semantics must keep this property, not
+        // this line: whatever makes a vector "the one this instance last
+        // latched" has to include an ADR-0014 restore, because the wrapper reads
+        // that counter to decide which slot owns the latch — not to decide where
+        // the numbers came from.
+        publishTrims (true);       // a restored vector is as real as a measured one
     }
 
     // Invariant 9, the unconditional half. Called once per block by the
@@ -344,7 +446,7 @@ public:
             step (trims.stereoLink,     target.stereoLink,     0.01f);
             step (trims.scHpfHz,        target.scHpfHz,        1.0f);
             step (trims.dynTiltDb,      target.dynTiltDb,      0.02f);
-            publishTrims();
+            publishTrims (true);   // the measured path — the only one that slews
         }
         blockFill = 0;
     }
@@ -412,9 +514,10 @@ public:
     // Session restore of learned targets (ADAPTIVE child), audio thread only
     // (the wrapper stages the pair and the engine consumes it at block top —
     // the release/acquire flag ordering on that hand-off is in
-    // AnabasisEngine::restoreLearnedTargets). Deliberately distinct from
-    // OQ-013's frozen-trim vector, whose four members are coherence-critical
-    // (half-restored = permanently wrong); nothing here weakens that Hard Stop.
+    // AnabasisEngine::restoreLearnedTargets). Deliberately distinct from the
+    // frozen-trim vector, whose four members are coherence-critical
+    // (half-restored = permanently wrong) — that one crosses as ONE staged
+    // record and lands through injectTrims (ADR-0014), never through here.
     void setLearnedTargets (float onsetRateIn, float tiltDbIn) noexcept
     {
         // The other writer of the references, and the other way a non-finite
@@ -453,6 +556,126 @@ public:
     float publishedTrimLink() const noexcept    { return pubTrimLink.load (std::memory_order_relaxed); }
     float publishedTrimHpf() const noexcept     { return pubTrimHpf.load (std::memory_order_relaxed); }
     float publishedTrimTilt() const noexcept    { return pubTrimTilt.load (std::memory_order_relaxed); }
+    // Do the four atomics above currently hold a REAL vector? Not "has one
+    // ever been published" — `reset()` publishes too, and publishes zeros, so
+    // a one-way flag would read true for every prepared instance and for every
+    // instance whose host has just changed the sample rate. It tracks the
+    // CURRENT contents instead: set by an audible `finishBlock` and by an
+    // ADR-0014 `injectTrims`, cleared by `reset()` along with the values.
+    //
+    // IT HAS NO PRODUCTION READER TODAY, AND IS DELIBERATELY KEPT. Stated in
+    // full, because "an atomic only a test reads" is exactly the shape this
+    // codebase has removed three times (`allCombos`/`hov`, `resetSweep`, the
+    // `"unit"` slider property), and the difference has to be visible or the
+    // next cleanup pass deletes it.
+    //
+    // The ADR-0014 save capture asked this question until round 41 and now asks
+    // `hasRetainedTrims()`, because it wants the vector that SURVIVES a
+    // re-prepare rather than the one being applied. Two things are left, and
+    // both are load-bearing:
+    //
+    //   * It is the published set's own VALIDITY MARKER — the honest answer to
+    //     "may I show these four numbers?", which is the question a §6.3 trim
+    //     readout must ask and cannot answer from the values themselves (all
+    //     four read 0 both when nothing has been measured and when the measured
+    //     answer is no trim). The readout does not exist yet — nothing in
+    //     `src/gui` reads `publishedTrim*` — so this is a reservation, named as
+    //     one rather than left to be inferred from an unused accessor.
+    //   * It is the ONLY observation of the published/retained SPLIT. That
+    //     split is the whole of KI-006's two halves: the published set describes
+    //     what the DSP is applying and `reset()` must zero it, while the
+    //     retained set is persistence state and must survive. `hasRetainedTrims`
+    //     alone cannot show the pair diverging, and the values alone cannot
+    //     either — zeros are ambiguous, which is the point above. Delete this
+    //     flag and `testPreparedStateAndSlotOwnership`'s "the APPLIED vector did
+    //     not survive re-initialisation / the RETAINED one did" pair collapses
+    //     to a single assertion, after which nothing stops a future
+    //     simplification merging the two sets back into one.
+    //
+    // The runtime cost is one release store per publication, on a path that
+    // already performs eight relaxed ones.
+    //
+    // ACQUIRE, not relaxed, and the distinction is the same one
+    // `AnabasisEngine::frozenRestorePending()` spells out: THREADING_POLICY's
+    // relaxed rule for display atomics rests on "carries no payload", and this
+    // flag is not a staleness counter — it ANNOUNCES the four values above and
+    // gates whether a reader may use them. Relaxed on both sides would let a
+    // consumer observe "a real vector exists" while still reading the stores
+    // that preceded the publication, i.e. exactly the initialisation zeros the
+    // flag exists to exclude. Unobservable on x86-TSO and real on a weakly
+    // ordered target; it pairs with the release in `publishTrims`.
+    bool hasPublishedTrims() const noexcept     { return pubTrimEver.load (std::memory_order_acquire); }
+
+    // -- The RETAINED vector: the last MEANINGFUL trim set this instance ever
+    //    held, which — unlike everything above — survives `reset()`.
+    //
+    // These exist because the two questions are different and one set of
+    // atomics cannot answer both. `publishedTrim*()` means "what the adaptive
+    // layer is applying to the audio right now", so `reset()` must zero it or
+    // the P5 overlay would report a vector the DSP is not using (KI-006's
+    // readout half). `retainedTrim*()` means "the vector this instance last
+    // latched", which is persistence state — the same category as `learned` /
+    // `refOnsetRate` / `refTiltDb`, which `reset()` has always preserved for
+    // the reason stated there: a host sample-rate change is not a reason to
+    // forget an answer the session established.
+    //
+    // The ADR-0014 save capture is the reader, and it is why the split had to
+    // exist at all: a Freeze latched LIVE has no copy anywhere else (no
+    // restore ever ran, so the wrapper's mirror is empty), so before this the
+    // latch lived only in atomics a re-prepare cleared and the next save wrote
+    // zeros — or, once that was guarded, nothing at all. Keeping it HERE keeps
+    // it lock-free: the alternative tried in round 40 was to have
+    // `prepareToPlay` copy the latch into the wrapper's `juce::ValueTree`
+    // mirror, which put a non-thread-safe write on a host callback JUCE does
+    // not deliver on the message thread, racing the editor's ~24 Hz
+    // `presetDirty()` read of that same member. Nothing crosses a thread here
+    // that did not already.
+    float retainedTrimRelease() const noexcept { return retTrimRel.load (std::memory_order_relaxed); }
+    float retainedTrimLink() const noexcept    { return retTrimLink.load (std::memory_order_relaxed); }
+    float retainedTrimHpf() const noexcept     { return retTrimHpf.load (std::memory_order_relaxed); }
+    float retainedTrimTilt() const noexcept    { return retTrimTilt.load (std::memory_order_relaxed); }
+
+    // A COUNTER rather than a flag, and it replaced one, because the wrapper
+    // needs two different answers from the same publication and a bool can only
+    // give the first:
+    //
+    //   * "is there a retained vector at all?" — `generation != 0`, which is
+    //     `hasRetainedTrims()` below;
+    //   * "has one been established SINCE some earlier moment?" — which is what
+    //     tells the wrapper whether this engine-wide vector belongs to the slot
+    //     that is currently live. This class knows nothing about A/B slots and
+    //     should not: it publishes when it latches, and the wrapper compares the
+    //     number against the one it recorded when slot ownership last changed.
+    //
+    // WHAT IT COUNTS, because the word "generation" invites the wrong reading:
+    // MEANINGFUL PUBLICATIONS, not Freeze latches. `publishTrims(true)` is
+    // reached from `finishBlock`'s `if (! freeze && audible)` branch, so this
+    // increments on essentially every audible block — ~90/s at 48 kHz with a
+    // 512-frame block — plus once per ADR-0014 `injectTrims`. It is therefore
+    // NOT a count of latches, NOT a rate, and NOT an interval: deriving elapsed
+    // time or "how many times has the user frozen" from a difference of two
+    // readings would be wrong, and wrong quietly.
+    //
+    // The only supported use is INEQUALITY against a previously recorded value,
+    // which is all `engineFrozenTrimsIfLive()` does. That reader consults it
+    // only with Freeze ON — the state in which the `! freeze` branch has stopped
+    // publishing altogether — so what it actually observes is "did anything get
+    // latched between the moment this slot took ownership and now?", which the
+    // counter answers correctly however fast it moves while unfrozen.
+    //
+    // ACQUIRE on the read, RELEASE on the write, for the reason the flag it
+    // replaced carried: it announces the four scalars above, so it is a
+    // publication flag on THREADING_POLICY's release/acquire row and not a
+    // staleness counter on the relaxed one. Incremented only by a MEANINGFUL
+    // publication, so it is also the "ever" answer without a second atomic.
+    //
+    // Wrap: `uint32` at one increment per block is ~1.4 years of continuous
+    // adaptation at 48 kHz/512, and a wrap would additionally have to land
+    // exactly on a recorded comparand to matter. Stated rather than guarded,
+    // the same way `frozenStageSeq` states it.
+    juce::uint32 retainedTrimGeneration() const noexcept
+    { return retTrimSeq.load (std::memory_order_acquire); }
+    bool hasRetainedTrims() const noexcept { return retainedTrimGeneration() != 0; }
 
 private:
     // AUDIO-THREAD ONLY, and private so that is true by construction rather
@@ -461,17 +684,52 @@ private:
     // object to message-thread callers (adaptiveReadout). Everything public
     // above is an atomic; a plain-struct getter beside them is the shape that
     // produced the `learned` and `learnActive` races. The engine — the only
-    // in-tree caller, on the audio thread — reaches it through this friendship;
-    // the P5 UI reads publishedTrim*() like every other display value.
+    // in-tree caller, on the audio thread — reaches it through this friendship.
+    // A message-thread reader would go through `publishedTrim*()` like every
+    // other display value; the P5 UI has no trim readout yet, so today those
+    // accessors serve the DSP suite and the §6.3 reservation `hasPublishedTrims`
+    // records. (This sentence used to assert the P5 UI already read them, which
+    // contradicted the accessor's own comment two screens up — corrected round
+    // 53 rather than left as two answers to one question.)
     friend class AnabasisEngine;
     const Trims& currentTrims() const noexcept { return trims; }
 
-    void publishTrims() noexcept
+    // `meaningful` says whether the four values being published are a REAL
+    // vector — measured by an audible block, or injected by an ADR-0014
+    // restore — as opposed to the initialisation zeros `reset()` publishes.
+    // It is a parameter rather than a store at the call sites so that no
+    // publication can silently skip the decision: `hasPublishedTrims()` is the
+    // save capture's discriminator, and the previous revision set the flag
+    // INSIDE this function, which meant `reset()` (called by `prepare()`, and
+    // therefore by every host before the first block) turned it on while
+    // publishing zeros. The guard it exists for was then inert.
+    // The flag is RELEASE-stored after the four values, and `hasPublishedTrims`
+    // acquire-loads it — see there. The same pair guards the retained set.
+    void publishTrims (bool meaningful) noexcept
     {
         pubTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
         pubTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
         pubTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
         pubTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
+        pubTrimEver.store (meaningful, std::memory_order_release);
+
+        // The retained set follows the MEANINGFUL publications only, and is
+        // never cleared. `reset()`'s zeros are not a vector this instance
+        // latched, so they must not overwrite the one it did; that is the whole
+        // difference between the two sets, and writing them unconditionally
+        // here would collapse it.
+        if (! meaningful)
+            return;
+        retTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
+        retTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
+        retTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
+        retTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
+        // Read-modify-write with a plain load: this is the ONLY writer (the
+        // audio thread, from `finishBlock` or the block-top `injectTrims`), so
+        // no `fetch_add` is owed — but the store must be RELEASE, because it
+        // publishes the four values above.
+        retTrimSeq.store (retTrimSeq.load (std::memory_order_relaxed) + 1u,
+                          std::memory_order_release);
     }
 
     float onePoleMs (float ms) const noexcept
@@ -515,6 +773,11 @@ private:
     std::atomic<float> pubCrestDb { 0.0f }, pubTiltDb { 0.0f }, pubOnsetRate { 0.0f };
     std::atomic<float> pubTrimRel { 0.0f }, pubTrimLink { 0.0f },
                        pubTrimHpf { 0.0f }, pubTrimTilt { 0.0f };
+    std::atomic<bool>  pubTrimEver { false };   // see hasPublishedTrims()
+    // The retained pair — same payload, different lifetime. See the accessors.
+    std::atomic<float> retTrimRel { 0.0f }, retTrimLink { 0.0f },
+                       retTrimHpf { 0.0f }, retTrimTilt { 0.0f };
+    std::atomic<juce::uint32> retTrimSeq { 0 };   // see retainedTrimGeneration()
     std::atomic<float> pubRefOnset { kDefaultRefOnset }, pubRefTilt { kDefaultRefTilt };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaptiveEngine)

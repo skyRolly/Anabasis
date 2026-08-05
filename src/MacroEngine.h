@@ -26,6 +26,24 @@
 //  test exercises exactly what the engine applies.
 // ============================================================================
 
+// The §5.5 managed set — ONE list, shared by the mapper (which writes these)
+// and the wrapper's §5.3 detach discriminator (which watches them), so the
+// two cannot drift apart. clipMix/compMix are deliberately NOT managed.
+namespace managed_params
+{
+    inline constexpr const char* ids[] = {
+        "limGain", "compThreshold", "compRatio", "clipDrive", "clipShape",
+        "colourDepth", "dynTilt", "eqTilt", "colourTone",
+    };
+    inline constexpr int kCount = 9;
+    // The two must agree, and until round 51 nothing said so: `kCount` is hand
+    // written while `ids` deduces its bound, so adding a tenth id without
+    // bumping the count compiled and silently under-scanned every loop keyed on
+    // `kCount`, and bumping the count without adding an id ran one past the end.
+    static_assert (std::size (ids) == (std::size_t) kCount,
+                   "managed_params::kCount must equal the length of managed_params::ids");
+}
+
 namespace macro_curves
 {
     // DESIGN §5.5 (⊕ draft — tuned by ear at P4, frozen before v0.1.0).
@@ -53,7 +71,96 @@ public:
     // True while the engine itself is writing managed parameters — the §5.3
     // discriminator's "not macro-originated" half. P4's gesture bracketing is
     // the other half.
-    bool isApplyingMacro() const noexcept { return applying; }
+    bool isApplyingMacro() const noexcept
+    { return applying.load (std::memory_order_relaxed); }
+
+    // §5.3 detach filter: the wrapper owns the mask (it is per-A/B-slot,
+    // serialized state); the mapper only ASKS. Null = nothing detached.
+    std::function<bool (const char*)> isDetached;
+
+    // The wrapper's own message-thread drain, run on THIS object's 30 ms timer
+    // tick. It exists so the wrapper never has to post its own message from a
+    // listener callback: APVTS and gesture callbacks arrive on whichever thread
+    // the host chooses, `triggerAsyncUpdate()` takes a lock (and allocates on
+    // some platforms), and that is a REALTIME_AUDIO_POLICY hard red line if the
+    // thread turns out to be the audio one. This class already refused to post
+    // for exactly that reason and already runs the timer; sharing the tick
+    // keeps one cadence instead of two. Called on the message thread only.
+    std::function<void()> onDrainTick;
+
+    // Exactly what the 30 ms timer does, exposed so the ORDER inside it is
+    // testable: the two halves are ordered against each other (the wrapper's
+    // bits decide the mask the mapping reads), and an order that only exists
+    // inside a private timer callback is an order no test can pin.
+    //
+    // Returns whether the tick actually RAN. It has two suppressors — the
+    // teardown latch and an in-flight restore — and both are silent from the
+    // outside, so the answer is reported rather than left to be inferred: this
+    // is the single decision site, and `flushPendingMapping`/`refreshMapping`
+    // do nothing but propagate it. The timer and the posted update ignore it
+    // (nothing to tell), which is why it is not `[[nodiscard]]`.
+    bool drainTick();
+
+    // Starts the 30 ms drain. Call ONCE, after both callbacks above are
+    // assigned: they are read on the tick, and the owner cannot assign them
+    // until this object is constructed. Until it is called nothing drains, so
+    // a mapping armed in between simply waits — the flag is never lost.
+    void startDraining();
+
+    // The symmetric half, and it is owed for the symmetric reason: the tick
+    // calls back INTO the owner, whose members are destroyed before this
+    // object is (it is declared early, and members die in reverse declaration
+    // order). The owner calls this FIRST in its destructor, so no tick can
+    // reach a half-destroyed owner. Splitting the construction race out and
+    // leaving the destruction one would have been half a fix.
+    void stopDraining();
+
+    // True while any ScopedRestore is alive — the detach discriminator's
+    // third condition (a restore lands values, it is not a user gesture).
+    bool isRestoring() const noexcept
+    { return restoreDepth.load (std::memory_order_relaxed) > 0; }
+
+    // Arm a mapping pass without asking for one now — the same relaxed store
+    // `parameterChanged` performs, callable from ANY thread, so a gesture
+    // callback the host may deliver off the message thread can request the
+    // curve be re-landed without touching anything but an atomic. The drain
+    // that follows (the posted update on the message thread, or the 30 ms
+    // tick) does the work. §5.3's re-engage uses it: clearing the mask and
+    // landing the curve are two halves of one rule, and the wrapper cannot
+    // call `refreshMapping()` from a gesture callback because that maps
+    // synchronously on whichever thread the callback arrived on.
+    void armMapping() noexcept
+    { mappingPending.store (true, std::memory_order_relaxed); }
+
+    // §5.3 step 4, "reset to macro": re-run the mapping at the CURRENT macro
+    // position (message thread). The caller clears the mask first; this is
+    // what re-lands the curve values on the freshly re-engaged parameters
+    // without the macro itself moving.
+    // NOTE it goes through `flushPendingMapping` → `drainTick`, so it also
+    // runs the WRAPPER's detach drain synchronously — see the re-entrancy
+    // paragraph in `drainTick`. Callers must have replaced the detach mask
+    // (which clears the staged bits) before reaching here, which every one of
+    // them does; the alternative would be a mask write landing in the middle
+    // of a preset apply.
+    //
+    // IT IS NOT UNCONDITIONAL, and the sentence above reads as though it were.
+    // Inside a `ScopedRestore` this arms the flag, `drainTick` suppresses the
+    // whole tick, and the scope's exit ABORTS the flag on the way out — so the
+    // curve is not re-landed now and is not deferred to afterwards either. That
+    // is the correct §5.3 outcome (a restore lands the values it carries; a
+    // mapping over them is exactly the clobber the guard exists to prevent),
+    // which makes this an intentional deferral rather than a defect — but it
+    // was documented only at the ONE call site that had to discover it
+    // (`applyFactoryPreset` drops its guard before calling, with a paragraph
+    // explaining why), so the API promised something its implementation did
+    // not. The return value states it instead of prose: FALSE means the curve
+    // was NOT re-landed and nothing remains armed, so a caller that needs the
+    // re-land must be outside the restore. Same answer for a torn-down engine.
+    bool refreshMapping()
+    {
+        mappingPending.store (true, std::memory_order_relaxed);
+        return flushPendingMapping();
+    }
 
     // §5.3: a state RESTORE is not a macro gesture. Every restore path
     // (session load, A/B switch, preset apply) notifies the macro listeners
@@ -109,12 +216,20 @@ public:
     // Deterministic flush for the headless tests (no message loop runs there):
     // applies a pending mapping now, on the calling (message) thread. Goes
     // through the same guard as the timer, so a test that flushes inside a
-    // ScopedRestore models what the timer would really do there.
-    void flushPendingMapping();
+    // ScopedRestore models what the timer would really do there — and returns
+    // `drainTick`'s answer unchanged, so "did the flush do anything?" is a
+    // question with an answer rather than an inference from side effects.
+    bool flushPendingMapping();
+
+    // The POSTED drain, public for the same reason `drainTick` is: it is a
+    // separate entry point into the same sequence, no message loop runs in the
+    // headless tests, and an entry point no test can call is exactly how this
+    // one drifted into running the mapping without the wrapper's drain in
+    // front of it. Calling it directly is what the message queue would do.
+    void handleAsyncUpdate() override;                             // message thread only
 
 private:
     void parameterChanged (const juce::String&, float) override;   // any thread → flag only
-    void handleAsyncUpdate() override;                             // message thread only
     void timerCallback() override;                                 // message thread only
     void drainPendingMapping();                                    // message thread only
     void applyMapping();
@@ -127,7 +242,18 @@ private:
     }
 
     juce::AudioProcessorValueTreeState& apvts;
-    bool applying = false;
+
+    // ATOMIC for the same reason `restoreDepth` below is, and it was the one
+    // of the pair that was not. `isApplyingMacro()` is read by
+    // `AnabasisAudioProcessor::parameterChanged`, which arrives on whichever
+    // thread the host chose — including the audio thread. In the case that
+    // MATTERS the read is synchronous on the thread that set the flag (a
+    // mapping write re-entering the listener), so the discriminator was always
+    // correct; a genuinely concurrent off-thread parameter change reading it
+    // while the message thread flips it was nevertheless a formal data race,
+    // whose worst outcome is one managed parameter wrongly detaching or
+    // wrongly not. Relaxed: it gates a decision, it orders no payload.
+    std::atomic<bool> applying { false };
 
     // parameterChanged can arrive on the AUDIO thread: APVTS calls its
     // listeners on whichever thread changed the parameter, and rule 5 makes
@@ -145,6 +271,13 @@ private:
     // thread; relaxed for the same reason as `mappingPending` — it gates a
     // message-thread action and carries no payload.
     std::atomic<int> restoreDepth { 0 };
+
+    // One-way teardown latch (see stopDraining): once the owner has begun
+    // tearing down, no trigger may reach `onDrainTick` — which calls back into
+    // members that are destroyed before this object is. Atomic because it is
+    // set from whichever thread destroys the processor and read on the message
+    // thread; relaxed because it gates a decision and carries no payload.
+    std::atomic<bool> drainStopped { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MacroEngine)
 };

@@ -2892,6 +2892,219 @@ static void testTrimBounds()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0013 (OQ-016): the release trim reaches the AUTO release path — the two
+// pole time-constants scale by 2^octaves, so after the same over-ceiling
+// burst a scale-2 limiter recovers measurably SLOWER than a scale-1 limiter.
+// Measured on the envelope the limiter itself emits (gainsOut), no chain.
+static void testAutoReleaseFollowsTheTrimScale()
+{
+    auto tailGainAfter = [] (float scale) -> float
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (48000.0, 96 + 3);
+        lim.setAutoRelease (true);
+        lim.setStereoLink (1.0f);
+        lim.setTransientPreserve (0.0f);
+        lim.setTruePeakMode (false);
+        lim.setAutoReleaseScale (scale);
+
+        float gains[2] = { 1.0f, 1.0f };
+        // 10 ms hard over-ceiling, then 600 ms of quiet — one time constant of
+        // the SLOW auto pole (600 ms), where the scale-1 and scale-2 recovery
+        // curves are furthest apart (63 % vs 39 % of the slow pole's travel).
+        for (int n = 0; n < 480 + 28800; ++n)
+        {
+            const float v = n < 480 ? 2.0f : 0.1f;
+            float frame[2] = { v, v };
+            lim.processSample (frame, 2, 96, 0.891f, gains);
+        }
+        return gains[0];                            // how far recovery has come
+    };
+
+    const float fast = tailGainAfter (1.0f);
+    const float slow = tailGainAfter (2.0f);
+    check (fast > 0.7f && fast < 1.0f,
+           "autoScale: (premise) scale 1 is mid-recovery after one slow time constant");
+    check (slow < fast - 0.02f,
+           "autoScale: scale 2 is clearly behind — the trim reaches the auto poles");
+
+    // prepare() is a clean-state contract: the trim scale is per-block engine
+    // state, not a prepared setting, so a limiter carrying a scale into a
+    // prepare must come out neutral. Only AnabasisEngine::process rewrites it
+    // per block, so a standalone user (the bench's limiter section) would
+    // otherwise inherit whatever the previous owner last set.
+    {
+        anabasis::LookaheadLimiter lim;
+        lim.prepare (48000.0, 96 + 3);
+        lim.setAutoRelease (true);
+        lim.setStereoLink (1.0f);
+        lim.setTransientPreserve (0.0f);
+        lim.setTruePeakMode (false);
+        lim.setAutoReleaseScale (2.0f);
+        lim.prepare (48000.0, 96 + 3);            // …and the scale goes with it
+        float gains[2] = { 1.0f, 1.0f };
+        for (int n = 0; n < 480 + 28800; ++n)
+        {
+            const float v = n < 480 ? 2.0f : 0.1f;
+            float frame[2] = { v, v };
+            lim.processSample (frame, 2, 96, 0.891f, gains);
+        }
+        check (std::abs (gains[0] - fast) < 1.0e-6f,
+               "autoScale: prepare() resets the scale — a re-prepared limiter recovers like scale 1");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0014's structural obligation: a STAGED frozen-trim record always gets a
+// silent bottom to land at. The wrapper requests the duck and stages the
+// record as two separate stores with a whole parameter restore between them,
+// so a block landing in that gap consumes the request, runs the entire ~34 ms
+// duck, and returns to idle BEFORE the record exists — after which nothing
+// brings the duck back and the vector waits for an unrelated one (an A/B
+// switch, say), landing in whatever slot is live by then. That is the same
+// misapplication the duck was added to prevent, one level down. The record
+// therefore carries its own request.
+//
+// The interleaving is reproduced exactly rather than raced: the request is
+// spent first, deliberately, and only then is the record staged.
+static void testAStagedFrozenVectorAlwaysGetsABottom()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.limGainDb    = 6.0f;
+    p.truePeakMode = false;
+    juce::AudioBuffer<float> buf (2, 512);
+
+    auto feed = [&] (int blocks, int t0)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = t0 + b * 512 + n;
+                float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                           * 220.0f * (float) t / (float) sr);
+                if ((t % 4800) < 96) v += 0.6f;
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+        }
+    };
+
+    feed (400, 0);                       // adapt, then latch something non-zero
+    p.freeze = true;
+    feed (4, 400 * 512);
+    const float latched = engine.adaptive().publishedTrimRelease();
+
+    // The wrapper's request is consumed and the whole duck completes…
+    engine.requestForcedDuck();
+    feed (40, 404 * 512);                // out → bottom → in → idle, all spent
+
+    // …and only now does the record arrive. Distinct from the latched vector
+    // so "did it land?" is a disjoint question.
+    const float wanted = latched > 0.0f ? -0.75f : 0.75f;
+    engine.restoreFrozenTrims (wanted, 0.15f, 12.0f, 0.4f);
+    feed (40, 444 * 512);                // enough for a duck the record must ask for itself
+
+    check (std::abs (engine.adaptive().publishedTrimRelease() - wanted) < 1.0e-6f,
+           "frozenStage: a record staged after the caller's duck was spent still gets a bottom");
+    check (std::abs (engine.adaptive().publishedTrimHpf() - 12.0f) < 1.0e-6f,
+           "frozenStage: …and the whole vector lands, not just one member");
+}
+
+// ---------------------------------------------------------------------------
+// The meter-reset watermark's OFF-BY-ONE half, which the wrapper-level test
+// cannot see: gating blocks are assembled from the last four 100 ms
+// sub-blocks, and at the instant of the reset one sub-block is PARTIALLY
+// FILLED with pre-reset material. Admitting the first block at subCount + 4
+// includes that straddler — a quarter of a gating block's energy taken from
+// the old programme — and through the −10 LU relative gate one loud block
+// then excludes every quieter block measured afterwards, which is the exact
+// failure the watermark was added to prevent.
+//
+// Driven at the meter directly: no lookahead line, so "old programme" and
+// "in-flight audio" cannot be confused, and the reset lands mid-sub-block by
+// construction (2.5 sub-blocks of loud material).
+static void testMeterResetIgnoresTheStraddlingSubBlock()
+{
+    anabasis::LoudnessMeter meter;
+    meter.prepare (48000.0);
+
+    auto feed = [&] (float amp, int frames, int t0)
+    {
+        for (int i = 0; i < frames; ++i)
+        {
+            const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 997.0f * (float) (t0 + i) / 48000.0f);
+            float frame[2] = { v, v };
+            meter.processFrame (frame, 2);
+        }
+    };
+
+    // 4.5 sub-blocks: four complete ones make the first gating block exist (a
+    // block needs 400 ms), and the half sub-block is the straddler under test.
+    feed (0.5f, 21600, 0);
+    check (meter.integratedLufs() > -20.0f,
+           "meterWatermark: (premise) the loud programme is measured before the reset");
+
+    meter.resetIntegrated();
+    feed (0.005f, 144000, 21600);               // 3 s of ~-46 LUFS
+
+    // With the straddler admitted the first fresh gating block reads ≈ -15
+    // LUFS and the relative gate then drops every -46 block after it, pinning
+    // the integrated figure to the old programme. Disjoint by ~30 dB.
+    check (meter.integratedLufs() < -40.0f,
+           "meterWatermark: the partially-filled sub-block at the reset stays out of the histogram");
+}
+
+// ---------------------------------------------------------------------------
+// §2.9 spectrum capture rings (THREAD_MODEL planned edge → implemented at
+// P5): tap 1 is post-input-gain, tap 2 the render, one release-published
+// block per processed chunk. Pinned headlessly: the counts advance exactly
+// once per chunk, and tap 1's content IS the input when inputGain is 0 dB —
+// content equality is what dies if the tap moves (e.g. behind the EQ).
+static void testSpectrumRingsCarryTheTaps()
+{
+    anabasis::AnabasisEngine engine;
+    const int block = 512;
+    engine.prepare (48000.0, block, 2);
+    anabasis::EngineParameters p;
+    juce::AudioBuffer<float> buf (2, block);
+
+    for (int b = 0; b < 4; ++b)
+    {
+        for (int n = 0; n < block; ++n)
+        {
+            const float v = 0.25f * std::sin (0.05f * (float) (b * block + n));
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        engine.process (buf, p);
+    }
+
+    const auto& in = engine.spectrumInRing();
+    check (in.writeCount() == 4 * (uint64_t) block,
+           "spectrum: tap 1 published exactly one block per chunk");
+    check (engine.spectrumOutRing().writeCount() == 4 * (uint64_t) block,
+           "spectrum: tap 2 published exactly one block per chunk");
+
+    // Content: the LAST input block, bit-for-bit (post-input-gain at 0 dB is
+    // the identity, and stage A writes the tap before any filter).
+    std::vector<float> l (block), r (block);
+    check (in.readLatest (l.data(), r.data(), block) == block,
+           "spectrum: tap 1 hands back a full block");
+    bool exact = true;
+    for (int n = 0; n < block; ++n)
+    {
+        const float v = 0.25f * std::sin (0.05f * (float) (3 * block + n));
+        if (! juce::exactlyEqual (l[(size_t) n], v)) { exact = false; break; }
+    }
+    check (exact, "spectrum: tap 1 is the post-input-gain signal, untouched");
+}
+
+// ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
 {
@@ -3320,6 +3533,55 @@ static void testSelfHealDoesNotSnapTheEnvelope()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0014's boundary contract, taken literally: a RESTORED frozen-trim vector
+// is the one externally authored thing that reaches the adaptive state, and the
+// ADR says it is "clamped at the boundary … holds against hostile state". A
+// clamp built from `juce::jlimit` does not hold against a NaN — both of its
+// comparisons are false, so the value passes through untouched — and past the
+// boundary it is published (so the wrapper can serialise it back out) and fed to
+// `std::pow` in the release mapping. `sanitiseState()` catches it a block later;
+// that is a bounded recovery, not the contract the ADR states.
+static void testHostileFrozenTrimsCannotEnterTheAdaptiveState()
+{
+    anabasis::AdaptiveEngine a;
+    a.prepare (48000.0, 512);
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+
+    // Every field poisoned differently, plus one ordinary out-of-range value so
+    // the check cannot pass by rejecting the whole vector.
+    anabasis::AdaptiveEngine::Trims hostile;
+    hostile.releaseOctaves = nan;
+    hostile.stereoLink     = -inf;
+    hostile.scHpfHz        = inf;
+    hostile.dynTiltDb      = 7.5f;      // legitimately out of range: must CLAMP, not reset
+    a.injectTrims (hostile);
+
+    check (std::isfinite (a.retainedTrimRelease()) && std::isfinite (a.retainedTrimLink())
+            && std::isfinite (a.retainedTrimHpf()) && std::isfinite (a.retainedTrimTilt()),
+           "hostileTrims: a non-finite restored trim never reaches the published vector");
+    check (std::abs (a.retainedTrimTilt() - 0.5f) < 1.0e-6f,
+           "hostileTrims: …and a merely out-of-range field is still clamped, not discarded");
+
+    // Per field, not whole-struct: three good values must survive one bad one,
+    // which is the opposite of `sanitiseState`'s choice and deliberately so —
+    // there the four members share one poisoned pipeline, here they are four
+    // independent document properties.
+    anabasis::AdaptiveEngine::Trims oneBad;
+    oneBad.releaseOctaves = 0.5f;
+    oneBad.stereoLink     = 0.1f;
+    oneBad.scHpfHz        = nan;
+    oneBad.dynTiltDb      = 0.25f;
+    a.injectTrims (oneBad);
+    check (std::abs (a.retainedTrimRelease() - 0.5f) < 1.0e-6f
+            && std::abs (a.retainedTrimLink() - 0.1f) < 1.0e-6f
+            && std::abs (a.retainedTrimTilt() - 0.25f) < 1.0e-6f
+            && juce::exactlyEqual (a.retainedTrimHpf(), 0.0f),
+           "hostileTrims: one unreadable field takes its reset seed and the rest are kept");
+}
+
+// ---------------------------------------------------------------------------
 // inv 7 second half: bypass is a delay-aligned bit-exact copy once the §2.8
 // crossfade has settled.
 static void testBypassNull()
@@ -3455,6 +3717,11 @@ static void testLimiterAlignment()
 
 int main()
 {
+    // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
+    // used to eat every line printed before it — a failing run showed exit 1
+    // and nothing else. Costs nothing measurable at this output volume.
+    setvbuf (stdout, nullptr, _IONBF, 0);
+
     testNullWithDefaults();
     testLimiterWindowCoverage();
     testLimiterAlignment();
@@ -3513,10 +3780,15 @@ int main()
     testStopThenStartInOneBlockKeepsBoth();
     testFreezeLatchesTrims();
     testTrimBounds();
+    testAutoReleaseFollowsTheTrimScale();
+    testAStagedFrozenVectorAlwaysGetsABottom();
+    testMeterResetIgnoresTheStraddlingSubBlock();
+    testSpectrumRingsCarryTheTaps();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();
     testALearnPassThatOverflowedIsNotCommitted();
+    testHostileFrozenTrimsCannotEnterTheAdaptiveState();
     testSelfHealDoesNotSnapTheEnvelope();
     testBypassNull();
 

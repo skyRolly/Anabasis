@@ -131,6 +131,40 @@ of record.
 
 ## Current implementation
 
+**P5 gesture grammar (2026-08-02).** The §5.3 detach/re-engage latch — ADR-0005's deliberately
+deferred half — is wired: a managed parameter detaches only when a change is (1) inside a
+begin/endChangeGesture bracket, (2) not macro-originated (`isApplyingMacro`), and (3) not part of
+a restore (`isRestoring`) — so automation playback, preset/A-B/session restores, and the mapper's
+own writes never detach, INCLUDING when they land under a user's open gesture (the overlap cases
+are tested). The mapping skips detached parameters; the next macro-knob gesture re-engages the
+whole set through the normal glide — the gesture BEGIN both clears the mask and arms a mapping
+pass (`MacroEngine::armMapping`), so point 3 above holds even for a gesture that moves nothing:
+without the arming, a press-and-release cleared the mask while the freshly re-engaged parameters
+kept their off-curve values, which is "re-engaged" by the mask and not by the sound. `resetToMacro()`
+re-engages in place and has always done both halves; the two routes are one rule. Discriminator callbacks
+can arrive off the message thread, so they only set lock-free bits which the message thread
+drains into the per-slot mask — the same marshalling shape as `mappingPending`, covered by the
+listener-guard row the OQ-014 resolution added (2026-08-02, reading 1). Guarded by
+`testDetachAndReengageGrammar`.
+**Re-landing the curve DEFERS TO A RESTORE, and that is now in the API rather than in one call
+site's comment** (round 40): inside a `MacroEngine::ScopedRestore`, `refreshMapping()` arms the
+flag, `drainTick` suppresses the whole tick, and the scope's exit ABORTS the arm — so the curve is
+neither landed then nor queued for afterwards. That is the correct outcome (a mapping pass over a
+restore is precisely the clobber the guard exists to prevent) and it is intentional, not a missed
+case; what was wrong was the promise. `refreshMapping()`/`flushPendingMapping()`/`drainTick()` now
+RETURN whether the tick ran, so a caller that needs the re-land — as `applyFactoryPreset` does,
+which drops its guard first for exactly this reason — can see the deferral instead of inferring it
+from the parameter values. Guarded by `testTeardownAndReengageInvariants` case 4.
+The §5.4 Learn UI grammar is likewise live: explicit start/end button, a 5 s minimum pass (the
+~1.5 s integrated features must outlast their time constant — the P4-recorded debt), a wordless
+empty-pass readout (`warn` flash: the reference did not move), and the running indicator off
+`isLearning()`. The undo machinery now exists (§7, 2026-08-02) — and the Learn commit remains
+OUTSIDE it, deliberately: the undo unit is the per-slot StateSet, while the learned references
+are GLOBAL session state (ADR-0007's `ADAPTIVE` child), so bracketing a commit into a per-slot
+stack would let an A/B switch resurrect a superseded reference. Making the commit undoable needs
+either the unit widened or a dedicated mechanism — a product decision for the P6 pass with the
+preset bank, recorded here rather than half-built.
+
 **P4 core (2026-08-01).** `src/dsp/AdaptiveEngine.h` — audio-thread feature extraction (crest,
 spectral tilt, transient density, silence-gated at ~−70 dBFS; the P4 trim mapping consumes
 **transient density and tilt** — crest is extracted and published for the UI, reserved for a
@@ -138,22 +172,27 @@ future mapping) and the bounded trim vector
 (release ±1 octave, stereo link ±0.2, scHpf 0…+30 Hz, dynTilt 0…+0.5 dB), slewed at ~2 s with a
 hysteresis deadband, applied to the per-block effective settings inside `AnabasisEngine` — never
 parameter writes, never lookahead or the OS factor (inv 4 holds structurally: the class emits
-only the four values). **Three of the four are audible in the factory state.** The release trim
-lands on `limReleaseMs`, which the limiter consumes only in **manual** release mode; with
-`limAutoRelease` on (the default) the two auto poles are fixed constants and the trim, while
-computed, published, overlaid and latched, changes nothing about the sound. That is the "inert
-while its host stage is inert" rule doing what it says, and it is also not obviously what §5.4
-intends — the question of whether the trim should scale the auto poles is **OQ-016**, an owner
-call, deliberately not answered in code. The invariant-7 null survives adaptation BY CONSTRUCTION: every trim is
+only the four values). **All four are audible in the factory state** (since ADR-0013,
+2026-08-02, resolving OQ-016): the release trim reaches BOTH release paths — the manual
+`limReleaseMs` multiply, and the auto poles through `LookaheadLimiter::setAutoReleaseScale`,
+which scales `kAutoFastMs`/`kAutoSlowMs` by the same `2^octaves` factor (clamped to [0.5, 2.0],
+the trim's own bound) so the fast/slow ratio and the dual-stage character never move. At zero
+trim the factor is exactly 1 and both alphas recompute to their old values, so the invariant-7
+null is untouched. The invariant-7 null survives adaptation BY CONSTRUCTION: every trim is
 inert while its host stage is inert, and the bit-exact null test runs with adaptation live. An
 engine `reset()` **cancels an in-flight Learn pass** — the features it was measuring are zeroed
 by the same call, so a commit spanning the discontinuity would mix two statistics; `learned` and
 the reference targets survive, being session state, and the cancelled pass leaves them alone
 (`testResetCancelsAnInFlightLearnPass`). **Which host actions reach that reset:**
 `prepareToPlay` only — a sample-rate or block-size change. The processor deliberately does not
-override `juce::AudioProcessor::reset()` (`THREAD_MODEL.md`), so a transport stop that calls it
-without re-preparing cancels nothing; whether to override it is a P5 question that also governs
-the delay-line tails and the published meter holds, and is not decided here.
+override `juce::AudioProcessor::reset()`, so a transport stop that calls it without re-preparing
+cancels nothing — **decided at P5 (2026-08-02), no longer open**: a stop/start must not cancel an
+in-flight Learn pass (invariant 3 makes Learn an explicit start/explicit end, and a host calling
+`reset()` on every transport stop would turn that into "Learn survives only within one play"),
+must not clear the session-cumulative integrated LUFS / dBTP holds (a mastering measurement spans
+transport stops by design — the P5 meter-reset request is the deliberate way to clear them), and
+would flush only a ≤ 10 ms + OS tail that is inaudible as stale content. A host that needs a full
+flush re-prepares, which reaches everything through `prepareToPlay`.
 
 Evidence (all mutation-verified):
 - inv 2: `testModeSwitchIsSoundNeutral` (state suite) — toggling Simple⇄Advanced mid-stream, at a
@@ -170,7 +209,60 @@ trims toward zero (`AdaptiveEngine::startLearn/commitLearn`, wrapper command ato
 targets serialize in the global `ADAPTIVE` child — written only once learned, "absent = never
 learned" (§4.4) — and restore through the host-hidden-session-state mirror pattern: two
 INDEPENDENT self-correcting scalars, deliberately distinct from OQ-013's coherence-critical
-frozen-trim vector, whose restore transport remains a **Hard Stop** until its ADR. Guarded by
+frozen-trim vector — which since **ADR-0014** (2026-08-02) restores too, closing invariant 3's
+last gap: a freeze-ON slot's latched vector is staged on ADR-0012's record row and applied at the
+§2.8 duck's silent bottom (or the unprimed direct-adopt), after which Freeze holds it exactly, so
+a frozen slot's render is reproducible across save/load and A/B (`testFrozenTrimRestore`).
+**Who owns that vector** (settled at round 41; round 40 answered it wrongly and the correction is
+instructive): the ENGINE owns it, in `AdaptiveEngine`'s **retained** trim set — four lock-free
+scalars plus a release-stored flag which `reset()` deliberately does not clear, so the vector
+outlives the engine's re-initialisation exactly as `learned` and the two reference targets do. Two
+sets exist because two different questions are being asked: `publishedTrim*()` is *what the
+adaptive layer is applying right now* and must be zeroed with the internal struct, or the P5
+overlay would report a vector the DSP is not using (KI-006's readout half); `retainedTrim*()` is
+*the vector this instance last latched*, which is persistence state.
+
+The wrapper's `liveFrozenTrims` mirror is **not** the owner. It covers exactly one window — a
+restore staged and not yet applied, where the engine's answer is one session out of date.
+
+**The retained set is engine-wide; `FROZEN_TRIMS` is per-slot, and the gap between those two facts
+is the third clause** (round 42). The engine latches *a vector*, not "slot A's vector", so after an
+A/B switch into a freeze-ON slot that holds none of its own — where nothing stages a restore and the
+generation pair therefore stays equal — the incoming slot's next save serialised the outgoing slot's
+latch as if it owned it. A runtime cache may only answer for the slot it was filled under: the
+wrapper records the retained GENERATION each time the live surface's frozen ownership changes, and
+adopts the engine's answer only once that generation has advanced past it. All three clauses live in
+`AnabasisAudioProcessor::engineFrozenTrimsIfLive()`; the re-basing lives in `adoptFrozenMirror()`,
+which is the single writer of the mirror precisely so the two halves of "replace the frozen
+ownership" cannot be performed separately. Freeze OFF adopts nothing:
+invariant 3 gives an unfrozen slot no latch.
+
+Round 40 declared the mirror the durable owner and had `prepareToPlay` copy the latch into it
+before the engine destroyed it. That is a **non-thread-safe `juce::ValueTree` write from a host
+callback JUCE does not deliver on the message thread**, opposite the editor's continuous
+`presetDirty()` read of the same member — with both sides gated on Freeze being ON, so the windows
+coincided exactly. ThreadSanitizer reports it as a data race on the tree's reference-counted
+pointer. Keeping the durable copy in the lock-free layer removes THAT rescue and THAT race: no
+thread crossing is added *in order to preserve a latch*. **The general rule this instance
+illustrates: when state must survive a re-initialisation, retain it where it already lives rather
+than copying it across a thread boundary to somewhere more durable.**
+
+**What it does NOT remove, stated because the paragraph above reads as though the crossing were gone
+outright — it is not.** `adoptFrozenMirror()` is a single writer, and a single writer is not a
+message-thread-only writer: it is still reached from `setStateInformation`, which VST3 does not
+promise on the message thread, while `getStateInformation`, the A/B swap and the §7 undo push read
+the same member through `saveSlotFromLive()`. (Until round 51 the editor's `presetDirty()` poll ran
+`saveSlotFromLive()` several times a second too, which made the opposing reader continuous rather
+than host-initiated; the marker now compares `presetShapeFromLive()`, which touches no ValueTree.
+That narrows the window — it does not remove it, because the readers named above remain.)
+The refcounted-pointer race ThreadSanitizer
+reported for the round-40 code therefore still exists **on the load path**, exactly as it does for
+`apvts.replaceState()`, `liveDetachMask` and `livePresetName` written from the same function. That
+is the residual `KNOWN_ISSUES.md` KI-003 keeps open and which closes with the thread-model decision,
+not separately. What rounds 41–42 changed is that the mirror is no longer written from a SECOND
+host callback (`prepareToPlay`) as well — the exposure is back to the one path KI-003 already owned,
+not eliminated.
+Guarded by
 `testLearnCommitAndAdaptiveRoundTrip` (commit moves the reference; the child restores it
 byte-identically; absent restores never-learned defaults). The Learn UI grammar (duck-routed
 engage, undo bracketing, running readout display) lands with the P5 UI.

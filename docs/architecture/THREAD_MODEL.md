@@ -31,12 +31,17 @@ it instantiates:
 | `nonRealtime` → latency predictor | `std::atomic<bool> nonRealtimeFlag`, written in `setNonRealtime()` (a host-thread callback), read by the snapshot build and the predictor | atomic mirror (same class as the row above) | `src/PluginProcessor.h` (`nonRealtimeFlag`), `src/PluginProcessor.cpp` (`setNonRealtime`/`updateLatency`/`processBlock`) |
 | Engaged lookahead window → any reader | `std::atomic<int> engagedWindow`, relaxed, written per sample on the audio thread; payload-free diagnostic (the smoothing test reads it) | Audio → GUI (staleness-hint class: monotonic display/diagnostic data) | `src/dsp/AnabasisEngine.h` (`engagedWindowSamples`; line-number cites here went stale twice — symbols only) |
 | Forced-duck request → engine | `std::atomic<bool> duckRequested`, set by the wrapper before every bulk swap (A/B, preset, session load), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestForcedDuck`), `src/PluginProcessor.cpp` (three call sites) |
-| Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr`, `pubGrDb` — relaxed atomics, ONE publish per block from `processBlock`, **fed from the engine's §2.9 render tap** (the programme path before the monitor-only delta/comp stages — the buffer itself carries the listening path); plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics | Audio → GUI (meters) | `src/PluginProcessor.cpp` (the per-block publish), `src/dsp/AnabasisEngine.h` (`outputLoudness`/`lastRenderTpMax`) |
+| Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr`, `pubGrDb` — relaxed atomics, ONE publish per block from `processBlock`, **fed from the engine's §2.9 render tap** (the programme path before the monitor-only delta/comp stages — the buffer itself carries the listening path); plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics. The audio thread is the steady-state writer but NOT the only one: `publishSilentMeters()` writes the same six from `prepareToPlay` (host thread) and from `requestMeterReset()` — so from the message thread on the meter panel's click and from whichever thread the host restores on via `setStateInformation` — because a clear that waits for a block top is invisible until audio flows, and both a project open and a meter read ordinarily happen stopped. Six INDEPENDENT relaxed scalars, no ordering role, so a concurrent load-clear and end-of-block publish are last-writer-wins per scalar and the worst observable outcome is one display frame mixing pre- and post-clear values, overwritten by the next block | Audio → GUI (meters) — plus the non-audio clear writers named here | `src/PluginProcessor.cpp` (the per-block publish), `src/dsp/AnabasisEngine.h` (`outputLoudness`/`lastRenderTpMax`) |
 | GR/waveform history → GUI | `GrHistoryBuffer`: 4096-entry power-of-two SPSC ring, entry written FIRST, monotonic index release-stored AFTER, acquire-loaded stateless peeks on the reader side | Audio → GUI (time series, SPSC ring) | `src/dsp/GrHistoryBuffer.h` |
 | Learn start/stop → engine | ONE atomic word `learnCmd` (none / start / commit / commitThenStart), **release**-stored by the writer and `exchange`-consumed with **acquire** at the block top. The writer COMPOSES on its own thread — a start landing on an unconsumed commit becomes one commitThenStart — because ordering information exists only there; two flags with a fixed consumption order silently discarded both commands when a stop and a start fell in the same block. It was a code+flag staged record until 2026-08-02: publishing a two-store record let a consumer whose `exchange` fell between the stores run the new code and leave the writer to re-raise the flag behind it, delivering the same command twice — a repeated commitThenStart commits a pass one block old. A two-bit payload has nothing to stage, so the code IS the flag | GUI → Audio (**single lock-free scalar**; ADR-0012 §Known limits still governs the composing writer) | `src/dsp/AnabasisEngine.h` (`requestLearnStart/Stop`), `src/dsp/AnabasisEngine.cpp` (block top) |
 | Learned-target restore → engine | ONE staged record: `pendingLearned` (the learned/never-learned discriminator) + `pendingRefOnset`/`pendingRefTilt` stored relaxed FIRST, then the single `adaptivePending` flag **release**-stored; the block top `exchange`s it with **acquire**, so a block that sees the flag reads that call's whole record, never a torn one, and the LAST restore staged before the block is the one that lands. Two flags with a fixed consumption order could not express last-writer-wins — an un-learned session loaded after a learned one inherited the learned references | GUI → Audio (**bounded staged record**, ADR-0012) | `src/dsp/AnabasisEngine.h` (`restoreLearnedTargets`), `src/dsp/AnabasisEngine.cpp` (block top) |
 | Learned state → `getStateInformation` | `AdaptiveEngine::learned` atomic: refs published FIRST, flag **release**-stored; `hasLearned()` **acquire**-loads, so a saver that sees `true` reads the refs that store ordered before it | Audio → GUI (published state read as a unit — the ADR-0012 contract mirrored) | `src/dsp/AdaptiveEngine.h` (`commitLearn`/`hasLearned`), `src/PluginProcessor.cpp` (`getStateInformation`) |
-| Macro listener → message-thread mapper | `std::atomic<bool> mappingPending` set from whichever thread APVTS delivers `parameterChanged` on; drained on the message thread by `AsyncUpdater` (only posted when already on the message thread) + a 30 ms `Timer`; `std::atomic<int> restoreDepth` suppresses the drain across a restore (`ScopedRestore`) | **no row — see OQ-014** | `src/MacroEngine.cpp:28-35,63-66`, `src/MacroEngine.h:92-101,139` |
+| Macro listener → message-thread mapper | `std::atomic<bool> mappingPending` set from whichever thread APVTS delivers `parameterChanged` on; drained on the message thread by a 30 ms `Timer` (and directly when the callback already runs there); `std::atomic<int> restoreDepth` suppresses the WHOLE drain tick across a restore (`ScopedRestore`) — the guard covers the wrapper's half too, so the tick is not a second concurrent writer of `liveDetachMask` on a host that restores off the message thread; `std::atomic<bool> applying` is the §5.3 discriminator's macro-originated half and is atomic for the same reason `restoreDepth` is — `AnabasisAudioProcessor::parameterChanged` reads it from whichever thread the host chose. **Nothing posts to the message queue from the listener**: `triggerAsyncUpdate()` takes a lock and on some platforms allocates, so a callback delivered on the audio thread would put both inside `processBlock`. `std::atomic<bool> drainStopped` is the one-way TEARDOWN latch: `stopDraining()` sets it and `drainTick` tests it first, so no trigger — timer, posted update, `flushPendingMapping`, `refreshMapping` — can reach `onDrainTick` after the owner has begun destroying the members it calls into. It replaced nulling the `std::function`s, which raced a tick already about to invoke one | Any thread → Message (listener → async drain guard; OQ-014 resolved 2026-08-02, reading 1) | `src/MacroEngine.cpp:28-35,63-66`, `src/MacroEngine.h:92-101,139` |
+| §5.3 detach/re-engage bits → the mask | `pendingDetachBits` / `pendingReengage` set from the gesture and APVTS callbacks on whichever thread the host delivers them, drained into `liveDetachMask` on the message thread — directly when the callback is already there, otherwise on the MacroEngine's SAME 30 ms tick via `onDrainTick`. The wrapper used to `triggerAsyncUpdate()` on the off-thread branch, which is the hard red line the row above refuses for exactly the same reason; the `AsyncUpdater` base is gone so the route cannot be re-opened. Cost of the wait: the badge and the serialized mask lag ≤ 30 ms on such a host. The drain is ONE sequence — `MacroEngine::drainTick()`: the wrapper's bits first (they decide the mask), then the mapping (it reads the mask) — and all three triggers call it (the 30 ms timer, the posted `handleAsyncUpdate`, `flushPendingMapping`), because a revision that fixed the order in the timer alone left the posted path mapping against a stale mask. A macro-knob gesture BEGIN raises `pendingReengage` and calls `MacroEngine::armMapping()` (a relaxed store, so it is safe from whichever thread the gesture arrives on): clearing the mask and re-landing the curve are two halves of §5.3 point 3, and a gesture that moves nothing armed neither | Any thread → Message (same row) | `src/PluginProcessor.cpp` (`drainDetachBitsSoon`, `handleAsyncUpdate`), `src/MacroEngine.cpp` (`drainTick`) |
+| Frozen-trim restore → engine | `AnabasisEngine::restoreFrozenTrims`: four scalars stored relaxed FIRST, one `frozenPending` flag **release**-stored after; the block top `exchange`s it with **acquire** into a pending copy, which is APPLIED (via `AdaptiveEngine::injectTrims`, finite-checked and clamped at the boundary — round 52: the clamp alone was `juce::jlimit`, whose comparisons are both false for a NaN, so a non-finite property passed through it untouched) at the §2.8 duck's silent bottom or the unprimed direct-adopt — where every restore-driven discontinuity lands. Staged only by the wrapper, only for a freeze-ON adopted surface, and only from a path that also requests the duck (the bottom is the only landing site — `undo`/`redo` were the omission, fixed 2026-08-03); last-writer-wins | GUI → Audio (**bounded staged record**, ADR-0012 — second instance, ADR-0014) | `src/dsp/AnabasisEngine.h` (`restoreFrozenTrims`), `src/dsp/AnabasisEngine.cpp` (block-top consume + the two application sites), `src/PluginProcessor.cpp` (`saveSlotFromLive` capture, `applySlotToLive` + `setStateInformation` stages) |
+| Frozen-trim **retention** → the saver | `AdaptiveEngine`'s RETAINED set: four scalars stored relaxed, `retTrimSeq` **release**-stored after them, **acquire**-loaded by `retainedTrimGeneration()`. A COUNTER rather than a flag since round 42, because the wrapper asks it two questions: `!= 0` is "does a retained vector exist?", and `!= slotFrozenBase` is "was it latched since the live surface's frozen ownership last changed?" — the slot scope the engine cannot carry itself, since it latches vectors and knows nothing about A/B. `slotFrozenBase` is recorded (relaxed; a comparand, no payload) by `adoptFrozenMirror`, the single writer of the per-slot mirror. Written only by a MEANINGFUL publication (an audible `finishBlock`, an ADR-0014 `injectTrims`) and never cleared. **The restore MUST be one of the two**, and it is load-bearing rather than incidental: with Freeze ON `finishBlock` publishes nothing, so after `adoptFrozenMirror` re-bases `slotFrozenBase` the injection is the ONLY event that can carry the generation past that base and let the incoming slot answer for its own latch. A future change that made `injectTrims` publish without counting — to keep the counter meaning "measured", say — would leave a freeze-ON slot restored from disk withholding its latch from every save until the next audible block, i.e. for ever on a stopped transport. Whatever the counter comes to mean, it has to include an ADR-0014 restore, because the wrapper reads it to decide which SLOT owns the latch, not where the numbers came from. `testFrozenTrimRestore` case (1) asserts the bump directly — `reset()` leaves it standing, which is what makes it survive a host rate change, while the PUBLISHED set beside it is zeroed with the internal struct because that one describes what the DSP is applying. This is the durable copy of a frozen latch, and it lives here rather than in the wrapper for a threading reason: round 40 kept it in the wrapper's `liveFrozenTrims` `juce::ValueTree` and had `prepareToPlay` — a host callback JUCE does not deliver on the message thread — assign it, opposite the editor's then-continuous `presetDirty()` read of the same member. ThreadSanitizer reports that as a data race on the tree's refcounted pointer. The mirror's REMAINING writer, `adoptFrozenMirror()`, is still reached from `setStateInformation` — a single writer, not a message-thread-only one — so the load-path exposure is the one KI-003 owns, reduced to its pre-round-40 shape rather than removed. Round 51 narrowed the opposing side without touching the thread model: the dirty marker moved off `saveSlotFromLive()` onto `presetShapeFromLive()` (fixed parameter list + atomics, no ValueTree), so the mirror's readers are now the host-initiated ones only — `getStateInformation`, the A/B swap, the §7 undo push — instead of those plus a display timer | Audio → GUI (**publication flag**, THREADING_POLICY release/acquire row) | `src/dsp/AdaptiveEngine.h` (`publishTrims`, `hasRetainedTrims`), `src/PluginProcessor.cpp` (`engineFrozenTrimsIfLive`) |
+| §7 undo history → the editor | `historyEpoch`, a relaxed counter bumped by `setStateInformation` (any thread); the message thread reconciles it in `syncHistory()`, which clears the four stacks and the gesture snapshot. The containers themselves — `juce::Array<juce::ValueTree>` and a `ValueTree` — are touched by NO other thread, which is the whole mechanism: the loader announces the session change instead of performing the clear, so there is nothing to race and nothing blocks in the host callback. Every read and write of the history passes through the one reconciliation point | GUI ← host (momentary / transient requests, inverted: the host announces, the GUI thread acts) | `src/PluginProcessor.h` (`historyEpoch`, `syncHistory`), `src/PluginProcessor.cpp` (`setStateInformation`, `undo`/`redo`/`pushUndoStep`, both gesture callbacks) |
+| Frozen-trim **application** generation → the saver | `frozenStageSeq` (`fetch_add` by the stager, before the record flag) vs `frozenAppliedSeq` (**release**-stored by the audio thread only after `injectTrims`, **acquire**-loaded by the saver — not the relaxed staleness row, because this counter GATES a read of the four `publishedTrim*` atomics and relaxed would let "settled" be observed before the values it announces — the row THREADING_POLICY now states generally, and which `pubTrimEver`/`retTrimEver` were brought into line with at round 41); `frozenRestorePending()` is their inequality. The consumer samples the generation BEFORE the payload, so a stage landing mid-consume stamps the older number and the record stays pending rather than claiming a vector it did not inject. The record flag alone answers "consumed?", and the save needs "**applied?**" — the ~34 ms between the block top and the duck bottom is a window in which the published trims are still the pre-restore ones, and a save landing there serialised them (until round 51 the editor's ~3 Hz dirty-marker poll reached this path in ordinary use as well, which is how the window was found; the marker no longer enters `saveSlotFromLive` at all, so the reachable landings are `getStateInformation`, the A/B swap and the §7 undo push — rarer, and the gate is required for exactly the same reason) | Audio → GUI (generation / staleness counters) | `src/dsp/AnabasisEngine.h` (`frozenRestorePending`), `src/PluginProcessor.cpp` (`saveSlotFromLive`) |
 
 **How the staged-record row came to exist (ADR-0012).** The two learned-target rows above were
 first written here under invented row names ("momentary request + flag-orders-payload"), which read
@@ -47,17 +52,17 @@ discipline, and Audio→GUI authorisation does not carry over to GUI→Audio. Ex
 it (2026-08-01), it was recorded as OQ-015 rather than redesigned under review pressure, and the
 owner ratified the implementation unchanged: **ADR-0012** adds the staged-record row with its six
 mandatory conditions, and the rows above now cite it. The implementation did not change; the
-authorisation did. **OQ-013 remains open** — ADR-0012 gave its trim vector a permitted transport
-but deliberately did not decide whether a restored vector may be injected into a running engine.
+authorisation did. **OQ-013 is now closed by ADR-0014 (2026-08-02)** — ADR-0012 gave its trim
+vector a permitted transport, and ADR-0014 took the injection decision it deliberately left open;
+the frozen-trim row above is the wired result.
 
-**The OQ-014 exception, stated rather than papered over.** `mappingPending` and `restoreDepth`
-point any-thread → message-thread, a direction the table does not enumerate. They implement the
-shape ADR-0005/ADR-0011 mandate ("the MacroEngine consumes macro changes solely through an async
+**OQ-014, resolved 2026-08-02 (reading 1).** `mappingPending` and `restoreDepth` point
+any-thread → message-thread, a direction the table did not enumerate. They implement the shape
+ADR-0005/ADR-0011 mandate ("the MacroEngine consumes macro changes solely through an async
 message-thread listener" — `juce::AsyncUpdater` is itself an atomic flag plus a message post), so
-one reading is that the table has a documentation gap; the other is that a small ratifying ADR is
-owed. That is an owner call recorded in `OPEN_QUESTIONS.md` **OQ-014**, and this file deliberately
-does not pre-empt it. The residual check-then-act window in the guard is recorded in
-`KNOWN_ISSUES.md` KI-003.
+the owner call took the documentation-gap reading: `THREADING_POLICY.md` now carries a
+listener-guard row citing those two ADRs as the enacting authority, and no new ADR was owed. The
+residual check-then-act window in the guard remains recorded in `KNOWN_ISSUES.md` KI-003.
 
 ## PDC
 
@@ -86,25 +91,64 @@ no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amen
 
 ## Planned edges (not yet in the tree)
 
-- **Spectrum capture rings** (post-input-gain and post-chain, the dual-trace §2.9 overlay) —
-  same ScopeBuffer idiom as the implemented GrHistoryBuffer; land with the P5 spectrum view.
-- **Command atomics** — the forced-duck request and the P4 Learn start/stop + learned-target
-  restore are IMPLEMENTED (see the table); the meter hold reset follows at P5, same
-  single-atomic exchange shape. **Its scope is wider than a GUI button:** `dbTpMaxHold` and the
-  integrated-LUFS histogram are session-cumulative and are cleared only by `prepareToPlay`, so
-  they also survive a `setStateInformation` (loading a different session keeps the previous
-  programme's true-peak maximum) and an `AudioProcessor::reset()` — which this processor does not
-  override. Whether a state load should clear them is a P5 decision, not an oversight. The same
-  decision covers `GrHistoryBuffer::reset()`, which today **rewinds** the ring's monotonic write
-  index to 0 and bulk-clears all 4096 entries: a reader holding a cached `available()` would see
-  the index go backwards, and the bulk clear is a host-thread write against a `const` peek that
-  the SPSC row does not cover (it scopes the audio-thread producer). Inert with no reader before
-  P5 — and the reader contract is what decides whether the index stays monotonic across a reset
-  or gains a generation counter, so it is designed there rather than guessed at now.
-- **Frozen trim vector transport** — **OQ-013 Hard Stop**: four scalars, no permitted mechanism
-  yet; no code may wire it until its ADR lands. **ADR-0012 settled the transport** (the staged
-  record row fits a four-scalar vector); what keeps OQ-013 open is whether a restored vector may
-  be injected into a running engine at all.
+- **Spectrum capture rings — IMPLEMENTED (P5, 2026-08-02)**: two `anabasis::ScopeBuffer`
+  instances in the engine (post-input-gain and post-chain/render taps), each filled into
+  preallocated scratch during stages A/E and published with ONE release-store per processed
+  chunk — the SPSC ring row, same discipline as `GrHistoryBuffer`. The FFT runs GUI-side
+  (`SpectrumView`), reading stateless `readLatest` peeks; nothing on the audio thread windows,
+  transforms or allocates. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
+  tap-content equality).
+  **`prepare` rewinds both rings, and the rewind is ANNOUNCED on a generation counter**
+  (`ScopeBuffer::resetGeneration()`, bumped release-after the index store; the generation-counter
+  row). The rewind makes pre-rate-change frames unreachable; the reader owns the smoothed EMA the
+  ring cannot reach, so it has to drop that itself, and until round 54 it inferred the reset from
+  `writeCount()` going backwards. That predicate holds only while the observed count is still
+  below the reader's last one — a single delayed tick lets the producer republish past it, after
+  which the reset is missed permanently and the pre-reset analysis is drawn against the new rate's
+  bin mapping. `SpectrumView` samples the generation on **both sides** of its analysis batch, the
+  same reader contract `GrHistoryBuffer::resetEpoch()` states; it is a plain generation rather than
+  that class's odd/even seqlock because `ScopeBuffer::reset()` writes one atomic and touches no
+  sample, so there is nothing for a reader to observe half-done.
+  `testARewoundSpectrumRingDropsThePreviousTrace` covers both edges, including the
+  count-never-dips case the old predicate could not see.
+- **Command atomics — the meter-hold reset is now IMPLEMENTED (P5, 2026-08-02)**, joining the
+  forced-duck request and the Learn command on the momentary-request row:
+  `AnabasisAudioProcessor::requestMeterReset()` → `meterResetPending`, consumed with `exchange`
+  at the top of `processBlock`, clearing the session-cumulative display state only — the
+  integrated-LUFS histogram (via `LoudnessMeter::resetIntegrated`, which also WATERMARKS the
+  gating-block assembly so a block straddling pre-reset material cannot enter the fresh
+  histogram and pin the relative gate at the old programme's loudness) and the wrapper's
+  `dbTpMaxHold`; PLR follows by derivation, the rolling M/S windows keep running, and the §2.7
+  compensation meters are untouched (they are a monitor function, not a display). The two P5
+  decisions this edge was holding are TAKEN: **a state load clears the holds**
+  (`setStateInformation` stages the same request, so the clear lands at a block top), and
+  **the six published atomics are cleared by the request itself**, not by its callers: the
+  ENGINE half genuinely has to wait for a block top, the DISPLAY half does not, and a request
+  that only set the flag was invisible until audio flowed — indefinitely so with the transport
+  stopped, which is the ordinary condition for BOTH callers (a project is opened stopped; a
+  meter is read stopped). `setStateInformation` carried the display publish beside its request
+  from round 33 and the meter panel's click did not, so the same reset worked from a load and
+  read as a dead button from the GUI. `requestMeterReset()` now performs both, so a third
+  caller inherits the pairing (round 40), and
+  **`AudioProcessor::reset()` stays un-overridden** — a transport stop must not clear a
+  mastering measurement, an in-flight Learn pass must survive a stop/start (MODE inv 3's
+  explicit start/end), and the ≤ 10 ms tail a reset would flush is inaudible; hosts that need a
+  flush re-prepare, which reaches everything. Guarded by `testMeterResetClearsSessionHolds`
+  (all four halves mutation-verified).
+- **GrHistoryBuffer reset epoch — the reader contract, decided here as promised (P5,
+  2026-08-02)**: the write index is monotonic BETWEEN resets and MAY REWIND across one;
+  `reset()` brackets its host-thread bulk clear with two `release` increments of a
+  `resetGuard` epoch (odd = clear in flight), and a reader samples `resetEpoch()` before and
+  after a batch of `peek`s — odd or changed means the batch raced a reset and is discarded,
+  and the reader re-anchors its cursor to the fresh `available()`, dropping at worst one
+  display frame on an event (re-prepare) that already blanks the programme. Readers never
+  cache `available()` across an epoch change; within one epoch the SPSC row's contract is
+  unchanged. Guarded by `testGrRingResetEpoch`.
+- **Frozen trim vector transport — IMPLEMENTED (2026-08-02, ADR-0014)**: the Hard Stop this
+  bullet carried is lifted. ADR-0012 settled the transport (the staged-record row fits a
+  four-scalar vector); ADR-0014 took the injection decision and the edge is now the frozen-trim
+  row in the implemented table above, guarded by `testFrozenTrimRestore` (every element killed by its own mutant, each
+  killed by a distinct check).
 
 ## Verification
 

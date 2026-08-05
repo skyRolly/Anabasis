@@ -10,6 +10,7 @@
 #include "LoudnessMeter.h"
 #include "TruePeak.h"
 #include "AdaptiveEngine.h"
+#include "ScopeBuffer.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
@@ -147,6 +148,63 @@ public:
         learnCmd.store (kLearnCommit, std::memory_order_release);
     }
 
+    // ADR-0014 frozen-trim restore (OQ-013 resolved 2026-08-02, owner-
+    // approved): the four-scalar vector crosses on ADR-0012's staged-record
+    // row — payload relaxed first, one flag release-stored after, consumed
+    // with exchange(acquire) at a block top — and is APPLIED at the §2.8
+    // duck's silent bottom (or the offline direct-adopt), which is where
+    // DESIGN §7 places every restore-driven discontinuity. Only the wrapper
+    // stages one, and only for a freeze-ON slot.
+    void restoreFrozenTrims (float relOct, float link, float hpf, float tilt) noexcept
+    {
+        stagedFrozen[0].store (relOct, std::memory_order_relaxed);
+        stagedFrozen[1].store (link,   std::memory_order_relaxed);
+        stagedFrozen[2].store (hpf,    std::memory_order_relaxed);
+        stagedFrozen[3].store (tilt,   std::memory_order_relaxed);
+        // Stage generation, stored BEFORE the flag so the consumer's acquire
+        // orders it with the payload. See frozenRestorePending() for why the
+        // flag alone cannot answer the writer's question. `fetch_add` rather
+        // than load+store: `setStateInformation` is not promised on the message
+        // thread (KI-003), so two stagers can in principle overlap, and a lost
+        // increment would read as "already applied".
+        frozenStageSeq.fetch_add (1u, std::memory_order_relaxed);
+        frozenPending.store (true, std::memory_order_release);
+        // NOTE the absence of a duck request here. The bottom is the only place
+        // this vector can land, so a staged record must always get one — but
+        // the guarantee is asserted where the record is CONSUMED (process()'s
+        // block top sets `duckAsked` from it), not by a second store beside
+        // this flag. A second store would be a second thing to observe: the
+        // consumer reads `duckRequested` a dozen lines before this flag, so a
+        // block could take the record and miss the request. Deriving the
+        // request from the record cannot go out of order with it.
+    }
+    // "Is the engine's published trim vector still older than the last record
+    // I staged?" — which is about APPLICATION, not consumption. `frozenPending`
+    // is cleared by the block-top exchange, but the vector is only injected
+    // (and therefore published) at the duck's silent bottom up to ~34 ms later;
+    // a save landing in that window read the PRE-restore trims and overwrote
+    // the loaded copy with them. The two counters close it exactly: the
+    // consumer remembers the generation it took and stores it back only after
+    // injectTrims, so equality means "published == last staged".
+    //
+    // The applied side is RELEASE/ACQUIRE, not relaxed, and the distinction is
+    // the whole point of the pair: unlike the display counters on
+    // THREADING_POLICY's staleness row, this one GATES a read of other atomics
+    // (`publishedTrim*`). Relaxed on both sides would let a reader observe
+    // "settled" while the four published trims injectTrims wrote just before it
+    // were still the old ones — the same stale capture, one reordering later.
+    // The acquire here pairs with the release in the application sites.
+    //
+    // A record staged and then dropped by prepare()/reset() cannot strand this:
+    // those clear neither `havePendingFrozen` nor the flag, and the unprimed
+    // direct-adopt branch applies the pending copy on the first block after
+    // either.
+    bool frozenRestorePending() const noexcept
+    {
+        return frozenStageSeq.load (std::memory_order_relaxed)
+            != frozenAppliedSeq.load (std::memory_order_acquire);
+    }
+
     // Learned-target restore (session load, ADAPTIVE child): host-hidden
     // session state through the mirror pattern — consumed at the block top.
     // ONE staged record — payload (`pendingLearned` discriminator + the two
@@ -201,6 +259,13 @@ public:
     float lastBlockMinGain() const noexcept
     { return grMinLinear.load (std::memory_order_relaxed); }
 
+    // Per-stage GR for the P5 panel meters — the answer to the recorded
+    // "which reduction is the meter showing" question: the COMP panel shows
+    // this, the LIMITER panel shows lastBlockMinGain()'s dB, and neither
+    // pretends to be chain reduction. Relaxed atomic, published per block.
+    float lastCompGrDb() const noexcept
+    { return compGrDb.load (std::memory_order_relaxed); }
+
     // -- §2.9 output metering: the RENDER tap ---------------------------------
     // Fed per sample from the bypass-mixed programme path BEFORE the two
     // monitor-only stages (§2.7 delta substitution and loudness-comp gain).
@@ -214,6 +279,22 @@ public:
     // metering did. Same-thread reads: the wrapper calls these right after
     // process() on the audio thread, so no atomics are needed.
     const LoudnessMeter& outputLoudness() const noexcept { return outMeter; }
+
+    // §2.9 spectrum capture rings (THREAD_MODEL's planned edge, implemented
+    // at P5 on the SPSC ring row): post-input-gain and post-chain (the render
+    // tap), each published with one release-store per processed chunk. The
+    // GUI-side FFT reads them as stateless peeks; nothing here consumes.
+    const ScopeBuffer& spectrumInRing()  const noexcept { return specInRing; }
+    const ScopeBuffer& spectrumOutRing() const noexcept { return specOutRing; }
+
+    // §2.9 meter-hold reset, audio thread (the wrapper consumes the request at
+    // the top of processBlock and calls this). Clears ONLY the render meter's
+    // session-cumulative half — the integrated histogram. Deliberately not
+    // touched: the §2.7 dry/wet meters (they feed the loudness COMPENSATION,
+    // a monitor function — clearing them would bounce the monitor gain, which
+    // is not what a meter-reset button means) and the GR ring (a rolling ~43 s
+    // window that clears itself; the wrapper owns it in any case).
+    void resetMeterHolds() noexcept { outMeter.resetIntegrated(); }
     float lastRenderTpMax() const noexcept { return renderTpMaxCall; }   // linear
     float lastRenderPeak() const noexcept  { return renderPeakCall; }    // plain |x| max
 
@@ -246,6 +327,21 @@ private:
     std::vector<int>   wArr;
     std::vector<float> pushArr;       // limiter push, applied inside the region
 
+    // §2.9 spectrum taps: per-chunk staging (filled in stages A and E, pushed
+    // once per chunk with a single release-store each) + the two SPSC rings
+    // the GUI FFTs from. Scratch is sized in prepare(); no audio-thread
+    // allocation.
+    // Per-chunk scratch for the two §2.9 spectrum taps. Both tap sites select
+    // L or R by channel index, which is exhaustive only while the engine is at
+    // most stereo — `numChans` is clamped to kMaxChannels in prepare(), so
+    // widening that constant WITHOUT giving the taps real per-channel scratch
+    // would fold every extra channel into the right trace. The assertion lives
+    // here, beside the declaration a widening would have to change, rather than
+    // inside the per-sample loop that consumes it.
+    static_assert (kMaxChannels == 2, "spectrum taps assume L/R; widen this scratch first");
+    std::vector<float> specInL, specInR, specOutL, specOutR;
+    ScopeBuffer specInRing, specOutRing;
+
     juce::SmoothedValue<float> inputGain      { 1.0f };
     juce::SmoothedValue<float> pushGain       { 1.0f };
     juce::SmoothedValue<float> ceilingLinear  { 0.8912509f };  // -1 dBTP default
@@ -253,6 +349,7 @@ private:
     bool smoothersPrimed = false;
     std::atomic<int> engagedWindow { 96 };
     std::atomic<float> grMinLinear { 1.0f };
+    std::atomic<float> compGrDb { 0.0f };
     float grMinThisCall = 1.0f;
 
     LookaheadLimiter limiter;
@@ -268,6 +365,18 @@ private:
     // stages see carries the APPLIED values, so nothing rewires at full gain.
     enum class DuckState { idle, out, bottom, in };
     std::atomic<bool> duckRequested { false };
+
+    // ADR-0014 staged record + the audio-thread pending copy the duck bottom
+    // applies (consumed at the block top per ADR-0012, applied at the bottom
+    // per DESIGN §7 — two steps, both audio-thread).
+    std::atomic<float> stagedFrozen[4] = { {0.0f}, {0.0f}, {0.0f}, {0.0f} };
+    std::atomic<bool>  frozenPending { false };
+    // Written by the message thread (stage) / audio thread (apply); read by the
+    // message thread. Equal ⇒ the published vector is the last staged one.
+    std::atomic<uint32_t> frozenStageSeq { 0 }, frozenAppliedSeq { 0 };
+    AdaptiveEngine::Trims pendingFrozenTrims;
+    uint32_t pendingFrozenSeq = 0;     // the generation `pendingFrozenTrims` holds
+    bool havePendingFrozen = false;
     // kLearnNone is the "nothing pending" value, which is what lets the code
     // and the flag be the same word — see requestLearnStart above.
     static constexpr int kLearnNone = 0, kLearnStart = 1, kLearnCommit = 2,

@@ -19,30 +19,21 @@ Adding any thread — including a worker for analysis, preset scanning, or meter
 | GUI → Audio (momentary / transient requests) | a single `std::atomic<int>` per request | e.g. meter reset, `Learn` start/stop, `Freeze` — consumed with `exchange` on the audio thread. Payload-free: the *arrival* is the whole message. |
 | GUI → Audio (sentinel-valued command **carrying one scalar**) | one `std::atomic<float>` per slot, an out-of-range **sentinel** meaning "nothing pending" | The `abMatchGain` idiom (ADR-0011): the writer stores the value, the audio thread `exchange`s the sentinel back in, so arrival and payload are one indivisible operation and no second flag can tear against it. One writer, one consumer, **one scalar** per slot — a *bounded* set of slots fixed at compile time, never a queue. Anything unbounded, wider than one lock-free scalar, or needing ordering against other state is **not** this row — a bounded record of several scalars is the **staged-record** row below (ADR-0012), and anything wider than that is a new cross-thread path. |
 | GUI → Audio (**bounded staged record**) | *N* lock-free scalars + **one** `std::atomic<bool>` flag, `release`-stored after the payload | **ADR-0012.** The payload is stored `relaxed` first, the flag `release`-stored after; the audio thread `exchange`es the flag with `acquire` **at a block top** and only then reads the payload, so the record adopts as a unit. Conditions, all mandatory: *N* fixed at compile time (no allocation, no container, no variable length) · one writer thread (off the audio thread), one consumer · **last-writer-wins only** — an unconsumed record is overwritten, never queued · the writer may `const`-acquire-load the flag to ask "taken yet?" · the consumer does nothing but adopt. Anything queued, multi-writer, unbounded, or consumed mid-block is **not** this row. |
-| Audio → GUI (scope / GR history) | SPSC ring buffer | Exactly **one producer thread and one reader thread**; release/acquire on the write index; the index is published **once per block**, so a reader that acquires it sees a whole committed block. |
-| Audio → GUI (meters: LUFS M/S/I, dBTP, PLR, GR) | published `std::atomic<float>` | Audio writes in a single `publish()`; GUI reads via getters. `memory_order_relaxed` — monotonic display data, no ordering role. |
+| Audio → GUI (scope / GR history) | SPSC ring buffer | Exactly **one producer thread and one reader thread**; release/acquire on the write index, published **once per COMMITTED UNIT** — a whole host block for the GR history, a processing CHUNK for the spectrum taps, which publish inside `processChunk` and therefore several times when a host block exceeds the prepared size. The guarantee the wording exists for is unchanged either way: a reader that acquires the index sees every frame below it complete, because the payload is written before the index is released. Only the reader's "has anything new arrived?" cadence differs. |
+| Audio → GUI (meters: LUFS M/S/I, dBTP, PLR, GR) | published `std::atomic<float>` | Audio writes in a single `publish()`; GUI reads via getters. `memory_order_relaxed` — monotonic display data, no ordering role. A non-audio thread may write the CLEARED values (prepare, state load) through the same helper: the scalars are independent and carry no ordering role, so the row is about the values' meaning, not about a single writer. |
 | Audio/param → GUI (staleness hints) | `std::atomic<uint32>` generation counters | A monotonic "something changed" hint that lets the GUI skip rebuilding caches. Carries **no payload**, so relaxed is sufficient. |
+| Any thread → Message (listener → async drain guard) | one `std::atomic<bool>` pending flag + one `std::atomic<int>` suppression depth | The `juce::AsyncUpdater` shape ADR-0005/ADR-0011 already mandate ("the MacroEngine consumes macro changes solely through an async message-thread listener" — an AsyncUpdater is itself an atomic flag plus a message post), written down as a row per the OQ-014 owner call (2026-08-02, reading 1: documentation gap, not a new mechanism). The flag is set from whichever thread delivers the listener callback and drained **only** on the message thread; the depth guard (`ScopedRestore`) suppresses the drain across a restore. Payload-free — the parameters themselves travel through APVTS. Residual check-then-act window: `KNOWN_ISSUES.md` KI-003. |
 
 Any path not in this table is a new cross-thread path → Architecture Review Gate.
 
-> **One edge is knowingly missing a row: the frozen trim vector.** ADR-0007 routes it through "a
-> sentinel-valued atomic consumed at the forced duck's silent bottom", but the vector is **four**
-> scalars — release, stereo-link, sidechain-HPF and dynamic-tilt trims (`DESIGN.md` §5.4, ADR-0005
-> decision item 10) — and the sentinel-valued row above covers **one**. It must not be forced into
-> that row. Four independent instances of it would restore a slot correctly only if the four
-> `exchange`s are guaranteed to be observed together; nothing in the accepted set establishes that,
-> and a half-consumed vector is a permanently half-restored slot, not a transient artefact — which
-> would defeat the per-slot bit-repeatability `MODE_AND_ADAPTATION_POLICY.md` invariant 3 requires of
-> Freeze. Choosing between *N* parallel sentinel scalars with a stated ordering guarantee and a
-> single release/acquire-gated per-slot POD is a **thread-model decision**: Architecture Review Gate,
-> ADR, and an AI-agent Hard Stop (`OPEN_QUESTIONS.md` OQ-013).
->
-> **Half of that is now decided (ADR-0012, 2026-08-01).** The *mechanism* question is answered: the
-> staged-record row above is the permitted transport, and a four-scalar trim vector fits it. What
-> ADR-0012 deliberately did **not** decide is whether a restored trim vector may be injected into a
-> running engine at all, and what that means for the adaptation state machine — so **OQ-013 stays
-> open and no code may wire that restore path**. The blocker moved from "no mechanism exists" to
-> "the product question is unanswered"; it did not disappear.
+> **The frozen trim vector — formerly this table's one knowingly missing row — is wired
+> (ADR-0014, 2026-08-02, resolving OQ-013).** ADR-0012 settled the transport (a four-scalar
+> record on the staged-record row above, so no half-consumed vector can leave a slot permanently
+> half-restored); ADR-0014 took the product decision ADR-0012 deliberately left open: injection is
+> permitted **only for a freeze-ON adopted surface**, and the vector is applied where every
+> restore-driven discontinuity lands — the §2.8 duck's silent bottom or the unprimed
+> direct-adopt — after which Freeze holds it exactly. The Hard Stop this banner carried is
+> lifted; the history stays in `OPEN_QUESTIONS.md` OQ-013.
 
 ## Forbidden cross-thread access
 
@@ -68,7 +59,16 @@ Any path not in this table is a new cross-thread path → Architecture Review Ga
 - Published meter values: `memory_order_relaxed` (monotonic display data).
 - Generation / staleness counters: `memory_order_relaxed` — they gate a message-thread cache
   rebuild and transfer no payload, so they are deliberately **not** ordering primitives.
-- Scope/GR ring index: `release` on write, `acquire` on read — the one ordering-critical pair.
+- Scope/GR ring index: `release` on write, `acquire` on read — the ordering-critical pair.
+- **Publication flags: `release` on write, `acquire` on read.** A flag that ANNOUNCES other atomics
+  is not a staleness counter, and the relaxed rule above does not reach it — its whole job is to
+  tell a reader that the values beside it may now be used, which is precisely a payload. The
+  distinction is easy to lose because the two look identical at the call site, so the test is what
+  the reader does next: if observing the flag gates a read of other state, it is a publication
+  flag. In this build: `AnabasisEngine::frozenAppliedSeq` (gates `publishedTrim*`),
+  `AdaptiveEngine::pubTrimEver` and `retTrimSeq` (each gates its own four trim scalars — the second is a counter, and is on this row rather than the relaxed one because it announces a payload; the wrapper's `slotFrozenBase`, which is only ever COMPARED against it, is correctly relaxed), and
+  ADR-0012's staged-record flags (each gates its payload). Unobservable on x86-TSO; real on a
+  weakly ordered target, and the cost is a compiler barrier on a path that runs once per block.
 
 ## Adaptive engine — where it runs
 
@@ -92,9 +92,8 @@ design choice.
 Decided in **ADR-0011**; the concrete implemented model, with code citations, is
 [`docs/architecture/THREAD_MODEL.md`](../architecture/THREAD_MODEL.md) (written at P1 as this
 policy required). Read the ADR for the decision, that file for what the tree actually does, and
-this policy for the permitted shapes. One edge is pending an owner call — the MacroEngine guard
-atomics, `OPEN_QUESTIONS.md` OQ-014 — and is flagged as such there rather than silently claimed
-as a table row.
+this policy for the permitted shapes. The MacroEngine guard atomics, formerly pending the OQ-014
+owner call, are now the listener-guard row above (reading 1, taken 2026-08-02).
 
 ## Enforcement
 

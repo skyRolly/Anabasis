@@ -33,9 +33,11 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       *Partially automated:* the state suite proves save→reload structural equality + exclusion
       rules + factory loadability; "sound identical" remains a Level-5 check.
 
-- [ ] **Pluginval passed (both modes)** — `scripts/run-pluginval.sh 10 deterministic` **and**
-      `scripts/run-pluginval.sh 10 randomise` pass at strictness 10 on all three platforms.
-      Ref: `docs/procedures/TESTING.md`.
+- [ ] **Pluginval passed (both modes)** — `run-pluginval.sh <strictness> deterministic` **and**
+      `run-pluginval.sh <strictness> randomise` pass on all three platforms, where `<strictness>`
+      is `ANABASIS_PLUGINVAL_STRICTNESS` from `.github/workflows/build.yml` — the one copy of the
+      number. A literal here is a release checkbox that can be ticked against the wrong bar after a
+      raise. Ref: `docs/procedures/TESTING.md` for the extraction snippet.
 
 - [ ] **Latency reporting verified** — reported PDC matches the actual chain delay across the
       **lookahead × oversampling** matrix. The impulse must land at exactly `maxLookahead + OS` for
@@ -63,6 +65,14 @@ Hard compatibility gate. **Every box must be checked before a release ships.** T
       render + state restoration. Minimum: **Reaper (Windows)** and **Logic Pro (macOS / AU)**.
       Requires manual DAW testing.
 
+- [ ] **Preset browsing checked against host automation recording** — a factory apply writes every
+      non-excluded parameter through `setValueNotifyingHost` (required: it is what keeps the host's
+      cached values, the APVTS tree and the editor attachments in agreement, and every other
+      value-landing path in the build uses it). Stepping presets with ‹/› therefore emits up to ~46
+      host notifications per step. Confirm in each target host that this does not record unwanted
+      automation or mark the project dirty in a way the user would not expect. Investigated at
+      round 46 and left unchanged: a silent write would make preset recall the one restore the host
+      never sees.
 - [ ] **Automation playback verified** — recorded automation on host-visible parameters plays back
       with unchanged meaning.
 

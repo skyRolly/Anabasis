@@ -31,6 +31,7 @@ endif()
 
 # --- Options (all ANABASIS_*, ADR-0008 §Options) ----------------------------
 option(ANABASIS_BUILD_TESTS      "Build the AnabasisTests + AnabasisStateTests console apps" ON)
+option(ANABASIS_BUILD_BENCH      "Build the AnabasisBench performance target (DESIGN §9; OFF by default)" OFF)
 option(ANABASIS_BUILD_STANDALONE "Build the Standalone format" ON)
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
@@ -131,7 +132,11 @@ set(ANABASIS_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MacroEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PresetManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/PluginEditor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LookAndFeel.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LookAndFeel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LoudnessMeterView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/GrHistoryView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/SpectrumView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CurveView.cpp)
 
 target_sources(Anabasis PRIVATE ${ANABASIS_PLUGIN_SOURCES})
 target_include_directories(Anabasis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -181,6 +186,7 @@ if(ANABASIS_BUILD_TESTS)
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
 
+
     # -- AnabasisStateTests: state / parameter-compatibility. Compiles
     #    tests/state_tests.cpp plus the shared wrapper/GUI source list to
     #    exercise the REAL AnabasisAudioProcessor. Links the same PRIVATE set
@@ -207,6 +213,30 @@ if(ANABASIS_BUILD_TESTS)
             juce::juce_audio_utils
             juce::juce_dsp
             juce::juce_opengl
+        PUBLIC
+            AnabasisHardening
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif()
+
+# -- AnabasisBench: the DESIGN §9 measurement procedure. OFF by default —
+#    a benchmark that always builds gets run casually and quoted without
+#    its machine, which is the C2 failure the budget doc guards against.
+#    OUTSIDE the ANABASIS_BUILD_TESTS block on purpose: the option is
+#    documented as independent, and nested it made
+#    `-DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_TESTS=OFF` build nothing
+#    at all — silently, which is the worst way for an option to be a lie.
+#    It needs only AnabasisDSP, which is defined above either way.
+if(ANABASIS_BUILD_BENCH)
+    juce_add_console_app(AnabasisBench PRODUCT_NAME "AnabasisBench")
+    target_sources(AnabasisBench PRIVATE tests/bench.cpp)
+    target_compile_definitions(AnabasisBench PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(AnabasisBench
+        PRIVATE
+            AnabasisDSP
         PUBLIC
             AnabasisHardening
             juce::juce_recommended_config_flags

@@ -17,17 +17,30 @@ permissions:
 
 # ---------------------------------------------------------------------------
 # pluginval strictness escalates with the project phase, and lives in ONE place
-# so raising the bar is a one-line edit (docs/policies/TESTING_POLICY.md):
+# so raising the bar is a one-line edit. THIS BLOCK IS THAT PLACE. The two
+# documents that describe the gate defer to it and state no number of their
+# own: docs/policies/TESTING_POLICY.md owns what the gate REQUIRES (suites,
+# modes, passes, platforms) and docs/procedures/CI_CD.md owns how the pipeline
+# is WIRED. They pointed at each other for the value for one round, which is
+# how the ladder ended up copied into prose twice.
 #
-#     P1-P2 (skeleton, DSP core)   -> 5   development bar
-#     P3-P5 (metering, adaptive, UI) -> 8 standard gate
-#     P6 / every release           -> 10  pre-release gold standard, REQUIRED
+# The env var below is the value in force RIGHT NOW, unconditionally, on every
+# branch — it is not phase-gated at runtime; the phases are the history of how
+# the bar was raised:
+#
+#     P1-P2 (skeleton, DSP core)      -> 5    development bar
+#     P3-P5 (metering, adaptive, UI)  -> 8    standard gate
+#     P6 / every release              -> 10   pre-release gold standard,
+#                                             REQUIRED (in force since
+#                                             2026-08-02)
 #
 # Lowering it below the current phase's value is a deliberate act that must be
-# justified in the PR.
+# justified in the PR. This block is cited as the single authority for the
+# number, so it carries no duplicate rows: the 2026-08-02 raise briefly added a
+# second P6 line that disagreed with the first.
 # ---------------------------------------------------------------------------
 env:
-  ANABASIS_PLUGINVAL_STRICTNESS: 5
+  ANABASIS_PLUGINVAL_STRICTNESS: 10
 
 # Every push builds the FULL set of formats on all three desktop OSes so beta
 # testers can install on any platform:
@@ -171,9 +184,29 @@ jobs:
           ./scripts/setup-linux.sh
 
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+        # ANABASIS_BUILD_BENCH is ON here and nowhere else. The bench stays OFF
+        # by default (a benchmark that always builds gets run casually and
+        # quoted without its machine — the C2 failure PERFORMANCE_BUDGET.md
+        # guards against), but OFF everywhere meant `tests/bench.cpp` was
+        # compiled by no automated job at all: its DSP calls would rot silently
+        # the first time a signature moved, and the rot would only surface when
+        # someone re-ran the measurement the budget's refresh rule requires.
+        # Building it on ONE platform costs a translation unit and makes the
+        # rot a red build. It is still never RUN in CI — timings from a shared
+        # runner are exactly the numbers that must not be quoted.
+        # TWO residuals, stated so this is not mistaken for full cover.
+        # (a) Only THIS platform compiles it, so a signature change behind
+        #     `#if JUCE_MAC` or `JUCE_WINDOWS` could still rot the bench.
+        # (b) Compiling is not running: a change that KEEPS every signature but
+        #     breaks the measurement's semantics — a stage that now needs a
+        #     per-sample `tick()`, say — builds green here and only surfaces
+        #     when someone re-runs the budget refresh. Cover for that is a human
+        #     re-measure, which PERFORMANCE_BUDGET.md already requires; it is
+        #     deliberately not a CI job, because the numbers a shared runner
+        #     produces are exactly the ones that must not be quoted.
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
-      - name: Build (VST3 + Standalone + tests)
+      - name: Build (VST3 + Standalone + tests + bench)
         id: build
         run: cmake --build build --config Release
 

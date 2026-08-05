@@ -44,17 +44,6 @@ P2 when there is DSP code for it to compile. Confirm at P2.
 
 ---
 
-## OQ-007 — Does the release pipeline ship installers at P6? · `Open`
-
-**Question.** Anamorph ships an Inno Setup installer (Windows), a `.pkg` (macOS) and shell
-installers inside the Linux zip, plus a tag-triggered draft-release pipeline. Anabasis's §11 P6
-says only "presets, performance optimisation, pluginval L10, DAW matrix, documentation."
-
-**Action.** Confirm at P5 whether P6 includes the full packaging/installer set (a substantial,
-well-understood port from Anamorph) or whether v0.1.0 ships as plain zips.
-
----
-
 ## OQ-008 — Loudness-penalty reference values · `Open`
 
 **Question.** §6 requires streaming-target lines (Spotify −14, Apple Music −16, YouTube −14,
@@ -70,9 +59,19 @@ documented "as of" date, or user-editable), and record the decision plus each va
 
 **Mechanism ratified at the 2026-07-31 sign-off** (`DESIGN.md` §2.9): one compiled table,
 per-value source citation, "as of" date surfaced in the tooltip, not user-editable in v1,
-refreshed each release. The **values themselves remain TODO** — gathered with citations at P5,
-never invented (C2). This entry therefore stays `Open`: what is undecided is the numbers, not how
-they are carried.
+refreshed each release.
+
+**Values gathered at P5 (2026-08-02), as the mechanism required.** The compiled table
+(`src/gui/LoudnessMeterView.h`) carries: **Spotify −14 LUFS** (Normal mode; Loud −11 / Quiet −19),
+**Apple Music −16 LUFS** (Sound Check), **YouTube −14 LUFS** — cross-confirmed against
+soundplate.com's streaming-loudness table and trackgleam.com's target guide, both current as of
+2026-07/08, and surfaced in the panel tooltip with the "as of" date. **What keeps this entry
+`Open`:** (1) release-time verification against the FIRST-party pages (Spotify for Artists /
+Apple Sound Check / YouTube help) is the per-release refresh the mechanism prescribes — secondary
+cross-confirmation was accepted at P5 to avoid shipping an empty panel, and the tooltip's date
+makes staleness visible; (2) **club/CD has no published normalization target** — that line from
+the brief's list needs an owner-specified reference level or a decision to drop it, and it is
+deliberately absent from the table rather than invented.
 
 ---
 
@@ -108,7 +107,24 @@ refers to the pluginval **gate**, not to which bytes it sees.
 
 ---
 
-## OQ-013 — How does the frozen trim vector cross message → audio? · `Blocking P1 (that path only)`
+## Resolved
+
+### OQ-013 — How does the frozen trim vector cross message → audio? · `Resolved 2026-08-02 (ADR-0014)`
+
+**Decision (2026-08-02, under the owner's v0.1.0 blanket approval; ⊕ for the post-v0.1.0 fine
+review).** **Inject, freeze-gated, at the duck's silent bottom** — recorded by **ADR-0014**. The
+transport is ADR-0012's bounded staged record (second instance:
+`AnabasisEngine::restoreFrozenTrims` / `frozenPending`); the product question ADR-0012 left open
+is answered *restrictively*: injection is staged **only for a freeze-ON adopted surface** (a
+freeze-OFF slot's adapting vector is the truth — there is nothing to restore *to*), and the
+pending copy is applied via `AdaptiveEngine::injectTrims` (clamped at the boundary) at the §2.8
+duck's silent bottom or the unprimed direct-adopt, after which Freeze holds it exactly. The
+capture side follows the ADAPTIVE child's mirror rule: a load→save with no audio between
+serialises the loaded copy, not the engine's stale published trims. The Hard Stop banners in
+`PluginProcessor.h`, `THREADING_POLICY.md` and `THREAD_MODEL.md` are lifted; guarded by
+`AnabasisStateTests` `testFrozenTrimRestore` (every element killed by its own mutant; ADR-0014
+enumerates them).
+The original entry follows as the record of why this needed deciding.
 
 **Question.** ADR-0007 routes `frozenTrims` through "the engine-side inject-at-the-duck-bottom path,
 a sentinel-valued atomic consumed at the forced duck's silent bottom" (the `abMatchGain` pattern).
@@ -147,7 +163,7 @@ running engine at all, and what that does to the adaptation state machine. **The
 stands** — no code may wire the `frozenTrims` restore — but the blocker is now a product question,
 not a missing transport.
 
-**Action.** Settle it at P1 **before** any code wires the `frozenTrims` restore. Everything else in
+**Action** *(historical — superseded by the Decision above)*. Settle it at P1 **before** any code wires the `frozenTrims` restore. Everything else in
 the P1 skeleton — CMake, parameter surface, POD boundary, pass-through chain, latency — is
 independent of it and is not blocked. Until then `THREADING_POLICY.md` carries the gap explicitly
 under the command-path table, so the missing mechanism cannot be read as an oversight and
@@ -155,7 +171,15 @@ silently filled in.
 
 ---
 
-## OQ-014 — Do the MacroEngine guard atomics need a THREADING_POLICY table row? · `Open (owner call)`
+### OQ-014 — Do the MacroEngine guard atomics need a THREADING_POLICY table row? · `Resolved 2026-08-02 (reading 1)`
+
+**Decision (2026-08-02, under the owner's v0.1.0 blanket approval; ⊕ for the post-v0.1.0 fine
+review).** **Reading 1 — already blessed; the table had a documentation gap.** The guards
+implement the `juce::AsyncUpdater` shape ADR-0005/ADR-0011 mandate, so no new ADR was owed:
+`THREADING_POLICY.md` gains an *any thread → message (listener → async drain guard)* row citing
+those two ADRs as the enacting authority, and `THREAD_MODEL.md`'s macro-listener row now cites it
+instead of this question. KI-003's residual check-then-act window stays recorded there —
+resolving the row question does not shrink the window. The original entry follows as the record.
 
 **Question.** The P1 macro layer carries two payload-free atomics that are not rows in
 `THREADING_POLICY.md`'s permitted-path table: `mappingPending` (any thread → message thread — the
@@ -186,7 +210,16 @@ must state one reading or the other.
 
 ---
 
-## OQ-016 — Does the §5.4 release trim apply while the limiter is in AUTO release? · `Open (owner call)`
+### OQ-016 — Does the §5.4 release trim apply while the limiter is in AUTO release? · `Resolved 2026-08-02 (ADR-0013)`
+
+**Decision (2026-08-02, under the owner's v0.1.0 blanket approval; ⊕ for the post-v0.1.0 fine
+review).** **Option 2 — the trim scales the auto poles**, as this entry recommended: recorded by
+**ADR-0013**. `LookaheadLimiter::setAutoReleaseScale` scales `kAutoFastMs`/`kAutoSlowMs` by the
+same `2^octaves` factor the manual path already applies (clamped to [0.5, 2.0], the trim's own
+±1-octave bound), preserving the fast/slow ratio and therefore the two-stage character. All four
+adaptive behaviours are now audible at factory defaults; `MODE_AND_ADAPTATION_POLICY.md`'s scope
+note is deleted by that ADR. Guarded by `AnabasisTests` `testAutoReleaseFollowsTheTrimScale`
+(mutation-verified against the fixed-constant alphas). The original entry follows as the record.
 
 **Question.** The release trim is applied to the effective `limReleaseMs`
 (`AnabasisEngine::process`), which `LookaheadLimiter` consumes **only in manual-release mode**.
@@ -223,7 +256,20 @@ now state the scope explicitly instead.
 before P5, since the §5.4 overlay in the Advanced view will otherwise display a trim the user
 cannot hear.
 
-## Resolved
+
+### OQ-007 — Does the release pipeline ship installers at P6? · `Resolved 2026-08-02`
+
+**Question.** Anamorph ships an Inno Setup installer (Windows), a `.pkg` (macOS) and shell
+installers inside the Linux zip, plus a tag-triggered draft-release pipeline. Anabasis's §11 P6
+says only "presets, performance optimisation, pluginval L10, DAW matrix, documentation."
+
+**Decision (2026-08-02, under the owner's v0.1.0 blanket approval; ⊕ for the post-v0.1.0 fine
+review).** **v0.1.0 ships as plain zips** — the CI build artifacts, stripped and (on macOS)
+ad-hoc-signed, zipped per platform, exactly what the existing `build.yml` produces. The full
+installer/packaging set (Inno Setup, `.pkg`, tag-triggered draft-release pipeline) is a
+well-understood port from Anamorph and is deferred to the first commercial release, alongside
+OQ-002 (licence tier) and OQ-012 (validate-the-shipped-bytes), which gate that release anyway.
+Nothing in the v0.1.0 tree changes: this resolution records scope, not code.
 
 ### OQ-015 — Does the learned-target restore need a THREADING_POLICY row, and which shape? · `Resolved 2026-08-01 (P4)`
 

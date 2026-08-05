@@ -6,7 +6,1651 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **twenty-third review round of 2026-08-02** (PR #5): the Learn command
+**Last updated:** for **review round 64 (2026-08-05)** — two follow-ups to round 63, one
+robustness and one documentation:
+(1) **A read that was total only because of the line above it.** Round 63 put the `iid::uiScale`
+ladder read rule in `replaceFrom`, reading the property with no stated default. That is safe today —
+`setDefaults()` runs two lines earlier and always writes the field — but it is the "correct because
+of what the previous statement did" shape this file keeps removing, and here the failure mode is
+QUIET rather than loud: an absent property reads as `var()`, `var()` converts to 0, and 0's nearest
+ladder step is **80**. A missing field would silently become the SMALLEST legal scale instead of the
+default one, which looks like a deliberate setting rather than a fault. The read now names
+`ui_scale::defaultPercent`, and that constant replaced a literal `100` at both sites so the fallback
+and `setDefaults()` cannot come to disagree, with a `static_assert` that the default is itself a
+ladder step (otherwise the default would need normalising, which is the shape the rule exists to
+remove).
+The test states the §4.4 rule directly rather than the implementation: a session whose
+`ANABASIS_INTERNAL` child OMITS the field must load at the default step. That is reachable now — a
+hand-edited session, or one written before the field existed — so it is a real read-rule check, not
+a guard against a hypothetical refactor. **Two-stage mutation measured which line does the work**,
+because with both present the test cannot tell them apart: removing `setDefaults()`'s write leaves
+the check passing (the fallback carries it, and the collateral failures are the byte-identical
+round-trip checks, correctly, since a field left the schema); removing the fallback as well fails it
+at exactly the 80 % predicted.
+(2) **A comment named one consequence of a change and not the other.**
+`SpectrumView::hitTest` declines every region but the dismiss ×, and the comment recorded that the
+tooltip therefore narrows to the × — but not that clicks over the trace now REACH WHATEVER IS
+BENEATH. Today that is the editor, which installs nothing there, so nothing happens; the point is
+that it is a live routing decision rather than a void, and the next person to put an affordance
+under the spectrum's footprint needs to know it becomes reachable through the overlay while the
+overlay is showing. Both consequences are now stated as the same trade seen from opposite ends
+(wanting the tooltip back means intercepting everywhere again, i.e. re-accepting the swallow), with
+the resolution named: widen the hit-area, do not revert. No behaviour change.
+Previous: **review round 63 (2026-08-05)** — one state-ownership move, one
+truthfulness guard, one invariant written down:
+(1) **A display poll had become a state writer.** `normalisedUiScale()` wrote `iid::uiScale` back to
+`InternalState` when the persisted percent was not a legal ladder step, and it is reached from
+`refreshInternalSettingsBoxes` — the 24 Hz settings re-seed. So the editor's display timer was an
+opposing writer to `InternalState::replaceFrom`, which `setStateInformation` reaches on whatever
+thread the host chose (KI-003), on the second of the two polls round 51 had just cleaned of
+`ValueTree` access. Narrow (it converged after one tick per illegal value) but the wrong direction.
+The correction moved to `replaceFrom`: that is where a value the schema cannot represent ENTERS, and
+where every other field's §4.4 read rule already is — the overlay drops unknown properties, and
+`syncAtomics` clamps the four mirrors. `iid::uiScale` was the one field clamped on READ and never
+corrected in the tree, which is why `getStateInformation` re-serialised an illegal percent for ever.
+**The enabling move, and the reason it is not a refactor for its own sake:** the ladder lived in
+`PluginEditor.cpp`, so normalising in the state layer would have meant a second copy of it — the
+exact duplication round 50 removed. `steps`/`numSteps`/`nearestIndex` therefore moved to
+`InternalState.h`, beside the identifier whose legal values they define ("what may this property
+hold?" is a state question), and the editor aliases them. `normalisedUiScale()` is now a pure read.
+It still CLAMPS, deliberately: the tree can hold an illegal percent in the window before
+`replaceFrom` runs, and a reader that returned it would put the rendered transform and the displayed
+combo step back out of agreement — the defect the single reading exists to prevent.
+The test followed the ownership rather than being patched around it: the convergence checks now
+drive a session LOAD, and a new check asserts the poll writes nothing (an illegal percent written
+straight into the live tree must survive a display refresh untouched while still being clamped on
+read). Two mutants — dropping the adoption-time normalisation, and reinstating the poll write — each
+fail their own check.
+(2) **The preset-source hint could describe a preset that never loaded.** `showPresetMenu` and
+`showLoadPreset` called `rememberPresetSource` regardless of `applyPresetFile`'s result, so a corrupt
+or foreign file (a documented no-op — `parsePresetFile` refuses a foreign root) left the editor
+believing it was the active source while the processor had not moved. Both gate on the return value
+now. The ‹ › RING is deliberately left ungated, and that is a decision rather than an oversight: it
+walks a list it just enumerated, and advancing its hint past an unreadable entry is what stops the
+arrows stalling on that entry for ever. Not tested — both paths run inside async menu/chooser
+callbacks that a headless suite has no message loop to deliver.
+(3) **The factory defaults pass writes the default unsnapped, and that is now stated.** Overrides go
+through `snapToLegalValue`; defaults do not. The asymmetry is the invariant: a registered default
+must ALREADY be legal — it is the value the parameter reports before anything writes it, so an
+off-step default would mean the plugin starts at a position the preset system considers unreachable
+— whereas an override is hand-written table data free to be an approximate intent. Snapping the
+default here would paper over a registration bug that `testRegistrySnapshot` is the place to catch.
+No behaviour change.
+Previous: **review round 62 (2026-08-05)** — two maintainability items, neither of
+which changes runtime behaviour:
+(1) **The visualisers' lifetime reasoning was inconsistent with the editor's.** `SpectrumView`,
+`GrHistoryView` and `LoudnessMeterView` each declare their `abgui::FrameClock` BEFORE the members
+their tick callbacks read — `SpectrumView`'s scratch buffers and `shown*` counters,
+`GrHistoryView`'s `shownHead`, `LoudnessMeterView`'s whole `shown*` snapshot — and each used
+`~View() = default`, so reverse-order destruction freed that state while the vblank attachment was
+still armed over it. Nothing is reachable today: a message-thread destructor cannot interleave with
+a message-thread vblank callback. But that is the SAME argument
+`~AnabasisAudioProcessorEditor` explicitly refuses for its own `animVBlank` (it move-assigns an
+empty attachment FIRST, with a comment saying why), so the GUI set was giving two different answers
+to one question. Each destructor now calls `clock.stop()`, which clears the attachment and the
+callback and is idempotent. Chosen over reordering the members deliberately: a reorder would fix it
+invisibly and could be undone by the next person to add a field, whereas a destructor states the
+guarantee where a reader looks for it. `CurveView` needs nothing — it has no `FrameClock`, being
+driven by the editor timer.
+(2) **The benchmark's flag set was described as the shipped plugin's.** `PERFORMANCE_BUDGET.md` read
+"Release with the shipped flag set". Verified against `CMakeLists.txt`: `AnabasisBench` links
+`AnabasisHardening` + `juce_recommended_config_flags` + `juce_recommended_warning_flags` — the same
+set the two test apps use — while the `Anabasis` plugin target links one more,
+`juce_recommended_lto_flags`. `AnabasisHardening` also adds Release debug info (`-g` on GCC/Clang,
+`/Zi` + `/DEBUG` on MSVC), which is binary hygiene rather than a codegen change. A
+build-configuration note now records all of that, plus two things a reader needs: why the difference
+is NOT closed by changing the target (that would change the measured results rather than the
+documentation, and the numbers would need re-measuring on a recorded machine — C2), and how much it
+is likely to matter (the whole DSP is header-only and reaches `bench.cpp` through
+`AnabasisEngine.h`, so it is already instantiated in one translation unit and most of what LTO buys
+is cross-TU inlining the optimiser can do here anyway). The residual gap is stated as UNMEASURED
+rather than argued away. `TEST_REPORT.md`'s performance summary points at that note instead of
+repeating it, keeping one authority. No methodology, build configuration or measured value changed.
+Previous: **review round 61 (2026-08-05)** — a preset source-tracking regression:
+**Saving a preset did not record itself as the preset now in use.** `stepPreset` resolves "where am
+I in the list?" from a remembered source first, and only falls back to searching by display name
+when that hint no longer describes what the processor shows. The fallback exists because names are
+NOT unique across the factory table and the user files — a user preset saved as "EDM Club" resolved
+to the factory entry, which is the very failure the remembered source was introduced to remove.
+Every route that changes the live preset sets the hint: the menu, the ring itself, the load chooser.
+The SAVE button did not. So: apply factory "EDM Club", Save Preset as "EDM Club" — the hint still
+said factory index 2 and the unchanged name CONFIRMED it, so ‹ › walked the factory ring from an
+entry the user had just replaced, applying the wrong preset and silently changing the sound.
+`saveOkButton.onClick` now calls `rememberPresetSource (file)` on a successful save — one line, at
+the point the flow already knows both that the save succeeded and which file it wrote. No new name
+matching, and no other preset path touched.
+**Why the editor and not `AnabasisAudioProcessor::savePresetFile`:** the remembered source is
+EDITOR state — this window's idea of where it sits in a list it enumerates itself — and the wrapper
+deliberately holds no view of it, because a second editor or a save through another route has its
+own answer. The wrapper owns the live name and the dirty datum, which it already set correctly; the
+regression was never in what it stored.
+The test drives the real controls (the save overlay's name field and Save button, then the ‹ ›
+buttons) and distinguishes the two same-named presets by CONTENT rather than by name, which is the
+only thing that can tell them apart: the saved preset carries a value for a parameter the factory
+table does not name, so a factory apply parks it at its default. Next-then-previous is exactly
+reversible through the ring, so a correctly resolved position returns to the saved preset and a
+stale hint returns to the factory one. It is the first test to write into the REAL user preset
+directory — the save handler and `stepPreset` both resolve that path themselves and neither takes
+an injected one — so it backs up and restores any file it would displace, since the scenario
+requires that exact filename.
+Previous: **review round 60 (2026-08-05)** — a lost-functionality regression restored:
+**The About overlay opened blank.** `Backdrop::aboutText` had exactly ONE reader — the
+dismiss-anywhere branch in `Backdrop::mouseDown` — so the flag named a panel whose copy nothing
+painted: clicking the wordmark produced an empty glass rectangle with only the hyperlink in it, and
+a user or tester had no way to see which version or build they were running. The compile definitions
+were orphaned with it: `ANABASIS_VERSION_STRING` and `ANABASIS_BUILD_NUMBER` are set by
+`CMakeLists.txt` for the plugin AND the state-test target, and `CI_CD.md` still describes the run
+number as "the About-box build number", but a repo-wide grep found no consumer in `src/` at all.
+`resized()` had even kept the space — the panel is 400×232 with the link at `withTrimmedTop (176)`,
+so the top 176 px were reserved for copy that was never drawn.
+`Backdrop::paint` now renders it, in the panel rather than in a new child component, because that is
+where every other overlay's content already lives. The strings are ones this product already owns:
+the wordmark and the `MASTERING MAXIMIZER` subtitle the top bar paints (at the top bar's own accent
+tracking, so the panel reads as that wordmark enlarged rather than a second one), `COMPANY_NAME`
+from `CMakeLists.txt`, and the two build definitions. The `#ifndef` fallbacks are for a build that
+bypasses CMake and are deliberately not a release number, so a stale one cannot masquerade as
+shipped.
+**No prose description, and that is where this departs from the sibling's About.** Anamorph's panel
+carries a product sentence because its owner supplied one; free prose here is owner-supplied wording
+(C8), which `PluginEditor.cpp`'s own header says is not invented in code. The panel identifies the
+build completely without it, and a description is a one-line addition when the copy lands.
+`testTheAboutPanelShowsTheBuildItIsRunning` opens the panel through the REAL path — the wordmark's
+ghost hit-area button, found by the component id the LookAndFeel already keys on — and asserts the
+copy area shows HORIZONTAL variation. That formulation is the point: an empty panel is a vertical
+glass gradient, so every row is near-constant across x, and any rendered copy breaks that. The check
+therefore needs no pixel count or glyph match tuned to one machine's font, which is what would have
+made an editor-rendering test a platform flake. A mutant restoring the blank paint fails it.
+Previous: **review round 59 (2026-08-05)** — one UI interaction fix:
+**`SpectrumView` consumed clicks it had no use for.** It left `setInterceptsMouseClicks` at JUCE's
+default, so it hit-tested true across its whole area while acting only on clicks in the top-right
+26×24 × region. Every other click inside the overlay was swallowed with no affordance and no effect
+— the one region of the editor that took a click and did nothing. The fix is `hitTest`, which is
+what JUCE provides for a PARTLY interactive component: `GrHistoryView` and `CurveView` opt out
+wholesale with `setInterceptsMouseClicks (false, false)` and this view cannot, because it owns the
+dismiss ×; `LoudnessMeterView` stays intercepting everywhere because its whole surface IS the
+affordance (click = meter reset). So this one opts out per-pixel, and now sits correctly between the
+two existing models rather than outside both.
+The hit-area moved into a single `dismissHitArea()` that `hitTest` and `mouseDown` share. That is
+part of the fix rather than tidying beside it: two separately computed rectangles could accept a
+click and then ignore it, which is the same swallowing reintroduced one pixel at a time. The
+rectangle matches exactly the set of in-bounds points the old predicate (`x > getWidth() - 26 &&
+y < 24`) accepted, so the touch target — deliberately larger than the 18×18 glyph `paint` draws — is
+unchanged, and `paint` is untouched.
+**One visible consequence, recorded because it is inseparable from the fix rather than added to
+it:** hit-testing is also what makes a component "under the mouse", so the `setTooltip ("Spectrum")`
+identifier now appears over the × only, not over the whole trace. There is no way to stop claiming
+clicks in a region while still claiming the pointer there. That wording carries an explicit C8
+owner-supplied TODO, so the narrower scoping is a brand-pass call if it is wanted back.
+`testTheSpectrumOverlayOnlyClaimsItsDismissCorner` pins both halves — a click over the trace is not
+claimed, and the × still dismisses through the real `MouseEvent` path — and a mutant restoring
+JUCE's hit-test-everything default fails the pass-through checks.
+Previous: **review round 58 (2026-08-05)** — two accuracy fixes, neither of which
+changes behaviour:
+(1) **An invariant comment described the wrong execution order.** The round-52 note on `injectTrims`
+justified its per-field finite check by saying `sanitiseState()` catches a poisoned trim "a block
+LATER", on the stated premise that the injection sites "run after that block's sanitise". The
+opposite is true: both sites — the unprimed direct adopt and the §2.8 duck's silent bottom — execute
+inside `AnabasisEngine::process` BEFORE its `adaptiveEngine.sanitiseState()` call, and the first
+`currentTrims()` read comes after it, in the same call. The audio path therefore has no recovery
+LATENCY at all; a poisoned vector is repaired before any block consumes it. Correcting the prose
+also surfaced the exposure the old version never named, which is the real reason the boundary check
+is necessary: `publishTrims (true)` writes the four published atomics and the retained set AT
+INJECTION TIME, `sanitiseState` repairs only the plain struct and never re-publishes, and nothing
+else will — an ADR-0014 restore is staged only for a freeze-ON surface and `finishBlock` holds while
+frozen. A NaN would sit in the wrapper-visible atomics indefinitely and
+`engineFrozenTrimsIfLive()` would serialise it into the saved session, outliving the block, the
+session and the file. No per-block sanitiser could close that. The DSP behaviour, ordering and
+validation logic are untouched; only the justification changed, from one that was wrong and weak to
+one that is right and stronger.
+(2) **`AnabasisLookAndFeel` regained its JUCE safety declaration.** Every other class in the new GUI
+set carries `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR` — `CurveView`, `GrHistoryView`,
+`SpectrumView`, `LoudnessMeterView`, `FrameClock`, the editor — and this one lost it when the class
+was rewritten for Anabasis, making it the single member that was silently copyable and unleak-checked.
+Restored. Verified by building the state suite in DEBUG, where the leak detector is compiled in
+(the Release gate never exercises it): 365 checks green, so nothing copies or leaks one. Two JUCE
+assertions fire in that Debug run (`juce_AudioProcessorEditor.cpp:199`,
+`juce_NormalisableRange.h:265`); both were confirmed present before this round's changes as well, so
+they are pre-existing and unrelated — recorded here because a Debug run is not part of the routine
+gate and the next person to make one should not read them as new.
+Previous: **review round 57 (2026-08-05)** — the third preset walk converted to the
+shared traversal; no behaviour changed:
+**`PresetManager::applyFactoryPreset`'s defaults pass still iterated `apvts.state`'s PARAM
+children** while `savePreset` and `presetShapeFromLive` had shared `forEachPresetParameter` over
+`getParameters()` since round 52. The argument that unified those two applies here with more force,
+because the consequence is different in kind: for the writer and the marker a divergence is a
+cosmetic disagreement about the "edited" mark, but an override table is "defaults + intents", so a
+parameter this pass skips keeps the value the PREVIOUS preset left it at — the blend-two-presets
+failure the pass exists to prevent, silent and worse the further apart the two presets are.
+"One tree child per parameter" is a fact about JUCE, not an invariant of this code.
+The shared walk now yields `(id, RangedAudioParameter&)` rather than `(id, double)`. That is what
+made the third caller able to use it at all: `savePreset` and the projection ask `presetValueOf`,
+while the factory apply needs the parameter's DEFAULT and then writes to it, so handing over a value
+and hiding the parameter was the reason this loop had its own collection. `presetValueOf` stays the
+single value rule, still one copy, now called by the two callers that want it.
+Everything observable is unchanged, and deliberately so: write ORDER (the walk's sorted-by-id order
+IS the tree order the loop had — round 54 measured it and `written == fromTree` pins it), values,
+exclusions, the ceiling-lock skip and host-notification behaviour. The ceiling lock stays at the
+CALL SITE rather than moving into the shared walk, because it is an apply-side rule: a locked
+ceiling is never written by a preset (DESIGN §4.2) but is still saved and still compared by the
+dirty marker, so it is not a member of the preset parameter set.
+It also retires a caveat instead of restating it. The old loop wrote the APVTS tree (through
+`setValueNotifyingHost`) while iterating it, safe only because a property write neither adds nor
+removes children — with a note to collect the ids first if a listener ever changed that. The shared
+walk reads the processor's parameter list and touches no `ValueTree`, so there is no iterator left
+to invalidate.
+The parity test gained the invariant in the form that needs no second copy of the table logic:
+IDEMPOTENCE AGAINST ARBITRARY PRIOR STATE — snapshot what a preset lands, park every non-excluded
+parameter at the far end of its range, re-apply the SAME preset, require every one of them back
+where it was. A parameter the walk misses keeps its parked value and is named in the failure
+message. One mutant (a parameter the pass skips) fails it, and `factory:`'s existing
+returns-to-default check as well.
+Previous: **review round 56 (2026-08-05)** — one implicit contract made explicit, one
+latent aliasing hazard removed; no behaviour changed by either:
+(1) **The ADR-0014 restore's generation bump was load-bearing and unstated.** `injectTrims` calls
+`publishTrims(true)`, which writes the RETAINED set and advances `retTrimSeq` exactly as an audible
+`finishBlock` does. That is what makes `engineFrozenTrimsIfLive()` answer correctly: after
+`adoptFrozenMirror()` re-bases `slotFrozenBase` to the current generation — "nothing the engine holds
+belongs to this slot yet" — the staged restore's own injection is the only thing that can carry the
+generation past that base, because with Freeze ON `finishBlock` publishes nothing. A future change
+that made the restore publish without counting (to keep the counter meaning "measured", say) would
+leave a freeze-ON slot restored from disk withholding its latch from every save until the next
+AUDIBLE block — never, on a stopped transport — so the slot would go on re-serialising the mirror
+instead of what the engine is applying. The argument is now stated at the injection site and in
+`THREAD_MODEL`'s retained-trim row, framed as the property a future maintainer must preserve rather
+than as the line they must not touch.
+**And it turned out to be untested where it matters.** A `publishTrims(false)` mutant left the STATE
+suite fully green; only the DSP suite's `hostileTrims` caught it, and incidentally, because that test
+reads `retainedTrim*()` for an unrelated reason. `testFrozenTrimRestore` case (1) — the unprimed
+session load — now asserts the generation advances across the landing block and that
+`hasRetainedTrims()` follows. The mutant fails both. The value checks around it could never have
+seen this: the mirror and the engine hold the SAME vector at that moment, so only the ownership
+answer differs.
+(2) **Preset baselines were aliased across slots and history entries.** `copySlotToOther()` did
+`storedPresetBaseline = presetBaseline;` and `undo()`/`redo()` did `presetBaseline = prev.baseline;`
+— a `juce::ValueTree` assignment shares the refcounted node, so two independent-looking owners
+became one tree. Correct today because a baseline is only ever REPLACED wholesale (by
+`presetShapeFromLive()` or a history entry) and never edited in place, and `pushUndoStep` already
+takes `createCopy()`. Three assignments gained `createCopy()`; an invalid tree copies to an invalid
+tree, so `presetDirty()`'s validity guard is untouched, and the cost is a ~46-node clone on a user
+action. Deliberately NOT tested: the alias is unobservable through the public API — nothing edits a
+baseline in place and `presetBaseline` is private — so a test would need an accessor added purely for
+it, which is the abstraction this change is meant to avoid. The existing preset/undo/A-B checks
+passing unchanged is the evidence that behaviour is preserved.
+Previous: **review round 55 (2026-08-05)** — the component-ID half of the LookAndFeel
+migration audit, decided per id rather than as one verdict:
+(1) **Four `getComponentID()` branches had no arming site.** Round 53 cleared the PROPERTY side
+(`"glow"` wired, `"unit"` removed); the ID side still discriminated on `"icon"`, `"apply"`,
+`"metersicon"` and `"vtoggle"`, and `PluginEditor` set only `ghost`, `bypass`, `presetnav`,
+`presetname`. The sibling product settles each case, because it is where every one of these ids is
+armed: `apply` styles its "Apply Gain" button beside the auto-gain-match readout, `metersicon` its
+show/hide LEVEL METERS toggle, and `vtoggle` its Mono / Swap / M-S / polarity-L / polarity-R row.
+Anabasis has no auto-gain match, no meters show/hide (the §6.3 strip is always present) and no
+stereo-field toggles — those belong to a product with a Widen stage. All three are removed, drawing
+code and font row alike.
+(2) **`"icon"` was the opposite case and is now WIRED.** Its own header names its owner — "Undo/Redo
+glyphs: render them larger AND rotated 180 degrees" — and this product has undo/redo, added at P6 in
+the same top bar. Unarmed, a 30 px glyph button rendered a ~13 px character through the generic
+text path: not a stylistic difference but the absence of the sizing the branch exists to provide.
+The discriminator is between two kinds of button in THIS top bar (the glyph pair against
+`Copy`/`Settings`/`Save`), which is the same test that kept `"glow"` last round — a design statement
+about Anabasis, not a description of a control it lacks.
+(3) **One thing deliberately NOT decided here.** The treatment also rotates the glyph 180°,
+specified against the sibling's U+21BA/U+21BB OPEN CIRCLE arrows where a half-turn of a near-circular
+shape is a subtle comfort tweak; these are U+21B6/U+21B7 SEMICIRCLE arrows, so the same half-turn
+visibly moves the arc from top to bottom. Direction is not at risk — a rotation preserves the curl,
+so neither glyph can come to read as the other — but WHICH glyph pair this product ships is a
+Level-5 brand question the checklist still holds open, and answering it is not a cleanup pass's job.
+Recorded at the arming site so the brand pass finds it.
+Previous: **review round 54 (2026-08-04)** — the single-authority sweep finished, and
+one reset invariant raised to the standard the rest of the tree already holds:
+(1) **Four documents still carried an ADR count or roster.** Round 53 fixed the README; the same
+duplication survived in `CLAUDE.md` ("the **fourteen** Accepted ADRs"), `REPOSITORY_MAP.md` (twice —
+"the eleven ADRs it spawned", and a file-tree line reading "ADR_INDEX.md + ADR-0001…0012, 0001–0011
+Accepted 2026-07-31") and `SOURCE_OF_TRUTH.md` ("Level 3 is populated: **ADR-0001…0011 are
+Accepted**"). Three of the four were already WRONG — they had gone stale through ADR-0012, 0013 and
+0014 — and the fourth was one acceptance away from it. All four now name `ADR_INDEX.md` and no
+number; `SOURCE_OF_TRUTH.md` names the LEVEL rather than its membership, which is the distinction
+that makes it stale-proof. `CHANGELOG.md`'s "twelve presets" was deliberately left: a changelog
+entry records what a released version did, and freezing that is the point of the file.
+(2) **The spectrum reset was inferred, not announced.** `SpectrumView::tick` decided a ring had been
+rewound by `writeCount()` going backwards, which is true only while the observed count is still
+below the one the last tick stored. Let the producer republish past that value between two ticks —
+one suspended message thread, one debugger stop, one host batching redraws — and the reset is missed
+OUTRIGHT and permanently, because every count from then on is larger again. The symptom is silent
+and is exactly what the rewind exists to prevent: the previous lifecycle's EMA drawn against the new
+sample rate's bin mapping. Ordering two counters cannot express "a reset happened". `GrHistoryBuffer`
+had already answered the same question with an epoch, so the rings gained a generation counter,
+bumped release-after the index rewind, and `SpectrumView` samples it on both sides of its analysis
+batch — the pre-batch sample catches a reset since the last tick, the post-batch one catches a reset
+that landed mid-batch, whose frames may straddle two configurations. A plain generation, NOT the GR
+buffer's odd/even seqlock: that class clears 4096 entries a reader can observe half-done, while
+`ScopeBuffer::reset()` writes one atomic and touches no sample, so the extra fence pair would buy
+nothing. The test now includes the case the counter predicate could not see, and it fails against a
+mutant restoring that predicate.
+Previous: **review round 53 (2026-08-04)** — a cleanup pass: two single-authority
+repairs in the README, two unreachable styling paths resolved in opposite directions, two unported
+LookAndFeel subclasses removed, and one deliberately-retained atomic given the reasoning it needed:
+(1) **The front page told contributors to validate at the OLD strictness.** Rounds 35/40/43 made
+`ANABASIS_PLUGINVAL_STRICTNESS` in `.github/workflows/build.yml` the single authority and reworked
+`TESTING_POLICY` and `CI_CD` to quote no literal — `CI_CD` reads it out with `sed` and documents the
+failure against itself ("the literal used to be `5` here and stayed 5 through two raises, under a
+comment telling the reader it was current"). The README's quick-start block was the one site the
+sweep missed, so it still passed `5` to both `run-pluginval.sh` invocations under a comment naming
+the ladder — the exact failure, left standing in the first document a reader opens. It now runs the
+same `sed` extraction, and the validation-gate table points at the workflow instead of spelling
+`5 → 8 → 10` out again.
+(2) **The README contradicted itself about the binding decision set.** The status section (updated
+last round) said fourteen ADRs; the Documentation section two screens down still read "twelve
+Accepted ADRs: ADR-0001…0011 plus ADR-0012", so a contributor following `CLAUDE.md`'s instruction to
+read the registry before writing code could miss ADR-0013 and ADR-0014 entirely. The enumeration is
+gone and BOTH numerals with it: `ADR_INDEX.md` is the registry, and the README carries no count for
+the same reason it carries no strictness number.
+(3) **The Save-Preset name field's focus glow was WIRED, not deleted** — the opposite call to
+`resetSweep`, and the difference is which side was missing. `fillTextEditorBackground` and
+`drawTextEditorOutline` both key on a `"glow"` component property and fall through to the JUCE
+default without it, and nothing set it, so the accent-lit rounded border the family design language
+specifies (#11) was unreachable. What makes this a wiring job rather than a removal is the fallback
+branch's own comment — "value boxes unchanged": the property discriminates between two kinds of text
+field IN THIS editor (the name box and the ValueBox edit fields), which is a design statement about
+Anabasis, not migrated state describing a control that does not exist here. The owner sets it at
+construction; `testTheSavePresetNameFieldIsTaggedForItsFocusGlow` pins the arming side.
+(4) **`rawEditText`'s balance branch was REMOVED**, and the same test decided it. It read a `"unit"`
+slider property nothing set, and took a dedicated path when it equalled `"bal"` to decode an
+"L 25" / "C" / "R 30" display into a signed number. That is the sibling product's stereo Balance
+format: Anabasis registers `colourBalance` with `[](float v, int) { return juce::String (v, 2); }`,
+a plain signed decimal the generic path already passes through untouched. Wiring it would have
+taught the editor to parse a display string this product cannot produce. The `"unit"` read went with
+it — it had no other reader.
+(5) **`CompactComboLookAndFeel` and `SimpleComboLookAndFeel` removed.** Their own comments named the
+controls they were "applied only to" — the compact Input Channel / M/S Solo combos, and the two
+Simple-mode Widen combos (algorithm + Style/Focus). Anabasis has no Widen stage, no input-channel
+selector and no M/S solo; nothing in `src/gui` instantiated either class, and the editor holds one
+`AnabasisLookAndFeel` for every combo. Left standing they invited a reader to assume a size variant
+was wired and to style a new control by reusing it.
+(6) **`hasPublishedTrims()` / `pubTrimEver` KEPT, with the reservation made explicit.** The review is
+right that the production reader is gone — the ADR-0014 save capture moved to `hasRetainedTrims()`
+at round 41 — and "an atomic only a test reads" is exactly the shape items 4 and 5 above just
+removed, so the difference had to be written down rather than inferred. Two things are load-bearing:
+it is the published set's VALIDITY marker, the question a §6.3 trim readout must ask and cannot
+answer from the values (all four read 0 both when nothing was measured and when the measurement was
+"no trim"); and it is the ONLY observation of the published/retained SPLIT, which is the whole of
+KI-006's two halves — delete it and `testPreparedStateAndSlotOwnership`'s "the APPLIED vector did not
+survive re-initialisation / the RETAINED one did" pair collapses to one assertion, after which
+nothing stops a future simplification merging the two sets. A contradiction was fixed alongside: the
+private section asserted "the P5 UI reads publishedTrim*() like every other display value", which
+the accessor's own comment two screens up correctly denied.
+Previous: **review round 52 (2026-08-04)** — three fixes and one investigation that
+confirmed the behaviour under review and pinned it instead of changing it:
+(1) **A state invariant was conditional on a branch that does not always run.** `applyUiScale()`
+owned the write-back that converges an illegal persisted `iid::uiScale` onto a ladder step, and
+`refreshInternalSettingsBoxes` reached it only when `nearestScaleIndex(stored)` differed from the
+combo's current selection. A session carrying 92 while the box already showed 90 % therefore
+clamped on every read and healed on none: the transform and the displayed percent still agreed, so
+nothing looked wrong, and the only observable was that `getStateInformation` re-serialised 92 for
+ever. The round-48 claim that the value "converges where the scale is applied" was stronger than
+the code by exactly the write the code skipped. `normalisedUiScale()` now owns the rule and every
+reader of the property goes through it, so convergence is a property of reading the value.
+Deliberately NOT "call `applyUiScale()` unconditionally from the re-seed": that path also calls
+`glContext.triggerRepaint()`, which is not a no-op, and the re-seed is the 24 Hz display poll —
+separating the state rule from the application of it is what lets the poll enforce the first without
+paying for the second.
+(2) **A boundary clamp did not hold against the input it was written for.**
+`AdaptiveEngine::injectTrims` bounds a restored frozen-trim vector with `juce::jlimit`, which is
+`v < lo ? lo : (hi < v ? hi : v)` — and every comparison against a NaN is false, so a non-finite
+value took neither branch and entered the trim state unchanged. This is the one externally authored
+thing that reaches the adaptive state (four properties read out of a session or slot tree), so
+ADR-0014's "clamped at the boundary … holds against hostile state" was the claim under test, and it
+did not hold: past the boundary the value is published — the wrapper can serialise it back out —
+and reaches `std::pow` in the release mapping. `sanitiseState()` does catch it, but a block later
+and only after it had been the live vector for the remainder of the block it was injected in, which
+is a bounded recovery rather than the stated contract. Each field is finite-checked before it is
+clamped, PER FIELD rather than whole-struct — the opposite of `sanitiseState`'s choice and
+deliberately so, since there the four members descend from one poisoned pipeline while here they are
+four independent document properties, and one corrupt attribute is no reason to discard three sound
+ones. The recovery path is untouched; it simply has nothing to recover from on this route.
+(3) **Two derivations of one answer walked two collections.** Round 51 gave the preset writer and
+the dirty-marker projection the same exclusion predicate and the same value rule, but left them
+iterating `apvts.state`'s PARAM children and `getParameters()` respectively. Every value agreed,
+because APVTS creates one tree child per parameter — a fact about JUCE, not an invariant of this
+code, and a parameter registered without a node (or the reverse) would have put content in the file
+the marker could not see. `PresetManager::forEachPresetParameter` is the single traversal now. It
+visits in ID ORDER, which is a serialisation decision rather than tidiness: the tree order the
+writer inherited was JUCE's id-keyed one, so that is the order every `.anabasis` file on disk was
+written in, while `getParameters()` is registration order — moving the writer onto it unsorted would
+have re-ordered every element of every file on its next save for no semantic gain (`applyPreset`
+looks each id up and has never depended on position) and would churn again on any future layout
+reshuffle. The test checks both directions and the order.
+(4) **Investigated and deliberately NOT changed: a preset apply keeps the frozen latch.** The
+review asked whether runtime-only frozen adaptation state should survive a factory preset change,
+reading the cleared `BASELINE` beside the kept `FROZEN_TRIMS` as an inconsistency. It is not one,
+and the two differ for a stateable reason: `BASELINE` is derived from the parameter surface the
+apply replaces, so it describes nothing afterwards; the trims are derived from the AUDIO, `freeze`
+is preset-EXCLUDED so the apply never changes whether the slot is frozen, and the engine's latch is
+untouched and still exactly what the DSP is applying — so the slot's record of it stays true.
+Clearing `liveFrozenTrims` would not clear that latch either; it is only the fallback answer for
+ADR-0014's staged-but-not-yet-applied window, so a save inside that window would report "no latch"
+while a vector was staged and about to land at the next duck bottom. That loses the vector rather
+than tidying it. Recorded in ADR-0014 and pinned by
+`testAPresetApplyKeepsTheFrozenLatchItDidNotChange`, so the question does not have to be re-derived.
+Previous: **review round 51 (2026-08-04)** — five fixes, and two investigations that
+ended in a documentation correction rather than a redesign:
+(1) **A comment promised a compile-time guarantee the language does not give.** The badge table in
+`PluginEditor::paint` was declared `const juce::Slider* badged[managed_params::kCount]` beside a
+comment saying a mismatch was a build error. Aggregate initialisation with FEWER initialisers than
+the bound is legal C++ and value-initialises the remainder, so raising `kCount` to 10 without adding
+a tenth knob compiled cleanly and then dereferenced a null `juce::Slider*` in that very loop — a
+crash at paint time, the opposite of what the comment promised. The array deduces its bound and
+`static_assert`s against `kCount`. The same audit found the count itself unchecked:
+`managed_params::kCount` is hand-written while `ids` deduces its own bound, so the two could
+disagree in either direction (a tenth id silently under-scanned every `kCount` loop; a bumped count
+ran one past the end). A `static_assert` at the declaration ties them.
+(2) **Widget state was written on non-toggle transitions.** The meter-target checkboxes wrote
+`iid::meterTargets` from `onStateChange`, which `juce::Button::sendStateMessage()` fires for every
+button-state change — normal→over, over→down — not only for a logical toggle. Hovering a checkbox
+therefore stamped that widget's current bit into the live tree, and inside the ~42 ms before the
+next re-seed that could overwrite a mask a preset or session load had just installed. The callback
+computes the wanted mask and writes only when it differs from the stored one, so hover and press are
+no-ops. The load direction was never the problem and is untouched: the re-seed uses
+`juce::dontSendNotification`.
+(3) **A paint cache labelled its geometry with a fingerprint it was not built from.** `CurveView`
+compared and stamped `pathFingerprint` against `shownFingerprint`, a member only `refresh()`
+advances — and the editor ticks `refresh()` only while Advanced is showing. Any repaint that no
+refresh preceded (a host expose, an overlay dismissal, a `resized()`) built the path from the
+CURRENT parameter values and stamped it with the previous tick's label; a subsequent repaint in the
+same state then served that geometry as if it described the new one. It self-corrected within a
+tick, which is why the previous round recorded it as "no stale curve persists beyond one refresh"
+rather than fixing it — but an invariant that only holds because a timer keeps repairing it is not
+an invariant. `readInputs()` now reads the mode's parameters and accumulates their fingerprint in a
+single pass, so a value cannot enter the curve without entering the hash; `paint()` takes its own
+`readInputs()`, compares and stamps with that, and builds from those very values. Exact by
+construction, with or without a preceding refresh.
+(4) **The dirty marker measured a state no preset can hold.** `presetDirty()` compared SLOT trees,
+which carry the full parameter surface (view tier included), the exact-`raw` attribute, `BASELINE`
+and `FROZEN_TRIMS`; a `.anabasis` file stores none of those. Resizing the window, switching
+Simple↔Advanced, toggling Freeze, or a mid-step raw move on a discrete parameter therefore lit
+"edited" on a preset whose file would have been byte-identical, and no re-save could honestly clear
+it. `presetShapeFromLive()` projects the live state onto exactly `PresetManager::savePreset`'s
+content — non-excluded parameters at their snapped preset values plus the `DETACH_MASK` — through a
+`presetValueOf` the writer and the projection now share, so the two cannot drift. This closes KI-007
+item 5, the spec question that entry had held open since round 28, and answers it the way the
+entry's own text proposed. It also removes the KI-008 exposure recorded at round 49: the ~3 Hz poll
+no longer reaches `apvts.copyState()` (the M1 half of the inversion) or any wrapper `ValueTree`,
+so the message thread's only remaining M1 acquisition is the gesture-begin snapshot. The inversion
+itself is unchanged and KI-008 stays open.
+(5) **Two paths for the same operation left different internal state.** `applyFactoryPreset` cleared
+`liveBaseline` ("defaults-based: no macro baseline survives"); `applyPresetFile` did not, although a
+preset file cannot carry `BASELINE` either. A preset loaded over a state that held a baseline kept
+the previous state's vector, and it travelled — into the SLOT tree that A/B swaps and
+`getStateInformation` writes. The file path clears it too. Undo is unaffected: the pre-state pushed
+before the bracket still carries the old baseline.
+**Investigated, and NOT redesigned — with the reason recorded rather than the conclusion assumed:**
+the MacroEngine teardown window, and the frozen-trim mirror boundary. For the first, the honest
+statement is stronger than the one the code carried: `timerCallback` and `handleAsyncUpdate` both
+run on the message thread, so a destructor running there cannot be concurrent with either, and
+`stopTimer()`/`cancelPendingUpdate()` shut the window completely rather than narrowing it. The
+residual is exactly the off-message-thread host KI-003 is about, and it is now checkable — a
+`jassert` on the message thread, not a spin-join, which would block a teardown thread on the message
+thread and deadlock whenever that thread is waiting on the caller. For the second, writer
+(`adoptFrozenMirror` from `setStateInformation`) and readers (`saveSlotFromLive` via
+`getStateInformation`, the A/B swap, the §7 undo push) are unchanged; what changed is that the
+display poll is no longer among the readers, which narrows the window without a thread-model
+decision. Closing it needs one, and that is an Architecture Review Gate item.
+Previous: **review round 50 (2026-08-03)** — four fixes and one assessment that
+changed nothing:
+(1) **The UI-scale ladder had two representations.** `kScaleSteps` was introduced as the single
+source, and the combo's item strings wrote the same seven values out again as labels. They agreed;
+adding or removing a step without editing the literal list would have left the displayed label
+naming a different scale from the applied transform. The labels are built from the ladder now. The
+test had to be strengthened to see it: checking that a label's number round-trips to its own index
+passes even with a wrong label, because the clamp maps it back onto the nearest step — so each item
+is now SELECTED and the rendered transform compared against the label.
+(2) **A preset file was parsed twice.** `applyPresetFile` parsed for the readability gate, discarded
+the document, and `applyPreset` parsed the same file again — so a file rewritten between the two
+(the ‹/› ring walks this path on every press) passed the gate and then applied different content.
+`PresetManager::applyPreset` gained an overload taking the parsed document; the `File` overload
+parses and delegates, so both entry points share one readability answer.
+(3) **The meter-reset request announced before it published.** The audio thread could consume the
+flag and complete an entire block — clearing the hold, running the engine, publishing fresh readings
+— between the flag store and `publishSilentMeters()`, after which the message thread wrote silence
+over readings that were already post-reset: a blank meter the audio had already restarted. Publish
+first, announce second; the flag is release-stored and the block-top `exchange` acquires, because
+the six meter atomics are relaxed and source order alone would not stop the consumer seeing the flag
+first. **No test catches this** — the interleaving needs a concurrent audio block and the suite is
+single-threaded; the swap is recorded at the site, as with the frozen-trim ownership boundary.
+(4) **A factory apply wrote every overridden parameter twice.** Defaults first, intents second, so
+the host was told about a value the preset never wanted and the surface passed through a state no
+preset describes. The apply now computes each parameter's final value and writes once, with the
+exclusion and ceiling-lock rules applied in one place instead of once per pass. `setValueNotifyingHost`
+is kept — it is what keeps host, APVTS and attachments in agreement — but it is no longer called for
+a value that does not move. Automation correctness is unchanged: a host that is not told about a
+value that did not change still holds the right value.
+(5) **The parented preset menu was assessed and left alone.** The z-order concern is unreachable:
+each overlay is `setBounds (getLocalBounds())`, `setAlwaysOnTop (true)` and intercepts mouse clicks
+(its `mouseDown` dismisses), so while one is showing a click on the preset name hits the backdrop,
+not the button — the menu cannot be opened behind an overlay. The scaling concern does not follow
+either: the menu is a child of the editor, so the transform scales menu and window together and the
+logical space available is 720 px at every scale. What remains is a user with enough saved presets
+to exceed that, where JUCE falls back to a scrolling menu — standard behaviour, not a defect.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the frozen-trim ownership model, the
+MacroEngine teardown architecture, the visualiser FrameClock criteria and the CurveView cache
+strategy.
+Previous: **review round 49 (2026-08-03)** — one real display defect, two duplicated
+numbers removed, and three comments brought back to what the code actually does:
+(1) **A re-prepare left the OLD spectrum analysis on screen, drawn against the NEW rate's bin
+mapping.** Round 39 rewound the rings at `prepare` so stale frames become unreachable; that was
+half of it. The reader owns its own smoothed copy, and `SpectrumView::analyse` returns immediately
+when `readLatest` yields nothing — exactly the post-rewind state — so `inDb`/`outDb` kept the
+previous lifecycle's EMA and went on being drawn. The rewind is observable from the reader as a
+write count that went BACKWARDS, so that edge now clears the trace the ring can no longer justify.
+Deliberately the edge only: the "should an idle analyser decay to the floor?" branch is the early
+return above it, a listening-pass call, and untouched (KI-007 item 6).
+`testARewoundSpectrumRingDropsThePreviousTrace`; two mutants — removing the clear, and clearing
+unconditionally. The second needed a sharper stimulus than the first attempt: clearing and then
+analysing in the same tick rebuilds instantly (the EMA's attack is a straight assignment), so
+"still above the floor" could not see it; the check now observes the DECAY a spurious clear would
+destroy.
+(2) **The per-stage performance figures were published twice, and the second copy was the stale
+one.** `TEST_REPORT.md` still carried the pre-correction values that `PERFORMANCE_BUDGET.md` had
+already re-measured and labelled wrong in the unsafe direction. The second copy is gone and the
+report points at the authority; the "not yet measured (do not cite): CPU/performance" line directly
+above it — which had contradicted its own next section since the bench landed — is corrected too.
+(3) **`CLAUDE.md` restated the pluginval strictness** that this PR's own rule confines to
+`build.yml`. It is the first file every contributor and agent reads, so it is the copy most likely
+to be trusted and exactly the one the rule exists to protect; it now describes the gate and names
+where the number lives. `HANDOVER`'s two PRESENT-TENSE restatements go the same way; its dated
+phase-history mentions stay, being narrative about when the bar moved.
+(4) **Three comments corrected to what the code guarantees.** `CurveView`'s cache claimed "there is
+no state in which a repaint is requested and the cache is not rebuilt" — the cache can be LABELLED
+with a fingerprint it was not built from, and what actually holds is "no stale curve persists beyond
+one refresh"; recorded, not fixed, since the cache strategy is deferred. The spectrum publication's
+"what this ASSUMES" list gained its second assumption (it publishes before the invariant-9 self-heal
+decides the chunk was contaminated — display-only, nothing non-finite escapes). And the macro
+mapping's "the pass costs nine comparisons" was an understatement, because `isDetached` built a
+`juce::String` per call — nine heap allocations per pass; it takes a `StringRef` now, so the claim is
+true rather than the comment being wrong.
+KI-008 gained an exposure paragraph: the editor's ~3 Hz dirty poll makes the message thread a
+CONTINUOUS acquirer of the APVTS lock, which is what a probability estimate for that inversion
+should be based on. The decision itself is untouched.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 48 (2026-08-03)** — one verification that ended in "keep it",
+one state-model convergence, one guard made structural:
+(1) **The frozen-trim ownership boundary was VERIFIED and deliberately left as it is.**
+`adoptFrozenMirror()` writes the mirror and then reads the retained generation, and the two cannot
+be made atomic without a lock — the audio thread can publish in the gap (only with Freeze OFF, since
+`finishBlock` stops publishing while frozen), so the boundary can be one generation off. The
+direction is what matters and it is NOT symmetric. Reading AFTER, as the code does, can only make
+the boundary too LATE: a publication in the gap is attributed to the OUTGOING slot and the new slot
+withholds a latch for ~10 ms of audio, writing nothing wrong. Reading BEFORE would make it too
+EARLY, and a publication in the gap would then satisfy `gen != base` for the INCOMING slot —
+serialising a vector measured while the outgoing slot was live, which is the cross-slot leak round
+42 closed. The skew is therefore deliberately biased toward silence rather than toward borrowing
+another slot's latch. **Reported honestly: no test catches a swap** — the distinguishing case needs a
+publication to land between two adjacent statements, and the suite is single-threaded; I ran the
+swap and all 307 checks passed. The ordering is now stated at the site with the consequence of
+inverting it, because a comment is the only guard available.
+(2) **An illegal persisted `uiScale` never converged.** Clamping on read (round 42) fixed the
+divergence between the transform and the combo but left the illegal value in `InternalState` for
+ever: `getStateInformation` re-serialised it on every save, so the session never healed. It is now
+normalised where the scale is APPLIED — the state model's own read-rule discipline, matching
+`adoptParamsTree`'s treatment of out-of-range parameter values — and deliberately not on the 24 Hz
+display poll: `applyUiScale()` runs from the constructor, a host DPI change, the user's own
+selection, and the refresh only on the branch where the stored value changed. A legal value is never
+altered. Two checks added; the no-write-back mutant dies. The `stored != step` test is recorded as
+belt-and-braces rather than as the mechanism — `ValueTree::setProperty` already compares before
+assigning, which the unconditional-write mutant demonstrated by passing.
+(3) **`drainDetachBitsSoon()` bypassed the whole-tick restore guard.** `drainTick` suppresses both
+halves of the drain inside a `ScopedRestore` because a restore is replacing `liveDetachMask`
+wholesale; this entry point reached the same `handleAsyncUpdate()` directly, so the suppression
+rested on nobody calling it during a restore. It is genuinely unreachable today —
+`parameterChanged` returns early when `isRestoring()`, and the macro gesture-begin path cannot run
+concurrently with a message-thread restore — but that is a reachability argument about two callers,
+and the third would not know. Behaviour is unchanged for every existing path. MacroEngine itself is
+untouched.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 47 (2026-08-03)** — two lifecycle orderings made structural,
+one predicate unified, and one documentation overstatement corrected. No behaviour change:
+(1) **`macroEngine->startDraining()` ran several statements before the constructor finished**, so
+the 30 ms tick — which reaches back into the wrapper through `onDrainTick` →
+`handleAsyncUpdate()`, and can drain detach bits, replace the mask and land a mapping pass — was
+armed before `addListener(this)` and the nine managed-parameter registrations. A tick in that window
+would have run a macro apply the wrapper could not hear. Nothing can deliver one (a `juce::Timer`
+fires from the message loop, which cannot run inside a constructor executing on that thread), and
+that is precisely the "safe by ordering" argument the startDraining/stopDraining split exists to
+retire. Arming is now the constructor's last statement, so the guarantee belongs to the function
+rather than to the platform's dispatch rules. Its old comment said "only now may the tick that reads
+them run" — true of the two callbacks, not of everything else the tick reaches.
+(2) **`animVBlank` was constructed in the member-initialiser list**, i.e. before `lastFrameTime` and
+`uiAnimOn`, which are declared after it and which its callback reads — and before the
+`registerAnimated` calls that fill `animated`. The destructor already refuses to rely on the same
+platform argument (`animVBlank = {}` runs first there); the two ends of the lifetime now say the
+same thing. The attachment is assigned at the end of the constructor; animation behaviour is
+unchanged.
+(3) **`ValueBox` recorded `downProp` under one predicate and consumed it under another.**
+`mouseDown` wrote it only when `numberOfClicks < 2 && ! isBeingEdited()`; `mouseDrag` proceeded on
+`! isBeingEdited()` alone, so on a NON-editable text box (where a double-click opens no editor) a
+drag would have used the origin captured at the first click while the distance was measured from the
+second press. Latent — `createSliderTextBox` makes every box editable when its slider is, and
+`setupRotary` builds them all editable — but it is the asymmetry this file has removed repeatedly.
+A `downArmed` flag makes recording and consuming one predicate. Deliberately NOT tested: the
+divergent case is unreachable, so any check would pass identically before and after.
+(4) **The MODE policy read as though the frozen-mirror thread crossing had been removed outright.**
+It has not. `adoptFrozenMirror()` is a single writer, and a single writer is not a
+message-thread-only writer — it is still reached from `setStateInformation`, which VST3 does not
+promise on the message thread, while `presetDirty()` reads and `createCopy()`s the same member
+several times a second. What rounds 41–42 actually did was remove the SECOND writer round 40 had
+added in `prepareToPlay`: the exposure is back to the one KI-003 already owns, reduced to its
+pre-round-40 shape rather than eliminated. `MODE_AND_ADAPTATION_POLICY`, `THREAD_MODEL`'s retained
+row and KI-003 (which now names `liveFrozenTrims` in its list of restore-written state) all say so.
+No guarantee was weakened to make the texts agree — the correction runs the other way.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 46 (2026-08-03)** — a measurement defect, a gesture-model
+defect, and one investigation that ended in "leave it":
+(1) **The per-stage bench timed its own stimulus generator.** `stageRow` computed an LCG step and a
+`std::sin` per sample INSIDE the timed span, while the method line and the matrix section both
+promise stimulus generation is outside the stamps. A `sinf` is comparable to — for the cheap stages
+larger than — the stage being measured, so every row of the per-stage table carried an unlabelled
+constant overhead, in a table used to argue each §9 allocation row is inside budget: wrong in the
+unsafe direction. The stimulus is now pre-generated per run outside the stamps (regenerated each
+run, because the callbacks mutate their frame in place), leaving one indexed call per sample inside
+the timed region. Re-measured on the machine the table already names: EQ 0.16 → 0.10 %, Compressor
+0.15 → 0.10 %, Metering 0.18 → 0.10 %, Limiter 0.44 → 0.42 %, Clipper unchanged at 0.21 %. That the
+two expensive stages barely moved is the corroboration — their own cost dominated the harness. No
+verdict changed. The whole-engine matrix is untouched: it already stamped only `process()`.
+(2) **"Worst block" was ambiguous, and stays conservative.** `worstUs` is the maximum over all five
+runs rather than the worst block of the median run. That is the right number for a real-time budget
+— a dropout is caused by the worst block that ever happens — so the implementation is unchanged and
+both the bench's own method line and `PERFORMANCE_BUDGET.md` now say which it is, including that it
+is ~5× more exposed to the scheduler noise the caveat already warns about.
+(3) **A click on a macro's numeric readout re-engaged every detached parameter.** `ValueBox` opened
+its `ScopedDragNotification` on mouse-DOWN, and a gesture-begin on one of the three §5.5 macros is
+not neutral: it takes the macro branch, clears the whole §5.3 detach mask and re-lands the curve. So
+clicking the number under Loudness to read it — or as the first half of a double-click to type into
+it — discarded every manual Advanced edit. §5.3 makes a macro gesture "the clear notice" that the
+user chooses the macro over their edits; pressing on a numeric readout is not that notice. The
+bracket now opens on the first MOVEMENT, which is the line the code already drew one event later
+(`mouseDown` refuses the bracket on a double-click for exactly the "about to type" reason). A real
+drag still opens it before its first write, so the imbalance the bracket exists to prevent cannot
+return, and the knob is untouched — `juce::Slider` opens its gesture on press, and that is a genuine
+macro grab. `testAValueBoxClickIsNotAMacroGesture` drives the real ValueBox through synthesised
+mouse events and pins both halves; two mutants (press-opens-gesture, never-opens).
+(4) **Preset application through `setValueNotifyingHost`: investigated, left unchanged.** Notifying
+is not stylistic — it is the only write that keeps the host's cached values, the APVTS tree and the
+editor attachments in agreement, and every other value-landing path uses it (`applyMapping`,
+`reassertFromRaw`, `applyOnePresetValue`), so silencing this one would leave exactly one restore the
+host never learns about. The real observation is the volume: ~46 notifications per ‹/› step, which
+some hosts record or dirty on. That is host behaviour, not correctness, and changing it would change
+automation semantics — so it is now a DAW-matrix line in `RELEASE_COMPATIBILITY_CHECKLIST.md` with
+the reasoning at the code site.
+Item 3 of the brief (the Windows PowerShell guard) was already fixed at round 45 — `$m` is tested
+before it is indexed — and needed no further change; verified against the current file.
+**Left documented, unchanged:** KI-006, KI-007, KI-008, the MacroEngine teardown architecture, the
+PopupMenu ownership question, the visualiser FrameClock criteria and the CurveView cache strategy.
+Previous: **review round 45 (2026-08-03)** — four small hardening items, no behaviour
+change and no deferred question touched:
+(1) **The bench printed a C2 refusal even when the documented override answered.** `ANABASIS_BENCH_CPU`
+is the supported way to run on a platform whose lookup is not written yet, so it must not read as a
+failure — the previous shape emitted the whole refusal to stderr and *then* accepted the override,
+telling an operator following the documentation that something had gone wrong when nothing had. The
+two identity sources are now tried in order (automatic, then the override) and the refusal belongs
+to exactly one state: neither answered. Verified by execution on both paths — with a suppressed
+lookup the override run writes **zero bytes** to stderr, and the no-override run still exits 2
+before printing any table.
+(2) **The documented Windows repro block failed obscurely when the workflow could not be read.**
+`(Select-String …).Matches[0]` indexes before the guard runs, so a renamed env var or a moved
+workflow produced a PowerShell property-not-found error instead of the intended message — the same
+class of failure round 43 fixed for the POSIX block with `${VAR:?}`. The match is now tested before
+it is indexed. The value still comes from `build.yml` and is duplicated nowhere.
+(3) **`~MacroEngine` now sets the teardown latch itself** by calling `stopDraining()` rather than
+repeating its two tail calls. `~AnabasisAudioProcessor` still calls it first and that ordering is
+unchanged — it is what makes `onDrainTick` safe — but round 37's point was to stop a structural
+guarantee resting on a rule a caller has to remember, and this was the last place it did. No lock,
+no join, no timer-model change. The residual is unchanged and restated at the site: a
+`timerCallback` that has already passed the latch check is not waited for, because `juce::Timer`
+offers no join. KI-003 stands exactly as written.
+(4) **`retTrimSeq`'s comment now says what it counts.** The value is correct and the name stays, but
+"generation" invited the wrong reading: it increments on every MEANINGFUL publication — ~90/s at
+48 kHz/512 from `finishBlock`'s audible branch, plus once per `injectTrims` — not once per Freeze
+latch. The comment now states that a difference of two readings is not a rate, not an interval and
+not a latch count, and that the only supported use is inequality against a recorded value, which is
+all `engineFrozenTrimsIfLive()` does (and it consults it only with Freeze ON, when publication has
+stopped).
+Also cleared: two `AffineTransform::getScaleFactor()` deprecation warnings introduced by round 44's
+test — JUCE deprecated it for transforms carrying a rotation, and the editor's is a pure scale, so
+the assertions read `mat00`. The build is documented as warning-free and now is again.
+No new tests: the destructor latch is unobservable after the object is gone, the bench is a separate
+console binary verified by running it, and the other two are documentation. **Left documented,
+unchanged:** KI-008, KI-006 (both halves), KI-007 items 1/2/5/6, popup-menu ownership, the
+MacroEngine re-entrancy architecture, and the visualiser lifecycle criteria.
+Previous: **review round 44 (2026-08-03)** — undefined behaviour, platform guarantees
+and three consistency repairs:
+(1) **Two stored GUI closures captured a reference variable by reference.** `uiScaleBox.onChange`
+captured the constructor-local `auto& ist`, and `setupComboInternal`'s captured its reference
+PARAMETER `box`. Both entities die when their scope returns, and the closures outlive them:
+[expr.prim.lambda.capture] captures the *variable*, not the referent, so invoking them afterwards is
+UB even though every compiler resolves it through to the long-lived object. Normalised on the safe
+forms the surrounding code already used — `[this]` plus a re-fetch (what the §6.4 toggle callback
+does) and `[b = &box]` (a pointer by value, naming an editor member).
+(2) **The bench's machine line was Linux-only while `ANABASIS_BUILD_BENCH` is platform-agnostic**,
+so a local re-measure on macOS or Windows — exactly the workflow the refresh rule prescribes —
+produced a results table identifying nothing, which is `PERFORMANCE_BUDGET.md` C2 failing silently.
+`cpuModel()` now has a lookup per platform (`/proc/cpuinfo`, `sysctlbyname
+machdep.cpu.brand_string`, the `ProcessorNameString` registry value) and, where none answers,
+`main` REFUSES rather than printing: an incomplete table is worse than no table because it can be
+pasted into the budget document. `ANABASIS_BENCH_CPU` is the documented override.
+(3) **The local-repro block claimed three platforms while being a POSIX pipeline.** Round 43 fixed
+the strictness lookup for macOS and then described the result as running everywhere, moving the same
+defect one platform along. Split into a POSIX block (Linux/macOS) and a PowerShell block that
+mirrors what the `windows` job actually runs, both reading the number from `build.yml` and neither
+restating it. The Windows block does not invent a `run-tests.ps1` — there is none, and it says so.
+(4) **Three GUI consistency repairs.** The `ValueBox` drag predicate was a STYLE test used by
+`mouseDown`/`mouseDrag` while `mouseUp` cleared through a wider `dynamic_cast` — two predicates for
+one begin/end pairing, and the style test also left a linear slider's readout unbracketed, which is
+the defect the bracket exists to prevent, waiting for the first linear slider. One `sliderParent()`
+now serves all three; behaviour is unchanged today because `setupRotary` builds every ValueBox and
+builds only rotary sliders. `stepPreset` re-derived its position from the display NAME, which is not
+unique across the two sources, so a user preset called "EDM Club" walked from the factory index; the
+editor now remembers the source it last applied and uses it only while the name still confirms it,
+falling back to the name search when anything else changed the name. And `resized()`'s early-return
+guard gained a `jassertfalse` plus an unconditional `resized()` at the end of the constructor,
+because `setSize` is a no-op on an unchanged size — so the guard could have produced a silently
+blank window rather than a diagnosable failure.
+`testTheSettingsCallbacksReachTheLiveTree` (two mutants) covers the closure refactor's direction —
+honestly labelled as regression coverage, since no test can kill UB that happens to work. No test
+was written for `stepPreset`: reaching it needs a file in the real user preset directory plus a
+synchronous button click, and the check would cost more in fragility than it buys.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6, and the
+popup-menu/visualiser/MacroEngine/bench-CI items the brief excluded.
+Previous: **review round 43 (2026-08-03)** — two maintenance items, both cases of a
+statement and its implementation disagreeing:
+(1) **The documented local-validation command could not run on one of the three gate platforms.**
+`CI_CD.md`'s repro block read the strictness with `grep -oP … \K`, and `-P`/`\K` are GNU
+extensions that BSD grep — `/usr/bin/grep` on macOS — rejects outright. The failure was SILENT
+rather than loud: `STRICTNESS` came out empty and the two commands below it ran with no strictness
+argument, so a developer following the documented procedure on macOS validated against nothing and
+could pass work CI rejects. Replaced with POSIX `sed`, anchored to the `env:` assignment so the
+`${{ env.… }}` references in the job steps cannot contribute a second value, plus a `${VAR:?}`
+guard that turns an unreadable workflow into a diagnosable failure instead of an empty argument.
+The ownership model is unchanged — the value still comes from `build.yml` and appears nowhere else
+— and the block now says which of its lines is Linux-only, since that was the other reason it did
+not describe a macOS run. Verified by executing the documented pipeline, not by reading it.
+(2) **`resetSweep` was read in two draw paths and written nowhere** — the half-ported Anamorph
+state round 28 removed for `allCombos`/`hov`. REMOVED rather than wired, which is the opposite of
+what its own comment asked for, so the reasoning is recorded at the site: honouring the flag in the
+draw path would not have produced the sweep it describes, because `stepMicroAnims` reaches the same
+conclusion one level up and SNAPS `vpos` to the target while the button is down. With the ease
+already collapsed at its source, the draw-path branch could only have drawn the un-eased value by a
+second route. "Sweep while held" needs all three sites to agree — new behaviour, and a listening-pass
+call rather than a repair. The reachable reset gesture is unaffected either way: `mouseDoubleClick`
+is dispatched from `internalMouseUp`, so the button is already released and the ease runs. The
+removal is behaviour-identical by construction (a property that is never set reads false), which is
+why it carries no new test — a check that cannot distinguish the two states would be noise.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6, and the
+preset-menu/visualiser/bench-coverage/`resized()`-guard items the brief excluded.
+Previous: **review round 42 (2026-08-03)** — ownership and synchronisation, six items:
+(1) **The retained frozen-trim set is engine-wide; `FROZEN_TRIMS` is per-slot.** The engine latches
+*a vector*, not "slot A's vector", so after an A/B switch into a freeze-ON slot holding none of its
+own — where nothing stages a restore, so the generation pair stays equal — the incoming slot's next
+save serialised the OUTGOING slot's latch as its own, and the next A/B or undo restore injected it.
+The retained set is a runtime CACHE and may only answer for the slot it was filled under: the
+wrapper records the retained generation whenever the live surface's frozen ownership changes and
+adopts the engine's answer only once it has advanced past that base. `adoptFrozenMirror()` is now
+the single writer of `liveFrozenTrims` for the same reason `replaceDetachMask()` is the mask's —
+replacing the vector and re-basing the comparand are two halves of one rule, and three call sites
+had only the first half. The retained *flag* became a *counter* to carry both questions (does one
+exist / was it latched since) without a second atomic. Schema, ADR-0007 and ADR-0014 untouched.
+(2) **Publication ordering re-verified and carried onto the counter.** `retTrimSeq` is
+release-stored after its four scalars and acquire-loaded, as `pubTrimEver` already was; the new
+`slotFrozenBase` is deliberately RELAXED, because it is only ever compared against that counter and
+announces nothing itself. `THREADING_POLICY`'s publication-flag row names both.
+(3) **§7 history ownership — KI-003's third member CLOSED without the thread-model decision.**
+`setStateInformation`, which VST3 does not promise on the message thread, was clearing four
+`juce::Array<juce::ValueTree>` stacks and a `ValueTree` that the editor reads at display rate and
+pops from. It now only bumps `historyEpoch`; the message thread reconciles at `syncHistory()`, the
+one point every read and write of the history passes through. The containers have exactly one legal
+thread again, no lock was added, and nothing blocks in a host callback.
+(4) **Persisted UI scale normalises once.** Three sites read `iid::uiScale` with three different
+fallbacks, so a percent that is not a legal step was silently ignored rather than clamped — and on
+a project load the window rendered at 100 % while the Settings panel kept displaying the previously
+selected step. One `nearestScaleIndex()` answers for the transform and the combo, clamping to the
+nearest step the way the tree's other persisted-value read rules do.
+(5) **Initial UI state** was seeded at round 41 (undo/redo beside the preset mark and the animated
+knob positions); re-checked, nothing else waits for a tick.
+(6) **`CurveView::paint` rebuilt its curve on every repaint** — a full `MasteringEQ::prepare` plus
+one `magnitudeDbAt` per pixel column — although `refresh()` already gates the repaint on a
+fingerprint. The built path is cached against that same fingerprint, so a host-driven expose, an
+overlay dismissal or a window move no longer pays for it. The two reference lines moved to a helper
+the cached path also calls, because leaving them inside the rebuilt branch would have made the
+cached frame differ from the uncached one — the defect a paint cache introduces if the split is
+drawn in the wrong place.
+Four mutants, one per behavioural guard. Two test-quality corrections worth recording: the curve
+test first fished a `CurveView` out of the editor and returned early on zero bounds — the Advanced
+panel is not laid out headlessly, so it asserted NOTHING while reporting a pass, and it could also
+have driven the clip-transfer well with EQ parameters; it now constructs its own component and names
+the mode. And the bounds half of the cache key is deliberately left uncovered: every stimulus for it
+is also satisfied by a cache that ignores bounds, and a check that cannot fail is worse than none.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6 (including
+the factory-apply and dirty-marker questions this round re-reviewed and did not change), and the
+preset-menu/visualiser/navigation items the brief excluded.
+Previous: **review round 41 (2026-08-03)** — a threading-correctness pass, and the
+first item is the previous round's fix being wrong in a way its own tests could not see:
+(1) **Round 40's frozen-trim fix introduced a data race.** It declared the wrapper's
+`liveFrozenTrims` `juce::ValueTree` the durable owner of the latch and had `prepareToPlay` assign
+it — a host callback JUCE does not deliver on the message thread, writing a non-thread-safe
+reference-counted object that the editor's `presetDirty()` poll reads and `createCopy()`s
+continuously, with both sides gated on Freeze being ON so the windows coincided exactly. The
+ownership answer was wrong, not just its placement: the durable copy belongs in the LOCK-FREE layer
+where the data already lives. `AdaptiveEngine` now keeps a RETAINED trim set — four scalars plus a
+release-stored flag — which `reset()` does not clear, joining `learned`/`refOnsetRate`/`refTiltDb`
+in that function's survivors list; the PUBLISHED set keeps its exact former meaning (what the DSP
+is applying, zeroed by `reset()`), which is what keeps KI-006's readout half honest. Nothing
+crosses a thread that did not already. `MODE_AND_ADAPTATION_POLICY` carries the corrected ownership
+statement and the general rule it illustrates; KI-006 records both the closure and the round-40
+misfire, because the shape recurs.
+(2) **`pubTrimEver` was relaxed although it gates a read of the four trim scalars.** That is the
+same shape `frozenAppliedSeq` was corrected to at round 39, whose reasoning is written out in
+`AnabasisEngine.h`: THREADING_POLICY's relaxed rule rests on "carries no payload", and a flag
+announcing other values is a payload. Both it and the new `retTrimEver` are now release-stored
+after their values and acquire-loaded. `THREADING_POLICY` gained a **publication flags** row so the
+distinction is a rule rather than four independent judgements — with the test stated (does
+observing the flag gate a read of other state?) and the four instances named.
+(3) **Freeze/preset questions reviewed, not changed.** A factory apply still leaves the slot's
+frozen vector standing (KI-007 item 1) and the dirty marker still keys on preset-EXCLUDED
+parameters (item 5); both remain spec questions. Item 5 gained the input it was missing: the
+CONTENT of `FROZEN_TRIMS` is a function of *when* Freeze was engaged, so identical parameter state
+can produce two different slot trees and two different answers to "edited?".
+(4) **Undo/redo buttons are seeded in the constructor**, alongside the preset mark and the animated
+knob positions, instead of rendering enabled over an empty stack for the first ~42 ms. The seed and
+the 24 Hz tick share `refreshUndoRedoEnablement()` rather than repeating its two comparisons.
+**Found while verifying (1), and the more serious finding: KI-008.** The suite's first two-threaded
+stimulus let ThreadSanitizer's deadlock detector see that two JUCE locks are taken in opposite
+orders on two reachable paths — the §7 pre-state snapshot calls `apvts.copyState()` from inside a
+parameter-listener callback (M0 → M1), while `APVTS::setDenormalisedValue` notifies listeners while
+holding the tree lock (M1 → M0). One thread cannot deadlock on it; the message thread starting a
+drag while a host thread restores state can. It PREDATES this review series (P6 §7 bracketing) and
+is NOT fixed here: the M0 → M1 edge is the undo grammar's snapshot point, and moving it is an
+Architecture Review Gate item, so it is recorded with its evidence rather than guessed at.
+`testTheFrozenLatchNeedsNoThreadCrossing` provides the stimulus; two mutants (the retention itself,
+and reinstating round 40's write under TSAN). The stress is honestly weak on a plain build — it
+does NOT fail against the round-40 code, because a data race is not a functional difference — and
+that is why the verification instrument is a `-fsanitize=thread` build, where the round-40 code
+reports races on `ReferenceCountedObjectPtr<ValueTree::SharedObject>::get()` and the refcount
+increment, and the current code reports none.
+**Left documented, unchanged:** KI-008, the audio half of KI-006, KI-007 items 1/2/5/6, KI-003, and
+the preset-UX/popup/spectrum-decay/navigation items the brief excluded.
+Previous: **review round 40 (2026-08-03)** — a targeted hardening pass, and every item
+is a case of two mechanisms that had to agree with each other:
+(1) **A meter reset was invisible from the GUI.** `requestMeterReset()` only set the momentary-request
+flag; the DISPLAY publish that makes the clear visible with no audio running lived at the
+`setStateInformation` call site, added there at round 33 for a reason — "a project is opened with
+the transport stopped" — that is at least as true of the meter panel's click, which is when a user
+reads an integrated figure and decides to clear it. The engine half must wait for a block top; the
+display half must not. Both are now inside the request, so the two callers agree by construction.
+`THREAD_MODEL`'s meter row and momentary-request row name the message thread as a clear writer.
+(2) **The frozen vector had no stated owner, and two places were deciding it.** Stated now, in
+`MODE_AND_ADAPTATION_POLICY` and at the code: the wrapper's `liveFrozenTrims` mirror is the DURABLE
+owner (it is what serialises); the engine's `publishedTrim*()` are a faster copy that does not
+survive `AdaptiveEngine::reset()`. A latch established LIVE had no mirror — no restore ever wrote
+one — so a host rate change destroyed the only record, and the save wrote initialisation zeros
+(pre-39) or nothing at all (post-39): the round-39 fix traded an invalid vector for a missing one,
+which is quieter, not better. `prepareToPlay` captures the latch into the mirror before
+`engine.prepare` reaches the reset, and the two-clause adoption test moved into
+`engineFrozenTrimsIfLive()` so the save and the capture cannot drift. KI-006's heading, status and
+both resolution paragraphs are re-synced: the SAVE half is closed, the AUDIO half is untouched and
+remains a Freeze-semantics decision behind the Architecture Review Gate — this fix deliberately
+stops at the serialization boundary rather than re-staging to the engine.
+(3) **Three files each claimed to be the single source for pluginval strictness.** `CI_CD.md`
+correctly located the value in `build.yml` and then sent the reader to `TESTING_POLICY.md` as "the
+only document that states it"; that policy explicitly refuses to state it and points back at
+`build.yml` — while carrying a phase→strictness table and three literal `10`s in its release-gate
+bullet. Round 35 moved this duplicate rather than removing it; this time the ownership is a table
+in both documents (value → `build.yml`; requirements → the policy; wiring → the procedure), the
+policy's table and literals are gone, and `CI_CD.md`'s local-repro block reads the number out of
+the workflow instead of pasting one (it had said `5` under a comment calling it current).
+(4) **`refreshMapping()` promised what `drainTick` withheld.** The header said "this is what
+re-lands the curve values"; inside a `ScopedRestore` the tick is suppressed whole and the scope's
+exit ABORTS the arm, so nothing lands then or later. The behaviour is right — a mapping over a
+restore is the clobber the guard exists to prevent — and the one caller that discovered it
+documented the discovery at its own site (`applyFactoryPreset` drops its guard first) rather than
+at the API. The deferral is now explicit and reported: `drainTick`/`flushPendingMapping`/
+`refreshMapping` return whether the tick ran, and the ONE decision site stays in `drainTick`.
+`testMeterResetClearsSessionHolds` (extended), `testPreparedStateAndSlotOwnership` case 4,
+`testTeardownAndReengageInvariants` cases 1 and 4; four mutants, one per guard. The frozen-trim
+stimulus first failed on an exact compare of a MEASURED trim through the XML decimal round trip —
+the assertion is now the text conversion's tolerance, still separating the vector from both failure
+modes (absent child, reset child).
+**Left documented, unchanged:** the audio half of KI-006, the frozen vector surviving a factory
+apply (KI-007 item 1), the preset dirty model, KI-003, and the preset-UX/popup/spectrum-decay/
+navigation items the brief excluded.
+Previous: **review round 39 (2026-08-03)** — correctness only, and the first item is
+the previous round's safeguard failing to safeguard anything:
+(1) **`hasPublishedTrims()` was true for every prepared instance.** Round 38 set the marker inside
+`publishTrims()`, and `AdaptiveEngine::reset()` — which `prepare()` calls, so every host reaches it
+before the first block — publishes too, and publishes ZEROS. The guard was therefore entered
+exactly as often as before it existed. The marker now describes the CURRENT contents of the four
+atomics rather than "has one ever been published": `publishTrims (bool meaningful)` takes the
+decision as a parameter so no publication can skip it, `reset()` passes false with the
+initialisation zeros, and an audible `finishBlock` and an ADR-0014 `injectTrims` pass true. The
+reachable case the guard exists for is a host sample-rate change on a frozen slot — `reset()`
+zeroes and republishes, the restore is no longer pending, and the next save wrote those zeros over
+the slot's latch.
+(2) **KI-006 asserted the opposite of the code.** It read "the PUBLISHED trim atomics are NOT
+zeroed, and cannot be", reasoning from `finishBlock`'s `if (! freeze && audible)` guard and missing
+`reset()`'s publish. Corrected against the tree: the consequence of a re-prepare is SYMMETRIC (the
+audio, the Advanced overlay and the capture all read zeros), what survives is the wrapper's
+`liveFrozenTrims` mirror, and the entry now says which of its two proposed resolutions that
+changes — "keep the trims across `reset()`" has to carry the published copy too.
+(3) **The GR ring's seqlock comment argued from the wrong primitive.** The CODE is the canonical
+write-begin (relaxed increment + release fence, the `seq++; smp_wmb();` shape) and is unchanged;
+the justification described what a release STORE gives. Restated as what the FENCE gives — a
+StoreStore+LoadStore barrier, so accesses sequenced before it cannot be reordered after any store
+sequenced after it, which is exactly "odd before the clear" — and it now also states what the
+barrier does NOT buy: the reader's entry reads are plain, so a racing batch can still observe a
+torn value and the epoch re-check DISCARDS it. That is the seqlock bargain, and it was the part the
+comment left implicit.
+(4) **The spectrum rings survived a re-prepare.** `prepare()` resized their scratch and left the
+rings, so a host sample-rate change left up to 4096 frames captured at the old rate readable while
+`SpectrumView` maps bins through the CURRENT rate. The GR history ring has been cleared at
+`prepareToPlay` since P3; these two were the analyser state that did not follow. `ScopeBuffer::reset()`
+rewinds the published INDEX only — `readLatest` copies strictly below it, so every stale frame
+becomes unreachable and clearing 2 × 16384 floats would buy nothing observable.
+(5) **A §7 pre-state could cross an A/B switch.** `switchToSlot` swapped the baseline but left
+`gesturePreState` and the open-drag bits, so a drag open across a switch had its snapshot taken
+from the OLD slot while the gesture-end compared it against the NEW slot's values — the difference
+is the slot change itself, and the end pushed a step onto the new slot's stack describing a state
+that slot never held. Both halves are dropped at the switch, matching what per-slot history already
+means. `managedGestureBits` deliberately stays: it decides §5.3 DETACHMENT, and a drag continuing
+after the switch is editing the new slot's value.
+`testPreparedStateAndSlotOwnership` covers (1), (4) and (5); three mutants, one per guard, each
+calibrated to the reachable case (the first two stimuli initially passed against their own mutants
+— a restore still pending shadowed the marker, and two identical slots gave the gesture-end nothing
+to push).
+**Left documented, unchanged:** the frozen vector surviving a factory apply (KI-007 item 1), the
+preset dirty model's preset-EXCLUDED half and its trim-content input, the undo/state-restore
+threading architecture (KI-003), the duck's cost on a frozen-slot restore, and the
+analyser/menu/navigation/CI items the brief excluded.
+Previous: **review round 38 (2026-08-03)** — a triaged round of five state-consistency
+items, each the minimal change consistent with the model already in the tree:
+(1) **A debug build could abort while browsing presets.** `relandMacroCurve()` asserted that no
+detach bit was staged, in the one function written to cope with one being staged.
+`applyFactoryPreset` calls `replaceDetachMask` INSIDE its `ScopedRestore` and reaches the re-land
+several statements after the guard drops, and `parameterChanged` stages a bit from whichever thread
+the host delivers the callback on (KI-003) — so the assertion could not hold under the threading
+model the same file documents. The two stores were already the whole mechanism; the assert is gone
+and the comment now says why dropping the bits is the correct outcome (a gesture racing a bulk swap
+belongs to the state being replaced, which `replaceDetachMask` decides for every other path).
+(2) **A load reset two of the three gesture-state members.** `openGestureBits` and `gesturePreState`
+were cleared; `managedGestureBits` was not — and it is set and cleared on ANY thread, so a BEGIN
+delivered off-thread with the session replaced before its END left the bit standing, and the next
+UNGESTURED write to that managed parameter satisfied the "gesture-bracketed" half of the §5.3
+discriminator. The three are one family and now reset together.
+(3) **Frozen-trim persistence, two unambiguous halves.** A freeze-OFF slot no longer serialises a
+`FROZEN_TRIMS` child at all: `frozen` used to start from the carried mirror unconditionally, so a
+slot that was frozen, loaded, then un-frozen wrote the old vector into every later save — a latch
+serialised by a slot §5.4/MODE invariant 3 gives nothing to latch, and a child of the tree
+`presetDirty()` compares. And the capture now also requires
+`AdaptiveEngine::hasPublishedTrims()`, because the four published atomics start at zero and "all
+four read 0" is otherwise indistinguishable between *measured, no trim* and *never measured* — the
+save half of KI-006, closed without needing the audio half's owner call, since a value never
+measured cannot be more truthful than the one the slot already holds. The round-trip fixture was
+corrected with it: it set `FROZEN_TRIMS` on a slot whose `freeze` was OFF, so it pinned the round
+trip of a state the product cannot produce; it now sets Freeze ON on both surfaces (the root
+`ANABASIS` child carries the ACTIVE slot's live values, the `AB` child the per-slot copies) and a
+new check pins the freeze-OFF half.
+(4) **Undo/redo restore the dirty datum beside the state.** They restored the whole slot including
+`presetName` while `presetBaseline` stayed put, so undoing a preset apply left the name and the
+datum describing different presets. Neither route this was recorded as needing was required — the
+baseline did not go into the StateSet (an ADR-0007 schema change and a Hard Stop) and undo does not
+recompute it: the stacks are session-local and never serialized, so an entry is now the pair
+`{ slot, baseline }`, taken and restored together.
+(5) **Reset-to-macro is undoable.** It clears the mask and re-lands nine values while pushing
+nothing onto the §7 stack, and its writes are ungestured so no drag step appeared either. It now
+pushes its pre-state exactly as the preset applies do. No duck request added: unlike a preset apply
+or an undo it rewires no discrete stage, and DSP invariant 8's enumeration is about the bulk swaps
+that do.
+`testStateReplacementAndHistoryConsistency` covers (2), (4) and (5); the frozen-trim half is covered
+by `testFrozenSlotRoundTrip`'s new freeze-OFF check. Four mutants, one per guard. Documents
+re-checked and synced: `KNOWN_ISSUES` KI-006 (save half CLOSED, audio half untouched and still an
+owner call) and KI-007 items 3, 5 (the `FROZEN_TRIMS` input settled, the preset-EXCLUDED half still
+open) and 9.
+**Left documented, per the triage:** the frozen vector surviving a factory apply (KI-007 item 1 — a
+MODE-invariant-3 question, and `applyPresetFile` behaves identically, so there is no internal
+inconsistency to correct), the preset dirty model's preset-EXCLUDED half, the undo/state-restore
+THREADING architecture (KI-003), the duck's cost on a frozen-slot restore, the spectrum rings not
+being cleared on `prepare()`, and the analyser/menu/navigation/CI items the brief excluded.
+Previous: **review round 37 (2026-08-03)** — a triaged round, limited to findings that
+violate an invariant this build has already established. Four, plus one pairing hardening:
+(1) **The post-teardown drain guarantee was unenforced.** Round 36 removed the `std::function`
+nulling from `stopDraining()` for a sound reason (it raced a tick already about to invoke one) and
+in doing so dropped what the nulling also bought: `drainTick`, `flushPendingMapping` and
+`refreshMapping` are all PUBLIC, so "nothing drains after stopDraining" became a rule a future
+caller had to remember — and after `~AnabasisAudioProcessor` has called it, the members
+`onDrainTick` reaches are already destroyed. A one-way atomic latch (`drainStopped`), read at the
+top of `drainTick`, restores the structural guarantee for every trigger at once and without the
+race the nulling had. One-way on purpose: an object whose owner has begun teardown never becomes
+drainable again.
+(2) **The preset menu's raw `LookAndFeel` pointer** — the one part of round 24's `SafePointer`
+hardening the look-and-feel did not cover — is closed by CONSTRUCTION rather than by either repair
+previously weighed and rejected. `Options::withParentComponent (this)` makes JUCE's MenuWindow a
+CHILD of the editor, so it cannot outlive it, and `Component::getLookAndFeel()` reaches `lnf` up
+the parent chain: the explicit `setLookAndFeel (&lnf)` is gone and there is no pointer to dangle.
+(3) **§5.3's re-engage was half applied on the gesture path.**
+`MODE_AND_ADAPTATION_POLICY` invariant 3 already reads "the next macro gesture re-engages every
+detached parameter **through the normal rate-limited glide**", and round 30 fixed the identical
+"re-engaged but off-curve" shape on the tick path — so this was code drifting from a written
+invariant, not an open question. A macro gesture that moved NOTHING cleared the mask and armed no
+mapping, leaving the re-engaged parameters on the user's values. The begin now calls
+`MacroEngine::armMapping()` (a relaxed store, safe from whichever thread the gesture arrives on)
+beside the re-engage, so the gesture route and `resetToMacro()` do the same two things. Inert when
+nothing was detached — `setParam` skips writes that would not change the value.
+(4) **Copy A→B left the destination slot's undo history describing the state it overwrote**, so the
+first undo after switching silently discarded the copy AND that slot's last edit. It needed no new
+semantics either: `setStateInformation` already clears both slots' stacks because "a load starts a
+fresh history", and a Copy is that event for one slot.
+(5) Pairing hardening on round 36's own new code: `ValueBox::mouseDown` now calls `drag.reset()`
+before opening a bracket, because assigning over a live `unique_ptr` runs the new constructor
+(begin) before the old destructor (end) — a mouse-down that never saw its mouse-up would have
+handed the host begin/begin/end/end.
+Regression coverage is mechanical for the first, third and fourth
+(`testTeardownAndReengageInvariants`, three mutants, one per invariant); the menu parenting and the
+bracket pairing are lifetime properties with no headless observable, verified by reading the pinned
+JUCE dispatch. Documents re-checked against the implementation and synced: `MODE_AND_ADAPTATION_
+POLICY` §P5 gesture grammar (the arming is the code half of invariant 3), `THREAD_MODEL` rows 39
+and 40 (the teardown latch, the re-engage arming), `KNOWN_ISSUES` KI-003 (the stopDraining
+paragraph said "clears the callbacks", which stopped being true in round 36) and KI-007 items 4, 7
+and 8, marked RESOLVED in place so the numbering other documents cite still resolves.
+**Left documented, per the triage:** frozen-trim ownership (the never-run capture, the factory
+apply's carry-over, the freeze-OFF slot that still serialises a child), the preset dirty model, the
+undo/state-restore THREADING architecture (KI-003's third member — architectural, not introduced),
+the spectrum analyser's idle behaviour, preset-ring navigation by name, the duck's extra bottom
+hold, and the phase table now present in both `build.yml` and `TESTING_POLICY.md` (consistent
+today; collapsing it decides which file owns the number).
+Previous: **review round 36 (2026-08-03)**, whose first finding is the previous
+round's fix landing in the wrong place:
+(1) **The `vpos` seed ran BEFORE the APVTS attachment, so it stored the minimum it was meant to
+stop showing.** `setupRotary`/`setupToggle` call `registerAnimated` and the per-control helper
+attaches SECOND, so at registration a slider still carries JUCE's default 0..10 range and value 0 —
+`valueToProportionOfLength (getValue())` is 0.0, and every knob still swept up from its minimum
+when the window opened. The same ordering hit `onA` on toggles. The value-derived seeding moved
+out of `registerAnimated` into `seedAnimatedFromValues()`, ONE pass over the registry called at the
+end of the constructor, which is the only point at which every attachment exists. The test asserts
+it over EVERY registered slider — with a guard that at least one default sits off its minimum, so
+the sweep would be visible — and dies against both the unseeded state AND the round-35 placement.
+(2) **The value box's drag wrote the parameter without gesture brackets.** `ValueBox::mouseDrag`
+calls `setValue (…, sendNotificationSync)` directly, so dragging the numeric readout of a managed
+parameter neither DETACHED it (§5.3 keys on gesture-bracketed) nor produced an undo step (§7 keys
+on a completed message-thread drag) — the same asymmetry the double-click fix removed one control
+over. Bracketed with `juce::Slider::ScopedDragNotification`, the stock RAII pair the attachment
+already listens to, opened on mouse-down and closed unconditionally on mouse-up so a press that
+moves nothing still balances. Not headlessly asserted: the box is a LookAndFeel-created child and
+driving it needs synthetic mouse events, so this one is verified by reading the JUCE dispatch and
+by the Level-5 pass.
+(3) **`stopDraining()` nulled two `std::function`s, making its own residual worse.** The window it
+cannot close is a tick ALREADY EXECUTING while another thread destroys the processor; such a tick
+has entered `drainTick` and is about to invoke `onDrainTick`, so assigning it is a data race on a
+non-atomic object where leaving it alone was merely a call into an owner still alive at that
+instant. Both assignments dropped; `stopTimer()` + `cancelPendingUpdate()` do the work, and the
+objects die with the engine.
+(4) **Round 35's enforcement was debug-only.** `relandMacroCurve()` asserted the staged detach bits
+were clear, so a future third caller would have shipped a RELEASE binary applying them in the
+middle of its own apply. It now clears them as well — a no-op for both existing callers, since
+`replaceDetachMask` already did it, and enforcement in every build.
+(5) **`resized()` dereferenced five view `unique_ptr`s, safe only by construction order** (nothing
+sets a size before they exist). One guard states the requirement instead.
+(6) **The redo cap lived in the undo path.** `pushUndoStep` capped `undoStacks`; `undo()`/`redo()`
+pushed onto the opposite stack uncapped, bounded only transitively. One `pushCapped` helper is now
+the single place a StateSet joins either stack.
+Documentation: `THREADING_POLICY`'s SPSC row said the index is published "once per block", while
+the spectrum taps publish inside `processChunk` and therefore several times when a host block
+exceeds the prepared size. Re-worded around the COMMITTED UNIT — a block for the GR history, a
+chunk for the spectrum — because the guarantee the row exists for ("every frame below the acquired
+index is complete") holds identically either way and only the reader's cadence differs; the
+publication site carries the same note.
+Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer (KI-007 item 4), and
+the KI-003/KI-006/KI-007 restatements, already recorded in the same words.
+Previous: **review round 35 (2026-08-03)** — two documentation drifts this PR itself
+caused, and three more copies:
+(1) **The pluginval strictness had a second copy that still said 5.** Round 29 collapsed the
+duplicate rows inside `build.yml` and wrote that the block "is cited as the single authority for
+the number, so it carries no duplicate rows" — while `CI_CD.md` kept its own fenced `env:` block
+quoting 5, under a heading reading "Strictness escalates by phase — **in one place**". The
+duplicate had not been removed, it had moved one file over, and
+`DOCUMENTATION_LIFECYCLE_POLICY.md` makes CI workflow → `CI_CD.md` a mandatory sync. The section
+now names where the number lives and quotes nothing; the same section gained the
+`-DANABASIS_BUILD_BENCH=ON` configure flag the Linux job has carried since round 29 and this
+document never recorded.
+(2) **The README still advertised the pre-P5 project.** "phases P1–P4 complete … P5 (GUI) is
+next", "the eleven ADRs", "pluginval L5", and OQ-013's Hard Stop "stands" — every one of them
+invalidated by this PR, in the first document a reader opens, while `CLAUDE.md` and `HANDOVER.md`
+were updated in the same commits. Rewritten to v0.1.0 CODE COMPLETE with the P5/P6 work named, the
+ADR count pointed at `ADR_INDEX.md` as the count of record, the strictness pointed at `build.yml`
+and `TESTING_POLICY.md` (which is where the number belongs at all), and OQ-013 dropped from the
+open list.
+(3) **The target-line CARDINALITY was still duplicated three ways** after round 34 removed the
+names and numbers: `kNumTargets = 3` written out beside the table it counts, two fixed
+`{ &targetSpToggle, &targetApToggle, &targetYtToggle }` arrays, and three hand-placed rows in
+`resized()`. OQ-008 explicitly leaves a fourth line (club/CD) pending an owner decision, so a
+fourth entry is the change most likely to be made — and it would have drawn a fourth tick and a
+fourth penalty row with no checkbox to switch it off. `kNumTargets` is now `std::size (kTargets)`,
+the three named toggles are one `std::array` sized from it, and the Settings row divides itself.
+(4) **The nine managed ids were written out again in the editor's badge table.**
+`managed_params::ids` is introduced in this PR as THE list the mapper and the wrapper's detach
+discriminator share; the Advanced-view badges paired their own string literals with the knobs, so a
+tenth managed parameter would have left one knob silently un-badged while the mask, the mapper and
+the serialized slot all tracked it. The badges now index that list against a parallel `Knob*` array
+whose FIXED size makes a mismatch a compile error.
+(5) **The ADAPTIVE-mirror comment had been orphaned from its members** by the §5.3 block spliced
+between them — the same defect round 34 fixed for the Learn paragraph, one file over, so the
+relaxed-atomic justification read as if it belonged to `managedGestureBits`/`pendingDetachBits`.
+Moved back onto `stagedAdaptiveLearned`/`stagedRefOnset`/`stagedRefTilt`.
+(6) **`registerAnimated` seeded every animated property except `vpos`.** `stepMicroAnims` eases
+`props["vpos"]` toward the slider's real proportion and an unset `var` reads as 0.0, while
+`drawRotarySlider` prefers `vpos` whenever the control is not being dragged — so every knob swept
+up from its minimum over the first frames after the editor opened. Seeded from
+`valueToProportionOfLength`, which is what `Knob::doReset` already does for the case where the
+sweep IS wanted.
+Enforcement rather than a comment: round 34 recorded that "every `refreshMapping()` caller must
+have replaced the mask first" and nothing checked it. Both callers now go through
+`AnabasisAudioProcessor::relandMacroCurve()`, which asserts the staged bits are clear before
+refreshing — so a third caller inherits the check instead of the trap.
+Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer (KI-007 item 4), and
+the KI-003/KI-006/KI-007 restatements, already recorded in the same words.
+Previous: **review round 34 (2026-08-03)** — the copies this build kept finding, and
+one guarantee that was two thirds applied:
+(1) **The OQ-008 target values had three copies.** `LoudnessMeterView::kTargets` is documented as
+THE compiled table, but the meter's tooltip carried the platform names, the numbers and the "as of"
+date as free text, and the three §6.4 Settings checkboxes carried the names again. OQ-008
+prescribes a per-release refresh, which touches the table — so the copies are exactly what would
+have gone stale, leaving a tooltip quoting last year's figures. `Target` gains a `fullName`,
+`kTargetsAsOf` becomes a constant, `tooltipText()` builds the string, and the checkbox labels come
+from the table. The test rebuilds its expectation from `kTargets`, so it dies against the real
+future event: a refreshed table plus a hard-coded string.
+(2) **The editor destructor's guarantee was two thirds applied.** Round 33 added `stopTimer()` and
+`cancelPendingUpdate()` with a comment rejecting "safe by ordering"; the THIRD message-thread
+callback source, `animVBlank`, was left armed while `stepMicroAnims`'s state (`animated`,
+`uiAnimOn`, `lastFrameTime`) was destroyed around it. `animVBlank = {}` detaches it there too.
+(3) **The preset dirty mark lagged up to ~333 ms after an action that changed it.**
+`refreshPresetDisplay()` throttles the full slot-tree compare to every 8th call, which is right for
+the 24 Hz tick asking "did anything change?" — but undo/redo, the A/B toggle, a preset apply, ‹/›
+and a save all call it immediately AFTER changing the state the mark describes, and all they did
+was advance the divider. Those callers now pass `recomputeNow`.
+(4) **The Learn-command paragraph had been orphaned by the ADR-0014 block spliced above it**, so in
+a file where comments are the contract it read as if the frozen-trim consume were the Learn
+command. Moved back onto `learnCmd.exchange`.
+(5) **`publishSilentMeters()` outran its documented row.** Round 33 gave the meter atomics a
+non-audio writer (the state load) while `THREAD_MODEL`'s and `THREADING_POLICY`'s meter rows still
+scoped that publication to the audio thread. Both rows now name the clear writers and state why the
+concurrency is benign: six INDEPENDENT relaxed scalars with no ordering role, so a load-clear racing
+an end-of-block publish is last-writer-wins per scalar and the worst outcome is one display frame
+mixing pre- and post-clear values.
+(6) **Two "untouched" factory presets landed on the Tape colour model.** `colourModel`'s registered
+default is 1 = Tape, and an override table is defaults + intents — so "Transparent Master" and
+"Classical Dynamics" inherited Tape, inaudible only because the managed `colourDepth` the macro
+mapping writes from Character is ~0 there. Their intent was resting on a §5.5 curve constant that
+is ⊕ for the listening pass; both now name Clean explicitly (⊕ with the rest of the table).
+Comments where a future change would break something silently: `drainTick` and `refreshMapping`
+record the RE-ENTRANCY routing every trigger through one sequence created — `refreshMapping()` now
+runs the wrapper's detach drain synchronously from inside `applyFactoryPreset`/`resetToMacro`, safe
+because both reach `replaceDetachMask()` first and because `isApplyingMacro()` blocks the mapping's
+own writes from re-entering, and stated so that breaking either is visible; the ADR-0014 consume
+records that deriving the duck request from the record costs one extra ~11 ms bottom hold when the
+engine is ALREADY at the bottom (the alternative reopens the `duckAskedWhileOut` ordering question);
+and `build.yml` now names both bench residuals — platform-gated compilation AND the fact that
+compiling is not running, so a semantics-only break surfaces at the next human re-measure.
+Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer (KI-007 item 4 — both
+repairs carry their own risk), and the KI-003/KI-006/KI-007 restatements, already recorded in the
+same words.
+Previous: **review round 33 (2026-08-03)**, a round of second copies and deferred
+work that a stopped transport never reaches:
+(1) **A project loaded with the transport stopped showed the previous session's meters.**
+`setStateInformation` staged the meter-hold clear through the momentary-request row, and the
+request is consumed at a BLOCK TOP — but opening a project with the transport stopped is the
+ordinary case and no block runs at all, so an open editor kept reading the old integrated LUFS and
+dBTP maximum indefinitely. The engine-side clear legitimately waits (it is engine state); the
+DISPLAY does not, and `prepareToPlay` already published exactly these constants for exactly this
+reason. Factored into `publishSilentMeters()` — one list, three callers (prepare, the block-top
+consume, the load) — because two of the three had grown their own copy of it and they disagreed
+about which of the six atomics to clear. `dbTpMaxHold` deliberately stays OUT of the helper: it is
+plain audio-thread state, and only the two callers that own that thread touch it. Mutation-verified
+in `testMeterResetClearsSessionHolds`, which now asserts before feeding any audio.
+(2) **The editor's `Timer` and `AsyncUpdater` bases stopped themselves only after its members were
+destroyed.** Base destructors run last, so `timerCallback`/`handleAsyncUpdate` — which touch
+`meterView`, `animated`, the attachments — were quiet only because the message thread happens to be
+the one executing `~AnabasisAudioProcessorEditor`. That is "safe by ordering", the argument this PR
+stopped relying on for `MacroEngine::startDraining`/`stopDraining` and for the processor
+destructor; `stopTimer(); cancelPendingUpdate();` now run first, so the editor says what it
+guarantees.
+(3) **The loudness meter's target ticks re-derived the row origin from `getLocalBounds()`.** The
+review read the second copy as a 2 px misalignment; the arithmetic in fact AGREED — the tick spans
+`bar.getY() - 2` to `bar.getBottom() + 2`, a deliberate symmetric overhang on an 8 px bar, so there
+was no visual defect. The duplication was real: a change to the header height, the 24 px row or the
+2 px gap would have moved one copy and not the other. The three bar rectangles are now kept and the
+ticks derive from them, so there is one source.
+(4) **`One factor, computed once` called `std::pow` twice.** The ADR-0013 release scale was
+computed separately for the manual time and for `setAutoReleaseScale`; the comment claiming
+otherwise was the drift, and the second `pow` was the only measurable part of that block. Computed
+once into a local, bit-identical. The call stays unconditional and the comment now says why: it is
+idempotent, factor 1.0 reproduces the prepared alphas exactly (so the invariant-7 null holds with
+adaptation live), and a changed-since-last-block gate would be a second piece of state that has to
+agree with the first — for one `pow` and two `exp` per block.
+Comments where a future change would break something silently: `setupToggleInternal`'s four
+`referTo`-bound toggles now say why they are NOT in `refreshInternalSettingsBoxes()` (a bool↔bool
+binding `juce::Value` can express, unlike index↔value, index↔percent or one-bit-of-an-int) and
+that the trade is testability, since `juce::Value` delivers asynchronously through a message loop
+the headless suite does not run; and `testAMacroGestureWinsADetachRacingItInOneDrain` states that
+it asserts the MASK only on purpose, because pinning the curve would silently decide KI-007 item 8.
+KI-007 gains a ninth item (reset-to-macro is a nine-parameter, mask-wide change with no undo step —
+the verb that DOES re-land the curve, where item 8 is the gesture that does not, and neither is
+undoable) and item 5 gains the fact that feeds the same decision: a freeze-OFF slot still
+serialises a stale `FROZEN_TRIMS` child, which is precisely the child whose presence flips the
+dirty comparison. Reviewed and NOT changed: the async preset menu's raw `LookAndFeel` pointer stays
+KI-007 item 4 — both available repairs carry their own risk (`dismissAllActiveMenus()` in the
+destructor also closes another instance's menu; a shared static trades it for static-destruction
+order at DLL unload) — and the KI-003/KI-006/KI-007 restatements are already recorded in the same
+words.
+Previous: **review round 32 (2026-08-03)**, where the recurring shape is a
+DIRECTION or a GUARD applied to some of the things it names:
+(1) **The Settings panel's three §6.4 target checkboxes never followed a project load.** They are
+hand-built — three BITS of one int, so `Value::referTo` cannot express them — and were seeded once
+at construction, while `LoudnessMeterView` reads `int_meterTargets` from the tree every frame. A
+panel left open across a load therefore showed the previous project's targets against the new
+project's meter, and the first click read as toggling the wrong thing. Exactly the one-way shape
+round 26 removed from the three combos and `uiScaleBox`, still present one row down. Re-seeded on
+the same 24 Hz tick, and `refreshInternalSettingsBoxes()` is now public **because this direction
+has been the missing half twice**: no message loop runs in the headless suite, so the tick never
+fires there and nothing could call it. `testTheSettingsPanelFollowsAProjectLoad` is the first test
+in the tree that CONSTRUCTS the editor; it covers the round-26 combos as well, and three mutants
+kill it (drop the checkbox re-seed, drop the combo re-seed, invert the direction).
+(2) **The macro tick's restore guard covered the mapping half only.** It sat inside
+`drainPendingMapping`, so a tick landing in a `ScopedRestore` still ran the WRAPPER's drain — which
+writes `liveDetachMask`, the plain `juce::StringArray` the restore is itself replacing. Harmless on
+the message thread; on the off-message-thread `setStateInformation` VST3 permits, it made the tick
+a second concurrent writer and WIDENED the window KI-003 records. Guard moved up to `drainTick`,
+covering the whole sequence, and the outcome is unchanged (`replaceDetachMask` drops the staged
+bits either way) — which is why the test asserts on the mask DURING the restore.
+(3) **`MacroEngine::applying` was the non-atomic half of an atomic pair.** `restoreDepth` beside it
+is `std::atomic<int>` precisely because `AnabasisAudioProcessor::parameterChanged` reads the §5.3
+discriminator from whichever thread the host chose, including the audio thread; `applying` was a
+plain `bool`. In the case that matters the read is synchronous on the writing thread, so the
+discriminator was always correct — but a genuinely concurrent read was a formal data race whose
+worst outcome is one managed parameter wrongly detaching. Now `std::atomic<bool>`, relaxed.
+(4) **The wrapper registered three listeners it discarded.** `addParameterListener` for
+`loudness`/`character`/`tone` fed a `parameterChanged` whose first line rejects every non-managed
+id — three registrations that read as load-bearing and were not. Dropped; the macros' listener is
+`MacroEngine`, and the wrapper hears them through the gesture callbacks, where §5.3's rule lives.
+(5) **The family tooltip style was unreachable.** `juce::TooltipWindow tooltips { nullptr, 600 }`
+is a DESKTOP window with no parent to inherit from, so it resolved
+`LookAndFeel::getDefaultLookAndFeel()` and `AnabasisLookAndFeel::drawTooltip`/`getTooltipBounds` —
+adapted brand code under ADR-0009 — never ran. `setLookAndFeel (&lnf)` in the constructor, cleared
+in the destructor beside the editor's own. Not headlessly assertable: the pixels are a Level-5
+brand-pass item, so this is a wiring fix the human pass verifies. It also surfaced a DRIFT in the
+adapted file: `drawTooltip`'s own comment stated that "on macOS the editor marks its TooltipWindow
+non-opaque … see PluginEditor.cpp", describing a fix that came across in prose but not in code. The
+macOS `setOpaque (false)` half is now adapted from Anamorph with the rest of it (ADR-0009,
+provenance in place), so the comment describes what the tree does — and it only mattered once the
+capsule became reachable, since undefined corner pixels are invisible in a capsule nothing draws.
+Comments where a future change would break something silently: `ScopeBuffer::readLatest` now states
+that it needs no `capacity - 1` clamp because of HEADROOM (4096 of 16384 — ~12288 frames must be
+written during one copy), not because it is a different mechanism from the GR ring's `peek`, so a
+capacity reduction or window widening is recognised as needing the explicit clamp; and `Knob`
+records two accepted properties — an alt-PRESS-AND-DRAG is inert because the alt-click is a
+complete gesture opened and closed in `mouseDown`, and a triple-click's third click resets nothing
+because `getNumberOfClicks() != 2`. Reviewed and NOT changed: `AnabasisBench`'s link shape is
+identical to both test console apps (`PRIVATE AnabasisDSP` + `PUBLIC AnabasisHardening` and the two
+JUCE flag interfaces), so there is nothing to normalise; and `saveSlotFromLive`'s never-run capture,
+the factory apply's stale frozen vector, the off-thread undo-stack mutation, Copy A→B's undo
+history, name-keyed preset navigation, the dirty marker's tree-wide comparison, the menu's raw
+LookAndFeel pointer and the frozen spectrum trace are each already recorded in KI-003/KI-006/KI-007
+in the same words.
+Previous: **review round 31 (2026-08-03)**, whose first finding is the previous
+round's fix counted in prose instead of enforced in code:
+(1) **The posted drain was a FOURTH entry point.** Round 30 fixed the tick's order and wrote "all
+three paths now apply the same precedence" — while `MacroEngine::handleAsyncUpdate`, the path a
+message-thread macro write posts to, still called `drainPendingMapping()` alone. Host automation
+of Loudness/Character/Tone (message thread, no gesture, so nothing re-engages) racing a gestured
+managed edit delivered off-thread mapped over the user's value, and the NEXT tick then marked that
+parameter detached at the value the macro had just written. All three triggers — the 30 ms timer,
+the posted update, and `flushPendingMapping` — now call `drainTick()`, so there is one sequence
+and three ways to ask for it rather than a count that has to be re-checked; `handleAsyncUpdate` is
+public for the reason `drainTick` is, because no message loop runs in the headless tests and an
+entry point no test can call is exactly how this one drifted. Both the posted path and the flush
+are mutation-verified.
+(2) **The GR history frame asked for the ring's FULL capacity.** `peek` masks the absolute index,
+so `head - kSize` aliases the slot the audio thread is filling at that instant — the producer
+writes the slot and THEN publishes `head + 1`, so the oldest entry of a full-capacity window is
+half-written. Reachable at ordinary settings (20 s at 48 kHz saturates the clamp for any block up
+to ~234 samples). Clamp corrected to `kSize - 1`, the reason mirrored into
+`GrHistoryBuffer::peek`'s contract, and the bound extracted to `GrHistoryView::windowEntries` so
+it is testable without a graphics context — the tear itself is only observable with a concurrent
+producer, so the bound has to be the guard.
+(3) **The processor's destructor did not deregister its listeners.** It is safe today by
+declaration order alone; the `startDraining`/`stopDraining` split exists precisely to stop relying
+on that argument, so the teardown now says what it guarantees.
+Comments where a future change would silently break something: `Knob::mouseDoubleClick`'s gesture
+bracketing now records the settled JUCE dispatch order with its citation (two reviews read it in
+opposite directions; the pinned `juce_Component.cpp` dispatches `mouseDoubleClick` from
+`internalMouseUp` AFTER `mouseUp`, so the bracket cannot nest inside the drag's); and
+`applyFactoryPreset` states why iterating the APVTS tree while writing it is safe (a property write
+neither adds nor removes children) so a listener that ever added a PARAM node from there is
+recognised as invalidating the iteration. KI-007 gains an eighth item: a macro-knob gesture that
+moves nothing re-engages the mask without re-landing the curve, while `resetToMacro()` does both —
+a §5.3 wording question, not a defect.
+Previous: **review round 30 (2026-08-03)**, both of whose findings were the SAME
+failure the previous rounds kept producing — a rule applied at one of its sites:
+(1) **Round 29's staged-bit drop was written at ONE of the mask's five replacement sites.**
+`applySlotToLive` got it; `applyFactoryPreset`, `applyPresetFile`, `setStateInformation` (which
+rebuilds the mask inline rather than through `applySlotToLive`) and `resetToMacro` did not — so a
+gestured edit delivered off the message thread just before a preset apply or a project load would
+be stamped onto the freshly installed mask by the next tick, leaving a parameter detached in a
+state it was never edited in, skipped by the mapper from then on, and serialized with the slot.
+This round's own documentation had already stated the rule as covering "a slot switch, preset
+apply or session load" — the sentence was right and the code was not. Fixed STRUCTURALLY rather
+than by four more copies: `replaceDetachMask()` is now the mask's only writer, so a sixth site
+cannot forget the drop. Each of the four paths has its own assertion.
+(2) **The drain tick ran the mapping BEFORE the wrapper's bits**, which undid round 27's
+precedence one level up: the wrapper's bits decide the detach mask, and the mapping pass reads
+that mask to know what it may write. When a macro gesture and its value change both arrive off the
+message thread — the only way both reach one tick — the mapping skipped a parameter the gesture
+was about to re-engage and the mask was cleared a moment later, so the parameter read as
+re-engaged while holding the user's off-curve value with nothing left to re-arm the mapping.
+Order swapped; `drainTick()` is extracted so the order is testable at all, since an order that
+exists only inside a private timer callback is an order no test can pin. All three paths
+(message-thread, tick-internal, tick-order) now apply the same precedence.
+Comments added where a future change would silently break something: the preset-exclusion
+predicate now says that a new view-tier/monitor parameter added without it will be reset by
+BROWSING factory presets (the defaults pass is what makes that predicate load-bearing); the
+spectrum publication states the assumption it rests on (both stage loops run the full chunk, so an
+early exit added later would publish stale scratch); `build.yml` notes that only the Linux job
+compiles the bench, so a platform-gated signature change could still rot it. KI-007 gains a
+seventh item: Copy A→B leaves the destination's undo history describing the state it overwrote.
+Previous: **review round 29 (2026-08-03)**, a round of loose ends rather than defects
+— most of its findings were already recorded in KI-003/006/007, and the rest were places where a
+rule this PR wrote had not been applied to itself:
+(1) **A restore replaced the detach mask but not the STAGED bits.** An off-thread gestured edit
+leaves its bit un-drained for up to one 30 ms tick; a slot switch, preset apply or session load
+landing in that window would have the following tick stamp that id onto the mask the restore had
+just installed — the carry-over those paths clear the mask to prevent. Both staged inputs are now
+dropped where the mask is replaced, which is what `MacroEngine::ScopedRestore` already does to a
+pending mapping and for the same reason: a restore is not a gesture, so a gesture racing it
+belongs to the state being replaced. Mutation-verified.
+(2) **The accessibility claim did not hold for the host-hidden controls.** `setupCombo`/
+`setupToggle` (the APVTS paths) set a title; `setupComboInternal`/`setupToggleInternal` did not,
+and `uiScaleBox` — hand-built because it maps index↔percent — missed `registerAnimated` too, so
+its hover skipped the easing every other combo has. A ComboBox with an empty title exposes NO
+accessible name (a Button falls back to its text), so "accessibility names on every control" was
+false for exactly the Settings panel.
+(3) **`ANABASIS_BUILD_BENCH` was nested inside `ANABASIS_BUILD_TESTS`**, so
+`-DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_TESTS=OFF` silently built nothing — the option's
+documented contract was stronger than its implementation. Moved to file scope and verified with
+tests OFF. (4) `build.yml`'s header carried TWO P6 strictness rows that disagreed, in the block now
+cited as the single authority for that number — collapsed, with a note that the env var is
+unconditional rather than phase-gated. (5) `TESTING_POLICY.md` stated the rule against restating
+the strictness and restated it parenthetically in the same sentence. (6) OQ-013/014/016 were
+marked Resolved but left physically among the open entries while OQ-007 was moved — a reader
+scanning the top saw three resolved questions mixed with the live ones; all three moved.
+Recorded rather than fixed: the `startDraining`/`stopDraining` pair is not symmetric in STRENGTH
+(construction is closed structurally, teardown cannot join a tick already executing — KI-003), and
+the spectrum view freezes rather than decaying when audio stops, which is a listening-pass call
+(KI-007 item 6).
+Previous: **review round 28 (2026-08-03)**:
+(1) **The dBTP readout warned against a literal −1**, which is merely the ceiling's DEFAULT, while
+the view's own banner and this file both describe the row as "dBTP in `warn` over the ceiling". At
+any other setting the warning fired at the wrong level — silent while genuinely over at a −6
+ceiling, red while legal at a raised one — and a factory preset already ships a moved ceiling
+(EDM Club, −0.5), so the non-default case is ordinary, not an edge. The ceiling joins the view's
+snapshot so a ceiling move repaints the colour on its own.
+(2) **The mutant count for `testFrozenTrimRestore` existed in six places and two of them
+disagreed** (seven vs nine — nine is current, seven predates the round-24 additions). Resolved the
+way the pluginval strictness was: ONE authority (ADR-0014's evidence line, which also enumerates
+them) and every other reference says "each killed by its own mutant" without a number. The
+historical coverage entry keeps its seven, marked AT THIS DATE.
+(3) **The bench target was compiled by no automated job**, so `tests/bench.cpp` would rot silently
+the first time a DSP signature moved — surfacing only when someone re-ran the measurement
+`PERFORMANCE_BUDGET.md`'s refresh rule requires. The Linux job now configures with
+`ANABASIS_BUILD_BENCH=ON`; it is still never RUN in CI (timings from a shared runner are exactly
+the numbers C2 says must not be quoted). Its stale "run() above" comment is gone with it.
+(4) **`allCombos` was dead state and the LookAndFeel's authoritative hover flag was never
+published** — a half-ported piece of the Anamorph editor, so `drawComboBox` fell back for ever to
+the live cursor test it documents as a pre-first-tick stopgap. The 24 Hz tick now publishes `hov`.
+(5) The tooltip comment in `LookAndFeel.cpp` cited **KI-006**, which in Anamorph is the
+transparent-window artefact and in Anabasis is an unrelated Freeze/re-prepare issue — the
+reference came with the adapted file and pointed readers at the wrong document; now attributed
+explicitly to Anamorph's numbering. **KI-007's heading said "Three" while four items were listed**
+(and this round adds a fifth: the dirty marker keys on the whole slot tree, so preset-EXCLUDED
+parameters mark a preset as edited) — the count is out of the heading entirely, because a
+fine-review checklist read as shorter than it is, is worse than one with no number.
+KI-003 gains a third family member: the §7 undo stacks are cleared from `setStateInformation`,
+which the same file says may not arrive on the message thread — the same exposure as
+`replaceState` on that path, recorded because the stacks are new P6 state.
+Previous: **review round 27 (2026-08-03)**:
+(1) **The preset dirty datum was engine-wide while the name it describes is per-slot.**
+`presetBaseline` survived a session load (which cannot restore it — a session records WHICH preset
+a slot holds, never whether it had been edited since) and did not travel across an A/B switch, so
+after applying a preset in B and switching back, A's name was marked against B's baseline. Now one
+per slot, swapped by `switchToSlot`, copied by `copySlotToOther`, and dropped with the other slot
+fields on a load. **The first version of the test was uncalibrated and the mutant walked past it**
+— slot B had no preset NAME, so `presetDirty()` early-returned before reaching the datum at all;
+both slots must hold a named preset for the stimulus to touch the defect. Recorded because it is
+the same lesson as round 25's three-attempt mutant: a passing mutant is as often a weak stimulus
+as a correct guard.
+(2) **Teardown was not symmetric with round 26's construction fix.** `startDraining()` was split
+out of MacroEngine's constructor so the tick could not read half-assigned callbacks; the
+destructor side went unhandled, and `macroEngine` is declared BEFORE every member
+`handleAsyncUpdate()` touches — reverse-order destruction frees them all while the timer is still
+armed. `stopDraining()` + an explicit `~AnabasisAudioProcessor` closes it. Half a fix is its own
+category of bug: the premise that justified the first half justified the second equally.
+(3) **The drain applied detach bits after the re-engage clear**, so a detach that raced a macro
+gesture WON — the opposite of §5.3's "the next macro-knob gesture re-engages ALL detached params",
+and the opposite of what the comment three lines above it claimed. Only reachable when both land in
+one 30 ms tick, i.e. off-thread delivery; the new test builds exactly that (a gestured managed edit
+from a worker thread, then a macro gesture on the message thread).
+Also: the double-click knob reset is gesture-bracketed like the alt-click path — unbracketed it
+produced neither an undo step nor a detach, so two gestures the UI presents as identical behaved
+differently; `CurveView`'s repaint fingerprint includes the sample rate, whose coefficients the
+drawn response depends on. KI-006 gains the SAVE half of its gap (an instance that never processed
+a block captures all-zero published trims into `FROZEN_TRIMS`) and KI-007 the menu's raw
+LookAndFeel pointer — both recorded rather than patched, the latter because each available repair
+carries a risk of its own.
+Previous: **review round 26 (2026-08-03)**, which caught two REGRESSIONS from the two
+rounds before it and one drift in the highest-authority document in the tree:
+(1) **The round-25 combo fix broke the other direction.** Replacing the two-way `Value::referTo`
+with an explicit seed + `onChange` writer fixed the off-by-one but left state→widget silent, so a
+project loaded with the Settings panel open showed the PREVIOUS project's oversampling, phase and
+offline quality (`InternalState::replaceFrom` rewrites the same tree object the editor is bound
+to) — and "correcting" one would have written back a setting that was already active. The boxes
+are now re-seeded from the tree on the existing 24 Hz tick, keeping the explicit index↔value
+mapping the `referTo` could not express. `uiScaleBox` is re-seeded with them, including the
+`applyUiScale()` its display alone would not reach; the step list it shares with two other sites
+is now one file-scope constant instead of three copies.
+(2) **The editor still had the red line the wrapper removed in round 25.** Its `parameterChanged`
+called `triggerAsyncUpdate()` unconditionally while listening to two AUTOMATABLE ids
+(`advancedMode`, `bypass`), so automating Bypass could post to the message queue — lock, and an
+allocation on some platforms — from inside the audio callback. Same shape as the wrapper's fix:
+post only when already on the message thread, otherwise raise a flag the 24 Hz tick consumes. The
+lesson recorded rather than the fix: when a rule is enforced at one site, grep for the construct
+before calling the round done — the wrapper and the editor implement the same listener interface.
+(3) **ADR-0014 described a duck request the code deliberately does not make.** The round-24
+hardening added `duckRequested` beside the record flag; round 25 replaced it with a derivation at
+the consume (one mechanism instead of two observations) and updated the code comment and this
+file — but not the ADR, which outranks DESIGN.md. Corrected, with the history kept: an ADR that
+describes a mechanism that is not there invites a future change to "restore" it.
+Also this round: `MacroEngine::startDraining()` splits the 30 ms timer out of the constructor, so
+the tick cannot read `isDetached`/`onDrainTick` while the owner is still assigning them (the owner
+is not promised to construct on the message thread — KI-003's premise); ADR-0014 gains two
+known-limits entries (the generation pair is engine-wide while the mirror is per-slot; and the
+"vector lands in whatever slot is live at the bottom" degradation is any live-slot change inside
+the duck, not only a Freeze toggle); the spectrum `static_assert` moved from the per-sample loop
+to the scratch declaration a widening would actually touch; `TESTING_POLICY.md` stopped restating
+the pluginval strictness in the present tense (`build.yml` holds it in one place, and the prose
+copy had already gone stale by a day) and HANDOVER's P6 note reads as history. Comments added for
+the two asymmetries a reader would otherwise read as oversights: `managedGestureBits` is
+maintained on any thread while `openGestureBits` is armed only on the message thread (detachment
+keys on "gesture-bracketed", an undo step on "message-thread drag"), and the factory-preset early
+return leaves its undo step and duck standing for the same reason `applyPresetFile`'s does.
+Previous: **review round 25 (2026-08-03)**, whose two flagged findings were both
+user-visible and neither reachable by any existing test:
+(1) **The three Settings combos were off by one.** `setupComboInternal` bound
+`getSelectedIdAsValue()` — a 1-based ComboBox item ID — straight onto InternalState fields whose
+encodings are 0-based and serialized that way, so picking "Off" turned oversampling ON, "Minimum"
+gave linear phase, "Follow" forced maximum offline quality, and the stored default 0 matched no
+item so the boxes opened blank. Now mapped index ↔ value explicitly, the shape `uiScaleBox` next
+to it already used. **Level-5, and stated as such**: the state suite does not construct an editor
+(doing so headlessly is what pluginval-under-xvfb is for, and it would catch a crash, not a wrong
+mapping), so this fix carries a code comment and this entry instead of a regression test.
+(2) **Factory presets were inaudible.** A factory table is defaults + a handful of intents and
+expresses itself through the MACROS; the apply ran inside `ScopedRestore`, whose destructor
+aborts the mapping those macro writes arm, and nothing re-ran it — so "EDM Club" moved `loudness`
+to 80 and left the nine managed parameters at M(0,0,0). The guard is now scoped to the
+value-landing and `refreshMapping()` runs after it, before the dirty baseline is captured (the
+existing "clean right after the apply" check turned out to guard that ordering — a mutant that
+captures the baseline first dies on it). Both directions are pinned: the factory path maps
+(against the §5.5 curves, not magic numbers, so the ⊕ tuning can move), and a FILE preset's
+managed values still survive untouched, because a file carries every parameter and its values are
+authoritative — the mutant for that one had to be written three times before it was faithful, since
+`refreshMapping()` inside a live `ScopedRestore` is inert and the first two mutants were quietly
+no-ops.
+Also this round: the wrapper no longer calls `triggerAsyncUpdate()` from a listener callback (it
+can arrive on the audio thread, where posting takes a lock and may allocate — the hard red line
+`MacroEngine` already refused for the same reason); the detach bits ride that class's existing
+30 ms tick and the `AsyncUpdater` base is removed so the route cannot be re-opened. The
+frozen-trim record's duck request moved from a second store beside the flag to a derivation at
+the consume, removing the last ordering question between them. `GrHistoryBuffer::reset`'s opening
+seqlock increment is a relaxed increment + release FENCE, since a release store orders only
+earlier writes and the bulk clear could be observed above it. **KI-007 opens with the three items
+this round deliberately did not fix** — the frozen vector surviving a factory apply, preset-ring
+navigation identifying entries by name, and undo not restoring the dirty baseline — because each
+is a semantics call and two of them are KI-006's question.
+Previous: **review round 24 (2026-08-03)** — the first review of the v0.1.0 tree, and
+three of its findings were live defects in code this repository shipped the day before:
+(1) **`undo`/`redo` never requested the forced duck.** DSP_POLICY invariant 8 has named the undo
+step as one of three bulk-swap routes since ADR-0004, and the code did not take it — an undo that
+moved no discrete stage never reached a silent bottom, so after ADR-0014 the frozen-trim vector it
+stages sat pending indefinitely and was injected at the next unrelated duck, into whatever slot
+was live by then. Both halves are now tested (`testUndoRequestsDuck` for the dip, the
+`frozenRestore/undo` case for the vector), each killed by the same mutant.
+(2) **The frozen-trim capture's "pending" test was off by one step.** It read the ADR-0012 record
+flag, which the block top clears — but the vector is only published at the duck bottom up to
+~34 ms later, and the editor's ~3 Hz dirty-marker poll reaches that window in ordinary use, so a
+save there serialised the PRE-restore trims and (because the capture also rewrote the mirror)
+destroyed the loaded vector permanently. Fixed with a stage/applied generation pair advanced only
+by `injectTrims`, and the capture now writes a LOCAL — a display query must not rewrite
+serialisable state. The generation pair is mutation-verified; the local is structural (with the
+counters in place the write-back is benign, and it is removed so a future caller cannot make it
+harmful again — recorded rather than given a synthetic test).
+(3) **The meter-reset watermark admitted the straddling sub-block.** `subCount + 4` lets the first
+fresh gating block average the sub-block that was PARTIALLY FILLED at the reset — up to 100 ms of
+the old programme at a quarter of the block's energy, which the −10 LU relative gate then turns
+into "the integrated figure stays pinned to the previous material", the exact failure the
+watermark exists to prevent. The wrapper-level test could not see it (its stimulus drains quiet
+audio before the reset, so the straddler was already quiet); the new
+`testMeterResetIgnoresTheStraddlingSubBlock` drives the meter directly, where "old programme" and
+"lookahead tail" cannot be confused, and the two readings are ~30 dB apart.
+**An adversarial verification pass over the round-24 diff then found four more, three of them in
+the round-24 fixes themselves** — recorded because the pattern is the round's own lesson repeating
+one level down: (a) the staged frozen record could still strand, because the caller's duck request
+and the stage are two separate stores with a full `adoptParamsTree` between them, so a block
+landing in the gap spends the whole duck before the record exists — the record now carries its own
+duck request, which makes "a staged record always gets a bottom" structural rather than a rule four
+call sites must remember (`testAStagedFrozenVectorAlwaysGetsABottom` reproduces the interleaving
+deterministically); (b) `frozenAppliedSeq` was relaxed on both sides although it GATES a read of
+the four published trim atomics — release/acquire now, since the staleness-counter row's "carries
+no payload" justification does not apply to a counter that announces other values; (c) the
+consumer sampled the generation AFTER the payload, so a stage landing mid-consume stamped the
+newer number onto the older vector and claimed settled — sampled first now, which makes the same
+interleaving self-correcting instead; (d) the gesture fix closed only one asymmetry — a
+message-thread begin whose END arrived off-thread leaked its bit for ever and undo then never
+fired again for the rest of the session. The mask is atomic and the end clears it on whichever
+thread it arrives on; only the ValueTree work stays message-thread-gated. (b) and (c) are
+memory-ordering corrections that no single-threaded mutant can kill on x86-TSO — recorded as
+correctness-by-construction rather than given a synthetic test. The pass also surfaced **KI-006**
+(a sample-rate change drops a frozen slot's adaptation from the audio while the readout and save
+still report it) which PREDATES this work and is recorded, not folded in.
+Also fixed, smaller: the gesture-end counter was asymmetric (a host delivering begin off-thread
+and end on the message thread closed a different open drag, pushing its step mid-gesture — now
+keyed per parameter, `testAGestureEndWithoutACountedBeginIsIgnored` with the off-thread begin as
+the real stimulus); the preset gate accepted any well-formed XML, so a foreign root cost an undo
+step for a guaranteed no-op (both gate and apply now read through
+`PresetManager::parsePresetFile`); `prepare()` no longer inherits an ADR-0013 auto-release scale;
+the editor's async menu/file-chooser callbacks hold a `SafePointer`; the spectrum taps' L/R
+assumption is a `static_assert` instead of a comment; the factory-index validation no longer hides
+in a comma expression. **The lesson of the round, recorded because it recurs:** every one of the
+three real defects was a *second* mechanism that had to agree with a first — the duck request with
+the staging site, the capture guard with the application site, the watermark with the sub-block
+that was mid-flight. Each first half was tested and correct; nothing tested the agreement.
+Previous: the **v0.1.0 completion batch (2026-08-02, owner blanket approval)**
+(PR #5): the two owed ADRs are written and registered — **ADR-0013** (OQ-016: the release trim
+scales the auto poles; `MODE_AND_ADAPTATION_POLICY.md`'s "three of four audible" scope note
+rewritten to four) and **ADR-0014** (OQ-013: the frozen-trim restore; the Hard Stop banners in
+`PluginProcessor.h`, `AdaptiveEngine.h`, `THREADING_POLICY.md` and `THREAD_MODEL.md` lifted and
+replaced with ADR citations, a frozen-trim row added to the implemented-edges table, ADR-0007's
+index row upgraded to Verified). **A drift found and fixed while writing the ADR-0014 test:**
+`setStateInformation` adopted `liveFrozenTrims` but never staged the engine restore — only
+`applySlotToLive` did — so a freeze-ON *session load* (the primary OQ-013 case) would have
+silently dropped the vector; the stage is now in both paths and `testFrozenTrimRestore`'s
+unprimed/primed load cases pin it (seven mutants AT THIS DATE, each killed by a distinct check — both
+application sites, both staging sites, the capture, the no-audio mirror guard, the freeze-off
+condition). OQ-007 (plain zips), OQ-014 (reading 1 — `THREADING_POLICY.md` gains the
+listener-guard row citing ADR-0005/ADR-0011 as enacting authority) and OQ-013/OQ-016 moved to
+Resolved; `testFrozenSlotRoundTrip`'s fixture property names corrected to the real ADR-0014
+field names (`releaseOctaves`/`scHpfHz`/`dynTiltDb` — the old test asserted byte transport, so
+it passed either way; the fixture was drifting, not the test); the preset bank extended to the
+brief's 12 (names/values ⊕); the brand checklist marked provisionally passed (boxes untouched —
+C7); CI strictness 8 → 10; HANDOVER carries the v0.1.0 completion summary. Previous: for the
+**Windows-CI stack fix (2026-08-02)** (PR #5): the spectrum commit's
+two ScopeBuffers carried 2 × 128 KB of INLINE arrays inside every engine, and the state suite
+builds processors on the stack — three coexisting in one test ≈ 1.2 MB against Windows' 1 MB
+default (Linux's 8 MB hid it), and the crash ate its own fully-buffered CI output, which is why
+the log showed exit 1 and nothing else. Storage moved to the heap (constructed off the audio
+thread; the push path still never allocates — the one functional delta from the Anamorph copy,
+recorded in the provenance header), and both suites now run UNBUFFERED stdout so no future crash
+can hide its position again. Previous: (PR #5): the §9 allocation
+table moves from ⊕ targets to measured-against-target — every stage standalone under its
+allocation, with the honest caveats stated in place (standalone ≠ in-chain attribution; the OS
+row is bounded by the matrix difference, which bundles the region stages' rate multiplication).
+Previous: (PR #5): the compiled-in
+override tables (defaults + intents through the shared lock/exclusion core; empty mask; one undo
+step; the five brief-named presets as ⊕ drafts), the FACTORY menu section with the ‹ › ring, and
+the dirty marker. Mutation pass: defaults-first, the lock skip, index-validated-before-the-
+bracket, and the empty-mask contract each die against their own assertion. Previous: (PR #5): `AnabasisBench` (OFF by
+default, `-DANABASIS_BUILD_BENCH=ON`) implements the DESIGN §9 procedure — SR × block × OS × mode
+matrix, median ns/sample of the timed region over 5×1 s runs, worst block, machine recorded —
+and `docs/architecture/PERFORMANCE_BUDGET.md` now exists with the measured table: the budget case
+(48 kHz · 4× · working) reads 3.0 % of a 2.1 GHz Xeon core against the ≈5 %-of-a-desktop-core
+target. Whole-engine numbers only; the per-stage ⊕ allocation stays unclaimed until a profiler
+pass. Previous: (PR #5): the §7 per-slot undo stacks —
+the StateSet slot tree as the undo unit (the widening rationale now mechanical: an undone edit
+reverts value and detach bit together), gesture-gated coalescing with automation folded silently,
+preset applies bracketed with the parse before the bracket, session loads clearing both
+histories, top-bar ↶ ↷. One mutant survived its first pass — pushing an undo step on a FAILED
+parse was invisible to "the stack is unchanged" because canUndo() is a bool, not a count; the
+stimulus now drains the stack first so the check is "still EMPTY". Previous: (PR #5): panel wells (clip transfer
++ EQ response through the DSP's own code; per-stage GR bars answering the recorded which-GR
+question), accessibility names, and the phase documentation — HANDOVER's P5 summary and phase
+row, CLAUDE.md's phase line, the CHANGELOG entry, the brand checklist's status note (human boxes
+deliberately untouched — Level 5), and a four-phase drift in TESTING_POLICY's "Current status"
+("TODO (no code yet)" since P0), reported here and corrected as the smallest edit. Previous: (PR #5): the last planned edge is
+implemented — two ScopeBuffer capture rings in the engine (post-input-gain and render taps, one
+release-store per chunk, scratch preallocated in prepare) with the FFT strictly GUI-side; the
+dual-trace SpectrumView takes the Advanced strip's middle share, dismisses to int_spectrumOn and
+returns from Settings; GR widens into the share when it is off. Previous: (PR #5): the §2.9 display
+layer — LoudnessMeterView (M/S/I bars, target lines off the OQ-008 compiled table with the
+"as of" tooltip, penalty rows gated on a valid integrated figure, dBTP in `warn` over the
+ceiling, click = the meter-hold reset request) and GrHistoryView (the first consumer of the GR
+ring, reading under the epoch contract decided at the P5 opening — odd/moved epoch discards the
+frame). OQ-008's values are gathered and cited; club/CD stays absent rather than invented.
+Previous: (PR #5):
+ADR-0005's deferred half is wired and Verified — the §5.3 detach discriminator (three conditions,
+each killed by its own mutant, including the two mid-gesture overlap cases), the mapping skip,
+re-engage-on-gesture and reset-to-macro; the §6.2 Simple view (big knob, macro row, ceiling
+lock, monitor toggles, out-LUFS readout) and the §5.4 Learn button with the 5 s minimum pass and
+the wordless empty-pass readout. Previous: (PR #5): the two planned edges
+THREAD_MODEL reserved for P5 are implemented and their open decisions taken — the meter-hold
+reset (momentary-request row; a state load stages it; `resetIntegrated` watermarks the
+gating-block assembly so a straddling block cannot pin the relative gate at the old programme's
+loudness) and the GR ring's reset epoch (index may rewind; readers discard a batch that raced a
+clear). `AudioProcessor::reset()` stays un-overridden, now as a recorded decision. Previous round: (PR #5): the Learn command
 was a code plus a flag, which a consumer could take between the writer's two stores and then have
 re-raised behind it — the same command twice, and a repeated commitThenStart commits a pass one
 block old. Two bits need no record: the code IS the flag now. Previous round: (PR #5): three documentation
@@ -56,6 +1700,54 @@ never passed the Architecture Review Gate. Previous round: (PR #5): the meters m
 the monitor path onto the engine's render tap, the limiter's three level-affecting controls
 (link / preserve / detector HPF) smoothed per invariant 8, and the round's doc-drift corrections
 (45 not 44 cached atomics, README's re-staled check count, the registry's unlanded-§2.8 text).
+
+### P5, the grammar before the pixels — ADR-0005's other half, and a discriminator that had to
+survive its own overlap cases (2026-08-02)
+
+**The detach discriminator's third condition looked redundant and was not.** Gestured-and-not-
+macro-originated seemed sufficient: macro writes and restores are ungestured, so the gesture
+condition filters them. The first mutation pass proved otherwise by SURVIVING the removal of the
+isApplyingMacro/isRestoring condition — the stimuli never created the overlap it exists for. A
+mapping pass or an A/B restore landing while the user's gesture is OPEN on the same parameter is
+gestured from the discriminator's viewpoint but is not a user edit; two new stimuli create
+exactly that overlap, and the condition's removal now fails both. A guard no mutant kills is
+either dead code or an uncalibrated stimulus — the same lesson as the meter ring, from the other
+side.
+
+**Learn's minimum pass is enforced where the bias lives.** The 5 s floor is not UX polish: the
+features are ~1.5 s integrated, so a shorter pass commits mostly what played BEFORE the button
+press (the P4-recorded debt). The button counts the remainder down in numerals — no invented
+wording — and an empty pass flashes `warn`, which is the readout `commitLearn`'s no-op owed its
+caller since P4. Undo bracketing of the commit waits for the P6 undo machinery, recorded rather
+than half-built.
+
+### P5 opens — the planned edges are settled before any pixel is drawn (2026-08-02)
+
+P5's first commit contains no GUI: it takes the decisions the GUI code would otherwise have made
+implicitly. THREAD_MODEL's planned-edge section reserved two edges for P5 and named the open
+questions; both are now implemented rows with their decisions recorded where the reservation was.
+
+**The meter-hold reset produced one real DSP finding before any button exists.** The obvious
+`resetIntegrated` — clear the histogram, keep the rolling windows — fails its own test: gating
+blocks are assembled from the last four 100 ms sub-blocks, so the first block committed after a
+reset straddles up to 300 ms of pre-reset material. A reset issued during loud playback puts one
+loud straddling block into the fresh histogram, and the −10 LU relative gate then excludes every
+quieter block measured after it — the "reset" figure reads the OLD programme's loudness for the
+rest of the session. The watermark (only gating blocks whose four sub-blocks all post-date the
+reset may enter) is the fix, and the stimulus that found it is the one the test keeps: reset
+between a loud and a quiet passage, which is exactly how the escape hatch will be used.
+
+**Both open decisions are taken, in the documents that were holding them.** A state load clears
+the holds (staged through the same momentary-request row, so it lands at a block top like every
+other command). `AudioProcessor::reset()` stays un-overridden — a transport stop must not cancel
+a Learn pass (invariant 3's explicit start/end would silently become "within one play") or a
+mastering measurement, and the tail it would flush is ≤ 10 ms.
+
+**The GR ring's reader contract is the seqlock the planned edge predicted.** The index may
+rewind across a reset; a `resetGuard` epoch brackets the host-thread bulk clear (odd = in
+flight), and a reader that samples it before and after a batch of peeks discards a racing batch
+and re-anchors. One display frame dropped at worst, on an event that already blanks the
+programme.
 
 ### Twenty-third review round — the fix was a narrower mechanism, not a wider one (2026-08-02)
 

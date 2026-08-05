@@ -1,17 +1,179 @@
+// Provenance (ADR-0009): adapted from Anamorph src/gui/LookAndFeel.h:1-176 @ b6a3db8.
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+namespace abgui
+{
+
 // ============================================================================
-//  AnabasisLookAndFeel — P1 stub. The brand system (family palette, glass
-//  language, control drawing) is copied-and-adapted from Anamorph at P5
-//  (ADR-0009, DESIGN §6.1); until then this only pins the dark ground so the
-//  skeleton editor is not unstyled white.
+//  Palette + LookAndFeel
+//
+//  A clean, premium "digital plugin" aesthetic (spec section 10): near-black
+//  background, a restrained cool accent gradient, modern thin-arc knobs, no
+//  skeuomorphism (no wood, brushed metal or vintage VU meters).
 // ============================================================================
+namespace colours
+{
+    const juce::Colour bg        { 0xff0e1014 };
+    const juce::Colour bgPanel   { 0xff161a21 };
+    const juce::Colour bgRaised  { 0xff1d222b };
+    const juce::Colour outline   { 0xff2a313d };
+    const juce::Colour text      { 0xffd7dde6 };
+    const juce::Colour textDim   { 0xff8b94a3 };
+    // ⊕ Anabasis accent family — DESIGN §6.1's warm amber/gold direction,
+    // exact values chosen at P5 as that section instructs; the swatch awaits
+    // owner ratification (C8-adjacent product identity). The neutral roles
+    // above are the FAMILY palette, reused verbatim. `warn` moves off amber
+    // (Anamorph's warn is inside this accent family) to a desaturated red so
+    // over-ceiling states stay distinguishable from ordinary accent fills —
+    // including under deuteranopia, where gold-vs-red survives as a
+    // luminance difference (the §8 colour-blind-safe requirement).
+    const juce::Colour accent    { 0xfff0b432 }; // gold
+    const juce::Colour accent2   { 0xffe07830 }; // amber/copper
+    const juce::Colour warn      { 0xffd96a5a };
+}
+
+// ============================================================================
+//  Glass surfaces (feedback #17)
+//
+//  A subtle, reversible "iOS-26 liquid glass" treatment shared by every framed
+//  surface (scope, meters, panels): a diagonal micro-gradient that is brightest
+//  at the TOP-RIGHT and darkest at the BOTTOM-LEFT, plus soft highlight edges on
+//  the top-left and bottom-right so the frame reads like a pane of glass. Kept
+//  deliberately faint so it never overpowers the existing dark aesthetic.
+// ============================================================================
+namespace glass
+{
+    // Highlight edges + base hairline only (the caller fills the interior). The
+    // top-left corner catches the brightest, thickest highlight; the bottom-right
+    // a dimmer one; the other two corners stay un-lit for diagonal contrast, and
+    // a soft inset stroke blends the bright edge into the content.
+    void drawEdges (juce::Graphics&, juce::Rectangle<float> bounds, float radius,
+                    float strength = 1.0f);
+    // Diagonal depth gradient (top-right bright -> bottom-left dark) + glass edges.
+    void fillPanel (juce::Graphics&, juce::Rectangle<float> bounds, float radius,
+                    juce::Colour base, float strength = 1.0f);
+    // Glass rim for round controls: a bright top-left arc with a faint glow on the
+    // opposite edge, matching the panel edges (#16).
+    void drawCircleEdge (juce::Graphics&, float centreX, float centreY, float radius,
+                         float strength = 1.0f);
+}
+
+// Eased 0..1 animation property ("hovA"/"actA"/"onA") published by the editor's
+// micro-anim driver (F3). Falls back to the binary state for components that
+// aren't registered (or before the first animated frame), so every drawing path
+// works with or without the driver.
+inline float animOr (const juce::Component& c, const char* key, bool fallback)
+{
+    if (const auto* v = c.getProperties().getVarPointer (key))
+        return (float) (double) *v;
+    return fallback ? 1.0f : 0.0f;
+}
 
 class AnabasisLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     AnabasisLookAndFeel();
+
+    void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h,
+                           float sliderPos, float startAngle, float endAngle,
+                           juce::Slider&) override;
+
+    void drawLinearSlider (juce::Graphics&, int x, int y, int w, int h,
+                           float sliderPos, float minPos, float maxPos,
+                           juce::Slider::SliderStyle, juce::Slider&) override;
+
+    // Inset the interactive track by a thumb-radius so the thumb stays fully on the
+    // track AND tracks the cursor 1:1 (no lag), without a remap that desynced them
+    // (#4/#5).
+    juce::Slider::SliderLayout getSliderLayout (juce::Slider&) override;
+
+    void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
+                           bool highlighted, bool down) override;
+
+    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
+                               bool highlighted, bool down) override;
+
+    void drawButtonText (juce::Graphics&, juce::TextButton&,
+                         bool highlighted, bool down) override;
+
+    void drawComboBox (juce::Graphics&, int w, int h, bool down,
+                       int buttonX, int buttonY, int buttonW, int buttonH,
+                       juce::ComboBox&) override;
+    // Indent the selected text a little from the left edge (#13).
+    void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
+
+    // Honour each Label's explicitly-set font instead of forcing one size, so the
+    // larger Simple-mode Widen text actually renders (recurring font request).
+    void drawLabel (juce::Graphics&, juce::Label&) override;
+
+    // Glassy highlight on the hovered pop-up row (Apple "liquid glass", #6).
+    void drawPopupMenuItem (juce::Graphics&, const juce::Rectangle<int>& area,
+                            bool isSeparator, bool isActive, bool isHighlighted,
+                            bool isTicked, bool hasSubMenu, const juce::String& text,
+                            const juce::String& shortcutKeyText,
+                            const juce::Drawable* icon, const juce::Colour* textColour) override;
+
+    // Unify the pop-up list with the rounded flat-design of the combo box (#22).
+    void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
+    // Small dim caps header for the preset menu's FACTORY / USER sections (F2).
+    void drawPopupMenuSectionHeader (juce::Graphics&, const juce::Rectangle<int>& area,
+                                     const juce::String& sectionName) override;
+    int  getPopupMenuBorderSize() override { return 3; } // narrower top/bottom dead-zone (#9)
+    // Fixed, uniform row height so a taller combo doesn't get taller rows (#3).
+    void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
+                                    int standardHeight, int& idealWidth, int& idealHeight) override;
+
+    juce::Font getLabelFont (juce::Label&) override;
+    juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+
+    // A value box you can drag (up/down) to change the value, like the knob (#2).
+    juce::Label* createSliderTextBox (juce::Slider&) override;
+
+    // Focused text fields tagged with a "glow" property get the combo's subtle
+    // accent micro-glow instead of a plain hard outline (#11).
+    void drawTextEditorOutline (juce::Graphics&, int width, int height, juce::TextEditor&) override;
+    void fillTextEditorBackground (juce::Graphics&, int width, int height, juce::TextEditor&) override;
+
+    // Uniform, compact font for every combo + its pop-up list (#13).
+    juce::Font getComboBoxFont (juce::ComboBox&) override;
+    juce::Font getPopupMenuFont() override;
+
+    // Drop the combo pop-up BELOW the box (target its screen bounds) instead of the JUCE default,
+    // which covers the box with the currently-selected item under the cursor. Restores the expected
+    // drop-down position. (#combo)
+    juce::PopupMenu::Options getOptionsForComboBoxPopupMenu (juce::ComboBox&, juce::Label&) override;
+
+    // Styled tooltip to match the design language (no system tooltip, #20).
+    void drawTooltip (juce::Graphics&, const juce::String& text, int w, int h) override;
+    juce::Rectangle<int> getTooltipBounds (const juce::String& tip, juce::Point<int> pos,
+                                           juce::Rectangle<int> parentArea) override;
+
+    // The same contract every other class in `src/gui` carries (`CurveView`,
+    // `GrHistoryView`, `SpectrumView`, `LoudnessMeterView`, `FrameClock`, the
+    // editor itself): non-copyable, and leak-checked in debug builds. Restored
+    // at review round 58 — it was lost when this class was rewritten for
+    // Anabasis, leaving the one member of the new GUI set that was silently
+    // copyable and untracked. `AnabasisAudioProcessorEditor` holds a single
+    // `lnf` by value and `setLookAndFeel` takes a pointer, so nothing copies
+    // one; the macro states that rather than leaving it to hold by accident.
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnabasisLookAndFeel)
 };
+
+// `CompactComboLookAndFeel` and `SimpleComboLookAndFeel` used to sit here — two
+// `AnabasisLookAndFeel` subclasses varying the combo font and pop-up row
+// height. Removed at review round 53 as unported migration state, and the
+// evidence was in their own comments: they named the controls they were "applied
+// only to" as the compact Input Channel / M/S Solo combos and the two
+// Simple-mode Widen combos (algorithm + Style/Focus). Those are the SIBLING
+// product's controls. Anabasis has no Widen stage, no input-channel selector and
+// no M/S solo, nothing in `src/gui` ever instantiated either class, and the
+// editor holds one `abgui::AnabasisLookAndFeel lnf` for every combo in the tree.
+// Left standing they invited a reader to assume a compact/large combo variant
+// was wired and to style a new control by "just using the existing variant" —
+// the same trap `allCombos`/`hov` (round 28) and `resetSweep` (round 43) were
+// removed for. A genuine size variant, if the §6.2/§6.3 layout ever wants one,
+// is a five-line subclass written against the control that needs it.
+
+} // namespace abgui

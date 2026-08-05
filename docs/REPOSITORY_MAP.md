@@ -95,15 +95,16 @@ docs/
 │                          standard (Part II). See SOURCE_OF_TRUTH.md §"Where the product brief sits".
 ├── DESIGN.md              The P0 design deliverable (brief §11/§24), SIGNED OFF 2026-07-31:
 │                          architecture, the 49-parameter table, macro curves, wireframes.
-│                          Answers to the brief; the eleven ADRs it spawned now outrank it and
-│                          supersede it section by section as P1-P6 land.
+│                          Answers to the brief; the ADRs it spawned (ADR_INDEX.md) now outrank
+│                          it and supersede it section by section as P1-P6 land.
 │                          See SOURCE_OF_TRUTH.md §"Where DESIGN.md sits".
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
 │   BRAND_CONSISTENCY_CHECKLIST.md, TEST_REPORT.md (measured data + method, grows per phase)
 ├── user/           [P6] end-user class: USER_MANUAL, INSTALLATION
-├── architecture/   design-decisions/ — ADR_INDEX.md + ADR-0001…0012 (0001–0011 Accepted
-│                   2026-07-31). THREAD_MODEL.md (implemented model, from ADR-0011)
+├── architecture/   design-decisions/ — ADR_INDEX.md + the ADR files it registers (the index is
+│                   the roster; this map does not re-list them, so a new ADR needs no edit
+│                   here). THREAD_MODEL.md (implemented model, from ADR-0011)
 │                   and PARAMETER_REGISTRY.md (the surface ledger, from ADR-0010 +
 │                   the frozen snapshot) exist since P1 close;
 │                   REALTIME_SAFETY_AUDIT.md since P2 close. [P3+] the rest of the
@@ -121,8 +122,8 @@ docs/
 ## Deliverables named by the brief
 
 **`docs/DESIGN.md` is signed off (P0 closed 2026-07-31)** — its research evidence trail is
-`worklogs/2026-07-30-p0-anamorph-research.md`, and the decisions it carried are now the eleven
-Accepted ADRs. `TEST_REPORT.md`
+`worklogs/2026-07-30-p0-anamorph-research.md`, and the decisions it carried are now the Accepted
+ADRs registered in `ADR_INDEX.md`. `TEST_REPORT.md`
 (§10, §12) and the factory preset bank are produced by their respective phases and are not
 scaffolded — they carry measured content, and an empty shell would invite it being filled with
 estimates (constraint C2).

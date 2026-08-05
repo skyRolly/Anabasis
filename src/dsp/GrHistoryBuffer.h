@@ -40,12 +40,52 @@ public:
 
     GrHistoryBuffer() = default;
 
+    // Host thread (prepareToPlay, audio stopped). The P5 READER CONTRACT this
+    // settles (THREAD_MODEL's planned-edge question, designed here as
+    // promised): the write index is monotonic BETWEEN resets and MAY REWIND
+    // across one, and the bulk clear below is a host-thread write a concurrent
+    // `const` peek could observe half-done. The reset epoch is what makes both
+    // safe to read against: it is bumped to ODD before the clear and back to
+    // EVEN after (a seqlock in miniature), so a reader samples `resetEpoch()`
+    // before a batch of peeks and again after — an odd value or a changed
+    // value means the batch raced a reset and is discarded, and the reader
+    // re-anchors its cursor to the fresh `available()`. One display frame is
+    // dropped at worst, on an event (re-prepare) that already blanks the
+    // programme. Readers must therefore never cache `available()` across an
+    // epoch change; within one epoch the existing SPSC contract is unchanged.
     void reset() noexcept
     {
+        // ORDERING, stated as what the barrier actually gives rather than as
+        // what a release STORE would give. The opening needs the odd value
+        // visible BEFORE the clear; a release store orders earlier accesses
+        // before ITSELF, which is the wrong direction here. `atomic_thread_
+        // fence(release)` is a StoreStore+LoadStore barrier: accesses
+        // sequenced before it cannot be reordered after any store sequenced
+        // after it — so the relaxed increment above cannot sink past the clear
+        // below. Relaxed increment + release fence is the canonical seqlock
+        // write-begin (the same shape as the kernel's `seq++; smp_wmb();`).
+        // The closing increment is a release STORE, and there the direction is
+        // right: it orders the clear before the even value.
+        //
+        // What this does NOT claim: the entry reads on the reader side are
+        // plain, non-atomic reads of a struct the writer may be clearing, so a
+        // racing batch can observe a torn value. Nothing here prevents that —
+        // the epoch re-check DISCARDS such a batch instead, which is the
+        // seqlock bargain and the reason `resetEpoch()` must be sampled on
+        // both sides of a batch. The barrier's job is only to keep "odd" from
+        // arriving after the writes it is meant to announce.
+        resetGuard.fetch_add (1, std::memory_order_relaxed);   // odd: clearing
+        std::atomic_thread_fence (std::memory_order_release);
         for (auto& e : entries)
             e = {};
         writeIndex.store (0, std::memory_order_release);
+        resetGuard.fetch_add (1, std::memory_order_release);   // even: stable
     }
+
+    // Reader side of the contract above. Even = stable; sample before and
+    // after a batch of peeks, discard the batch if it moved or was odd.
+    uint32_t resetEpoch() const noexcept
+    { return resetGuard.load (std::memory_order_acquire); }
 
     // Audio thread, once per block. The entry is written FIRST, the index
     // release-stored AFTER — that ordering is the whole synchronisation.
@@ -62,12 +102,17 @@ public:
 
     // Stateless peek at entry n (absolute index). Entries older than kSize
     // behind the head have been overwritten; the caller clamps its window.
+    // The clamp is **kSize - 1**, not kSize: the index is masked, so `head -
+    // kSize` aliases the slot `push` is filling at this instant (it writes the
+    // slot, THEN publishes head + 1). A reader that asks for the full capacity
+    // therefore reads a half-written entry as its oldest one.
     Entry peek (int64_t n) const noexcept
     { return entries[(size_t) (n & (int64_t) kMask)]; }
 
 private:
     Entry entries[kSize] = {};
-    std::atomic<int64_t> writeIndex { 0 };
+    std::atomic<int64_t>  writeIndex { 0 };
+    std::atomic<uint32_t> resetGuard { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GrHistoryBuffer)
 };

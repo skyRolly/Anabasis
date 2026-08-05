@@ -35,6 +35,19 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     ceilArr.resize ((size_t) maxBlock);
     wArr.resize ((size_t) maxBlock);
     pushArr.resize ((size_t) maxBlock);
+    specInL.resize ((size_t) maxBlock);
+    specInR.resize ((size_t) maxBlock);
+    specOutL.resize ((size_t) maxBlock);
+    specOutR.resize ((size_t) maxBlock);
+    // …and rewind the two spectrum rings with them. The scratch was resized
+    // here from the start; the RINGS were not touched, so a host sample-rate
+    // change left up to 4096 frames captured at the old rate readable, and
+    // `SpectrumView` maps bins through the CURRENT rate — the trace was drawn
+    // at the wrong frequencies until the ring refilled (~85 ms of audio). The
+    // wrapper already clears `grHistoryRing` at `prepareToPlay` for exactly
+    // this reason; these two were the analyser state that survived.
+    specInRing.reset();
+    specOutRing.reset();
 
     using OS = juce::dsp::Oversampling<float>;
     osTableMatchesJuce = true;
@@ -178,6 +191,7 @@ void AnabasisEngine::reset() noexcept
     // which the §2.7 predict floor reads at the NEXT block top).
     lastNonRealtime = false;
     grMinLinear.store (1.0f, std::memory_order_relaxed);
+    compGrDb.store (0.0f, std::memory_order_relaxed);
     dryMeter.reset();
     wetMeter.reset();
     outMeter.reset();
@@ -219,7 +233,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const int  wantPh   = (int) p.osPhase;
     const int  wantEq   = p.eqPosition;
     const int  wantModel = juce::jlimit (0, 3, p.colourModel);
-    const bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
+    bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
 
     // Learn commands + learned-target restore, consumed at the block top. ONE
     // staged record, so the LAST restore staged before this block wins — see
@@ -231,6 +245,46 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                                               pendingRefTilt.load (std::memory_order_relaxed));
         else
             adaptiveEngine.clearLearnedTargets();
+    }
+    // ADR-0014: consume the staged frozen-trim record at the block top (the
+    // ADR-0012 contract); the duck bottom below APPLIES it. Last-writer-wins:
+    // a second restore before the bottom overwrites the pending copy.
+    if (frozenPending.exchange (false, std::memory_order_acquire))
+    {
+        // Generation FIRST, payload after — deliberately this order. The
+        // writer's settled test is stageSeq == appliedSeq, and only the
+        // application below may advance the applied side, so the number
+        // stamped here must never be NEWER than the vector it labels. Read
+        // last, a stage landing between the payload loads and this one would
+        // stamp its generation onto the previous vector and the writer would
+        // read "settled" while the published trims were a restore behind.
+        // Read first, that same interleaving stamps the OLDER generation, the
+        // record stays pending, and the next block top re-consumes it — the
+        // self-correcting direction of ADR-0012's Known-limit 3.
+        pendingFrozenSeq = frozenStageSeq.load (std::memory_order_relaxed);
+        pendingFrozenTrims.releaseOctaves = stagedFrozen[0].load (std::memory_order_relaxed);
+        pendingFrozenTrims.stereoLink     = stagedFrozen[1].load (std::memory_order_relaxed);
+        pendingFrozenTrims.scHpfHz        = stagedFrozen[2].load (std::memory_order_relaxed);
+        pendingFrozenTrims.dynTiltDb      = stagedFrozen[3].load (std::memory_order_relaxed);
+        havePendingFrozen = true;
+        // The record IS a duck request, asserted HERE rather than by a second
+        // store in restoreFrozenTrims. Two stores are two observations: this
+        // consume and `duckRequested`'s are a dozen lines apart, so a block
+        // could see the record while the request was still invisible and the
+        // vector would wait a further block (or, before the request existed at
+        // all, for an unrelated duck). Deriving it from the record removes the
+        // ordering question instead of tightening it — the bottom is the only
+        // landing site, so wanting one is a property OF the record.
+        //
+        // UNCONDITIONAL, including on a block that is ALREADY at the bottom.
+        // There the vector is injected in the bottom branch immediately and
+        // `holdForRequest` then keeps the bottom for one extra block (~11 ms)
+        // that nothing needs — a real, inaudible side effect of deriving the
+        // request from the record, stated so it is not read as an oversight.
+        // Clearing `duckAsked` after applying would remove it and reintroduce
+        // exactly the ordering question with `duckAskedWhileOut` that deriving
+        // it was meant to close: one extra silent block is the cheaper half.
+        duckAsked = true;
     }
     // Learn: ONE atomic word, so the command the writer composed arrives whole
     // and exactly once — a code plus a separate flag could be consumed between
@@ -281,6 +335,12 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             eq.resetState();
         }
         appliedModel = wantModel;
+        if (havePendingFrozen)
+        {
+            adaptiveEngine.injectTrims (pendingFrozenTrims);   // ADR-0014
+            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_release);
+            havePendingFrozen = false;
+        }
         duckState = DuckState::idle;
         duckGain  = 1.0f;
         // A render that STARTS with an empty pipeline is not a transition:
@@ -321,6 +381,18 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
             eq.resetState();
         }
         appliedModel = wantModel;
+        if (havePendingFrozen)
+        {
+            // ADR-0014: the restored vector lands at the silent bottom, like
+            // every other restore-driven discontinuity (DESIGN §7). Freeze is
+            // ON in the slot that staged it, so finishBlock holds the vector
+            // from here on — this is the per-slot Freeze memory restoring.
+            adaptiveEngine.injectTrims (pendingFrozenTrims);
+            // Only NOW is the published vector the restored one — the writer's
+            // capture guard reads this, not the block-top flag.
+            frozenAppliedSeq.store (pendingFrozenSeq, std::memory_order_release);
+            havePendingFrozen = false;
+        }
 
         // A request seen at (or during) the bottom holds it one more block:
         // the bulk swap it guards reaches the snapshot NEXT block and must be
@@ -423,18 +495,20 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // a trim member); the §9 lockable set is {ceiling} in v1.
     {
         const auto& t = adaptiveEngine.currentTrims();
-        // SCOPE OF THE RELEASE TRIM, stated because the parameter name hides
-        // it: this lands on `limReleaseMs`, which LookaheadLimiter reads ONLY
-        // in manual-release mode. `limAutoRelease` defaults to ON and its two
-        // envelopes step with the fixed kAutoFastMs/kAutoSlowMs constants, so
-        // at factory defaults this trim is computed, published, overlaid and
-        // latched — and inaudible. That is consistent with the rule stated
-        // above (a trim is inert while its host stage is inert) and it is not
-        // obviously what §5.4 intends, which is why the choice is OQ-016 and
-        // not a silent edit here: making it audible means scaling the auto
-        // poles, and that changes the default sound.
-        pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f,
-                                              p.limReleaseMs * std::pow (2.0f, t.releaseOctaves));
+        // ADR-0013 (OQ-016 resolved 2026-08-02, owner-approved): the release
+        // trim reaches BOTH release paths — the manual time below, and the
+        // auto poles through setAutoReleaseScale — so the §5.4 behaviour is
+        // audible at factory defaults (auto ON). One factor, computed once —
+        // it said that while calling `pow` twice, which is both the comment
+        // drifting from the code and the only measurable part of this block.
+        // Still UNCONDITIONAL (no manual/auto test, no changed-since-last-block
+        // gate): the call is idempotent and factor 1.0 reproduces the prepared
+        // alphas exactly, so the invariant-7 bit-exact null holds with
+        // adaptation live — and a gate would be a second piece of state that
+        // has to agree with the first, for one `pow` and two `exp` per block.
+        const float releaseScale = std::pow (2.0f, t.releaseOctaves);
+        pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f, p.limReleaseMs * releaseScale);
+        limiter.setAutoReleaseScale (releaseScale);
         pApplied.stereoLink   = juce::jlimit (0.0f, 1.0f, p.stereoLink + t.stereoLink);
         // The scHpf trim is the one that changes a DETECTOR rather than a
         // gain: pushing the shared sidechain HPF off its 20 Hz exact-skip
@@ -518,6 +592,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         processChunk (buffer, start, juce::jmin (maxBlock, totalSamples - start),
                       p, eqPre, eqPost);
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
+    compGrDb.store (comp.currentGainReductionDb(), std::memory_order_relaxed);
     adaptiveEngine.finishBlock (p.freeze);
     return true;
 }
@@ -571,6 +646,11 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             float s = juce::exactlyEqual (gIn, 1.0f) ? in : in * gIn;
             if (! std::isfinite (s))
                 s = 0.0f;                      // filter state must never eat a NaN
+            // §2.9 spectrum tap 1: post-InputGain, pre-everything-else. The
+            // L/R selection is exhaustive only while the engine is at most
+            // stereo; the static_assert that says so lives beside the scratch
+            // declarations in the header, where a widening would start.
+            (ch == 0 ? specInL : specInR)[(size_t) n] = s;
             if (eqPre)
                 s = eq.processSample (ch, s);
             if (! std::isfinite (s))
@@ -925,6 +1005,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             else if (bypassMix >= 1.0f) render = delayedDry;                    // exact endpoint
             else                        render = processed + (delayedDry - processed) * bypassMix;
             renderFrame[ch] = std::isfinite (render) ? render : 0.0f;
+            // §2.9 spectrum tap 2: post-chain — the same render the meters read.
+            (ch == 0 ? specOutL : specOutR)[(size_t) n] = renderFrame[ch];
 
             // Bypass crossfade. The SECOND leg downstream of dither (the §2.7
             // monitor gain below is the other), and unlike that one it is not
@@ -970,6 +1052,35 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         if (++dryReadPos >= dryRingSize)
             dryReadPos = 0;
     }
+
+    // §2.9 spectrum publication: one release-store per ring per CHUNK, which is
+    // more than once per host block whenever the host delivers more than the
+    // prepared size — the caller runs this ⌈blockSize / preparedMax⌉ times.
+    // THREADING_POLICY's SPSC row is worded around the committed unit for
+    // exactly this reason: the guarantee is "every frame below the acquired
+    // index is complete", which holds per chunk as it does per block, since the
+    // payload is written before the index is released. What differs is only the
+    // reader's "has anything new arrived?" cadence. Mono sources duplicate L into R via
+    // the stage loops above writing only ch 0 — harmless for a stereo-only
+    // plugin (isBusesLayoutSupported pins 2×2).
+    //
+    // What this publication ASSUMES, stated because it is invisible from here:
+    // both stage loops run the full `num` samples with no early `continue`, so
+    // every element of the scratch below `num` was written THIS chunk. An early
+    // exit added to stage A or E would publish the previous chunk's tail as if
+    // it were current — a display artefact, not a signal one, but a silent one.
+    // If such an exit is ever added, publish only the samples actually written.
+    // A SECOND thing this publication assumes, beside the no-early-exit one
+    // above: that the chunk it publishes is one the engine will keep. It runs
+    // BEFORE the invariant-9 self-heal below, so a chunk the heal then decides
+    // was contaminated has already reached the GUI. Nothing non-finite gets
+    // through — the taps are individually scrubbed (stage A's `s = 0.0f`, stage
+    // E's `isFinite(render) ? render : 0.0f`), so the FFT cannot be poisoned —
+    // what reaches it is a chunk of substituted zeros for audio that is about to
+    // be reset. Display-only and self-correcting within one analysis window;
+    // recorded here so the assumption list is complete rather than half-stated.
+    specInRing.pushBlock (specInL.data(), nCh > 1 ? specInR.data() : specInL.data(), num);
+    specOutRing.pushBlock (specOutL.data(), nCh > 1 ? specOutR.data() : specOutL.data(), num);
 
     // ---- Invariant 9 self-heal -------------------------------------------
     // TWO failure modes, repaired separately, because they are not the same

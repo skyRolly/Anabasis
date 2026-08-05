@@ -24,14 +24,22 @@ Part I is the product/DSP spec; Part II is the engineering standard inherited fr
 product **Anamorph**. Open decisions live in [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) —
 **do not guess at them**.
 
-**Current phase: P1–P4 complete, P5 (GUI) next.** `docs/DESIGN.md` was **signed off 2026-07-31**,
-closing P0; the full §2 chain, the §2.8 transition layer, §2.7/§2.9 metering and the §5.4 adaptive
-engine with Learn are in the tree (P4's one blocked item is the OQ-013 frozen-trim restore).
-Implementation is governed by the twelve Accepted ADRs in
+**Current phase: v0.1.0 CODE COMPLETE (2026-08-02, under the owner's blanket approval) — the
+post-v0.1.0 human fine review is what remains.** `docs/DESIGN.md` was **signed off 2026-07-31**,
+closing P0; the full §2 chain, the §2.8 transition layer, §2.7/§2.9 metering, the §5.4 adaptive
+engine with Learn AND the ADR-0014 frozen-trim restore, the P5 UI, and the P6 undo/preset/budget
+work are all in the tree. Implementation is governed by the Accepted ADRs in
 [`docs/architecture/design-decisions/`](docs/architecture/design-decisions/ADR_INDEX.md) — read
-`ADR_INDEX.md` before writing code; an ADR outranks `DESIGN.md`, which is now superseded section by
-section as the real architecture set lands. Exit criterion so far: pluginval **L5** (P1); L8 at P5,
-L10 at P6. `docs/HANDOVER.md` carries the status of record.
+`ADR_INDEX.md` before writing code, and take the COUNT from there too: this file quotes no number,
+for the same reason it quotes no pluginval strictness. An ADR outranks `DESIGN.md`, which is now superseded section by
+section as the real architecture set lands. pluginval gates in both modes ×3 with the editor
+under xvfb, locally and in CI, at the strictness held in one place —
+`ANABASIS_PLUGINVAL_STRICTNESS` in `.github/workflows/build.yml`
+(`docs/policies/TESTING_POLICY.md` owns what the gate requires; this file
+deliberately quotes no number, being the first file every contributor reads and
+so the copy whose staleness the rule exists to prevent). Every decision dated 2026-08-02 is ⊕ pending the fine review; the
+brand checklist is provisionally passed with its Level-5 boxes deliberately unchecked
+(`docs/BRAND_CONSISTENCY_CHECKLIST.md`). `docs/HANDOVER.md` carries the status of record.
 
 ---
 

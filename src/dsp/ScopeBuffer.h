@@ -1,0 +1,168 @@
+#pragma once
+
+// Provenance (ADR-0009): copied from Anamorph src/dsp/ScopeBuffer.h:1-93 @ b6a3db8
+// (namespace only). The §2.9 spectrum capture rings instantiate it — the
+// THREAD_MODEL planned edge, now implemented on the SPSC ring row.
+
+#include <atomic>
+#include <vector>
+#include <cstdint>
+#include <cstring>
+
+namespace anabasis
+{
+
+// ============================================================================
+//  ScopeBuffer
+//
+//  Lock-free single-producer ring buffer of stereo samples. The audio thread
+//  (producer) only writes; all reads happen on the GUI (message) thread as
+//  stateless peeks (vectorscope + spectrum imager). No locks, no allocation
+//  on either side.
+//
+//  Capacity is a power of two so wrap is a cheap mask.
+// ============================================================================
+class ScopeBuffer
+{
+public:
+    static constexpr int capacity = 1 << 14; // 16384 stereo frames
+    static constexpr int mask     = capacity - 1;
+
+    // Adapted beyond the namespace (the provenance header's one functional
+    // delta): storage lives on the HEAP, not inline in the object. Anamorph
+    // holds one ScopeBuffer; Anabasis's engine holds two, and 2 × 128 KB of
+    // inline arrays ride along with EVERY engine — including the processors
+    // the state suite builds on the STACK, where Windows' 1 MB default
+    // overflowed (the Linux 8 MB default hid it; the crash ate its own
+    // buffered output, which is why CI showed exit 1 and nothing else).
+    // Allocation happens HERE, at construction on a non-audio thread; the
+    // audio-thread push path still never allocates.
+    ScopeBuffer() : left ((size_t) capacity, 0.0f), right ((size_t) capacity, 0.0f)
+    { write.store (0, std::memory_order_relaxed); }
+
+    // Host thread (prepare, audio stopped). Rewinds the published index so no
+    // reader can reach a frame captured under the PREVIOUS configuration.
+    // `readLatest` returns the newest N frames and the analyser maps their
+    // bins through the CURRENT sample rate, so frames captured at the old rate
+    // are drawn at the wrong frequencies until they age out. The GR history
+    // ring has been cleared at `prepareToPlay` since P3 for the same reason;
+    // these two were the analyser state that survived a re-prepare.
+    //
+    // Deliberately only the INDEX, not the samples: `readLatest` copies
+    // strictly below the acquired index, so rewinding it makes every stale
+    // frame unreachable, and the reader's own `count > w` clamp then returns
+    // fewer frames until the ring refills. Clearing 2 × 16384 floats on a
+    // re-prepare would buy nothing a reader can observe.
+    //
+    // The generation is bumped with it, and that is the ANNOUNCEMENT half.
+    // Rewinding the index is how a reset works; it is not a reliable way to
+    // TELL a reader one happened. `SpectrumView` used to infer it from
+    // `writeCount()` going backwards, which is true only while the observed
+    // count is still below the reader's last one — let the producer republish
+    // past that value between two reader ticks and the reset is missed
+    // outright, silently, with the reader's own EMA state left describing a
+    // configuration the ring no longer holds. A monotonic counter the reader
+    // compares against its own copy has no such window: any reset between two
+    // observations changes it, however far the index has since travelled.
+    //
+    // Published AFTER the rewind, with release, so a reader that has ACQUIRED
+    // the new generation cannot then read the pre-reset index. The opposite
+    // skew (new index, old generation) is possible and is why the reader
+    // samples the generation on BOTH sides of its batch — the same contract
+    // `GrHistoryBuffer::resetEpoch()` states for the same question. It is a
+    // plain generation, NOT that class's odd/even seqlock, because there is
+    // nothing here for a reader to observe half-done: this function writes one
+    // atomic and touches no sample.
+    void reset() noexcept
+    {
+        write.store (0, std::memory_order_release);
+        resetGen.fetch_add (1, std::memory_order_release);
+    }
+
+    // --- gui thread ------------------------------------------------------
+    // Reader side of the contract above. Monotonic across the instance's life
+    // (one bump per `prepare`, so it cannot realistically wrap or alias);
+    // sample it before and after a batch of reads and treat ANY change as
+    // "the frames I just read may straddle a reset".
+    uint32_t resetGeneration() const noexcept
+    { return resetGen.load (std::memory_order_acquire); }
+
+    // --- audio thread ----------------------------------------------------
+    // Writes a whole block and publishes it with ONE release-store on the
+    // write index (S9). Readers acquire the index and only copy frames
+    // strictly below it, so a block becomes visible atomically -- partially
+    // committed frames can never be observed. The synchronisation contract is
+    // unchanged: the same single writer, the same single release/acquire pair
+    // on the same atomic, just at block cadence instead of per sample.
+    inline void pushBlock (const float* l, const float* r, int n) noexcept
+    {
+        auto w = write.load (std::memory_order_relaxed);
+        const auto end = w + (uint64_t) n;
+        if (n > capacity) // pathological block: only the newest frames can fit
+        {
+            l += n - capacity;
+            r += n - capacity;
+            w = end - (uint64_t) capacity;
+            n = capacity;
+        }
+        // At most two contiguous segments instead of a per-sample masked store
+        // (Wave 4): the ring bytes and the single release-store publication are
+        // identical -- readers only ever copy frames strictly below the index
+        // they acquire, so intra-block store order was never observable.
+        const int idx   = (int) (w & mask);
+        const int first = n < capacity - idx ? n : capacity - idx;
+        std::memcpy (left.data()  + idx, l, (size_t) first * sizeof (float));
+        std::memcpy (right.data() + idx, r, (size_t) first * sizeof (float));
+        if (n > first)
+        {
+            std::memcpy (left.data(),  l + first, (size_t) (n - first) * sizeof (float));
+            std::memcpy (right.data(), r + first, (size_t) (n - first) * sizeof (float));
+        }
+        write.store (end, std::memory_order_release);
+    }
+
+    // --- gui thread ------------------------------------------------------
+    // Monotonic total of frames ever written (uint64 -- never wraps in
+    // practice). The same acquire load readLatest performs; lets a reader
+    // detect "no new frames since last check" without copying any data.
+    // Read-only: never mutates the ring and consumes nothing.
+    uint64_t writeCount() const noexcept { return write.load (std::memory_order_acquire); }
+
+    // Copies up to `count` most-recent frames (oldest first) into the caller's
+    // buffers. Returns the number of frames actually copied.
+    //
+    // Same shape as `GrHistoryBuffer::peek` — a masked index into a ring the
+    // producer is still writing — and the reason it needs no `capacity - 1`
+    // clamp is HEADROOM, not a different mechanism, so state it rather than
+    // leave the next reader to re-derive it. The oldest frame copied sits
+    // `count` behind the head; the producer has to advance a further
+    // `capacity - count` frames before it reaches that slot. The only caller
+    // asks for 4096 of 16384, so ~12288 frames (~0.26 s at 48 kHz) must be
+    // written while one memcpy-sized loop runs. A future capacity reduction or
+    // window widening that narrows this margin needs the explicit clamp the GR
+    // ring carries; `count > capacity` alone would not catch it.
+    int readLatest (float* dstL, float* dstR, int count) const noexcept
+    {
+        const auto w = write.load (std::memory_order_acquire);
+        if (count > capacity) count = capacity;
+        // Adapted (beyond the namespace): both ternary arms made unsigned —
+        // the original's int arm trips -Wsign-conversion under this repo's
+        // warning gate; the value range is unchanged (count ≤ capacity).
+        const uint64_t available = (w < (uint64_t) count) ? w : (uint64_t) count;
+        const uint64_t start = w - available;
+        for (uint64_t i = 0; i < available; ++i)
+        {
+            const auto idx = (start + i) & mask;
+            dstL[i] = left [idx];
+            dstR[i] = right[idx];
+        }
+        return (int) available;
+    }
+
+private:
+    std::vector<float> left, right;
+    std::atomic<uint64_t>       write { 0 };
+    std::atomic<uint32_t>       resetGen { 0 };   // see reset() / resetGeneration()
+};
+
+} // namespace anabasis

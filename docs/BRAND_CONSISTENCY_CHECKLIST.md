@@ -7,6 +7,28 @@ RISK-007).
 Anamorph is a **read-only reference** for every check below. Verification means opening the
 Anamorph source/UI and comparing — never editing it.
 
+## P5 status (2026-08-02) — implemented; the human pass is still owed
+
+The P5 UI is in the tree and every item below has its implementation counterpart. The boxes stay
+UNCHECKED deliberately: each is a Level-5 human verification against running builds of both
+plugins (`TESTING_POLICY.md` §20.1), and this file records that pass, not the code's existence.
+Two known candidates for the "deliberate deviation" clause, so the human pass does not
+rediscover them (a third — Undo/Redo absent from the top bar — resolved on 2026-08-02 when the
+§7 undo machinery landed): **the platform default sans is used** (no licence-clean variable font was approved by P5 — the DESIGN-authorised
+fallback path, RISK-009); **the accent swatch (gold/amber ⊕)** awaits owner ratification.
+
+## v0.1.0 status (2026-08-02) — PROVISIONALLY PASSED under the owner's blanket approval
+
+The owner's v0.1.0 directive pre-approves every human-review gate so the complete first version
+can be assembled, with the item-by-item fine review owed afterward. Under that approval this
+checklist is **provisionally passed as implemented**: the two deviation candidates above are
+provisionally ACCEPTED (platform default sans per RISK-009; the gold/amber accent swatch ⊕),
+and P5's exit criterion is treated as met for the purpose of closing the phase. The boxes below
+still stay unchecked — they record the REAL Level-5 pass against running builds of both
+plugins, which no approval can substitute for, and which is the first item of the post-v0.1.0
+fine review. If that pass fails an item, the fix lands as an ordinary post-v0.1.0 change; the
+provisional acceptance here is scope, not evidence (C7 — the boxes are not claimed).
+
 ## How to use this
 
 Each item is checked by a human against a running build of both plugins, or against Anamorph's

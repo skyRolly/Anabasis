@@ -2,6 +2,9 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "InternalState.h"
+#include "PluginParameters.h"   // isPresetExcludedParam — the shared exclusion predicate
+#include <algorithm>
+#include <vector>
 
 // ============================================================================
 //  PresetManager — user presets as `.anabasis` XML (ADR-0007 §Presets).
@@ -30,8 +33,133 @@ public:
                    .getChildFile ("RollyTech").getChildFile ("Anabasis").getChildFile ("Presets");
     }
 
+    // The exact number a preset stores for one parameter: the SNAPPED
+    // denormalised value (ADR-0007 — snap-equivalence is the preset contract,
+    // raw-exactness is the host-session one). `savePreset` writes it and the
+    // wrapper's dirty-marker projection re-derives it, so it lives here rather
+    // than twice: two copies of this rule disagreeing would make the "edited"
+    // mark describe a file different from the one save would write.
+    static double presetValueOf (const juce::RangedAudioParameter& param)
+    {
+        const auto& r = param.getNormalisableRange();
+        return (double) r.snapToLegalValue (r.convertFrom0to1 (param.getValue()));
+    }
+
+    // THE preset parameter set — one traversal, one exclusion test — visited in
+    // a fixed order and handed to the caller as (id, parameter).
+    //
+    // THE PARAMETER, not its preset value, because the three callers need
+    // different things from it and only two of them want a value:
+    // `savePreset` and `presetShapeFromLive` ask `presetValueOf` (the shared
+    // ADR-0007 snap rule, still one copy), while `applyFactoryPreset` needs the
+    // parameter's DEFAULT and then writes to it. Handing over the value and
+    // hiding the parameter would have left the third caller unable to use this
+    // function at all — which is exactly why it walked its own collection until
+    // round 57.
+    //
+    // `savePreset` writes the file from it, the wrapper's dirty-marker
+    // projection (`presetShapeFromLive`) rebuilds the same content from it, and
+    // `applyFactoryPreset`'s defaults pass writes through it.
+    // Those three used to walk DIFFERENT collections for one answer: two over
+    // `apvts.state`'s PARAM children, one over `getParameters()`. Every value
+    // agreed, because APVTS creates one tree child per parameter — but "agree"
+    // was a fact about today's JUCE rather than a property of the code, and a
+    // parameter registered without a tree node (or a stray node without a
+    // parameter) would have put content in the file that the marker could not
+    // see, or the reverse. Sharing the walk makes them one set by construction.
+    //
+    // The FACTORY APPLY is the case where a divergence would have been audible
+    // rather than cosmetic. An override table is "defaults + intents", so the
+    // pass has to reach EVERY non-excluded parameter: one it skipped would keep
+    // the value the previous preset left, which is the blend-two-presets
+    // failure the defaults pass exists to prevent — silent, and worse the
+    // further apart the two presets are.
+    //
+    // The PARAMETERS are the collection, not the tree, and that choice carries
+    // a second guarantee: the marker runs on the editor's ~3 Hz poll, and this
+    // walk touches no `juce::ValueTree` at all — the parameter list is fixed for
+    // the processor's lifetime and each value is an atomic load. That is what
+    // keeps the poll off the APVTS tree lock (KI-008) and away from the wrapper
+    // state an off-message-thread restore writes (KI-003).
+    //
+    // Restricted to parameters APVTS owns: `getParameters()` is the processor's
+    // list, so a future non-APVTS parameter would otherwise silently start
+    // appearing in preset files.
+    //
+    // VISITED IN ID ORDER, and that is a serialisation decision rather than
+    // tidiness. `savePreset` used to inherit the order of `apvts.state`'s
+    // children, which JUCE keys by id and therefore hands back alphabetically;
+    // `getParameters()` is REGISTRATION order, so moving the writer onto it
+    // would have re-ordered every `<PARAM>` element in every file on its next
+    // save — a diff across the whole preset bank for no semantic gain, since
+    // `applyPreset` looks each id up and has never depended on position. Worse,
+    // registration order is not stable: it changes whenever the parameter
+    // layout is re-arranged, so the file would churn again on any future
+    // reshuffle. Sorting by id keeps the bytes exactly as they were AND makes
+    // the order independent of the layout. `String::compare` is a plain UTF-8
+    // lexicographic compare, which is the collation the tree order already had
+    // for this ASCII id set.
+    template <typename Fn>
+    static void forEachPresetParameter (const juce::AudioProcessorValueTreeState& apvts, Fn&& fn)
+    {
+        std::vector<juce::RangedAudioParameter*> ordered;
+        ordered.reserve ((size_t) apvts.processor.getParameters().size());
+
+        for (auto* p : apvts.processor.getParameters())
+        {
+            auto* param = dynamic_cast<juce::RangedAudioParameter*> (p);
+            if (param == nullptr)
+                continue;
+            const auto id = param->getParameterID();
+            if (isPresetExcludedParam (id) || apvts.getParameter (id) == nullptr)
+                continue;
+            ordered.push_back (param);
+        }
+
+        std::sort (ordered.begin(), ordered.end(),
+                   [] (const juce::RangedAudioParameter* a, const juce::RangedAudioParameter* b)
+                   { return a->getParameterID().compare (b->getParameterID()) < 0; });
+
+        for (auto* param : ordered)
+            fn (param->getParameterID(), *param);
+    }
+
     bool savePreset (const juce::File& file, const juce::StringArray& detachMask) const;
     bool applyPreset (const juce::File& file, juce::StringArray& detachMaskOut);
+    // The same apply, against a document the CALLER already parsed. Added so
+    // the wrapper's readability gate and the apply operate on ONE document:
+    // `applyPresetFile` used to parse for the gate, discard the result, and let
+    // this class parse the file again, so a file rewritten between the two
+    // passed the gate and then applied different content — and the preset ring
+    // walks this path on every ‹/› press. The `File` overload above is kept for
+    // callers that have no document yet; it parses and delegates here.
+    bool applyPreset (const juce::XmlElement& parsed, juce::StringArray& detachMaskOut);
+
+    // The single answer to "is this a preset file this build can apply?".
+    // `applyPreset` reads through it, and so does the wrapper's pre-parse undo
+    // gate — two independent readability tests could disagree, and did: the
+    // gate accepted any well-formed XML, so a foreign root passed it, opened an
+    // undo bracket, and then applied nothing. Returns the parsed document (the
+    // caller re-parses; a preset apply is a user action, not a hot path).
+    static std::unique_ptr<juce::XmlElement> parsePresetFile (const juce::File& file);
+
+    // -- factory presets (DESIGN §7: compiled-in override tables) ------------
+    // The five names come VERBATIM from the brief (§9 names them — they are
+    // owner wording, not invented); the VALUES are ⊕ drafts with the same
+    // status as the §5.5 macro curves: tuned by ear at the P6 listening pass,
+    // frozen before v0.1.0. The ≥12-preset bank and any further wording stay
+    // owner-supplied (C8, OQ). A factory preset expresses itself through the
+    // MACROS plus non-managed parameters wherever possible, so nothing loads
+    // pre-detached; the mask it carries is empty.
+    struct FactoryPreset
+    {
+        const char* name;
+        struct Override { const char* id; float value; };
+        const Override* overrides;
+        int numOverrides;
+    };
+    static const FactoryPreset* factoryPresets (int& countOut);
+    bool applyFactoryPreset (int index, juce::StringArray& detachMaskOut);
 
 private:
     juce::AudioProcessorValueTreeState& apvts;

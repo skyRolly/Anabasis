@@ -63,13 +63,24 @@ non-zero pluginval exit fails the job everywhere.
 
 ## Strictness escalates by phase — in one place
 
-```yaml
-env:
-  ANABASIS_PLUGINVAL_STRICTNESS: 5   # P1–P2: 5 · P3–P5: 8 · P6/release: 10
-```
+That place is the `env:` block at the top of `.github/workflows/build.yml`
+(`ANABASIS_PLUGINVAL_STRICTNESS`), and this section deliberately does **not**
+quote its current value. It used to, and the copy went stale the moment the
+build raised the bar for P6 — in the very file whose heading promises one place
+only. Read the number there; raising it stays a one-line edit.
 
-Raising the bar is a one-line edit to `build.yml`. The release gate is **10**
-(`docs/policies/TESTING_POLICY.md`).
+The sentence that used to close this section sent readers to
+`docs/policies/TESTING_POLICY.md` as "likewise the only document that states
+it", which was a circle: that policy does **not** state the number — it
+explicitly refuses to, and points back here at `build.yml`. Three files each
+claiming to be the single source is how the value gets copied a fourth time.
+The division of labour, stated once:
+
+| Question | Answered by |
+|---|---|
+| What number is in force, and what it was per phase | `.github/workflows/build.yml` (`env:` block) — **the only source** |
+| What the gate *requires* — suites, modes, passes, platforms | `docs/policies/TESTING_POLICY.md` |
+| How the pipeline is wired to meet it — jobs, step order, artefacts, retries | this document |
 
 ## Pipeline
 
@@ -82,8 +93,15 @@ Common to all three:
 2. **Configure** — `cmake -B build [-G Ninja] -DCMAKE_BUILD_TYPE=Release
    -DANABASIS_BUILD_NUMBER=${{ github.run_number }}` (the run number becomes the About-box build
    number). Windows uses the default VS generator; macOS adds
-   `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` and a deployment target.
-3. **Build** — `cmake --build build --config Release`.
+   `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` and a deployment target. **Linux additionally passes
+   `-DANABASIS_BUILD_BENCH=ON`** — the bench is OFF by default so it cannot be run casually and
+   quoted without its machine (`PERFORMANCE_BUDGET.md`), but OFF everywhere meant `tests/bench.cpp`
+   was compiled by no job at all and its DSP calls would rot silently. One platform compiling it
+   makes that rot a red build; `build.yml`'s own comment records the two residuals (only this
+   platform, and compiling is not running).
+3. **Build** — `cmake --build build --config Release` (Linux therefore also builds `AnabasisBench`,
+   which is never RUN in CI — shared-runner timings are exactly the numbers that must not be
+   quoted).
 
 Then:
 
@@ -252,11 +270,63 @@ These are the rules, not incidental details — each blocks a specific way a bad
 
 ## Reproducing CI locally
 
+**Two blocks, because the shells genuinely differ.** The POSIX one covers Linux and
+macOS; Windows gets its own, since the CI job there drives `run-pluginval.ps1` from
+PowerShell and neither `sed` nor `${VAR:?}` is available in a stock `cmd`/PowerShell
+environment. Round 43 fixed the strictness lookup for macOS and then described the
+result as running "on all three gate platforms", which moved the same defect one
+platform along rather than removing it. Both blocks read the number from the same
+single authority, `.github/workflows/build.yml`, and neither restates it.
+
+**Linux / macOS:**
+
 ```bash
-scripts/setup-linux.sh
+scripts/setup-linux.sh          # Linux only — macOS needs no dependency step
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 scripts/run-tests.sh
-scripts/run-pluginval.sh 5 deterministic     # use the current phase strictness
-scripts/run-pluginval.sh 5 randomise
+# $STRICTNESS is ANABASIS_PLUGINVAL_STRICTNESS, read from the ONE place that
+# holds it (.github/workflows/build.yml) rather than pasted: the literal used to
+# be `5` here and stayed 5 through two raises, under a comment telling the reader
+# it was current.
+#
+# POSIX `sed`, not `grep -oP`: `-P` and `\K` are GNU extensions that BSD grep —
+# /usr/bin/grep on macOS, one of the three platforms this gate is REQUIRED on —
+# rejects outright. The failure was silent rather than loud: STRICTNESS came out
+# empty and the two commands below ran with no strictness argument at all, so the
+# local gate did not match CI. The `^  ` anchor pins the match to the `env:`
+# assignment, so the `${{ env.ANABASIS_PLUGINVAL_STRICTNESS }}` references in the
+# job steps cannot contribute a second value.
+STRICTNESS=$(sed -n 's/^  ANABASIS_PLUGINVAL_STRICTNESS:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+             .github/workflows/build.yml)
+: "${STRICTNESS:?could not read ANABASIS_PLUGINVAL_STRICTNESS from build.yml}"
+scripts/run-pluginval.sh "$STRICTNESS" deterministic
+scripts/run-pluginval.sh "$STRICTNESS" randomise
+```
+
+**Windows** (PowerShell — what the `windows` job itself runs):
+
+```powershell
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+# There is no `run-tests.ps1`: the `windows` job inlines its binary discovery so
+# it can REFUSE an ambiguous multi-config match rather than guess (see the job's
+# own comment). Locally the paths are fixed, so run them directly.
+build/AnabasisTests_artefacts/Release/AnabasisTests.exe
+build/AnabasisStateTests_artefacts/Release/AnabasisStateTests.exe
+# Same single authority, read with PowerShell's own regex rather than sed. The
+# `^  ` anchor pins the match to the `env:` assignment, so the
+# `${{ env.ANABASIS_PLUGINVAL_STRICTNESS }}` references in the job steps cannot
+# contribute a second value — the same reasoning as the POSIX block above.
+# The match is TESTED before it is indexed. `(Select-String …).Matches[0]`
+# dereferences a `$null` when the pattern misses — a renamed env var, a moved
+# workflow — and PowerShell then throws a property-not-found error before the
+# guard below can say what is actually wrong. Same class of failure the POSIX
+# block's `${VAR:?}` exists to prevent.
+$m = Select-String -Path .github/workflows/build.yml `
+       -Pattern '^  ANABASIS_PLUGINVAL_STRICTNESS:\s*(\d+)'
+if (-not $m) { throw 'could not read ANABASIS_PLUGINVAL_STRICTNESS from .github/workflows/build.yml' }
+$Strictness = $m.Matches[0].Groups[1].Value
+scripts/run-pluginval.ps1 -Strictness $Strictness -Mode deterministic
+scripts/run-pluginval.ps1 -Strictness $Strictness -Mode randomise
 ```

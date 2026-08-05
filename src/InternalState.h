@@ -36,6 +36,43 @@ namespace iid
     inline const juce::Identifier tpMeterOn      { "int_tpMeterOn" };      // bool
 }
 
+// The LEGAL VALUES of `iid::uiScale`, beside the identifier that names it
+// rather than in the editor that renders it. The ladder is the field's schema —
+// "what may this property hold?" is a state question, and putting the answer
+// here is what lets `replaceFrom` apply the §4.4 read rule to it like every
+// other field, without the editor and the state layer keeping two lists that
+// can disagree (the ladder already had two representations once; round 50
+// removed the second).
+//
+// NEAREST rather than a range clamp, because the legal set is a ladder: 110 →
+// 100, 92 → 90, 50 → 80, 300 → 200. Returning an INDEX as well as a value is
+// what lets the editor make the rendered transform and the displayed combo
+// selection ONE decision instead of two that happen to agree.
+namespace ui_scale
+{
+    inline constexpr int steps[]  = { 80, 90, 100, 125, 150, 175, 200 };
+    inline constexpr int numSteps = (int) (sizeof (steps) / sizeof (steps[0]));
+
+    inline constexpr int nearestIndex (int pct) noexcept
+    {
+        int best = 0, bestDist = pct > steps[0] ? pct - steps[0] : steps[0] - pct;
+        for (int i = 1; i < numSteps; ++i)
+            if (const int d = pct > steps[i] ? pct - steps[i] : steps[i] - pct; d < bestDist)
+            { best = i; bestDist = d; }
+        return best;
+    }
+
+    inline constexpr int nearest (int pct) noexcept { return steps[nearestIndex (pct)]; }
+
+    // The field's default, HERE rather than as a literal at each site, so
+    // `setDefaults()` and every fallback read name the same number. It must be
+    // a legal step, or the default would itself need normalising — which is the
+    // shape the read rule exists to remove.
+    inline constexpr int defaultPercent = 100;
+    static_assert (nearest (defaultPercent) == defaultPercent,
+                   "the default UI scale must be one of the ladder steps");
+}
+
 class InternalState : private juce::ValueTree::Listener
 {
 public:
@@ -53,7 +90,7 @@ public:
         tree.setProperty (iid::osPhase,        0,     nullptr);   // ⊕ min-phase
         tree.setProperty (iid::offlineQuality, 0,     nullptr);   // ⊕ Follow
         tree.setProperty (iid::ceilingLock,    false, nullptr);
-        tree.setProperty (iid::uiScale,        100,   nullptr);
+        tree.setProperty (iid::uiScale,        ui_scale::defaultPercent, nullptr);
         tree.setProperty (iid::tooltipsOn,     false, nullptr);
         tree.setProperty (iid::uiAnimations,   true,  nullptr);
         tree.setProperty (iid::spectrumOn,     true,  nullptr);
@@ -108,6 +145,43 @@ public:
                 if (tree.hasProperty (name))           // unknown fields ignored (schema v1 read rules)
                     tree.setProperty (name, incoming.getProperty (name), nullptr);
             }
+        // NORMALISE THE LADDER FIELD HERE, which is where a value the schema
+        // cannot represent enters: a hand-edited session, or one written by a
+        // build whose step list has since changed. Every OTHER field's read
+        // rule is already applied at adoption — the overlay above drops unknown
+        // properties, and `syncAtomics` clamps the four mirrors — and
+        // `iid::uiScale` was the exception: it was clamped on READ by the
+        // editor and never corrected in the tree, so `getStateInformation`
+        // re-serialised the illegal percent for ever.
+        //
+        // It used to be corrected by the editor's 24 Hz settings poll, which
+        // made a display timer a writer of this tree — an opposing writer to
+        // this very function, which VST3 does not promise on the message thread
+        // (KI-003), on the one poll round 51 had just cleaned of ValueTree
+        // access. Correcting it at adoption removes that pairing outright: the
+        // editor now only READS, and by the time it can read, the value is
+        // already legal.
+        //
+        // `setProperty` compares before assigning, so a legal percent — every
+        // session this build ever wrote — writes nothing and sends no change
+        // message. This is not a latency input, so the batch above is
+        // indifferent to it.
+        //
+        // THE FALLBACK IS THE 100 % DEFAULT, NOT `var()`'s. `setDefaults()`
+        // runs immediately above and always writes the field, so the read
+        // cannot miss today — but "correct because of what the line above did"
+        // is the reasoning this file avoids elsewhere, and here it fails
+        // QUIETLY rather than loudly: a missing property reads as `var()`,
+        // which converts to 0, and 0's nearest ladder step is 80. An absent
+        // field would silently become the SMALLEST legal scale instead of the
+        // default one. Naming the default in the read makes this total on its
+        // own, and it is the same default `setDefaults()` writes — the value,
+        // not a second opinion about it.
+        tree.setProperty (iid::uiScale,
+                          ui_scale::nearest ((int) tree.getProperty (
+                              iid::uiScale, ui_scale::defaultPercent)),
+                          nullptr);
+
         // …and the single fire happens in ~ScopedLatencyBatch, so an early
         // return could not skip it. A missing child still lands on defaults.
     }

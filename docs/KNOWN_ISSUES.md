@@ -76,6 +76,105 @@ message thread, so on a well-behaved host there is no race at all; they are
 the message thread a concurrent save would otherwise read a half-written
 mirror. ADR-0012's contract covers the engine-side record, not this copy.
 
+**Narrowed 2026-08-03 (review round 32), not closed:** the MacroEngine's 30 ms tick used to run
+the wrapper's drain even inside a `ScopedRestore` — the restore guard sat one level down, in
+`drainPendingMapping` — which made the tick a SECOND concurrent writer of `liveDetachMask` on this
+path. The guard now covers the whole tick, so the restore is again the only writer; the underlying
+exposure (the restore itself writing `replaceState` / `liveDetachMask` / `livePresetName` while the
+editor reads them) is untouched and still needs the thread-model decision below.
+
+A **third** member, added 2026-08-03 (review round 28) and **CLOSED 2026-08-03
+(round 42)**: the §7 undo/redo stacks. `setStateInformation` used to clear
+`undoStacks`/`redoStacks`/`gesturePreState`, plain `juce::Array<juce::ValueTree>`
+members, while the editor read `canUndo()`/`canRedo()` on its 24 Hz tick and
+`undo()`/`redo()` popped from them on the message thread — so an off-thread load
+with the window open could race a `clear()` against a `removeAndReturn()`.
+
+It closed WITHOUT the thread-model decision the rest of this entry waits on,
+because it did not need one: the containers have exactly one legal thread, and
+the fix is to stop the other one touching them. The loader now only bumps
+`historyEpoch`, a relaxed counter, and the message thread does the clearing
+itself at the next `syncHistory()` — the single reconciliation point every read
+and write of the history passes through (`canUndo`/`canRedo`, `undo`/`redo`,
+`pushUndoStep`, both gesture callbacks' message-thread branches,
+`copySlotToOther`). No lock, and nothing blocks in a host callback. What remains
+unclosed here is the state the restore genuinely must write — `replaceState`,
+`liveDetachMask`, `livePresetName` and **`liveFrozenTrims`** — which has no such
+option and still needs the decision below.
+
+`liveFrozenTrims` is named explicitly because two rounds of work around it could
+otherwise read as having closed it. Round 40 added a SECOND writer of that member
+from `prepareToPlay`, which ThreadSanitizer reported as a data race against the
+editor's `presetDirty()` poll; rounds 41–42 removed that second writer and routed
+the remaining one through `adoptFrozenMirror()`. A single writer is not a
+message-thread-only writer: `adoptFrozenMirror()` is still reached from
+`setStateInformation`, so the exposure is back to the one this entry already owns
+— reduced to its pre-round-40 shape, not eliminated. `MODE_AND_ADAPTATION_POLICY`
+carries the same qualification beside its ownership statement.
+
+**Round 51 re-examined that boundary and narrowed the OPPOSING side of it,
+without touching the thread model.** The question asked was whether the transfer
+between state loading, audio processing and state saving still exposes an
+inconsistent snapshot. It does, and the answer is unchanged in kind: the writer
+is `adoptFrozenMirror()` reached from `setStateInformation`, and the readers are
+`saveSlotFromLive()` (the A/B swap, the §7 undo push, `getStateInformation`) and
+the ADR-0014 restore branch. What changed is who else was reading. The editor's
+~3 Hz dirty poll used to run `saveSlotFromLive()` continuously, which made it a
+permanent concurrent reader of `liveFrozenTrims` and `liveBaseline` for as long
+as the window was open; the marker now compares `presetShapeFromLive()`, which
+reads only the fixed parameter list and their atomics and no ValueTree member at
+all. The remaining readers are all deliberate, host-initiated operations rather
+than a display timer, so the window is now as narrow as it can be made without
+the decision below. It is not closed: an off-message-thread `setStateInformation`
+concurrent with a `getStateInformation` or an A/B switch still races the tree's
+refcounted pointer, and closing THAT needs a lock or a marshalling path on the
+state route — an Architecture Review Gate item and an AI-agent Hard Stop,
+deliberately not attempted.
+
+**Round 63 removed the last editor-poll writer of a wrapper tree, on the other
+poll.** Round 51 cleaned the ~3 Hz dirty-marker poll of `apvts`/wrapper
+`ValueTree` access; the 24 Hz **settings** re-seed then acquired one of its own,
+because `normalisedUiScale()` wrote `iid::uiScale` back to `InternalState` when
+the persisted percent was not a legal ladder step. That made a display timer an
+opposing writer to `InternalState::replaceFrom`, which `setStateInformation`
+reaches on whatever thread the host chose — a narrow window (it converged after
+one tick per illegal value) but a new pairing on exactly the surface this entry
+covers. The correction moved to `replaceFrom` itself, where the §4.4 read rules
+for every other field already live and where such a value actually enters, so
+both editor polls are now read-only with respect to the wrapper's trees.
+
+**The construction and destruction halves of the MacroEngine drain are not
+equally strong**, recorded 2026-08-03 (review round 29) so the pair is not read
+as fully closed, and NARROWED TWICE since. `startDraining()` closes its race
+STRUCTURALLY — the timer does not exist until both callbacks are assigned, so
+no tick can observe a half-written `std::function`. `stopDraining()` stops the
+timer, drops any posted update, and sets the one-way `drainStopped` latch that
+`drainTick` tests first, so the SEQUENTIAL half is structural too: no trigger —
+timer, posted update, `flushPendingMapping`, `refreshMapping` — can reach the
+owner after teardown begins (round 37; the latch replaced nulling the
+`std::function`s, which raced a tick already about to invoke one — round 36).
+What remains, and what the pair is still not symmetric about, is a
+`timerCallback` that has ALREADY entered: `juce::Timer` offers no join, so a
+tick executing while another thread destroys the processor is not waited for.
+That needs a host that destroys a processor concurrently with its own message
+thread — the same premise class as the rest of this entry, and it closes with
+the same thread-model decision rather than separately.
+
+**Stated more exactly, and made CHECKABLE, round 51.** `timerCallback` and
+`handleAsyncUpdate` both run on the message thread, so destroying the object ON
+that thread leaves no residual at all — one thread cannot be inside a drain and
+inside `~MacroEngine` at once, and `stopTimer()`/`cancelPendingUpdate()`
+returning therefore means no drain is executing and none can start. The residual
+above exists only for a host that destroys the processor OFF the message thread,
+which is precisely this entry's premise. `~MacroEngine` now asserts
+`juce::MessageManager::existsAndIsCurrentThread()`, so that host is reported at
+the point of violation instead of surfacing as a use-after-free downstream. An
+assertion rather than a spin-join deliberately: joining would block a teardown
+thread on the message thread, which deadlocks whenever that message thread is
+itself waiting on the caller — a worse failure than the one it removes, and a
+lock on a path `THREADING_POLICY` keeps lock-free. Debug-only, so the Release
+build the pluginval gate gets is unchanged.
+
 **Workaround:** none required on the hosts tested so far — no case of an
 off-message-thread restore has been observed against this plugin. The entry
 exists because the assumption is load-bearing and undocumented elsewhere.
@@ -86,9 +185,10 @@ which one restores state.
 Evidence [Partially Verified]:
 - Source: `src/MacroEngine.h` (`ScopedRestore`), `src/PluginProcessor.cpp`
   (`setStateInformation`, `switchToSlot`, `applyPresetFile`)
-- Test:   `AnabasisStateTests` `testDrainInsideRestoreIsSuppressed` — models the
-  mid-restore drain single-threaded; the uncovered `replaceState` race is not
-  reproducible headlessly
+- Test:   `AnabasisStateTests` `testDrainInsideRestoreIsSuppressed` (the mapping
+  half) and `testTheWholeTickIsSuppressedInsideARestore` (the wrapper half, the
+  round-32 narrowing) — both model the mid-restore drain single-threaded; the
+  uncovered `replaceState` race is not reproducible headlessly
 - Commit: P1 skeleton, thread-safety pass
 
 ---
@@ -224,6 +324,330 @@ Evidence [Verified]:
 - Commit: PR #5, recorded 2026-08-01
 
 ---
+
+### KI-006 — A sample-rate change silently drops a frozen slot's adaptation from the AUDIO and the readout, while the SAVE keeps it
+
+**Severity:** Medium
+**Status:** Confirmed — **audio half only** (fix deferred: it is a Freeze-semantics decision, not a
+repair). The save half is CLOSED (round 38, corrected in 39, completed in 40); the heading above
+describes what is left, and it used to describe the reverse.
+**Affects:** all platforms/formats. Trigger: Freeze ON with a latched trim
+vector, then any `prepareToPlay` — a host sample-rate or block-size change.
+
+`AnabasisEngine::prepare` calls `AdaptiveEngine::prepare` → `reset()`, which
+zeroes the internal `trims` struct along with the features **and republishes
+them**: `reset()`'s last step is a `publishTrims` call, so all four published
+atomics go to zero too, whatever Freeze says. (This entry asserted the opposite
+until 2026-08-03 — "the PUBLISHED trim atomics are NOT zeroed, and cannot be",
+reasoning from `finishBlock`'s `if (! freeze && audible)` guard and missing the
+`reset()` publish. Corrected against the code, which is the authority.)
+
+The consequence was therefore SYMMETRIC, not one-sided: after a re-prepare the
+engine applies a zero trim vector to the audio, the Advanced overlay reads zeros
+with it, **and the state half went with them**. What never went to zero is the
+wrapper's `liveFrozenTrims` mirror — the copy a load/A-B/undo placed — so a slot
+whose vector arrived that way still serialised the right thing; a vector latched
+LIVE in the session had no mirror, and after a re-prepare there was nothing left
+to save (before round 39 the save wrote the post-reset zeros, an INVALID vector
+that the next load re-injected; after it, no `FROZEN_TRIMS` child at all).
+
+**The state half is CLOSED (round 40, re-implemented correctly at round 41,
+slot-scoped at round 42) and the audio half is what remains.** The fix is an ownership statement rather than
+a Freeze decision: the ENGINE owns the durable copy, in `AdaptiveEngine`'s
+**retained** trim set — four lock-free scalars plus a release-stored flag that
+`reset()` does not clear, so the latched vector outlives a re-prepare exactly as
+`learned`/`refOnsetRate`/`refTiltDb` always have. The PUBLISHED set keeps its
+current meaning (what the DSP is applying, zeroed by `reset()`), which is what
+keeps the overlay honest. The save prefers the engine whenever
+`! frozenRestorePending() && hasRetainedTrims()` — both clauses in
+`engineFrozenTrimsIfLive()` — and falls back to the wrapper's mirror for the
+staged-but-unapplied window, which is the only window the mirror covers.
+Guarded by `testPreparedStateAndSlotOwnership` case 4 (`liveLatch:`), which
+asserts the two sets part company at the re-prepare.
+
+**Round 42 added the slot scope the retained set could not carry by itself.**
+`FROZEN_TRIMS` is per-slot; the retained vector is engine-wide and knows nothing
+about A/B. After a switch into a freeze-ON slot holding no vector of its own,
+nothing stages a restore (the stage is gated on the mirror being valid), the
+generation pair stays equal, and the incoming slot's next save serialised the
+OUTGOING slot's latch as its own — after which the next A/B or undo restore
+injected it. The retained set is a runtime CACHE of the last latch and may only
+answer for the slot it was filled under, so the wrapper records the retained
+GENERATION whenever the live surface's frozen ownership changes
+(`adoptFrozenMirror`, the single writer of the mirror) and adopts the engine's
+answer only when the generation has advanced past it. `testAFrozenLatchDoesNotFollowTheSlotSwitch`.
+
+**Round 40's version of this fix was itself a defect, recorded because the shape
+recurs:** it declared the wrapper's `juce::ValueTree` mirror the durable owner
+and had `prepareToPlay` copy the latch into it. `prepareToPlay` is a host
+callback JUCE does not deliver on the message thread, and the editor's
+`presetDirty()` poll read and `createCopy()`d that same member continuously (it
+went through `saveSlotFromLive()` until round 51 moved the marker onto
+`presetShapeFromLive()`, which touches no ValueTree at all) — both sides gated
+on Freeze being ON, so the windows coincided exactly rather than being disjoint. ThreadSanitizer reports it as a data race on
+`ReferenceCountedObjectPtr<ValueTree::SharedObject>::get()` plus one on the
+refcount increment; the current code is TSAN-clean on the same stimulus
+(`testTheFrozenLatchNeedsNoThreadCrossing`). The lesson is general: state that
+must survive a re-initialisation should be RETAINED where it already lives, not
+copied across a thread boundary to somewhere more durable.
+
+What is still open, unchanged: after a re-prepare the ENGINE applies a zero trim
+vector and the Advanced overlay reads zeros until the next load, A/B or undo
+re-injects the mirror. Closing that means "keep the trims across `reset()`",
+covering the published atomics as well as the internal struct since both are
+cleared together — which is a Freeze-semantics change, an Architecture Review
+Gate item and an AI-agent Hard Stop (`MODE_AND_ADAPTATION_POLICY` Enforcement),
+so it stays owner's business rather than a repair.
+
+**Found by** the adversarial verification pass over review round 24
+(2026-08-03), not by the review itself; it PREDATES ADR-0014 (P4 shipped the
+same reset), which is why it is recorded rather than folded into that round's
+fixes.
+
+**Why it is not simply "keep the trims across reset".** That is the likely
+resolution — the trim vector is a bounded, rate-independent control value, not
+signal state, and carrying it would also make an un-frozen re-prepare re-slew
+from where it was instead of jumping to zero — but it changes what
+`MODE_AND_ADAPTATION_POLICY` invariant 3's Freeze clause promises across a
+discontinuity, which is an owner/ADR call, not a bug fix. It would also have to
+carry the PUBLISHED copy, not just the internal struct — see the correction
+above. The alternative (re-stage the vector from the wrapper at
+`prepareToPlay`) used to be blocked by the same asymmetry — `liveFrozenTrims`
+held one only after a load — and round 41 removes that objection from the other
+side: the engine's RETAINED set holds a live latch too, so the audio-side fix no
+longer needs the wrapper at all. It would be a one-line re-injection from the
+retained values at the end of `reset()`. It is still not done here, because that
+IS the Freeze-semantics change this section defers; the retained set deliberately
+stops at the serialization boundary and feeds no audio path.
+
+**The SAVE half of the same gap, added 2026-08-03 (review round 27), CLOSED 2026-08-03 (round
+38).** The description above is about the audio; the capture had the mirror-image problem.
+`saveSlotFromLive` read `publishedTrim*()` whenever Freeze was on and no restore was pending — and
+on an instance that was prepared but had never PROCESSED a block, those atomics are all zero, so
+the session serialised an all-zero `FROZEN_TRIMS` for a slot the user believes holds a latched
+vector and the next load injected zeros. It needed no answer to the audio half after all: the
+capture now also requires `AdaptiveEngine::hasPublishedTrims()`, because "all four read 0" is
+otherwise indistinguishable between *measured, and the answer is no trim* and *initialisation* —
+and a value nothing measured cannot be more truthful than the one the slot already holds. The flag
+tracks the CURRENT contents of the four atomics rather than "has one ever been published": it is
+set by an audible `finishBlock` and by an ADR-0014 `injectTrims`, and CLEARED by `reset()` along
+with the values. Round 38 shipped it as a one-way flag set inside `publishTrims()` — which
+`reset()` also calls — so it read true for every prepared instance and the guard was inert; round
+39 made it mean what its name says. Round 40 closed the remaining save case — a latch established
+LIVE, whose only record was the atomics the re-prepare cleared — and round 41 re-implemented that
+closure without a thread crossing, by retaining the vector in the engine instead of copying it into
+the wrapper's mirror from a host callback (see above). The AUDIO half above is untouched and still
+needs the owner call.
+
+**For the post-v0.1.0 fine review.**
+
+### KI-007 — Preset/Freeze bookkeeping edges the fine review must settle together
+
+**Severity:** Low (each is display or recall bookkeeping; none changes a rendered sample on its own)
+**Status:** Recorded — opened by review round 25 (2026-08-03) with three items and extended by
+rounds 27, 28, 31 and 33; deliberately NOT fixed, because each is a semantics question rather than a
+defect, and several are the same question KI-006 asks. **The count is deliberately not in the
+heading**: it was "Three" for one round after the fourth item landed, which is exactly how a
+fine-review checklist gets read as shorter than it is. Numbered items below are the list of
+record.
+
+1. **A factory-preset apply keeps the slot's frozen-trim vector.** `applyFactoryPreset` clears
+   `liveBaseline` and the detach mask but not `liveFrozenTrims`, and `freeze` is
+   preset-excluded — so a slot that was frozen carries the PREVIOUS programme's latched vector
+   across a preset change, the next save serialises it, and the next A/B or undo restore
+   re-injects it. Whether a preset should carry or clear the Freeze memory is a
+   `MODE_AND_ADAPTATION_POLICY` invariant-3 question, and it is the same question **KI-006**
+   asks about a re-prepare. Settle them together or the two answers will disagree.
+
+2. **Preset-ring navigation identifies the current entry by NAME.** `stepPreset`
+   (`src/gui/PluginEditor.cpp`) matches `currentPresetName()` against the factory table first and
+   the user files second, so a user preset saved as "EDM Club" resolves to the factory index and
+   the arrows walk from the wrong place. Robust fix is to track the last applied SOURCE (factory
+   index vs file) instead of re-deriving it from the display string — which is state the editor
+   does not currently keep, hence not a one-line change.
+
+3. **RESOLVED 2026-08-03 (round 38) — undo/redo restore `presetBaseline`.** They restored the whole
+   SLOT tree, `presetName` included, while `applyFactoryPreset` / `applyPresetFile` /
+   `savePresetFile` reset the dirty datum — so undoing a preset apply left the name and the datum
+   describing different presets. Neither of the two routes this entry weighed was needed: the
+   baseline did NOT have to go into the StateSet (that would be an ADR-0007 schema change and a
+   Hard Stop) and undo did not have to recompute it. The stacks are session-local and never
+   serialized, so a history entry is now the pair — `{ slot, baseline }` — taken and restored
+   together at the one place entries are made.
+
+4. **RESOLVED 2026-08-03 (round 37) — the preset menu's raw LookAndFeel pointer.** `showPresetMenu`
+   handed the menu `&lnf`, an editor member the menu window could outlive if a host tore the window
+   down while it was open — the one part of round 24's `SafePointer` hardening the look-and-feel did
+   not cover. Both repairs considered here carried their own risk (`dismissAllActiveMenus()` in the
+   destructor also closes another instance's menu; a shared static trades it for static-destruction
+   order at DLL unload), and neither was needed: the menu is now given
+   `Options::withParentComponent (this)`, so JUCE's MenuWindow is a CHILD of the editor and cannot
+   outlive it, and `getLookAndFeel()` reaches `lnf` up the parent chain with no pointer to dangle.
+   Kept numbered rather than removed so the references in `HANDOVER.md` and the coverage audit
+   still resolve.
+
+5. **RESOLVED 2026-08-04 (round 51) — the dirty marker keyed on the whole slot tree, so
+   preset-EXCLUDED parameters marked a preset as edited.** The spec question this item held open
+   is answered, and by the code that already knew the answer: `presetShapeFromLive()` projects the
+   live state onto exactly what `PresetManager::savePreset` writes — the non-excluded parameters at
+   their SNAPPED preset values (`PresetManager::presetValueOf`, now shared by the writer and the
+   projection so the two cannot drift) plus the `DETACH_MASK`, which presets do carry. `BASELINE`,
+   `FROZEN_TRIMS`, the exact-`raw` attribute and every preset-excluded id are dropped, which
+   settles the "second input" below with them: trim CONTENT cannot reach the comparison because
+   `FROZEN_TRIMS` cannot. Dropping `raw` also fixed the converse case nobody had recorded — a
+   mid-step raw move on a discrete parameter marked a preset edited although the value a preset
+   stores had not moved. `testTheDirtyMarkerMeasuresOnlyWhatAPresetCanCarry`. A second consequence
+   is threading rather than display: the editor's ~3 Hz poll no longer reaches `saveSlotFromLive()`,
+   so it no longer takes the APVTS tree lock (see KI-008) or reads the wrapper's ValueTree members
+   (KI-003) — it walks the fixed parameter list and their atomics.
+   **Round 52 made the "exactly `savePreset`'s content" claim structural rather than factual.**
+   Round 51 shared the two RULES (`isPresetExcludedParam`, `presetValueOf`) but left the two WALKS
+   distinct — the writer over `apvts.state`'s PARAM children, the projection over
+   `getParameters()`. They agreed only because APVTS happens to create one tree child per
+   parameter, which is a fact about JUCE rather than an invariant of this code: a parameter
+   registered without a node (or a node without a parameter) would have put content in the file the
+   marker could not see, or the reverse. `PresetManager::forEachPresetParameter` is now the single
+   traversal both run, visiting in id order so the bytes of existing `.anabasis` files are
+   unchanged (`getParameters()` is registration order; the tree's was id order, and registration
+   order would also churn again on any future layout reshuffle).
+   `testThePresetWriterAndTheDirtyMarkerCoverTheSameParameters` checks both directions — the two
+   collections against each other, and every id the file carries against the marker.
+   The original text is kept below because two other entries reference its reasoning.
+
+   `presetDirty()` compared `presetBaseline` against a fresh `saveSlotFromLive()`, which
+   carries the FULL parameter set plus the `FROZEN_TRIMS` child. `freeze` is preset-excluded
+   (`isPresetExcludedParam`), so no preset can ever have carried it — yet toggling Freeze changes
+   the slot tree twice over (the `freeze` PARAM node, and the appearance of `FROZEN_TRIMS` once
+   the capture branch fires) and flips the name to edited. The view-tier exclusions behave the
+   same way. Display-only. The fix is a comparison that drops what a preset cannot carry, which
+   means deciding exactly that set (excluded params, `FROZEN_TRIMS`, `BASELINE` — but NOT
+   `DETACH_MASK`, which presets do carry) — a small spec question, and the reason it is recorded
+   here with items 1–4 rather than guessed at inside a no-new-bugs round.
+   **One input to that decision is now settled** (round 33 recorded it, round 38 closed it): a
+   freeze-OFF slot no longer serialises a `FROZEN_TRIMS` child at all. `frozen` used to start from
+   the carried mirror unconditionally, so a slot that was frozen, loaded, then un-frozen wrote the
+   old vector into every later save — a latch serialised by a slot that §5.4/MODE invariant 3 give
+   nothing to latch. That was a state-consistency defect on its own, and it removes the
+   `FROZEN_TRIMS` half of this item's noise; what REMAINS open is the preset-EXCLUDED parameter
+   half (`freeze` itself, and the view-tier ids), which is still the spec question above.
+   **A second input, added round 41: the CONTENT of `FROZEN_TRIMS` is a function of when Freeze was
+   engaged, not of the parameter state.** With Freeze ON the latch holds, so the comparison is
+   stable moment to moment — but the values latched are whatever the last audible block had
+   produced, so engaging Freeze at two different instants over identical parameters yields two
+   different slot trees, and therefore two different answers to "is this preset edited?". This is
+   the same spec question one level down: if the comparison drops what a preset cannot carry, the
+   trim content goes with it. Recorded because the item read as being only about the `freeze` PARAM
+   node.
+
+6. **The spectrum view freezes rather than decaying when audio stops.**
+   `SpectrumView::tick` returns early when neither capture ring's write count moved, so the
+   per-bin EMA stops and the last analysed trace stays on screen indefinitely after a transport
+   stop or a plugin suspend. It is cheap and reads as deliberate ("idle: nothing new"), but most
+   analysers decay to the floor, and a frozen trace can be mistaken for live signal. Which
+   behaviour this product wants is a listening-pass call, not a repair — the fix (run the EMA
+   toward the floor on an idle tick) is three lines once the answer is known.
+
+7. **RESOLVED 2026-08-03 (round 37) — Copy A→B and the destination's undo history.**
+   `copySlotToOther()` replaced `storedSlot` but not `undoStacks[1 - activeSlot]`, so switching to
+   the copied-into slot and pressing undo restored a pre-copy state the user never edited from the
+   copied values — silently discarding the copy AND that slot's last edit, because the copy itself
+   is not an undo step. It needed no new semantics: `setStateInformation` already clears both
+   slots' stacks because "a load starts a fresh history", and a Copy is that event for one slot, so
+   `copySlotToOther()` clears the destination's stacks too. What REMAINS open is only the narrower
+   question item 3 asks (whether undo should also restore the dirty baseline); the two were
+   recorded together and only the history half is settled.
+
+8. **RESOLVED 2026-08-03 (round 37) — a macro gesture that moves nothing now re-lands the curve.**
+   `audioProcessorParameterChangeGestureBegin` cleared the detach mask for a macro-knob gesture but
+   armed no mapping, so a click-and-release left the freshly re-engaged parameters holding the
+   user's off-curve values. Recorded as a spec question, and settled by the specification rather
+   than by a new choice: `MODE_AND_ADAPTATION_POLICY` invariant 3 already reads "the next macro
+   gesture re-engages every detached parameter **through the normal rate-limited glide**", and
+   round 30 had already fixed the identical "re-engaged but off-curve" shape on the tick path. The
+   begin now calls `MacroEngine::armMapping()` alongside the re-engage — a relaxed store, so it is
+   safe from whichever thread the gesture arrives on — and the two re-engagement routes (gesture
+   and `resetToMacro()`) do the same two things. Inert when nothing was detached, because
+   `setParam` skips writes that would not change the value.
+
+9. **RESOLVED 2026-08-03 (round 38) — reset-to-macro is undoable.** It clears the detach mask and
+   re-lands the curve on all nine managed parameters, but pushed nothing onto the §7 stack, and its
+   writes are ungestured so no drag step appeared either — leaving the one Simple-view affordance
+   that changes nine parameters at once as the only one the user could not take back. It needed no
+   new grammar: the preset applies already push their pre-state before changing anything, so
+   `resetToMacro()` does the same. No duck request was added — unlike a preset apply or an undo it
+   rewires no discrete stage, and DSP invariant 8's click-free enumeration is about the bulk swaps
+   that do. Item 7's Copy A→B, recorded here as the same shape, was settled in round 37.
+
+**For the post-v0.1.0 fine review, alongside KI-006.**
+
+---
+
+### KI-008 — Two JUCE locks are taken in opposite orders on two reachable paths (potential deadlock)
+
+**Severity:** Medium
+**Status:** Confirmed by ThreadSanitizer (fix deferred — the change is to §7's snapshot point, an
+Architecture Review Gate item)
+**Affects:** all platforms/formats. Requires a host that delivers `setStateInformation` — or any
+APVTS parameter write — on a thread other than the message thread, concurrently with a
+gesture-begin on the SAME parameter. The KI-003 premise, one step worse than a torn read.
+
+Two mutexes, both JUCE's own:
+
+* **M0** — a `juce::AudioProcessorParameter`'s listener lock, held while it dispatches
+  `parameterGestureChanged` / `parameterValueChanged` to its listeners.
+* **M1** — the single `CriticalSection` inside `juce::AudioProcessorValueTreeState` that guards the
+  parameter tree (`copyState()` and `ParameterAdapter::setDenormalisedValue` both take it).
+
+They are acquired in **both** orders:
+
+| Order | Path |
+|---|---|
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:122`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
+
+One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
+while a host thread restores state and writes P.
+
+**The editor WAS a continuous acquirer of M1 — that half is closed** (recorded round 49, removed
+round 51). `refreshPresetDisplay` polls `presetDirty()` on the 24 Hz tick, throttled to every 8th
+tick, and that used to reach `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`,
+which flushes pending parameter values and takes M1 — so with the window open the message thread
+acquired M1 at ~3 Hz all the time, plus immediately on every user action (the `recomputeNow` path).
+It never added an EDGE to the inversion; it made the M0 → M1 side something the plugin did
+continuously rather than only at a gesture-begin, which is what a probability estimate for this
+entry rests on. The marker now compares `presetShapeFromLive()`, which reads the fixed parameter
+list and each parameter's own atomic and takes no tree lock at all, so the only M1 acquisition left
+on the message thread is the gesture-begin snapshot itself — back to "at a gesture-begin", which is
+the rate this entry was originally scoped for. **The inversion is unchanged and the entry stays
+open:** the two edges are exactly as tabulated above, and the fix is still the §7 snapshot-point
+decision. That is the interleaving KI-003 is about, and the §5.3 machinery exists *because*
+gestures and parameter writes on the same managed parameter do overlap across threads.
+
+**Why it is not fixed here.** The M0 → M1 edge is the §7 undo grammar's pre-state snapshot, and it
+has to be taken *at* gesture begin — deferring it to the next drain tick would capture a state the
+first edit had already changed, which is a different undo grammar rather than a repair. The other
+edge is inside JUCE. Removing the inversion therefore means changing where §7 captures its
+pre-state (for instance, keeping a continuously maintained snapshot that the callback only reads),
+which is an undo-architecture change and an **Architecture Review Gate** item.
+
+**PREDATES this review series** — it arrived with the P6 §7 bracketing and is not introduced by the
+round-40/41 ownership work; it surfaced only because round 41 added the first two-threaded stimulus
+to the suite, which is what let ThreadSanitizer's deadlock detector see both orders.
+
+**Workaround:** none required on the hosts tested so far; no off-message-thread restore has been
+observed against this plugin (the same standing caveat as KI-003).
+**Cause:** taking a lock that guards the whole parameter tree from inside a parameter's own
+listener callback.
+
+Evidence [Verified]:
+- Source: `src/PluginProcessor.cpp:122` (the M0 → M1 edge); JUCE
+  `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
+- Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
+  stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite
+  failure — the suite passes. Reproduce with a `-fsanitize=thread` build of the state suite.
+- Commit: P6 §7 gesture bracketing (pre-existing); observed 2026-08-03 (round 41)
+
+**For the post-v0.1.0 fine review — the highest-severity open item in this family.**
 
 ## Standing note for P1 onward
 

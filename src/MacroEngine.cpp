@@ -6,16 +6,95 @@ MacroEngine::MacroEngine (juce::AudioProcessorValueTreeState& apvtsIn) : apvts (
     apvts.addParameterListener (pid::loudness,  this);
     apvts.addParameterListener (pid::character, this);
     apvts.addParameterListener (pid::tone,      this);
+    // The timer is NOT started here — see startDraining(). Everything the
+    // listener above can do before then is set a flag; nothing reads the
+    // std::function members until a drain runs.
+}
+
+void MacroEngine::startDraining()
+{
     // Drains a flag set from a thread that may not post messages safely. 30 ms
     // is well inside the message-thread-rate mapping the macro layer promises
     // (ADR-0005 §5.2) and costs an atomic load when idle.
+    //
+    // Deliberately separate from the constructor: the tick reads `isDetached`
+    // (through applyMapping) and `onDrainTick`, and the owner can only assign
+    // those AFTER this object exists. Starting the timer in the constructor
+    // left a window in which the message thread could run a tick while the
+    // constructing thread was still assigning a std::function — and the
+    // constructing thread is not promised to be the message thread (VST3 does
+    // not promise it for `setStateInformation` either; KI-003). Owner calls
+    // this once, after wiring.
     startTimer (30);
+}
+
+void MacroEngine::stopDraining()
+{
+    // Stop the repeating tick, then drop any single posted update — after
+    // this returns no NEW tick can start, which is the window this closes.
+    // `~MacroEngine` calls THIS function rather than repeating its tail, so the
+    // latch below is set whether or not an owner asked; see there.
+    //
+    // It deliberately does NOT null `onDrainTick`/`isDetached`, and the reason
+    // is the inverse of what it looks like. The residual this cannot close is a
+    // tick ALREADY EXECUTING on the message thread while another thread
+    // destroys the processor (JUCE's Timer offers no join, and a host doing
+    // that has a larger problem than this callback). Assigning the
+    // `std::function`s made that residual strictly WORSE: such a tick has
+    // already entered `drainTick` and is about to invoke `onDrainTick`, so
+    // overwriting it is a data race on a non-atomic object, where leaving it
+    // alone is merely a call into an owner still alive at that instant.
+    //
+    // What the nulling DID buy, and what `drainStopped` now buys without the
+    // race: the SEQUENTIAL guarantee. `drainTick`, `flushPendingMapping` and
+    // `refreshMapping` are all public, so "nothing drains after stopDraining"
+    // was a rule a future caller had to remember rather than something the
+    // object enforced — and after `~AnabasisAudioProcessor` has called this,
+    // the members `onDrainTick` reaches (`liveDetachMask`, the staged bits)
+    // are already destroyed. A one-way atomic latch, read at the top of
+    // `drainTick`, makes it structural in every build and costs a relaxed load
+    // on a path that already performs several. One way on purpose: an object
+    // whose owner has begun teardown never becomes drainable again, so there
+    // is no re-arm for a later caller to get wrong.
+    drainStopped.store (true, std::memory_order_relaxed);
+    stopTimer();
+    cancelPendingUpdate();
 }
 
 MacroEngine::~MacroEngine()
 {
-    stopTimer();
-    cancelPendingUpdate();
+    // `stopDraining()` rather than its two tail calls, so the one-way latch is
+    // set by the OBJECT being destroyed instead of by the owner remembering to
+    // ask first. `~AnabasisAudioProcessor` does ask — that ordering is what
+    // makes `onDrainTick` safe, and it is unchanged — but round 37's whole
+    // point was to stop a structural guarantee resting on a rule a caller has
+    // to remember, and a second owner would have had to remember this one.
+    // Idempotent: the latch is one-way and `stopTimer`/`cancelPendingUpdate`
+    // are no-ops the second time.
+    //
+    // WHAT THIS CLOSES, STATED EXACTLY, because "the residual stands" was both
+    // true and imprecise. `timerCallback` and `handleAsyncUpdate` run on the
+    // MESSAGE thread. Destroy this object on that same thread and neither can
+    // be in flight — a thread cannot be inside a callback and inside this
+    // destructor at once — so `stopTimer()`/`cancelPendingUpdate()` returning
+    // means no drain is executing and none will start: the window is shut, not
+    // narrowed. The residual exists only for a host that destroys the processor
+    // OFF the message thread, where a drain already past the latch check is not
+    // waited for (`juce::Timer` offers no join) and can still reach owner state
+    // being torn down. That is the KI-003 premise, and it is now CHECKABLE
+    // rather than merely written down: the assertion below names the condition
+    // the guarantee rests on, so a host that violates it is reported at the
+    // point of violation instead of surfacing as a teardown crash somewhere
+    // downstream.
+    //
+    // An assertion rather than a spin-join deliberately. Joining would mean
+    // blocking a teardown thread on the message thread, which is the classic
+    // deadlock when that message thread is itself waiting on the caller — a new
+    // failure mode, worse than the one it removes, and it would put a lock on a
+    // path THREADING_POLICY keeps lock-free. Debug-only by construction, so the
+    // Release build the pluginval gate runs is bit-identical to before.
+    jassert (juce::MessageManager::existsAndIsCurrentThread());
+    stopDraining();
     apvts.removeParameterListener (pid::loudness,  this);
     apvts.removeParameterListener (pid::character, this);
     apvts.removeParameterListener (pid::tone,      this);
@@ -38,31 +117,107 @@ void MacroEngine::parameterChanged (const juce::String&, float)
 
 void MacroEngine::handleAsyncUpdate()
 {
-    drainPendingMapping();
+    // The posted path, and it runs the SAME sequence as the timer — see
+    // drainTick(). It called `drainPendingMapping()` alone for one round, which
+    // is the fourth entry point the "all three agree" comment below did not
+    // count: a macro id written on the message thread WITHOUT a gesture (host
+    // automation of loudness/character/tone) posts here, and if a managed edit
+    // had been delivered off-thread in the previous 30 ms its detach bit was
+    // still staged — so the mapping overwrote the user's value, and the next
+    // tick then marked that parameter detached at the value the macro had just
+    // put there.
+    drainTick();
 }
 
 void MacroEngine::timerCallback()
 {
-    drainPendingMapping();
+    drainTick();
 }
 
-void MacroEngine::flushPendingMapping()
+bool MacroEngine::drainTick()
+{
+    // ORDER IS THE CONTRACT, and it is the opposite of what this used to do.
+    // The wrapper's bits go FIRST: they decide the detach mask, and the mapping
+    // below consults that mask through `isDetached` to know which managed
+    // parameters it may write. Mapping first meant that when a macro gesture
+    // and its value change both arrived off the message thread — the only way
+    // the two can reach one tick together — the mapping SKIPPED a parameter the
+    // gesture was about to re-engage, and the mask was cleared a moment later:
+    // the parameter then read as re-engaged while still holding the user's
+    // off-curve value, and nothing re-armed the mapping, so it stayed there
+    // until some later macro move. §5.3's rule is "the next macro-knob gesture
+    // re-engages ALL detached params"; that is only true if the re-engage is
+    // visible to the pass that lands the curve.
+    //
+    // This is the same precedence the wrapper's drain applies INTERNALLY
+    // (detach bits, then the re-engage clears over them), and the same one the
+    // message-thread gesture path gets for free — there `drainDetachBitsSoon`
+    // clears synchronously at gesture begin, before any mapping write.
+    //
+    // EVERY trigger routes through this function — the 30 ms timer, the posted
+    // `handleAsyncUpdate`, and `flushPendingMapping` — because the previous
+    // revision fixed the order here and left `handleAsyncUpdate` calling
+    // `drainPendingMapping()` alone, then claimed in this very comment that
+    // "all three now agree". Counting the paths in prose is how the fourth one
+    // was missed; there is now one sequence and three ways to ask for it.
+    //
+    // A restore in flight suppresses the WHOLE tick, not just the mapping.
+    // The guard used to sit one level down, in `drainPendingMapping`, so the
+    // wrapper's half ran anyway — and the wrapper's half writes
+    // `liveDetachMask`, a plain `juce::StringArray` that the restore is itself
+    // replacing. On the message thread that is only wasted work (the wrapper
+    // stages no bits while `isRestoring()`, and every restore path ends at
+    // `replaceDetachMask`, which drops whatever was staged before it); on the
+    // off-message-thread `setStateInformation` a host may perform, it made the
+    // tick a SECOND concurrent writer of that array, widening the window
+    // KI-003 records rather than leaving it as found. Deferring is
+    // outcome-neutral — the bits are dropped by `replaceDetachMask` exactly as
+    // they would have been had they landed and then been overwritten — and it
+    // is the same rule the mapping half already followed: a restore is not a
+    // gesture, so a gesture racing one belongs to the state being replaced.
+    // Teardown latch FIRST — see stopDraining(). Every trigger routes through
+    // this function, so one test here covers the timer, the posted update,
+    // `flushPendingMapping` and `refreshMapping` alike.
+    if (drainStopped.load (std::memory_order_relaxed))
+        return false;
+
+    if (restoreDepth.load (std::memory_order_relaxed) > 0)
+        return false;
+
+    // RE-ENTRANCY, stated because routing every trigger through here created
+    // it and neither site said so. `onDrainTick` is the WRAPPER's detach
+    // drain, so `refreshMapping()` — called by `applyFactoryPreset` and
+    // `resetToMacro` — now runs that drain synchronously from inside a wrapper
+    // method. Safe, and for a reason rather than by luck: both of those
+    // callers reach `replaceDetachMask()` first, which clears the staged bits
+    // AND the re-engage flag, so the drain below them finds nothing to apply.
+    // The mapping's own `setValueNotifyingHost` writes cannot re-enter either:
+    // they land in `AnabasisAudioProcessor::parameterChanged`, which returns
+    // before `drainDetachBitsSoon()` because `isApplyingMacro()` is true for
+    // the whole of `applyMapping`. Break either of those two and this becomes
+    // a re-entrant mask write in the middle of a preset apply.
+    if (onDrainTick)
+        onDrainTick();
+    drainPendingMapping();
+    return true;   // neither suppressor fired: both halves ran on this thread
+}
+
+bool MacroEngine::flushPendingMapping()
 {
     cancelPendingUpdate();
-    drainPendingMapping();
+    return drainTick();
 }
 
 void MacroEngine::drainPendingMapping()
 {
-    // A restore is in flight: leave the flag ARMED and do nothing. The
-    // restore's ScopedRestore drops it on the way out, which is the §5.3
-    // outcome — "a restore is not a macro gesture" — reached without this
-    // thread writing the nine managed parameters underneath it. Consuming the
-    // flag here instead would be the same outcome by a longer route, but it
-    // would make the drain's behaviour depend on which of the two ran first.
-    if (restoreDepth.load (std::memory_order_relaxed) > 0)
-        return;
-
+    // The restore guard is in `drainTick`, the ONLY caller, and covers this
+    // half too. What it buys here, unchanged from when it sat on this line:
+    // the flag is left ARMED and the restore's ScopedRestore drops it on the
+    // way out, which is the §5.3 outcome — "a restore is not a macro gesture"
+    // — reached without this thread writing the nine managed parameters
+    // underneath it. Consuming the flag under the guard instead would be the
+    // same outcome by a longer route, but would make the drain's behaviour
+    // depend on which of the two ran first.
     if (mappingPending.exchange (false, std::memory_order_relaxed))
         applyMapping();
 }
@@ -73,7 +228,9 @@ void MacroEngine::applyMapping()
     const float c = apvts.getRawParameterValue (pid::character)->load();
     const float t = apvts.getRawParameterValue (pid::tone)->load();
 
-    applying = true;
+    applying.store (true, std::memory_order_relaxed);
+    // A detached parameter is the user's until re-engage (§5.3): the mapping
+    // skips it entirely rather than writing and hoping nobody noticed.
     setParam (pid::limGain,       macro_curves::limGainDb (l));
     setParam (pid::compThreshold, macro_curves::compThresholdDb (l));
     setParam (pid::compRatio,     macro_curves::compRatio (l));
@@ -83,11 +240,13 @@ void MacroEngine::applyMapping()
     setParam (pid::dynTilt,       macro_curves::dynTiltDb (l));
     setParam (pid::eqTilt,        macro_curves::eqTiltDb (t));
     setParam (pid::colourTone,    macro_curves::colourTone (t));
-    applying = false;
+    applying.store (false, std::memory_order_relaxed);
 }
 
 void MacroEngine::setParam (const char* paramID, float denormalisedValue)
 {
+    if (isDetached != nullptr && isDetached (paramID))
+        return;
     if (auto* p = apvts.getParameter (paramID))
     {
         const float norm = p->getNormalisableRange().convertTo0to1 (

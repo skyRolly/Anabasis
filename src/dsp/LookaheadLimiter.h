@@ -74,8 +74,14 @@ public:
             wedgeIndices[ch].assign ((size_t) maxWindowSamples + 3, 0);
         }
         truePeak.prepare();
-        aRelFast = onePoleMs (kAutoFastMs);
-        aRelSlow = onePoleMs (kAutoSlowMs);
+        // prepare() means "clean state": the ADR-0013 trim scale is per-block
+        // engine state, not a prepared setting, so it starts neutral and
+        // AnabasisEngine::process rewrites it before the first audible sample.
+        // Inheriting the last session's scale here would give a standalone user
+        // of this class (the bench's limiter section) a silently scaled release.
+        autoScale = 1.0f;
+        aRelFast = onePoleMs (kAutoFastMs * autoScale);
+        aRelSlow = onePoleMs (kAutoSlowMs * autoScale);
         linkSm.reset (sampleRate, 0.020);
         preserveSm.reset (sampleRate, 0.020);
         hpfFreqSm.reset (sampleRate, 0.020);
@@ -122,8 +128,8 @@ public:
     void setRate (double newRate) noexcept
     {
         sr = newRate;
-        aRelFast = onePoleMs (kAutoFastMs);
-        aRelSlow = onePoleMs (kAutoSlowMs);
+        aRelFast = onePoleMs (kAutoFastMs * autoScale);
+        aRelSlow = onePoleMs (kAutoSlowMs * autoScale);
         // reset() SNAPS each smoother to its target — a latch is a silent-
         // bottom event (the engine ducks around it), so no glide is owed.
         linkSm.reset (newRate, 0.020);
@@ -182,6 +188,19 @@ public:
     }
 
     void setAutoRelease (bool b) noexcept        { autoRelease = b; }
+
+    // ADR-0013 (resolves OQ-016): the §5.4 release trim reaches the AUTO
+    // path by scaling BOTH pole time-constants by the same 2^octaves factor —
+    // the two-stage character (fast:slow ratio) is preserved, only the overall
+    // release speed adapts. Per block, like the manual release: a rate, not a
+    // level, so a boundary change cannot step the output (the envelope is the
+    // smoother). Factor 1 recomputes the exact default alphas.
+    void setAutoReleaseScale (float factor) noexcept
+    {
+        autoScale = juce::jlimit (0.5f, 2.0f, factor);   // ±1 octave, the trim's bound
+        aRelFast  = onePoleMs (kAutoFastMs * autoScale);
+        aRelSlow  = onePoleMs (kAutoSlowMs * autoScale);
+    }
     void setStyle (int s) noexcept               { style = juce::jlimit (0, 2, s); }
     void setTransientPreserve (float t) noexcept
     {
@@ -413,6 +432,7 @@ private:
     double sr           = 48000.0;
     int    maxWindow    = 480;
     float  aRelManual   = 0.01f, aRelFast = 0.01f, aRelSlow = 0.001f;
+    float  autoScale    = 1.0f;   // ADR-0013: the release trim's 2^octaves
     juce::SmoothedValue<float> linkSm { 1.0f }, preserveSm { 0.0f }, hpfFreqSm { 20.0f };
     bool   primed       = false;
     int    style        = 0;

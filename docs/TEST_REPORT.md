@@ -120,4 +120,22 @@ P3 meter publication work.
 
 ## Not yet measured (do not cite)
 
-CPU/performance budget (P2/P6, needs a recorded machine spec), the file-based EBU R128 vector sweep, the dBTP meter against the BS.1770 vector set (P3), listening results (P6).
+The file-based EBU R128 vector sweep, the dBTP meter against the BS.1770 vector set (P3),
+listening results (P6). *(CPU/performance stood in this list until 2026-08-03 while the section
+below already measured it — the line was not updated when the bench landed.)*
+
+## Performance (2026-08-02, `AnabasisBench` — full matrix in `docs/architecture/PERFORMANCE_BUDGET.md`)
+
+Budget case **48 kHz · 512 · 4× OS · working state: 3.0 % of one core** (Intel Xeon @ 2.10 GHz,
+gcc 13.3.0, Release at the BENCH target's flag set — not the plugin's; `PERFORMANCE_BUDGET.md`'s
+build-configuration note owns that distinction and is not restated here — median ns/sample of the
+timed `process()` region, 5×1 s runs) against the
+brief-§10 target of ≈5 % on a modern desktop core. Null path ≈1.3 %; the 16× quality extreme
+9.2 % (48 kHz) / 20.2 % (96 kHz). Machine + method travel with every quote (C2).
+
+**The per-stage standalone costs are NOT repeated here.** They lived in this paragraph as a second
+copy and went stale exactly as a second copy does: round 46 corrected the per-stage harness (the
+stimulus generator had been inside the timed region) and re-measured, and four of the five figures
+here still read at their pre-correction values — the project's own authority document had already
+established them as wrong in the unsafe direction. `docs/architecture/PERFORMANCE_BUDGET.md` owns
+the table and the verdicts; quote it, not this file.
