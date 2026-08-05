@@ -10,7 +10,9 @@ SpectrumView::SpectrumView (AnabasisAudioProcessor& p) : processor (p)
     fftData.resize ((size_t) kSize * 2);
     inDb.assign (kBins, -120.0f);
     outDb.assign (kBins, -120.0f);
-    setTooltip ("Spectrum");   // owner wording TODO (C8); identifier only
+    // Fires over the corner chip only (`hitTest` narrows the pointer claim),
+    // so the hint names the chip's ACTION, not this view. R2 item-11 wording ⊕.
+    setTooltip ("Switch to the gain-reduction history");
 }
 
 void SpectrumView::visibilityChanged()

@@ -1,12 +1,96 @@
 #include "PluginEditor.h"
 #include "../PluginProcessor.h"
+#include <cstring>
 
 using namespace abgui;
 
-// Tooltips carry the parameter's registry display name plus any DESIGN-
-// specified note; free prose is owner-supplied wording (C8) and is NOT
-// invented here — the mechanism ships, the copy lands when specified.
-static juce::String tidyTip (const juce::String& tip) { return tip.trim(); }
+// The C8 rule ("free tooltip prose is owner-supplied, not invented") was
+// DISCHARGED for tooltips by the round-2 item-11 directive: the owner asked
+// for a generated complete set, so the copy below ships ⊕ instead of waiting.
+// Tooltips read terser without a trailing full stop (the sibling's rule,
+// ADR-0009). Applied centrally so every control set up through the helpers is
+// covered. This was a stub (`trim()` only) while the tips themselves were just
+// the registry names; both halves became real with the R2 item-11 tooltip set.
+static juce::String tidyTip (const juce::String& tip)
+{
+    auto t = tip.trim();
+    while (t.endsWithChar ('.')) t = t.dropLastCharacters (1).trimEnd();
+    return t;
+}
+
+// ----------------------------------------------------------------------------
+//  The parameter tooltip set (R2 item 11, 2026-08-05 owner directive) — one
+//  descriptive line per parameter, in the sibling's tooltip voice (terse,
+//  plain " - " dash, no trailing period; `tidyTip` enforces the last rule).
+//  Held in ONE table so a knob and its Simple-view twin (ceiling, truePeakMode)
+//  can never drift apart. Accessibility titles deliberately do NOT read these:
+//  they stay the registry names (brief §8), so a screen reader announces what
+//  the automation lane shows, and the hover hint stays free to explain.
+//  Wording ⊕ for the fine review, like all product copy taken under the
+//  standing approval.
+// ----------------------------------------------------------------------------
+static juce::String tipFor (const char* id)
+{
+    struct Row { const char* id; const char* tip; };
+    static constexpr Row rows[] = {
+        { pid::bypass,            "" },   // the red pill labels itself (sibling: no tip)
+        { pid::advancedMode,      "Per-stage control over the same sound - switching views never changes it" },
+        { pid::loudness,          "How hard the adaptive chain pushes - 0 adds no push, but the Ceiling still holds" },
+        { pid::character,         "Clean to Colour - how much of the push comes from saturation rather than clean limiting" },
+        { pid::tone,              "Dark to bright tilt of the overall result" },
+        { pid::ceiling,           "The true-peak output limit - nothing leaves the plugin above it" },
+        { pid::freeze,            "Hold the adaptive trims exactly where they are now" },
+        { pid::loudnessComp,      "Listen at matched loudness, so louder can't pass for better" },
+        { pid::deltaMonitor,      "Solo the difference - hear exactly what the processing removes" },
+        { pid::inputGain,         "Level into the chain, before any processing" },
+        { pid::scHpfFreq,         "Sidechain high-pass for both detectors - keeps low end from pumping the compressor and limiter" },
+        { pid::compRatio,         "How strongly the glue compressor reduces past the threshold" },
+        { pid::compThreshold,     "Where the glue compressor starts to work" },
+        { pid::compAttack,        "How quickly the compressor responds to a level rise" },
+        { pid::compRelease,       "How quickly the compressor recovers" },
+        { pid::compAutoRelease,   "Programme-dependent release - two stages follow the material" },
+        { pid::compKnee,          "Width of the soft knee around the threshold" },
+        { pid::compDetector,      "RMS averages the level, Peak follows every transient" },
+        { pid::compMix,           "Parallel compression - blend compressed with dry" },
+        { pid::clipShape,         "Hard to soft clipping curve - shown live in the display" },
+        { pid::clipDrive,         "Push into the clipper, level-compensated - adds density, not volume" },
+        { pid::clipMix,           "Blend clipped with dry" },
+        { pid::colourModel,       "The saturation voicing - Clean, Tape, Tube or Transistor" },
+        { pid::colourBalance,     "Odd to even harmonic balance of the colour" },
+        { pid::colourTone,        "Dark to bright voicing of the added harmonics" },
+        { pid::colourDepth,       "How much colour the stage adds" },
+        { pid::dynTilt,           "Dynamic Tame - softens harsh highs only when the material turns aggressive" },
+        { pid::limGain,           "The push into the limiter" },
+        { pid::lookahead,         "How far ahead the limiter sees - longer catches transients more cleanly" },
+        { pid::limRelease,        "How quickly the limiter recovers" },
+        { pid::limAutoRelease,    "Programme-dependent release - two stages follow the material" },
+        { pid::limStyle,          "Release voicing - Transparent, Punchy or Loud" },
+        { pid::stereoLink,        "How much both channels share one gain - full link keeps the image stable" },
+        { pid::transientPreserve, "Keeps attack transients alive through heavy limiting" },
+        { pid::truePeakMode,      "Limit inter-sample peaks - the Ceiling holds in dBTP" },
+        { pid::eqTilt,            "Tilts the whole spectrum around ~700 Hz" },
+        { pid::eqLowShelfFreq,    "Low shelf corner frequency" },
+        { pid::eqLowShelfGain,    "Low shelf level" },
+        { pid::eqHighShelfFreq,   "High shelf corner frequency" },
+        { pid::eqHighShelfGain,   "High shelf level" },
+        { pid::eqBell1Freq,       "Bell 1 centre frequency" },
+        { pid::eqBell1Gain,       "Bell 1 level" },
+        { pid::eqBell1Q,          "Bell 1 width - higher is narrower" },
+        { pid::eqBell2Freq,       "Bell 2 centre frequency" },
+        { pid::eqBell2Gain,       "Bell 2 level" },
+        { pid::eqBell2Q,          "Bell 2 width - higher is narrower" },
+        { pid::eqPosition,        "EQ before the compressor or after the limiter - the Ceiling holds either way" },
+        { pid::dither,            "Bit-depth dither for the final export - Off, 16-bit or 24-bit TPDF" },
+        { pid::ditherShaping,     "Shape the dither noise away from where the ear is most sensitive" },
+    };
+    for (const auto& r : rows)
+        if (std::strcmp (r.id, id) == 0)
+            return r.tip;
+    // Reaching here means a parameter was added without a tooltip — make the
+    // gap visible in a debug build instead of silently hoverless.
+    jassertfalse;
+    return {};
+}
 
 // The build system defines both (CMakeLists `target_compile_definitions`, for the
 // plugin AND the state-test target that constructs this editor). The fallbacks
@@ -201,6 +285,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     titleButton.onClick = [this] { showAbout (true); };
     addAndMakeVisible (titleButton);
 
+    abControl.setTooltip ("A/B Compare");   // the sibling's exact wording (no period)
     abControl.getActive = [this] { return processor.activeSlotIndex(); };
     abControl.onToggle  = [this]
     {
@@ -211,6 +296,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addAndMakeVisible (abControl);
     registerAnimated (abControl);
 
+    copyButton.setTooltip (tidyTip ("Copy the current settings into the other A/B slot."));
     copyButton.onClick = [this] { processor.copySlotToOther(); };
     addAndMakeVisible (copyButton);
     registerAnimated (copyButton);
@@ -240,6 +326,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // and it is not one a cleanup pass should answer.
     undoButton.setComponentID ("icon");
     redoButton.setComponentID ("icon");
+    undoButton.setTooltip ("Undo");
+    redoButton.setTooltip ("Redo");
     undoButton.onClick = [this] { processor.undo(); refreshPresetDisplay (true); };
     redoButton.onClick = [this] { processor.redo(); refreshPresetDisplay (true); };
     addAndMakeVisible (undoButton);
@@ -251,8 +339,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addAndMakeVisible (settingsButton);
     registerAnimated (settingsButton);
 
-    setupToggle (advancedToggle, pid::advancedMode, "ADV", paramName (pid::advancedMode));
-    setupToggle (bypassToggle, pid::bypass, "BYPASS", paramName (pid::bypass));
+    setupToggle (advancedToggle, pid::advancedMode, "ADV", tipFor (pid::advancedMode));
+    setupToggle (bypassToggle, pid::bypass, "BYPASS", tipFor (pid::bypass));
     bypassToggle.setComponentID ("bypass");   // red-pill LookAndFeel variant
 
     presetPrev.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x2039));
@@ -312,6 +400,9 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         }
         refreshPresetDisplay (true);
     };
+    presetPrev.setTooltip ("Previous preset");
+    presetNext.setTooltip ("Next preset");
+    presetName.setTooltip ("Presets");   // short, no period — the sibling's rule
     presetPrev.onClick = [stepPreset] { stepPreset (-1); };
     presetNext.onClick = [stepPreset] { stepPreset (+1); };
     presetName.onClick = [this] { showPresetMenu(); };
@@ -322,7 +413,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // -- COMP panel ----------------------------------------------------------
     auto rotary = [this, &paramName] (Knob& k, juce::Label& l, const char* id)
     {
-        setupRotary (k, l, paramName (id), paramName (id));
+        setupRotary (k, l, paramName (id), tipFor (id));
         attachSlider (k, id);
     };
     rotary (ratioK, ratioL, pid::compRatio);
@@ -331,8 +422,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     rotary (releaseK, releaseL, pid::compRelease);
     rotary (kneeK, kneeL, pid::compKnee);
     rotary (compMixK, compMixL, pid::compMix);
-    setupToggle (compAutoToggle, pid::compAutoRelease, "AUTO", paramName (pid::compAutoRelease));
-    setupCombo (detectorBox, pid::compDetector, paramName (pid::compDetector));
+    setupToggle (compAutoToggle, pid::compAutoRelease, "AUTO", tipFor (pid::compAutoRelease));
+    setupCombo (detectorBox, pid::compDetector, tipFor (pid::compDetector));
 
     // -- CLIP / COLOUR panel -------------------------------------------------
     rotary (shapeK, shapeL, pid::clipShape);
@@ -342,7 +433,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     rotary (colToneK, colToneL, pid::colourTone);
     rotary (depthK, depthL, pid::colourDepth);
     rotary (dynTiltK, dynTiltL, pid::dynTilt);
-    setupCombo (modelBox, pid::colourModel, paramName (pid::colourModel));
+    setupCombo (modelBox, pid::colourModel, tipFor (pid::colourModel));
 
     // -- LIMITER panel -------------------------------------------------------
     rotary (limGainK, limGainL, pid::limGain);
@@ -351,9 +442,9 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     rotary (limReleaseK, limReleaseL, pid::limRelease);
     rotary (linkK, linkL, pid::stereoLink);
     rotary (preserveK, preserveL, pid::transientPreserve);
-    setupToggle (limAutoToggle, pid::limAutoRelease, "AUTO", paramName (pid::limAutoRelease));
-    setupToggle (tpToggle, pid::truePeakMode, "TP", paramName (pid::truePeakMode));
-    setupCombo (styleBox, pid::limStyle, paramName (pid::limStyle));
+    setupToggle (limAutoToggle, pid::limAutoRelease, "AUTO", tipFor (pid::limAutoRelease));
+    setupToggle (tpToggle, pid::truePeakMode, "TP", tipFor (pid::truePeakMode));
+    setupCombo (styleBox, pid::limStyle, tipFor (pid::limStyle));
 
     // -- EQ panel ------------------------------------------------------------
     rotary (eqTiltK, eqTiltL, pid::eqTilt);
@@ -367,17 +458,17 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     rotary (b2FreqK, b2FreqL, pid::eqBell2Freq);
     rotary (b2GainK, b2GainL, pid::eqBell2Gain);
     rotary (b2QK, b2QL, pid::eqBell2Q);
-    setupCombo (eqPosBox, pid::eqPosition, paramName (pid::eqPosition));
+    setupCombo (eqPosBox, pid::eqPosition, tipFor (pid::eqPosition));
 
     // -- utility row ---------------------------------------------------------
     rotary (inputGainK, inputGainL, pid::inputGain);
     rotary (scHpfK, scHpfL, pid::scHpfFreq);
-    setupCombo (ditherBox, pid::dither, paramName (pid::dither));
-    setupToggle (shapingToggle, pid::ditherShaping, "SHAPE", paramName (pid::ditherShaping));
-    setupToggle (compToggle, pid::loudnessComp, "COMP", paramName (pid::loudnessComp));
-    setupToggle (deltaToggle, pid::deltaMonitor, "DELTA", paramName (pid::deltaMonitor));
-    setupToggle (freezeToggle, pid::freeze, "FREEZE", paramName (pid::freeze));
-    setupToggle (tpSimpleToggle, pid::truePeakMode, "TP", paramName (pid::truePeakMode));
+    setupCombo (ditherBox, pid::dither, tipFor (pid::dither));
+    setupToggle (shapingToggle, pid::ditherShaping, "SHAPE", tipFor (pid::ditherShaping));
+    setupToggle (compToggle, pid::loudnessComp, "COMP", tipFor (pid::loudnessComp));
+    setupToggle (deltaToggle, pid::deltaMonitor, "DELTA", tipFor (pid::deltaMonitor));
+    setupToggle (freezeToggle, pid::freeze, "FREEZE", tipFor (pid::freeze));
+    setupToggle (tpSimpleToggle, pid::truePeakMode, "TP", tipFor (pid::truePeakMode));
 
     // -- macro row (read-only in Advanced, §6.3: the macros are driven from
     //    the Simple view; here they display position + detach badges) --------
@@ -398,6 +489,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     bigLoudnessL.setFont (juce::Font (juce::FontOptions (13.5f)).withExtraKerningFactor (0.2f));
 
     setupToggleInternal (ceilingLockToggle, "LOCK", "Ceiling lock",
+                         "Keep the Ceiling where it is while you browse presets",
                          processor.internalState.state()
                              .getPropertyAsValue (iid::ceilingLock, nullptr));
 
@@ -428,6 +520,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
             learnStopPending = true;
         }
     };
+    learnButton.setTooltip (tidyTip (
+        "Play the loudest section and Learn measures it as the adaptive reference - click again to stop"));
     addAndMakeVisible (learnButton);
     registerAnimated (learnButton);
 
@@ -441,6 +535,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     outLufsValue.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (outLufsValue);
 
+    editedDot.setTooltip (tidyTip (
+        "Advanced edits took knobs off the macros - click to return to the macro sound"));
     editedDot.onClick = [this] { processor.resetToMacro(); };
     addChildComponent (editedDot);
 
@@ -508,13 +604,18 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     settingsRow (uiScaleLabel,    "UI Scale");
 
     setupComboInternal (oversampleBox, { "Off", "2x", "4x", "8x", "16x" },
-                        "Oversampling", ist.getPropertyAsValue (iid::oversample, nullptr));
+                        "Oversampling",
+                        "Cleaner nonlinear stages and true-peak accuracy - higher costs CPU and adds latency",
+                        ist.getPropertyAsValue (iid::oversample, nullptr));
     // DESIGN §6.4 specifies the latency note lives in this control's tooltip.
     setupComboInternal (phaseBox, { "Minimum", "Linear" },
-                        "Phase. Linear phase adds latency (reported to the host).",
+                        "Phase",
+                        "Minimum keeps latency lowest - Linear rings symmetrically and adds latency (reported to the host)",
                         ist.getPropertyAsValue (iid::osPhase, nullptr));
     setupComboInternal (offlineBox, { "Follow Online", "Force Max" },
-                        "Offline Render", ist.getPropertyAsValue (iid::offlineQuality, nullptr));
+                        "Offline Render",
+                        "Force Max bounces at maximum oversampling - Follow Online uses the live setting",
+                        ist.getPropertyAsValue (iid::offlineQuality, nullptr));
     // int_uiScale stores PERCENT; the combo maps index<->percent through the
     // step list, so the stored value stays meaningful outside this editor.
     // Built FROM `kScaleSteps`, not written out beside it. The literal list
@@ -565,6 +666,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // every other combo has, and without a title it had no accessibility name.
     registerAnimated (uiScaleBox);
     uiScaleBox.setTitle ("UI Scale");
+    uiScaleBox.setTooltip (tidyTip ("Window size - M is the original"));
     for (auto* b : { &oversampleBox, &phaseBox, &offlineBox })
     {
         removeChildComponent (b);
@@ -583,10 +685,13 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // loop, which the headless suite does not run, so
     // `testTheSettingsPanelFollowsAProjectLoad` covers the re-seeded half only.
     setupToggleInternal (animToggle, "UI Animations", "UI Animations",
+                         "Smooth micro-animations on hovers, presses and switches",
                          ist.getPropertyAsValue (iid::uiAnimations, nullptr));
     setupToggleInternal (tooltipsToggle, "Tooltips", "Tooltips",
+                         "Show these hover hints on every control",
                          ist.getPropertyAsValue (iid::tooltipsOn, nullptr));
     setupToggleInternal (tpMeterToggle, "True-Peak Meter", "True-Peak Meter",
+                         "Show the true-peak row in the meter panel",
                          ist.getPropertyAsValue (iid::tpMeterOn, nullptr));
     // The Spectrum toggle left Settings 2026-08-05: the graph well itself
     // carries the GR/SPEC switch now (owner directive — the control lives on
@@ -793,7 +898,8 @@ void AnabasisAudioProcessorEditor::passComboHoverThrough (juce::ComboBox& box)
 void AnabasisAudioProcessorEditor::setupCombo (juce::ComboBox& box, const char* id,
                                                const juce::String& tip)
 {
-    if (auto* cp = processor.apvts.getParameter (id))
+    auto* cp = processor.apvts.getParameter (id);
+    if (cp != nullptr)
         box.addItemList (cp->getAllValueStrings(), 1);
     box.setTooltip (tidyTip (tip));
     box.setRepaintsOnMouseActivity (true);
@@ -802,7 +908,10 @@ void AnabasisAudioProcessorEditor::setupCombo (juce::ComboBox& box, const char* 
     addAndMakeVisible (box);
     comboAtts.add (new ComboBoxAttachment (processor.apvts, id, box));
     registerAnimated (box);
-    box.setTitle (tip);
+    // Title = the REGISTRY name (brief §8), no longer the tooltip: since the
+    // R2 tooltip set the two are different strings, and the title must keep
+    // announcing what the automation lane shows.
+    box.setTitle (cp != nullptr ? cp->getName (24) : tidyTip (tip));
 }
 
 void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const char* id,
@@ -813,11 +922,14 @@ void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const cha
     addAndMakeVisible (t);
     buttonAtts.add (new ButtonAttachment (processor.apvts, id, t));
     registerAnimated (t);
-    t.setTitle (tip.isNotEmpty() ? tip : text);
+    // Registry name as title (brief §8) — see setupCombo.
+    auto* p = processor.apvts.getParameter (id);
+    t.setTitle (p != nullptr ? p->getName (24) : text);
 }
 
 void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
                                                        const juce::StringArray& items,
+                                                       const juce::String& name,
                                                        const juce::String& tip, juce::Value value)
 {
     box.addItemList (items, 1);          // JUCE reserves item ID 0 for "nothing selected"
@@ -848,15 +960,17 @@ void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
     { value.setValue (juce::jmax (0, b->getSelectedItemIndex())); };
     registerAnimated (box);
     // The accessibility name. `setupCombo` (the APVTS path) sets one from the
-    // parameter's registry name; these host-hidden combos had none, and unlike
+    // parameter's registry name; these host-hidden combos have none, and unlike
     // a Button — which falls back to its button text — a ComboBox with an empty
-    // title exposes no name at all. The tooltip IS the control's name here (the
-    // Settings rows label themselves that way), so it is the honest source.
-    box.setTitle (tidyTip (tip));
+    // title exposes no name at all. The Settings row's LABEL is the honest
+    // source (`name`); the tooltip stopped being usable for this when the R2
+    // set made it descriptive prose. The state suite finds these by title.
+    box.setTitle (name);
 }
 
 void AnabasisAudioProcessorEditor::setupToggleInternal (juce::ToggleButton& t,
                                                         const juce::String& text,
+                                                        const juce::String& name,
                                                         const juce::String& tip, juce::Value value)
 {
     t.setButtonText (text);
@@ -864,7 +978,7 @@ void AnabasisAudioProcessorEditor::setupToggleInternal (juce::ToggleButton& t,
     addAndMakeVisible (t);
     t.getToggleStateValue().referTo (value);
     registerAnimated (t);
-    t.setTitle (tip.isNotEmpty() ? tidyTip (tip) : text);   // as setupToggle does
+    t.setTitle (name.isNotEmpty() ? name : text);   // as setupToggle does
 }
 
 // ============================================================================

@@ -3512,6 +3512,49 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
            "about: the panel paints product copy, not an empty glass rectangle");
 }
 
+// R2 item 11: every parameter control carries a hover hint. The wording lives
+// in ONE table (`tipFor`, file-static in PluginEditor.cpp) which this suite
+// cannot reach — what it CAN pin is the outcome: no slider or combo in the
+// editor is hoverless, and neither are the named toggles. Toggles are not
+// swept wholesale because `bypass` is DELIBERATELY tipless (the red pill
+// labels itself — the sibling's rule), so a sweep would either fail on it or
+// need the exemption this list states explicitly.
+static void collectTooltipless (juce::Component& root, juce::StringArray& names)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* sl = dynamic_cast<juce::Slider*> (c); sl != nullptr && sl->getTooltip().isEmpty())
+            names.add ("slider \"" + sl->getTitle() + "\"");
+        if (auto* bx = dynamic_cast<juce::ComboBox*> (c); bx != nullptr && bx->getTooltip().isEmpty())
+            names.add ("combo \"" + bx->getTitle() + "\"");
+        collectTooltipless (*c, names);
+    }
+}
+
+static void testEveryKnobAndComboCarriesATooltip()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "tooltips: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    juce::StringArray hoverless;
+    collectTooltipless (*ed, hoverless);
+    if (! hoverless.isEmpty())
+        std::printf ("  tooltipless: %s\n", hoverless.joinIntoString (", ").toRawUTF8());
+    check (hoverless.isEmpty(), "tooltips: every slider and combo carries a hover hint");
+
+    for (auto* text : { "FREEZE", "COMP", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
+                        "UI Animations", "Tooltips", "True-Peak Meter" })
+    {
+        auto* b = findButtonByText (*ed, text);
+        check (b != nullptr && b->getTooltip().isNotEmpty(),
+               "tooltips: the named toggles carry hints");
+    }
+}
+
 static void testTheGraphWellViewsOnlyClaimTheirModeChips()
 {
     AnabasisAudioProcessor proc;
@@ -4199,6 +4242,7 @@ int main (int argc, char** argv)
         testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
         testTheAboutPanelShowsTheBuildItIsRunning();
         testTheGraphWellViewsOnlyClaimTheirModeChips();
+        testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();

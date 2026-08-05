@@ -232,10 +232,14 @@ private:
     void setupCombo (juce::ComboBox&, const char* id, const juce::String& tip);
     void setupToggle (juce::ToggleButton&, const char* id, const juce::String& text,
                       const juce::String& tip);
+    // `name` is the accessibility title (the Settings row's label — these
+    // host-hidden controls have no registry name to fall back on); `tip` is
+    // the hover hint. Separate strings since the R2 tooltip set — the titles
+    // are load-bearing (the state suite finds these controls by title).
     void setupComboInternal (juce::ComboBox&, const juce::StringArray& items,
-                             const juce::String& tip, juce::Value);
+                             const juce::String& name, const juce::String& tip, juce::Value);
     void setupToggleInternal (juce::ToggleButton&, const juce::String& text,
-                              const juce::String& tip, juce::Value);
+                              const juce::String& name, const juce::String& tip, juce::Value);
     void passComboHoverThrough (juce::ComboBox&);
 
     AnabasisAudioProcessor& processor;

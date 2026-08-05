@@ -32,7 +32,8 @@ class AnabasisAudioProcessor;
 //  from its prepared size, and only in display width, never in data.
 // ============================================================================
 
-class GrHistoryView : public juce::Component
+class GrHistoryView : public juce::Component,
+                      public juce::SettableTooltipClient
 {
 public:
     explicit GrHistoryView (AnabasisAudioProcessor&);

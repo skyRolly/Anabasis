@@ -6,7 +6,25 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 items 8/9 — the Simple-view TP switch and the combined
+**Last updated:** for **round-2 item 11 — the complete tooltip set, the sibling's rules
+(2026-08-05, owner directive)**. The C8 rule ("free tooltip prose is owner-supplied, not
+invented") was discharged for tooltips by the directive itself — the owner asked for a
+generated set, so the copy ships ⊕ like the About description. `tidyTip` becomes the
+sibling's real rule (trailing full stops stripped centrally) instead of the stub it had been;
+every parameter's hint lives in ONE table (`tipFor`, keyed by parameter ID) so a knob and its
+Simple-view twin (ceiling, TP) cannot drift apart, with a debug assert on any parameter added
+without one. Voice is the sibling's: one terse line, plain " - " dash, no trailing period;
+its exact top-bar strings are taken verbatim (A/B "A/B Compare", Copy, Undo/Redo,
+Previous/Next preset, "Presets"); `bypass` stays deliberately tipless (the red pill labels
+itself) and the graph-well chips name their ACTION ("Switch to the …", firing over the chip
+only, since `hitTest` narrows the pointer claim). Accessibility titles deliberately do NOT
+follow the tooltips: they stay the registry names (brief §8) — `setupCombo`/`setupToggle` now
+derive the title from the parameter, and the Internal helpers take an explicit `name`
+parameter (the Settings row label, which is also what the state suite finds them by).
+Tests: `testEveryKnobAndComboCarriesATooltip` sweeps every slider/combo and the named toggles
+(13 new checks; suites 233 + 412). Manual's Tooltips row, HANDOVER's Test Status and README's
+count synced.
+Previous: **round-2 items 8/9 — the Simple-view TP switch and the combined
 Spectrum/GR graph well (2026-08-05, owner directive)**. Item 8: `truePeakMode` gets the
 "highly visible" main-UI switch the directive asked for — a second attachment (`tpSimpleToggle`)
 in the Simple ceiling cell, stacked **TP above LOCK** (dual attachments to one parameter are

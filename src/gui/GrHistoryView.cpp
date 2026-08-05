@@ -11,6 +11,10 @@ GrHistoryView::GrHistoryView (AnabasisAudioProcessor& p) : processor (p)
     // opts out per-pixel through `hitTest` instead, exactly as `SpectrumView`
     // does for its chip: JUCE's default interception stays on, and `hitTest`
     // declines every point outside the chip.
+    //
+    // The tooltip therefore fires over the chip only — name its ACTION, the
+    // mirror of the spectrum's wording.
+    setTooltip ("Switch to the spectrum");
 }
 
 // The mode chip's hit-area (top-right corner). ONE definition, because

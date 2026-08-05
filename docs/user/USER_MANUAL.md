@@ -226,7 +226,7 @@ Session state — saved with your DAW project, never in presets, invisible to au
 | **Offline Render** | Follow Online / Force Max | Force Max renders your bounce at maximum oversampling regardless of the live setting; Follow Online uses whatever the live setting is. |
 | **UI Scale** | XS / S / M / L / XL | Five steps; **M** is the original size, everything scales in proportion. |
 | **UI Animations** | on/off | Default on. Off never changes behaviour, only motion. |
-| **Tooltips** | on/off | Default off. |
+| **Tooltips** | on/off | Hover hints on every control — what it does, in a line. Default off. |
 | **True-Peak Meter** | on/off | Shows/hides the TP row. Default off. |
 
 (The Spectrum/GR choice is *not* here: switch it with the chip on the graph itself — §3.4.)
