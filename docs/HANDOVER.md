@@ -66,6 +66,15 @@ first scheduled or dispatched run — rehearse via `workflow_dispatch` after mer
 running" (P1 summary), silently unreported at P2–P6 closes. This entry is the status of record
 until the next phase summary.
 
+**Same date, `SERIALIZATION_REGISTRY.md` lands** — the schema ledger `COMPATIBILITY_POLICY.md`
+has cited since bootstrap, written from the code with every node cited. Its evidence pass
+produced two catches: `BASELINE` has **no originator in this build** (adopted, carried and
+dropped but never created — the registry records it as schema-reserved rather than describing
+a phantom producer), and the user manual had inherited the sibling's "omitted parameters keep
+their default" preset claim, which is true here of sessions and factory tables but **not of
+file applies** (overlay-only — an omitted parameter keeps its live value, visible the first
+time a build adds a parameter). Registry states the asymmetry; manual corrected.
+
 **Same date, the batch was adversarially verified and eleven findings fixed.** Every checkable
 claim in the day's commits was independently re-derived and each discrepancy re-verified before
 being trusted (the canary commit came back clean). The three worth remembering: the matrix

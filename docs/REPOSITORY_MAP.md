@@ -115,10 +115,11 @@ docs/
 │                   and PARAMETER_REGISTRY.md (the surface ledger, from ADR-0010 +
 │                   the frozen snapshot) exist since P1 close;
 │                   REALTIME_SAFETY_AUDIT.md since P2 close; PERFORMANCE_BUDGET.md
-│                   since P6 (2026-08-02); COMPATIBILITY_MATRIX.md since 2026-08-05
-│                   (the DAW-audition target list). Still planned, no date claimed:
-│                   ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE,
-│                   DSP_ALGORITHMS, API_REFERENCE, SERIALIZATION_REGISTRY,
+│                   since P6 (2026-08-02); COMPATIBILITY_MATRIX.md and
+│                   SERIALIZATION_REGISTRY.md since 2026-08-05 (the DAW-audition
+│                   target list; the schema-v1 ledger COMPATIBILITY_POLICY cites).
+│                   Still planned, no date claimed: ARCHITECTURE, SIGNAL_FLOW,
+│                   DSP_GRAPH_REFERENCE, DSP_ALGORITHMS, API_REFERENCE,
 │                   STATE_SERIALIZATION, LATENCY_MODEL
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives

@@ -335,8 +335,9 @@ moves it. The `*` edited marker compares exactly what a preset can carry, so tog
 monitoring or resizing the window never marks a preset as edited.
 
 Presets are **forward-compatible**: parameter identities are frozen and regression-tested
-in CI, so `.anabasis` files and DAW sessions from older versions load unchanged in newer
-ones — anything an old file doesn't mention keeps its default.
+in CI, so `.anabasis` files and DAW sessions from older versions keep loading in newer
+ones. (A *session* restores anything an old file doesn't mention to its default; a
+*preset* applies exactly the values it lists.)
 
 ### 7.4 A/B compare
 

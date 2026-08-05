@@ -6,7 +6,29 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the adversarial verification round over the 2026-08-05 batch** — every
+**Last updated:** for **`SERIALIZATION_REGISTRY.md` landing (2026-08-05)** — the schema-v1
+ledger `COMPATIBILITY_POLICY.md` has cited as the serialization authority since bootstrap,
+now real: the session blob's full tree (root/children/properties in write order, each cited
+to `PluginProcessor.cpp`), the raw-vs-value fidelity split, the SLOT StateSet shape and its
+two deliberate asymmetries (full-surface slots with apply-side view exclusion; DETACH_MASK
+always written), FROZEN_TRIMS' three conditional-write rules, ADAPTIVE's absent-=-never-learned
+discriminator, the read-rule table (including that a version gate would *reverse* ADR-0007),
+the `.anabasis` format, and the §4 statement that no legacy fixture exists yet *because
+nothing has shipped* — with the freeze scheduled for the v0.1.0 tag.
+Two findings the evidence pass itself produced, both fixed in the same unit:
+(1) **`BASELINE` has no originator in this build** — the only code that constructs one is the
+test that seeds it; the wrapper adopts, carries and drops the child but never creates it. The
+registry records it as schema-reserved, adopted-only — tolerate on read, never invent on
+write — instead of describing a producer that does not exist.
+(2) **A sibling-inherited manual sentence did not survive contact with the code.** The user
+manual's §7.3 claimed an old preset's omitted parameters "keep their default" — true of the
+sibling, and true here of *sessions* (defaults-first) and *factory tables* (defaults +
+intents), but the FILE apply is **overlay-only** (`applyPreset` writes exactly the PARAM list,
+no defaults pass), so an omitted parameter keeps its live value. Invisible today (the writer
+emits every non-excluded parameter); visible the first time a build adds one. The registry
+states the asymmetry precisely, and the manual sentence is corrected to what both paths
+actually do.
+Previous: **the adversarial verification round over the 2026-08-05 batch** — every
 checkable claim in the six new commits was independently re-derived (citations, symbol probes,
 workflow structure, cross-document coherence), each reported discrepancy then adversarially
 re-verified before being trusted. The canary commit came back clean; eleven findings elsewhere
@@ -5283,9 +5305,13 @@ These are **deliberate**, not oversights. Each names what would close it.
 
 - **Architecture set, partially closed** — `THREAD_MODEL.md` and `PARAMETER_REGISTRY.md` landed
   with P1, `REALTIME_SAFETY_AUDIT.md` with P2, `PERFORMANCE_BUDGET.md` with P6 (struck from the
-  absent list 2026-08-05 — it had sat here for three days after landing). Still absent:
-  `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`, `SERIALIZATION_REGISTRY.md`,
-  `LATENCY_MODEL.md`, `DSP_ALGORITHMS.md`, `API_REFERENCE.md`, `STATE_SERIALIZATION.md` (the
+  absent list 2026-08-05 — it had sat here for three days after landing),
+  `SERIALIZATION_REGISTRY.md` on 2026-08-05 — another absent document a binding policy already
+  cited as an authority (`COMPATIBILITY_POLICY.md` §"Where each contract is specified"), the
+  same class as the attribution files and the matrix. Still absent:
+  `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`,
+  `LATENCY_MODEL.md` (also policy-cited — the next of the set to land),
+  `DSP_ALGORITHMS.md`, `API_REFERENCE.md`, `STATE_SERIALIZATION.md` (the
   last two were listed in `REPOSITORY_MAP.md`'s planned set but omitted here — the two lists
   described the same set with different membership until the 2026-08-05 verification round
   aligned them). The "closed by P5–P6" target has **passed unmet**
