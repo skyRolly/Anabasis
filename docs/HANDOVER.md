@@ -96,7 +96,7 @@ record.
 
 **Same date, the User documentation class lands** — `docs/user/USER_MANUAL.md` +
 `INSTALLATION.md`, the class whose P6 target had passed unmet. Every stated fact was read
-from the tree first (registry ranges verbatim, the `kFactory` names, `presetDirectory()`,
+from the tree first (registry ranges verbatim, the `kFactory` names, `userPresetDirectory()`,
 `kLearnMinPassMs`, `kTiltPivotHz`, the editor's actual affordances, `isBusesLayoutSupported`);
 no magic numbers shipped to users (no GR-window seconds, no undo cap, no performance figures);
 INSTALLATION describes the OQ-007 zips as they are, including the executable-bit restore

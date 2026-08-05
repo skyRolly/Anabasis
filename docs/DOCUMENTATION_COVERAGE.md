@@ -74,7 +74,7 @@ Previous: **the User documentation class landing (2026-08-05)** —
 passed unmet. Method, because a user manual is where invented facts hide best: every stated
 fact was read from the tree before it was written — the registry's ranges and names verbatim
 (the 49-row table), the twelve factory preset names from `PresetManager.cpp`'s `kFactory`
-table, the preset folder from `presetDirectory()`, Learn's 5-second minimum from
+table, the preset folder from `userPresetDirectory()`, Learn's 5-second minimum from
 `kLearnMinPassMs`, the tilt pivot from `kTiltPivotHz`, Force-Max-equals-16× from the PDC
 callback's own comment, the About/‹›/edited-dot/meter-click affordances from the editor's
 constructors, and the stereo-only bus contract from `isBusesLayoutSupported`. What the manual

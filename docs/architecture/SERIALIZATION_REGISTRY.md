@@ -162,8 +162,8 @@ Pinned by: `testAbToleranceRules`, `testCorruptAndForeignState`,
 ## 3. The `.anabasis` preset file
 
 Plain XML, written by `PresetManager::savePreset` (`src/PresetManager.cpp:4-30`) into
-`<userAppData>/RollyTech/Anabasis/Presets` (`presetDirectory()`,
-`src/PresetManager.h:32-33`):
+`<userAppData>/RollyTech/Anabasis/Presets` (`userPresetDirectory()`,
+`src/PresetManager.h:30-34`):
 
 ```xml
 <AnabasisPreset schemaVersion="1">

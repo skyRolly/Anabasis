@@ -35,9 +35,11 @@ offset, not a PDC input (`PARAMETER_REGISTRY.md` §non-automatable rows).
 A pure function of `(factor, phaseMode)` — no signal-dependent term, and **integer** by
 construction (`useIntegerLatency = true` on every `juce::dsp::Oversampling` instance, built
 at `prepare`). The per-configuration values live in the `kOsLatMin` / `kOsLatLin` tables in
-`src/dsp/Latency.h` and are quoted **nowhere else, including here** — they are
-`getLatencyInSamples()` *measured against the pinned JUCE tree*, so a second copy is a
-stale copy the day the pin moves. Structure worth knowing:
+`src/dsp/Latency.h` and are quoted in **no normative document — this one included**: they
+are `getLatencyInSamples()` *measured against the pinned JUCE tree*, so a prose copy is a
+stale copy the day the pin moves. (The one other occurrence in the tree is a dated
+2026-08-01 coverage-journal entry — a historical record of that day's measurement, which is
+what dated entries are for, not a live copy to keep in step.) Structure worth knowing:
 
 - **Off contributes zero.** The chain at OS Off has no oversampler in the path at all.
 - The values are group delays **in samples**, which is why the function ignores its
@@ -100,7 +102,7 @@ realtime→offline flip does **not** duck the render (`testOfflineFlipDoesNotDuc
 | Property | Test (`tests/dsp_tests.cpp`) |
 |---|---|
 | Impulse lands at exactly the reported figure, across lookahead values | `testReportedLatencyMatchesImpulse` |
-| Reported == measured across the full `(factor × phase)` matrix | `testOsLatencyMatrix` |
+| Measured impulse vs reported figure across the full `(factor × phase)` matrix — **exact** for linear phase (a symmetric FIR's peak *is* its group delay) and at OS Off; **within ±1 sample** for min-phase (an IIR cascade's group delay is frequency-dependent by design; the test's comment records the measured split) | `testOsLatencyMatrix` |
 | Offline force / duck edges | `testOfflineFlipDoesNotDuckTheRender`, `testReturnFromOfflineIsDucked` |
 | Bypass alignment at every factor (the dry ring uses the same tables) | the OS bypass-null checks |
 
