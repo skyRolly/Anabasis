@@ -324,7 +324,8 @@ blindly. Evidence: the pinned JUCE 9 tree documents its deployment floor as **ma
 10.13 sits above the framework floor; it also matches the sibling product, keeping one support
 claim across the family. The value governs the **x86_64 slice** only — the arm64 slice floors at
 **11.0** by toolchain regardless — so the user-visible claim is: **macOS 10.13+ (Intel), 11.0+
-(Apple Silicon)**. Restated in `COMPATIBILITY_MATRIX.md` when that document lands (P2). The first
+(Apple Silicon)**. Restated in `COMPATIBILITY_MATRIX.md`, which this line made an obligation:
+discharged 2026-08-05, later than the P2 it originally targeted. The first
 macOS CI run is the warning-free check on the value; the `build.yml` comment carries the decision
 at the point of use.
 

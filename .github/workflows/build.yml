@@ -682,8 +682,10 @@ jobs:
       # sibling product, keeping one support claim across the family. The value
       # governs the x86_64 slice; the arm64 slice floors at 11.0 by toolchain
       # regardless. Supported-OS claim: macOS 10.13+ (Intel), 11.0+ (Apple
-      # Silicon) — restate in COMPATIBILITY_MATRIX.md when that document lands
-      # (P2). The first macOS CI run is the warning-free check on this value.
+      # Silicon) — restated in docs/architecture/COMPATIBILITY_MATRIX.md, which
+      # landed 2026-08-05 (this comment asked for it "when that document lands
+      # (P2)"; it arrived later than that target). The first macOS CI run is the
+      # warning-free check on this value.
       #
       # This note lives OUTSIDE the `run:` scalar deliberately. In a YAML folded
       # block (`run: >`) every line is joined into ONE shell line and `#` has no

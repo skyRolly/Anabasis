@@ -160,7 +160,7 @@ Universal gestures:
 
 | Control | Range | What it does |
 |---|---|---|
-| **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). 0 leaves the sound untouched. |
+| **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
 | **Ceiling** | −20 … 0 dB, default −1 | The true-peak output limit. The **LOCK** toggle beside it keeps it fixed while you browse presets. |
 | **Character** | 0 … 1 | Clean ↔ Colour: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |

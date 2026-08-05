@@ -6,7 +6,32 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **three review-confirmed documentation corrections (2026-08-05)**, all
+**Last updated:** for **three further review-confirmed corrections (2026-08-05)**, all
+content-only:
+(1) **This file's own inventory understated what exists** — the architecture self-coverage row
+still listed five descriptive documents after `SERIALIZATION_REGISTRY.md` and
+`LATENCY_MODEL.md` landed, while the gaps list two screens down recorded both as landed and
+`REPOSITORY_MAP.md` listed all seven. The audit's own Update protocol says "a new doc → add to
+self-coverage", so the file that exists to catch staleness had three lists and two of them
+right. The row now enumerates all seven (dates grouped rather than repeated); directory and
+row now match one-for-one.
+(2) **The last two future-landed pointers to `COMPATIBILITY_MATRIX.md`** — OQ-011's Decision
+and the `build.yml` macOS-configure comment both still asked for the supported-OS claim to be
+"restated in COMPATIBILITY_MATRIX.md when that document lands (P2)". Both now record the
+obligation as discharged **and** that it landed later than the P2 they targeted — the
+historical meaning of the original line is what makes the lateness visible, so it is kept
+rather than erased. The workflow change is comment-only; no step, condition or value moved.
+One occurrence is deliberately untouched: the dated 2026-08-05 entry below **quotes** the old
+OQ-011 wording as the evidence for why the matrix was owed, framed in the past tense — a dated
+entry recording what a document said then is the historical record working, not drift.
+(3) **A user-manual claim the manual's own §6 contradicted.** The Simple-view table said
+Loudness at 0 "leaves the sound untouched", while §6 states the ceiling clamp is always last
+before dither and the output never exceeds it. At `l = 0` the macro curves do neutralise the
+push (`limGainDb`, `clipDriveDb`, `dynTiltDb` all reach 0 — `src/MacroEngine.h`), which is why
+the all-defaults null is bit-exact for material below the ceiling; a master already hotter
+than the Ceiling is still limited. The row now says what a user can observe — no push at 0,
+Ceiling still holding — without importing the curve detail.
+Previous: **three review-confirmed documentation corrections (2026-08-05)**, all
 content-only:
 (1) **The lifecycle trigger map was satisfied at two of its three targets.** The
 `ANABASIS_CXX_STANDARD` seam updated `CI_CD.md` (the canary's own section) but not
@@ -5327,7 +5352,7 @@ landed — the staleness the same date's audit entry reports.)
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING moved with the installer set to the first commercial release — **OQ-007**, resolved 2026-08-02; no longer a P6 item) |
-| architecture | `design-decisions/ADR_INDEX.md` — **the registry**: take the ADR set and each entry's confidence from it, never from a row here (this row enumerated "ADR-0001…0012" and went stale the moment ADR-0013/0014 were Accepted — the same staleness the round-53 README fix removed, in the file whose job is noticing it). Descriptive set: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2), `PERFORMANCE_BUDGET.md` (P6), `COMPATIBILITY_MATRIX.md` (2026-08-05) | Decisions registered in the index; remaining descriptive docs — see the gaps list below |
+| architecture | `design-decisions/ADR_INDEX.md` — **the registry**: take the ADR set and each entry's confidence from it, never from a row here (this row enumerated "ADR-0001…0012" and went stale the moment ADR-0013/0014 were Accepted — the same staleness the round-53 README fix removed, in the file whose job is noticing it). Descriptive set: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2), `PERFORMANCE_BUDGET.md` (P6), and `COMPATIBILITY_MATRIX.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md` (all 2026-08-05) | Decisions registered in the index; remaining descriptive docs — see the gaps list below |
 | docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
 | user | `USER_MANUAL.md`, `INSTALLATION.md` | **Present (2026-08-05)** — written against the v0.1.0 surface with every stated fact taken from the tree (registry ranges, factory names, preset paths, Learn's 5 s minimum, the constant-latency contract, the chmod/quarantine realities of the OQ-007 zips). Derived class — never evidence (`SOURCE_OF_TRUTH.md`); prose voice adapted from the sibling's manual under ADR-0009 and ⊕ for the fine review like all product wording taken under a standing approval |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
