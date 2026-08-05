@@ -282,7 +282,15 @@ void AnabasisAudioProcessor::undo()
     // `presetName` from the StateSet, so restoring one without the other left
     // the top bar comparing a previous preset's state against the applied
     // preset's baseline and rendering the mark for neither.
-    presetBaseline = prev.baseline;
+    //
+    // `createCopy()`, not a plain assignment: `juce::ValueTree` assignment
+    // shares the refcounted node, so the live datum and the history entry that
+    // supplied it would be ONE tree. Nothing edits a baseline in place today —
+    // both are only ever replaced wholesale, by `presetShapeFromLive()` or by a
+    // history entry — so the alias is invisible now, and it is exactly the kind
+    // of invisible that a later in-place edit turns into an undo entry silently
+    // rewriting itself. The copy is a ~46-node clone on a user action.
+    presetBaseline = prev.baseline.createCopy();
 }
 
 void AnabasisAudioProcessor::redo()
@@ -297,7 +305,7 @@ void AnabasisAudioProcessor::redo()
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();                              // §2.8, as undo()
     applySlotToLive (next.slot);
-    presetBaseline = next.baseline;                          // paired, as undo()
+    presetBaseline = next.baseline.createCopy();             // paired, as undo()
 }
 
 void AnabasisAudioProcessor::parameterChanged (const juce::String& parameterID, float)

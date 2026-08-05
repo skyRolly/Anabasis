@@ -6,7 +6,39 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 55 (2026-08-05)** — the component-ID half of the LookAndFeel
+**Last updated:** for **review round 56 (2026-08-05)** — one implicit contract made explicit, one
+latent aliasing hazard removed; no behaviour changed by either:
+(1) **The ADR-0014 restore's generation bump was load-bearing and unstated.** `injectTrims` calls
+`publishTrims(true)`, which writes the RETAINED set and advances `retTrimSeq` exactly as an audible
+`finishBlock` does. That is what makes `engineFrozenTrimsIfLive()` answer correctly: after
+`adoptFrozenMirror()` re-bases `slotFrozenBase` to the current generation — "nothing the engine holds
+belongs to this slot yet" — the staged restore's own injection is the only thing that can carry the
+generation past that base, because with Freeze ON `finishBlock` publishes nothing. A future change
+that made the restore publish without counting (to keep the counter meaning "measured", say) would
+leave a freeze-ON slot restored from disk withholding its latch from every save until the next
+AUDIBLE block — never, on a stopped transport — so the slot would go on re-serialising the mirror
+instead of what the engine is applying. The argument is now stated at the injection site and in
+`THREAD_MODEL`'s retained-trim row, framed as the property a future maintainer must preserve rather
+than as the line they must not touch.
+**And it turned out to be untested where it matters.** A `publishTrims(false)` mutant left the STATE
+suite fully green; only the DSP suite's `hostileTrims` caught it, and incidentally, because that test
+reads `retainedTrim*()` for an unrelated reason. `testFrozenTrimRestore` case (1) — the unprimed
+session load — now asserts the generation advances across the landing block and that
+`hasRetainedTrims()` follows. The mutant fails both. The value checks around it could never have
+seen this: the mirror and the engine hold the SAME vector at that moment, so only the ownership
+answer differs.
+(2) **Preset baselines were aliased across slots and history entries.** `copySlotToOther()` did
+`storedPresetBaseline = presetBaseline;` and `undo()`/`redo()` did `presetBaseline = prev.baseline;`
+— a `juce::ValueTree` assignment shares the refcounted node, so two independent-looking owners
+became one tree. Correct today because a baseline is only ever REPLACED wholesale (by
+`presetShapeFromLive()` or a history entry) and never edited in place, and `pushUndoStep` already
+takes `createCopy()`. Three assignments gained `createCopy()`; an invalid tree copies to an invalid
+tree, so `presetDirty()`'s validity guard is untouched, and the cost is a ~46-node clone on a user
+action. Deliberately NOT tested: the alias is unobservable through the public API — nothing edits a
+baseline in place and `presetBaseline` is private — so a test would need an accessor added purely for
+it, which is the abstraction this change is meant to avoid. The existing preset/undo/A-B checks
+passing unchanged is the evidence that behaviour is preserved.
+Previous: **review round 55 (2026-08-05)** — the component-ID half of the LookAndFeel
 migration audit, decided per id rather than as one verdict:
 (1) **Four `getComponentID()` branches had no arming site.** Round 53 cleared the PROPERTY side
 (`"glow"` wired, `"unit"` removed); the ID side still discriminated on `"icon"`, `"apply"`,

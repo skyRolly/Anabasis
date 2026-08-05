@@ -204,6 +204,34 @@ public:
         trims.stereoLink     = take (v.stereoLink,     -0.2f,  0.2f,  seed.stereoLink);
         trims.scHpfHz        = take (v.scHpfHz,         0.0f, 30.0f,  seed.scHpfHz);
         trims.dynTiltDb      = take (v.dynTiltDb,       0.0f,  0.5f,  seed.dynTiltDb);
+
+        // `true`, AND THE WRAPPER'S SLOT OWNERSHIP DEPENDS ON IT. Read this
+        // before "correcting" the argument to mean "measured": the flag decides
+        // whether `publishTrims` also writes the RETAINED set and advances
+        // `retTrimSeq`, and a restore has to do both.
+        //
+        // `AnabasisAudioProcessor::adoptFrozenMirror()` re-bases
+        // `slotFrozenBase` to the CURRENT generation whenever the live surface's
+        // frozen ownership changes — an A/B switch, an undo, a session load —
+        // which is how it says "nothing the engine holds belongs to this slot
+        // yet". `engineFrozenTrimsIfLive()` then answers with the engine's
+        // vector only once the generation has moved PAST that base. For a
+        // freeze-ON slot restored from disk, this injection is the only thing
+        // that moves it: the wrapper stages the vector, the duck bottom lands it
+        // here, and the bump is what hands ownership to the incoming slot.
+        //
+        // Publish without counting and the failure is silent and stopped-
+        // transport-only: the restored slot never claims its own latch, so every
+        // save falls back to the mirror until the next AUDIBLE block publishes —
+        // which on a stopped transport is never. The slot would keep
+        // re-serialising the vector it loaded rather than the one the engine is
+        // applying, and the two only differ once anything else has moved.
+        //
+        // So a future change to publish semantics must keep this property, not
+        // this line: whatever makes a vector "the one this instance last
+        // latched" has to include an ADR-0014 restore, because the wrapper reads
+        // that counter to decide which slot owns the latch — not to decide where
+        // the numbers came from.
         publishTrims (true);       // a restored vector is as real as a measured one
     }
 

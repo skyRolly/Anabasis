@@ -87,7 +87,15 @@ public:
     void copySlotToOther()
     {
         storedSlot = saveSlotFromLive();
-        storedPresetBaseline = presetBaseline;
+        // `createCopy()`, for the reason `undo()`/`redo()` carry: assigning a
+        // `juce::ValueTree` shares the refcounted node, so the two slots' dirty
+        // data would be ONE tree until the next wholesale replacement. Harmless
+        // while a baseline is only ever replaced, never edited in place — which
+        // is true of every writer today — and a trap the moment one is not, since
+        // an edit made "for slot A" would appear in B. `storedSlot` above needs
+        // no such call: `saveSlotFromLive()` returns a freshly built tree that
+        // nothing else holds.
+        storedPresetBaseline = presetBaseline.createCopy();
         // …and the destination's history goes with the state it described.
         // A per-slot undo stack records edits made FROM that slot's own values
         // (§7 / ADR-0010); a Copy replaces those values wholesale from outside

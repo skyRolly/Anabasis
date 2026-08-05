@@ -508,10 +508,35 @@ static void testFrozenTrimRestore()
         AnabasisAudioProcessor fresh;
         fresh.prepareToPlay (48000.0, 512);
         fresh.setStateInformation (state.getData(), (int) state.getSize());
+        // The RETAINED generation before the vector lands. `setStateInformation`
+        // only stages, and `adoptFrozenMirror` has just re-based
+        // `slotFrozenBase` to this value — so nothing the engine holds belongs
+        // to the incoming slot yet.
+        const auto genBefore = fresh.adaptiveReadout().retainedTrimGeneration();
+        check (! fresh.adaptiveReadout().hasRetainedTrims(),
+               "frozenRestore: (premise) a freshly loaded instance has latched nothing yet");
         buf.clear();
         fresh.processBlock (buf, midi);
         check (sameVector (trimsOf (fresh), saved),
                "frozenRestore: an unprimed session load restores the vector on the first block");
+
+        // …AND THE RESTORE COUNTS AS A LATCH. `injectTrims` publishes with
+        // `meaningful = true`, so it writes the retained set and advances the
+        // generation exactly as an audible `finishBlock` does — and with Freeze
+        // ON nothing else publishes, so this injection is the ONLY thing that
+        // can move it. That bump is what carries the generation past the base
+        // `adoptFrozenMirror` just set, which is how `engineFrozenTrimsIfLive()`
+        // learns the incoming slot may now answer for itself. Publish without
+        // counting and the slot withholds its latch from every save until the
+        // next AUDIBLE block — never, on a stopped transport — so it would go on
+        // re-serialising the mirror instead of what the engine is applying.
+        // Silent, and only reachable with the transport stopped, which is why it
+        // is asserted here rather than left to the value checks: they cannot see
+        // it, because both answers are the same vector.
+        check (fresh.adaptiveReadout().retainedTrimGeneration() != genBefore,
+               "frozenRestore: an ADR-0014 restore advances the retained generation");
+        check (fresh.adaptiveReadout().hasRetainedTrims(),
+               "frozenRestore: …so the restored slot owns a latch it can save on a stopped transport");
     }
 
     // (2) Session load into a PRIMED engine: the vector lands at the duck's
