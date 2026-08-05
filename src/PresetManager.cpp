@@ -306,6 +306,24 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
         // The exclusion and ceiling-lock rules are applied ONCE here rather
         // than once per pass, which is also why they cannot now disagree
         // between the two.
+        // THE DEFAULT IS NOT SNAPPED, and that is a stated invariant rather than
+        // an omission. A registered default must already BE a legal value: it is
+        // the value the parameter reports before anything writes it, so an
+        // off-step default would mean the plugin starts out at a position the
+        // preset system, the snapping ranges and ADR-0007's round trip all agree
+        // is unreachable. Every default in `PluginParameters.cpp` satisfies that
+        // today, which is why routing it through `snapToLegalValue` — as the old
+        // two-pass walk did, via `applyOnePresetValue` — was a no-op and its
+        // removal changed nothing.
+        //
+        // Overrides ARE snapped, below, and the asymmetry is the point: an
+        // override is TABLE DATA, hand-written per preset and free to be an
+        // approximate intent ("ceiling −0.5"), so it is normalised on the way
+        // in. A default is registry data that the registry itself must keep
+        // legal. If a discrete parameter is ever registered with an off-step
+        // default, snapping here would paper over it — the fix belongs in the
+        // registration, and `testRegistrySnapshot` (which pins every default against a
+        // frozen fixture) is where it would surface.
         float target = param.getDefaultValue();
         for (int i = 0; i < table[index].numOverrides; ++i)
             if (id == table[index].overrides[i].id)

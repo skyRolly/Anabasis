@@ -131,6 +131,18 @@ refcounted pointer, and closing THAT needs a lock or a marshalling path on the
 state route — an Architecture Review Gate item and an AI-agent Hard Stop,
 deliberately not attempted.
 
+**Round 63 removed the last editor-poll writer of a wrapper tree, on the other
+poll.** Round 51 cleaned the ~3 Hz dirty-marker poll of `apvts`/wrapper
+`ValueTree` access; the 24 Hz **settings** re-seed then acquired one of its own,
+because `normalisedUiScale()` wrote `iid::uiScale` back to `InternalState` when
+the persisted percent was not a legal ladder step. That made a display timer an
+opposing writer to `InternalState::replaceFrom`, which `setStateInformation`
+reaches on whatever thread the host chose — a narrow window (it converged after
+one tick per illegal value) but a new pairing on exactly the surface this entry
+covers. The correction moved to `replaceFrom` itself, where the §4.4 read rules
+for every other field already live and where such a value actually enters, so
+both editor polls are now read-only with respect to the wrapper's trees.
+
 **The construction and destruction halves of the MacroEngine drain are not
 equally strong**, recorded 2026-08-03 (review round 29) so the pair is not read
 as fully closed, and NARROWED TWICE since. `startDraining()` closes its race

@@ -6,7 +6,47 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 62 (2026-08-05)** — two maintainability items, neither of
+**Last updated:** for **review round 63 (2026-08-05)** — one state-ownership move, one
+truthfulness guard, one invariant written down:
+(1) **A display poll had become a state writer.** `normalisedUiScale()` wrote `iid::uiScale` back to
+`InternalState` when the persisted percent was not a legal ladder step, and it is reached from
+`refreshInternalSettingsBoxes` — the 24 Hz settings re-seed. So the editor's display timer was an
+opposing writer to `InternalState::replaceFrom`, which `setStateInformation` reaches on whatever
+thread the host chose (KI-003), on the second of the two polls round 51 had just cleaned of
+`ValueTree` access. Narrow (it converged after one tick per illegal value) but the wrong direction.
+The correction moved to `replaceFrom`: that is where a value the schema cannot represent ENTERS, and
+where every other field's §4.4 read rule already is — the overlay drops unknown properties, and
+`syncAtomics` clamps the four mirrors. `iid::uiScale` was the one field clamped on READ and never
+corrected in the tree, which is why `getStateInformation` re-serialised an illegal percent for ever.
+**The enabling move, and the reason it is not a refactor for its own sake:** the ladder lived in
+`PluginEditor.cpp`, so normalising in the state layer would have meant a second copy of it — the
+exact duplication round 50 removed. `steps`/`numSteps`/`nearestIndex` therefore moved to
+`InternalState.h`, beside the identifier whose legal values they define ("what may this property
+hold?" is a state question), and the editor aliases them. `normalisedUiScale()` is now a pure read.
+It still CLAMPS, deliberately: the tree can hold an illegal percent in the window before
+`replaceFrom` runs, and a reader that returned it would put the rendered transform and the displayed
+combo step back out of agreement — the defect the single reading exists to prevent.
+The test followed the ownership rather than being patched around it: the convergence checks now
+drive a session LOAD, and a new check asserts the poll writes nothing (an illegal percent written
+straight into the live tree must survive a display refresh untouched while still being clamped on
+read). Two mutants — dropping the adoption-time normalisation, and reinstating the poll write — each
+fail their own check.
+(2) **The preset-source hint could describe a preset that never loaded.** `showPresetMenu` and
+`showLoadPreset` called `rememberPresetSource` regardless of `applyPresetFile`'s result, so a corrupt
+or foreign file (a documented no-op — `parsePresetFile` refuses a foreign root) left the editor
+believing it was the active source while the processor had not moved. Both gate on the return value
+now. The ‹ › RING is deliberately left ungated, and that is a decision rather than an oversight: it
+walks a list it just enumerated, and advancing its hint past an unreadable entry is what stops the
+arrows stalling on that entry for ever. Not tested — both paths run inside async menu/chooser
+callbacks that a headless suite has no message loop to deliver.
+(3) **The factory defaults pass writes the default unsnapped, and that is now stated.** Overrides go
+through `snapToLegalValue`; defaults do not. The asymmetry is the invariant: a registered default
+must ALREADY be legal — it is the value the parameter reports before anything writes it, so an
+off-step default would mean the plugin starts at a position the preset system considers unreachable
+— whereas an override is hand-written table data free to be an approximate intent. Snapping the
+default here would paper over a registration bug that `testRegistrySnapshot` is the place to catch.
+No behaviour change.
+Previous: **review round 62 (2026-08-05)** — two maintainability items, neither of
 which changes runtime behaviour:
 (1) **The visualisers' lifetime reasoning was inconsistent with the editor's.** `SpectrumView`,
 `GrHistoryView` and `LoudnessMeterView` each declare their `abgui::FrameClock` BEFORE the members

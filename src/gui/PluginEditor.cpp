@@ -20,11 +20,14 @@ static juce::String tidyTip (const juce::String& tip) { return tip.trim(); }
  #define ANABASIS_BUILD_NUMBER "0"
 #endif
 
-// The UI-scale step list, in ONE place: the combo builds its item list from it,
-// `applyUiScale` maps the stored percent back through it, and the settings
-// re-seed compares against it. Three private copies is how the three drift.
-static constexpr int kScaleSteps[]  = { 80, 90, 100, 125, 150, 175, 200 };
-static constexpr int kNumScaleSteps = (int) (sizeof (kScaleSteps) / sizeof (kScaleSteps[0]));
+// The UI-scale step list, in ONE place — and that place is `InternalState.h`,
+// beside the identifier whose legal values it defines, because the state layer
+// needs it too: `replaceFrom` normalises a persisted percent onto the ladder as
+// part of the §4.4 read rules. These are aliases, not a second list. The combo
+// builds its item list from them, `applyUiScale` maps the stored percent back
+// through them, and the settings re-seed compares against them.
+static constexpr auto& kScaleSteps  = ui_scale::steps;
+static constexpr int   kNumScaleSteps = ui_scale::numSteps;
 
 // The ONE reading of `iid::uiScale`, because three sites derived a step from it
 // with three different fallbacks and could therefore disagree about the same
@@ -42,14 +45,7 @@ static constexpr int kNumScaleSteps = (int) (sizeof (kScaleSteps) / sizeof (kSca
 // clamp: 110 → 100, 50 → 80, 300 → 200. Returning an INDEX rather than a scale
 // is what makes the rendered transform and the displayed selection the same
 // decision instead of two decisions that happen to agree.
-static int nearestScaleIndex (int pct) noexcept
-{
-    int best = 0, bestDist = std::abs (pct - kScaleSteps[0]);
-    for (int i = 1; i < kNumScaleSteps; ++i)
-        if (const int d = std::abs (pct - kScaleSteps[i]); d < bestDist)
-        { best = i; bestDist = d; }
-    return best;
-}
+static int nearestScaleIndex (int pct) noexcept { return ui_scale::nearestIndex (pct); }
 
 // ============================================================================
 //  Backdrop / ABControl paint — family grammar (provenance in the header).
@@ -1359,49 +1355,30 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     }
 }
 
-// THE ONE READ of `iid::uiScale`, and it normalises what it reads. Clamping on
-// read fixed the divergence between the transform and the combo, but left an
-// illegal value (a hand-edited session, a step list that has since changed)
-// sitting in `InternalState` for ever: `getStateInformation` re-serialised it
-// every save, so the session never healed and every future reader had to
-// re-derive the same clamp. Normalising at the read is the state model's own
-// read-rule discipline, matching `adoptParamsTree`'s treatment of out-of-range
-// parameter values.
+// THE ONE READ of `iid::uiScale`, and it is now a READ — it clamps, it does not
+// write. The correction moved to `InternalState::replaceFrom`, which is where a
+// value the schema cannot represent enters (a hand-edited session, or one from a
+// build whose ladder has since changed) and where every other field's read rule
+// already lives.
 //
-// IT LIVES HERE, not in `applyUiScale`, because putting it there made the
-// invariant conditional on a branch that does not always run. The settings
-// re-seed only called `applyUiScale()` when the nearest step DIFFERED from the
-// combo's current selection — so a session carrying 110 while the box already
-// showed 100 % never converged, and every save re-serialised 110. Nothing was
-// visibly wrong (the rendered transform and the displayed selection still
-// agreed), which is exactly why it survived: the claim "the value converges
-// where the scale is applied" was stronger than the code, and only the write
-// the code skipped could tell. Both call sites now read through this function,
-// so convergence follows from reading the value at all.
+// It used to write back from here, and this function is reached by
+// `refreshInternalSettingsBoxes` — the 24 Hz settings poll — which made a
+// DISPLAY TIMER a writer of the wrapper's `InternalState` tree. `replaceFrom` is
+// the opposing writer, and VST3 does not promise `setStateInformation` on the
+// message thread (KI-003), so that was a new writer pairing on the very poll
+// round 51 had just cleaned of ValueTree access. Converging at adoption gets the
+// same result — a session's illegal percent is corrected once, before anything
+// can read it — with no writer on the poll at all.
 //
-// It is deliberately NOT `applyUiScale()` that the re-seed gained: that path
-// also calls `setSize`/`setTransform` (no-ops on unchanged values) and
-// `glContext.triggerRepaint()` (NOT a no-op), which on the 24 Hz display poll
-// would be a GL repaint request every tick. Separating the state rule from the
-// application of it is what lets the poll enforce the first without paying for
-// the second.
-//
-// The `stored != step` test states the intent rather than providing it:
-// `ValueTree::setProperty` already compares before it assigns, so an
-// unconditional write would also be a no-op for a legal value and sends no
-// change message. Kept explicit because a reader should not have to know that
-// to see that this cannot disturb a valid setting — and mutation-checked, so it
-// is recorded as belt-and-braces rather than as the guard. It converges at most
-// once per illegal value: afterwards the stored value IS the step, and there is
-// nothing left to write.
-int AnabasisAudioProcessorEditor::normalisedUiScale()
+// The clamp STAYS here because it is free and because it keeps this function
+// total: the tree can hold an illegal percent only in the window before
+// `replaceFrom` runs (a test writing the live tree directly, say), and a reader
+// that returned it would put the rendered transform and the displayed step back
+// out of agreement, which is the defect the single reading exists to prevent.
+int AnabasisAudioProcessorEditor::normalisedUiScale() const
 {
-    auto ist = processor.internalState.state();
-    const int stored = (int) ist.getProperty (iid::uiScale, 100);
-    const int step   = kScaleSteps[nearestScaleIndex (stored)];
-    if (stored != step)
-        ist.setProperty (iid::uiScale, step, nullptr);
-    return step;
+    return kScaleSteps[nearestScaleIndex (
+        (int) processor.internalState.state().getProperty (iid::uiScale, 100))];
 }
 
 void AnabasisAudioProcessorEditor::applyUiScale()
@@ -1652,8 +1629,14 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             }
             if (r - 1 < files.size())
             {
-                safeThis->processor.applyPresetFile (files.getReference (r - 1));
-                safeThis->rememberPresetSource (files.getReference (r - 1));
+                // The hint records what actually produced the current state, so
+                // it is set only when the apply SUCCEEDED. A corrupt or foreign
+                // file is a documented no-op (`parsePresetFile` refuses it), and
+                // recording it would have the editor believe a file is the
+                // active source while the processor never moved.
+                const auto& f = files.getReference (r - 1);
+                if (safeThis->processor.applyPresetFile (f))
+                    safeThis->rememberPresetSource (f);
                 safeThis->refreshPresetDisplay (true);
             }
         });
@@ -1672,8 +1655,11 @@ void AnabasisAudioProcessorEditor::showLoadPreset()
             const auto f = fc.getResult();
             if (safeThis != nullptr && f.existsAsFile())
             {
-                safeThis->processor.applyPresetFile (f);
-                safeThis->rememberPresetSource (f);
+                // Only on success — see the menu path above. `existsAsFile()`
+                // is not the readability test; `parsePresetFile` is, and it
+                // refuses a foreign root.
+                if (safeThis->processor.applyPresetFile (f))
+                    safeThis->rememberPresetSource (f);
                 safeThis->refreshPresetDisplay (true);
             }
         });

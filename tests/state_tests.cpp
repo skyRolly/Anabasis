@@ -3150,37 +3150,66 @@ static void testAnOutOfListUiScaleClampsConsistently()
     check (std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …to the same step the window renders at");
 
-    // …and the STORED value converges on the step it renders as. Clamping on
-    // read left an illegal value in `InternalState` for ever — every save
-    // re-serialised it, so the session never healed. The write happens where
-    // the scale is applied, not on the display poll, and only when the stored
-    // value is not already a legal step.
-    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 125,
-           "uiScaleClamp: an illegal stored value is normalised, not just clamped on read");
+    // CONVERGENCE, and it happens where the state is ADOPTED rather than on the
+    // display poll. Clamping on read alone left an illegal value in
+    // `InternalState` for ever — every save re-serialised it, so the session
+    // never healed — but correcting it from `refreshInternalSettingsBoxes` made
+    // a 24 Hz display timer a writer of the wrapper's tree, opposite
+    // `setStateInformation` → `replaceFrom`, which VST3 does not promise on the
+    // message thread (KI-003). `replaceFrom` applies the ladder read rule now,
+    // beside every other field's, so the poll only reads. The stimulus is
+    // therefore a session LOAD, not a poll.
+    auto loadWithScale = [&proc] (int pct)
+    {
+        juce::MemoryBlock mb;
+        proc.getStateInformation (mb);
+        auto root = juce::ValueTree::fromXml (
+            *juce::AudioProcessor::getXmlFromBinary (mb.getData(), (int) mb.getSize()));
+        root.getChildWithName ("ANABASIS_INTERNAL").setProperty (iid::uiScale, pct, nullptr);
+        juce::MemoryBlock in;
+        juce::AudioProcessor::copyXmlToBinary (*root.createXml(), in);
+        proc.setStateInformation (in.getData(), (int) in.getSize());
+    };
+    auto storedScale = [&proc] { return (int) proc.internalState.state().getProperty (iid::uiScale, -1); };
+
+    loadWithScale (130);
+    check (storedScale() == 125,
+           "uiScaleClamp: an illegal stored value is normalised at adoption, not just clamped on read");
+    ed->refreshInternalSettingsBoxes();
+    check (box->getText() == "125%" && std::abs (rendered() - 1.25f) < 1.0e-4f,
+           "uiScaleClamp: …and the editor shows the step it converged on");
 
     // A LEGAL value is never rewritten — the convergence must not disturb a
     // scale the user actually chose.
-    proc.internalState.state().setProperty (iid::uiScale, 90, nullptr);
+    loadWithScale (90);
+    check (storedScale() == 90, "uiScaleClamp: a legal stored step is left exactly as the user set it");
     ed->refreshInternalSettingsBoxes();
-    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 90
-            && std::abs (rendered() - 0.90f) < 1.0e-4f,
-           "uiScaleClamp: a legal stored step is left exactly as the user set it");
+    check (std::abs (rendered() - 0.90f) < 1.0e-4f, "uiScaleClamp: …and renders at it");
 
-    // THE CASE THE CONVERGENCE USED TO MISS, and the reason it was invisible:
-    // an illegal value whose nearest step is the one ALREADY DISPLAYED. 92 sits
-    // nearer 90 than 100 (and unambiguously so — 95 would be a tie the ladder
-    // resolves by order, which is a different thing to test), so with the box
-    // showing 90 % the re-seed's "has the selection changed?" branch is false —
-    // and while that branch owned the write-back, nothing converged. The
-    // rendered transform and the shown percent still agreed, so no symptom; the
-    // only observable was that `getStateInformation` re-serialised 92 for ever.
-    // Normalising at the READ rather than inside the branch is what closes it.
-    proc.internalState.state().setProperty (iid::uiScale, 92, nullptr);
-    ed->refreshInternalSettingsBoxes();
-    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 90,
+    // THE CASE A BRANCH-OWNED CONVERGENCE MISSED, kept because it is the one
+    // that made the old defect invisible: an illegal value whose nearest step is
+    // the one ALREADY DISPLAYED. 92 sits nearer 90 than 100 (unambiguously — 95
+    // would be a tie the ladder resolves by order, a different thing to test),
+    // so the re-seed's "has the selection changed?" branch is false, and while
+    // that branch owned the write-back nothing converged. Adoption does not
+    // consult the display at all, so the case is no longer special.
+    loadWithScale (92);
+    check (storedScale() == 90,
            "uiScaleClamp: an illegal value converges even when the DISPLAYED step does not move");
+    ed->refreshInternalSettingsBoxes();
     check (box->getText() == "90%" && std::abs (rendered() - 0.90f) < 1.0e-4f,
-           "uiScaleClamp: …and the box and the transform are undisturbed by that write");
+           "uiScaleClamp: …and the box and the transform agree with the converged value");
+
+    // THE POLL WRITES NOTHING. The whole point of moving the correction: an
+    // illegal percent written straight into the live tree (which only a test can
+    // do — `replaceFrom` is the real entry) must survive the display refresh
+    // untouched, while still being clamped on read.
+    proc.internalState.state().setProperty (iid::uiScale, 130, nullptr);
+    ed->refreshInternalSettingsBoxes();
+    check (storedScale() == 130,
+           "uiScaleClamp: the display poll does not write the InternalState tree");
+    check (box->getText() == "125%" && std::abs (rendered() - 1.25f) < 1.0e-4f,
+           "uiScaleClamp: …and still renders and displays the clamped step");
 }
 
 // Round 42. `CurveView::paint` rebuilt its curve on every repaint — a full
