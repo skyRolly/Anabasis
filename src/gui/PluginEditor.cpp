@@ -644,8 +644,28 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
             return;
         auto dir = PresetManager::userPresetDirectory();
         dir.createDirectory();
-        if (processor.savePresetFile (dir.getChildFile (name + ".anabasis")))
+        const auto file = dir.getChildFile (name + ".anabasis");
+        if (processor.savePresetFile (file))
         {
+            // A SAVE IS AN APPLY as far as "which preset is in use" is
+            // concerned, and this was the one route that did not say so. Every
+            // other path that changes the live preset records its source — the
+            // menu, the ‹ › ring, the load chooser — because `stepPreset` cannot
+            // recover it from the display NAME: names are not unique across the
+            // two collections, which is precisely why the remembered source
+            // exists. Saving left the PREVIOUS source standing, so saving over a
+            // factory name (apply "EDM Club", Save Preset as "EDM Club") left a
+            // factory hint that the unchanged name then CONFIRMED, and the
+            // arrows walked the factory ring from an entry the user had just
+            // replaced — silently changing the sound.
+            //
+            // Here rather than in `AnabasisAudioProcessor::savePresetFile`: the
+            // remembered source is editor state (this window's idea of where it
+            // is in the list), and the processor deliberately holds no view of
+            // it — a second editor, or a host that saves through some other
+            // route, has its own answer. The wrapper's job is the name and the
+            // dirty datum, which it already does.
+            rememberPresetSource (file);
             showSavePreset (false);
             refreshPresetDisplay (true);
         }

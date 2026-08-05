@@ -3306,6 +3306,86 @@ static void testARewoundSpectrumRingDropsThePreviousTrace()
 // gradient, so every row is near-constant across x, while any rendered copy
 // breaks that. A blank panel therefore fails no matter which font the host
 // machine resolves, and the check needs no threshold tuned to one of them.
+// Saving a preset over a FACTORY name used to leave the remembered source
+// pointing at the factory entry, and the unchanged display name then CONFIRMED
+// that stale hint — so the ‹ › arrows walked the factory ring from an entry the
+// user had just replaced, silently changing the sound. Names cannot resolve this
+// (they are not unique across the two collections, which is why the remembered
+// source exists at all), so the check distinguishes the two by CONTENT: the
+// saved preset carries a parameter value the factory table does not name, and
+// therefore leaves at its default.
+//
+// This is the one test that writes into the REAL user preset directory, because
+// the save button and `stepPreset` both resolve it themselves and neither takes
+// an injected path. It restores whatever it displaced.
+static void testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset()
+{
+    int factoryCount = 0;
+    const auto* factory = PresetManager::factoryPresets (factoryCount);
+    check (factoryCount > 3, "saveSource: (premise) the factory bank has room to step");
+    if (factoryCount <= 3)
+        return;
+
+    const juce::String clashName (factory[2].name);
+    const auto dir  = PresetManager::userPresetDirectory();
+    const auto file = dir.getChildFile (clashName + ".anabasis");
+
+    // Displace nothing: a developer machine may already hold a preset of this
+    // name, and the whole scenario requires that exact filename.
+    const auto backup = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("anabasis-savesource-backup.anabasis");
+    const bool hadFile = file.existsAsFile();
+    if (hadFile)
+        file.copyFileTo (backup);
+    struct Restore
+    {
+        juce::File f, b; bool had;
+        ~Restore() { f.deleteFile(); if (had) { b.copyFileTo (f); b.deleteFile(); } }
+    } restore { file, backup, hadFile };
+
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "saveSource: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    auto* prev = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x2039));
+    auto* next = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x203A));
+    auto* save = findButtonByText (*ed, "Save");
+    auto* nameBox = findTextEditor (*ed);
+    check (prev != nullptr && next != nullptr && save != nullptr && nameBox != nullptr,
+           "saveSource: (premise) the ring arrows and the save controls were found");
+    if (prev == nullptr || next == nullptr || save == nullptr || nameBox == nullptr)
+        return;
+
+    // Land on the factory entry whose name we are about to take, so the stale
+    // hint the bug relies on is genuinely in place.
+    check (proc.applyFactoryPreset (2), "saveSource: (premise) the factory preset applies");
+
+    // A value the table does NOT name — a factory apply therefore parks it at
+    // its default, and only the SAVED preset carries this number.
+    auto* knee = proc.apvts.getParameter (pid::compKnee);
+    const float mark = knee->getNormalisableRange().convertTo0to1 (1.0f);
+    knee->setValueNotifyingHost (mark);
+    check (! juce::exactlyEqual (knee->getValue(), knee->getDefaultValue()),
+           "saveSource: (premise) the marker value is not the default");
+
+    nameBox->setText (clashName, juce::dontSendNotification);
+    save->onClick();
+    check (file.existsAsFile(), "saveSource: (premise) the preset saved under the factory's name");
+    check (proc.currentPresetName() == clashName,
+           "saveSource: (premise) the live name now collides with the factory entry");
+
+    // Next then previous is exactly reversible through the ring, so a correctly
+    // resolved position returns to the SAVED preset. Under the stale hint it
+    // returns to the factory entry instead — same name, different content.
+    next->onClick();
+    prev->onClick();
+    check (std::abs (knee->getValue() - mark) < 1.0e-6f,
+           "saveSource: the arrows step from the saved USER preset, not the same-named factory one");
+}
+
 static void testTheAboutPanelShowsTheBuildItIsRunning()
 {
     AnabasisAudioProcessor proc;
@@ -3914,6 +3994,7 @@ int main (int argc, char** argv)
         testAnOutOfListUiScaleClampsConsistently();
         testTheCurveWellCachesWithoutChangingWhatItDraws();
         testARewoundSpectrumRingDropsThePreviousTrace();
+        testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
         testTheAboutPanelShowsTheBuildItIsRunning();
         testTheSpectrumOverlayOnlyClaimsItsDismissCorner();
         testGrHistoryWindowNeverAsksForTheHeadSlot();

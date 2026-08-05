@@ -6,7 +6,34 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 60 (2026-08-05)** — a lost-functionality regression restored:
+**Last updated:** for **review round 61 (2026-08-05)** — a preset source-tracking regression:
+**Saving a preset did not record itself as the preset now in use.** `stepPreset` resolves "where am
+I in the list?" from a remembered source first, and only falls back to searching by display name
+when that hint no longer describes what the processor shows. The fallback exists because names are
+NOT unique across the factory table and the user files — a user preset saved as "EDM Club" resolved
+to the factory entry, which is the very failure the remembered source was introduced to remove.
+Every route that changes the live preset sets the hint: the menu, the ring itself, the load chooser.
+The SAVE button did not. So: apply factory "EDM Club", Save Preset as "EDM Club" — the hint still
+said factory index 2 and the unchanged name CONFIRMED it, so ‹ › walked the factory ring from an
+entry the user had just replaced, applying the wrong preset and silently changing the sound.
+`saveOkButton.onClick` now calls `rememberPresetSource (file)` on a successful save — one line, at
+the point the flow already knows both that the save succeeded and which file it wrote. No new name
+matching, and no other preset path touched.
+**Why the editor and not `AnabasisAudioProcessor::savePresetFile`:** the remembered source is
+EDITOR state — this window's idea of where it sits in a list it enumerates itself — and the wrapper
+deliberately holds no view of it, because a second editor or a save through another route has its
+own answer. The wrapper owns the live name and the dirty datum, which it already set correctly; the
+regression was never in what it stored.
+The test drives the real controls (the save overlay's name field and Save button, then the ‹ ›
+buttons) and distinguishes the two same-named presets by CONTENT rather than by name, which is the
+only thing that can tell them apart: the saved preset carries a value for a parameter the factory
+table does not name, so a factory apply parks it at its default. Next-then-previous is exactly
+reversible through the ring, so a correctly resolved position returns to the saved preset and a
+stale hint returns to the factory one. It is the first test to write into the REAL user preset
+directory — the save handler and `stepPreset` both resolve that path themselves and neither takes
+an injected one — so it backs up and restores any file it would displace, since the scenario
+requires that exact filename.
+Previous: **review round 60 (2026-08-05)** — a lost-functionality regression restored:
 **The About overlay opened blank.** `Backdrop::aboutText` had exactly ONE reader — the
 dismiss-anywhere branch in `Backdrop::mouseDown` — so the flag named a panel whose copy nothing
 painted: clicking the wordmark produced an empty glass rectangle with only the hyperlink in it, and
