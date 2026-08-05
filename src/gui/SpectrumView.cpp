@@ -45,12 +45,30 @@ juce::Rectangle<int> SpectrumView::dismissHitArea() const noexcept
 // for. `LoudnessMeterView` stays intercepting because its WHOLE surface is the
 // affordance (click = meter reset).
 //
-// ONE VISIBLE CONSEQUENCE, stated because it is inseparable from the fix rather
-// than an addition to it: hit-testing is also what makes a component "under the
-// mouse", so the `setTooltip ("Spectrum")` identifier now appears over the ×
-// only, not over the whole trace. There is no way to stop claiming clicks in a
-// region while still claiming the pointer there. The wording is a C8
-// owner-supplied TODO, so the scoping is a brand-pass call if it is wanted back.
+// TWO CONSEQUENCES, both inseparable from the fix rather than additions to it —
+// `hitTest` is what decides membership of JUCE's "under the mouse" set, so
+// declining a region declines EVERYTHING about it, not just the click.
+//
+//   1. THE TOOLTIP NARROWS. `setTooltip ("Spectrum")` now fires over the ×
+//      only, not over the whole trace: there is no way to stop claiming clicks
+//      in a region while still claiming the pointer there. The wording is a C8
+//      owner-supplied TODO, so the scoping is a brand-pass call if it is wanted
+//      back — and wanting it back means intercepting everywhere again, i.e.
+//      re-accepting consequence 2 below.
+//
+//   2. CLICKS OVER THE TRACE NOW REACH WHATEVER IS BENEATH — today the editor
+//      itself, which is the correct outcome and the point of the change, but it
+//      is a live routing decision rather than a void. The editor installs no
+//      tooltip on its background and no click handler under this strip, so
+//      nothing happens there now. The thing to know before ADDING one: anything
+//      placed under the spectrum's footprint becomes reachable through the
+//      overlay while it is showing, which is a different arrangement from the
+//      dismissible overlay it looks like on screen. If a future affordance
+//      lands there and must NOT be clickable through the trace, the answer is
+//      to widen this hit-area — not to revert to intercepting everywhere, which
+//      would restore the swallow this removed. Recorded for the brand pass
+//      beside the tooltip question, since the two are the same trade seen from
+//      opposite ends.
 bool SpectrumView::hitTest (int x, int y)
 {
     return dismissHitArea().contains (x, y);

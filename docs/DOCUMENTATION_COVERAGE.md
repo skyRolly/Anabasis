@@ -6,7 +6,37 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 63 (2026-08-05)** — one state-ownership move, one
+**Last updated:** for **review round 64 (2026-08-05)** — two follow-ups to round 63, one
+robustness and one documentation:
+(1) **A read that was total only because of the line above it.** Round 63 put the `iid::uiScale`
+ladder read rule in `replaceFrom`, reading the property with no stated default. That is safe today —
+`setDefaults()` runs two lines earlier and always writes the field — but it is the "correct because
+of what the previous statement did" shape this file keeps removing, and here the failure mode is
+QUIET rather than loud: an absent property reads as `var()`, `var()` converts to 0, and 0's nearest
+ladder step is **80**. A missing field would silently become the SMALLEST legal scale instead of the
+default one, which looks like a deliberate setting rather than a fault. The read now names
+`ui_scale::defaultPercent`, and that constant replaced a literal `100` at both sites so the fallback
+and `setDefaults()` cannot come to disagree, with a `static_assert` that the default is itself a
+ladder step (otherwise the default would need normalising, which is the shape the rule exists to
+remove).
+The test states the §4.4 rule directly rather than the implementation: a session whose
+`ANABASIS_INTERNAL` child OMITS the field must load at the default step. That is reachable now — a
+hand-edited session, or one written before the field existed — so it is a real read-rule check, not
+a guard against a hypothetical refactor. **Two-stage mutation measured which line does the work**,
+because with both present the test cannot tell them apart: removing `setDefaults()`'s write leaves
+the check passing (the fallback carries it, and the collateral failures are the byte-identical
+round-trip checks, correctly, since a field left the schema); removing the fallback as well fails it
+at exactly the 80 % predicted.
+(2) **A comment named one consequence of a change and not the other.**
+`SpectrumView::hitTest` declines every region but the dismiss ×, and the comment recorded that the
+tooltip therefore narrows to the × — but not that clicks over the trace now REACH WHATEVER IS
+BENEATH. Today that is the editor, which installs nothing there, so nothing happens; the point is
+that it is a live routing decision rather than a void, and the next person to put an affordance
+under the spectrum's footprint needs to know it becomes reachable through the overlay while the
+overlay is showing. Both consequences are now stated as the same trade seen from opposite ends
+(wanting the tooltip back means intercepting everywhere again, i.e. re-accepting the swallow), with
+the resolution named: widen the hit-area, do not revert. No behaviour change.
+Previous: **review round 63 (2026-08-05)** — one state-ownership move, one
 truthfulness guard, one invariant written down:
 (1) **A display poll had become a state writer.** `normalisedUiScale()` wrote `iid::uiScale` back to
 `InternalState` when the persisted percent was not a legal ladder step, and it is reached from

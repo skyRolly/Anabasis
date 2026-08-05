@@ -3200,6 +3200,29 @@ static void testAnOutOfListUiScaleClampsConsistently()
     check (box->getText() == "90%" && std::abs (rendered() - 0.90f) < 1.0e-4f,
            "uiScaleClamp: …and the box and the transform agree with the converged value");
 
+    // MISSING FIELD → THE DEFAULT, which is §4.4's read rule and the one case
+    // the ladder can get wrong in a way that looks plausible: an absent property
+    // reads as `var()`, `var()` converts to 0, and 0's NEAREST step is 80 — so a
+    // read without a stated default turns "not present" into the smallest legal
+    // scale rather than the default one. Reachable from a hand-edited session or
+    // one written before the field existed.
+    {
+        AnabasisAudioProcessor bare;
+        juce::MemoryBlock mb;
+        bare.getStateInformation (mb);
+        auto root = juce::ValueTree::fromXml (
+            *juce::AudioProcessor::getXmlFromBinary (mb.getData(), (int) mb.getSize()));
+        auto internal = root.getChildWithName ("ANABASIS_INTERNAL");
+        check (internal.isValid() && internal.hasProperty (iid::uiScale),
+               "uiScaleClamp: (premise) a written session carries the field");
+        internal.removeProperty (iid::uiScale, nullptr);
+        juce::MemoryBlock in;
+        juce::AudioProcessor::copyXmlToBinary (*root.createXml(), in);
+        bare.setStateInformation (in.getData(), (int) in.getSize());
+        check ((int) bare.internalState.state().getProperty (iid::uiScale, -1) == 100,
+               "uiScaleClamp: a session missing the field loads at the DEFAULT step, not the smallest");
+    }
+
     // THE POLL WRITES NOTHING. The whole point of moving the correction: an
     // illegal percent written straight into the live tree (which only a test can
     // do — `replaceFrom` is the real entry) must survive the display refresh

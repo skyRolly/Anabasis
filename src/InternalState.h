@@ -63,6 +63,14 @@ namespace ui_scale
     }
 
     inline constexpr int nearest (int pct) noexcept { return steps[nearestIndex (pct)]; }
+
+    // The field's default, HERE rather than as a literal at each site, so
+    // `setDefaults()` and every fallback read name the same number. It must be
+    // a legal step, or the default would itself need normalising — which is the
+    // shape the read rule exists to remove.
+    inline constexpr int defaultPercent = 100;
+    static_assert (nearest (defaultPercent) == defaultPercent,
+                   "the default UI scale must be one of the ladder steps");
 }
 
 class InternalState : private juce::ValueTree::Listener
@@ -82,7 +90,7 @@ public:
         tree.setProperty (iid::osPhase,        0,     nullptr);   // ⊕ min-phase
         tree.setProperty (iid::offlineQuality, 0,     nullptr);   // ⊕ Follow
         tree.setProperty (iid::ceilingLock,    false, nullptr);
-        tree.setProperty (iid::uiScale,        100,   nullptr);
+        tree.setProperty (iid::uiScale,        ui_scale::defaultPercent, nullptr);
         tree.setProperty (iid::tooltipsOn,     false, nullptr);
         tree.setProperty (iid::uiAnimations,   true,  nullptr);
         tree.setProperty (iid::spectrumOn,     true,  nullptr);
@@ -158,8 +166,20 @@ public:
         // session this build ever wrote — writes nothing and sends no change
         // message. This is not a latency input, so the batch above is
         // indifferent to it.
+        //
+        // THE FALLBACK IS THE 100 % DEFAULT, NOT `var()`'s. `setDefaults()`
+        // runs immediately above and always writes the field, so the read
+        // cannot miss today — but "correct because of what the line above did"
+        // is the reasoning this file avoids elsewhere, and here it fails
+        // QUIETLY rather than loudly: a missing property reads as `var()`,
+        // which converts to 0, and 0's nearest ladder step is 80. An absent
+        // field would silently become the SMALLEST legal scale instead of the
+        // default one. Naming the default in the read makes this total on its
+        // own, and it is the same default `setDefaults()` writes — the value,
+        // not a second opinion about it.
         tree.setProperty (iid::uiScale,
-                          ui_scale::nearest ((int) tree.getProperty (iid::uiScale)),
+                          ui_scale::nearest ((int) tree.getProperty (
+                              iid::uiScale, ui_scale::defaultPercent)),
                           nullptr);
 
         // …and the single fire happens in ~ScopedLatencyBatch, so an early
