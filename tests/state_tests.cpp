@@ -1309,6 +1309,46 @@ static void testThePresetWriterAndTheDirtyMarkerCoverTheSameParameters()
                                   "marker watches (" + unnoticed.joinIntoString (", ") + ")";
     check (notClean.isEmpty(), cleanMsg.toRawUTF8());
     check (unnoticed.isEmpty(), seenMsg.toRawUTF8());
+
+    // THE THIRD CONSUMER of that set: the factory apply's defaults pass. An
+    // override table is "defaults + intents", so the pass must reach EVERY
+    // non-excluded parameter — one it skipped would keep the value the PREVIOUS
+    // preset left, which is the blend-two-presets failure the pass exists to
+    // prevent, and audible rather than cosmetic. Until round 57 this walked
+    // `apvts.state`'s PARAM children while the other two walked
+    // `getParameters()`.
+    //
+    // Stated as IDEMPOTENCE AGAINST ARBITRARY PRIOR STATE, which is the whole
+    // invariant and needs no second copy of the table logic in the test:
+    // snapshot what a preset lands, park every non-excluded parameter at the
+    // far end of its range, re-apply the SAME preset, and require every one of
+    // them back where it was. A parameter the walk misses keeps its parked
+    // value and is named in the failure.
+    {
+        AnabasisAudioProcessor p3;
+        check (p3.applyFactoryPreset (1), "shapeParity: (premise) the factory preset applies");
+
+        std::vector<std::pair<juce::String, float>> landed;
+        for (const auto& id : written)
+            if (auto* param = p3.apvts.getParameter (id))
+                landed.emplace_back (id, param->getValue());
+
+        for (auto& [id, v] : landed)
+            if (auto* param = p3.apvts.getParameter (id))
+                param->setValueNotifyingHost (v > 0.5f ? 0.0f : 1.0f);
+
+        check (p3.applyFactoryPreset (1), "shapeParity: (premise) the same preset re-applies");
+
+        juce::StringArray stranded;
+        for (const auto& [id, v] : landed)
+            if (auto* param = p3.apvts.getParameter (id);
+                param != nullptr && ! juce::exactlyEqual (param->getValue(), v))
+                stranded.add (id);
+        const juce::String strandedMsg =
+            "shapeParity: the factory defaults pass reaches every parameter a preset stores ("
+            + stranded.joinIntoString (", ") + ")";
+        check (stranded.isEmpty(), strandedMsg.toRawUTF8());
+    }
 }
 
 // ---------------------------------------------------------------------------

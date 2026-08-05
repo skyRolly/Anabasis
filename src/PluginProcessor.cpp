@@ -789,11 +789,11 @@ juce::ValueTree AnabasisAudioProcessor::presetShapeFromLive() const
     // KI-003 exposure it always had, unchanged rather than newly introduced.
     juce::ValueTree shape ("PRESET_SHAPE");
     PresetManager::forEachPresetParameter (apvts,
-        [&shape] (const juce::String& id, double value)
+        [&shape] (const juce::String& id, juce::RangedAudioParameter& param)
         {
             juce::ValueTree node ("PARAM");
             node.setProperty ("id", id, nullptr);
-            node.setProperty ("value", value, nullptr);
+            node.setProperty ("value", PresetManager::presetValueOf (param), nullptr);
             shape.appendChild (node, nullptr);
         });
 

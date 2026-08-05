@@ -45,19 +45,35 @@ public:
         return (double) r.snapToLegalValue (r.convertFrom0to1 (param.getValue()));
     }
 
-    // THE preset parameter set — one traversal, one exclusion test, one value
-    // rule — visited in a fixed order and handed to the caller as (id, value).
+    // THE preset parameter set — one traversal, one exclusion test — visited in
+    // a fixed order and handed to the caller as (id, parameter).
     //
-    // `savePreset` writes the file from it and the wrapper's dirty-marker
-    // projection (`presetShapeFromLive`) rebuilds the same content from it.
-    // Those two used to walk DIFFERENT collections for the same answer: the
-    // writer iterated `apvts.state`'s PARAM children, the projection iterated
-    // `getParameters()`. Every value agreed, because APVTS creates one tree
-    // child per parameter — but "agree" was a fact about today's JUCE rather
-    // than a property of the code, and a parameter registered without a tree
-    // node (or a stray node without a parameter) would have put content in the
-    // file that the marker could not see, or the reverse. Sharing the walk
-    // makes the two the same set by construction.
+    // THE PARAMETER, not its preset value, because the three callers need
+    // different things from it and only two of them want a value:
+    // `savePreset` and `presetShapeFromLive` ask `presetValueOf` (the shared
+    // ADR-0007 snap rule, still one copy), while `applyFactoryPreset` needs the
+    // parameter's DEFAULT and then writes to it. Handing over the value and
+    // hiding the parameter would have left the third caller unable to use this
+    // function at all — which is exactly why it walked its own collection until
+    // round 57.
+    //
+    // `savePreset` writes the file from it, the wrapper's dirty-marker
+    // projection (`presetShapeFromLive`) rebuilds the same content from it, and
+    // `applyFactoryPreset`'s defaults pass writes through it.
+    // Those three used to walk DIFFERENT collections for one answer: two over
+    // `apvts.state`'s PARAM children, one over `getParameters()`. Every value
+    // agreed, because APVTS creates one tree child per parameter — but "agree"
+    // was a fact about today's JUCE rather than a property of the code, and a
+    // parameter registered without a tree node (or a stray node without a
+    // parameter) would have put content in the file that the marker could not
+    // see, or the reverse. Sharing the walk makes them one set by construction.
+    //
+    // The FACTORY APPLY is the case where a divergence would have been audible
+    // rather than cosmetic. An override table is "defaults + intents", so the
+    // pass has to reach EVERY non-excluded parameter: one it skipped would keep
+    // the value the previous preset left, which is the blend-two-presets
+    // failure the defaults pass exists to prevent — silent, and worse the
+    // further apart the two presets are.
     //
     // The PARAMETERS are the collection, not the tree, and that choice carries
     // a second guarantee: the marker runs on the editor's ~3 Hz poll, and this
@@ -105,7 +121,7 @@ public:
                    { return a->getParameterID().compare (b->getParameterID()) < 0; });
 
         for (auto* param : ordered)
-            fn (param->getParameterID(), presetValueOf (*param));
+            fn (param->getParameterID(), *param);
     }
 
     bool savePreset (const juce::File& file, const juce::StringArray& detachMask) const;

@@ -6,7 +6,39 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 56 (2026-08-05)** — one implicit contract made explicit, one
+**Last updated:** for **review round 57 (2026-08-05)** — the third preset walk converted to the
+shared traversal; no behaviour changed:
+**`PresetManager::applyFactoryPreset`'s defaults pass still iterated `apvts.state`'s PARAM
+children** while `savePreset` and `presetShapeFromLive` had shared `forEachPresetParameter` over
+`getParameters()` since round 52. The argument that unified those two applies here with more force,
+because the consequence is different in kind: for the writer and the marker a divergence is a
+cosmetic disagreement about the "edited" mark, but an override table is "defaults + intents", so a
+parameter this pass skips keeps the value the PREVIOUS preset left it at — the blend-two-presets
+failure the pass exists to prevent, silent and worse the further apart the two presets are.
+"One tree child per parameter" is a fact about JUCE, not an invariant of this code.
+The shared walk now yields `(id, RangedAudioParameter&)` rather than `(id, double)`. That is what
+made the third caller able to use it at all: `savePreset` and the projection ask `presetValueOf`,
+while the factory apply needs the parameter's DEFAULT and then writes to it, so handing over a value
+and hiding the parameter was the reason this loop had its own collection. `presetValueOf` stays the
+single value rule, still one copy, now called by the two callers that want it.
+Everything observable is unchanged, and deliberately so: write ORDER (the walk's sorted-by-id order
+IS the tree order the loop had — round 54 measured it and `written == fromTree` pins it), values,
+exclusions, the ceiling-lock skip and host-notification behaviour. The ceiling lock stays at the
+CALL SITE rather than moving into the shared walk, because it is an apply-side rule: a locked
+ceiling is never written by a preset (DESIGN §4.2) but is still saved and still compared by the
+dirty marker, so it is not a member of the preset parameter set.
+It also retires a caveat instead of restating it. The old loop wrote the APVTS tree (through
+`setValueNotifyingHost`) while iterating it, safe only because a property write neither adds nor
+removes children — with a note to collect the ids first if a listener ever changed that. The shared
+walk reads the processor's parameter list and touches no `ValueTree`, so there is no iterator left
+to invalidate.
+The parity test gained the invariant in the form that needs no second copy of the table logic:
+IDEMPOTENCE AGAINST ARBITRARY PRIOR STATE — snapshot what a preset lands, park every non-excluded
+parameter at the far end of its range, re-apply the SAME preset, require every one of them back
+where it was. A parameter the walk misses keeps its parked value and is named in the failure
+message. One mutant (a parameter the pass skips) fails it, and `factory:`'s existing
+returns-to-default check as well.
+Previous: **review round 56 (2026-08-05)** — one implicit contract made explicit, one
 latent aliasing hazard removed; no behaviour changed by either:
 (1) **The ADR-0014 restore's generation bump was load-bearing and unstated.** `injectTrims` calls
 `publishTrims(true)`, which writes the RETAINED set and advances `retTrimSeq` exactly as an audible

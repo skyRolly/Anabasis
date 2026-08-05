@@ -13,11 +13,12 @@ bool PresetManager::savePreset (const juce::File& file, const juce::StringArray&
     // the property. It also owns the exclusion test and the traversal, so this
     // writer and the wrapper's dirty-marker projection cannot come to describe
     // different content — see `forEachPresetParameter`.
-    forEachPresetParameter (apvts, [&root] (const juce::String& id, double value)
+    forEachPresetParameter (apvts, [&root] (const juce::String& id,
+                                            juce::RangedAudioParameter& param)
     {
         auto* p = root.createNewChildElement ("PARAM");
         p->setAttribute ("id", id);
-        p->setAttribute ("value", value);
+        p->setAttribute ("value", presetValueOf (param));
     });
 
     auto* mask = root.createNewChildElement ("DETACH_MASK");
@@ -263,24 +264,32 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
     // Each notification re-enters `AnabasisAudioProcessor::parameterChanged`,
     // where the nine managed ids are discarded because `isRestoring()` is true.
     //
-    // This ITERATES the APVTS tree while WRITING it: `setValueNotifyingHost`
-    // has APVTS write the `value` property of the very node being visited.
-    // Safe with juce::ValueTree's iterator because a property write neither
-    // adds nor removes children, so the child array is never reallocated — and
-    // stated because that is the whole reason it is safe. A listener that ever
-    // added or removed a PARAM node from here would invalidate the iteration,
-    // so collect the ids first if that day comes.
+    // THROUGH `forEachPresetParameter`, the same walk `savePreset` and the
+    // wrapper's dirty-marker projection use, which is what keeps every preset
+    // operation over ONE parameter set. This loop used to iterate
+    // `apvts.state`'s PARAM children instead, and the round-52 argument for
+    // unifying the other two applies here with more force: "one tree child per
+    // parameter" is a fact about JUCE, not an invariant of this code, and a
+    // parameter the tree walk missed would keep the value the PREVIOUS preset
+    // left it at — the blend-two-presets failure this defaults pass exists to
+    // prevent, and audible rather than cosmetic.
+    //
+    // It also retires a caveat rather than restating it: the old loop wrote the
+    // APVTS tree (via `setValueNotifyingHost`) while iterating it, safe only
+    // because a property write neither adds nor removes children. The shared
+    // walk reads the processor's parameter list and touches no `ValueTree` at
+    // all, so the iterator has nothing left to invalidate.
+    //
+    // The ceiling lock stays HERE, not in the shared walk: a locked ceiling is
+    // never WRITTEN by a preset (DESIGN §4.2), but it is still saved and still
+    // compared by the dirty marker, so it is an apply-side rule and not a
+    // member of the preset parameter set.
     const bool locked = internal.ceilingLocked();
-    for (const auto node : apvts.state)
+    forEachPresetParameter (apvts, [&] (const juce::String& id,
+                                        juce::RangedAudioParameter& param)
     {
-        if (! node.hasType ("PARAM"))
-            continue;
-        const auto id = node.getProperty ("id").toString();
-        if (isPresetExcludedParam (id) || (locked && id == pid::ceiling))
-            continue;
-        auto* param = apvts.getParameter (id);
-        if (param == nullptr)
-            continue;
+        if (locked && id == pid::ceiling)
+            return;                                 // §4.2, as `applyOnePresetValue`
 
         // ONE write per parameter, at its FINAL value. This used to be two
         // passes — every non-excluded parameter to its default, then the
@@ -297,14 +306,14 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
         // The exclusion and ceiling-lock rules are applied ONCE here rather
         // than once per pass, which is also why they cannot now disagree
         // between the two.
-        float target = param->getDefaultValue();
+        float target = param.getDefaultValue();
         for (int i = 0; i < table[index].numOverrides; ++i)
             if (id == table[index].overrides[i].id)
-                target = param->getNormalisableRange().convertTo0to1 (
-                             param->getNormalisableRange().snapToLegalValue (
+                target = param.getNormalisableRange().convertTo0to1 (
+                             param.getNormalisableRange().snapToLegalValue (
                                  table[index].overrides[i].value));
-        setParamIfMoved (*param, target);
-    }
+        setParamIfMoved (param, target);
+    });
 
     detachMaskOut.clear();     // factory presets load nothing pre-detached
     return true;
