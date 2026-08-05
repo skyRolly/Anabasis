@@ -66,6 +66,16 @@ first scheduled or dispatched run — rehearse via `workflow_dispatch` after mer
 running" (P1 summary), silently unreported at P2–P6 closes. This entry is the status of record
 until the next phase summary.
 
+**Same date, the User documentation class lands** — `docs/user/USER_MANUAL.md` +
+`INSTALLATION.md`, the class whose P6 target had passed unmet. Every stated fact was read
+from the tree first (registry ranges verbatim, the `kFactory` names, `presetDirectory()`,
+`kLearnMinPassMs`, `kTiltPivotHz`, the editor's actual affordances, `isBusesLayoutSupported`);
+no magic numbers shipped to users (no GR-window seconds, no undo cap, no performance figures);
+INSTALLATION describes the OQ-007 zips as they are, including the executable-bit restore
+`build.yml`'s own packaging NOTE makes necessary and the quarantine steps for
+ad-hoc-signed bundles. Voice adapted from the sibling under ADR-0009; all wording ⊕ for the
+fine review's brand pass.
+
 **Same date, `COMPATIBILITY_MATRIX.md` lands** — the document this file's own Pending Tasks row
 was already pointing the DAW-matrix audition at, and which `OQ-011` directed its supported-OS
 restatement to. The audition now has a target list: rows A1 (REAPER/Windows/VST3) and A2

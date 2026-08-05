@@ -101,7 +101,8 @@ docs/
 ├── SOURCE_OF_TRUTH.md, REPOSITORY_MAP.md, OPEN_QUESTIONS.md, HANDOVER.md,
 │   DOCUMENTATION_COVERAGE.md, KNOWN_ISSUES.md, FUTURE_RISKS.md, POSTMORTEMS.md,
 │   BRAND_CONSISTENCY_CHECKLIST.md, TEST_REPORT.md (measured data + method, grows per phase)
-├── user/           [P6] end-user class: USER_MANUAL, INSTALLATION
+├── user/           end-user class (derived; never evidence): USER_MANUAL.md,
+│                   INSTALLATION.md — since 2026-08-05, written against the v0.1.0 surface
 ├── architecture/   design-decisions/ — ADR_INDEX.md + the ADR files it registers (the index is
 │                   the roster; this map does not re-list them, so a new ADR needs no edit
 │                   here). THREAD_MODEL.md (implemented model, from ADR-0011)

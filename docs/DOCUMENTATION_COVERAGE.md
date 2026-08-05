@@ -6,7 +6,26 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the RISK-009 trigger-passed note (2026-08-05)** — the risk register's
+**Last updated:** for **the User documentation class landing (2026-08-05)** —
+`docs/user/USER_MANUAL.md` + `docs/user/INSTALLATION.md`, closing the class that P6's target
+passed unmet. Method, because a user manual is where invented facts hide best: every stated
+fact was read from the tree before it was written — the registry's ranges and names verbatim
+(the 49-row table), the twelve factory preset names from `PresetManager.cpp`'s `kFactory`
+table, the preset folder from `presetDirectory()`, Learn's 5-second minimum from
+`kLearnMinPassMs`, the tilt pivot from `kTiltPivotHz`, Force-Max-equals-16× from the PDC
+callback's own comment, the About/‹›/edited-dot/meter-click affordances from the editor's
+constructors, and the stereo-only bus contract from `isBusesLayoutSupported`. What the manual
+deliberately does NOT do: quote the GR-history window length, the undo cap or any performance
+number (the counts rule and C2 apply to user docs too — behaviourally visible limits are
+described, magic numbers are not shipped to users); claim a transport-follows meter reset the
+sibling has and this product does not; or describe automation of the nine advisory
+non-automatable rows as impossible (hosts may expose them — the manual says so). INSTALLATION
+is written for what v0.1.x actually is (OQ-007 plain zips): manual copy paths, the
+executable-bit restore the artifact transport makes necessary (`build.yml`'s own NOTE), the
+quarantine steps for ad-hoc-signed bundles, and an honest "no checksums yet" section. Voice
+and structure adapted from the sibling's manual under ADR-0009; all product wording ⊕ for the
+fine review. `REPOSITORY_MAP.md`'s user row updated; the gaps item closed.
+Previous: **the RISK-009 trigger-passed note (2026-08-05)** — the risk register's
 variable-font entry gained a dated blockquote in the RISK-008 pattern: its trigger ("P5 reaching
 typography with no approved font licence") has passed without materialising — the shipped P5
 uses the platform default and embeds nothing, the fact the attribution inventory independently
@@ -5221,7 +5240,7 @@ landed — the staleness the same date's audit entry reports.)
 | procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING moved with the installer set to the first commercial release — **OQ-007**, resolved 2026-08-02; no longer a P6 item) |
 | architecture | `design-decisions/ADR_INDEX.md` — **the registry**: take the ADR set and each entry's confidence from it, never from a row here (this row enumerated "ADR-0001…0012" and went stale the moment ADR-0013/0014 were Accepted — the same staleness the round-53 README fix removed, in the file whose job is noticing it). Descriptive set: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2), `PERFORMANCE_BUDGET.md` (P6), `COMPATIBILITY_MATRIX.md` (2026-08-05) | Decisions registered in the index; remaining descriptive docs — see the gaps list below |
 | docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
-| user | — | **Absent — P6 closed without it** and no replacement target is recorded; when it lands it is written against the finished v0.1.0 surface (the class is derived, `SOURCE_OF_TRUTH.md`). Flagged to the owner rather than silently re-dated (C7) |
+| user | `USER_MANUAL.md`, `INSTALLATION.md` | **Present (2026-08-05)** — written against the v0.1.0 surface with every stated fact taken from the tree (registry ranges, factory names, preset paths, Learn's 5 s minimum, the constant-latency contract, the chmod/quarantine realities of the OQ-007 zips). Derived class — never evidence (`SOURCE_OF_TRUTH.md`); prose voice adapted from the sibling's manual under ADR-0009 and ⊕ for the fine review like all product wording taken under a standing approval |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
 | root — legal | `NOTICE`, `THIRD_PARTY_LICENSES.md` | **Factual attribution half Present (2026-08-05)** — produced against the actually-pinned JUCE tree per `RELEASE_POLICY.md`'s own prescription: inventory from JUCE's `LICENSE.md` plus a compiled-TU walk, compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides them), exclusions from their gates plus symbol absence; CI copies both files into every customer artifact. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) stays absent — waits on OQ-002 and owner wording, never invented (C8) |
 | root — internal/testing | — | SUPPORT.md ships with the first tester build (none has left the repository — Release Status row, `HANDOVER.md`) |
@@ -5269,8 +5288,9 @@ These are **deliberate**, not oversights. Each names what would close it.
 - **Legal / attribution class absent** — the P6 target passed; the "real dependency tree"
   precondition is met, so the factual half (`NOTICE`, `THIRD_PARTY_LICENSES.md`) is producible
   now; the owner-legal half waits on OQ-002 and owner wording (see the self-coverage row).
-- **`docs/user/` absent** — the P6 target passed unmet; flagged in the self-coverage row, no
-  replacement date invented (C7).
+- ~~**`docs/user/` absent**~~ — **closed 2026-08-05**: `USER_MANUAL.md` + `INSTALLATION.md`
+  landed against the v0.1.0 surface (see the self-coverage row for the evidence discipline);
+  the class's ⊕ wording review joins the fine review's brand pass.
 
 ## Update protocol
 
