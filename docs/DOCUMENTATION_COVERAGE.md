@@ -6,7 +6,20 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 items 12/13/14 — Settings polish (2026-08-05, owner
+**Last updated:** for **round-2 items 3/10 — the sibling's icons, About layout and A/B oval
+(2026-08-05, owner directive)**. Undo/redo carry the sibling's circle arrows (U+21BA/U+21BB) —
+the half-arrows they replace inverted their reading under the icon treatment's 180° rotation,
+which is what the "ugly icons" report was; the glyph test now pins the new pair and records
+the why. The About panel matches the sibling's content layout exactly: 440×290 geometry, the
+12 pt/0.22 subtitle tracking, and the link band LEFT-aligned at the content inset (170×20,
+50 px up from the bottom), styled the sibling's way — accent, 13 pt, **no underline**, no
+tooltip. The one-sentence product description the C8 rule had deliberately withheld is now IN,
+under the owner's explicit round-2 instruction to generate it ("I will let you know later if
+it needs tweaking" — the authority supplied, ⊕ on the words), in the family sentence-shape and
+drawn with the sibling's fitted-4-lines idiom. A/B takes the sibling's shorter oval
+(`removeFromRight (46).reduced (0, 1)`, its #4) instead of the 64 px slab. Brand-checklist
+Level-5 deviation candidates shrink accordingly.
+Previous: **round-2 items 12/13/14 — Settings polish (2026-08-05, owner
 directive)**. The UI-scale ladder is now the SIBLING'S: five steps 75/85/100/125/150 % shown
 as **XS/S/M/L/XL** (M = the original size; `ui_scale::names` index-locked to `steps` by a
 `static_assert`), keeping the field a percent so the schema's meaning is unchanged — an old

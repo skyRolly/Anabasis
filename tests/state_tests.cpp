@@ -2926,11 +2926,15 @@ static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
     // The three sibling ids beside it (`"apply"`, `"metersicon"`, `"vtoggle"`)
     // were removed instead, because they style controls this product does not
     // have — there is nothing to assert about an id no component may carry.
-    for (const auto glyph : { (juce::juce_wchar) 0x21B6, (juce::juce_wchar) 0x21B7 })
+    // 0x21BA/0x21BB since 2026-08-05 — the SIBLING'S circle arrows, which
+    // still read as undo/redo under the icon treatment's 180° rotation; the
+    // half-arrows they replace (0x21B6/0x21B7) inverted their meaning when
+    // rotated, which is what the owner's "ugly icons" report was.
+    for (const auto glyph : { (juce::juce_wchar) 0x21BA, (juce::juce_wchar) 0x21BB })
     {
         auto* b = findButtonByText (*ed, juce::String::charToString (glyph));
         const juce::String msg = juce::String ("saveGlow: the ")
-                               + (glyph == (juce::juce_wchar) 0x21B6 ? "undo" : "redo")
+                               + (glyph == (juce::juce_wchar) 0x21BA ? "undo" : "redo")
                                + " glyph button is tagged for the icon treatment";
         check (b != nullptr && b->getComponentID() == "icon", msg.toRawUTF8());
     }

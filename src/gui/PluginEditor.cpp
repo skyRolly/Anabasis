@@ -79,24 +79,25 @@ void AnabasisAudioProcessorEditor::Backdrop::paint (juce::Graphics& g)
     // this space — the panel is 400×232 with the link at `withTrimmedTop (176)`
     // — and every other overlay's content is likewise painted by its Backdrop.
     //
-    // The strings are the ones this product already owns: the wordmark and
-    // subtitle the top bar paints, `COMPANY_NAME` from `CMakeLists.txt`, and the
-    // two build definitions. NO PROSE DESCRIPTION, deliberately — the sibling's
-    // About carries one because its owner supplied it, and free prose here is
-    // owner-supplied wording (C8), which this file's header says is not invented
-    // in the code. Identification is complete without it; a description is a
-    // one-line addition once the copy lands.
+    // The strings are the ones this product already owns — plus, since
+    // 2026-08-05, ONE flowing description sentence. C8 said product prose is
+    // never invented in code; the owner's round-2 directive explicitly asked
+    // for this copy to be generated here (⊕ — "I will let you know later if
+    // it needs tweaking"), which is the owner supplying the authority if not
+    // the words. Layout mirrors the sibling's About panel exactly (its #3:
+    // one sentence that word-wraps naturally, drawFittedText over 4 lines).
     const auto copyright = juce::String::charToString ((juce::juce_wchar) 0x00A9);  // © , not mojibake
+    const auto emdash    = juce::String::charToString ((juce::juce_wchar) 0x2014);
 
     auto r = panel.reduced (30, 26);
     g.setColour (colours::text);
     g.setFont (juce::Font (juce::FontOptions (28.0f)).withExtraKerningFactor (0.16f));
     g.drawText ("ANABASIS", r.removeFromTop (38), juce::Justification::topLeft);
 
-    // The accent subtitle at the top bar's own tracking (`paint`, 10 px / 0.25),
-    // so the panel reads as the same wordmark enlarged rather than a second one.
+    // The sibling's subtitle tracking (12 pt / 0.22), so the two About
+    // panels read as one family document with different names on it.
     g.setColour (colours::accent);
-    g.setFont (juce::Font (juce::FontOptions (12.0f)).withExtraKerningFactor (0.25f));
+    g.setFont (juce::Font (juce::FontOptions (12.0f)).withExtraKerningFactor (0.22f));
     g.drawText ("MASTERING MAXIMIZER", r.removeFromTop (20), juce::Justification::topLeft);
 
     r.removeFromTop (14);
@@ -107,9 +108,19 @@ void AnabasisAudioProcessorEditor::Backdrop::paint (juce::Graphics& g)
                 r.removeFromTop (18), juce::Justification::topLeft);
     g.drawText ("RollyTech", r.removeFromTop (18), juce::Justification::topLeft);
 
-    // Above the link band, not below it: the link is centred 180 px wide, so a
-    // bottom-left notice would run under it at this panel width.
     r.removeFromTop (10);
+    // One flowing sentence that word-wraps naturally (the sibling's #3) —
+    // the family sentence-shape: what it is, the three things it does, the
+    // honest-monitoring hook after the dash. ⊕ owner-review wording.
+    const juce::String desc =
+        "A mastering loudness maximizer: push loudness through an adaptive chain, "
+        "hold a true-peak ceiling, and judge the result " + emdash + " loudness-matched, "
+        "so louder never masquerades as better.";
+    g.setColour (colours::text);
+    g.setFont (juce::Font (juce::FontOptions (13.0f)));
+    g.drawFittedText (desc, r.removeFromTop (60), juce::Justification::topLeft, 4);
+
+    r.removeFromTop (6);
     g.setColour (colours::textDim.withAlpha (0.7f));
     g.setFont (juce::Font (juce::FontOptions (11.0f)));
     g.drawText (copyright + " 2026 RollyTech. All rights reserved.",
@@ -204,8 +215,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addAndMakeVisible (copyButton);
     registerAnimated (copyButton);
 
-    undoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B6));
-    redoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B7));
+    undoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21BA)); // the sibling's circle arrow (#7)
+    redoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21BB));
     // THE ARMING SITE for the LookAndFeel's `"icon"` treatment, missing since
     // these buttons were added at P6. `drawButtonText`/`getTextButtonFont`
     // discriminate on this id to render a 21 px glyph instead of the generic
@@ -456,6 +467,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     aboutBackdrop.setAlwaysOnTop (true);
     addChildComponent (aboutLink);
     aboutLink.setAlwaysOnTop (true);
+    // The sibling's link styling, exactly: accent colour, 13 pt, NO underline
+    // (the second argument), left-justified, and no tooltip on the URL (#2).
+    aboutLink.setColour (juce::HyperlinkButton::textColourId, colours::accent);
+    aboutLink.setFont (juce::Font (juce::FontOptions (13.0f)), false, juce::Justification::centredLeft);
+    aboutLink.setJustificationType (juce::Justification::centredLeft);
+    aboutLink.setTooltip (juce::String());
 
     settingsBackdrop.dropShadow = true;
     settingsBackdrop.onDismiss = [this] { showSettings (false); };
@@ -975,7 +992,7 @@ void AnabasisAudioProcessorEditor::resized()
     r.removeFromRight (10);
     copyButton.setBounds (r.removeFromRight (46));
     r.removeFromRight (6);
-    abControl.setBounds (r.removeFromRight (64));
+    abControl.setBounds (r.removeFromRight (46).reduced (0, 1)); // the sibling's shorter oval (#4)
 
     // Preset browser fills between the wordmark and the right cluster.
     r.removeFromLeft (352 - r.getX());
@@ -987,9 +1004,11 @@ void AnabasisAudioProcessorEditor::resized()
 
     for (auto* b : { &aboutBackdrop, &settingsBackdrop, &savePresetBackdrop })
         b->setBounds (getLocalBounds());
-    aboutBackdrop.panel = getLocalBounds().withSizeKeepingCentre (400, 232);
-    aboutLink.setBounds (aboutBackdrop.panel.withTrimmedTop (176).withTrimmedBottom (24)
-                             .withSizeKeepingCentre (180, 20));
+    aboutBackdrop.panel = getLocalBounds().withSizeKeepingCentre (440, 290);   // the sibling's About geometry
+    // The sibling's link band: LEFT-aligned at the panel's content inset,
+    // 170×20, 50 px up from the panel bottom — not centred.
+    aboutLink.setBounds (aboutBackdrop.panel.reduced (30, 26).getX(),
+                         aboutBackdrop.panel.getBottom() - 50, 170, 20);
     settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 398);
     savePresetBackdrop.panel = getLocalBounds().withSizeKeepingCentre (340, 150);
 
