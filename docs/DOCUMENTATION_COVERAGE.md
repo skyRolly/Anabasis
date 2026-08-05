@@ -6,7 +6,37 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the User documentation class landing (2026-08-05)** —
+**Last updated:** for **the adversarial verification round over the 2026-08-05 batch** — every
+checkable claim in the six new commits was independently re-derived (citations, symbol probes,
+workflow structure, cross-document coherence), each reported discrepancy then adversarially
+re-verified before being trusted. The canary commit came back clean; eleven findings elsewhere
+were confirmed and are fixed in this change:
+(1) **A fabricated quotation** — the matrix's AAX row attributed the sentence "AAX is not
+supported" to brief §2, which excludes AAX only by omission (the sentence exists in the README;
+the brief's §14.3 uses AAX as its Not Supported *example*). The row now says exactly that. The
+same mis-attribution pre-exists in `COMPATIBILITY_POLICY.md` — left for its own change, being a
+policy file (recorded here per C6 instead).
+(2) **A stale-count violation of this batch's own making** — the matrix quoted the
+~46-notification preset burst in live prose while assigning ownership of that bound to the
+checklist in the same sentence (and the number had already drifted: round 50's
+`setParamIfMoved` made it an upper bound). The number is gone; the checklist owns it.
+(3) **The one live pluginval-strictness quote left in the doc set** — HANDOVER's Pending Tasks
+item (f), pre-existing from 2026-08-02, three rows below the row that says the number lives in
+`build.yml` alone. Now it defers like everything else.
+(4) **Passed-phase markers this batch's repairs missed, all in `REPOSITORY_MAP.md`**: the legal
+class still "[P6]" though its factual half landed; `packaging/`, `release.yml` and PACKAGING
+still "[P6]" though OQ-007 moved them; both workflow enumerations missing `cxx23-canary.yml`.
+All re-pointed.
+(5) **Two lists describing one set with different membership** — the map's planned descriptive
+docs (8 names) vs this file's gaps list (6): `API_REFERENCE.md` and `STATE_SERIALIZATION.md`
+added here.
+(6) Small-bore exactness: the matrix's bus-declaration citation was off by one line (`:10-13`,
+the output bus was outside the cited range); `PERFORMANCE_BUDGET.md`'s map entry gets its date
+beside the phase label; the gaps list's legal bullet said "producible now" one commit after the
+files existed; and the inventory's claim that `NOTICE` uses the FTL credit "verbatim" overstated
+byte-fidelity (the year placeholder is filled, as the FTL itself instructs) — reworded to say
+precisely that.
+Previous: **the User documentation class landing (2026-08-05)** —
 `docs/user/USER_MANUAL.md` + `docs/user/INSTALLATION.md`, closing the class that P6's target
 passed unmet. Method, because a user manual is where invented facts hide best: every stated
 fact was read from the tree before it was written — the registry's ranges and names verbatim
@@ -5255,7 +5285,10 @@ These are **deliberate**, not oversights. Each names what would close it.
   with P1, `REALTIME_SAFETY_AUDIT.md` with P2, `PERFORMANCE_BUDGET.md` with P6 (struck from the
   absent list 2026-08-05 — it had sat here for three days after landing). Still absent:
   `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`, `SERIALIZATION_REGISTRY.md`,
-  `LATENCY_MODEL.md`, `DSP_ALGORITHMS.md`. The "closed by P5–P6" target has **passed unmet**
+  `LATENCY_MODEL.md`, `DSP_ALGORITHMS.md`, `API_REFERENCE.md`, `STATE_SERIALIZATION.md` (the
+  last two were listed in `REPOSITORY_MAP.md`'s planned set but omitted here — the two lists
+  described the same set with different membership until the 2026-08-05 verification round
+  aligned them). The "closed by P5–P6" target has **passed unmet**
   for these; no replacement date is invented (C7). `COMPATIBILITY_MATRIX.md` — the one that was
   load-bearing, being what `OQ-011` and `HANDOVER.md`'s Pending Tasks row point the DAW-matrix
   audition at — **landed 2026-08-05**, so the audition has its target document; every host row
@@ -5285,9 +5318,12 @@ These are **deliberate**, not oversights. Each names what would close it.
 - **No host (DAW) matrix** — requires manual testing. P6 closed without it; it is now the
   post-v0.1.0 fine review's DAW-matrix audition (`HANDOVER.md` Pending Tasks), which needs
   `COMPATIBILITY_MATRIX.md` first (above).
-- **Legal / attribution class absent** — the P6 target passed; the "real dependency tree"
-  precondition is met, so the factual half (`NOTICE`, `THIRD_PARTY_LICENSES.md`) is producible
-  now; the owner-legal half waits on OQ-002 and owner wording (see the self-coverage row).
+- ~~**Legal / attribution class absent**~~ — **factual half closed 2026-08-05**: `NOTICE` +
+  `THIRD_PARTY_LICENSES.md` landed (self-coverage row carries the method) and CI ships them
+  inside every customer artifact. Still genuinely absent: the owner-legal half (`EULA.md`,
+  `PRIVACY.md`, `TRADEMARKS.md`) — waits on OQ-002 and owner wording (C8). (This bullet said
+  "producible now" for one commit after the files existed — the attribution change synced the
+  row and missed the bullet; caught by the 2026-08-05 verification round.)
 - ~~**`docs/user/` absent**~~ — **closed 2026-08-05**: `USER_MANUAL.md` + `INSTALLATION.md`
   landed against the v0.1.0 surface (see the self-coverage row for the evidence discipline);
   the class's ⊕ wording review joins the fine review's brand pass.

@@ -20,17 +20,22 @@ Anabasis/
 │                           docs; finalized decisions graduate to ADRs — worklogs are the raw
 │                           evidence trail: measurements, rejected alternatives and why).
 ├── scripts/                setup / build / test / pluginval / docs lint.
-├── packaging/              [P6] Per-platform install notes + installer assets (linux/, windows/, macos/).
+├── packaging/              Per-platform install notes + installer assets (linux/, windows/,
+│                           macos/) — deferred with the installer set to the first commercial
+│                           release (OQ-007, resolved 2026-08-02; v0.1.0 ships plain zips).
 ├── .github/                CI + security tooling: workflows/ (build + validate on 3 OSes with
 │                           retain-then-strip symbol pipeline; CodeQL; MSVC /analyze;
-│                           Dependency Review) and dependabot.yml (github-actions ecosystem only).
+│                           Dependency Review; the weekly non-blocking C++23 canary) and
+│                           dependabot.yml (github-actions ecosystem only).
 └── docs/                   This documentation library.
 ```
 
-Legal/attribution documents (`NOTICE`, `THIRD_PARTY_LICENSES.md`, `EULA.md`, `PRIVACY.md`,
-`TRADEMARKS.md`) and the internal-testing guide (`SUPPORT.md`) are **[P6]** — they are produced
-against a real dependency tree and a real binary, and inventing them earlier would violate
-constraint C7.
+Of the legal/attribution class, the **factual half is Present since 2026-08-05**: `NOTICE` and
+`THIRD_PARTY_LICENSES.md` were produced against the real pinned dependency tree and this build's
+own object files (the method is stated inside the inventory), and CI copies both into every
+customer artifact. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) and the
+internal-testing guide (`SUPPORT.md`) remain absent: their wording is owner-supplied (C8) and
+gated with OQ-002/OQ-009 — inventing them would violate constraint C7.
 
 ## `src/` — layout (P1 skeleton in the tree; stages marked P2+ are not yet implemented)
 
@@ -77,7 +82,8 @@ delta monitoring, feature extraction for the adaptive engine, and a lock-free sc
 | `workflows/codeql.yml` | CodeQL (`c-cpp` manual build + `actions`); alerts scoped to repo-own code (`paths-ignore: build`). |
 | `workflows/msvc.yml` | MSVC `/analyze` → SARIF; JUCE treated as external; path-filtered triggers. |
 | `workflows/dependency-review.yml` | Dependency Review on PRs to `main` (GitHub Actions deps; comment on failure only). |
-| `workflows/release.yml` | **[P6]** Annotated `vX.Y.Z` tag → fail-closed metadata validation → reused `build.yml` gates → **draft** GitHub Release. |
+| `workflows/cxx23-canary.yml` | Weekly + `workflow_dispatch` **non-blocking** C++23 early warning: builds the `AnabasisTests` target at C++23 on all three OSes and runs the suite (OQ-006). Never a required check. |
+| `workflows/release.yml` | Annotated `vX.Y.Z` tag → fail-closed metadata validation → reused `build.yml` gates → **draft** GitHub Release. Deferred to the first commercial release (**OQ-007**); not present. |
 | `dependabot.yml` | Weekly grouped `github-actions` bumps; JUCE stays manually pinned (`DEPENDENCY_POLICY.md`). |
 | `ISSUE_TEMPLATE/` | `bug_report.yml` (test-report form) + `config.yml` (doc links). |
 
@@ -109,13 +115,14 @@ docs/
 │                   and PARAMETER_REGISTRY.md (the surface ledger, from ADR-0010 +
 │                   the frozen snapshot) exist since P1 close;
 │                   REALTIME_SAFETY_AUDIT.md since P2 close; PERFORMANCE_BUDGET.md
-│                   since P6; COMPATIBILITY_MATRIX.md since 2026-08-05 (the
-│                   DAW-audition target list). Still planned, no date claimed:
+│                   since P6 (2026-08-02); COMPATIBILITY_MATRIX.md since 2026-08-05
+│                   (the DAW-audition target list). Still planned, no date claimed:
 │                   ARCHITECTURE, SIGNAL_FLOW, DSP_GRAPH_REFERENCE,
 │                   DSP_ALGORITHMS, API_REFERENCE, SERIALIZATION_REGISTRY,
 │                   STATE_SERIALIZATION, LATENCY_MODEL
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
-│                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. [P6] PACKAGING
+│                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
+│                   with the OQ-007 installer set (first commercial release)
 └── policies/       REALTIME_AUDIO, THREADING, DSP, MODE_AND_ADAPTATION, COMPATIBILITY family,
                     ARCHITECTURE_REVIEW_GATE, ADR, DOCUMENTATION_LIFECYCLE, AI_AGENT,
                     CHANGELOG, TESTING, RELEASE, DEPENDENCY, CODE_STYLE

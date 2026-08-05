@@ -21,7 +21,7 @@ re-derived from **this** repository.
 | **VST3** | **Verified** | Built on Linux/Windows/macOS; the primary target; pluginval gates it on all three platforms. `CMakeLists.txt` (`ANABASIS_FORMATS` opens with `VST3`); `build.yml`, all build jobs |
 | **AU (Audio Unit)** | **Verified (build)** / **Unverified (host)** | Built on macOS only as a universal `.component` (`if(APPLE) list(APPEND ANABASIS_FORMATS AU)` — the brief requires AU for Logic Pro, §2). Real Logic/GarageBand loading has never been observed from this repository — that is audition row A2 below |
 | **Standalone** | **Verified** | Built on all three OSes; `ANABASIS_BUILD_STANDALONE` defaults ON. `CMakeLists.txt` §3 |
-| **AAX** | **Not Supported** | Deliberate, evidence-backed exclusion: `DEVELOPMENT_BRIEF.md` §2 ("AAX is not supported"), `docs/policies/COMPATIBILITY_POLICY.md`. Not in `ANABASIS_FORMATS`. The DSP core is wrapper-agnostic (ADR-0001), so a future AAX wrapper is low-cost — but it is explicitly not built and not claimed |
+| **AAX** | **Not Supported** | Deliberate, evidence-backed exclusion: `docs/policies/COMPATIBILITY_POLICY.md` carries the Not Supported entry; the brief's §2 format list has no AAX row (exclusion by construction, not by a sentence — its §14.3 uses AAX as the canonical Not Supported *example*), and `README.md` states it outright. Not in `ANABASIS_FORMATS`. The DSP core is wrapper-agnostic (ADR-0001), so a future AAX wrapper is low-cost — but it is explicitly not built and not claimed |
 
 ## Platforms / architectures
 
@@ -48,7 +48,7 @@ buildability there and nothing about older systems.
 
 | Layout | Status | Evidence |
 |---|---|---|
-| **stereo → stereo** | **Verified** | The only accepted layout: bus declaration `src/PluginProcessor.cpp:10-12`, predicate `:388-392` (`isBusesLayoutSupported` requires stereo on both mains). The whole test suite runs this layout |
+| **stereo → stereo** | **Verified** | The only accepted layout: bus declaration `src/PluginProcessor.cpp:10-13`, predicate `:388-392` (`isBusesLayoutSupported` requires stereo on both mains). The whole test suite runs this layout |
 | **mono → anything / anything → mono** | **Not Supported** | Deliberate: Anabasis is a **stereo mastering** maximizer (`DEVELOPMENT_BRIEF.md` §0); `isBusesLayoutSupported` rejects every non-stereo main. This differs from the sibling product, which accepts mono-in — a product-scope decision, not an omission |
 
 ## DAW hosts — the audition target list
@@ -59,8 +59,9 @@ and not a substitute for real hosts. Every row below is therefore **Unverified**
 until the post-v0.1.0 DAW-matrix audition records evidence against it. **Do not mark any host
 Verified without that evidence** (constraint C7); what each audition pass must exercise —
 loading, automation, offline render, state restoration, and the recorded per-host checks (the
-preset-step host-notification burst, ~46 `setValueNotifyingHost` calls per preset apply, is a
-named checklist line) — is owned by `docs/procedures/RELEASE_COMPATIBILITY_CHECKLIST.md`.
+preset-step host-notification burst is a named checklist line — its bound lives there, not
+here, the same single-place treatment the strictness gets above) — is owned by
+`docs/procedures/RELEASE_COMPATIBILITY_CHECKLIST.md`.
 
 | Row | Host (format) | Status | Note |
 |---|---|---|---|

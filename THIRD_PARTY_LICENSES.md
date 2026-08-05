@@ -122,7 +122,8 @@ anyone redistributing the binaries further must carry both files along:
 - **FreeType** (FTL) does not mandate a specific form, but §"Legal Terms" asks distributors of
   binaries to credit it and supplies the wording — *"Portions of this software are copyright ©
   &lt;year&gt; The FreeType Project (www.freetype.org). All rights reserved."* — which
-  `NOTICE` uses verbatim.
+  `NOTICE` reproduces with the `<year>` placeholder filled (2000-2014, the span the vendored
+  `plutovg-ft-*` file headers carry), exactly the substitution the FTL's own text instructs.
 
 zlib and libpng ask for acknowledgement but explicitly do *not* require it; it is given anyway.
 **stb** is dual MIT/public-domain, so attribution is optional; it is listed for completeness.
