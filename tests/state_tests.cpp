@@ -2815,6 +2815,23 @@ static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
         return;
     check ((bool) name->getProperties().getWithDefault ("glow", false),
            "saveGlow: the name field carries the property its focus styling keys on");
+
+    // Same contract shape, the other half of it: the LookAndFeel's `"icon"`
+    // treatment (21 px glyph, rotated) names Undo/Redo in its own header, and
+    // those two buttons carried no component ID at all — so a 30 px glyph
+    // button drew a ~13 px character through the generic path. Round 54 armed
+    // them; this is the arming side, which is the part a headless test can see.
+    // The three sibling ids beside it (`"apply"`, `"metersicon"`, `"vtoggle"`)
+    // were removed instead, because they style controls this product does not
+    // have — there is nothing to assert about an id no component may carry.
+    for (const auto glyph : { (juce::juce_wchar) 0x21B6, (juce::juce_wchar) 0x21B7 })
+    {
+        auto* b = findButtonByText (*ed, juce::String::charToString (glyph));
+        const juce::String msg = juce::String ("saveGlow: the ")
+                               + (glyph == (juce::juce_wchar) 0x21B6 ? "undo" : "redo")
+                               + " glyph button is tagged for the icon treatment";
+        check (b != nullptr && b->getComponentID() == "icon", msg.toRawUTF8());
+    }
 }
 
 // Round 42. A persisted `uiScale` that is not one of the seven legal steps —

@@ -149,6 +149,29 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
 
     undoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B6));
     redoButton.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x21B7));
+    // THE ARMING SITE for the LookAndFeel's `"icon"` treatment, missing since
+    // these buttons were added at P6. `drawButtonText`/`getTextButtonFont`
+    // discriminate on this id to render a 21 px glyph instead of the generic
+    // path's ~13 px, and the branch's own header names its owner: "Undo/Redo
+    // glyphs". Unarmed, a 30 px glyph button drew a 13 px character — the
+    // opposite of the sizing the branch exists to provide.
+    //
+    // Wired rather than deleted, unlike the three sibling ids removed beside
+    // it, because the discriminator is between two kinds of button IN THIS
+    // top bar (the glyph pair against `Copy`/`Settings`/`Save`), not a
+    // description of a control this product lacks.
+    //
+    // ONE THING FOR THE BRAND PASS, flagged rather than decided here: the
+    // treatment also rotates the glyph 180°, specified against the sibling's
+    // U+21BA/U+21BB OPEN CIRCLE arrows, where a half-turn of a near-circular
+    // shape is a subtle comfort tweak. These are U+21B6/U+21B7 SEMICIRCLE
+    // arrows, so the same half-turn visibly moves the arc from the top to the
+    // bottom. Direction is not at risk — a rotation preserves the curl, so
+    // neither glyph can come to read as the other — but which glyph pair this
+    // product ships is a Level-5 question the brand checklist still holds open,
+    // and it is not one a cleanup pass should answer.
+    undoButton.setComponentID ("icon");
+    redoButton.setComponentID ("icon");
     undoButton.onClick = [this] { processor.undo(); refreshPresetDisplay (true); };
     redoButton.onClick = [this] { processor.redo(); refreshPresetDisplay (true); };
     addAndMakeVisible (undoButton);

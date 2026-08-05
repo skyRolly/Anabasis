@@ -261,79 +261,17 @@ void AnabasisLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButto
     const float onAv = animOr (b, "onA",  on);
     const float hi = 0.18f * hovA;
 
-    // --- Level-meter glyph instead of the word "Meters" (#7) ---
-    if (b.getComponentID() == "metersicon")
-    {
-        const auto col = colours::textDim.interpolatedWith (colours::accent, onAv).brighter (hi);
-        const float barW = 5.0f, gap = 4.0f;
-        const float totalW = barW * 2.0f + gap;
-        const float barH = juce::jmin (bounds.getHeight() - 6.0f, 16.0f);
-        const float x0 = bounds.getCentreX() - totalW * 0.5f;
-        const float y0 = bounds.getCentreY() - barH * 0.5f;
-        if (onAv > 0.02f) { g.setColour (col.withAlpha (0.18f * onAv)); g.fillRoundedRectangle (bounds.reduced (3.0f), 4.0f); }
-        for (int k = 0; k < 2; ++k)
-        {
-            auto bar = juce::Rectangle<float> (x0 + k * (barW + gap), y0, barW, barH);
-            g.setColour (col.withAlpha (0.55f));
-            g.drawRoundedRectangle (bar, 1.5f, 1.0f);                 // hollow top
-            const float ratio = (k == 0) ? 0.55f : 0.80f;            // unequal fills
-            g.setColour (col);
-            g.fillRoundedRectangle (bar.withTop (bar.getBottom() - barH * ratio).reduced (0.6f), 1.2f);
-        }
-        return;
-    }
-
-    // --- Compact vertical toggle: pill on top, label centred below, for tight
-    //     module rows where a right-side label would clip (#11 / #14) ---
-    if (b.getComponentID() == "vtoggle")
-    {
-        const juce::Colour onCol = colours::accent.brighter (hi);
-        const float ph = 15.0f, pw = ph * 1.7f;
-        auto pill = juce::Rectangle<float> (bounds.getCentreX() - pw * 0.5f, bounds.getY() + 2.0f, pw, ph);
-        if (onAv > 0.02f) { g.setColour (onCol.withAlpha (0.22f * onAv)); g.fillRoundedRectangle (pill.expanded (2.0f), (ph + 4.0f) * 0.5f); }
-        const auto pillBase = colours::bgRaised.brighter (hi).interpolatedWith (onCol, onAv);
-        juce::ColourGradient pg (pillBase.brighter (0.06f + 0.04f * onAv), pill.getX(), pill.getY(),
-                                 pillBase.darker (0.10f + 0.02f * onAv),   pill.getX(), pill.getBottom(), false);
-        g.setGradientFill (pg);
-        g.fillRoundedRectangle (pill, ph * 0.5f);
-        g.setColour (colours::outline.brighter (hi).interpolatedWith (onCol, onAv));
-        g.drawRoundedRectangle (pill, ph * 0.5f, 1.0f);
-        const float knob = ph - 4.0f;
-        const float kx = pill.getX() + 2.0f + (pill.getWidth() - knob - 4.0f) * onAv; // slides (F3)
-        g.setColour (colours::text.interpolatedWith (colours::bg, onAv));
-        g.fillEllipse (kx, pill.getCentreY() - knob * 0.5f, knob, knob);
-
-        // Labels render with a shared 11 px baseline so Mono/Swap/M/S all line up
-        // (#8). The polarity toggles are the exception: their "ø" is drawn LARGER
-        // than the trailing letter but on the SAME baseline, so it reads bold
-        // without dragging the letter's baseline around (#5).
-        const juce::Colour tc = colours::textDim.interpolatedWith (colours::text, juce::jmax (onAv, hovA));
-        g.setColour (tc);
-        const auto labelArea = bounds.withTop (pill.getBottom() + 1.0f);
-        const juce::juce_wchar phi = (juce::juce_wchar) 0x00F8;
-        const juce::String txt = b.getButtonText();
-        if (txt.startsWithChar (phi))
-        {
-            const juce::Font fBig (juce::FontOptions (15.0f));
-            const juce::Font fSm  (juce::FontOptions (11.0f));
-            juce::GlyphArrangement ga;
-            ga.addLineOfText (fBig, juce::String::charToString (phi), 0.0f, 0.0f);
-            const float headW = ga.getBoundingBox (0, -1, true).getRight();
-            ga.addLineOfText (fSm, txt.substring (1), headW, 0.0f); // shared baseline at y = 0
-            const auto bb = ga.getBoundingBox (0, -1, true);
-            // Centre the group horizontally; place the shared baseline so the small
-            // letter is vertically centred just like the other toggles' labels.
-            const float tx = labelArea.getCentreX() - bb.getCentreX();
-            const float by = labelArea.getCentreY() + (fSm.getAscent() - fSm.getDescent()) * 0.5f;
-            ga.draw (g, juce::AffineTransform::translation (tx, by));
-        }
-        else
-        {
-            g.setFont (juce::Font (juce::FontOptions (11.0f)));
-            g.drawFittedText (txt, labelArea.toNearestInt(), juce::Justification::centred, 1, 0.85f);
-        }
-        return;
-    }
+    // Two ID-keyed variants used to sit here — `"metersicon"` (a level-meter
+    // glyph drawn instead of the word "Meters") and `"vtoggle"` (a compact
+    // pill-above-label toggle for tight module rows). Both are removed at
+    // review round 54 as unported migration state, on the evidence of who owns
+    // them in the sibling product: `metersicon` styles its show/hide LEVEL
+    // METERS toggle, and `vtoggle` its Mono / Swap / M-S / polarity-L /
+    // polarity-R row. Anabasis has neither — the §6.3 metering strip is always
+    // present and has no show/hide control, and the stereo-field toggles belong
+    // to a product with a Widen stage. Nothing here ever set either id, so both
+    // branches were unreachable, and an unreachable drawing path implies a UI
+    // variant a reader may then try to "just use" for a new control.
 
     // Leave a uniform inset so the outer glow can never be clipped at the left /
     // top / bottom edges (feedback #16). The pill is a fixed, compact size.
@@ -422,7 +360,11 @@ void AnabasisLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button&
 
 juce::Font AnabasisLookAndFeel::getTextButtonFont (juce::TextButton& b, int buttonHeight)
 {
-    if (b.getComponentID() == "apply")      return juce::Font (juce::FontOptions (12.0f)); // Apply, a touch smaller (#21)
+    // An `"apply"` row used to precede this one, sizing the sibling product's
+    // "Apply Gain" button beside its auto-gain-match readout. Anabasis has no
+    // auto-gain match and no Apply button of any kind, so nothing could ever
+    // carry the id — removed at review round 54 with the two toggle variants
+    // above, and for the same reason.
     if (b.getComponentID() == "icon")       return juce::Font (juce::FontOptions (21.0f)); // bigger glyph (#7)
     if (b.getComponentID() == "presetname") return juce::Font (juce::FontOptions (13.0f)); // preset display (F2)
     if (b.getComponentID() == "presetnav")  return juce::Font (juce::FontOptions (19.0f)); // chevrons (F2)

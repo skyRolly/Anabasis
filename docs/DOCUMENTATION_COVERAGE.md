@@ -6,7 +6,32 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 54 (2026-08-04)** — the single-authority sweep finished, and
+**Last updated:** for **review round 55 (2026-08-05)** — the component-ID half of the LookAndFeel
+migration audit, decided per id rather than as one verdict:
+(1) **Four `getComponentID()` branches had no arming site.** Round 53 cleared the PROPERTY side
+(`"glow"` wired, `"unit"` removed); the ID side still discriminated on `"icon"`, `"apply"`,
+`"metersicon"` and `"vtoggle"`, and `PluginEditor` set only `ghost`, `bypass`, `presetnav`,
+`presetname`. The sibling product settles each case, because it is where every one of these ids is
+armed: `apply` styles its "Apply Gain" button beside the auto-gain-match readout, `metersicon` its
+show/hide LEVEL METERS toggle, and `vtoggle` its Mono / Swap / M-S / polarity-L / polarity-R row.
+Anabasis has no auto-gain match, no meters show/hide (the §6.3 strip is always present) and no
+stereo-field toggles — those belong to a product with a Widen stage. All three are removed, drawing
+code and font row alike.
+(2) **`"icon"` was the opposite case and is now WIRED.** Its own header names its owner — "Undo/Redo
+glyphs: render them larger AND rotated 180 degrees" — and this product has undo/redo, added at P6 in
+the same top bar. Unarmed, a 30 px glyph button rendered a ~13 px character through the generic
+text path: not a stylistic difference but the absence of the sizing the branch exists to provide.
+The discriminator is between two kinds of button in THIS top bar (the glyph pair against
+`Copy`/`Settings`/`Save`), which is the same test that kept `"glow"` last round — a design statement
+about Anabasis, not a description of a control it lacks.
+(3) **One thing deliberately NOT decided here.** The treatment also rotates the glyph 180°,
+specified against the sibling's U+21BA/U+21BB OPEN CIRCLE arrows where a half-turn of a near-circular
+shape is a subtle comfort tweak; these are U+21B6/U+21B7 SEMICIRCLE arrows, so the same half-turn
+visibly moves the arc from top to bottom. Direction is not at risk — a rotation preserves the curl,
+so neither glyph can come to read as the other — but WHICH glyph pair this product ships is a
+Level-5 brand question the checklist still holds open, and answering it is not a cleanup pass's job.
+Recorded at the arming site so the brand pass finds it.
+Previous: **review round 54 (2026-08-04)** — the single-authority sweep finished, and
 one reset invariant raised to the standard the rest of the tree already holds:
 (1) **Four documents still carried an ADR count or roster.** Round 53 fixed the README; the same
 duplication survived in `CLAUDE.md` ("the **fourteen** Accepted ADRs"), `REPOSITORY_MAP.md` (twice —
