@@ -162,6 +162,17 @@ residual exposure is to the accuracy contract (invariant 11), not the latency on
 
 ## RISK-009 — The variable-font direction depends on a licence that does not exist yet
 
+> **Trigger passed without materialising (recorded 2026-08-05).** P5 completed (2026-08-02) on
+> the fallback path this entry named: the shipped UI embeds **no typeface** and uses the
+> platform default sans-serif, exactly as the sibling does — `src/` contains no `BinaryData`
+> and registers no custom `Typeface` (re-verified 2026-08-05 while producing
+> `THIRD_PARTY_LICENSES.md`, whose inventory depends on that fact), so no font licence question
+> ever arose and brand consistency with the sibling holds *because* nothing was embedded. The
+> risk is not deleted: it re-arms if the post-v0.1.0 brand pass decides the family should adopt
+> a variable font after all (`BRAND_CONSISTENCY_CHECKLIST.md` Level-5), at which point the
+> licence-before-adoption rule (brief §13) applies unchanged — and the attribution inventory
+> must gain the font's row in the same change.
+
 **Likelihood:** Medium **Impact:** Low
 **Trigger:** P5 UI work reaching typography with no approved font licence.
 **Why it exists here:** `DEVELOPMENT_BRIEF.md` §2 and §8 ask Anabasis to use JUCE 9's variable-font

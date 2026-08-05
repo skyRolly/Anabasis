@@ -6,7 +6,15 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **`COMPATIBILITY_MATRIX.md` landing (2026-08-05)** — the descriptive doc
+**Last updated:** for **the RISK-009 trigger-passed note (2026-08-05)** — the risk register's
+variable-font entry gained a dated blockquote in the RISK-008 pattern: its trigger ("P5 reaching
+typography with no approved font licence") has passed without materialising — the shipped P5
+uses the platform default and embeds nothing, the fact the attribution inventory independently
+re-verified — and the entry now says when it re-arms (a brand-pass decision to adopt a font)
+and what that costs (licence-before-adoption per brief §13, plus a new inventory row). The
+entry is annotated, not deleted; the register's own rule is that a risk moves only when it
+materialises.
+Previous: **`COMPATIBILITY_MATRIX.md` landing (2026-08-05)** — the descriptive doc
 the fine review could not start without: `OQ-011` directed its supported-OS claim to be
 "restated in COMPATIBILITY_MATRIX.md when that document lands", and HANDOVER's Pending Tasks
 row points the DAW-matrix audition at "`COMPATIBILITY_MATRIX.md` targets" — while the document
