@@ -122,7 +122,7 @@ with the plug-in versions ([§7.2](#72-saving-and-managing)).
 
 - What the adaptive engine is doing under the knob, and how to lock it: [§4](#4-the-adaptive-engine-learn-and-freeze).
 - Per-stage control (compressor, clipper, limiter, EQ): press **ADV** — [§5](#5-simple-mode-and-advanced-mode).
-- A starting point rather than a blank slate: twelve factory presets — [§7](#7-presets-and-ab).
+- A starting point rather than a blank slate: thirteen factory presets — [§7](#7-presets-and-ab).
 - Concrete recipes: [§8](#8-workflow-examples).
 - Something not working? [§9](#9-faq--troubleshooting).
 
@@ -308,7 +308,8 @@ Click the preset name for the menu — **FACTORY** and **USER** sections — or 
 **‹ ›** arrows (wrap-around). "Load Preset…" opens a file chooser for `.anabasis` files
 anywhere on disk. Loads are click-free and form **one undo step**.
 
-Twelve factory presets ship built in: *Transparent Master, Loud Pop, EDM Club, Vocal
+Thirteen factory presets ship built in: *Default* (the plug-in's opening state — re-apply
+it to get back to a clean slate), then *Transparent Master, Loud Pop, EDM Club, Vocal
 Forward, Tape Glue, Rock Punch, Hip-Hop Low End, Acoustic Warmth, Classical Dynamics,
 Podcast Voice, Cinematic Wide, Lo-Fi Crush*.
 

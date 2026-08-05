@@ -206,6 +206,11 @@ namespace
     };
 
     const PresetManager::FactoryPreset kFactory[] = {
+        // Index 0, an EMPTY override table: "defaults + intents" with zero
+        // intents IS the default patch. The sibling's pattern (its bank also
+        // opens on { "Default", {} }); the fresh-constructed state is named
+        // by it, so the plugin never shows a nameless "Preset" placeholder.
+        { "Default",            nullptr,            0 },
         { "Transparent Master", kTransparentMaster, (int) std::size (kTransparentMaster) },
         { "Loud Pop",           kLoudPop,           (int) std::size (kLoudPop) },
         { "EDM Club",           kEdmClub,           (int) std::size (kEdmClub) },

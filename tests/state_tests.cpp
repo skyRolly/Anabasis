@@ -697,8 +697,9 @@ static void testAbToleranceRules()
     const auto rAfter = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (after.getData(), (int) after.getSize()));
     const auto sAfter = rAfter.getChildWithName ("AB").getChild (0);
     check (! sAfter.getChildWithName ("FROZEN_TRIMS").isValid()
-             && sAfter.getProperty ("presetName").toString().isEmpty(),
-           "tolerance: a root without AB resets the slot fields to defaults");
+             && sAfter.getProperty ("presetName").toString() == "Default",
+           "tolerance: a root without AB resets the slot fields to defaults "
+           "(and the presetName field's default IS the Default preset's name)");
 
     // Unknown child inside AB must not shift the SLOT children.
     AnabasisAudioProcessor d;
@@ -1120,11 +1121,28 @@ static void testFactoryPresets()
 
     int count = 0;
     const auto* table = PresetManager::factoryPresets (count);
-    check (count == 12, "factory: the brief's >=12-preset bank is compiled in (5 named + 7 owner-approved 2026-08-02)");
+    check (count == 13, "factory: the bank is Default + the brief's >=12 (5 named + 7 owner-approved 2026-08-02)");
 
-    // Apply EDM Club (index 2): macros land, style lands, ceiling lands.
-    check (proc.applyFactoryPreset (2), "factory: apply succeeds");
-    check (proc.currentPresetName() == juce::String (table[2].name),
+    // Index 0 is "Default" with an EMPTY override table, and the fresh state
+    // already carries its identity: the plugin opens ON a preset, not on a
+    // nameless placeholder (owner directive 2026-08-05, the sibling's pattern).
+    check (juce::String (table[0].name) == "Default" && table[0].numOverrides == 0,
+           "factory: index 0 is Default with zero overrides");
+    check (proc.currentPresetName() == "Default" && ! proc.presetDirty(),
+           "factory: a fresh instance reads as a clean Default");
+    {
+        auto* push = apvts.getParameter (pid::loudness);
+        push->setValueNotifyingHost (push->getNormalisableRange().convertTo0to1 (30.0f));
+        check (proc.presetDirty(), "factory: editing the fresh Default stars it");
+        check (proc.applyFactoryPreset (0), "factory: (premise) re-apply Default");
+        check (std::abs (apvts.getRawParameterValue (pid::loudness)->load()) < 0.5f
+                   && ! proc.presetDirty(),
+               "factory: re-applying Default restores the default patch, clean");
+    }
+
+    // Apply EDM Club (index 3): macros land, style lands.
+    check (proc.applyFactoryPreset (3), "factory: apply succeeds");
+    check (proc.currentPresetName() == juce::String (table[3].name),
            "factory: the preset name is the table's");
     check (std::abs (apvts.getRawParameterValue (pid::loudness)->load() - 80.0f) < 0.5f,
            "factory: the loudness macro landed");
@@ -2501,9 +2519,9 @@ static void testStateReplacementAndHistoryConsistency()
     // against the applied preset's baseline.
     {
         AnabasisAudioProcessor proc;
-        proc.applyFactoryPreset (1);
+        proc.applyFactoryPreset (2);          // Loud Pop (Default shifted the bank by one)
         check (! proc.presetDirty(), "undoBaseline: (premise) a fresh apply reads clean");
-        proc.applyFactoryPreset (2);
+        proc.applyFactoryPreset (3);          // EDM Club
         check (! proc.presetDirty(), "undoBaseline: (premise) …and so does the second");
         proc.undo();
         check (proc.currentPresetName() == "Loud Pop",

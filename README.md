@@ -27,7 +27,7 @@ headless Linux machine, no IDE.
   the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
-  display) and the P6 per-slot undo / 12-preset factory bank / performance bench — verified by
+  display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
   `tests/` (**621 checks** — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see

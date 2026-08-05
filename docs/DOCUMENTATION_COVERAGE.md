@@ -6,7 +6,17 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 items 4/7 — True Peak defaults OFF, every ceiling to −0.1 dBTP
+**Last updated:** for **round-2 item 6 — the "Default" preset (2026-08-05, owner directive,
+the sibling's pattern)**. Factory index 0 is now `{ "Default", nullptr, 0 }` — "defaults +
+intents" with zero intents IS the default patch — and the fresh-constructed state carries its
+identity: `livePresetName` seeds to "Default" before the default slot is captured (so both A/B
+slots open named), the dirty baseline seeds right after (so an untouched instance reads clean
+and the first edit stars), `resetSlotFieldsToDefaults` makes "Default" the field's §4.4
+default (a missing-AB session now shows it — `testAbToleranceRules` pins the new value), and
+`getProgramName` returns the sibling's constant. Bank count 12 → 13; EDM-Club-specific test
+indices shifted; new checks: index 0 shape, fresh-instance-clean, edit-stars,
+re-apply-restores-clean. Manual/README/HANDOVER counts synced.
+Previous: **round-2 items 4/7 — True Peak defaults OFF, every ceiling to −0.1 dBTP
 (2026-08-05, owner directive)**. `truePeakMode` default 1→0, `int_tpMeterOn` true→false,
 `ceiling` default −1→−0.1 (parameter, POD, and EDM Club's now-redundant −0.5 override removed —
 its slot in `testFactoryPresets` now proves the *un-overridden-sits-at-default* half instead).
