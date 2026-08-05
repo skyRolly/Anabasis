@@ -1,0 +1,111 @@
+name: C++23 Canary
+
+# ---------------------------------------------------------------------------
+# The DEVELOPMENT_BRIEF §2.1 / ADR-0008 early-warning job: build the DSP core
+# and its test suite at C++23 on all three platforms, so the day the baseline
+# is raised (a review-gated Build System change) the breakage is already known
+# instead of discovered inside that PR.
+#
+# Scope and cadence are OQ-006's resolution (2026-08-05, adopting that entry's
+# own standing recommendation): DSP CORE + TESTS ONLY — the canary builds the
+# `AnabasisTests` target, which compiles AnabasisDSP's sources plus the JUCE
+# modules they pull in, and then RUNS the suite, so the signal is "compiles AND
+# still behaves identically at C++23", not merely "compiles". The wrapper/GUI
+# half and the plugin formats are deliberately out of scope: full-matrix
+# per-push would roughly double CI cost for an early-warning signal (the OQ's
+# stated reason), and the wrapper compiles no code the DSP suite's JUCE module
+# set does not already exercise at the language level. Weekly + on demand, not
+# per-push, for the same cost reason.
+#
+# NON-BLOCKING BY STRUCTURE, not by continue-on-error: this workflow is not in
+# any `needs:` chain of build.yml, and it must NEVER be made a required status
+# check — ADR-0008: "a red canary is a to-do, not a gate". A failure here is
+# meant to be SEEN (the job goes red on the Actions page), just never to stop
+# the main pipeline; swallowing the exit code would delete the signal the job
+# exists to produce.
+#
+# Deliberately absent, so their absence is not read as oversight:
+#   * pluginval / ANABASIS_PLUGINVAL_STRICTNESS — no plugin is built here.
+#   * the preflight guard — this workflow postdates P1; CMakeLists.txt exists.
+#   * macOS universal (arm64;x86_64) — the question is "does this SOURCE
+#     compile at C++23 with this platform's toolchain", which a native single-
+#     arch build answers; the second slice doubles compile time to re-answer it
+#     with the same compiler.
+#
+# The C++23 request travels through ANABASIS_CXX_STANDARD (CMakeLists.txt), a
+# cache seam whose only legal values are 20 and 23. Passing CMAKE_CXX_STANDARD
+# directly would be silently ignored — the project set()s it unconditionally.
+#
+# MAINTENANCE NOTE: GitHub disables `schedule` triggers after ~60 days without
+# repository activity, and scheduled runs fire only from the default branch.
+# After a long quiet spell, or to rehearse the first run after merging, use
+# `workflow_dispatch` (docs/procedures/CI_CD.md §"C++23 canary").
+# ---------------------------------------------------------------------------
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'   # weekly, Monday 06:17 UTC (off :00 — GitHub sheds load spikes)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/setup-linux.sh
+
+      - name: Configure at C++23
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_CXX_STANDARD=23
+
+      - name: Build the DSP core + suite (AnabasisTests only)
+        run: cmake --build build --config Release --target AnabasisTests
+
+      - name: Run the DSP suite at C++23
+        run: ./build/AnabasisTests_artefacts/Release/AnabasisTests
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure at C++23
+        run: cmake -B build -DANABASIS_CXX_STANDARD=23
+
+      - name: Build the DSP core + suite (AnabasisTests only)
+        run: cmake --build build --config Release --target AnabasisTests
+
+      # A fixed path, unlike build.yml's exactly-one-match discovery: that
+      # discipline exists because a LOCAL multi-config tree may hold several
+      # configurations' binaries at once, whereas this runner's tree was
+      # created two steps up and has built exactly one. If the path is wrong
+      # the step fails loudly on "not found", which is the honest outcome.
+      - name: Run the DSP suite at C++23
+        run: build/AnabasisTests_artefacts/Release/AnabasisTests.exe
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build tools
+        run: brew install ninja || true
+
+      # Native arch only, and no CMAKE_OSX_DEPLOYMENT_TARGET: the 10.13 floor
+      # in build.yml is a SHIPPING claim (OQ-011) about binaries this job does
+      # not produce. Letting the toolchain default keeps the canary answering
+      # exactly one question — C++23 compilability — with nothing to conflate.
+      - name: Configure at C++23
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_CXX_STANDARD=23
+
+      - name: Build the DSP core + suite (AnabasisTests only)
+        run: cmake --build build --config Release --target AnabasisTests
+
+      - name: Run the DSP suite at C++23
+        run: ./build/AnabasisTests_artefacts/Release/AnabasisTests

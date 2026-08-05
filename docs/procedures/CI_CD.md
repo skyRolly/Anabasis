@@ -10,7 +10,8 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 | `codeql.yml` | CodeQL analysis (`c-cpp` + `actions`). |
 | `msvc.yml` | MSVC `/analyze` → SARIF. |
 | `dependency-review.yml` | Dependency Review on PRs to `main`. |
-| `release.yml` | **[P6]** tag-triggered draft release. Not present yet. |
+| `cxx23-canary.yml` | Weekly non-blocking C++23 early-warning build + run of the DSP suite (OQ-006, resolved 2026-08-05). **Never a gate.** |
+| `release.yml` | Tag-triggered draft release. Not present — deferred to the first commercial release by **OQ-007** (resolved 2026-08-02), no longer a P6 item. |
 
 ## The pre-P1 preflight guard
 
@@ -182,10 +183,45 @@ The conclusion still holds — the workflow is inert until P1 — but the pinned
 action has consequently **never executed** here. **Run it once via `workflow_dispatch` at P1**,
 rather than discovering an incompatibility inside the P1 build PR.
 
+## The C++23 canary — early warning, never a gate
+
+`cxx23-canary.yml` is the `DEVELOPMENT_BRIEF.md` §2.1 / ADR-0008 job: it builds the
+**`AnabasisTests` target** — `AnabasisDSP`'s sources, the JUCE modules they pull in, and the DSP
+suite — at **C++23** on all three platforms, then **runs** the suite. Scope and cadence are
+OQ-006's resolution (its own recommendation, adopted 2026-08-05): DSP core + tests only, weekly
+(`schedule`, Monday 06:17 UTC) plus `workflow_dispatch`; the wrapper/GUI half and the plugin
+formats are deliberately out of scope because full-matrix per-push roughly doubles CI cost for an
+early-warning signal. macOS builds **native-arch only** and sets no deployment target — the
+10.13/universal contract is a shipping claim (OQ-011) about binaries this job does not produce.
+
+Three properties worth stating precisely:
+
+- **Non-blocking by structure, not by `continue-on-error`.** The workflow is in no `needs:` chain
+  of `build.yml`, so it *cannot* stop the main pipeline; within itself, failures still fail the
+  run, because a red canary on the Actions page **is the product** — ADR-0008: "a red canary is a
+  to-do, not a gate". Swallowing the exit code would delete the signal the job exists to produce.
+- **The C++23 request goes through `ANABASIS_CXX_STANDARD`** (a `CMakeLists.txt` cache seam whose
+  only legal values are 20 and 23). Passing `-DCMAKE_CXX_STANDARD=23` directly does **not** work,
+  and fails silently: the project `set()`s that variable unconditionally, which shadows a
+  same-named cache entry. The seam exists so the override is loud, named and validated.
+- **`schedule` fires only from the default branch, and GitHub disables it after ~60 days without
+  repository activity.** After a quiet spell, check the workflow is still enabled and fire it
+  once via `workflow_dispatch` — which is also how to rehearse the first run right after the
+  workflow merges, the same advice `msvc.yml` carries about never-yet-executed pinned actions.
+
+Reproducing it locally (POSIX; the Windows difference is only the generator default and the
+`.exe` suffix):
+
+```bash
+cmake -B build-cxx23 -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_CXX_STANDARD=23
+cmake --build build-cxx23 --config Release --target AnabasisTests
+./build-cxx23/AnabasisTests_artefacts/Release/AnabasisTests
+```
+
 ## Before enabling branch protection — read this
 
-Two trigger designs here interact with **required status checks**, and both bite only once
-protection is switched on. Neither is a defect; both are traps if configured blindly.
+Three trigger designs here interact with **required status checks**, and all bite only once
+protection is switched on. None is a defect; all are traps if configured blindly.
 
 1. **`build.yml` on same-repo PRs.** The jobs are skipped by the `preflight` guard above, so they
    report a *skipped* conclusion on the PR event rather than running. GitHub treats a skipped
@@ -213,6 +249,13 @@ protection is switched on. Neither is a defect; both are traps if configured bli
    traffic during P0. The standard workaround is a companion no-op workflow declaring jobs with
    the **same names** and the inverse path filter. Add it when — and only when — CodeQL is made
    required; adding it earlier is dead weight.
+
+4. **`cxx23-canary.yml` must never be in the required set at all.** Not a skip/naming subtlety
+   like the three above — a standing prohibition: ADR-0008 defines the canary as early warning
+   whose failure "must never block the main pipeline", and it runs on a schedule rather than on
+   PR events, so requiring it would block every PR on a check that cannot report there even when
+   green. If the canary is red, the to-do is a code or toolchain fix (or a deliberate, ADR-gated
+   baseline decision) — never "make the check required so someone has to look at it".
 
 ## Artifact safety rules (fail-closed)
 

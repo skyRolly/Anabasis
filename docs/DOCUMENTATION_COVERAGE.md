@@ -6,7 +6,31 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 64 (2026-08-05)** — two follow-ups to round 63, one
+**Last updated:** for **the post-v0.1.0 C++23 canary landing (2026-08-05)** — the first change
+after PR #6 merged, found by walking `DEVELOPMENT_BRIEF.md` against the tree:
+(1) **An Accepted-ADR mandate had no implementation behind it.** ADR-0008 mandates a non-blocking
+C++23 canary on all three platforms; OQ-006 held scope/cadence with its own recommendation
+("added at P2"); the P1 phase summary said "scheduled for P2" — and P2 through P6 closed without
+it or any phase summary re-raising it. Landed as `.github/workflows/cxx23-canary.yml` (builds the
+`AnabasisTests` target at C++23 and RUNS it, weekly + `workflow_dispatch`, non-blocking by
+structure) plus the `ANABASIS_CXX_STANDARD` cache seam in `CMakeLists.txt` — needed because the
+obvious `-DCMAKE_CXX_STANDARD=23` is shadowed by the project's unconditional `set()` and fails
+silently, i.e. a canary wired that way would validate C++20 for ever while reporting green.
+Docs synced in the same unit: OQ-006 → Resolved (⊕, adopting its own recommendation — the entry
+records why no owner round-trip was needed), `CI_CD.md` (canary section + a fourth
+branch-protection trap + the workflows table, whose `release.yml` row now cites OQ-007 rather
+than "[P6]"), `HANDOVER.md` (Build Status row + a dated section restoring the §2.1 canary
+status-reporting duty that had been silently unreported since the P1 summary), and this file's
+`.github` self-coverage row.
+(2) **Drift found in this file's own tail, reported before repairing (C6).** The
+"Documentation-set self-coverage" and "Known coverage gaps" sections are a ~P2-era snapshot: the
+architecture row still enumerates "ADR-0001…0012" (a count duplication of exactly the kind the
+round-53 README fix removed, and it HAS gone stale — the index registers later ADRs), the gaps
+list still names `PERFORMANCE_BUDGET.md` as absent though it landed at P6, the `.github` row
+attributed `release.yml`'s absence to P6 rather than to OQ-007's resolution, and the user/legal
+rows still read "Deferred to P6" though P6 has closed. Repair queued as its own change so this
+commit stays the canary's; the rows corrected here are only those this change itself touches.
+Previous: **review round 64 (2026-08-05)** — two follow-ups to round 63, one
 robustness and one documentation:
 (1) **A read that was total only because of the line above it.** Round 63 put the `iid::uiScale`
 ladder read rule in `replaceFrom`, reading the property with no stated default. That is safe today —
@@ -5123,7 +5147,7 @@ Rows were added as modules landed. The remaining planned modules (`src/gui/`, P5
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
 | root — legal | — | Deferred to P6 (produced against a real dependency tree; copying another project's inventory would be invented evidence) |
 | root — internal/testing | — | Deferred to P6 (SUPPORT.md ships with the first tester build) |
-| .github | workflows/{build,codeql,msvc,dependency-review}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present (release.yml deferred to P6) |
+| .github | workflows/{build,codeql,msvc,dependency-review,cxx23-canary}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present (release.yml deferred to the first commercial release — OQ-007, resolved 2026-08-02) |
 | scripts | setup-linux, build, run-tests, run-pluginval.{sh,ps1} | Present |
 
 ## Known coverage gaps / TODOs
