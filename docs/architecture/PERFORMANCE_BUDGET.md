@@ -35,7 +35,9 @@ of line with its allocation", and none is:
 ## Measured (2026-08-02) — whole engine, `AnabasisBench`
 
 **Machine:** Intel(R) Xeon(R) Processor @ 2.10 GHz (4 cores), gcc 13.3.0, Linux, Release with the
-shipped flag set. **Method** (the procedure Anamorph prescribes and DESIGN §9 commits to): the
+**bench target's** flag set — see "Build configuration" immediately below, which is NOT identical
+to the shipped plugin's and used to be described here as though it were. **Method** (the procedure
+Anamorph prescribes and DESIGN §9 commits to): the
 OFF-by-default `AnabasisBench` target (`-DANABASIS_BUILD_BENCH=ON`) compiles the engine sources
 directly; 5 runs per cell of 1 s audio each (220 Hz tone + noise at ≈−12 dBFS); **ns/sample is
 the median over runs of the per-block timed region** (`process()` only — stimulus generation is
@@ -45,6 +47,24 @@ runs**, not the worst block of the run that supplied the median — deliberately
 figure, since a dropout is caused by the worst block that ever happens rather than a typical one,
 and correspondingly ~5× more exposed to the scheduler noise the caveat below describes. `working` = the §5.5 macro at loudness ≈ 50 with EQ and colour engaged
 (every stage off its exact-skip path); `defaults` = the factory null path.
+
+**Build configuration — where the bench differs from the shipped plugin, stated because the row
+above quoted "the shipped flag set" and that was not exact.** `AnabasisBench` links
+`AnabasisHardening` + `juce::juce_recommended_config_flags` + `juce::juce_recommended_warning_flags`
+(`CMakeLists.txt`), which is the same set the two test apps use. The `Anabasis` plugin target links
+one more: **`juce::juce_recommended_lto_flags`**. So these figures come from a Release build
+**without LTO**, and additionally **with debug info** — `AnabasisHardening` adds `-g` in Release on
+GCC/Clang and `/Zi` + `/DEBUG` on MSVC, which is binary hygiene rather than a codegen change and
+does not alter the optimisation level.
+
+The difference is deliberately NOT closed by changing the target, because that would change the
+measured results rather than the documentation, and the numbers above would then need re-measuring
+on a recorded machine (C2). What it means for reading them: the whole DSP under `src/dsp` is
+header-only and reaches `bench.cpp` through `AnabasisEngine.h`, so it is already instantiated inside
+the bench's single translation unit — most of what LTO buys is cross-TU inlining the optimiser can
+therefore do here anyway. The residual gap between this configuration and the shipped one is
+**unmeasured**, so treat these as the bench target's figures rather than as the plugin binary's, and
+re-state the flag set if a future round ever adds LTO to the bench.
 
 | SR | block | OS | mode | ns/sample (median) | worst block (us) | % of realtime |
 |---|---|---|---|---|---|---|

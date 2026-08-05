@@ -70,7 +70,12 @@ public:
     static juce::String tooltipText();
 
     explicit LoudnessMeterView (AnabasisAudioProcessor&);
-    ~LoudnessMeterView() override = default;
+    // Detached FIRST — the tick reads the whole `shown*` snapshot, declared
+    // after `clock`, so `= default` freed it under an armed attachment. Same
+    // reasoning as `~SpectrumView` and, one class up,
+    // `~AnabasisAudioProcessorEditor`'s `animVBlank = {}`: not "safe by
+    // declaration order".
+    ~LoudnessMeterView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;

@@ -6,7 +6,37 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 61 (2026-08-05)** — a preset source-tracking regression:
+**Last updated:** for **review round 62 (2026-08-05)** — two maintainability items, neither of
+which changes runtime behaviour:
+(1) **The visualisers' lifetime reasoning was inconsistent with the editor's.** `SpectrumView`,
+`GrHistoryView` and `LoudnessMeterView` each declare their `abgui::FrameClock` BEFORE the members
+their tick callbacks read — `SpectrumView`'s scratch buffers and `shown*` counters,
+`GrHistoryView`'s `shownHead`, `LoudnessMeterView`'s whole `shown*` snapshot — and each used
+`~View() = default`, so reverse-order destruction freed that state while the vblank attachment was
+still armed over it. Nothing is reachable today: a message-thread destructor cannot interleave with
+a message-thread vblank callback. But that is the SAME argument
+`~AnabasisAudioProcessorEditor` explicitly refuses for its own `animVBlank` (it move-assigns an
+empty attachment FIRST, with a comment saying why), so the GUI set was giving two different answers
+to one question. Each destructor now calls `clock.stop()`, which clears the attachment and the
+callback and is idempotent. Chosen over reordering the members deliberately: a reorder would fix it
+invisibly and could be undone by the next person to add a field, whereas a destructor states the
+guarantee where a reader looks for it. `CurveView` needs nothing — it has no `FrameClock`, being
+driven by the editor timer.
+(2) **The benchmark's flag set was described as the shipped plugin's.** `PERFORMANCE_BUDGET.md` read
+"Release with the shipped flag set". Verified against `CMakeLists.txt`: `AnabasisBench` links
+`AnabasisHardening` + `juce_recommended_config_flags` + `juce_recommended_warning_flags` — the same
+set the two test apps use — while the `Anabasis` plugin target links one more,
+`juce_recommended_lto_flags`. `AnabasisHardening` also adds Release debug info (`-g` on GCC/Clang,
+`/Zi` + `/DEBUG` on MSVC), which is binary hygiene rather than a codegen change. A
+build-configuration note now records all of that, plus two things a reader needs: why the difference
+is NOT closed by changing the target (that would change the measured results rather than the
+documentation, and the numbers would need re-measuring on a recorded machine — C2), and how much it
+is likely to matter (the whole DSP is header-only and reaches `bench.cpp` through
+`AnabasisEngine.h`, so it is already instantiated in one translation unit and most of what LTO buys
+is cross-TU inlining the optimiser can do here anyway). The residual gap is stated as UNMEASURED
+rather than argued away. `TEST_REPORT.md`'s performance summary points at that note instead of
+repeating it, keeping one authority. No methodology, build configuration or measured value changed.
+Previous: **review round 61 (2026-08-05)** — a preset source-tracking regression:
 **Saving a preset did not record itself as the preset now in use.** `stepPreset` resolves "where am
 I in the list?" from a remembered source first, and only falls back to searching by display name
 when that hint no longer describes what the processor shows. The fallback exists because names are

@@ -27,7 +27,16 @@ class SpectrumView : public juce::Component,
 {
 public:
     explicit SpectrumView (AnabasisAudioProcessor&);
-    ~SpectrumView() override = default;
+    // The clock is DETACHED FIRST, not left to reverse-order destruction. Its
+    // tick reads `scratchL`/`fftData`/`inDb`/`outDb` and the `shown*` counters,
+    // all declared AFTER `clock`, so `= default` freed them while the vblank
+    // attachment was still armed over them. Unreachable today — a message-thread
+    // destructor cannot interleave with a message-thread vblank callback — but
+    // that is the "safe by ordering" argument `~AnabasisAudioProcessorEditor`
+    // refuses to rely on for its own `animVBlank`, and this is the same thing
+    // one class down. Stating it also means a future member reorder cannot
+    // quietly take the guarantee away. `FrameClock::stop()` is idempotent.
+    ~SpectrumView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;   // top-right × dismisses

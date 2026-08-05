@@ -127,7 +127,9 @@ below already measured it — the line was not updated when the bench landed.)*
 ## Performance (2026-08-02, `AnabasisBench` — full matrix in `docs/architecture/PERFORMANCE_BUDGET.md`)
 
 Budget case **48 kHz · 512 · 4× OS · working state: 3.0 % of one core** (Intel Xeon @ 2.10 GHz,
-gcc 13.3.0, Release; median ns/sample of the timed `process()` region, 5×1 s runs) against the
+gcc 13.3.0, Release at the BENCH target's flag set — not the plugin's; `PERFORMANCE_BUDGET.md`'s
+build-configuration note owns that distinction and is not restated here — median ns/sample of the
+timed `process()` region, 5×1 s runs) against the
 brief-§10 target of ≈5 % on a modern desktop core. Null path ≈1.3 %; the 16× quality extreme
 9.2 % (48 kHz) / 20.2 % (96 kHz). Machine + method travel with every quote (C2).
 

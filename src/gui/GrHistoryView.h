@@ -29,7 +29,11 @@ class GrHistoryView : public juce::Component
 {
 public:
     explicit GrHistoryView (AnabasisAudioProcessor&);
-    ~GrHistoryView() override = default;
+    // Detached FIRST — the tick reads `shownHead`, declared after `clock`, so
+    // `= default` freed it under an armed attachment. Same reasoning as
+    // `~SpectrumView` and, one class up, `~AnabasisAudioProcessorEditor`'s
+    // `animVBlank = {}`: not "safe by declaration order".
+    ~GrHistoryView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
     void visibilityChanged() override;

@@ -758,6 +758,29 @@ It is the one test that writes into the real user preset directory (the save han
 `stepPreset` both resolve it themselves and neither takes an injected path) and it restores whatever
 it displaces. One mutant dropping the call, killed. Suites: 233 + 382.
 
+**Review round 62 (2026-08-05) — two maintainability items; no runtime behaviour changed.**
+(1) The three visualisers with a `FrameClock` — `SpectrumView`, `GrHistoryView`,
+`LoudnessMeterView` — declared `clock` BEFORE the state their ticks read, and used
+`~View() = default`, so reverse-order destruction freed that state while the vblank attachment was
+still armed over it. No defect is reachable (a message-thread destructor cannot interleave with a
+message-thread vblank callback) but it is exactly the "safe by declaration order" argument
+`~AnabasisAudioProcessorEditor` refuses for its own `animVBlank`, which it detaches explicitly and
+first. Each destructor now calls `clock.stop()` — `FrameClock::stop()` clears the attachment and the
+callback and is idempotent — so the guarantee is stated rather than inherited from member order, and
+a future reorder cannot quietly remove it. `CurveView` needs nothing: it has no `FrameClock` and is
+driven by the editor timer. (2) `PERFORMANCE_BUDGET.md` described the measurements as "Release with
+the shipped flag set", which is not exact: `AnabasisBench` links `AnabasisHardening` +
+`juce_recommended_config_flags` + `juce_recommended_warning_flags` (the same set the two test apps
+use) while the `Anabasis` plugin target links **`juce_recommended_lto_flags`** as well, and
+`AnabasisHardening` additionally adds Release debug info (`-g`, or `/Zi` + `/DEBUG` on MSVC). A
+build-configuration note now states the difference, why it is not closed by changing the target (that
+would change the results, not the documentation, and force a re-measure under C2), and how to read
+the figures: the DSP is header-only and already instantiated in the bench's single translation unit,
+so most of what LTO buys is available to the optimiser anyway — but the residual gap is UNMEASURED,
+so these are the bench target's numbers, not the plugin binary's. `TEST_REPORT.md`'s summary points
+at that note rather than repeating it. No methodology, build configuration or measured value changed.
+Suites: 233 + 382 (unchanged — neither item is a behaviour a test can observe).
+
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The editor: family frame (46 px top bar — wordmark→About, preset browser, A/B, Copy,
