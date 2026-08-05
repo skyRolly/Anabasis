@@ -19,7 +19,22 @@ cmake_minimum_required(VERSION 3.22)
 
 project(Anabasis VERSION 0.1.0 LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+# The BASELINE is C++20 (ADR-0008 decision B5). The cache seam below exists for
+# exactly ONE caller — the OQ-006 C++23 canary (.github/workflows/cxx23-canary.yml),
+# which asks "does tomorrow's baseline still compile?" without touching what
+# ships: 20 stays the default in every configuration nobody overrides, 23 is
+# legal only so the canary can request it, and anything else refuses loudly
+# rather than configuring a standard ADR-0008 never admitted. A plain
+# -DCMAKE_CXX_STANDARD=23 would NOT work here and would fail SILENTLY — the
+# unconditional set() below shadows a same-named cache entry — which is why the
+# knob is an ANABASIS_* option instead of advice to pass the standard directly.
+set(ANABASIS_CXX_STANDARD "20" CACHE STRING
+    "C++ standard the tree compiles at (20 = ADR-0008 baseline; 23 = the OQ-006 canary configuration)")
+if(NOT ANABASIS_CXX_STANDARD MATCHES "^(20|23)$")
+    message(FATAL_ERROR "ANABASIS_CXX_STANDARD must be 20 or 23 (got '${ANABASIS_CXX_STANDARD}') -- "
+                        "the baseline is fixed by ADR-0008; 23 exists only for the C++23 canary")
+endif()
+set(CMAKE_CXX_STANDARD ${ANABASIS_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 # C++20 modules are not used (ADR-0008 decision B5); C++23 library features are

@@ -29,21 +29,6 @@ terms separately.
 
 ---
 
-## OQ-006 — Where does the C++23 canary run, and what does it gate? · `Open`
-
-**Question.** §2.1 requires a **non-blocking** CI canary job building at C++23 on all three
-platforms, whose failure must never block the main pipeline, with its status reported in each
-phase summary.
-
-**Open detail.** Whether the canary builds the full target set or only the DSP core + tests, and
-whether it runs per-push or on a schedule. Full-matrix per-push roughly doubles CI cost for an
-early-warning signal.
-
-**Recommendation.** DSP core + tests only, on a weekly schedule plus `workflow_dispatch`, added at
-P2 when there is DSP code for it to compile. Confirm at P2.
-
----
-
 ## OQ-008 — Loudness-penalty reference values · `Open`
 
 **Question.** §6 requires streaming-target lines (Spotify −14, Apple Music −16, YouTube −14,
@@ -108,6 +93,45 @@ refers to the pluginval **gate**, not to which bytes it sees.
 ---
 
 ## Resolved
+
+### OQ-006 — Where does the C++23 canary run, and what does it gate? · `Resolved 2026-08-05`
+
+**Decision (2026-08-05, taken while executing the owner's post-v0.1.0 continue-autonomously
+directive; ⊕ for review like every decision taken under a standing approval rather than an
+item-specific sign-off).** **This entry's own recommendation, adopted unchanged** — which is why
+it could be taken without the owner in the loop: the discretionary part (scope and cadence) was
+already answered in writing here, and ADR-0008 had already mandated everything else (the job
+exists, builds C++23 on all three platforms, never gates). The canary is
+`.github/workflows/cxx23-canary.yml`: **DSP core + tests only** — it builds the `AnabasisTests`
+target at C++23 (compiling `AnabasisDSP`'s sources plus the JUCE modules they pull in) and then
+**runs** the suite, so the weekly signal is "compiles *and still behaves identically* at C++23",
+not merely "compiles" — on a **weekly schedule plus `workflow_dispatch`**, on all three
+platforms, native-arch on macOS (the 10.13/universal contract is a shipping claim about binaries
+this job does not produce). It gates **nothing**: it sits in no `needs:` chain and must never be
+made a required status check — ADR-0008: "a red canary is a to-do, not a gate". The C++23
+request travels through the `ANABASIS_CXX_STANDARD` cache seam in `CMakeLists.txt` (legal values
+20/23 only), which exists because a plain `-DCMAKE_CXX_STANDARD=23` is shadowed by the project's
+unconditional `set()` and would be ignored *silently*. The "added at P2" half of the
+recommendation was missed — P2 closed 2026-08-01 with the P1 phase summary still reading
+"scheduled for P2", and no later phase summary re-raised it — so this resolution lands the job
+three phases late rather than re-litigating where it should have landed. Verified on Linux
+before landing: every TU of the canary's target compiles at `-std=c++23` with zero diagnostics
+and the DSP suite passes in full; the default configuration is untouched (identical `-std=c++20`
+command lines, zero recompilation after the CMake edit).
+The original entry follows as the record.
+
+**Question.** §2.1 requires a **non-blocking** CI canary job building at C++23 on all three
+platforms, whose failure must never block the main pipeline, with its status reported in each
+phase summary.
+
+**Open detail.** Whether the canary builds the full target set or only the DSP core + tests, and
+whether it runs per-push or on a schedule. Full-matrix per-push roughly doubles CI cost for an
+early-warning signal.
+
+**Recommendation.** DSP core + tests only, on a weekly schedule plus `workflow_dispatch`, added at
+P2 when there is DSP code for it to compile. Confirm at P2.
+
+---
 
 ### OQ-013 — How does the frozen trim vector cross message → audio? · `Resolved 2026-08-02 (ADR-0014)`
 
@@ -300,7 +324,8 @@ blindly. Evidence: the pinned JUCE 9 tree documents its deployment floor as **ma
 10.13 sits above the framework floor; it also matches the sibling product, keeping one support
 claim across the family. The value governs the **x86_64 slice** only — the arm64 slice floors at
 **11.0** by toolchain regardless — so the user-visible claim is: **macOS 10.13+ (Intel), 11.0+
-(Apple Silicon)**. Restated in `COMPATIBILITY_MATRIX.md` when that document lands (P2). The first
+(Apple Silicon)**. Restated in `COMPATIBILITY_MATRIX.md`, which this line made an obligation:
+discharged 2026-08-05, later than the P2 it originally targeted. The first
 macOS CI run is the warning-free check on the value; the `build.yml` comment carries the decision
 at the point of use.
 

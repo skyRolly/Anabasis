@@ -63,4 +63,9 @@ path, once listed, is never removed without the exception above.
 ## Status taxonomy (for `COMPATIBILITY_MATRIX.md`)
 
 Verified · Partially Verified · Unverified · **Not Supported** (a deliberate exclusion — for
-Anabasis, **AAX** is Not Supported by decision, `DEVELOPMENT_BRIEF.md` §2; it is not "unverified").
+Anabasis, **AAX** is Not Supported by decision: the brief's §2 format list carries no AAX entry
+and its §14.3 names AAX as the canonical Not Supported example, and `README.md` states the
+exclusion outright. It is not "unverified". The citation used to read "`DEVELOPMENT_BRIEF.md`
+§2" bare, as if §2 stated it in words — §2 excludes AAX by omission, which is a different kind
+of evidence; corrected 2026-08-05 when the same phrasing, copied into `COMPATIBILITY_MATRIX.md`
+with invented quotation marks around it, failed adversarial verification).

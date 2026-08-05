@@ -52,6 +52,7 @@ scripts/build.sh            # scripts/build.sh [Release|Debug]
 
 | Option | Default | Effect |
 |---|---|---|
+| `ANABASIS_CXX_STANDARD` | 20 | Which C++ standard the tree compiles at. **20** is the ADR-0008 baseline and the only value anything ships from; **23** exists solely so the OQ-006 canary can ask "does tomorrow's baseline still compile?". Any other value refuses at configure. **Set the standard through this option, never through `-DCMAKE_CXX_STANDARD`** — the project assigns `CMAKE_CXX_STANDARD` unconditionally, so a direct override is shadowed and ignored *silently*. It is a cache entry, so a tree configured at 23 stays at 23 until it is reset or reconfigured fresh |
 | `ANABASIS_BUILD_TESTS` | ON | Build the `AnabasisTests` + `AnabasisStateTests` console apps |
 | `ANABASIS_BUILD_STANDALONE` | ON | Add the Standalone target (debugging convenience) |
 | `ANABASIS_JUCE_PATH` | "" | Use a local JUCE checkout instead of fetching |

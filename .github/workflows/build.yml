@@ -310,7 +310,15 @@ jobs:
           mkdir -p "$DIST"
           cp -R build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 "$DIST/"
           cp    build/Anabasis_artefacts/Release/Standalone/Anabasis "$DIST/Anabasis"
-          # Installer scripts + INSTALL.txt are added at P6 (packaging/).
+          # Third-party attribution travels WITH the binaries, not merely in the
+          # repository: the IJG/BSD notices attach to binary redistribution, and
+          # RELEASE_POLICY.md §"Third-party attribution" makes carrying both
+          # files a requirement of every binary distribution. Copied on all
+          # three platforms.
+          cp NOTICE THIRD_PARTY_LICENSES.md "$DIST/"
+          # Installer scripts + INSTALL.txt arrive with the packaging pipeline,
+          # deferred to the first commercial release (OQ-007 — v0.1.0 ships
+          # plain zips).
           # The customer artifact must contain no symbol table and no debug files.
           while IFS= read -r -d '' ELF; do
             if readelf -S "$ELF" 2>/dev/null | grep -q '\.symtab'; then
@@ -564,9 +572,14 @@ jobs:
           $exe = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.exe -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq 'Standalone' })
           if ($exe.Count -ne 1) { Write-Error "expected exactly one Standalone Anabasis.exe, found $($exe.Count)" }
           $exe = $exe[0]
-          # 2) Copy the public artifact. (INSTALL.txt is added at P6.)
+          # 2) Copy the public artifact. (INSTALL.txt arrives with the OQ-007
+          #    packaging pipeline, first commercial release.) NOTICE +
+          #    THIRD_PARTY_LICENSES.md ride along on every platform:
+          #    RELEASE_POLICY.md §"Third-party attribution".
           Copy-Item -Recurse -Force $vst3.FullName $dist
           Copy-Item -Force $exe.FullName $dist
+          Copy-Item -Force NOTICE $dist
+          Copy-Item -Force THIRD_PARTY_LICENSES.md $dist
           # 3) Purge ALL debug material from the public copy BEFORE any further
           #    step that can abort.
           Get-ChildItem -Recurse -Path $dist -File |
@@ -669,8 +682,10 @@ jobs:
       # sibling product, keeping one support claim across the family. The value
       # governs the x86_64 slice; the arm64 slice floors at 11.0 by toolchain
       # regardless. Supported-OS claim: macOS 10.13+ (Intel), 11.0+ (Apple
-      # Silicon) — restate in COMPATIBILITY_MATRIX.md when that document lands
-      # (P2). The first macOS CI run is the warning-free check on this value.
+      # Silicon) — restated in docs/architecture/COMPATIBILITY_MATRIX.md, which
+      # landed 2026-08-05 (this comment asked for it "when that document lands
+      # (P2)"; it arrived later than that target). The first macOS CI run is the
+      # warning-free check on this value.
       #
       # This note lives OUTSIDE the `run:` scalar deliberately. In a YAML folded
       # block (`run: >`) every line is joined into ONE shell line and `#` has no
@@ -813,7 +828,11 @@ jobs:
           cp -R "$VST3" "$DIST/"
           cp -R "$AU"   "$DIST/"
           cp -R "$APP"  "$DIST/"
-          # INSTALL.txt is added at P6 (packaging/).
+          # Third-party attribution rides with the binaries on every platform
+          # (RELEASE_POLICY.md §"Third-party attribution").
+          cp NOTICE THIRD_PARTY_LICENSES.md "$DIST/"
+          # INSTALL.txt arrives with the OQ-007 packaging pipeline (first
+          # commercial release; v0.1.0 ships plain zips).
           # ASSERT both slices are present -- do not merely print them. `lipo -archs`
           # exits 0 for ANY valid Mach-O, including a thin one, so echoing its output
           # verifies nothing: an arm64-only build would ship labelled "universal" and

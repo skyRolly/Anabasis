@@ -53,9 +53,17 @@ the places this project is most likely to violate the rule:
 
 ## Current compliance
 
-**TODO (no code yet).** This section is populated with a real audit — the module-by-module review
-plus its evidence citations — when `src/` exists (target: end of P2, recorded in
-`docs/architecture/REALTIME_SAFETY_AUDIT.md`). It is not claimed in advance (constraint C7).
+**Audited (section updated 2026-08-05 — it had read "TODO (no code yet)" since P0 and stayed TODO
+for three phases after the deliverable it scheduled actually landed; the flip was owed at
+end-of-P2 and is applied late, not backdated).** The module-by-module review with evidence
+citations is `docs/architecture/REALTIME_SAFETY_AUDIT.md`; **its audited revision is the P2
+transition-layer commit (2026-08-01)**, stated there rather than glossed. Audio-thread code added
+after that revision — the P3 meters and their rings, the §5.4 feature extractor, the spectrum
+taps — entered through the `THREADING_POLICY.md` permitted-path table (each addition is a named
+row with its ADR) and the round-41/42 two-threaded stimulus + ThreadSanitizer passes recorded in
+`HANDOVER.md`, but the audit *document* has not been re-baselined against the v0.1.0 tree. That
+re-baseline is a recorded gap (`DOCUMENTATION_COVERAGE.md` §Known coverage gaps), not a claim
+(constraint C7).
 
 ## Enforcement
 

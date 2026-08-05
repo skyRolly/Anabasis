@@ -25,13 +25,106 @@ empty Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BR
 | **Current Version** | 0.1.0 (pre-release; `project(Anabasis VERSION 0.1.0)` in `CMakeLists.txt`). `CHANGELOG.md` has no released entry; the P1 skeleton is under `[Unreleased]`. |
 | **Current Phase** | **P6 — v0.1.0 CODE COMPLETE (2026-08-02, under the owner's blanket approval; every item taken under it is ⊕ for the post-v0.1.0 fine review).** The last two owner gates are decided and wired: **ADR-0013** (OQ-016 — the release trim scales the auto poles; all four adaptive behaviours audible at defaults) and **ADR-0014** (OQ-013 — the frozen-trim vector restores: captured at save, staged on ADR-0012's row, applied at the duck's silent bottom; MODE inv 3's last gap closed). OQ-014 resolved (reading 1 — listener-guard row) and OQ-007 resolved (v0.1.0 ships plain zips). The preset bank is at the brief's 12 (5 brief-named + 7 ⊕); the brand checklist is provisionally passed under the approval (the real Level-5 human pass is the first fine-review item); CI pluginval strictness is raised to the P6/release value (`build.yml`'s `env:` block — this row quotes no number). Still owed before tagging v0.1.0: the human fine review (brand pass, DAW matrix audition, preset/curve listening pass), OQ-002 (licence — blocks commercial distribution only), OQ-008 first-party verification, OQ-009. Previously: P5 UI code complete at L8 (2026-08-02); P0 closed 2026-07-31; P1 closed 2026-08-01; P2/P3/P4 complete 2026-08-01. |
 | **Branch Strategy** | Feature branch → PR into `main`. CI builds every branch; `main` carries shipped versions. Release tagging convention: annotated `vX.Y.Z`, wired to a `release.yml` at P6. |
-| **Build Status** | **Builds green on Linux** (P1 skeleton, 2026-07-31): `CMakeLists.txt` per ADR-0008 (five targets, JUCE 9.0.0 @ the pinned SHA fetched via FetchContent, C++20, warning-free under the recommended flags), `src/` + `src/dsp/` + `src/gui/` exist. The `preflight` guard now takes its ready=true path, so the full 3-OS matrix runs in CI; Windows/macOS results arrive with the first CI run of this commit. The `docs` job continues to run on every push and gates nothing. |
+| **Build Status** | **Builds green on Linux** (P1 skeleton, 2026-07-31): `CMakeLists.txt` per ADR-0008 (five targets, JUCE 9.0.0 @ the pinned SHA fetched via FetchContent, C++20, warning-free under the recommended flags), `src/` + `src/dsp/` + `src/gui/` exist. The `preflight` guard now takes its ready=true path, so the full 3-OS matrix runs in CI; Windows/macOS results arrive with the first CI run of this commit. The `docs` job continues to run on every push and gates nothing. **The §2.1 C++23 canary is wired as of 2026-08-05** (`cxx23-canary.yml` — weekly + `workflow_dispatch`, DSP suite built AND run at C++23 on all three platforms, non-blocking by structure and never a required check; OQ-006 Resolved ⊕). |
 | **Test Status** | **621 checks green on Linux**: `AnabasisTests` (233 — ADR-0013 auto-release-follows-the-trim-scale, null-with-defaults bit-exact, impulse-at-allowance for four lookahead values, ceiling clamp, control/gain priming, limiter window coverage and alignment, smoothing of ceiling and lookahead, hostile-input finiteness, self-heal recovery, recovery from a stage that overflows on a FINITE input (EQ biquad in BOTH positions, RMS detector, colour c⁵, polyphase IIR up and down — `testExtremeLevelDoesNotSilencePermanently`) and from the stages that emit no audio to check (the BS.1770 meters and the §5.4 feature extractor — `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`) and a Learn pass that measured through an overflow never becoming the saved reference (`testALearnPassThatOverflowedIsNotCommitted`), bypass null, EQ frequency response/smoothing/positions, the ADR-0002 post-shelf ceiling stimulus, compressor static curve/detectors/mix/two-stage auto release/sidechain HPF, clipper curve/compensation/ADAA aliasing/colour models/dynamic tame, true-peak accuracy, limiter link/styles/preserve/two-stage auto/detector HPF/dBTP mode, the full OS latency matrix, OS aliasing/transparency/bypass/ceiling, dither modes, the §2.8 duck on rewires/latches/requests, LUFS calibration/gating/windows, inv-10 monitoring honesty incl. the mid-stream offline flip snap, delta, the duck-bottom hold, the post-latch refill hold, a request held through the out-leg, delta covered by the duck, the last-staged-restore rule, stale detector state, limiter control smoothing incl. link/preserve/HPF glides) plus meter publication and the GR ring in the state suite and `AnabasisStateTests` (388 — the ADR-0014 frozen-trim restore (`testFrozenTrimRestore`: both landing sites, both staging sites, the capture, the no-audio mirror, the undo case, the consume-to-bottom save window, freeze-off inert — each killed by its own mutant), the undo duck (`testUndoRequestsDuck`), gesture begin/end symmetry, the 12-preset factory bank, registry snapshot vs the frozen fixture, 49/9 counts, raw-exact byte-identical round-trip and its fixed-point precondition, structural-tolerance read rules, batched latency notification, corrupt/foreign no-op, macro fixed point, restore-vs-macro-drain, A/B tier behaviour, preset contract, cache mapping, the ADAPTIVE missing-field defaults, meters reading the render not the monitor path, load-then-save with no audio between, the zero-length-block publish guard, and — first in the tree to construct the EDITOR — the Settings panel following a project load in both directions, the meter tooltip quoting the OQ-008 table rather than a copy of it, and every knob's animated position starting where its value already is), plus `testTeardownAndReengageInvariants` (no trigger drains after `stopDraining`; a macro gesture that moves nothing re-lands the curve; a copied-into slot starts a fresh undo history). `AnabasisTests` also pins the limiter push's chain position (`testLimiterPushDoesNotDriveTheClipper`) and that a realtime→offline flip does not duck the render (`testOfflineFlipDoesNotDuckTheRender`) while the return edge stays ducked (`testReturnFromOfflineIsDucked`), and that an EQ-position change on the offline-entry edge starts from cleared filter state (`testOfflineEntryClearsEqStateOnAPositionChange`). **pluginval green ×3 in both modes on Linux at the P6 strictness (editor under xvfb)**; CI gates at the same value on all three platforms — the number lives in `build.yml` alone. Re-count from the suites' own output when editing this row; it has gone stale once already. |
 | **Release Status** | Pre-0.1.0. Nothing has ever left this repository, which is why the compatibility contract can still be shaped at zero cost (`COMPATIBILITY_POLICY.md` §"When the contract starts"). |
 | **Known Blockers** | **No code blockers.** Every formerly `Blocking` question is Resolved: OQ-013 by **ADR-0014** (2026-08-02 — the frozen-trim restore is wired and mutation-verified), OQ-016 by **ADR-0013**, OQ-014 (reading 1) and OQ-007 (plain zips) by the same owner call, OQ-010/OQ-011/OQ-004/OQ-005/OQ-015 earlier with their ADRs. What blocks the RELEASE rather than the code: the post-v0.1.0 human fine review (the blanket approval's other half — brand pass, DAW audition, listening pass over the ⊕ constants/presets), **OQ-002** (JUCE licence tier — blocks commercial distribution only), OQ-008's first-party value verification, OQ-009 (owner metadata). This row must agree with every `Blocking` entry in `docs/OPEN_QUESTIONS.md` — check it there, not here, when adding one. |
-| **Pending Tasks** | **P1–P6 code work is DONE** (phase histories in the summaries below; the v0.1.0 completion summary carries the final batch). What remains is the **post-v0.1.0 fine review** — the other half of the owner's blanket approval: (a) the item-by-item Level-5 brand pass (`BRAND_CONSISTENCY_CHECKLIST.md` — provisionally passed, boxes deliberately unchecked); (b) the DAW matrix audition (`COMPATIBILITY_MATRIX.md` targets); (c) the listening pass over every ⊕ — trim mapping constants, §5.5 macro curves, tame/model weights, the 12 factory preset value sets, the gold/amber accent; (d) a second look at every decision dated 2026-08-02 (ADR-0013, ADR-0014, OQ-007/OQ-014 readings, the 7 preset names/values); (e) OQ-008's first-party value verification at release; (f) the 3-OS CI confirmation of this batch (suites + pluginval 10). Commercial release additionally waits on OQ-002 (licence tier), OQ-009 (owner metadata), and the OQ-007-deferred packaging pipeline. |
+| **Pending Tasks** | **P1–P6 code work is DONE** (phase histories in the summaries below; the v0.1.0 completion summary carries the final batch). What remains is the **post-v0.1.0 fine review** — the other half of the owner's blanket approval: (a) the item-by-item Level-5 brand pass (`BRAND_CONSISTENCY_CHECKLIST.md` — provisionally passed, boxes deliberately unchecked); (b) the DAW matrix audition (`COMPATIBILITY_MATRIX.md` targets); (c) the listening pass over every ⊕ — trim mapping constants, §5.5 macro curves, tame/model weights, the 12 factory preset value sets, the gold/amber accent; (d) a second look at every decision dated 2026-08-02 (ADR-0013, ADR-0014, OQ-007/OQ-014 readings, the 7 preset names/values); (e) OQ-008's first-party value verification at release; (f) the 3-OS CI confirmation of this batch (suites + pluginval at the `build.yml` strictness — the number lives there alone, as the Test Status row already says). Commercial release additionally waits on OQ-002 (licence tier), OQ-009 (owner metadata), and the OQ-007-deferred packaging pipeline. |
 | **Roadmap** | P0 research & design → P1 skeleton (pluginval L5) → P2 DSP core → P3 metering engine → P4 Simple adaptive engine → P5 UI → P6 polish & release (pluginval L10, DAW matrix, docs). `DEVELOPMENT_BRIEF.md` §11. v2 candidates (codec preview, reference matching, dynamic EQ, multiband limiting) are out of scope — leave architectural room only. |
 | **Ownership** | `TODO: no owner/team metadata in the repository. Requires project-owner input (OQ-009).` Company of record: RollyTech. |
+
+## Post-v0.1.0 development (2026-08-05) — the C++23 canary lands (OQ-006)
+
+**The one §2.1 mandate that had no implementation behind it.** ADR-0008 mandates the canary's
+*existence* (builds C++23, all three platforms, never gates); OQ-006 held only scope and cadence,
+with its own written recommendation ("DSP core + tests, weekly + `workflow_dispatch`, added at
+P2"); the P1 phase summary below records "scheduled for P2" — and P2 closed 2026-08-01 without
+it, with no later phase summary re-raising it. Found by walking `DEVELOPMENT_BRIEF.md` against
+the tree at the start of the post-v0.1.0 continuation, exactly the class of gap that walk exists
+to catch.
+
+**What landed.** `.github/workflows/cxx23-canary.yml` (three jobs, `AnabasisTests` target only,
+built at C++23 and then RUN, weekly Monday 06:17 UTC plus `workflow_dispatch`; non-blocking by
+structure — no `needs:` edge, no `continue-on-error`, never a required check) and the
+`ANABASIS_CXX_STANDARD` cache seam in `CMakeLists.txt` (legal values 20/23, anything else refuses
+loudly at configure). The seam exists because the obvious `-DCMAKE_CXX_STANDARD=23` is shadowed
+by the project's unconditional `set()` and fails *silently* — the canary would have reported
+green forever while validating C++20. OQ-006 → Resolved (⊕, adopting its own recommendation;
+the entry records why that was takeable without an owner round-trip). `CI_CD.md` gains the
+canary section and a fourth branch-protection trap (never require the canary).
+
+**Verified before landing** (Linux, this machine): the canary configuration compiles every TU of
+its target at `-std=c++23` with zero diagnostics and the DSP suite passes in full; the guard
+refuses `ANABASIS_CXX_STANDARD=17` at configure; the default configuration reconfigured to
+identical `-std=c++20` command lines and `ninja: no work to do` — zero recompilation, so the
+shipped binaries this change ships beside are the same bytes the round-64 gate (suites ×2,
+pluginval both modes ×3) already validated. Windows/macOS canary legs are unexercised until the
+first scheduled or dispatched run — rehearse via `workflow_dispatch` after merge, the same advice
+`msvc.yml` carries.
+
+**C++23 canary status (§2.1 reporting duty): RUNNING from this commit** — previously "not yet
+running" (P1 summary), silently unreported at P2–P6 closes. This entry is the status of record
+until the next phase summary.
+
+**Same date, `LATENCY_MODEL.md` lands** — the other contract authority
+`COMPATIBILITY_POLICY.md` cited without it existing. Thin on purpose where `Latency.h` is
+already the single source (the measured os tables are quoted nowhere in it); what it adds is
+the map: the two-term contract, what never moves PDC versus what does, the measurement tap's
+zero contribution, the five recompute triggers plus the load's documented no-op sixth, and
+the property→test verification table. With it and the serialization ledger, every authority
+document a binding policy points at now exists.
+
+**Same date, `SERIALIZATION_REGISTRY.md` lands** — the schema ledger `COMPATIBILITY_POLICY.md`
+has cited since bootstrap, written from the code with every node cited. Its evidence pass
+produced two catches: `BASELINE` has **no originator in this build** (adopted, carried and
+dropped but never created — the registry records it as schema-reserved rather than describing
+a phantom producer), and the user manual had inherited the sibling's "omitted parameters keep
+their default" preset claim, which is true here of sessions and factory tables but **not of
+file applies** (overlay-only — an omitted parameter keeps its live value, visible the first
+time a build adds a parameter). Registry states the asymmetry; manual corrected.
+
+**Same date, the batch was adversarially verified and eleven findings fixed.** Every checkable
+claim in the day's commits was independently re-derived and each discrepancy re-verified before
+being trusted (the canary commit came back clean). The three worth remembering: the matrix
+attributed a quotation to brief §2 that the brief does not contain (AAX is excluded by
+omission there; the sentence lives in the README — and `COMPATIBILITY_POLICY.md` carries the
+same pre-existing mis-attribution, recorded for its own change); the matrix quoted the
+preset-burst bound in live prose while assigning its ownership to the checklist in the same
+sentence; and HANDOVER's own Pending Tasks row still held the doc set's one live strictness
+quote, three rows below the row that forbids it. The full list is the coverage audit's entry of
+record.
+
+**Same date, the User documentation class lands** — `docs/user/USER_MANUAL.md` +
+`INSTALLATION.md`, the class whose P6 target had passed unmet. Every stated fact was read
+from the tree first (registry ranges verbatim, the `kFactory` names, `userPresetDirectory()`,
+`kLearnMinPassMs`, `kTiltPivotHz`, the editor's actual affordances, `isBusesLayoutSupported`);
+no magic numbers shipped to users (no GR-window seconds, no undo cap, no performance figures);
+INSTALLATION describes the OQ-007 zips as they are, including the executable-bit restore
+`build.yml`'s own packaging NOTE makes necessary and the quarantine steps for
+ad-hoc-signed bundles. Voice adapted from the sibling under ADR-0009; all wording ⊕ for the
+fine review's brand pass.
+
+**Same date, `COMPATIBILITY_MATRIX.md` lands** — the document this file's own Pending Tasks row
+was already pointing the DAW-matrix audition at, and which `OQ-011` directed its supported-OS
+restatement to. The audition now has a target list: rows A1 (REAPER/Windows/VST3) and A2
+(Logic/macOS/AU) are the brief's §10 minimum, A3 is discretionary depth, and every host row is
+`Unverified` until the audition records per-host evidence — the matrix states the C7 rule that
+no row flips without it. Formats, platforms, the stereo-only I/O contract and the dependency
+pins are cited to their evidence; no pluginval strictness number is quoted (single-place rule).
+
+**Same date, the third-party attribution landing.** `RELEASE_POLICY.md` §"Third-party
+attribution" had required `NOTICE` + `THIRD_PARTY_LICENSES.md` with every binary distribution
+since bootstrap while neither file existed. Both now exist, produced by that section's own
+prescription — inventory from the pinned JUCE `LICENSE.md` plus a compiled-TU walk (FreeType and
+stb arrive transitively inside PlutoVG and are missed by every manifest-only reading),
+compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides the
+symbols — probing the `.so` says "absent" for components that are demonstrably in it),
+exclusions confirmed by gate + symbol absence, structure adapted from the sibling under ADR-0009
+with the findings re-derived rather than copied. All three `build.yml` staging steps now copy
+both files into the customer artifact, so the obligation travels with the binaries — including
+the beta zips testers get. The owner-legal half (EULA / PRIVACY / TRADEMARKS) is deliberately
+NOT produced: no draft exists here (unlike the sibling), the wording is owner-supplied (C8), and
+OQ-002 gates the whole commercial question. Coverage's legal row carries the split.
 
 ## v0.1.0 completion summary (2026-08-02, under the owner's blanket approval)
 

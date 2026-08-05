@@ -6,7 +6,239 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 64 (2026-08-05)** — two follow-ups to round 63, one
+**Last updated:** for **three further review-confirmed corrections (2026-08-05)**, all
+content-only:
+(1) **This file's own inventory understated what exists** — the architecture self-coverage row
+still listed five descriptive documents after `SERIALIZATION_REGISTRY.md` and
+`LATENCY_MODEL.md` landed, while the gaps list two screens down recorded both as landed and
+`REPOSITORY_MAP.md` listed all seven. The audit's own Update protocol says "a new doc → add to
+self-coverage", so the file that exists to catch staleness had three lists and two of them
+right. The row now enumerates all seven (dates grouped rather than repeated); directory and
+row now match one-for-one.
+(2) **The last two future-landed pointers to `COMPATIBILITY_MATRIX.md`** — OQ-011's Decision
+and the `build.yml` macOS-configure comment both still asked for the supported-OS claim to be
+"restated in COMPATIBILITY_MATRIX.md when that document lands (P2)". Both now record the
+obligation as discharged **and** that it landed later than the P2 they targeted — the
+historical meaning of the original line is what makes the lateness visible, so it is kept
+rather than erased. The workflow change is comment-only; no step, condition or value moved.
+One occurrence is deliberately untouched: the dated 2026-08-05 entry below **quotes** the old
+OQ-011 wording as the evidence for why the matrix was owed, framed in the past tense — a dated
+entry recording what a document said then is the historical record working, not drift.
+(3) **A user-manual claim the manual's own §6 contradicted.** The Simple-view table said
+Loudness at 0 "leaves the sound untouched", while §6 states the ceiling clamp is always last
+before dither and the output never exceeds it. At `l = 0` the macro curves do neutralise the
+push (`limGainDb`, `clipDriveDb`, `dynTiltDb` all reach 0 — `src/MacroEngine.h`), which is why
+the all-defaults null is bit-exact for material below the ceiling; a master already hotter
+than the Ceiling is still limited. The row now says what a user can observe — no push at 0,
+Ceiling still holding — without importing the curve detail.
+Previous: **three review-confirmed documentation corrections (2026-08-05)**, all
+content-only:
+(1) **The lifecycle trigger map was satisfied at two of its three targets.** The
+`ANABASIS_CXX_STANDARD` seam updated `CI_CD.md` (the canary's own section) but not
+`BUILD.md`'s "Build options" table — and `DOCUMENTATION_LIFECYCLE_POLICY.md`'s
+"Build / CMake / JUCE pin / C++ baseline" row names `BUILD.md` first. It is also the option
+that most needs to be there: the knob exists precisely *because* the obvious
+`-DCMAKE_CXX_STANDARD=23` is shadowed silently, and the person who would try that is reading
+the build guide. Row added with its legal values, the 20-ships/23-canary split, the
+never-use-CMAKE_CXX_STANDARD rule, and the cache-persistence consequence. `DEPENDENCY_POLICY.md`
+— the row's third target — is deliberately untouched: it already carries the C++23 *policy*
+(baseline, feature-test-macro rule, canary-never-gates), and the cache variable's name is a
+build-usage fact, not a dependency rule.
+(2) **The stale-phase class the batch set out to repair, in the file that defines authority.**
+`SOURCE_OF_TRUTH.md`'s legal-class list still read "`NOTICE` and `THIRD_PARTY_LICENSES.md`
+(added at P6)". The parenthetical is gone; the authority statement is unchanged. No date or
+phase replaces it — an authority document says what ranks above what, and *when a file landed*
+is exactly the kind of history this class of drift comes from (status lives in the coverage
+self-coverage row and `REPOSITORY_MAP.md`).
+(3) **The user manual's automation answer drew the line in the wrong place.** It listed eight
+of the nine `withAutomatable(false)` parameters and then said "Settings items are not
+parameters at all" — leaving the missing ninth, `advancedMode`, to be read as Settings state
+when it is a host parameter (`src/PluginParameters.cpp:145`). Two distinct facts now stated as
+two: host parameters not offered as automation targets (now including the **ADV** toggle), and
+the Settings overlay's items, which are not host parameters at all. No new claims, no
+expansion.
+Previous: **`LATENCY_MODEL.md` landing (2026-08-05)** — the second of the two
+documents `COMPATIBILITY_POLICY.md` cites as contract authorities that did not exist. The
+model is deliberately thin where `src/dsp/Latency.h` is already the single source: the
+`kOsLatMin`/`kOsLatLin` values are quoted **nowhere in the document** (they are measured
+against the pinned JUCE tree, so a prose copy is a stale copy the day the pin moves —
+the same reasoning as the pluginval strictness); what the document adds is the map — the
+two-term contract, what never moves PDC (the lookahead knob, presets, A/B, undo, loads)
+versus what does (OS factor/phase, the offline Force-Max flip), the ADR-0003 measurement
+tap contributing zero with RISK-008's measured resolution, the five recompute triggers plus
+the load's deliberately redundant sixth call (documented as a no-op at its own site), the
+one-latency-event-per-load batch, and the verification map from property to named test.
+Previous: **`SERIALIZATION_REGISTRY.md` landing (2026-08-05)** — the schema-v1
+ledger `COMPATIBILITY_POLICY.md` has cited as the serialization authority since bootstrap,
+now real: the session blob's full tree (root/children/properties in write order, each cited
+to `PluginProcessor.cpp`), the raw-vs-value fidelity split, the SLOT StateSet shape and its
+two deliberate asymmetries (full-surface slots with apply-side view exclusion; DETACH_MASK
+always written), FROZEN_TRIMS' three conditional-write rules, ADAPTIVE's absent-=-never-learned
+discriminator, the read-rule table (including that a version gate would *reverse* ADR-0007),
+the `.anabasis` format, and the §4 statement that no legacy fixture exists yet *because
+nothing has shipped* — with the freeze scheduled for the v0.1.0 tag.
+Two findings the evidence pass itself produced, both fixed in the same unit:
+(1) **`BASELINE` has no originator in this build** — the only code that constructs one is the
+test that seeds it; the wrapper adopts, carries and drops the child but never creates it. The
+registry records it as schema-reserved, adopted-only — tolerate on read, never invent on
+write — instead of describing a producer that does not exist.
+(2) **A sibling-inherited manual sentence did not survive contact with the code.** The user
+manual's §7.3 claimed an old preset's omitted parameters "keep their default" — true of the
+sibling, and true here of *sessions* (defaults-first) and *factory tables* (defaults +
+intents), but the FILE apply is **overlay-only** (`applyPreset` writes exactly the PARAM list,
+no defaults pass), so an omitted parameter keeps its live value. Invisible today (the writer
+emits every non-excluded parameter); visible the first time a build adds one. The registry
+states the asymmetry precisely, and the manual sentence is corrected to what both paths
+actually do.
+Previous: **the adversarial verification round over the 2026-08-05 batch** — every
+checkable claim in the six new commits was independently re-derived (citations, symbol probes,
+workflow structure, cross-document coherence), each reported discrepancy then adversarially
+re-verified before being trusted. The canary commit came back clean; eleven findings elsewhere
+were confirmed and are fixed in this change:
+(1) **A fabricated quotation** — the matrix's AAX row attributed the sentence "AAX is not
+supported" to brief §2, which excludes AAX only by omission (the sentence exists in the README;
+the brief's §14.3 uses AAX as its Not Supported *example*). The row now says exactly that. The
+same mis-attribution pre-exists in `COMPATIBILITY_POLICY.md` — left for its own change, being a
+policy file (recorded here per C6 instead).
+(2) **A stale-count violation of this batch's own making** — the matrix quoted the
+~46-notification preset burst in live prose while assigning ownership of that bound to the
+checklist in the same sentence (and the number had already drifted: round 50's
+`setParamIfMoved` made it an upper bound). The number is gone; the checklist owns it.
+(3) **The one live pluginval-strictness quote left in the doc set** — HANDOVER's Pending Tasks
+item (f), pre-existing from 2026-08-02, three rows below the row that says the number lives in
+`build.yml` alone. Now it defers like everything else.
+(4) **Passed-phase markers this batch's repairs missed, all in `REPOSITORY_MAP.md`**: the legal
+class still "[P6]" though its factual half landed; `packaging/`, `release.yml` and PACKAGING
+still "[P6]" though OQ-007 moved them; both workflow enumerations missing `cxx23-canary.yml`.
+All re-pointed.
+(5) **Two lists describing one set with different membership** — the map's planned descriptive
+docs (8 names) vs this file's gaps list (6): `API_REFERENCE.md` and `STATE_SERIALIZATION.md`
+added here.
+(6) Small-bore exactness: the matrix's bus-declaration citation was off by one line (`:10-13`,
+the output bus was outside the cited range); `PERFORMANCE_BUDGET.md`'s map entry gets its date
+beside the phase label; the gaps list's legal bullet said "producible now" one commit after the
+files existed; and the inventory's claim that `NOTICE` uses the FTL credit "verbatim" overstated
+byte-fidelity (the year placeholder is filled, as the FTL itself instructs) — reworded to say
+precisely that.
+Previous: **the User documentation class landing (2026-08-05)** —
+`docs/user/USER_MANUAL.md` + `docs/user/INSTALLATION.md`, closing the class that P6's target
+passed unmet. Method, because a user manual is where invented facts hide best: every stated
+fact was read from the tree before it was written — the registry's ranges and names verbatim
+(the 49-row table), the twelve factory preset names from `PresetManager.cpp`'s `kFactory`
+table, the preset folder from `userPresetDirectory()`, Learn's 5-second minimum from
+`kLearnMinPassMs`, the tilt pivot from `kTiltPivotHz`, Force-Max-equals-16× from the PDC
+callback's own comment, the About/‹›/edited-dot/meter-click affordances from the editor's
+constructors, and the stereo-only bus contract from `isBusesLayoutSupported`. What the manual
+deliberately does NOT do: quote the GR-history window length, the undo cap or any performance
+number (the counts rule and C2 apply to user docs too — behaviourally visible limits are
+described, magic numbers are not shipped to users); claim a transport-follows meter reset the
+sibling has and this product does not; or describe automation of the nine advisory
+non-automatable rows as impossible (hosts may expose them — the manual says so). INSTALLATION
+is written for what v0.1.x actually is (OQ-007 plain zips): manual copy paths, the
+executable-bit restore the artifact transport makes necessary (`build.yml`'s own NOTE), the
+quarantine steps for ad-hoc-signed bundles, and an honest "no checksums yet" section. Voice
+and structure adapted from the sibling's manual under ADR-0009; all product wording ⊕ for the
+fine review. `REPOSITORY_MAP.md`'s user row updated; the gaps item closed.
+Previous: **the RISK-009 trigger-passed note (2026-08-05)** — the risk register's
+variable-font entry gained a dated blockquote in the RISK-008 pattern: its trigger ("P5 reaching
+typography with no approved font licence") has passed without materialising — the shipped P5
+uses the platform default and embeds nothing, the fact the attribution inventory independently
+re-verified — and the entry now says when it re-arms (a brand-pass decision to adopt a font)
+and what that costs (licence-before-adoption per brief §13, plus a new inventory row). The
+entry is annotated, not deleted; the register's own rule is that a risk moves only when it
+materialises.
+Previous: **`COMPATIBILITY_MATRIX.md` landing (2026-08-05)** — the descriptive doc
+the fine review could not start without: `OQ-011` directed its supported-OS claim to be
+"restated in COMPATIBILITY_MATRIX.md when that document lands", and HANDOVER's Pending Tasks
+row points the DAW-matrix audition at "`COMPATIBILITY_MATRIX.md` targets" — while the document
+did not exist, references to a plan mistaken for a deliverable. It now exists at the sibling's
+location (`docs/architecture/`, ADR-0009 structure, findings re-derived): formats (AAX Not
+Supported per the brief's own exclusion), the three blocking platform gates (quoting no
+strictness number — the single-place rule), the OQ-011 macOS floor restated with its evidence
+and **no invented Windows/Linux floor** (C7), stereo→stereo as the only accepted layout
+(`isBusesLayoutSupported`, with the mono delta from the sibling stated as a scope decision),
+the audition target rows A1–A3 (all `Unverified`, with the rule that no host flips without
+per-host evidence — the ~46-notification preset burst check stays owned by
+`RELEASE_COMPATIBILITY_CHECKLIST.md`), and the pins (JUCE SHA, C++20 + the 20/23 canary seam,
+pluginval deliberately recorded as unpinned). `REPOSITORY_MAP.md`'s architecture row now says
+which descriptive docs exist with dates and which remain planned with none claimed; the gaps
+list and self-coverage row updated in step.
+Previous: **the third-party attribution landing (2026-08-05)** — the factual half of
+the legal class, produced by the method `RELEASE_POLICY.md` §"Third-party attribution" itself
+prescribes (which had been *requiring* these files with every binary distribution since
+bootstrap, while neither existed — a policy-vs-tree drift this closes):
+(1) **`NOTICE` + `THIRD_PARTY_LICENSES.md` (root)** — inventory read from the pinned JUCE
+`LICENSE.md` plus a walk of the compiled TUs (which is what catches FreeType and stb, vendored
+transitively inside PlutoVG and absent from JUCE's own list); compiled-in status verified by
+`nm` probes on **this build's per-TU object files**, because the linked image is LTO'd with
+`--gc-sections` and hides most static C symbols — a probe against the `.so` reported almost
+everything absent, which is the wrong answer arrived at honestly and is why the method sentence
+in the inventory names the objects as the evidence; exclusions (MP3, LV2, AAX, ASIO, Oboe,
+CHOC, Box2D) confirmed by their compile gates *and* symbol absence. Structure and protocol
+adapted from the sibling under ADR-0009 with provenance stated in-file; **findings re-derived,
+not copied** — the sibling's own rule, and this repository's (C7). One genuine delta from the
+sibling's record: Anabasis's Linux `.so` carries only seven `DT_NEEDED` entries — JUCE 9 loads
+the X11/GL stack dynamically — so §5 records direct-vs-runtime linkage as two lists instead of
+one `ldd` closure.
+(2) **The obligation now travels with the binaries**: all three `build.yml` staging steps copy
+both files into the customer artifact (the IJG/BSD notices attach to binary redistribution, and
+CI artifacts reach beta testers), and the three adjacent "added at P6 (packaging/)" comments now
+cite OQ-007 — the same passed-phase staleness the drift repair fixed elsewhere.
+(3) Synced: README §Licensing (pointers to both files), the legal self-coverage row (factual
+half Present; owner-legal half — EULA/PRIVACY/TRADEMARKS — stays absent on C8/OQ-002, stated
+per the sibling delta: Anabasis has no EULA even as a draft), HANDOVER's post-v0.1.0 section.
+Previous: **the self-coverage drift repair (2026-08-05)** — the change the canary
+entry queued, applied row by row against the tree rather than wholesale:
+(1) **The audit's own tail was a ~P2-era snapshot**, in the file whose job is noticing exactly
+that. Repaired with evidence per row: the code-module table gains the two rows the v0.1.0 tree
+has that it did not (MacroEngine/PresetManager/InternalState; `src/gui/` — behaviour Verified via
+the editor-constructing state tests, appearance deliberately Level-5), and its closing sentence
+no longer calls `src/gui/` "planned" two phases after it landed. The architecture row stops
+enumerating ADRs — `ADR_INDEX.md` is the registry, and the enumeration here had gone stale the
+moment ADR-0013/0014 were Accepted, the same failure the round-53 README fix removed.
+`PERFORMANCE_BUDGET.md` is struck from the absent list (it landed at P6 and sat in the gaps list
+for three days after). The PACKAGING and `release.yml` deferrals now cite **OQ-007** instead of a
+P6 that has closed. The user/legal/DAW-matrix items state that their P6 targets **passed unmet**
+and what each now waits on, instead of pointing at a phase that no longer exists to close them —
+no replacement dates invented (C7).
+(2) **One repair crossed into a policy, following the TESTING_POLICY precedent.**
+`REALTIME_AUDIO_POLICY.md` §Current compliance still read "TODO (no code yet)" three phases after
+`REALTIME_SAFETY_AUDIT.md` — the deliverable that very TODO scheduled — landed at P2. It now
+points at the audit and states plainly what the audit covers: its audited revision is the P2
+commit, the P3–P6 audio-thread additions entered through `THREADING_POLICY.md`'s permitted-path
+table and the round-41/42 TSAN passes, and the document's re-baseline against the v0.1.0 tree is
+a recorded gap here, not a claim there. This is the section's own scheduled flip applied late —
+the policy's RULES are untouched, so no ADR is owed (the same reasoning TESTING_POLICY's 2026-08-02
+flip recorded).
+(3) **One gap was found to be load-bearing for the fine review**: `COMPATIBILITY_MATRIX.md` is
+the document `OQ-011` and HANDOVER's Pending Tasks point the DAW-matrix audition at, so the
+audition cannot record results until it exists — stated in the gaps list as owed *before* that
+audition rather than eventually.
+Previous: **the post-v0.1.0 C++23 canary landing (2026-08-05)** — the first change
+after PR #6 merged, found by walking `DEVELOPMENT_BRIEF.md` against the tree:
+(1) **An Accepted-ADR mandate had no implementation behind it.** ADR-0008 mandates a non-blocking
+C++23 canary on all three platforms; OQ-006 held scope/cadence with its own recommendation
+("added at P2"); the P1 phase summary said "scheduled for P2" — and P2 through P6 closed without
+it or any phase summary re-raising it. Landed as `.github/workflows/cxx23-canary.yml` (builds the
+`AnabasisTests` target at C++23 and RUNS it, weekly + `workflow_dispatch`, non-blocking by
+structure) plus the `ANABASIS_CXX_STANDARD` cache seam in `CMakeLists.txt` — needed because the
+obvious `-DCMAKE_CXX_STANDARD=23` is shadowed by the project's unconditional `set()` and fails
+silently, i.e. a canary wired that way would validate C++20 for ever while reporting green.
+Docs synced in the same unit: OQ-006 → Resolved (⊕, adopting its own recommendation — the entry
+records why no owner round-trip was needed), `CI_CD.md` (canary section + a fourth
+branch-protection trap + the workflows table, whose `release.yml` row now cites OQ-007 rather
+than "[P6]"), `HANDOVER.md` (Build Status row + a dated section restoring the §2.1 canary
+status-reporting duty that had been silently unreported since the P1 summary), and this file's
+`.github` self-coverage row.
+(2) **Drift found in this file's own tail, reported before repairing (C6).** The
+"Documentation-set self-coverage" and "Known coverage gaps" sections are a ~P2-era snapshot: the
+architecture row still enumerates "ADR-0001…0012" (a count duplication of exactly the kind the
+round-53 README fix removed, and it HAS gone stale — the index registers later ADRs), the gaps
+list still names `PERFORMANCE_BUDGET.md` as absent though it landed at P6, the `.github` row
+attributed `release.yml`'s absence to P6 rather than to OQ-007's resolution, and the user/legal
+rows still read "Deferred to P6" though P6 has closed. Repair queued as its own change so this
+commit stays the canary's; the rows corrected here are only those this change itself touches.
+Previous: **review round 64 (2026-08-05)** — two follow-ups to round 63, one
 robustness and one documentation:
 (1) **A read that was total only because of the line above it.** Round 63 put the `iid::uiScale`
 ladder read rule in `replaceFrom`, reading the property with no stated default. That is safe today —
@@ -5105,9 +5337,12 @@ must satisfy rather than compliance it already has (constraint C7).
 | `src/dsp/AdaptiveEngine.h` | `MODE_AND_ADAPTATION_POLICY.md` Current implementation, `THREAD_MODEL.md` | Full | Verified |
 | `src/dsp/GrHistoryBuffer.h` · `Latency.h` · `EngineParameters.h` | `THREAD_MODEL.md` (SPSC row), ADR-0004 (latency table) | Full | Verified |
 | `src/PluginProcessor.{h,cpp}` · `PluginParameters.{h,cpp}` (wrapper, APVTS, state, macro layer) | `PARAMETER_REGISTRY.md`, `SERIALIZATION` notes in `THREAD_MODEL.md`, ADR-0005/0006 | Full | Verified (`tests/state_tests.cpp`) |
+| `src/MacroEngine.{h,cpp}` · `PresetManager.{h,cpp}` · `InternalState.h` (macro drain, preset contract, host-hidden state) | ADR-0005 (macro layer + listener-guard, OQ-014), ADR-0007 §preset exclusion, `THREAD_MODEL.md` (listener-guard / staged-record rows), ADR-0010 | Full | Verified (`tests/state_tests.cpp` — drain/teardown/preset/read-rule tests) |
+| `src/gui/` (editor, LookAndFeel, LoudnessMeter/GrHistory/Spectrum/Curve views) | `BRAND_CONSISTENCY_CHECKLIST.md`, `THREAD_MODEL.md` (SPSC + relaxed-meter reader rows), ADR-0009 provenance headers in each adapted file | Full | Partially Verified — behaviour is Verified (the state suite constructs the real editor since round 32), **appearance is Level 5** and deliberately not claimed headlessly (`TESTING_POLICY.md`) |
 
-Rows were added as modules landed. The remaining planned modules (`src/gui/`, P5) are listed in
-`docs/REPOSITORY_MAP.md` §`src/`; that is a **plan**, not coverage.
+Rows were added as modules landed; with the P5/P6 rows above, the table covers the v0.1.0 tree.
+(Until 2026-08-05 this section still called `src/gui/` a "planned" module two phases after it
+landed — the staleness the same date's audit entry reports.)
 
 ## Documentation-set self-coverage (deliverables present)
 
@@ -5116,14 +5351,14 @@ Rows were added as modules landed. The remaining planned modules (`src/gui/`, P5
 | docs root | DEVELOPMENT_BRIEF, **DESIGN**, SOURCE_OF_TRUTH, REPOSITORY_MAP, OPEN_QUESTIONS, HANDOVER, DOCUMENTATION_COVERAGE, KNOWN_ISSUES, FUTURE_RISKS, POSTMORTEMS, BRAND_CONSISTENCY_CHECKLIST | Present (`DESIGN.md` is **`Accepted`**, signed off 2026-07-31; it ranks at level 5 and is superseded section by section by its ADRs — SOURCE_OF_TRUTH §"Where `DESIGN.md` sits") |
 | worklogs | `2026-07-30-p0-anamorph-research.md` | Present (raw evidence trail; never cited as policy) |
 | policies | 16 docs (incl. the Anabasis-specific `MODE_AND_ADAPTATION_POLICY`) | Present |
-| procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING deferred to P6) |
-| architecture | `design-decisions/ADR_INDEX.md` + **ADR-0001…0012** (0001…0011 Accepted 2026-07-31, **ADR-0012** 2026-08-01); descriptive set so far: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2) | Decisions complete for P0; remaining descriptive docs (ARCHITECTURE, SIGNAL_FLOW, LATENCY_MODEL, …) land by P6 |
+| procedures | BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS, RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING | Present (PACKAGING moved with the installer set to the first commercial release — **OQ-007**, resolved 2026-08-02; no longer a P6 item) |
+| architecture | `design-decisions/ADR_INDEX.md` — **the registry**: take the ADR set and each entry's confidence from it, never from a row here (this row enumerated "ADR-0001…0012" and went stale the moment ADR-0013/0014 were Accepted — the same staleness the round-53 README fix removed, in the file whose job is noticing it). Descriptive set: `THREAD_MODEL.md`, `PARAMETER_REGISTRY.md` (P1), `REALTIME_SAFETY_AUDIT.md` (P2), `PERFORMANCE_BUDGET.md` (P6), and `COMPATIBILITY_MATRIX.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md` (all 2026-08-05) | Decisions registered in the index; remaining descriptive docs — see the gaps list below |
 | docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
-| user | — | Deferred to P6 |
+| user | `USER_MANUAL.md`, `INSTALLATION.md` | **Present (2026-08-05)** — written against the v0.1.0 surface with every stated fact taken from the tree (registry ranges, factory names, preset paths, Learn's 5 s minimum, the constant-latency contract, the chmod/quarantine realities of the OQ-007 zips). Derived class — never evidence (`SOURCE_OF_TRUTH.md`); prose voice adapted from the sibling's manual under ADR-0009 and ⊕ for the fine review like all product wording taken under a standing approval |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
-| root — legal | — | Deferred to P6 (produced against a real dependency tree; copying another project's inventory would be invented evidence) |
-| root — internal/testing | — | Deferred to P6 (SUPPORT.md ships with the first tester build) |
-| .github | workflows/{build,codeql,msvc,dependency-review}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present (release.yml deferred to P6) |
+| root — legal | `NOTICE`, `THIRD_PARTY_LICENSES.md` | **Factual attribution half Present (2026-08-05)** — produced against the actually-pinned JUCE tree per `RELEASE_POLICY.md`'s own prescription: inventory from JUCE's `LICENSE.md` plus a compiled-TU walk, compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides them), exclusions from their gates plus symbol absence; CI copies both files into every customer artifact. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) stays absent — waits on OQ-002 and owner wording, never invented (C8) |
+| root — internal/testing | — | SUPPORT.md ships with the first tester build (none has left the repository — Release Status row, `HANDOVER.md`) |
+| .github | workflows/{build,codeql,msvc,dependency-review,cxx23-canary}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present (release.yml deferred to the first commercial release — OQ-007, resolved 2026-08-02) |
 | scripts | setup-linux, build, run-tests, run-pluginval.{sh,ps1} | Present |
 
 ## Known coverage gaps / TODOs
@@ -5131,10 +5366,25 @@ Rows were added as modules landed. The remaining planned modules (`src/gui/`, P5
 These are **deliberate**, not oversights. Each names what would close it.
 
 - **Architecture set, partially closed** — `THREAD_MODEL.md` and `PARAMETER_REGISTRY.md` landed
-  with P1, `REALTIME_SAFETY_AUDIT.md` with P2. Still absent: `ARCHITECTURE.md`,
-  `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`, `SERIALIZATION_REGISTRY.md`, `LATENCY_MODEL.md`,
-  `COMPATIBILITY_MATRIX.md`, `DSP_ALGORITHMS.md`, `PERFORMANCE_BUDGET.md` — closed by P5–P6 as
-  the code they would describe stabilises.
+  with P1, `REALTIME_SAFETY_AUDIT.md` with P2, `PERFORMANCE_BUDGET.md` with P6 (struck from the
+  absent list 2026-08-05 — it had sat here for three days after landing),
+  `SERIALIZATION_REGISTRY.md` on 2026-08-05 — another absent document a binding policy already
+  cited as an authority (`COMPATIBILITY_POLICY.md` §"Where each contract is specified"), the
+  same class as the attribution files and the matrix; `LATENCY_MODEL.md` (the other
+  policy-cited one) landed the same day. Still absent:
+  `ARCHITECTURE.md`, `SIGNAL_FLOW.md`, `DSP_GRAPH_REFERENCE.md`,
+  `DSP_ALGORITHMS.md`, `API_REFERENCE.md`, `STATE_SERIALIZATION.md` (the
+  last two were listed in `REPOSITORY_MAP.md`'s planned set but omitted here — the two lists
+  described the same set with different membership until the 2026-08-05 verification round
+  aligned them). The "closed by P5–P6" target has **passed unmet**
+  for these; no replacement date is invented (C7). `COMPATIBILITY_MATRIX.md` — the one that was
+  load-bearing, being what `OQ-011` and `HANDOVER.md`'s Pending Tasks row point the DAW-matrix
+  audition at — **landed 2026-08-05**, so the audition has its target document; every host row
+  in it is deliberately `Unverified` until the audition supplies evidence.
+- **`REALTIME_SAFETY_AUDIT.md`'s audited revision is the P2 commit (2026-08-01)** — stated in
+  the audit itself. The P3–P6 audio-thread additions entered through `THREADING_POLICY.md`'s
+  permitted-path table and the round-41/42 TSAN passes, but the document has not been
+  re-baselined against the v0.1.0 tree. Closed by a re-audit at (or after) the fine review.
 - ~~**No ADRs**~~ — **closed 2026-07-31**: ADR-0001…0011 are Accepted and registered. They were
   authored `Unverified` (no `src/` existed then), which is a *different* gap from absence: each is
   a contract the code must satisfy. **Closed for most of them as of the P1–P4 code**: `ADR_INDEX.md`
@@ -5142,16 +5392,29 @@ These are **deliberate**, not oversights. Each names what would close it.
   `Partially Verified` say which half is unwired (ADR-0005's gesture grammar → P5, ADR-0007's
   FROZEN_TRIMS inject → OQ-013, ADR-0011's OQ-014/KI-003 questions).
   New decisions still follow C1 — evidence-driven, no quota.
-- **Policy compliance sections are `TODO (no code yet)`** in `REALTIME_AUDIO_POLICY`,
-  `THREADING_POLICY`, `DSP_POLICY` and `MODE_AND_ADAPTATION_POLICY`. Closed as each phase lands,
-  with evidence citations.
-- **Performance numbers** — none may be written until measured with a recorded machine and
-  methodology (C2). `docs/TEST_REPORT.md` exists since P2 (2026-08-01) and carries the measured
-  aliasing / true-peak / latency-matrix / dither data; CPU and memory budgets remain open until a
-  machine spec is recorded (P2/P6).
-- **No host (DAW) matrix** — requires manual testing. Closed by the P6 DAW smoke tests.
-- **Legal / attribution class absent** — closed at P6 against the actually-pinned JUCE tree.
-- **`docs/user/` absent** — closed at P6.
+- ~~**Policy compliance sections are `TODO (no code yet)`**~~ — **closed 2026-08-05**, and the
+  closure was itself overdue in one place: `TESTING_POLICY`'s section flipped 2026-08-02,
+  `DSP_POLICY`'s invariant→test map and `MODE_AND_ADAPTATION_POLICY`'s "Current implementation"
+  filled as their phases landed — but `REALTIME_AUDIO_POLICY` §Current compliance still read
+  "TODO (no code yet)" three phases after `REALTIME_SAFETY_AUDIT.md` (the deliverable the TODO
+  itself scheduled) existed. It now points at the audit and states the re-baseline gap above.
+- **Performance numbers** — the C2 rule stands (no number without machine + method).
+  ~~CPU budget open~~ — **closed 2026-08-02**: `PERFORMANCE_BUDGET.md` carries the measured
+  whole-engine matrix and per-stage table with the machine and method recorded, plus the DESIGN
+  §9 allocation review. (This entry still said "CPU … remains open" three days after that
+  document landed.) No separate memory-budget figure exists, and none is invented.
+- **No host (DAW) matrix** — requires manual testing. P6 closed without it; it is now the
+  post-v0.1.0 fine review's DAW-matrix audition (`HANDOVER.md` Pending Tasks), which needs
+  `COMPATIBILITY_MATRIX.md` first (above).
+- ~~**Legal / attribution class absent**~~ — **factual half closed 2026-08-05**: `NOTICE` +
+  `THIRD_PARTY_LICENSES.md` landed (self-coverage row carries the method) and CI ships them
+  inside every customer artifact. Still genuinely absent: the owner-legal half (`EULA.md`,
+  `PRIVACY.md`, `TRADEMARKS.md`) — waits on OQ-002 and owner wording (C8). (This bullet said
+  "producible now" for one commit after the files existed — the attribution change synced the
+  row and missed the bullet; caught by the 2026-08-05 verification round.)
+- ~~**`docs/user/` absent**~~ — **closed 2026-08-05**: `USER_MANUAL.md` + `INSTALLATION.md`
+  landed against the v0.1.0 surface (see the self-coverage row for the evidence discipline);
+  the class's ⊕ wording review joins the fine review's brand pass.
 
 ## Update protocol
 
