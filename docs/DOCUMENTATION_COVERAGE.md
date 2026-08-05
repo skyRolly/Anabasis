@@ -6,7 +6,33 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **`LATENCY_MODEL.md` landing (2026-08-05)** — the second of the two
+**Last updated:** for **three review-confirmed documentation corrections (2026-08-05)**, all
+content-only:
+(1) **The lifecycle trigger map was satisfied at two of its three targets.** The
+`ANABASIS_CXX_STANDARD` seam updated `CI_CD.md` (the canary's own section) but not
+`BUILD.md`'s "Build options" table — and `DOCUMENTATION_LIFECYCLE_POLICY.md`'s
+"Build / CMake / JUCE pin / C++ baseline" row names `BUILD.md` first. It is also the option
+that most needs to be there: the knob exists precisely *because* the obvious
+`-DCMAKE_CXX_STANDARD=23` is shadowed silently, and the person who would try that is reading
+the build guide. Row added with its legal values, the 20-ships/23-canary split, the
+never-use-CMAKE_CXX_STANDARD rule, and the cache-persistence consequence. `DEPENDENCY_POLICY.md`
+— the row's third target — is deliberately untouched: it already carries the C++23 *policy*
+(baseline, feature-test-macro rule, canary-never-gates), and the cache variable's name is a
+build-usage fact, not a dependency rule.
+(2) **The stale-phase class the batch set out to repair, in the file that defines authority.**
+`SOURCE_OF_TRUTH.md`'s legal-class list still read "`NOTICE` and `THIRD_PARTY_LICENSES.md`
+(added at P6)". The parenthetical is gone; the authority statement is unchanged. No date or
+phase replaces it — an authority document says what ranks above what, and *when a file landed*
+is exactly the kind of history this class of drift comes from (status lives in the coverage
+self-coverage row and `REPOSITORY_MAP.md`).
+(3) **The user manual's automation answer drew the line in the wrong place.** It listed eight
+of the nine `withAutomatable(false)` parameters and then said "Settings items are not
+parameters at all" — leaving the missing ninth, `advancedMode`, to be read as Settings state
+when it is a host parameter (`src/PluginParameters.cpp:145`). Two distinct facts now stated as
+two: host parameters not offered as automation targets (now including the **ADV** toggle), and
+the Settings overlay's items, which are not host parameters at all. No new claims, no
+expansion.
+Previous: **`LATENCY_MODEL.md` landing (2026-08-05)** — the second of the two
 documents `COMPATIBILITY_POLICY.md` cites as contract authorities that did not exist. The
 model is deliberately thin where `src/dsp/Latency.h` is already the single source: the
 `kOsLatMin`/`kOsLatLin` values are quoted **nowhere in the document** (they are measured

@@ -76,7 +76,7 @@ classes sit alongside it, not inside it:
   the same way, with one addition: its statements about what a tester may and may not do
   restate the legal class and must not diverge from it.
 - **Legal documents** rank in two groups:
-  - `NOTICE` and `THIRD_PARTY_LICENSES.md` (added at P6) are **authoritative for third-party
+  - `NOTICE` and `THIRD_PARTY_LICENSES.md` are **authoritative for third-party
     attribution and licence facts** — each claim cites the licence file it was read from — and
     change only through their own re-verification procedure. Where a developer doc disagrees
     with them on an attribution fact, the developer doc is corrected.

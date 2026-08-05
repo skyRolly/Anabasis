@@ -432,11 +432,14 @@ live. Closing the editor window removes the GUI's share.
 
 **Can I automate the controls?**
 Every stage parameter (compressor, clipper/colour, limiter, EQ, gains) is a host parameter
-and can be automated as usual. A few are deliberately not offered for automation: the
-three macro knobs (Loudness, Character, Tone — automating a macro that itself writes other
-parameters would fight the host), Freeze, Lookahead, True Peak mode and the dither
-controls. Hosts differ in whether they hide such parameters; writing them still behaves
-sanely. Settings items are not parameters at all — they are session state.
+and can be automated as usual. A few are host parameters that are deliberately **not
+offered as automation targets**: the three macro knobs (Loudness, Character, Tone —
+automating a macro that itself writes other parameters would fight the host), the
+Simple/Advanced view toggle (**ADV**), Freeze, Lookahead, True Peak mode and the two dither
+controls. Hosts differ in whether they hide those; writing them still behaves sanely.
+The **Settings** overlay's items are a different thing again — they are not host parameters
+at all, so they never reach an automation list; they are session state saved with your
+project.
 
 **Will my old sessions and presets still work after I update?**
 Yes — parameter identities are frozen and regression-tested in CI ([§7.3](#73-what-a-preset-contains)).
