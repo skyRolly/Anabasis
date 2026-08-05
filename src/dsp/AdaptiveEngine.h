@@ -176,16 +176,34 @@ public:
     // a non-numeric one straight through. This is the only boundary an
     // externally authored vector crosses: the wrapper reads four `FROZEN_TRIMS`
     // properties out of a session or slot tree, and a hand-edited or corrupt one
-    // is exactly the hostile input the ADR names. Past here a NaN would reach
-    // `publishTrims`, so the wrapper could serialise it back out, and reach
-    // `AnabasisEngine::process`, which feeds `releaseOctaves` to `std::pow`.
+    // is exactly the hostile input the ADR names.
     //
-    // `sanitiseState()` does catch it — but a block LATER, and only after the
-    // NaN has been the live vector for the remainder of the block it was
-    // injected in (the injection sites are the duck bottom and the direct
-    // adopt, both of which run after that block's sanitise). Bounded, and not
-    // the same thing as never entering. That recovery path is unchanged; this
-    // simply means it has nothing to recover from on this route.
+    // WHAT `sanitiseState()` COVERS, and what it cannot. Both injection sites
+    // — the unprimed direct adopt and the §2.8 duck's silent bottom — run
+    // inside `AnabasisEngine::process` BEFORE its `adaptiveEngine
+    // .sanitiseState()` call, and the first read of `currentTrims()` comes
+    // after it, in the same call. So on the AUDIO path the existing recovery is
+    // already complete: a poisoned vector is repaired before any block consumes
+    // it, and `std::pow (releaseOctaves)` never sees it. (An earlier revision
+    // of this comment claimed the repair arrived a block late; it does not, and
+    // the ordering is worth stating exactly, because "recovery latency" is what
+    // a future reader would try to reason about here.)
+    //
+    // The hole is on the PUBLICATION path, which `sanitiseState` does not
+    // touch. `publishTrims (true)` below writes the four published atomics AND
+    // the retained set at injection time; `sanitiseState` repairs the plain
+    // `trims` struct and never re-publishes, and nothing else will: an ADR-0014
+    // restore is staged only for a freeze-ON surface, and `finishBlock` holds
+    // while frozen — that is what "latched" means. A NaN would therefore sit in
+    // the wrapper-visible atomics indefinitely, and `engineFrozenTrimsIfLive()`
+    // would serialise it into the saved session, outliving the block, the
+    // session and the file. That is the exposure this check closes, and it is
+    // not one the per-block sanitiser could ever have closed.
+    //
+    // It also differs in KIND from the recovery, not only in timing:
+    // `sanitiseState` resets the whole struct when any member is non-finite, so
+    // relying on it would discard three sound values for one corrupt document
+    // property. See the per-field note below.
     //
     // PER FIELD rather than whole-struct, which is the opposite of
     // `sanitiseState`'s choice and deliberately so: there, all four members

@@ -6,7 +6,35 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **review round 57 (2026-08-05)** — the third preset walk converted to the
+**Last updated:** for **review round 58 (2026-08-05)** — two accuracy fixes, neither of which
+changes behaviour:
+(1) **An invariant comment described the wrong execution order.** The round-52 note on `injectTrims`
+justified its per-field finite check by saying `sanitiseState()` catches a poisoned trim "a block
+LATER", on the stated premise that the injection sites "run after that block's sanitise". The
+opposite is true: both sites — the unprimed direct adopt and the §2.8 duck's silent bottom — execute
+inside `AnabasisEngine::process` BEFORE its `adaptiveEngine.sanitiseState()` call, and the first
+`currentTrims()` read comes after it, in the same call. The audio path therefore has no recovery
+LATENCY at all; a poisoned vector is repaired before any block consumes it. Correcting the prose
+also surfaced the exposure the old version never named, which is the real reason the boundary check
+is necessary: `publishTrims (true)` writes the four published atomics and the retained set AT
+INJECTION TIME, `sanitiseState` repairs only the plain struct and never re-publishes, and nothing
+else will — an ADR-0014 restore is staged only for a freeze-ON surface and `finishBlock` holds while
+frozen. A NaN would sit in the wrapper-visible atomics indefinitely and
+`engineFrozenTrimsIfLive()` would serialise it into the saved session, outliving the block, the
+session and the file. No per-block sanitiser could close that. The DSP behaviour, ordering and
+validation logic are untouched; only the justification changed, from one that was wrong and weak to
+one that is right and stronger.
+(2) **`AnabasisLookAndFeel` regained its JUCE safety declaration.** Every other class in the new GUI
+set carries `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR` — `CurveView`, `GrHistoryView`,
+`SpectrumView`, `LoudnessMeterView`, `FrameClock`, the editor — and this one lost it when the class
+was rewritten for Anabasis, making it the single member that was silently copyable and unleak-checked.
+Restored. Verified by building the state suite in DEBUG, where the leak detector is compiled in
+(the Release gate never exercises it): 365 checks green, so nothing copies or leaks one. Two JUCE
+assertions fire in that Debug run (`juce_AudioProcessorEditor.cpp:199`,
+`juce_NormalisableRange.h:265`); both were confirmed present before this round's changes as well, so
+they are pre-existing and unrelated — recorded here because a Debug run is not part of the routine
+gate and the next person to make one should not read them as new.
+Previous: **review round 57 (2026-08-05)** — the third preset walk converted to the
 shared traversal; no behaviour changed:
 **`PresetManager::applyFactoryPreset`'s defaults pass still iterated `apvts.state`'s PARAM
 children** while `savePreset` and `presetShapeFromLive` had shared `forEachPresetParameter` over

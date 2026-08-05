@@ -683,6 +683,26 @@ same preset, require every one back — which needs no second copy of the table 
 (a parameter the pass skips), killed by that check and by `factory:`'s existing default check.
 Suites: 233 + 365.
 
+**Review round 58 (2026-08-05) — two accuracy fixes; no behaviour changed.** (1) The `injectTrims`
+comment described the wrong execution order. It claimed `sanitiseState()` catches a poisoned trim "a
+block LATER", on the premise that the injection sites run after that block's sanitise. They do not:
+both — the unprimed direct adopt and the §2.8 duck bottom — run inside `AnabasisEngine::process`
+BEFORE its `adaptiveEngine.sanitiseState()` call, and the first `currentTrims()` read comes after
+it, in the same call. So on the AUDIO path the existing recovery is already complete and nothing
+consumes a poisoned vector. The comment now says that, and states the exposure the finite check
+actually closes, which the old prose missed entirely: `publishTrims (true)` writes the published and
+retained atomics AT INJECTION TIME, `sanitiseState` repairs the plain struct and never re-publishes,
+and nothing else will — an ADR-0014 restore is staged only for a freeze-ON surface and `finishBlock`
+holds while frozen — so a NaN would sit in the wrapper-visible atomics indefinitely and
+`engineFrozenTrimsIfLive()` would serialise it into the saved session. That outlives the block, the
+session and the file, and no per-block sanitiser could have closed it. Validation logic, ordering and
+DSP behaviour are untouched. (2) `AnabasisLookAndFeel` regained
+`JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR`, lost when the class was rewritten for Anabasis and
+leaving it the one member of the new GUI set that was silently copyable and untracked (`CurveView`,
+`GrHistoryView`, `SpectrumView`, `LoudnessMeterView`, `FrameClock` and the editor all carry it). A
+Debug build with the leak detector active runs the state suite green, so nothing copies or leaks one.
+Suites: 233 + 365 (unchanged — neither fix is a behaviour a test can observe).
+
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 
 **Changes.** The editor: family frame (46 px top bar — wordmark→About, preset browser, A/B, Copy,

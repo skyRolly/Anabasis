@@ -149,6 +149,16 @@ public:
     void drawTooltip (juce::Graphics&, const juce::String& text, int w, int h) override;
     juce::Rectangle<int> getTooltipBounds (const juce::String& tip, juce::Point<int> pos,
                                            juce::Rectangle<int> parentArea) override;
+
+    // The same contract every other class in `src/gui` carries (`CurveView`,
+    // `GrHistoryView`, `SpectrumView`, `LoudnessMeterView`, `FrameClock`, the
+    // editor itself): non-copyable, and leak-checked in debug builds. Restored
+    // at review round 58 — it was lost when this class was rewritten for
+    // Anabasis, leaving the one member of the new GUI set that was silently
+    // copyable and untracked. `AnabasisAudioProcessorEditor` holds a single
+    // `lnf` by value and `setLookAndFeel` takes a pointer, so nothing copies
+    // one; the macro states that rather than leaving it to hold by accident.
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnabasisLookAndFeel)
 };
 
 // `CompactComboLookAndFeel` and `SimpleComboLookAndFeel` used to sit here — two
