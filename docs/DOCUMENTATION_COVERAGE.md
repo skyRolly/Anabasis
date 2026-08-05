@@ -6,7 +6,16 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **three further review-confirmed corrections (2026-08-05)**, all
+**Last updated:** for **round-2 items 4/7 — True Peak defaults OFF, every ceiling to −0.1 dBTP
+(2026-08-05, owner directive)**. `truePeakMode` default 1→0, `int_tpMeterOn` true→false,
+`ceiling` default −1→−0.1 (parameter, POD, and EDM Club's now-redundant −0.5 override removed —
+its slot in `testFactoryPresets` now proves the *un-overridden-sits-at-default* half instead).
+The registry snapshot was **deliberately re-frozen** — the Hard-Stop item, taken under the
+owner's round-2 autonomous-decision directive with nothing yet shipped, so the compatibility
+cost is zero by the contract's own terms. `testLimiterTruePeakMode` pins its ceiling explicitly
+now (its stimulus is calibrated against −1 dBTP and the test is about TP-awareness, not the
+default). PARAMETER_REGISTRY rows and the manual's three default mentions updated.
+Previous: **three further review-confirmed corrections (2026-08-05)**, all
 content-only:
 (1) **This file's own inventory understated what exists** — the architecture self-coverage row
 still listed five descriptive documents after `SERIALIZATION_REGISTRY.md` and

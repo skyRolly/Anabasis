@@ -1128,8 +1128,15 @@ static void testFactoryPresets()
            "factory: the preset name is the table's");
     check (std::abs (apvts.getRawParameterValue (pid::loudness)->load() - 80.0f) < 0.5f,
            "factory: the loudness macro landed");
-    check (std::abs (apvts.getRawParameterValue (pid::ceiling)->load() - (-0.5f)) < 0.01f,
-           "factory: the ceiling override landed");
+    // EDM Club's explicit ceiling override was REMOVED 2026-08-05 when every
+    // ceiling moved to the -0.1 default (owner directive) — the slot now
+    // proves both halves of "defaults + intents": an override that exists
+    // lands (limStyle 2 = Loud), and a value with no override sits at the
+    // REGISTERED default rather than at some earlier preset's leftovers.
+    check (std::abs (apvts.getRawParameterValue (pid::limStyle)->load() - 2.0f) < 0.01f,
+           "factory: the limStyle override landed");
+    check (std::abs (apvts.getRawParameterValue (pid::ceiling)->load() - (-0.1f)) < 0.01f,
+           "factory: an un-overridden field sits at the registered default");
 
     // …and the macro position is TRANSLATED. A factory table is defaults plus a
     // few intents and expresses itself through the macros (PresetManager.h), so

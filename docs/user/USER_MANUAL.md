@@ -102,7 +102,7 @@ toggle row, and the metering strip.
    better, keep going; if it only sounded better because it was louder, you just found out.
 4. Press **DELTA** to hear exactly what is being removed — transient tops, mostly. Short,
    dry ticks are healthy; tone or vocal body in the delta means you are pushing too hard.
-5. Check the **Ceiling** (default −1 dBTP) against your delivery target, and note the
+5. Check the **Ceiling** (default −0.1 dBTP) against your delivery target, and note the
    streaming target lines on the LUFS meter — the tooltip shows each platform's reference
    level and how far above it you are.
 6. **Bypass** in the top bar A/Bs against the untouched signal — with COMP on, that
@@ -161,7 +161,7 @@ Universal gestures:
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −1 | The true-peak output limit. The **LOCK** toggle beside it keeps it fixed while you browse presets. |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The true-peak output limit. The **LOCK** toggle beside it keeps it fixed while you browse presets. |
 | **Character** | 0 … 1 | Clean ↔ Colour: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -354,7 +354,7 @@ step. Both slots travel with your DAW session.
 ### A transparent master
 
 1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec
-   (−1 dBTP is the common streaming-safe choice; lock it).
+   (the −0.1 dBTP default suits most deliveries; lock it).
 2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work.
 3. **COMP on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.

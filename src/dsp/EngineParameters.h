@@ -59,7 +59,7 @@ struct EngineParameters
     int   limStyle          = 0;      // 0 Transparent, 1 Punchy, 2 Loud
     float stereoLink        = 1.0f;   // 0..1
     float transientPreserve = 0.5f;   // 0..1
-    bool  truePeakMode      = true;
+    bool  truePeakMode      = false;
 
     // -- eq (pass-through at P1) --------------------------------------------
     float eqTiltDb          = 0.0f;
@@ -76,7 +76,7 @@ struct EngineParameters
     int   eqPosition        = 0;      // 0 Pre, 1 Post
 
     // -- shared / output ----------------------------------------------------
-    float ceilingDbTp       = -1.0f;
+    float ceilingDbTp       = -0.1f;
     int   ditherMode        = 0;      // 0 Off, 1 16-bit, 2 24-bit
     bool  ditherShaping     = false;
 

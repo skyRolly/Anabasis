@@ -148,7 +148,7 @@ namespace
     // brief §9 name 3: club level; the Loud style carries the density.
     const O kEdmClub[] = {
         { pid::loudness, 80.0f }, { pid::character, 0.45f }, { pid::tone, 0.25f },
-        { pid::limStyle, 2.0f }, { pid::ceiling, -0.5f },
+        { pid::limStyle, 2.0f },
     };
     // brief §9 name 4: presence via the (non-managed) bells, macro modest.
     const O kVocalForward[] = {

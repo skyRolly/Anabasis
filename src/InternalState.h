@@ -95,7 +95,7 @@ public:
         tree.setProperty (iid::uiAnimations,   true,  nullptr);
         tree.setProperty (iid::spectrumOn,     true,  nullptr);
         tree.setProperty (iid::meterTargets,   ~0,    nullptr);
-        tree.setProperty (iid::tpMeterOn,      true,  nullptr);
+        tree.setProperty (iid::tpMeterOn,      false, nullptr);
     }
 
     ~InternalState() override { tree.removeListener (this); }

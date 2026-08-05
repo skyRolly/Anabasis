@@ -150,7 +150,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createAnabasisLayout()
     floatParam (pid::tone, "Tone", { -1.0f, 1.0f }, 0.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); }, false);
-    floatParam (pid::ceiling, "Ceiling", { -20.0f, 0.0f }, -1.0f,
+    floatParam (pid::ceiling, "Ceiling", { -20.0f, 0.0f }, -0.1f,
                 [] (float v, int) { return juce::String (v, 1) + " dBTP"; }, dbFrom);
     boolParam  (pid::freeze,       "Freeze",        false, false);
     boolParam  (pid::loudnessComp, "Loudness Comp", false);
@@ -204,7 +204,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createAnabasisLayout()
     choiceParam (pid::limStyle, "Style", { "Transparent", "Punchy", "Loud" }, 0);
     floatParam (pid::stereoLink, "Stereo Link", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
     floatParam (pid::transientPreserve, "Transients", { 0.0f, 100.0f }, 50.0f, pctText, pctFrom);
-    boolParam  (pid::truePeakMode, "True Peak", true, false);
+    boolParam  (pid::truePeakMode, "True Peak", false, false);
 
     // Rows 34-45 (eq)
     floatParam (pid::eqTilt, "Tilt", { -3.0f, 3.0f }, 0.0f, dbText, dbFrom);

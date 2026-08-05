@@ -42,7 +42,7 @@ one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
 | `loudness` | Loudness | 0 … 100 | 0 | cont. | **no** | — |
 | `character` | Character | 0 … 1 | 0 | cont. | **no** | — |
 | `tone` | Tone | -1 … 1 | 0 | cont. | **no** | — |
-| `ceiling` | Ceiling | -20 … 0 | -1 | cont. | yes | — |
+| `ceiling` | Ceiling | -20 … 0 | -0.1 | cont. | yes | — |
 | `freeze` | Freeze | 0 … 1 | 0 | 2 | **no** | preset-excl |
 | `loudnessComp` | Loudness Comp | 0 … 1 | 0 | 2 | yes | view |
 | `deltaMonitor` | Delta | 0 … 1 | 0 | 2 | yes | view |
@@ -71,7 +71,7 @@ one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
 | `limStyle` | Style | 0 … 2 | 0 | 3 | yes | — |
 | `stereoLink` | Stereo Link | 0 … 100 | 100 | cont. | yes | — |
 | `transientPreserve` | Transients | 0 … 100 | 50 | cont. | yes | — |
-| `truePeakMode` | True Peak | 0 … 1 | 1 | 2 | **no** | — |
+| `truePeakMode` | True Peak | 0 … 1 | 0 | 2 | **no** | — |
 | `eqTilt` | Tilt | -3 … 3 | 0 | cont. | yes | — |
 | `eqLowShelfFreq` | LS Freq | 20 … 500 | 100 | cont. | yes | — |
 | `eqLowShelfGain` | LS Gain | -12 … 12 | 0 | cont. | yes | — |

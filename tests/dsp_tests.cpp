@@ -1233,6 +1233,11 @@ static void testLimiterTruePeakMode()
         p.truePeakMode      = tpOn;
         p.transientPreserve = 0.0f;
         p.lookaheadMs       = 2.0f;
+        // EXPLICIT ceiling: the stimulus below is calibrated against -1 dBTP,
+        // and this test is about TP-awareness, not about what the default is
+        // (the default moved to -0.1 dBTP on 2026-08-05, where a 0.95 true
+        // peak no longer exceeds it and the tpOn case would show nothing).
+        p.ceilingDbTp       = -1.0f;
         // fs/4 phase pi/4: sample peak 0.601, TRUE peak 0.85 — ceiling -1 dBTP
         // (0.891)... needs the ISP peak OVER the ceiling: amp 0.95: samples
         // 0.672, true peak 0.95 > 0.891.
