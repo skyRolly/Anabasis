@@ -463,6 +463,18 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // -- utility row ---------------------------------------------------------
     rotary (inputGainK, inputGainL, pid::inputGain);
     rotary (scHpfK, scHpfL, pid::scHpfFreq);
+    // R2 item 2: these two ride the utility STRIP, where a rotary renders as
+    // the smallest knob on the page — a horizontal fader (the family's
+    // `drawLinearSlider` language) fits the row's shape instead. Everything
+    // else `setupRotary`/`attachSlider` wired — attachment, double-click
+    // reset, value box, tooltip, title — is presentation-independent and
+    // stays; only the slider style changes, and the value box moves beside
+    // the track (a below-track box would eat the strip's height).
+    for (auto* s : { &inputGainK, &scHpfK })
+    {
+        s->setSliderStyle (juce::Slider::LinearHorizontal);
+        s->setTextBoxStyle (juce::Slider::TextBoxRight, false, 62, 14);
+    }
     setupCombo (ditherBox, pid::dither, tipFor (pid::dither));
     setupToggle (shapingToggle, pid::ditherShaping, "SHAPE", tipFor (pid::ditherShaping));
     setupToggle (compToggle, pid::loudnessComp, "COMP", tipFor (pid::loudnessComp));
@@ -1128,7 +1140,11 @@ void AnabasisAudioProcessorEditor::resized()
     // 170×20, 50 px up from the panel bottom — not centred.
     aboutLink.setBounds (aboutBackdrop.panel.reduced (30, 26).getX(),
                          aboutBackdrop.panel.getBottom() - 50, 170, 20);
-    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 398);
+    // 310 fits the content exactly (title 24+6, four 30+6 combo rows, three
+    // 26+6 toggles, 16 px top/bottom): the 398 this held before the target
+    // checkboxes and the Spectrum toggle left Settings kept ~90 px of glass
+    // below the last row (R2 item 2).
+    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 310);
     savePresetBackdrop.panel = getLocalBounds().withSizeKeepingCentre (340, 150);
 
     {
@@ -1191,38 +1207,47 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         }
     };
 
+    // R2 item 2 (2026-08-05): every zone's MODE combo sits in the zone HEADER,
+    // top-right beside the caption — the slot the EQ panel already used. Before
+    // this, three zones parked their combo in three different places, and the
+    // LIMITER's foot row squeezed AUTO + TP + Style into one line where both
+    // toggle labels truncated to "..": `drawToggleButton` fits text into
+    // whatever is right of the pill, and 44–52 px cells leave ~16 px. The foot
+    // rows now carry toggles only, at half-panel widths their labels fit.
     {   // COMP
         auto a = panel (0);
+        auto boxRow = a.removeFromTop (24);
+        detectorBox.setBounds (boxRow.removeFromRight (boxRow.getWidth() / 2).reduced (2, 1));
         placeRow (a, { { &ratioK, &ratioL }, { &thresholdK, &thresholdL } });
         placeRow (a, { { &attackK, &attackL }, { &releaseK, &releaseL } });
         placeRow (a, { { &kneeK, &kneeL }, { &compMixK, &compMixL } });
         auto row = a.removeFromTop (26);
         compAutoToggle.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 2));
-        detectorBox.setBounds (row.reduced (2, 2));
         a.removeFromTop (8);
         compGrMeter.setBounds (a.removeFromTop (14));   // [GR meter] — this stage's own
     }
     {   // CLIP / COLOUR
         auto a = panel (1);
+        auto boxRow = a.removeFromTop (24);
+        modelBox.setBounds (boxRow.removeFromRight (boxRow.getWidth() / 2).reduced (2, 1));
         placeRow (a, { { &shapeK, &shapeL }, { &driveK, &driveL } });
         placeRow (a, { { &clipMixK, &clipMixL }, { &depthK, &depthL } });
         placeRow (a, { { &balanceK, &balanceL }, { &colToneK, &colToneL } });
         auto row = a.removeFromTop (84);
         placeRow (row, { { &dynTiltK, &dynTiltL } });
-        auto boxRow = a.removeFromTop (26);
-        modelBox.setBounds (boxRow.reduced (2, 2));
         a.removeFromTop (6);
         clipCurve->setBounds (a.removeFromTop (juce::jmax (40, a.getHeight())));  // [live curve]
     }
     {   // LIMITER
         auto a = panel (2);
+        auto boxRow = a.removeFromTop (24);
+        styleBox.setBounds (boxRow.removeFromRight (boxRow.getWidth() / 2).reduced (2, 1));
         placeRow (a, { { &limGainK, &limGainL }, { &ceilingK, &ceilingL } });
         placeRow (a, { { &lookaheadK, &lookaheadL }, { &limReleaseK, &limReleaseL } });
         placeRow (a, { { &linkK, &linkL }, { &preserveK, &preserveL } });
         auto row = a.removeFromTop (26);
-        limAutoToggle.setBounds (row.removeFromLeft (56).reduced (2, 2));
-        tpToggle.setBounds (row.removeFromLeft (48).reduced (2, 2));
-        styleBox.setBounds (row.reduced (2, 2));
+        limAutoToggle.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 2));
+        tpToggle.setBounds (row.reduced (2, 2));
         a.removeFromTop (8);
         limGrMeter.setBounds (a.removeFromTop (14));    // [GR meter] — this stage's own
     }
@@ -1242,11 +1267,17 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
     auto util = juce::Rectangle<int> (0, kBarH + kPanelRowH, getWidth(), kUtilityH)
                     .reduced (16, 4);
     {
-        auto left = util.removeFromLeft (260);
-        auto cell = left.removeFromLeft (120);
+        // Input Gain and SC HPF ride as FADERS here (R2 item 2): a 40 px-tall
+        // strip knob was the smallest control on the page for two parameters
+        // set by ear at session start — the family's linear style gives them a
+        // full-width track instead. Same Knob objects, same attachments/reset/
+        // value box; only the presentation changed (the style is set at setup).
+        auto left = util.removeFromLeft (360);
+        auto cell = left.removeFromLeft (175);
         inputGainL.setBounds (cell.removeFromBottom (12));
         inputGainK.setBounds (cell);
-        cell = left.removeFromLeft (120);
+        left.removeFromLeft (10);
+        cell = left.removeFromLeft (175);
         scHpfL.setBounds (cell.removeFromBottom (12));
         scHpfK.setBounds (cell);
 
@@ -1257,9 +1288,9 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         freezeToggle.setBounds (toggles.removeFromLeft (100).reduced (2, 14));
 
         auto mid = util.reduced (12, 14);
-        ditherBox.setBounds (mid.removeFromLeft (110));
+        ditherBox.setBounds (mid.removeFromLeft (100));
         mid.removeFromLeft (8);
-        shapingToggle.setBounds (mid.removeFromLeft (90));
+        shapingToggle.setBounds (mid.removeFromLeft (88));
     }
 
     // Macro row: read-only L / C / T (badges land with the §5.3 grammar).
@@ -1321,10 +1352,13 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     // LOCK — TP decides what the ceiling MEANS (dBTP vs sample peak), the
     // lock decides whether presets may move it.
     {
-        auto col = ceilCell.removeFromRight (54);
+        // 74/70 px, not the 54/52 this shipped at first: `drawToggleButton`
+        // fits the label into what is right of the pill (~35 px in), so a
+        // 52 px cell left "LOCK" ~16 px and it truncated to "L…" (R2 item 2).
+        auto col = ceilCell.removeFromRight (74);
         tpSimpleToggle.setBounds (col.removeFromTop (col.getHeight() / 2)
-                                     .withSizeKeepingCentre (52, 20));
-        ceilingLockToggle.setBounds (col.withSizeKeepingCentre (52, 20));
+                                     .withSizeKeepingCentre (70, 20));
+        ceilingLockToggle.setBounds (col.withSizeKeepingCentre (70, 20));
     }
     place (ceilCell, simpleCeilingK, simpleCeilingL);
 

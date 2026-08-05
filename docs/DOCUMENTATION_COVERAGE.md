@@ -6,7 +6,26 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 item 11 — the complete tooltip set, the sibling's rules
+**Last updated:** for **round-2 item 2 — the layout coherence pass, verified against
+rendered snapshots (2026-08-05, owner directive)**. The editor was actually LOOKED AT for
+this one: an env-gated `createComponentSnapshot` dump (temporary, not committed) rendered
+Simple, Advanced and Settings headlessly, and the pass fixed what the pixels showed rather
+than what the code implied. (1) Every Advanced zone's MODE combo now sits in the zone
+HEADER, top-right beside the caption — the slot EQ's Pre/Post already used; before, three
+zones parked it in three different places, and the LIMITER's foot row squeezed AUTO + TP +
+Style into one line where both toggle labels truncated to ".." (`drawToggleButton` fits text
+into what remains right of the pill; 44–52 px cells leave ~16 px). Foot rows now carry
+toggles only, at half-panel widths. (2) The Simple ceiling cell's TP/LOCK column widens
+54→74 px — "LOCK" truncated to "L…" at the shipped 52. (3) Input Gain and SC HPF become
+horizontal FADERS in the utility strip (the family's `drawLinearSlider` language, value box
+beside the track): a strip-squeezed rotary was the smallest control on the page for two
+set-by-ear parameters; same Knob objects, attachments, reset and tooltip — presentation
+only. (4) The Settings panel shrinks 398→310 px to fit its content — the target checkboxes
+and the Spectrum toggle left ~90 px of dead glass when they were removed. GUI appearance
+stays Level-5: the snapshots verified geometry (no truncation, consistent slots), not brand
+quality, which remains the fine review's item. No parameter, attachment or behaviour change;
+suites and pluginval unchanged-green.
+Previous: **round-2 item 11 — the complete tooltip set, the sibling's rules
 (2026-08-05, owner directive)**. The C8 rule ("free tooltip prose is owner-supplied, not
 invented") was discharged for tooltips by the directive itself — the owner asked for a
 generated set, so the copy ships ⊕ like the About description. `tidyTip` becomes the
