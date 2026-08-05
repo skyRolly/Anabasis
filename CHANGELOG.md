@@ -306,6 +306,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   pending the listening pass.
   Evidence Source: **PR #6** (`skyRolly/Anabasis`). [Verified]
 
+### Changed (round-2 owner directive, 2026-08-05)
+- **Defaults:** every true-peak switch (limiter mode and the true-peak meter row) now defaults
+  **off**; the Ceiling defaults to **−0.1 dBTP** everywhere (parameter, engine POD, and the one
+  factory override that pinned −0.5 is gone). The registry snapshot was deliberately re-frozen —
+  nothing has shipped, so the change is compatibility-free by the contract's own terms.
+- **A "Default" preset** opens the plugin: factory index 0 with zero intents, the bank now
+  Default + the brief's 12. A fresh instance reads clean and stars on the first edit.
+- **Streaming-platform analysis removed outright:** the loudness-target lines, penalty rows,
+  target checkboxes and their session field are gone — platforms normalise; a master is pushed
+  against the ceiling, not a platform figure. Old sessions carrying the field load unaffected.
+- **One graph well, two views:** the spectrum and the scrolling GR history are switchable modes
+  of the same panel in both Simple and Advanced, toggled by the chip on the graph's own corner
+  ("GR" / "SPEC" — it names the view you switch to); the Settings toggle is gone. The spectrum's
+  low end no longer staircases (the sibling's two-regime column read: Catmull-Rom under 1.5
+  bins/column, bin averaging above).
+- **A highly visible TP switch** joins the Ceiling in the Simple view (stacked above LOCK) —
+  the same parameter as the Advanced limiter zone's TP.
+- **The sibling's UI grammar lands:** circle-arrow undo/redo icons, its About layout (left-aligned
+  link, no underline) with a generated one-sentence product description, its shorter A/B oval, the
+  XS/S/M/L/XL five-step UI scale (M = original), Title-Case Settings terminology ("Offline
+  Render", "UI Scale", "UI Animations", "Follow Online"), and Save left / Cancel right in the
+  save dialog.
+- **A complete tooltip set** in the sibling's voice — one terse line per parameter, held in one
+  table; accessibility titles stay the registry names. The graph-well chips explain themselves;
+  Bypass deliberately carries no tip.
+- **Layout coherence, verified against rendered snapshots:** every Advanced zone's mode combo
+  sits in the zone header (the truncated "AUTO"/"TP"/"LOCK" labels now fit their cells), Input
+  Gain and SC HPF ride the utility strip as faders, and the Settings panel shrinks to its
+  content.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+
+### Known issue reports under investigation
+- **A field report of the left channel falling silent** could not be reproduced headlessly: a
+  seven-configuration wrapper battery (defaults, driven macros, editor alive, 16× linear
+  oversampling, factory preset, session round-trip) measures both channels carrying audio within
+  6 dB in every case, and remains in the suite as a permanent guard. `docs/KNOWN_ISSUES.md`
+  KI-009 records what the probes exclude and the environment details needed to proceed.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+
 The first entry will be `[0.1.0]`, cut when the post-v0.1.0 fine review clears the tag.
 
 ---
