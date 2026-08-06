@@ -114,6 +114,10 @@ alter *which* values are out-of-list.
   review. Both copies now quote the current ladder.
 - **Forecloses:** treating the ladder as a display concern. It is the field's accepted domain, and
   changing it is a ledger change under this record.
+- **Doc-sync:** `DESIGN.md` §4.3's row for this field carries a per-row forward pointer to THIS
+  record. The banner there names all three of ADR-0015/0016/0017 against the rows each one
+  actually supersedes — it credited everything to ADR-0015 for one commit, which is the
+  widening the three-record split exists to prevent.
 
 ## Related code
 

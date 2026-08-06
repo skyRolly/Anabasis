@@ -6,7 +6,29 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **third gate clearance and two rendering/comment fixes (2026-08-06)**.
+**Last updated:** for the **DESIGN §4.3 attribution repair and the locked-override test
+(2026-08-06)**. The §4.3 supersession banner credited all of its rows to **ADR-0015**, including
+`int_uiScale`'s ladder (ADR-0017's), and did not mention **ADR-0016** at all while the
+`int_spectrumOn` row below it still read "spectrum overlay … dismissible". That is the widening
+the three-record split exists to prevent, committed in the one document whose job is to point at
+the right record. The banner is now a per-row table — one forward pointer per superseded row, to
+the record that actually supersedes it — with §4.2's `ceiling`/`truePeakMode` defaults attributed
+to ADR-0015 alongside, and a note recording the earlier misattribution rather than hiding it.
+ADR-0016 and ADR-0017 gained the matching doc-sync bullet (each names `DESIGN.md` §4.3, which
+neither did), and ADR-0016's clearance banner no longer says ADR-0017's gate is open — it was
+cleared later the same day.
+**Locked-ceiling coverage:** `testFactoryPresets`' lock check reached only the DEFAULTS half of
+the rule once EDM Club's −0.5 override went with the ADR-0015 default change — no factory table
+names `ceiling` any more, so the stronger "an override aimed at a locked parameter is skipped"
+path had no coverage. Rather than add a preset to the shipped bank to have something to test
+with, the new `testALockedCeilingSurvivesAPresetThatNamesIt` drives the FILE path, where a
+document naming `ceiling` is exactly that collision, through `applyPreset (const XmlElement&, …)`
+— the overload the wrapper's own preset ring uses, so it is the shipped path with the filesystem
+left out. An unlocked pass first proves the document really does move the ceiling, so the locked
+check cannot pass vacuously; mutation-verified (removing the skip in `applyOnePresetValue` turns
+it red). The factory check keeps its assertion and gains a comment saying which half it reaches.
+Suites 233 + 432.
+Previous: the **third gate clearance and two rendering/comment fixes (2026-08-06)**.
 **ADR-0017 CLEARED**, separately again — the owner's confirmation naming the reduced ladder, the
 acceptance that out-of-set stored values normalise on adoption, and that this is a pre-1.0 decision
 with no released-session migration obligation. Recorded in the four places the previous two

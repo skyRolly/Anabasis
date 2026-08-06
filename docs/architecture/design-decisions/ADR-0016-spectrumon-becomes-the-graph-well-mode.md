@@ -22,8 +22,9 @@ autonomous half)
 > beside it — not a statement that no delta exists.
 >
 > **This clearance is ADR-0016's alone.** It does not widen ADR-0015, whose own sign-off named
-> three different changes, and it does not extend to `int_uiScale`'s ladder narrowing, which is a
-> third record ([ADR-0017](ADR-0017-uiscale-ladder-narrowing.md)) with its own gate still open.
+> three different changes, and it does not extend to `int_uiScale`'s ladder narrowing — that is a
+> third record, [ADR-0017](ADR-0017-uiscale-ladder-narrowing.md), which was cleared later the same
+> day on its own separate confirmation.
 
 ## Context
 
@@ -101,6 +102,10 @@ describes is open.
   not after.
 - **The DESIGN §6.2 "GR-only Simple strip" wireframe is superseded**, as the layout site already
   records.
+- **Doc-sync:** `DESIGN.md` §4.3's row for this field carries a per-row forward pointer to THIS
+  record. The banner there names all three of ADR-0015/0016/0017 against the rows each one
+  actually supersedes — it credited everything to ADR-0015 for one commit, which is the
+  widening the three-record split exists to prevent.
 - **Forecloses:** reading `int_spectrumOn` as "is the spectrum visible" anywhere — with the well
   always showing one of the pair, visibility of one view is the negation of the other's.
 
