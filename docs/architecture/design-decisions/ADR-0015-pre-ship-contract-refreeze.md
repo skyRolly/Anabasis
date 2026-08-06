@@ -116,13 +116,29 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
 5. **The Ceiling advertises the unit it enforces.** Its value text is `" dBTP"` while
    `truePeakMode` is engaged and `" dB"` otherwise. The mechanism is `CeilingUnitSource`
    (`src/PluginParameters.h:93`): the layout is a free function with no processor to ask, so the
-   processor owns the holder, **declares it before `apvts`** so it outlives the lambda that
-   captured it (`src/PluginProcessor.h:81`), and points it at `truePeakMode`'s raw atomic once the
-   APVTS exists (`src/PluginProcessor.cpp:22`). An unwired holder falls back to `" dB"` — the
-   **weaker** claim, which is the safe direction for a guarantee. The suffix is display-only:
-   `dbFrom` parses the leading float, so `getValueForText` is indifferent to which spelling it is
-   handed, and neither the registry snapshot (ID · name · range · default · steps · automatable)
-   nor any serialized value can see it.
+   processor owns the holder, **declares it before `apvts`** so the layout's capture of its
+   address happens after it is constructed (`src/PluginProcessor.h`), and points it at
+   `truePeakMode`'s raw atomic once the APVTS exists (`src/PluginProcessor.cpp:22`). An unwired
+   holder falls back to `" dB"` — the **weaker** claim, which is the safe direction for a
+   guarantee. The suffix is display-only: `dbFrom` parses the leading float, so `getValueForText`
+   is indifferent to which spelling it is handed, and neither the registry snapshot (ID · name ·
+   range · default · steps · automatable) nor any serialized value can see it.
+
+   **Correction (2026-08-06, PR #8 review):** an earlier revision of this item — and of the
+   comment at the member — argued that the declaration order also made the holder *outlive* the
+   lambda. It does not. The APVTS constructor hands every layout parameter to
+   `AudioProcessor::addParameter`, so the parameters (and their value-text lambdas) belong to the
+   **base** `AudioProcessor` and are destroyed by `~AudioProcessor`, which runs after every
+   derived member; `apvts` is destroyed before the holder as well, leaving `truePeakRaw` dangling
+   for the remainder of the derived teardown. Declaration order buys the **construction** half
+   and nothing more. What makes the arrangement safe is a runtime fact: `getText` is called while
+   the processor is live, and nothing in JUCE queries parameter text from a destructor — the
+   hazard is latent, not live. Recorded rather than quietly fixed because the wrong version told
+   a maintainer the lifetime was proven, and the remedy it implied (keep the two lines in this
+   order) is not the remedy the real hazard would need — that would be a handle the parameters
+   can own, not an ordering. The ownership arrangement is deliberately unchanged here: nothing
+   reads the holder during teardown today, and inventing a shared handle for a display string
+   would be a larger change than the risk earns.
 
 6. **The window closes at the first build that leaves this repository.** Until then a default or a
    host-hidden field may be re-frozen under an ADR that records what changed and why. After it,
@@ -162,9 +178,12 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
 - **A live-changing unit string is new behaviour for a host.** Generic editors re-query text on
   demand, so nothing has to be notified; the round-trip test pins that both spellings parse to the
   same value, which is what keeps automation and state indifferent to it.
-- **`CeilingUnitSource` is a lifetime rule expressed as declaration order.** Moving `ceilingUnit`
-  below `apvts` in `PluginProcessor.h` would compile and then dangle on destruction. The comment at
-  the member says so; this is the record of why the member is where it is.
+- **`CeilingUnitSource`'s placement is a CONSTRUCTION rule, and only that.** Moving `ceilingUnit`
+  below `apvts` in `PluginProcessor.h` would compile and hand the layout the address of a member
+  that has not been constructed yet. It buys nothing at the other end — see the correction in
+  item 5 — so a maintainer reading the member comment is told what the order does prove and what
+  it does not, rather than being left with a false invariant that would suppress the real question
+  if parameter text ever had to be queried during teardown.
 - **Forecloses:** further default changes after the first shipped build without a migration story;
   re-introducing `int_meterTargets` under its old name with a different meaning (the ID is spent —
   a future targets feature picks a new one); and any reading of the Hard Stop list under which

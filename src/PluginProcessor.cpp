@@ -17,8 +17,10 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // The Ceiling's suffix follows the live true-peak mode (ADR-0015). Wired
     // HERE and not in the layout because the layout builds `ceiling` (row 6)
     // long before `truePeakMode` (row 33) exists. `ceilingUnit` is declared
-    // ahead of `apvts` in the header, so it outlives the lambda that captured
-    // it; until this store lands the suffix is the fallback " dB".
+    // ahead of `apvts` in the header, so it is already constructed when the
+    // layout captures its address (the member's comment states what that
+    // ordering does and does not prove); until this store lands the suffix is
+    // the fallback " dB".
     ceilingUnit.truePeakRaw.store (apvts.getRawParameterValue (pid::truePeakMode),
                                    std::memory_order_relaxed);
     macroEngine   = std::make_unique<MacroEngine> (apvts);

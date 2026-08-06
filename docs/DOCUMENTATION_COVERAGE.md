@@ -6,7 +6,23 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **second PR #8 review round — the Ceiling unit's missing refresh half
+**Last updated:** for the **third PR #8 review round — one false lifetime invariant withdrawn
+(2026-08-06)**. `CeilingUnitSource`'s member comment and ADR-0015 §5 argued that declaring the
+holder before `apvts` made it *outlive* the value-text lambda that captured its address. It does
+not: the APVTS constructor hands every layout parameter to `AudioProcessor::addParameter`, so the
+parameters — and their lambdas — belong to the **base** class and `~AudioProcessor` destroys them
+after every derived member; `apvts` also dies before the holder, leaving `truePeakRaw` dangling
+for the rest of the derived teardown. Declaration order buys the **construction** half and nothing
+more, and that half is real. What makes the arrangement safe is a runtime fact — `getText` is
+called while the processor is live and nothing in JUCE queries parameter text from a destructor —
+so the hazard is latent, not live. The ownership is deliberately **unchanged**: the wrong claim is
+withdrawn at all four sites that carried it (the member comment, `CeilingUnitSource`'s header
+block, the wiring comment, ADR-0015 §5 and its Consequences bullet) rather than repaired by
+inventing a shared handle for a display string, because the false invariant was the actual defect
+— it told a maintainer the lifetime was proven, and pointed the remedy at keeping two lines in
+order when the real remedy would be a handle the parameters can own. No behaviour change; suites
+and pluginval unchanged-green.
+Previous: the **second PR #8 review round — the Ceiling unit's missing refresh half
 (2026-08-06)**. The mode-aware unit was correct on the parameter side and its test passed there,
 but nothing refreshed the CACHED value-box label: a JUCE `Slider` recomputes it only in
 `updateText()` — on a value change, a `setTextBoxStyle`, a relayout or a look-and-feel change,
@@ -51,8 +67,9 @@ The ADR also settles the consequence the default change created: with `truePeakM
 ceiling is a **sample-peak** limit (`DSP_POLICY.md` invariant 3, ADR-0006 item 3), so the
 unconditional `" dBTP"` suffix claimed an inter-sample guarantee the shipped default does not
 make. The unit now follows the mode (`CeilingUnitSource` — the holder the processor declares
-*before* `apvts` so it outlives the value-text lambda that captured it; unwired it falls back to
-the weaker `" dB"`), and the tooltip and four manual sites say which limit is live. The DSP needed
+*before* `apvts`, which is what puts its construction ahead of the layout call that captures its
+address; unwired it falls back to the weaker `" dB"`), and the tooltip and four manual sites say
+which limit is live. The DSP needed
 no change and neither invariant needed amending — both were already mode-conditional, which is the
 load-bearing observation. Also fixed: `LoudnessMeterView`'s TP snapshot seed and read fallback both
 encoded `true` against a default of `false`, so the first painted frame showed a row the default

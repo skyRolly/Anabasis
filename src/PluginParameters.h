@@ -86,7 +86,10 @@ namespace pid
 //
 // The layout is a free function with no processor to ask, so the live mode
 // arrives through this holder: the processor owns one, declares it BEFORE
-// `apvts` (so it outlives the lambda that captured it) and points it at
+// `apvts` — which is what puts its construction ahead of the layout call that
+// captures its address, and is ALL the ordering buys (the parameters, and so
+// the lambda, belong to the base `AudioProcessor` and outlive every derived
+// member; see the member's comment in `PluginProcessor.h`) — and points it at
 // `truePeakMode`'s raw atomic once the APVTS exists. Unwired — a null slot, or
 // a build that constructs the layout standalone — falls back to plain " dB",
 // the WEAKER claim, which is the safe direction for a guarantee.
