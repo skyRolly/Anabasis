@@ -1,8 +1,24 @@
 # ADR-0015 — Pre-ship contract re-freeze: the round-2 defaults, the `int_meterTargets` removal, and the unit the Ceiling is allowed to advertise
 
 **Status:** Accepted (2026-08-06 — owner round-2 directive of 2026-08-05, taken under the standing
-autonomous-decision instruction that accompanied it; ⊕ for the post-v0.1.0 fine review like every
-decision taken under the v0.1.0 blanket approval)
+autonomous-decision instruction that accompanied it)
+
+> **ARCHITECTURE REVIEW GATE — CLEARED (2026-08-06).** The owner reviewed this record and
+> **explicitly signed off all three contract changes by name**: the removal of `int_meterTargets`
+> from the internal serialization state, the `ceiling` default −1.0 → −0.1, and the `truePeakMode`
+> default enabled → disabled. Instruction of record: *"The owner explicitly approves and signs off
+> on the changes already documented in ADR-0015 … Do not revert these changes. The decisions in
+> ADR-0015 are confirmed."*
+>
+> This closes the gap the Context below records. Two of the three are
+> `ARCHITECTURE_REVIEW_GATE.md` items in their own right — a **Serialization Registry change** and
+> a **Parameter Registry change** — and its Procedure is now satisfied end to end: the change was
+> flagged as gated (steps 1–2, twice in PR #8 review), this ADR is the decision record (step 3),
+> and step 4's `RELEASE_COMPATIBILITY_CHECKLIST.md` is a release-time gate with no previous
+> release to diff against, so it binds at the first release rather than here. The three decisions
+> are therefore no longer ⊕ — they are settled. Everything else taken under the v0.1.0 blanket
+> approval keeps its ⊕ for the post-v0.1.0 fine review, including the **wording** ⊕ on the
+> mode-aware unit's copy (item 5).
 
 ## Context
 
@@ -29,6 +45,11 @@ made ("nothing has shipped, so the cost is zero") is a sound argument for what t
 *say*; it is not a substitute for saying it, because the reader who needs the reasoning is the one
 who arrives after the window has closed and finds a default that disagrees with a signed-off design
 document.
+
+**That ordering is the part not to copy.** The gate's Procedure puts human review *before* the
+merge, and here the ADR and the review both arrived after the change was pushed — the review found
+it twice before the owner cleared it (see the banner above). The record stands as an example of a
+gap closed, not of a route that may be taken again: the next gated change flags first and waits.
 
 A fourth item is decided here because it is a direct consequence of the second: with `truePeakMode`
 defaulting off, **the shipped default configuration no longer enforces a dBTP ceiling**, while the

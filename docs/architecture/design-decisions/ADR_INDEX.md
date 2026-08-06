@@ -31,7 +31,13 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 ADR-0015 was taken on **2026-08-06**, ratifying contract changes the owner's round-2 directive
 (2026-08-05) had already landed in PR #8 — the same ratification shape as ADR-0012/0013/0014, and
 carrying `Verified` confidence for the same reason. It is the first ADR whose Context records that
-the code preceded its own authority; the ADR says why that is not a precedent.
+the code preceded its own authority; the ADR says why that is not a precedent. Two of its three
+changes are `ARCHITECTURE_REVIEW_GATE.md` items (a Serialization Registry change and a Parameter
+Registry change), and the **owner cleared that gate explicitly on 2026-08-06**, naming all three —
+the `int_meterTargets` removal, the `ceiling` default and the `truePeakMode` default. The
+sign-off is quoted in the ADR's own Status banner, which is the record of authority; this row
+exists so the index answers "was the gate cleared?" without opening the file. **It is the only
+gate clearance in this repository so far**, and the only ADR that needed one.
 
 ## ADRs amended by a later ADR
 

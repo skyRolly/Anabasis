@@ -6,7 +6,27 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **third PR #8 review round — one false lifetime invariant withdrawn
+**Last updated:** for the **Architecture Review Gate clearance and two cleanups (2026-08-06)**.
+The gate is **CLEARED** — the first clearance in this repository. Two of ADR-0015's three contract
+changes are `ARCHITECTURE_REVIEW_GATE.md` items in their own right (a Serialization Registry
+change and a Parameter Registry change) and both sit on `CLAUDE.md`'s Hard Stop list, which a
+green build explicitly does not clear; they had landed on the round-2 directive plus a
+self-authored ADR, which the review flagged twice — correctly, since the gate's Procedure puts the
+human review *before* the merge, so an ADR written in the same PR is a record and not a clearance.
+The owner has now reviewed and signed off all three by name. Recorded where the repository's
+process puts it: **ADR-0015's Status banner** (an ADR's Status is where its authority lives, so
+the sign-off is quoted there verbatim), **`ADR_INDEX.md`** (so "was the gate cleared?" is
+answerable without opening the file), **`HANDOVER.md`** (item (g) of the fine-review list struck,
+plus a dated entry in the round log — the chronological record of record), and a line at each of
+the two ledger rows the change touches, **`PARAMETER_REGISTRY.md`** ¹⁵ and
+**`SERIALIZATION_REGISTRY.md`**'s header. Those three decisions are now **settled, not ⊕**;
+everything else under the v0.1.0 blanket approval keeps its ⊕, including the ⊕ on the mode-aware
+unit's *wording*. The ordering is written down as the part not to repeat.
+Two cleanups alongside: `LoudnessMeterView::paint`'s trailing `area.removeFromTop (6)` — the gap
+that used to sit above the §6.4 penalty rows, reserving nothing since they left with the
+streaming-target display — is gone (the 6 px gap *above* the TP row is a different, live one), and
+the manual's graph-well bullet said "the choice is session state" twice.
+Previous: the **third PR #8 review round — one false lifetime invariant withdrawn
 (2026-08-06)**. `CeilingUnitSource`'s member comment and ADR-0015 §5 argued that declaring the
 holder before `apvts` made it *outlive* the value-text lambda that captured its address. It does
 not: the APVTS constructor hands every layout parameter to `AudioProcessor::addParameter`, so the

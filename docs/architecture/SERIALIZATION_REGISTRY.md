@@ -17,7 +17,10 @@ superseding ADR.
 still open: `int_meterTargets` left `ANABASIS_INTERNAL` on 2026-08-05 with the streaming-target
 display, under
 [**ADR-0015**](design-decisions/ADR-0015-pre-ship-contract-refreeze.md) — which is why the
-count below reads nine rather than the ten `ADR-0007`/`ADR-0010` decided. The migration is §2's
+count below reads nine rather than the ten `ADR-0007`/`ADR-0010` decided. A Serialization Registry
+change is an `ARCHITECTURE_REVIEW_GATE.md` item and a Hard Stop, and **the owner cleared that gate
+on 2026-08-06**, signing off the field removal by name; the sign-off is quoted in ADR-0015's
+Status banner, which is the record of authority for it. The migration is §2's
 read rules doing their ordinary job: an older blob carrying the property loads with every other
 field intact and the unknown one ignored, and the writer emits the schema rather than the input,
 so it does not survive a re-save. No legacy read path is owed, because no build carrying the

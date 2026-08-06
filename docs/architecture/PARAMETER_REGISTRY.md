@@ -91,7 +91,9 @@ one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
 (2026-08-06, owner round-2 directive): `ceiling` −1.0 → **−0.1**, `truePeakMode` on → **off**.
 Both are `PARAMETER_COMPATIBILITY_POLICY.md` rule 3 changes, taken while nothing has shipped and
 recorded with the condition that closes that window. The snapshot fixture was re-frozen with
-them. A consequence worth carrying at the row: with `truePeakMode` off the ceiling is a
+them. A Parameter Registry change is an `ARCHITECTURE_REVIEW_GATE.md` item and a Hard Stop:
+**the owner cleared that gate on 2026-08-06**, signing off both defaults by name (quoted in
+ADR-0015's Status banner). Neither is ⊕ any longer. A consequence worth carrying at the row: with `truePeakMode` off the ceiling is a
 **sample-peak** limit (`DSP_POLICY.md` invariant 3, ADR-0006 item 3), so `ceiling`'s value text
 prints `dB` and switches to `dBTP` only while the mode is engaged —
 `testTheCeilingAdvertisesTheUnitItEnforces`. The **text** is not part of the snapshot (ID · name ·
