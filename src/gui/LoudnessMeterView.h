@@ -59,7 +59,12 @@ private:
           // of the snapshot: a ceiling move must repaint the colour even when
           // no meter value changed.
           shownCeiling = 1.0f;
-    bool  shownTpOn = true;
+    // NOT a sentinel like the floats above — it is a real state, so it seeds
+    // at the SHIPPED DEFAULT (`int_tpMeterOn` = false, ADR-0015). Seeded `true`
+    // it made the first paint — the one before the first `FrameClock` tick can
+    // correct the snapshot — draw a "TP -" row that then vanished, i.e. the
+    // opening frame showed the opposite of the default configuration.
+    bool  shownTpOn = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoudnessMeterView)
 };

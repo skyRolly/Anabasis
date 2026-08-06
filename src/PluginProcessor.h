@@ -73,6 +73,12 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     // -- Anabasis -----------------------------------------------------------
+    // DECLARED BEFORE `apvts`, deliberately: the Ceiling's value-text lambda
+    // lives inside a parameter owned by `apvts` and captures a pointer to this
+    // holder, so this must outlive it — declaration order gives construction
+    // before and destruction after, which is the whole lifetime argument
+    // (ADR-0015; `CeilingUnitSource` carries the rest of the reasoning).
+    CeilingUnitSource ceilingUnit;
     juce::AudioProcessorValueTreeState apvts;
     InternalState internalState;
 

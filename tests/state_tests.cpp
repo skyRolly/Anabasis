@@ -3096,12 +3096,20 @@ static void testAFactoryApplyWritesEachParameterOnce()
     if (lookaheadIndex < 0)
         return;
 
-    // Preset 0 overrides lookahead, and the probe is parked away from BOTH its
-    // default and the preset's value first. That third position is what makes
-    // the count interesting: with the parameter already at its default the old
-    // two-pass apply also wrote once (the defaults pass had nothing to move),
-    // so the defect only shows from a state a user actually reaches — a knob
-    // they moved before browsing presets.
+    // Factory index 1 ("Transparent Master") overrides `lookahead` — to 3.0 ms,
+    // against the 2.0 ms registered default — and the probe is parked away from
+    // BOTH first. That third position is what makes the count interesting: with
+    // the parameter already at its default the old two-pass apply also wrote
+    // once (the defaults pass had nothing to move), so the defect only shows
+    // from a state a user actually reaches — a knob they moved before browsing
+    // presets.
+    //
+    // The index is 1 and not 0 SINCE "Default" JOINED THE BANK AT INDEX 0
+    // (2026-08-05): Default's override table is deliberately empty, so applying
+    // it exercises the defaults pass alone and the two-pass defect this test
+    // exists for has no override to duplicate. The check still passed there —
+    // one write is one write — which is precisely why the stale index had to be
+    // found by reading rather than by a red suite.
     auto* look = proc.apvts.getParameter (pid::lookahead);
     look->setValueNotifyingHost (look->getNormalisableRange().convertTo0to1 (7.5f));
     const float before = look->getValue();
@@ -3111,7 +3119,7 @@ static void testAFactoryApplyWritesEachParameterOnce()
     CountingListener counter;
     counter.watched = lookaheadIndex;
     proc.addListener (&counter);
-    check (proc.applyFactoryPreset (0), "presetNotify: (premise) the apply succeeds");
+    check (proc.applyFactoryPreset (1), "presetNotify: (premise) the apply succeeds");
     proc.removeListener (&counter);
 
     check (! juce::exactlyEqual (look->getValue(), before),
@@ -4010,6 +4018,55 @@ static void testLearnCommitAndAdaptiveRoundTrip()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0015: the Ceiling ADVERTISES THE UNIT IT ACTUALLY ENFORCES. `ceiling` is
+// a dBTP limit only while true-peak mode is engaged (DSP_POLICY invariant 3,
+// ADR-0006 item 3); with it off — the shipped default since ADR-0015 — the
+// clamp decides on the sample peak, so the old unconditional " dBTP" suffix
+// promised an inter-sample guarantee the default configuration does not make.
+//
+// Checked through the HOST-FACING path (`getCurrentValueAsText`, i.e. the same
+// `getText` a generic editor and the value box call), in both modes, plus the
+// round-trip that makes the change safe: `dbFrom` parses the leading float, so
+// `getValueForText` is indifferent to which spelling it is handed. That last
+// half is what pins the suffix as display-only — a reader who wonders whether
+// a live-changing unit can disturb automation or state has the answer here.
+static void testTheCeilingAdvertisesTheUnitItEnforces()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    auto* tp   = proc.apvts.getParameter (pid::truePeakMode);
+    check (ceil != nullptr && tp != nullptr,
+           "ceilingUnit: (premise) the ceiling and true-peak parameters exist");
+    if (ceil == nullptr || tp == nullptr)
+        return;
+
+    check (tp->getValue() < 0.5f,
+           "ceilingUnit: (premise) true-peak mode ships OFF (ADR-0015)");
+
+    const auto offText = ceil->getCurrentValueAsText();
+    check (offText.endsWith (" dB"),
+           "ceilingUnit: with true-peak mode off the ceiling reads in plain dB");
+    check (! offText.contains ("dBTP"),
+           "ceilingUnit: …and does not claim dBTP the default cannot hold");
+
+    tp->setValueNotifyingHost (1.0f);
+    const auto onText = ceil->getCurrentValueAsText();
+    check (onText.endsWith (" dBTP"),
+           "ceilingUnit: engaging true-peak mode makes the ceiling read in dBTP");
+
+    // Both spellings name the same number, and both parse back to it.
+    check (std::abs (ceil->getValueForText (offText) - ceil->getValueForText (onText)) < 1.0e-6f,
+           "ceilingUnit: the suffix is display-only — both spellings parse identically");
+    check (std::abs (ceil->getValueForText (onText) - ceil->getValue()) < 1.0e-4f,
+           "ceilingUnit: …and round-trip to the value they were printed from");
+
+    tp->setValueNotifyingHost (0.0f);
+    check (ceil->getCurrentValueAsText().endsWith (" dB")
+             && ! ceil->getCurrentValueAsText().contains ("dBTP"),
+           "ceilingUnit: turning true-peak mode back off restores the weaker claim");
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -4182,7 +4239,13 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
     });
     runWith ("factory preset applied", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
     {
-        p.applyFactoryPreset (1);            // Loud Pop — macro push engaged
+        // Index 3 = "EDM Club", the bank's LOUDEST table (loudness 80) — the
+        // point of this configuration is maximum macro push through the chain.
+        // It read `1` with the comment "Loud Pop" until 2026-08-05, when
+        // "Default" took index 0 and shifted every entry by one: index 1 is
+        // "Transparent Master" (loudness 25), so the case had quietly become
+        // the gentlest preset in the bank rather than the hardest-driven one.
+        p.applyFactoryPreset (3);
         return nullptr;
     });
     runWith ("after a session round-trip", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
@@ -4261,6 +4324,7 @@ int main (int argc, char** argv)
         testMissingChildrenReadAsDefaults();
         testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();
+        testTheCeilingAdvertisesTheUnitItEnforces();
         testCachedParamsMapping();
     }
 

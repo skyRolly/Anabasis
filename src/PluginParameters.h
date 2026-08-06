@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <atomic>
 #include "dsp/EngineParameters.h"
 
 // ============================================================================
@@ -73,7 +74,39 @@ namespace pid
     inline constexpr const char* ditherShaping     = "ditherShaping";
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout createAnabasisLayout();
+// The Ceiling readout's UNIT SOURCE (ADR-0015). `ceiling` is the limiter's
+// threshold and the clamp's, and what it MEANS is mode-conditional:
+// `DSP_POLICY` invariant 3 says the ceiling is interpreted as dBTP *when
+// true-peak mode is on*, and ADR-0006 item 3 spells out the other half — with
+// it off the clamp decides on the sample peak. The suffix used to read
+// " dBTP" unconditionally, which was true of the old default (`truePeakMode`
+// on) and became a false claim when ADR-0015 turned it off: at defaults the
+// chain holds sample peaks at the ceiling and inter-sample peaks can sit above
+// it, while the readout promised dBTP.
+//
+// The layout is a free function with no processor to ask, so the live mode
+// arrives through this holder: the processor owns one, declares it BEFORE
+// `apvts` (so it outlives the lambda that captured it) and points it at
+// `truePeakMode`'s raw atomic once the APVTS exists. Unwired — a null slot, or
+// a build that constructs the layout standalone — falls back to plain " dB",
+// the WEAKER claim, which is the safe direction for a guarantee.
+struct CeilingUnitSource
+{
+    // Written once on the message thread after construction, read from
+    // whichever thread the host asks for parameter text on. Relaxed on both
+    // sides: the pointee is a parameter atomic whose own load carries no
+    // ordering obligation either — this is a display query, not a handshake.
+    std::atomic<const std::atomic<float>*> truePeakRaw { nullptr };
+
+    bool truePeakEngaged() const noexcept
+    {
+        const auto* p = truePeakRaw.load (std::memory_order_relaxed);
+        return p != nullptr && p->load (std::memory_order_relaxed) >= 0.5f;
+    }
+};
+
+juce::AudioProcessorValueTreeState::ParameterLayout
+createAnabasisLayout (const CeilingUnitSource* ceilingUnit = nullptr);
 
 // Exclusion tiers (DESIGN §4.2, ADR-0010) — ONE shared predicate, consulted by
 // A/B, undo and preset apply alike so the sets cannot drift apart.

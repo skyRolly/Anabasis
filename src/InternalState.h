@@ -179,9 +179,13 @@ public:
         // cannot miss today — but "correct because of what the line above did"
         // is the reasoning this file avoids elsewhere, and here it fails
         // QUIETLY rather than loudly: a missing property reads as `var()`,
-        // which converts to 0, and 0's nearest ladder step is 80. An absent
-        // field would silently become the SMALLEST legal scale instead of the
-        // default one. Naming the default in the read makes this total on its
+        // which converts to 0, and 0's nearest ladder step is the smallest one
+        // — **75** on the XS..XL ladder this now ships (it was 80 on the
+        // seven-step ladder the paragraph was written against, and the number
+        // is quoted rather than derived precisely because the argument is about
+        // a silent wrong answer). An absent field would silently become the
+        // SMALLEST legal scale instead of the default one, at either value.
+        // Naming the default in the read makes this total on its
         // own, and it is the same default `setDefaults()` writes — the value,
         // not a second opinion about it.
         tree.setProperty (iid::uiScale,

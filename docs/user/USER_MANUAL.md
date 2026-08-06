@@ -48,7 +48,8 @@ The **Loudness** knob does not map to a single gain — it drives the whole chai
 factor, spectral tilt, transient density) and continuously, *slowly* trims how the stages
 share the work: light compression and transparent limiting low on the dial, the clipper
 absorbing transients in the middle, saturation colour and a dynamic high-frequency tame at
-the top. The **Ceiling** is a true-peak limit the output never exceeds. **Loudness Comp**
+the top. The **Ceiling** is a limit the output never exceeds — a sample-peak limit as shipped,
+and a *true-peak* one once you engage **TP** (§3.2). **Loudness Comp**
 plays the processed signal back at matched loudness so the level increase cannot flatter
 you, and **Delta** lets you listen to exactly what the processing is removing.
 
@@ -102,7 +103,9 @@ toggle row, and the metering strip.
    better, keep going; if it only sounded better because it was louder, you just found out.
 4. Press **DELTA** to hear exactly what is being removed — transient tops, mostly. Short,
    dry ticks are healthy; tone or vocal body in the delta means you are pushing too hard.
-5. Check the **Ceiling** (default −0.1 dBTP) against your delivery spec.
+5. Check the **Ceiling** (default −0.1 dB) against your delivery spec — and if that spec is
+   written in **dBTP**, engage **TP** beside it, which is what makes the number mean dBTP
+   (§3.2). The readout's unit follows the switch, so it always says which one you have.
 6. **Bypass** in the top bar A/Bs against the untouched signal — with COMP on, that
    comparison is loudness-matched too.
 
@@ -159,7 +162,7 @@ Universal gestures:
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −0.1 | The true-peak output limit. Two toggles sit beside it: **TP** engages true-peak detection in the limiter (the same parameter as the Advanced limiter zone's TP switch, §3.3 — default off), and **LOCK** keeps the ceiling fixed while you browse presets. |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, detection moves to the oversampled rate, inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling fixed while you browse presets. |
 | **Character** | 0 … 1 | Clean ↔ Colour: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -184,8 +187,9 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
   Tone, Colour Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
 - **LIMITER** — the true-peak lookahead limiter: Limiter Gain (the push into it), Lookahead
   (0.5–10 ms), Release (1–1000 ms) with **AUTO**, **Style** (Transparent / Punchy / Loud),
-  Stereo Link, Transients (transient preservation), **TP** (true-peak mode — detection at
-  oversampled rate so inter-sample peaks are caught), and its gain-reduction meter. The
+  Stereo Link, Transients (transient preservation), **TP** (true-peak mode — **off by
+  default**; on, detection moves to the oversampled rate so inter-sample peaks are caught
+  and the Ceiling becomes a dBTP limit), and its gain-reduction meter. The
   shared **SC HPF** (20–300 Hz) keeps low-frequency energy from pumping the detectors of
   both the compressor and the limiter.
 - **EQ** — Tilt (±3 dB around ~700 Hz), low shelf, high shelf, two bells (Freq/Gain/Q),
@@ -352,8 +356,9 @@ step. Both slots travel with your DAW session.
 
 ### A transparent master
 
-1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec
-   (the −0.1 dBTP default suits most deliveries; lock it).
+1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec (the −0.1
+   default suits most deliveries; lock it). If the spec is written in dBTP, engage **TP**
+   as well — that is what makes the ceiling hold inter-sample peaks.
 2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work.
 3. **COMP on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.

@@ -34,8 +34,13 @@ void LoudnessMeterView::tick (double)
     const float i   = processor.meterLufsI();
     const float tp  = processor.meterDbTpMax();
     const float plr = processor.meterPlr();
+    // The §4.4 read fallback is the SHIPPED DEFAULT (false, ADR-0015), not the
+    // old `true`. Unreachable today — `setDefaults()` always writes the field —
+    // but a fallback that contradicts the default is a wrong answer waiting for
+    // the day the property is absent, and the same reasoning `InternalState`'s
+    // `uiScale` read already applies to itself.
     const bool tpOn = (bool) processor.internalState.state()
-                          .getProperty (iid::tpMeterOn, true);
+                          .getProperty (iid::tpMeterOn, false);
     const float ceil = processor.apvts.getRawParameterValue (pid::ceiling)->load();
 
     // Bitwise compares, so even a NaN transition still repaints once.

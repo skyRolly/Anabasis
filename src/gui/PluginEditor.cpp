@@ -38,7 +38,7 @@ static juce::String tipFor (const char* id)
         { pid::loudness,          "How hard the adaptive chain pushes - 0 adds no push, but the Ceiling still holds" },
         { pid::character,         "Clean to Colour - how much of the push comes from saturation rather than clean limiting" },
         { pid::tone,              "Dark to bright tilt of the overall result" },
-        { pid::ceiling,           "The true-peak output limit - nothing leaves the plugin above it" },
+        { pid::ceiling,           "The output limit - nothing leaves the plugin above it. Sample peak by default; engage TP to hold it in dBTP" },
         { pid::freeze,            "Hold the adaptive trims exactly where they are now" },
         { pid::loudnessComp,      "Listen at matched loudness, so louder can't pass for better" },
         { pid::deltaMonitor,      "Solo the difference - hear exactly what the processing removes" },
@@ -67,7 +67,7 @@ static juce::String tipFor (const char* id)
         { pid::limStyle,          "Release voicing - Transparent, Punchy or Loud" },
         { pid::stereoLink,        "How much both channels share one gain - full link keeps the image stable" },
         { pid::transientPreserve, "Keeps attack transients alive through heavy limiting" },
-        { pid::truePeakMode,      "Limit inter-sample peaks - the Ceiling holds in dBTP" },
+        { pid::truePeakMode,      "Catch inter-sample peaks - the Ceiling then holds in dBTP instead of sample peak" },
         { pid::eqTilt,            "Tilts the whole spectrum around ~700 Hz" },
         { pid::eqLowShelfFreq,    "Low shelf corner frequency" },
         { pid::eqLowShelfGain,    "Low shelf level" },
@@ -1207,13 +1207,23 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         }
     };
 
-    // R2 item 2 (2026-08-05): every zone's MODE combo sits in the zone HEADER,
-    // top-right beside the caption — the slot the EQ panel already used. Before
-    // this, three zones parked their combo in three different places, and the
-    // LIMITER's foot row squeezed AUTO + TP + Style into one line where both
-    // toggle labels truncated to "..": `drawToggleButton` fits text into
-    // whatever is right of the pill, and 44–52 px cells leave ~16 px. The foot
-    // rows now carry toggles only, at half-panel widths their labels fit.
+    // R2 item 2 (2026-08-05): every zone's MODE combo takes the SAME slot — the
+    // first row of the panel body, right half — which is the slot the EQ panel
+    // already used. Before this, three zones parked their combo in three
+    // different places, and the LIMITER's foot row squeezed AUTO + TP + Style
+    // into one line where both toggle labels truncated to "..":
+    // `drawToggleButton` fits text into whatever is right of the pill, and
+    // 44–52 px cells leave ~16 px. The foot rows now carry toggles only, at
+    // half-panel widths their labels fit.
+    //
+    // "Panel body, first row" and not the caption band itself: `panel()` hands
+    // back the zone rect already `withTrimmedTop (20)`, so the caption the
+    // `paint` pass draws is OUTSIDE this rectangle and the combo row sits
+    // directly beneath it. 20 px is short for a combo (they are 22–24), so
+    // moving it up beside the caption would mean shrinking the control rather
+    // than relocating it. An earlier revision of this comment said "in the zone
+    // HEADER, top-right beside the caption", which describes a layout the code
+    // never produced.
     {   // COMP
         auto a = panel (0);
         auto boxRow = a.removeFromTop (24);
@@ -1233,8 +1243,16 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         placeRow (a, { { &shapeK, &shapeL }, { &driveK, &driveL } });
         placeRow (a, { { &clipMixK, &clipMixL }, { &depthK, &depthL } });
         placeRow (a, { { &balanceK, &balanceL }, { &colToneK, &colToneL } });
-        auto row = a.removeFromTop (84);
-        placeRow (row, { { &dynTiltK, &dynTiltL } });
+        // 76, not the 84 the paired rows use: this row carries ONE knob, and
+        // the 8 px it gives back are what stop the curve well overhanging the
+        // panel. The zone body is 398 px (446 − 12, `reduced (8)`, minus the
+        // 20 px caption band); the combo row and the four knob rows take 358,
+        // leaving exactly the 40 px the `jmax` floor below insists on. At 84
+        // the floor won by 8 px and the curve drew past the panel's outline —
+        // a pre-existing overhang (10 px before the combo row moved here, so
+        // this is the arithmetic that finally closes it, not one it opened).
+        auto row = a.removeFromTop (76);
+        placeRow (row, { { &dynTiltK, &dynTiltL } }, 76);
         a.removeFromTop (6);
         clipCurve->setBounds (a.removeFromTop (juce::jmax (40, a.getHeight())));  // [live curve]
     }
