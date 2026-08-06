@@ -6,7 +6,37 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **round-2 item 2 — the layout coherence pass, verified against
+**Last updated:** for the **PR #8 review round — ADR-0015 and the true-peak honesty pass
+(2026-08-06)**. The round-2 batch changed three things the repository's own rules put behind a
+decision record — `ceiling`'s default, `truePeakMode`'s default, and the removal of the
+`int_meterTargets` session field — and landed them with prose justification only.
+**`ADR-0015`** is that record: it takes the pre-ship latitude
+`PARAMETER_COMPATIBILITY_POLICY.md` §"Getting it right the first time" already describes, names
+the §4.4 read rules as the migration `SESSION_COMPATIBILITY_POLICY.md` rule 1 demands, and states
+the condition that closes the window (**the first build that leaves this repository**, not the
+first tag). It amends rather than rewrites the two ADRs whose incidental numbers moved — ADR-0006
+(the two defaults it quotes in passing) and ADR-0010 (its ten-field host-hidden inventory) — each
+of which now carries a forward-pointing banner, and the index gained an **"ADRs amended by a later
+ADR"** registry so an auditor knows before reading whether any of a record has moved. `DESIGN.md`
+§4.3 carries the same banner and is otherwise untouched, per `SOURCE_OF_TRUTH.md`: it is the
+signed-off P0 record, superseded section by section, never rewritten.
+The ADR also settles the consequence the default change created: with `truePeakMode` off the
+ceiling is a **sample-peak** limit (`DSP_POLICY.md` invariant 3, ADR-0006 item 3), so the
+unconditional `" dBTP"` suffix claimed an inter-sample guarantee the shipped default does not
+make. The unit now follows the mode (`CeilingUnitSource` — the holder the processor declares
+*before* `apvts` so it outlives the value-text lambda that captured it; unwired it falls back to
+the weaker `" dB"`), and the tooltip and four manual sites say which limit is live. The DSP needed
+no change and neither invariant needed amending — both were already mode-conditional, which is the
+load-bearing observation. Also fixed: `LoudnessMeterView`'s TP snapshot seed and read fallback both
+encoded `true` against a default of `false`, so the first painted frame showed a row the default
+does not have; the UI-scale ladder comment still argued from the seven-step ladder's 80 %; the
+zone-combo comment described a header placement the code never produced (and the CLIP well's
+knob row gives back 8 px, which closes a curve overhang that predates the combo move); and two
+factory-index test comments went stale when "Default" took index 0 — one had quietly become the
+gentlest preset in the bank where it wanted the loudest, the other had stopped exercising the
+override path it exists for. New guard: `testTheCeilingAdvertisesTheUnitItEnforces` (suites
+233 + 420).
+Previous: **round-2 item 2 — the layout coherence pass, verified against
 rendered snapshots (2026-08-05, owner directive)**. The editor was actually LOOKED AT for
 this one: an env-gated `createComponentSnapshot` dump (temporary, not committed) rendered
 Simple, Advanced and Settings headlessly, and the pass fixed what the pixels showed rather

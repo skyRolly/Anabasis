@@ -2,6 +2,14 @@
 
 **Status:** Accepted (2026-07-31 — owner sign-off on `docs/DESIGN.md`)
 
+> **Amended by [ADR-0015](ADR-0015-pre-ship-contract-refreeze.md) (2026-08-06)** — the two
+> DEFAULTS this record quotes in passing have moved: `ceiling` is **−0.1** (Context, "default
+> ⊕ −1.0") and `truePeakMode` is **off** (option E, "row 33, default ⊕ on"). Nothing in the
+> Decision changes: the clamp is still a separate stage, still last before dither, still with its
+> own true-peak tap, and item 3's **mode-conditional rule is exactly what now governs the shipped
+> default** — with true-peak mode off the clamp decides on the sample peak, which is why ADR-0015
+> also makes the Ceiling's displayed unit follow the mode instead of asserting dBTP.
+
 ## Context
 
 `DSP_POLICY.md` invariant 4 states the product promise: *the output never exceeds the ceiling*,

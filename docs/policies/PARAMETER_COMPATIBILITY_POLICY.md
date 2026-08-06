@@ -52,6 +52,12 @@ settle the surface is **now**:
 - Freeze `tests/fixtures/parameter_registry.snapshot` as soon as the layout exists — the snapshot
   test is what makes rule 1 automatic rather than aspirational.
 
+**This latitude has been exercised, and it is not open-ended.** `ADR-0015` (2026-08-06) re-froze
+the `ceiling` default (−1.0 → −0.1) and the `truePeakMode` default (on → off) under rule 3, and
+records the condition that closes the window: **the first build that leaves this repository**, not
+the first tag. After that, a default change re-scales no stored value but does change what an
+un-edited recall sounds like, and rule 3 binds with no latitude.
+
 ## Required verification before release
 
 - `[ ] Parameter IDs unchanged` (diff the registry / the snapshot test is green).

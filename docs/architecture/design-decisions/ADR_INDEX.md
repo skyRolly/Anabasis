@@ -26,6 +26,25 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0012](ADR-0012-staged-record-cross-thread-path.md) | GUI→Audio **bounded staged record** behind a release/acquire flag (ratifies the learned-target restore, OQ-015) | Accepted | Verified |
 | [ADR-0013](ADR-0013-release-trim-reaches-auto-poles.md) | The §5.4 release trim scales the limiter's **AUTO release poles** by `2^octaves` (resolves OQ-016) | Accepted | Verified — `testAutoReleaseFollowsTheTrimScale`, mutation-verified against the fixed-constant alphas |
 | [ADR-0014](ADR-0014-frozen-trim-restore.md) | Frozen trim vector **restored**: staged on ADR-0012's row, applied at the §2.8 duck's silent bottom (resolves OQ-013) | Accepted | Verified — `testFrozenTrimRestore`, every element killed by its own mutant (the ADR enumerates them) |
+| [ADR-0015](ADR-0015-pre-ship-contract-refreeze.md) | **Pre-ship contract re-freeze**: the round-2 `ceiling`/`truePeakMode` defaults, the `int_meterTargets` removal, and the Ceiling's mode-aware unit | Accepted | Verified — `testTheCeilingAdvertisesTheUnitItEnforces`, the re-frozen `testRegistrySnapshot`, `testFactoryPresets` and the §4.4 read-rule checks |
+
+ADR-0015 was taken on **2026-08-06**, ratifying contract changes the owner's round-2 directive
+(2026-08-05) had already landed in PR #8 — the same ratification shape as ADR-0012/0013/0014, and
+carrying `Verified` confidence for the same reason. It is the first ADR whose Context records that
+the code preceded its own authority; the ADR says why that is not a precedent.
+
+## ADRs amended by a later ADR
+
+An ADR is a historical record and is **not** rewritten when a later decision moves one of its
+numbers. Where the later ADR only supersedes *part* of an earlier one, the earlier record keeps its
+`Accepted` status and its original text, and carries an amendment banner pointing forward. This is
+the registry of those, so a reader auditing an ADR knows before reading it whether any of it has
+moved:
+
+| Amended | By | What moved |
+|---|---|---|
+| **0006** | **0015** | The `ceiling` (⊕ −1.0) and `truePeakMode` (⊕ on) defaults quoted in its Context and option E. The clamp mechanism, the stage placement and the monitoring decisions are untouched. |
+| **0010** | **0015** | The ten-field host-hidden inventory in its Decision — `int_meterTargets` was removed, so the set is nine — and the same two defaults. The IDs, the exclusion tiers and the lockable set are untouched. |
 
 ADR-0013 and ADR-0014 were taken on **2026-08-02** under the owner's v0.1.0 blanket approval
 (every human-review/owner-decision gate pre-approved to unblock the complete first version, with

@@ -306,16 +306,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   pending the listening pass.
   Evidence Source: **PR #6** (`skyRolly/Anabasis`). [Verified]
 
-### Changed (round-2 owner directive, 2026-08-05)
+### Changed (round-2 owner directive, 2026-08-05; recorded by **ADR-0015**)
 - **Defaults:** every true-peak switch (limiter mode and the true-peak meter row) now defaults
-  **off**; the Ceiling defaults to **−0.1 dBTP** everywhere (parameter, engine POD, and the one
-  factory override that pinned −0.5 is gone). The registry snapshot was deliberately re-frozen —
-  nothing has shipped, so the change is compatibility-free by the contract's own terms.
+  **off**; the Ceiling defaults to **−0.1** everywhere (parameter, engine POD, and the one factory
+  override that pinned −0.5 is gone). The registry snapshot was deliberately re-frozen — nothing
+  has shipped, so the change is compatibility-free by the contract's own terms, and
+  [`ADR-0015`](docs/architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md) records
+  both the rationale and the condition that closes that window.
+- **The Ceiling now says which limit it is holding.** With true-peak mode off — the new default —
+  the ceiling is a **sample-peak** limit, so its readout prints `dB`; engaging **TP** moves
+  detection to the oversampled rate and the readout becomes `dBTP`. It used to print `dBTP`
+  unconditionally, which claimed an inter-sample guarantee the default configuration does not
+  make. The number, the automation and the saved state are unaffected — only the unit shown.
 - **A "Default" preset** opens the plugin: factory index 0 with zero intents, the bank now
   Default + the brief's 12. A fresh instance reads clean and stars on the first edit.
 - **Streaming-platform analysis removed outright:** the loudness-target lines, penalty rows,
-  target checkboxes and their session field are gone — platforms normalise; a master is pushed
-  against the ceiling, not a platform figure. Old sessions carrying the field load unaffected.
+  target checkboxes and their session field (`int_meterTargets`) are gone — platforms normalise; a
+  master is pushed against the ceiling, not a platform figure. Old sessions carrying the field
+  load unaffected: the defaults-first read rules ignore it and a re-save does not write it back.
+  The schema removal is recorded by
+  [`ADR-0015`](docs/architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md).
 - **One graph well, two views:** the spectrum and the scrolling GR history are switchable modes
   of the same panel in both Simple and Advanced, toggled by the chip on the graph's own corner
   ("GR" / "SPEC" — it names the view you switch to); the Settings toggle is gone. The spectrum's

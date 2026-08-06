@@ -9,6 +9,12 @@ Subset of `COMPATIBILITY_POLICY.md`. Governs state serialization
 1. **Serialization fields are immutable.** No field in the state tree — the versioned root, the
    APVTS subtree, the host-hidden session subtree, or the A/B subtree — may be removed or have its
    meaning changed without an ADR + migration.
+
+   *Exercised once, pre-ship:* **ADR-0015** removes `int_meterTargets` from `ANABASIS_INTERNAL`,
+   with the §4.4 defaults-first read rules as the migration. That ADR also records the condition
+   that closes the pre-ship window — the first build that leaves this repository — after which
+   this rule binds with no latitude at all. The rule itself is unchanged; the pointer is here so a
+   reader who finds a field missing from an old blob knows where the authority is.
 2. **Additions must tolerate absence.** A new field must have a default applied when an older
    session lacks it, so old sessions still load.
 3. **Every legacy read path stays.** Once a state format has shipped in any build that left this

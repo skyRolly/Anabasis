@@ -184,9 +184,18 @@ locked parameter exactly as it does a view parameter, so browsing presets never 
 ceiling. **Lock state is host-hidden**: `int_ceilingLock` in `ANABASIS_INTERNAL`, session-persistent,
 never in A/B, undo or presets.
 
+> **Amended by [ADR-0015](ADR-0015-pre-ship-contract-refreeze.md) (2026-08-06).** The inventory
+> below is the surface **as decided on 2026-07-31** and is left standing as the record of that
+> decision. Two of its numbers no longer describe the code: `int_meterTargets` was **removed**
+> from the schema with the streaming-target display, so the host-hidden set is **nine** fields,
+> not ten; and the `ceiling` / `truePeakMode` defaults quoted in §Decision moved to −0.1 and
+> **off**. `docs/architecture/PARAMETER_REGISTRY.md` and
+> `docs/architecture/SERIALIZATION_REGISTRY.md` are the descriptive ledgers of what the code
+> holds today; ADR-0015 carries the reasoning and the migration.
+
 **Host-hidden state** (§4.3) is the ten `int_` fields listed there — `int_oversample`, `int_osPhase`,
 `int_offlineQuality`, `int_ceilingLock`, `int_uiScale`, `int_tooltipsOn`, `int_uiAnimations`,
-`int_spectrumOn`, `int_meterTargets`, `int_tpMeterOn`. They are out of the APVTS **because
+`int_spectrumOn`, `int_meterTargets` (removed 2026-08-05, ADR-0015), `int_tpMeterOn`. They are out of the APVTS **because
 `withAutomatable(false)` does not hide a VST3 parameter in every host** (REAPER lists them all), so
 the only reliable hiding is absence from the tree (Anamorph ADR-0010). OS factor and phase drive the
 DSP through an atomic mirror plus an `onChanged` → PDC-recompute callback (ADR-0003/ADR-0004); all ten

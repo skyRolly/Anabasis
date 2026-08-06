@@ -13,6 +13,16 @@ tolerate absence, removal is prohibited, and any change here is a **serializatio
 change — an AI-agent Hard Stop** (`ARCHITECTURE_REVIEW_GATE.md`), enacted only by a
 superseding ADR.
 
+**One removal has been enacted that way**, while the window described in that first sentence is
+still open: `int_meterTargets` left `ANABASIS_INTERNAL` on 2026-08-05 with the streaming-target
+display, under
+[**ADR-0015**](design-decisions/ADR-0015-pre-ship-contract-refreeze.md) — which is why the
+count below reads nine rather than the ten `ADR-0007`/`ADR-0010` decided. The migration is §2's
+read rules doing their ordinary job: an older blob carrying the property loads with every other
+field intact and the unknown one ignored, and the writer emits the schema rather than the input,
+so it does not survive a re-save. No legacy read path is owed, because no build carrying the
+field has left the repository.
+
 There are **two formats**, deliberately different in fidelity (ADR-0007 option H):
 
 | Format | Fidelity contract | Carrier |

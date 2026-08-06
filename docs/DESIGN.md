@@ -549,6 +549,16 @@ ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
 
 ### 4.3 Host-hidden state (`ANABASIS_INTERNAL` — InternalState pattern, Anamorph ADR-0010)
 
+> **Superseded in part by [ADR-0015](architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md)
+> (2026-08-06); left as written, per `SOURCE_OF_TRUTH.md` — `DESIGN.md` is the signed-off P0 record
+> and is superseded section by section, not rewritten.** Three rows below no longer describe the
+> code: **`int_meterTargets` is gone** from the schema (removed 2026-08-05 with the
+> streaming-target display, so the set is nine fields, not ten), `int_tpMeterOn` defaults **off**,
+> and `int_uiScale`'s ladder is the five-step XS…XL one (75/85/100/125/150 %, default 100). The
+> `ceiling` and `truePeakMode` defaults in §4.2 moved likewise — −0.1 and **off**.
+> `docs/architecture/PARAMETER_REGISTRY.md` and `docs/architecture/SERIALIZATION_REGISTRY.md` are
+> the descriptive ledgers of what the code holds today.
+
 | Identifier | Meaning | Values | Default |
 |---|---|---|---|
 | `int_oversample` | OS factor | Off/2×/4×/8×/16× | ⊕ Off |
