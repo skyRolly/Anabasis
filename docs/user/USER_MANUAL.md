@@ -154,7 +154,7 @@ Universal gestures:
 | **‹ Preset name ›** | Steps through presets (wraps at the ends). Clicking the name opens the preset menu (§7). An `*` after the name means the sound no longer matches the loaded preset. |
 | **A / B** | Two independent sound slots for comparing settings; click to switch (§7.4). |
 | **Copy** | Copies the current slot's sound into the other slot. |
-| **↶ / ↷** | Undo / Redo — sound parameters only, kept **per A/B slot**. |
+| **↶ / ↷** | Undo / Redo — kept **per A/B slot**. Covers sound parameters, preset loads, Copy (on the destination slot) and the ADV view switch; bypass and the monitor toggles are never recorded. |
 | **Settings (gear)** | Opens the Settings overlay (§3.5). |
 | **ADV** | Switches Simple ↔ Advanced view (§5). |
 | **BYPASS** | Click-free bypass; with Loudness Comp on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
@@ -350,9 +350,10 @@ ones. (A *session* restores anything an old file doesn't mention to its default;
 
 **A/B** switches between two complete, independent sound setups; **Copy** pushes the
 current one into the other slot. Each slot keeps its own preset name, edited state and
-undo history — and because Copy *replaces* the destination's sound, the destination's undo
-history starts fresh at that point. Switching is click-free and is not itself an undo
-step. Both slots travel with your DAW session.
+undo history — and the Copy itself is an **undo step on the destination**: switch to the
+copied-into slot and press Undo to revert the Copy, then keep undoing through that slot's
+own earlier history. Switching is click-free and is not itself an undo step. Both slots
+travel with your DAW session.
 
 ---
 

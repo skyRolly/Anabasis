@@ -109,36 +109,13 @@ public:
 
     // Top-bar Copy (§6.1): the INACTIVE slot becomes a snapshot of the live
     // state. No duck and no engine involvement — nothing audible changes, the
-    // copy lands where the next A/B switch will read it.
-    // Copy A→B (or B→A): the dirty datum travels with the values, or the
-    // copy would land looking edited against whatever the other slot held.
-    void copySlotToOther()
-    {
-        storedSlot = saveSlotFromLive();
-        // `createCopy()`, for the reason `undo()`/`redo()` carry: assigning a
-        // `juce::ValueTree` shares the refcounted node, so the two slots' dirty
-        // data would be ONE tree until the next wholesale replacement. Harmless
-        // while a baseline is only ever replaced, never edited in place — which
-        // is true of every writer today — and a trap the moment one is not, since
-        // an edit made "for slot A" would appear in B. `storedSlot` above needs
-        // no such call: `saveSlotFromLive()` returns a freshly built tree that
-        // nothing else holds.
-        storedPresetBaseline = presetBaseline.createCopy();
-        // …and the destination's history goes with the state it described.
-        // A per-slot undo stack records edits made FROM that slot's own values
-        // (§7 / ADR-0010); a Copy replaces those values wholesale from outside
-        // that history, so every entry now describes a state the slot no
-        // longer has. Leaving them, the first undo after switching to B
-        // restored a pre-copy state the user never edited from — silently
-        // discarding the copy AND B's last edit, because the copy itself is
-        // not an undo step. `setStateInformation` already clears both slots'
-        // stacks for exactly this reason ("a load starts a fresh history");
-        // a copy is that event for one slot, so it takes the same answer.
-        syncHistory();
-        const int other = 1 - activeSlot;
-        undoStacks[other].clear();
-        redoStacks[other].clear();
-    }
+    // copy lands where the next A/B switch will read it. Since ADR-0018 the
+    // Copy is an UNDO STEP on the destination slot — its pre-copy state is
+    // pushed onto that slot's stack, whose older entries are KEPT (entries are
+    // absolute snapshots, so the pre-copy history stays reachable beneath the
+    // new entry) — the sibling's semantics, replacing the clear-both-stacks
+    // answer 0.1.0 shipped. Body in the .cpp: it pushes through `pushCapped`.
+    void copySlotToOther();
 
     // Preset apply goes through here, never through PresetManager directly:
     // the wrapper lands the slot-level fields (name, detach mask) and drops
@@ -309,7 +286,11 @@ private:
     // BOTH sides of its compare. See the definition for why the slot tree is
     // not that datum.
     juce::ValueTree presetShapeFromLive() const;
-    void applySlotToLive (const juce::ValueTree& slot);
+    // adoptAdvanced (ADR-0018): the UNDO/REDO restore adopts `advancedMode`
+    // from the slot tree (an ADV toggle is an undoable step); every other
+    // adoption path — A/B switch, Copy — pins it to the live value, because
+    // an A/B compare is a sound compare and must not resize the editor.
+    void applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced = false);
     void reassertFromRaw (const juce::ValueTree& apvtsTree);
     void resetSlotFieldsToDefaults();
 

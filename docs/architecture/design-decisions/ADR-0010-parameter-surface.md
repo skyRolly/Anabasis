@@ -2,6 +2,16 @@
 
 **Status:** Accepted (2026-07-31 — owner sign-off on `docs/DESIGN.md`)
 
+> **Amended by [ADR-0015](ADR-0015-pre-ship-contract-refreeze.md)** (the host-hidden inventory is
+> nine fields; two defaults moved) **and [ADR-0018](ADR-0018-copy-and-advanced-join-the-undo-history.md)**
+> (2026-08-06, owner's 0.1.1 directive): option E's *undo* half is superseded — the Advanced
+> toggle IS an undo step now, `advancedMode` left `isViewTierParam` and is preset-excluded by
+> name. Option E's *A/B* half (a compare never resizes the editor) and the non-automatability
+> decision stand, enforced by `applySlotToLive`'s adopt-flag. The tier table below (view row
+> includes `advancedMode`) is the historical record of this ADR's own decision; the live answer
+> is ADR-0018's. This banner is the ADR_INDEX "amended by" registry's pointer, per its rule that
+> an ADR is not rewritten when a later decision moves one of its numbers.
+
 ## Context
 `ADR_POLICY.md` makes parameter semantics ADR-mandatory (range/default/meaning of a host-visible
 parameter, ID changes), and `PARAMETER_COMPATIBILITY_POLICY.md` rule 6 separately makes the

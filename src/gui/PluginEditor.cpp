@@ -1637,9 +1637,10 @@ void AnabasisAudioProcessorEditor::setScaleFactor (float newScale)
 
 void AnabasisAudioProcessorEditor::parameterChanged (const juce::String&, float)
 {
-    // Both ids this listens to — advancedMode and bypass — are AUTOMATABLE, and
-    // APVTS delivers on whichever thread wrote the value, so a host automating
-    // Bypass calls this FROM THE AUDIO THREAD. `triggerAsyncUpdate()` posts to
+    // Of the two ids this listens to, `bypass` is AUTOMATABLE (`advancedMode`
+    // is not — ADR-0010's X11 rationale — but an undo restore writes it, since
+    // ADR-0018), and APVTS delivers on whichever thread wrote the value, so a
+    // host automating Bypass calls this FROM THE AUDIO THREAD. `triggerAsyncUpdate()` posts to
     // the platform message queue, which takes a lock and on some platforms
     // allocates: the REALTIME_AUDIO_POLICY hard red line that
     // `MacroEngine::parameterChanged` refuses and that the wrapper's

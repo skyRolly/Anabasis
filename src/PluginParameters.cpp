@@ -277,10 +277,17 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
 }
 
 // ----------------------------------------------------------------------------
+// The A/B-travel exclusion. `advancedMode` LEFT this set in ADR-0018: it now
+// travels with an UNDO step (the owner's 0.1.1 directive — an ADV toggle is
+// a user action the user can take back) while staying pinned across A/B
+// switches and Copies (`applySlotToLive`'s adoptAdvanced flag), because an
+// A/B compare is a SOUND compare and must not resize the editor (the half of
+// ADR-0010 option E that survives). It also stays out of PRESETS — explicitly,
+// below — and stays non-automatable (the X11 editor-resize crash path).
 bool isViewTierParam (const juce::String& paramID)
 {
     return paramID == pid::bypass || paramID == pid::loudnessComp
-        || paramID == pid::deltaMonitor || paramID == pid::advancedMode;
+        || paramID == pid::deltaMonitor;
 }
 
 // A NEW view-tier or monitor parameter MUST be added above (or here), and this
@@ -292,9 +299,15 @@ bool isViewTierParam (const juce::String& paramID)
 // flip off every time the user auditioned a preset, and the defaults pass would
 // look innocent while doing it. The exclusion set is the only thing standing
 // between that pass and the view state.
+//
+// `advancedMode` is named HERE rather than inherited from the view tier since
+// ADR-0018 (it undoes, so it is no longer view-tier), for exactly the hazard
+// this comment describes: without it, browsing a preset would slam the editor
+// back to Simple on every audition.
 bool isPresetExcludedParam (const juce::String& paramID)
 {
-    return isViewTierParam (paramID) || paramID == pid::freeze;
+    return isViewTierParam (paramID) || paramID == pid::freeze
+        || paramID == pid::advancedMode;
 }
 
 // ----------------------------------------------------------------------------

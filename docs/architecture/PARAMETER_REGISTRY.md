@@ -31,14 +31,16 @@ changelog entry. `kVersion = 1` on every parameter; a parameter-set change bumps
 
 Range/default/steps/automation are the snapshot's columns verbatim ("cont." = a continuous range,
 `getNumSteps()`'s sentinel). Tier: **view** = excluded from A/B, undo *and* presets;
-**preset-excl** = excluded from presets only (travels in A/B and undo). Both are computed by the
-one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
-(`src/PluginParameters.cpp:236-245`) — a preset skips the union, view ∪ {freeze}.
+**preset-excl** = excluded from presets only (travels in A/B and undo);
+**adv** (`advancedMode` alone, since ADR-0018) = travels with **undo** but is pinned across
+A/B/Copy (`applySlotToLive`'s adopt-flag) and excluded from presets by name. The predicates are
+`isViewTierParam` / `isPresetExcludedParam` (`src/PluginParameters.cpp`) — a preset skips
+view ∪ {freeze, advancedMode}.
 
 | ID | Name | Range | Default | Steps | Auto | Tier |
 |---|---|---|---|---|---|---|
 | `bypass` | Bypass | 0 … 1 | 0 | 2 | yes | view |
-| `advancedMode` | Advanced | 0 … 1 | 0 | 2 | **no** | view |
+| `advancedMode` | Advanced | 0 … 1 | 0 | 2 | **no** | adv ¹⁸ |
 | `loudness` | Loudness | 0 … 100 | 0 | cont. | **no** | — |
 | `character` | Character | 0 … 1 | 0 | cont. | **no** | — |
 | `tone` | Tone | -1 … 1 | 0 | cont. | **no** | — |
@@ -99,6 +101,13 @@ prints `dB` and switches to `dBTP` only while the mode is engaged —
 `testTheCeilingAdvertisesTheUnitItEnforces`. The **text** is not part of the snapshot (ID · name ·
 range · default · steps · automatable), and both spellings parse back identically, so it is
 display-only.
+
+¹⁸ **Re-tiered by [ADR-0018](design-decisions/ADR-0018-copy-and-advanced-join-the-undo-history.md)**
+(2026-08-06, owner 0.1.1 directive item 4, gate cleared in the ADR's Status banner): the Advanced
+toggle is an **undo step** now — `advancedMode` left `isViewTierParam`, the undo/redo restore
+adopts it, and every other adoption path (A/B switch, Copy) pins it to live, so a compare still
+never resizes the editor. Preset exclusion is by name in `isPresetExcludedParam`. Automation and
+the snapshot columns are untouched — the tier is not a snapshot column.
 
 ## The nine non-automatable rows
 

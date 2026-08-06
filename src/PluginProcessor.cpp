@@ -127,6 +127,31 @@ static int managedIndexOf (const juce::String& id)
     return -1;
 }
 
+// The §7 change test compares what an undo could RESTORE (ADR-0018): the
+// view-tier entries never travel with a slot restore — `applySlotToLive`
+// pins them — so both sides of the compare have them normalised away here.
+// Without this, a monitor toggle clicked while a knob drag was open minted a
+// step whose restore changed nothing. `advancedMode` is deliberately NOT
+// stripped: its diff is restorable (the undo path adopts it), so it must
+// keep minting steps.
+static juce::ValueTree strippedForUndoCompare (const juce::ValueTree& slot)
+{
+    auto copy = slot.createCopy();
+    auto params = copy.getChildWithName ("ANABASIS");
+    if (! params.isValid())
+        return copy;
+    for (int i = 0; i < params.getNumChildren(); ++i)
+    {
+        auto node = params.getChild (i);
+        if (node.hasType ("PARAM") && isViewTierParam (node.getProperty ("id").toString()))
+        {
+            node.setProperty ("value", 0.0, nullptr);
+            node.removeProperty ("raw", nullptr);
+        }
+    }
+    return copy;
+}
+
 void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*,
                                                                         int parameterIndex)
 {
@@ -158,7 +183,21 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
     // step keys on a message-thread drag, because pushing one means copying
     // ValueTrees and that may not happen off the message thread. Stated here
     // because the two lines sit three apart and look like an oversight.
-    if (juce::MessageManager::existsAndIsCurrentThread()
+    // ADR-0018: the view-tier toggles (bypass and the two monitor functions)
+    // never travel with an undo restore — `applySlotToLive` pins them — so
+    // their clicks must not ARM the undo machinery either. Before this gate,
+    // a BYPASS click snapshotted the full tree, the end-compare saw the
+    // bypass diff, and a step was pushed whose restore changed nothing: one
+    // Undo press eaten per click. (`advancedMode` deliberately passes — its
+    // step is real since ADR-0018.) The sibling avoids the whole class by
+    // never listening to its view params; this listener hears everything, so
+    // the exclusion is spelled here.
+    const auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (
+        getParameters()[parameterIndex]);
+    const bool undoEligible = pw == nullptr || ! isViewTierParam (pw->getParameterID());
+
+    if (undoEligible
+        && juce::MessageManager::existsAndIsCurrentThread()
         && parameterIndex >= 0 && parameterIndex < kMaxCountedGestureIndex)
     {
         const uint64_t bit = 1ull << parameterIndex;
@@ -238,10 +277,14 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
         // and `syncHistory()` is what drops it. Testing first would have read
         // a snapshot belonging to the previous session.
         syncHistory();
-        // One step per completed drag, and only if something CHANGED —
-        // an aborted gesture (press, no move) pushes nothing.
+        // One step per completed drag, and only if something an undo could
+        // RESTORE changed — an aborted gesture (press, no move) pushes
+        // nothing, and neither does a drag whose only diff is a view-tier
+        // toggle clicked mid-gesture (ADR-0018: `applySlotToLive` pins those
+        // entries, so their diff is unrestorable and must not mint a step).
         if (gesturePreState.isValid()
-            && ! gesturePreState.isEquivalentTo (saveSlotFromLive()))
+            && ! strippedForUndoCompare (gesturePreState)
+                   .isEquivalentTo (strippedForUndoCompare (saveSlotFromLive())))
             pushUndoStep (gesturePreState);
         gesturePreState = {};
     }
@@ -260,6 +303,43 @@ static void pushCapped (Stack& stack, Entry entry, int cap)
     stack.add (std::move (entry));
     while (stack.size() > cap)
         stack.remove (0);            // oldest first: the cap trims history, not the present
+}
+
+// §6.1 Copy, ADR-0018 semantics (the sibling's #12 rule, adopted verbatim):
+// the destination slot's PRE-COPY state becomes an undo entry on the
+// DESTINATION's stack, its older history is kept, and only its redo line is
+// cleared (a new action invalidates redo, same as any edit). Undoing on the
+// copied-into slot therefore reverts the Copy; further undos walk the
+// destination's own pre-copy history — coherent because entries are absolute
+// SLOT snapshots, not diffs. The 0.1.0 behaviour (clear both stacks, "as a
+// load does") argued the old entries described states the slot no longer has
+// — true only because the copy itself was not a step; making it one makes
+// them reachable again, which is the sibling's resolution and the owner's
+// 0.1.1 directive.
+//
+// The entry pairs the destination's OWN dirty datum (`storedPresetBaseline`),
+// not the active slot's live one — `pushUndoStep` targets the active stack
+// and pairs the live baseline, so it cannot be reused here.
+//
+// Still no duck and no engine involvement: nothing audible changes.
+void AnabasisAudioProcessor::copySlotToOther()
+{
+    syncHistory();                       // epoch reconcile before any stack touch
+    const int other = 1 - activeSlot;
+    pushCapped (undoStacks[other],
+                UndoEntry { storedSlot.createCopy(), storedPresetBaseline.createCopy() },
+                kUndoCap);
+    redoStacks[other].clear();
+    storedSlot = saveSlotFromLive();
+    // `createCopy()`, for the reason `undo()`/`redo()` carry: assigning a
+    // `juce::ValueTree` shares the refcounted node, so the two slots' dirty
+    // data would be ONE tree until the next wholesale replacement. Harmless
+    // while a baseline is only ever replaced, never edited in place — which
+    // is true of every writer today — and a trap the moment one is not, since
+    // an edit made "for slot A" would appear in B. `storedSlot` above needs
+    // no such call: `saveSlotFromLive()` returns a freshly built tree that
+    // nothing else holds.
+    storedPresetBaseline = presetBaseline.createCopy();
 }
 
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
@@ -293,7 +373,7 @@ void AnabasisAudioProcessor::undo()
     const auto prev = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3: not a gesture
     engine.requestForcedDuck();
-    applySlotToLive (prev.slot);
+    applySlotToLive (prev.slot, /*adoptAdvanced*/ true);     // ADR-0018: ADV undoes
     // …and the datum that described it. `applySlotToLive` restores
     // `presetName` from the StateSet, so restoring one without the other left
     // the top bar comparing a previous preset's state against the applied
@@ -320,7 +400,7 @@ void AnabasisAudioProcessor::redo()
     const auto next = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();                              // §2.8, as undo()
-    applySlotToLive (next.slot);
+    applySlotToLive (next.slot, /*adoptAdvanced*/ true);     // ADR-0018, as undo()
     presetBaseline = next.baseline.createCopy();             // paired, as undo()
 }
 
@@ -861,7 +941,7 @@ void AnabasisAudioProcessor::reassertFromRaw (const juce::ValueTree& apvtsTree)
     }
 }
 
-void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
+void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced)
 {
     const auto params = slot.getChildWithName ("ANABASIS");
     if (params.isValid())
@@ -870,15 +950,21 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
         // predicate): overwrite the incoming copy with the LIVE values —
         // value from the tree, raw from the parameter itself — so both the
         // replaceState and the raw re-assert leave them untouched.
+        // `advancedMode` left the view tier in ADR-0018 but stays PINNED on
+        // every path except the undo/redo restore (`adoptAdvanced`), so the
+        // pin is spelled out here rather than inherited from the predicate.
         auto incoming = params.createCopy();
         for (int i = 0; i < incoming.getNumChildren(); ++i)
         {
             auto node = incoming.getChild (i);
-            if (node.hasType ("PARAM") && isViewTierParam (node.getProperty ("id").toString()))
+            const auto id = node.getProperty ("id").toString();
+            const bool pinned = isViewTierParam (id)
+                             || (id == pid::advancedMode && ! adoptAdvanced);
+            if (node.hasType ("PARAM") && pinned)
                 if (auto live = apvts.state.getChildWithProperty ("id", node.getProperty ("id")); live.isValid())
                 {
                     node.setProperty ("value", live.getProperty ("value"), nullptr);
-                    if (auto* lp = apvts.getParameter (node.getProperty ("id").toString()))
+                    if (auto* lp = apvts.getParameter (id))
                         node.setProperty ("raw", (double) lp->getValue(), nullptr);
                 }
         }

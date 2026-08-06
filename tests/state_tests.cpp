@@ -210,6 +210,17 @@ static void testAbSlotsAndTiers()
 
     check (isPresetExcludedParam (pid::freeze) && ! isViewTierParam (pid::freeze),
            "tiers: freeze is preset-excluded only (travels in A/B and undo)");
+
+    // ADR-0018: advancedMode left the view tier (it undoes) but is still
+    // preset-excluded BY NAME, and still pinned across an A/B switch — the
+    // pin moved from the shared predicate into applySlotToLive.
+    check (isPresetExcludedParam (pid::advancedMode) && ! isViewTierParam (pid::advancedMode),
+           "tiers: advancedMode is preset-excluded by name, no longer view-tier (ADR-0018)");
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    proc.switchToSlot (1);
+    check (proc.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f,
+           "tiers: advancedMode stays live across the A/B switch (the editor never resizes on a compare)");
+    proc.switchToSlot (0);
 }
 
 // ---------------------------------------------------------------------------
@@ -2119,27 +2130,80 @@ static void testTeardownAndReengageInvariants()
                "reengage: …and the SAME gesture re-landed the curve on it");
     }
 
-    // (3) COPY A→B. A per-slot undo stack records edits made from that slot's
-    // own values; a Copy replaces them wholesale from outside that history, so
-    // every entry describes a state the slot no longer has —
-    // `setStateInformation` already clears both stacks for that reason.
+    // (3) COPY A→B — ADR-0018 (the sibling's #12 rule): the Copy is an undo
+    // step ON THE DESTINATION whose older history is KEPT beneath it. One
+    // undo on the copied-into slot reverts the Copy; the next walks the
+    // slot's own pre-copy history. Entries are absolute snapshots, which is
+    // what makes the kept history coherent. (0.1.0 cleared both stacks here;
+    // that behaviour and its rationale are superseded — see the ADR.)
     {
         AnabasisAudioProcessor proc;
         auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto driveDb = [&] { return proc.apvts.getRawParameterValue (pid::clipDrive)->load(); };
         proc.switchToSlot (1);                       // edit B so it HAS a history
         drive->beginChangeGesture();
         drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (7.0f));
         drive->endChangeGesture();
         check (proc.canUndo(), "copyUndo: (premise) slot B has an undo step");
         proc.switchToSlot (0);
+        drive->beginChangeGesture();                 // give A a distinct value to copy
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (3.0f));
+        drive->endChangeGesture();
         proc.copySlotToOther();                      // A → B
         proc.switchToSlot (1);
-        check (! proc.canUndo(),
-               "copyUndo: a copied-into slot starts a fresh history, as a load does");
-        check (std::abs (proc.apvts.getRawParameterValue (pid::clipDrive)->load()
-                           - drive->getNormalisableRange().convertFrom0to1 (drive->getValue()))
-                   < 1.0e-3f,
-               "copyUndo: (premise) the copy itself landed");
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyUndo: (premise) the copy itself landed on B");
+        check (proc.canUndo(), "copyUndo: the Copy is an undo step on the destination");
+        proc.undo();
+        check (std::abs (driveDb() - 7.0f) < 1.0e-3f,
+               "copyUndo: one undo on the destination reverts the Copy");
+        check (proc.canUndo(), "copyUndo: …and the destination's OWN history survives beneath it");
+        proc.undo();
+        check (std::abs (driveDb() - 0.0f) < 1.0e-3f,
+               "copyUndo: the second undo walks the pre-copy history");
+        check (proc.canRedo(), "copyUndo: the redo line rebuilt by undoing");
+        proc.redo();
+        proc.redo();
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyUndo: redo twice re-lands the copied state");
+        // The SOURCE slot's history is untouched by a Copy: A had one step
+        // (the 3 dB edit) and still has exactly that.
+        proc.switchToSlot (0);
+        check (proc.canUndo(), "copyUndo: the source slot's history is untouched");
+    }
+
+    // (5) ADV UNDO — ADR-0018's second half: an Advanced-mode toggle is a
+    // real undo step (the click is gesture-bracketed by its ButtonAttachment;
+    // this drives the same path directly), and the undo restore ADOPTS the
+    // slot's advancedMode — the one adoption path that does. A bypass click,
+    // by contrast, arms nothing: its diff is unrestorable (applySlotToLive
+    // pins it), so it must not eat an Undo press.
+    {
+        AnabasisAudioProcessor proc;
+        auto* adv = proc.apvts.getParameter (pid::advancedMode);
+        const auto advOn = [&] { return proc.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f; };
+        check (! proc.canUndo(), "advUndo: (premise) fresh instance, empty history");
+
+        adv->beginChangeGesture();                   // the ButtonAttachment's bracket
+        adv->setValueNotifyingHost (1.0f);
+        adv->endChangeGesture();
+        check (advOn(), "advUndo: (premise) the toggle landed");
+        check (proc.canUndo(), "advUndo: the ADV toggle minted an undo step");
+        proc.undo();
+        check (! advOn(), "advUndo: undo restores the previous view mode");
+        proc.redo();
+        check (advOn(), "advUndo: redo re-applies it");
+
+        auto* bypass = proc.apvts.getParameter (pid::bypass);
+        bypass->beginChangeGesture();
+        bypass->setValueNotifyingHost (1.0f);
+        bypass->endChangeGesture();
+        // The bypass click must not have minted a step: undoing now must
+        // change ADV (the last real step), not bypass.
+        proc.undo();
+        check (! advOn(), "advUndo: a bypass click minted NO step — undo reached the ADV toggle");
+        check (proc.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f,
+               "advUndo: …and bypass itself was untouched by the restore (pinned view tier)");
     }
 
     // (4) `refreshMapping()`'s CONTRACT. Its header promised "this is what

@@ -29,6 +29,7 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0015](ADR-0015-pre-ship-contract-refreeze.md) | **Pre-ship contract re-freeze**: the round-2 `ceiling`/`truePeakMode` defaults, the `int_meterTargets` removal, and the Ceiling's mode-aware unit | Accepted | Verified — `testTheCeilingAdvertisesTheUnitItEnforces`, the re-frozen `testRegistrySnapshot`, `testFactoryPresets` and the §4.4 read-rule checks |
 | [ADR-0016](ADR-0016-spectrumon-becomes-the-graph-well-mode.md) | `int_spectrumOn` repurposed from "is the spectrum shown" to **which graph-well view is active** — a serialization **semantic** change; **gate cleared 2026-08-06** | Accepted | Verified — `testTheGraphWellViewsOnlyClaimTheirModeChips`; the pre-change behaviour is tabulated in the ADR from the commit that held it |
 | [ADR-0017](ADR-0017-uiscale-ladder-narrowing.md) | `int_uiScale`'s legal value set narrows 7 steps → 5; out-of-set stored values converge at adoption — a serialization **domain** change, recorded at the gate's bar; **gate cleared 2026-08-06** | Accepted | Verified — `testAnOutOfListUiScaleClampsConsistently`; the pre-change ladder is quoted in the ADR from the commit that held it |
+| [ADR-0018](ADR-0018-copy-and-advanced-join-the-undo-history.md) | Copy becomes a destination-slot undo step that KEEPS the destination's history; the Advanced toggle joins the undo history (A/B-pinned) — partially supersedes ADR-0010 option E; **gate cleared 2026-08-06** (owner's 0.1.1 directive item 4 + standing sign-off instruction) | Accepted | Verified — `testTeardownAndReengageInvariants` cases (3)/(5), `testAbSlotsAndTiers`'s ADR-0018 checks |
 
 ADR-0015 was taken on **2026-08-06**, ratifying contract changes the owner's round-2 directive
 (2026-08-05) had already landed in PR #8 — the same ratification shape as ADR-0012/0013/0014, and
@@ -70,6 +71,7 @@ moved:
 |---|---|---|
 | **0006** | **0015** | The `ceiling` (⊕ −1.0) and `truePeakMode` (⊕ on) defaults quoted in its Context and option E. The clamp mechanism, the stage placement and the monitoring decisions are untouched. |
 | **0010** | **0015** | The ten-field host-hidden inventory in its Decision — `int_meterTargets` was removed, so the set is nine — and the same two defaults. The IDs, the exclusion tiers and the lockable set are untouched. |
+| **0010** | **0018** | Option E's *undo* half: the Advanced toggle is now an undo step (owner's 0.1.1 directive). Its A/B half — a compare never resizes the editor — is reaffirmed, enforced by `applySlotToLive`'s pin instead of tier membership; `advancedMode` left `isViewTierParam` and is preset-excluded by name. Non-automatability untouched. |
 
 ADR-0013 and ADR-0014 were taken on **2026-08-02** under the owner's v0.1.0 blanket approval
 (every human-review/owner-decision gate pre-approved to unblock the complete first version, with

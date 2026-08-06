@@ -520,6 +520,17 @@ bit-identical either way.
 clipper, which the chain already carries as a better tool, and widening the range later re-scales
 every saved session (`PARAMETER_COMPATIBILITY_POLICY.md` rule 3).
 
+> **Superseded in part (2026-08-06); left as written, same rule as §4.3's banner.** The tier
+> composition below and the first departure bullet are no longer the code:
+> [ADR-0018](architecture/design-decisions/ADR-0018-copy-and-advanced-join-the-undo-history.md)
+> (owner 0.1.1 directive, gate cleared in its Status banner) moved `advancedMode` OUT of the view
+> tier — the Advanced toggle is an **undo step** now, still pinned across A/B/Copy by
+> `applySlotToLive`'s adopt-flag and preset-excluded by name, so the bullet's A/B-resize argument
+> survives while its undo half is superseded. The same record made **Copy an undo step on the
+> destination slot that keeps the destination's history** (§7's Copy sentence below, where
+> present, is likewise historical). `docs/architecture/PARAMETER_REGISTRY.md` carries the live
+> tier table.
+
 **Exclusion tiers** (single shared predicate, Anamorph pattern
 `Anamorph:src/PluginParameters.h:66-88` [Verified]): *view tier*
 `{bypass, loudnessComp, deltaMonitor, advancedMode}` — serialized with the session, excluded

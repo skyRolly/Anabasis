@@ -548,6 +548,10 @@ record.
    toward the floor on an idle tick) is three lines once the answer is known.
 
 7. **RESOLVED 2026-08-03 (round 37) — Copy A→B and the destination's undo history.**
+   **[Superseded 2026-08-06 by ADR-0018 — the round-37 answer is reversed.]** The Copy is now an
+   undo step ON the destination whose pre-copy history is KEPT (the sibling's semantics, per the
+   owner's 0.1.1 directive); the clear-both-stacks resolution below is the historical record of
+   the 0.1.0 answer.
    `copySlotToOther()` replaced `storedSlot` but not `undoStacks[1 - activeSlot]`, so switching to
    the copied-into slot and pressing undo restored a pre-copy state the user never edited from the
    copied values — silently discarding the copy AND that slot's last edit, because the copy itself
