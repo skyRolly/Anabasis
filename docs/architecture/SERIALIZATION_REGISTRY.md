@@ -43,7 +43,10 @@ There are **two formats**, deliberately different in fidelity (ADR-0007 option H
 ```
 AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, PluginProcessor.cpp:7)
 ├── ANABASIS                      the APVTS tree — the LIVE parameter surface
-│   └── PARAM ×49                 id · value (denormalised) · raw (normalised double, additive)
+│   └── PARAM ×50                 id · value (denormalised) · raw (normalised double, additive)
+│                                 (×49 until 0.1.1 — ADR-0019 ADDED compStereoLink, an
+│                                  additive change under the §2 missing-field rule: an old
+│                                  session simply loads the default 100 %, no migration)
 ├── ANABASIS_INTERNAL             host-hidden session state (9 int_* properties)
 ├── AB                            active = 0|1
 │   ├── SLOT                      (slot 0)

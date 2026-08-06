@@ -52,6 +52,7 @@ static juce::String tipFor (const char* id)
         { pid::compKnee,          "Width of the soft knee around the threshold" },
         { pid::compDetector,      "RMS averages the level, Peak follows every transient" },
         { pid::compMix,           "Parallel compression - blend compressed with dry" },
+        { pid::compStereoLink,    "How much both channels share one compressor gain - lower lets each channel breathe on its own" },
         { pid::clipShape,         "Hard to soft clipping curve - shown live in the display" },
         { pid::clipDrive,         "Push into the clipper, level-compensated - adds density, not volume" },
         { pid::clipMix,           "Blend clipped with dry" },
@@ -85,7 +86,26 @@ static juce::String tipFor (const char* id)
     };
     for (const auto& r : rows)
         if (std::strcmp (r.id, id) == 0)
+        {
+            // §5.3/§6.3 detach-badge legend (0.1.1, owner item 9: the dot's
+            // semantics read as arbitrary — "why only these knobs, and why
+            // doesn't returning to the preset value clear it?"). The answer
+            // lives ON the only controls that can ever show it — the nine
+            // macro-managed knobs — appended here from the ONE managed list
+            // rather than written into nine strings, so the badge set and
+            // the legend set cannot drift apart. The dot marks detachment
+            // FROM THE MACROS, not difference from the preset: it appears
+            // when a manual edit takes the knob off its macro curve, and
+            // clears when a macro gesture (or Simple's reset dot, or a
+            // preset load's own mask) re-lands the curve — matching the
+            // value alone never re-attaches, so it never clears the dot.
+            for (int i = 0; i < managed_params::kCount; ++i)
+                if (std::strcmp (managed_params::ids[i], id) == 0)
+                    return juce::String (r.tip)
+                         + ". A corner dot means this knob is detached from the macros"
+                           " and holds your value - move a macro to re-land it";
             return r.tip;
+        }
     // Reaching here means a parameter was added without a tooltip — make the
     // gap visible in a debug build instead of silently hoverless.
     jassertfalse;
@@ -436,6 +456,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     rotary (releaseK, releaseL, pid::compRelease);
     rotary (kneeK, kneeL, pid::compKnee);
     rotary (compMixK, compMixL, pid::compMix);
+    rotary (compLinkK, compLinkL, pid::compStereoLink);   // ADR-0019 (0.1.1)
     setupToggle (compAutoToggle, pid::compAutoRelease, "AUTO", tipFor (pid::compAutoRelease));
     setupCombo (detectorBox, pid::compDetector, tipFor (pid::compDetector));
 
@@ -1275,6 +1296,12 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         placeRow (a, { { &ratioK, &ratioL }, { &thresholdK, &thresholdL } });
         placeRow (a, { { &attackK, &attackL }, { &releaseK, &releaseL } });
         placeRow (a, { { &kneeK, &kneeL }, { &compMixK, &compMixL } });
+        // The ADR-0019 stereo-link knob rides a single-knob row, the CLIP
+        // zone's Dynamic Tame grammar — 74 px, so the zone's remaining budget
+        // (24 combo + 3×84 rows + 26 toggles + 8 + 14 meter = 324 of 398)
+        // closes exactly instead of leaving the foot row floating.
+        auto lrow = a.removeFromTop (74);
+        placeRow (lrow, { { &compLinkK, &compLinkL } }, 74);
         auto row = a.removeFromTop (26);
         compAutoToggle.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 2));
         a.removeFromTop (8);
@@ -1467,8 +1494,8 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
 
     const bool adv = advanced;
     juce::Component* advOnly[] = {
-        &ratioK, &thresholdK, &attackK, &releaseK, &kneeK, &compMixK,
-        &ratioL, &thresholdL, &attackL, &releaseL, &kneeL, &compMixL,
+        &ratioK, &thresholdK, &attackK, &releaseK, &kneeK, &compMixK, &compLinkK,
+        &ratioL, &thresholdL, &attackL, &releaseL, &kneeL, &compMixL, &compLinkL,
         &compAutoToggle, &detectorBox,
         &shapeK, &driveK, &clipMixK, &balanceK, &colToneK, &depthK, &dynTiltK,
         &shapeL, &driveL, &clipMixL, &balanceL, &colToneL, &depthL, &dynTiltL,

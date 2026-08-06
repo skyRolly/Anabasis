@@ -100,7 +100,7 @@ docs/
 ├── DEVELOPMENT_BRIEF.md   The owner-supplied product spec (Part I) + the inherited engineering
 │                          standard (Part II). See SOURCE_OF_TRUTH.md §"Where the product brief sits".
 ├── DESIGN.md              The P0 design deliverable (brief §11/§24), SIGNED OFF 2026-07-31:
-│                          architecture, the 49-parameter table, macro curves, wireframes.
+│                          architecture, the parameter table (49 at sign-off; 50 live per ADR-0019), macro curves, wireframes.
 │                          Answers to the brief; the ADRs it spawned (ADR_INDEX.md) now outrank
 │                          it and supersede it section by section as P1-P6 land.
 │                          See SOURCE_OF_TRUTH.md §"Where DESIGN.md sits".

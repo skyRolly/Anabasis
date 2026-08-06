@@ -598,6 +598,71 @@ static void testCompDetectorAndMix()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0019 (0.1.1): the comp's stereo link is ADJUSTABLE — the limiter's
+// blend at the same point, linked = link·max(all) + (1−link)·own, before the
+// integrator. Stimulus: a loud sine on ch 0 (deep over threshold), a quiet
+// one on ch 1 (below the knee bottom). Full link must drag the quiet channel
+// down with the loud one (one shared gain — the pre-0.1.1 glue); zero link
+// must leave the quiet channel BIT-EXACT (its own detector never reaches the
+// knee, and the gain-1 path multiplies by exactly 1.0f); half link sits
+// between. A mutant that blends after the RMS integrator, or that keeps the
+// single shared envelope, fails the zero-link half.
+static void testCompStereoLink()
+{
+    const double sr = 48000.0;
+    anabasis::EngineParameters p;
+    p.compThresholdDb = -20.0f; p.compRatio = 4.0f; p.compKneeDb = 0.0f;
+    p.compAttackMs = 5.0f; p.compAutoRelease = false; p.compReleaseMs = 50.0f;
+    p.compMix = 1.0f; p.compDetector = 0;
+
+    auto quietOutDb = [&] (float link) -> float
+    {
+        p.compStereoLink = link;
+        anabasis::MasteringComp comp;
+        comp.prepare (sr);
+        comp.setPerBlock (p);
+        const int total = (int) sr;
+        double sumSq = 0.0; int counted = 0;
+        for (int n = 0; n < total; ++n)
+        {
+            const float ph = 2.0f * juce::MathConstants<float>::pi
+                           * 1000.0f * (float) n / (float) sr;
+            float frame[2] = { 0.31623f * std::sin (ph),      // −13 dB RMS: ~7 dB over
+                               0.02f    * std::sin (ph) };    // −37 dB RMS: far below
+            comp.processSample (frame, 2);
+            if (n >= total / 2) { sumSq += (double) frame[1] * frame[1]; ++counted; }
+        }
+        return (float) (20.0 * std::log10 (std::sqrt (sumSq / counted)));
+    };
+
+    const float linked   = quietOutDb (1.0f);
+    const float unlinked = quietOutDb (0.0f);
+    const float half     = quietOutDb (0.5f);
+    check (linked < unlinked - 2.0f,
+           "compLink: full link drags the quiet channel down with the loud one");
+    check (half < unlinked - 0.5f && half > linked + 0.5f,
+           "compLink: half link sits between full and none");
+
+    {   // zero link: the below-knee channel is BIT-EXACT while the other compresses
+        p.compStereoLink = 0.0f;
+        anabasis::MasteringComp comp;
+        comp.prepare (sr);
+        comp.setPerBlock (p);
+        bool exact = true;
+        for (int n = 0; n < 24000; ++n)
+        {
+            const float ph = 0.1309f * (float) n;
+            const float q  = 0.02f * std::sin (ph);
+            float frame[2] = { 0.5f * std::sin (ph), q };
+            comp.processSample (frame, 2);
+            if (! juce::exactlyEqual (frame[1], q)) { exact = false; break; }
+        }
+        check (exact, "compLink: at zero link a below-knee channel passes bit-exact "
+                      "while the other channel is deep in reduction");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The §2.3 auto release is TWO-STAGE: after a burst ends, the fast pole gives
 // back most of its half quickly, the slow pole holds its half — so recovery
 // in the first 100 ms strictly exceeds recovery in the following 100 ms, and
@@ -3773,6 +3838,7 @@ int main()
     testEqPositionsAreDistinct();
     testCompStaticCurve();
     testCompDetectorAndMix();
+    testCompStereoLink();
     testCompAutoReleaseIsTwoStage();
     testCompSidechainHpf();
     testClipDriveZeroIsBitExact();

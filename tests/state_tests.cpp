@@ -118,7 +118,7 @@ static void testRegistrySnapshot (bool writeSnapshot)
             if (! rp->isAutomatable())
                 ++nonAuto;
         }
-    check (count == 49,  "registry: exactly 49 parameters (DESIGN §4.2)");
+    check (count == 50,  "registry: exactly 50 parameters (DESIGN §4.2's 49 + ADR-0019's compStereoLink)");
     check (nonAuto == 9, "registry: exactly nine non-automatable (ADR-0010)");
 }
 
@@ -4375,6 +4375,7 @@ static void testCachedParamsMapping()
     set (pid::eqBell2Q, 2.0f);
     set (pid::ceiling, -3.0f);
     set (pid::compMix, 40.0f);          // percent in, 0..1 out
+    set (pid::compStereoLink, 70.0f);   // ADR-0019 — distinct from the limiter's 80
     set (pid::stereoLink, 80.0f);
     set (pid::colourDepth, 60.0f);
 
@@ -4387,7 +4388,8 @@ static void testCachedParamsMapping()
     auto near = [] (float a, float b) { return std::abs (a - b) < 1.0e-3f; };
     check (near (e.inputGainDb, 7.0f)        && near (e.scHpfFreqHz, 120.0f),   "cache: input/detector fields");
     check (near (e.compRatio, 3.0f)          && near (e.compThresholdDb, -18.0f)
-            && near (e.compKneeDb, 9.0f)     && near (e.compMix, 0.40f),        "cache: compressor fields");
+            && near (e.compKneeDb, 9.0f)     && near (e.compMix, 0.40f)
+            && near (e.compStereoLink, 0.70f),                                   "cache: compressor fields");
     check (near (e.clipDriveDb, 5.0f)        && near (e.colourBalance, 0.5f)
             && near (e.dynTiltDb, 1.25f)     && near (e.colourDepth, 0.60f),    "cache: clip/colour fields");
     check (near (e.limGainDb, 11.0f)         && near (e.lookaheadMs, 4.0f)

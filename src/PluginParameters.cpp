@@ -1,5 +1,6 @@
 // ============================================================================
-//  createAnabasisLayout — the 49 parameters of DESIGN §4.2, values verbatim.
+//  createAnabasisLayout — the 50 parameters of the surface: DESIGN §4.2's 49,
+//  values verbatim, plus ADR-0019's compStereoLink (0.1.1).
 //
 //  Copy-and-adapt provenance (ADR-0009): the Raw* exact-normalised discrete
 //  classes, the formatter/parser shapes and the log-range helper are adapted
@@ -215,6 +216,11 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
     floatParam (pid::compKnee, "Comp Knee", { 0.0f, 12.0f }, 6.0f, dbText, dbFrom);
     choiceParam (pid::compDetector, "Comp Detector", { "RMS", "Peak" }, 0);
     floatParam (pid::compMix, "Comp Mix", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
+    // ADR-0019 (0.1.1): the comp's own stereo link, named apart from the
+    // limiter's "Stereo Link" so the two automation lanes cannot be confused.
+    // Default 100 % = the fully linked detector the comp always had — the
+    // addition is backwards-inert (an old session simply loads the default).
+    floatParam (pid::compStereoLink, "Comp Stereo Link", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
 
     // Rows 20-25, 48-49 (clip / colour). colourModel defaults to Tape, NOT
     // Clean — Clean is the null model and would make the Character macro inert
@@ -319,6 +325,7 @@ constexpr const char* kCacheOrder[] = {
     pid::inputGain, pid::scHpfFreq,
     pid::compRatio, pid::compThreshold, pid::compAttack, pid::compRelease,
     pid::compAutoRelease, pid::compKnee, pid::compDetector, pid::compMix,
+    pid::compStereoLink,
     pid::clipShape, pid::clipDrive, pid::clipMix, pid::colourModel,
     pid::colourBalance, pid::colourTone, pid::dynTilt, pid::colourDepth,
     pid::limGain, pid::lookahead, pid::limRelease, pid::limAutoRelease,
@@ -379,6 +386,7 @@ void CachedParams::toEngine (anabasis::EngineParameters& out) const noexcept
     out.compKneeDb        = f();
     out.compDetector      = c();
     out.compMix           = f() * 0.01f;
+    out.compStereoLink    = f() * 0.01f;
     out.clipShape         = f();
     out.clipDriveDb       = f();
     out.clipMix           = f() * 0.01f;

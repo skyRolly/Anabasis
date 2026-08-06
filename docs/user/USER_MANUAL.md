@@ -182,7 +182,9 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 
 - **COMP** — the mastering glue compressor: Ratio (1.1–4:1), Threshold, Attack (5–100 ms),
   Release (50–1000 ms) with **AUTO** (program-dependent two-stage release), Knee, RMS/Peak
-  detector, Mix (parallel compression), and its gain-reduction meter.
+  detector, Mix (parallel compression), **Comp Stereo Link** (how much both channels share
+  one gain — full link keeps the image stable, lower lets each channel breathe on its own;
+  since 0.1.1), and its gain-reduction meter.
 - **CLIP / COLOUR** — the transient-absorbing clipper and the colour stage: Shape
   (hard ↔ soft, with a live transfer-curve display), Drive (level-compensated), Mix,
   **Colour** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Colour
@@ -275,11 +277,20 @@ Simple is a **macro layer over the Advanced parameters** — one parameter model
 and **switching views never changes the sound**.
 
 When you edit a stage parameter in Advanced that the macros manage, that parameter
-**detaches** from the macro (it shows a badge) and keeps your value — returning to Simple
-moves nothing. The next time you move a macro knob, detached parameters **re-engage** and
-glide back under macro control; that gesture is the "the macros are in charge again"
-moment, and it is smooth, not a jump. The **edited dot** in Simple view is the summary
-indicator — click it to re-land everything on the macro sound at once (undoable).
+**detaches** from the macro (it shows a corner-dot badge) and keeps your value — returning
+to Simple moves nothing. The next time you move a macro knob, detached parameters
+**re-engage** and glide back under macro control; that gesture is the "the macros are in
+charge again" moment, and it is smooth, not a jump. The **edited dot** in Simple view is
+the summary indicator — click it to re-land everything on the macro sound at once
+(undoable).
+
+Two things the corner dot is **not**: it is not an "edited since the preset" mark (that is
+the `*` after the preset name), and it never appears on knobs the macros don't manage —
+only the nine managed parameters can detach, because only they have a macro curve to
+detach *from*. Consequently, manually turning a detached knob back to its old value does
+**not** clear the dot: the knob is still off macro control, holding *your* value. Moving a
+macro, clicking Simple's edited dot, or loading a preset is what re-attaches it. Each
+managed knob's tooltip carries this legend.
 
 ---
 

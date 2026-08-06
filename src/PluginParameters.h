@@ -5,7 +5,8 @@
 #include "dsp/EngineParameters.h"
 
 // ============================================================================
-//  PluginParameters — the 49-parameter surface of DESIGN §4.2 (ADR-0010).
+//  PluginParameters — the 50-parameter surface: DESIGN §4.2's 49 (ADR-0010)
+//  plus ADR-0019's compStereoLink (0.1.1).
 //
 //  IDs are a PERMANENT CONTRACT from v0.1.0 (PARAMETER_COMPATIBILITY_POLICY
 //  rules 1/3): ID, range, default and choice ordering freeze; display names
@@ -38,6 +39,7 @@ namespace pid
     inline constexpr const char* compKnee          = "compKnee";
     inline constexpr const char* compDetector      = "compDetector";
     inline constexpr const char* compMix           = "compMix";
+    inline constexpr const char* compStereoLink    = "compStereoLink";   // ADR-0019 (0.1.1)
     // clip / colour
     inline constexpr const char* clipShape         = "clipShape";
     inline constexpr const char* clipDrive         = "clipDrive";
@@ -111,11 +113,15 @@ struct CeilingUnitSource
 juce::AudioProcessorValueTreeState::ParameterLayout
 createAnabasisLayout (const CeilingUnitSource* ceilingUnit = nullptr);
 
-// Exclusion tiers (DESIGN §4.2, ADR-0010) — ONE shared predicate, consulted by
-// A/B, undo and preset apply alike so the sets cannot drift apart.
-//   view tier          {bypass, loudnessComp, deltaMonitor, advancedMode}
+// Exclusion tiers (DESIGN §4.2, ADR-0010; advancedMode re-tiered by ADR-0018)
+// — ONE predicate pair, consulted by A/B, undo and preset apply alike so the
+// sets cannot drift apart.
+//   view tier          {bypass, loudnessComp, deltaMonitor}
 //                        -> excluded from A/B, undo AND presets
-//   preset-excluded    view ∪ {freeze}   (freeze travels in A/B and undo)
+//   preset-excluded    view ∪ {freeze, advancedMode}
+//                        (freeze travels in A/B and undo; advancedMode
+//                         travels in UNDO only — applySlotToLive pins it on
+//                         the A/B and Copy paths)
 bool isViewTierParam (const juce::String& paramID);
 bool isPresetExcludedParam (const juce::String& paramID);
 
@@ -123,14 +129,14 @@ bool isPresetExcludedParam (const juce::String& paramID);
 // ONCE PER BLOCK into the POD snapshot on the audio thread (ADR-0001/0011 —
 // never piecemeal mid-block).
 //
-// 45, not 49: the four macro/view-only parameters (advancedMode, loudness,
+// 46, not 50: the four macro/view-only parameters (advancedMode, loudness,
 // character, tone) never reach the engine — freeze DOES since P4, as the
 // adaptive trim latch. The cache order and
 // toEngine's assignment sequence are coupled POSITIONALLY — inserting one
 // without the other silently shifts every later field — so a static_assert
 // pins the count and `testCachedParamsMapping` pins the field-by-field
 // mapping end to end.
-inline constexpr int kCachedParamCount = 45;
+inline constexpr int kCachedParamCount = 46;
 
 struct CachedParams
 {

@@ -27,7 +27,7 @@ changelog entry. `kVersion = 1` on every parameter; a parameter-set change bumps
 - Units render through the shared `db`/`ms`/`hz`/`pct` formatter lambdas with suffix-tolerant
   parsers.
 
-## The 49 rows
+## The 50 rows
 
 Range/default/steps/automation are the snapshot's columns verbatim ("cont." = a continuous range,
 `getNumSteps()`'s sentinel). Tier: **view** = excluded from A/B, undo *and* presets;
@@ -58,6 +58,7 @@ view ∪ {freeze, advancedMode}.
 | `compKnee` | Comp Knee | 0 … 12 | 6 | cont. | yes | — |
 | `compDetector` | Comp Detector | 0 … 1 | 0 | 2 | yes | — |
 | `compMix` | Comp Mix | 0 … 100 | 100 | cont. | yes | — |
+| `compStereoLink` | Comp Stereo Link | 0 … 100 | 100 | cont. | yes | — ¹⁹ |
 | `clipShape` | Clip Shape | 0 … 1 | 0.5 | cont. | yes | — |
 | `clipDrive` | Clip Drive | 0 … 24 | 0 | cont. | yes | — |
 | `clipMix` | Clip Mix | 0 … 100 | 100 | cont. | yes | — |
@@ -101,6 +102,15 @@ prints `dB` and switches to `dBTP` only while the mode is engaged —
 `testTheCeilingAdvertisesTheUnitItEnforces`. The **text** is not part of the snapshot (ID · name ·
 range · default · steps · automatable), and both spellings parse back identically, so it is
 display-only.
+
+¹⁹ **Added by [ADR-0019](design-decisions/ADR-0019-comp-stereo-link.md)** (2026-08-06, owner
+0.1.1 directive item 12) — the 50th row, the first parameter ADDED since the surface froze at 49.
+The comp's own stereo link: the limiter's blend applied at the comp detector
+(linked = link·max + (1−link)·own, before the RMS integrator), named "Comp Stereo Link" so the
+two automation lanes cannot be confused with the limiter's "Stereo Link". Default 100 % IS the
+fully linked single-gain glue the stage always had, so the addition is backwards-inert — an old
+session or preset simply loads the default (§4.4 missing-field rule). The snapshot fixture was
+re-frozen with the row; `PARAMETER_COMPATIBILITY_POLICY` rule 1 freezes the new ID from here on.
 
 ¹⁸ **Re-tiered by [ADR-0018](design-decisions/ADR-0018-copy-and-advanced-join-the-undo-history.md)**
 (2026-08-06, owner 0.1.1 directive item 4, gate cleared in the ADR's Status banner): the Advanced

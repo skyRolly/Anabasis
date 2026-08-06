@@ -274,8 +274,8 @@ private:
     juce::TextButton   presetPrev, presetNext, presetName;
 
     // -- COMP panel ----------------------------------------------------------
-    Knob ratioK, thresholdK, attackK, releaseK, kneeK, compMixK;
-    juce::Label ratioL, thresholdL, attackL, releaseL, kneeL, compMixL;
+    Knob ratioK, thresholdK, attackK, releaseK, kneeK, compMixK, compLinkK;
+    juce::Label ratioL, thresholdL, attackL, releaseL, kneeL, compMixL, compLinkL;
     juce::ToggleButton compAutoToggle;
     juce::ComboBox detectorBox;
 
