@@ -214,11 +214,10 @@ Always along the bottom:
   - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see
     how hard and how often the limiter is working.
 
-  A fresh instance opens on the **spectrum**; the choice is session state, so a project
-  reopens on whichever you left. The small chip in the graph's top-right corner names the
-  view you switch **to** —
-  click **GR** on the spectrum to see the gain-reduction history, click **SPEC** on the
-  history to return. The choice is session state, saved with your project.
+  A fresh instance opens on the **spectrum**. The small chip in the graph's top-right corner
+  names the view you switch **to** — click **GR** on the spectrum to see the gain-reduction
+  history, click **SPEC** on the history to return. The choice is session state, saved with
+  your project, so it reopens on whichever you left it.
 
 **Click the LUFS/TP/PLR panel to reset** the integrated measurement and the held maxima —
 do it after changing the section you are judging.

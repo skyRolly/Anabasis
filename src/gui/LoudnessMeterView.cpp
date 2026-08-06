@@ -137,6 +137,9 @@ void LoudnessMeterView::paint (juce::Graphics& g)
         g.drawText (shownI <= silent ? juce::String ("-") : juce::String (shownPlr, 1),
                     row, juce::Justification::centredLeft);
     }
-    area.removeFromTop (6);
-
+    // Nothing follows. A trailing `area.removeFromTop (6)` stood here as the
+    // gap before the §6.4 penalty rows; those left with the streaming-target
+    // display (ADR-0015) and the statement became a reserved gap reserving
+    // nothing — no later statement reads `area`. The 6 px gap ABOVE the TP row
+    // is a different one and is still live.
 }
