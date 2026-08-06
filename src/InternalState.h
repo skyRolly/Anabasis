@@ -31,7 +31,7 @@ namespace iid
     inline const juce::Identifier uiScale        { "int_uiScale" };        // percent; legal set = ui_scale::steps
     inline const juce::Identifier tooltipsOn     { "int_tooltipsOn" };     // bool
     inline const juce::Identifier uiAnimations   { "int_uiAnimations" };   // bool
-    inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool (dismissible, brief §6)
+    inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool: graph-well mode — true spectrum, false GR history (ADR-0016)
     inline const juce::Identifier tpMeterOn      { "int_tpMeterOn" };      // bool
 }
 

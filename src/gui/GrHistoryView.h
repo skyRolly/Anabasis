@@ -71,8 +71,12 @@ public:
 
 private:
     // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
-    // agree about it — the rule `SpectrumView::dismissHitArea` states.
+    // agree about it — the rule `SpectrumView::chipHitArea` states.
     juce::Rectangle<int> chipHitArea() const noexcept;
+    // The traces, split out of `paint` so the corner chip can be drawn AFTER
+    // them (matching `SpectrumView`) without losing the reader contract's
+    // three early returns — see the definition.
+    void paintHistory (juce::Graphics&);
     void tick (double dt);
 
     AnabasisAudioProcessor& processor;

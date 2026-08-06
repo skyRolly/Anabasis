@@ -65,13 +65,26 @@ void GrHistoryView::tick (double)
 
 void GrHistoryView::paint (juce::Graphics& g)
 {
-    // Corner mode chip first, BEFORE the data guards below: the way back to the
-    // spectrum must not disappear just because the ring is empty or a clear is
-    // in flight. Same face as `SpectrumView`'s "GR" chip.
+    // TRACES FIRST, CHIP LAST — the same order `SpectrumView::paint` uses, so
+    // the two chips genuinely look alike rather than only claiming to. Drawn
+    // the other way round, the GR trace (which sits at `area.getY()`, ~8 px,
+    // whenever there is no reduction) and the waveform run the full width and
+    // cross the glyph.
+    //
+    // The history is a SEPARATE function because it early-returns three times
+    // on the reader contract (odd epoch, empty window, epoch moved), and the
+    // chip has to survive all three: the way back to the spectrum must not
+    // disappear because the ring is empty or a clear is in flight. Returning
+    // from `paintHistory` skips the traces, never the chip.
+    paintHistory (g);
+
     g.setColour (colours::textDim.withAlpha (0.7f));
     g.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.1f));
     g.drawText ("SPEC", getWidth() - 40, 4, 36, 16, juce::Justification::centred);
+}
 
+void GrHistoryView::paintHistory (juce::Graphics& g)
+{
     const auto& ring = processor.grHistory();
 
     // Epoch-guarded batch (the decided reader contract — header banner).
