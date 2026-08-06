@@ -141,9 +141,19 @@ placement was rejected for the trims, not for this (ADR-0007 §Options D).
 > hides the GR trace that used to sit beside it. Display-only, one click to change, and free
 > while the pre-ship window is open.
 >
-> **The Architecture Review Gate for this one is NOT yet cleared.** The 2026-08-06 sign-off named
-> the `int_meterTargets` removal and the two parameter defaults; this is a fourth item and needs
-> its own clearance. Tracked in `HANDOVER.md`.
+> **Gate CLEARED 2026-08-06**, separately from ADR-0015's: the owner's confirmation names the
+> semantic change, the decision to keep it a pre-1.0 migration change, and the acceptance that
+> stored values load with no migration path.
+>
+> **A SECOND field's accepted DOMAIN changed in the same batch**, and that one is still open.
+> `int_uiScale`'s ladder narrowed from seven steps (80/90/100/125/150/175/200) to five
+> (75/85/100/125/150). Type, unit and default are unchanged — it is still a percent, 100 is still
+> the default — but the ladder is part of this field's read contract (§1.6's normalisation note
+> and §2's out-of-range row both name it), so a stored **80 → 75, 90 → 85, 175/200 → 150**, and
+> because the normalisation happens at adoption the corrected percent is what the next save
+> writes. 100/125/150 are common to both ladders and survive untouched.
+> [**ADR-0017**](design-decisions/ADR-0017-uiscale-ladder-narrowing.md) carries it; **its gate is
+> NOT yet cleared** — neither 2026-08-06 sign-off names `int_uiScale`. Tracked in `HANDOVER.md`.
 
 The host-hidden fields (`src/InternalState.h` — inventory in
 `PARAMETER_REGISTRY.md` §Host-hidden state). Read by `InternalState::replaceFrom`:

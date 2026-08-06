@@ -6,7 +6,40 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **ADR-0016 — `int_spectrumOn`'s semantic migration recorded (2026-08-06)**.
+**Last updated:** for the **second gate clearance, ADR-0017, and DSP-test isolation (2026-08-06)**.
+**ADR-0016 CLEARED** — separately from ADR-0015 and on its own terms, the owner's confirmation
+naming the semantic change, the pre-1.0 migration decision, and the acceptance that stored values
+keep loading with no migration path (an acceptance of the read delta the ADR tabulates, not a
+claim that none exists). Recorded in the same four places the first clearance was: the ADR's
+Status banner, `ADR_INDEX.md`, `HANDOVER.md` (item (h) struck plus a round-log entry) and the two
+ledger rows.
+**ADR-0017 opened** for a third member of the same class that had gone unrecorded anywhere:
+`int_uiScale`'s ladder narrowed from seven steps (80/90/100/125/150/175/200) to five
+(75/85/100/125/150). Type, unit and default are untouched — it is still a percent, 100 is still
+the default — so this is a **domain** change rather than a semantic one, and a reader could argue
+it sits below the gate's bar. It is recorded at the bar anyway, because
+`SERIALIZATION_REGISTRY.md` §1.6 and §2 both name the ladder as part of this field's read
+contract, and because over-recording a pre-ship change costs a paragraph while under-recording one
+costs a user's window size. A stored 80 → 75, 90 → 85, 175/200 → 150, and the correction persists
+at adoption; 100/125/150 are common to both ladders, so the ordinary session is untouched. Its
+gate is **open** — neither 2026-08-06 sign-off names `int_uiScale` — and it is its own ADR rather
+than a fourth item inside ADR-0016, which had just been signed off naming three.
+**DSP-test isolation:** three invariant guards derived their bound from the POD default instead of
+stating it, so a product default move silently re-calibrated them. `testOutputNeverExceedsCeiling`
+and `testCeilingUnderOs` now pin `ceilingDbTp = −1` **and** `truePeakMode = false` (the harder case
+for the sample-level backstop — with TP on, the TP-driven gain keeps the signal further from the
+clamp the test exists to prove), and `testLimiterAlignment` pins the ceiling its two-sided
+`>= ceilingLin * 0.995` check is calibrated against. `testNullWithDefaults` deliberately keeps
+inheriting — "all-defaults is a bit-exact null" is its whole claim — and its comment now says so;
+three stale "0.891 default" numbers in test comments corrected to 0.989.
+**TP-default rationale recorded** (no behaviour changed): ADR-0015 §Consequences now states why
+the meter row being off is deliberate — round-2 item 4 said "all TP toggles (**analyzer +
+processor**) default OFF", so the diagnostic default was specified, not inherited — and carries
+the two questions left for the fine review: whether the row should be the exception to the
+family's opt-in pattern (it is the only one of the three defaults that removes a *diagnostic*
+rather than a guarantee), and what the `warn` colour should compare against. The meter's own
+comment now records the same trade at the comparison.
+Previous: **ADR-0016 — `int_spectrumOn`'s semantic migration recorded (2026-08-06)**.
 Review asked whether repurposing the field needed a record. It does, and by the repository's own
 terms it needs an **ADR**, not a registry line: `ARCHITECTURE_REVIEW_GATE.md` lists "any field
 add/remove/**semantic change**" and `SESSION_COMPATIBILITY_POLICY.md` rule 1 covers a field

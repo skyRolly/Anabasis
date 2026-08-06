@@ -4,17 +4,26 @@
 directive of 2026-08-05, which specified the combined graph well; the field choice was the
 autonomous half)
 
-> **ARCHITECTURE REVIEW GATE — NOT YET CLEARED.** `ARCHITECTURE_REVIEW_GATE.md` lists
+> **ARCHITECTURE REVIEW GATE — CLEARED (2026-08-06).** `ARCHITECTURE_REVIEW_GATE.md` lists
 > "**Serialization Registry change** — any field add/remove/**semantic change**", and
 > `SESSION_COMPATIBILITY_POLICY.md` rule 1 covers a field "removed **or have its meaning
-> changed**". This is the meaning-change case, so it is the same class of gated item as
-> ADR-0015's `int_meterTargets` removal and needs the same explicit owner clearance.
-> **The 2026-08-06 sign-off does NOT cover it**: that instruction named three changes — the
-> `int_meterTargets` removal, the `ceiling` default and the `truePeakMode` default — and this
-> is a fourth. It is recorded separately rather than added to ADR-0015 precisely so a signed-off
-> record is not quietly widened after the fact. Carried as an open item in `docs/HANDOVER.md`.
-> Nothing here is urgent: no build has left the repository, so reversing or re-shaping the field
-> is still free.
+> changed**". This is the meaning-change case, so it needed the same explicit owner clearance as
+> ADR-0015's `int_meterTargets` removal — and it has one, granted **separately and on its own
+> terms**. The owner's confirmation covers three things by name:
+>
+> 1. **the semantic change** of `int_spectrumOn`, from the previous graph/spectrum visibility
+>    meaning to the current graph-well mode meaning;
+> 2. **keeping it a pre-1.0 migration change**, taken inside the window rather than deferred;
+> 3. **that existing stored values continue loading with no migration path**, because that
+>    window is still open.
+>
+> Item 3 is the one worth reading twice: it is an explicit acceptance of the read delta this ADR
+> tabulates below — a stored `true` now shows the spectrum where it used to show the GR trace
+> beside it — not a statement that no delta exists.
+>
+> **This clearance is ADR-0016's alone.** It does not widen ADR-0015, whose own sign-off named
+> three different changes, and it does not extend to `int_uiScale`'s ladder narrowing, which is a
+> third record ([ADR-0017](ADR-0017-uiscale-ladder-narrowing.md)) with its own gate still open.
 
 ## Context
 

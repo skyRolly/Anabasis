@@ -196,6 +196,37 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
   engage **TP** to make the number a dBTP number. The manual says so in four places and the readout
   says so continuously — that is the mitigation, and it is a description change because the DSP
   needed none.
+
+- **The three defaults that moved together, and why the TP METER ROW being off is deliberate.**
+  Review raised the combination rather than the parts: `ceiling` −0.1 (the hottest it has been),
+  `truePeakMode` off (no inter-sample detection), and `int_tpMeterOn` off (the row that would
+  *reveal* the overshoot hidden until enabled). The observation is correct and worth stating
+  plainly — **in the shipped configuration, nothing on screen shows the inter-sample overshoot**.
+  Two things make that a decision rather than an omission:
+
+  1. **The directive named both switches, not one.** Round-2 item 4 reads "all TP toggles
+     (**analyzer + processor**) default OFF" — the analyzer *is* the meter row. The processor
+     default and the meter default were specified together, so the diagnostic being off is the
+     instruction, not a side effect of turning the processing off. It is decision item 2 above,
+     and it is inside what the 2026-08-06 sign-off cleared.
+  2. **It is the family's opt-in pattern, not a special case.** `int_tooltipsOn` also ships off:
+     the shipped surface is the quiet one and the user turns detail on. A meter row is display
+     density, and unlike the processing default it removes no guarantee — the ceiling holds
+     exactly what invariant 4 says it holds either way.
+
+  **Two questions are left open for the fine review**, stated here so a later reviewer finds a
+  recorded question rather than an apparent oversight:
+  - *Should the meter row be the exception to the opt-in pattern?* It is the only one of the three
+    that removes a **diagnostic** rather than a guarantee, and it is the diagnostic for the exact
+    thing the other two defaults make more likely.
+  - *What should the row's `warn` colour mean?* It compares measured true peak against `ceiling`
+    (`LoudnessMeterView::paint`). With TP off that comparison is honest — a true peak above the
+    ceiling is a real inter-sample over — but at these defaults it is also the **ordinary** case,
+    so the colour reads as "you are not in TP mode" more often than "you did something wrong".
+    Changing it means choosing a different comparand (sample peak, or the ceiling only while TP is
+    engaged), which is a product call, not a bug fix. **Nothing is changed here**: the current
+    behaviour is the honest reading of the numbers, and swapping it silently would trade an
+    over-warning for an under-warning.
 - **A live-changing unit string is new behaviour for a host.** Generic editors re-query text on
   demand, so nothing has to be notified; the round-trip test pins that both spellings parse to the
   same value, which is what keeps automation and state indifferent to it.

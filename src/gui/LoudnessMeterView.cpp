@@ -120,9 +120,22 @@ void LoudnessMeterView::paint (juce::Graphics& g)
         // Against the USER's ceiling, not a literal: the threshold was
         // hard-coded to −1.0, which is merely the ceiling's DEFAULT, so any
         // other setting warned at the wrong level — silent while genuinely
-        // over at a −6 ceiling, red while legal at a raised one. Both are in
-        // dBTP; the ceiling is the user's to move, so a non-default value
-        // is the ordinary case.
+        // over at a −6 ceiling, red while legal at a raised one. The ceiling
+        // is the user's to move, so a non-default value is the ordinary case.
+        //
+        // THE COMPARISON IS DELIBERATELY MODE-BLIND, and at the shipped
+        // defaults that makes it warn often. This row always measures TRUE
+        // peak; the ceiling since ADR-0015 is a SAMPLE-peak limit until the
+        // user engages TP, and it sits at −0.1 dB — so a genuine inter-sample
+        // over of roughly 0.5–1.5 dB is the ordinary reading, not the alarming
+        // one, and the colour then says "you are not in TP mode" more often
+        // than "you did something wrong". That is the honest arithmetic: the
+        // number really is above the ceiling. Making it quieter means choosing
+        // a different comparand — the sample peak, or the ceiling only while
+        // TP is engaged — which trades an over-warning for an under-warning
+        // and is a product call, not a bug fix. Recorded as an open
+        // fine-review question in ADR-0015 §Consequences rather than decided
+        // here.
         g.setColour (shownTp > shownCeiling && shownTp > -99.0f ? colours::warn : colours::text);
         g.setFont (juce::Font (juce::FontOptions (13.0f)));
         g.drawText (fmt (shownTp, 2) + " dBTP", row, juce::Justification::centredLeft);
