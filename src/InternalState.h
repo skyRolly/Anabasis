@@ -44,7 +44,9 @@ namespace iid
 // removed the second).
 //
 // NEAREST rather than a range clamp, because the legal set is a ladder: 110 →
-// 100, 92 → 90, 50 → 80, 300 → 200. Returning an INDEX as well as a value is
+// 100, 92 → 85, 50 → 75, 300 → 150 (worked against the XS..XL steps below —
+// these read 90/80/200 while the seven-step ladder was current, so the examples
+// described a ladder the code no longer had). Returning an INDEX as well as a value is
 // what lets the editor make the rendered transform and the displayed combo
 // selection ONE decision instead of two that happen to agree.
 namespace ui_scale

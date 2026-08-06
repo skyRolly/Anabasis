@@ -97,7 +97,8 @@ toggle row, and the metering strip.
 
 1. Play the loudest section of your track.
 2. Raise **Loudness** until the gain-reduction history shows steady, musical work — watch
-   the **out LUFS** readout climb.
+   the **out LUFS** readout climb. (The graph well opens on the **spectrum**; click the
+   **GR** chip in its top-right corner to put the gain-reduction trace there — §3.4.)
 3. Switch **COMP** (loudness-compensated monitoring) on. The level jump disappears; what
    you hear now is the *sound* of the processing at matched loudness. If it still sounds
    better, keep going; if it only sounded better because it was louder, you just found out.
@@ -203,8 +204,9 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 Always along the bottom:
 
 - **LUFS** — Momentary / Short-term / Integrated bars (BS.1770-4, gated).
-- **TP** — true peak in dBTP with a max hold (hidden if you turn the true-peak meter off
-  in Settings).
+- **TP** — true peak in dBTP with a max hold. **Hidden by default**: turn *True-Peak Meter*
+  on in Settings to show the row. It always measures true peak, whether or not the limiter's
+  TP mode is engaged — so it is the honest check on a sample-peak ceiling.
 - **PLR** — peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics
   at-a-glance number.
 - **The graph well** — one panel, two switchable views, in both Simple and Advanced:
@@ -212,7 +214,9 @@ Always along the bottom:
   - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see
     how hard and how often the limiter is working.
 
-  The small chip in the graph's top-right corner names the view you switch **to** —
+  A fresh instance opens on the **spectrum**; the choice is session state, so a project
+  reopens on whichever you left. The small chip in the graph's top-right corner names the
+  view you switch **to** —
   click **GR** on the spectrum to see the gain-reduction history, click **SPEC** on the
   history to return. The choice is session state, saved with your project.
 
@@ -359,7 +363,8 @@ step. Both slots travel with your DAW session.
 1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec (the −0.1
    default suits most deliveries; lock it). If the spec is written in dBTP, engage **TP**
    as well — that is what makes the ceiling hold inter-sample peaks.
-2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work.
+2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work
+   (click the **GR** chip on the graph well first — it opens on the spectrum).
 3. **COMP on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.
 4. Compare candidates with **A/B** + **Copy**, judge PLR, and undo freely — history

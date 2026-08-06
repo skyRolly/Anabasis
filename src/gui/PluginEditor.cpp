@@ -126,7 +126,8 @@ static constexpr int   kNumScaleSteps = ui_scale::numSteps;
 // Clamping to the NEAREST step is the read rule the rest of this tree already
 // uses for persisted values (`adoptParamsTree`'s missing/aliased-field rules,
 // `setupComboInternal`'s `jlimit`), and it is a strict generalisation of a range
-// clamp: 110 → 100, 50 → 80, 300 → 200. Returning an INDEX rather than a scale
+// clamp: 110 → 100, 50 → 75, 300 → 150 (the XS..XL ladder in `ui_scale`; the
+// examples read 80/200 from the seven-step ladder this replaced). Returning an INDEX rather than a scale
 // is what makes the rendered transform and the displayed selection the same
 // decision instead of two decisions that happen to agree.
 static int nearestScaleIndex (int pct) noexcept { return ui_scale::nearestIndex (pct); }
@@ -196,9 +197,13 @@ void AnabasisAudioProcessorEditor::Backdrop::paint (juce::Graphics& g)
     // One flowing sentence that word-wraps naturally (the sibling's #3) —
     // the family sentence-shape: what it is, the three things it does, the
     // honest-monitoring hook after the dash. ⊕ owner-review wording.
+    // "hold the ceiling", NOT "hold a true-peak ceiling": with `truePeakMode`
+    // off — the shipped default since ADR-0015 — the clamp decides on the
+    // sample peak, so the stronger phrasing was the same inter-sample
+    // over-claim that ADR removed from the Ceiling readout one panel over.
     const juce::String desc =
         "A mastering loudness maximizer: push loudness through an adaptive chain, "
-        "hold a true-peak ceiling, and judge the result " + emdash + " loudness-matched, "
+        "hold the ceiling, and judge the result " + emdash + " loudness-matched, "
         "so louder never masquerades as better.";
     g.setColour (colours::text);
     g.setFont (juce::Font (juce::FontOptions (13.0f)));
@@ -1471,6 +1476,33 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
 // the explicit index↔value mapping (the thing the referTo could not express)
 // and restores the missing direction; it only touches a box whose selection
 // actually differs, so it is a comparison per tick in the steady state.
+// The Ceiling's UNIT follows `truePeakMode` (ADR-0015) — and a JUCE Slider
+// recomputes its value-box label only inside `updateText()`, which runs on a
+// value change, a `setTextBoxStyle`, a relayout or a look-and-feel change.
+// NEVER on a repaint. Flipping TP moves no ceiling value and triggers no
+// relayout (the graph-well branch that used to call `resized()` from the tick
+// is a visibility flip now), so the box went on showing the previous suffix
+// until the ceiling itself was touched: a generic host editor re-queries
+// `getText` and was right, while the plugin's own readout carried exactly the
+// stale claim the mode-aware unit exists to remove.
+//
+// BOTH controls are refreshed because both are the same parameter shown twice
+// — the Advanced limiter zone's `ceilingK` and the Simple row's
+// `simpleCeilingK`. `updateText()` re-runs the attachment's
+// `textFromValueFunction`, which is the parameter's own `getText`.
+//
+// Edge-gated: `updateText()` sets the label and repaints, and this runs 24
+// times a second.
+void AnabasisAudioProcessorEditor::refreshCeilingUnit()
+{
+    const bool tp = processor.apvts.getRawParameterValue (pid::truePeakMode)->load() >= 0.5f;
+    if (tp == shownTpMode)
+        return;
+    shownTpMode = tp;
+    ceilingK.updateText();
+    simpleCeilingK.updateText();
+}
+
 void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
 {
     const auto& ist = processor.internalState.state();
@@ -1650,6 +1682,9 @@ void AnabasisAudioProcessorEditor::timerCallback()
         clipCurve->refresh();
         eqCurve->refresh();
     }
+
+    // -- the Ceiling's unit follows truePeakMode (ADR-0015) ------------------
+    refreshCeilingUnit();
 
     // -- graph-well mode follows int_spectrumOn (the corner chips) -----------
     {

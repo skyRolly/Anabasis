@@ -349,7 +349,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 
 ### Known issue reports under investigation
 - **A field report of the left channel falling silent** could not be reproduced headlessly: a
-  seven-configuration wrapper battery (defaults, driven macros, editor alive, 16× linear
+  six-configuration wrapper battery (defaults, driven macros, editor alive, 16× linear
   oversampling, factory preset, session round-trip) measures both channels carrying audio within
   6 dB in every case, and remains in the suite as a permanent guard. `docs/KNOWN_ISSUES.md`
   KI-009 records what the probes exclude and the environment details needed to proceed.

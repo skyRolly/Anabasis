@@ -657,9 +657,11 @@ normal, "in both Simple and Advanced modes" (i.e. always). Host, OS and build no
 **What was probed, and found healthy.** `testBothChannelsCarryAudioThroughTheWrapper`
 (`tests/state_tests.cpp`) drives the REAL `AnabasisAudioProcessor::processBlock` — not the bare
 engine — with per-channel-distinct sines (220/330 Hz, so a swap or a sum-into-one-channel cannot
-masquerade as health) and measures settled per-channel RMS in **seven configurations**: defaults ·
+masquerade as health) and measures settled per-channel RMS in **six configurations**: defaults ·
 loudness 50 · the editor alive across the whole processing loop · 16× linear-phase oversampling ·
-a factory preset applied · after a session save/load round-trip. Both channels carry audio within
+a factory preset applied · after a session save/load round-trip. (This paragraph said "seven"
+against its own six-item list for three commits — the list is the count, and the list is what the
+suite runs.) Both channels carry audio within
 6 dB of each other in every one. The DSP suite separately covers the engine's stereo path, and
 pluginval (both modes ×3, editor open) passes on the built VST3.
 
@@ -673,9 +675,9 @@ the plugin's output. Those are exactly this file's standing-note categories.
 
 **Status: OPEN — needs the environment.** To act on this, record: host + version, OS, which
 build (CI zip? local?), whether the standalone or a plugin format, and whether the left silence
-is heard or read off a meter. The seven-configuration battery stays in the suite either way — it
+is heard or read off a meter. The six-configuration battery stays in the suite either way — it
 is now the permanent guard on every headless-reachable stereo path, and whichever configuration
-eventually reproduces the report becomes its eighth case.
+eventually reproduces the report becomes its seventh case.
 
 ## Standing note for P1 onward
 

@@ -65,6 +65,15 @@ public:
     // carries the reasoning.
     void refreshInternalSettingsBoxes();
 
+    // The Ceiling value box's unit→mode direction, run on the same 24 Hz tick,
+    // and PUBLIC for the same reason as the line above: no message loop runs in
+    // the headless suite, so nothing else can drive it, and this is the second
+    // time a state→widget direction has been the missing half of a change that
+    // looked complete from the parameter side. `getText` was already
+    // mode-aware and its host-facing test passed; what nothing refreshed was
+    // the CACHED label, which is what the user actually reads.
+    void refreshCeilingUnit();
+
 private:
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -334,6 +343,16 @@ private:
     std::unique_ptr<CurveView>         clipCurve, eqCurve;
     GrMiniMeter compGrMeter, limGrMeter;
     bool shownSpectrumOn = true;
+    // The Ceiling's UNIT follows `truePeakMode` (ADR-0015), and a JUCE Slider
+    // recomputes its value-box text only in `updateText()` — on a value change,
+    // a `setTextBoxStyle`, a relayout or a look-and-feel change, never on a
+    // repaint. Flipping TP moves no ceiling value and triggers no relayout, so
+    // the box kept the previous suffix until the ceiling itself was touched:
+    // exactly the stale claim the mode-aware unit exists to remove. The tick
+    // watches the mode and refreshes both ceiling boxes on the edge.
+    // Initialised to the parameter's own default so the first tick after a
+    // session that loads TP ON still counts as an edge.
+    bool shownTpMode = false;
 
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit
     // end; an empty pass flashes the button in `warn` (wordless readout).

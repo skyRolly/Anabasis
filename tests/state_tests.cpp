@@ -3495,9 +3495,20 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
         return;
     title->onClick();
 
-    // The same expression `resized()` centres the panel with.
-    const auto panel = ed->getLocalBounds().withSizeKeepingCentre (400, 232);
-    const auto copyArea = panel.reduced (30, 26).withTrimmedBottom (232 - 26 - 150);
+    // The same expression `resized()` centres the panel with — 440×290 since
+    // the About layout took the sibling's geometry (2026-08-05). It read
+    // 400×232 for a commit after that, so the sampled band no longer lined up
+    // with the content inset and the heuristic was measuring a different strip
+    // than it claimed to (it still passed, which is why it needed reading).
+    //
+    // The copy area is the panel's content inset, `reduced (30, 26)` — the same
+    // expression `Backdrop::paint` uses — trimmed to the height the copy stack
+    // actually occupies: 38 title + 20 subtitle + 14 + 18 version + 18 vendor
+    // + 10 + 60 description + 6 + 16 copyright = 200 px, of the 238 the inset
+    // leaves. Sampling only that band keeps the "textured rows" count about the
+    // copy rather than about the empty glass beneath it.
+    const auto panel = ed->getLocalBounds().withSizeKeepingCentre (440, 290);
+    const auto copyArea = panel.reduced (30, 26).withHeight (200);
     const auto shot = ed->createComponentSnapshot (copyArea, false);
     check (shot.getWidth() == copyArea.getWidth() && shot.getHeight() > 0,
            "about: (premise) the panel's copy area rendered");
@@ -4064,6 +4075,45 @@ static void testTheCeilingAdvertisesTheUnitItEnforces()
     check (ceil->getCurrentValueAsText().endsWith (" dB")
              && ! ceil->getCurrentValueAsText().contains ("dBTP"),
            "ceilingUnit: turning true-peak mode back off restores the weaker claim");
+
+    // ...AND THE READOUT THE USER ACTUALLY LOOKS AT, which the parameter half
+    // above does not reach. A JUCE Slider caches its value-box label and
+    // recomputes it only in `updateText()` — on a value change, a
+    // `setTextBoxStyle`, a relayout or a LookAndFeel change, never on a
+    // repaint. Flipping TP does none of those, so the box kept the previous
+    // suffix while `getText` returned the right one: the host was told the
+    // truth and the plugin's own panel was not. Checked on the LABEL rather
+    // than through `getTextFromValue`, because the cached string is the defect
+    // — a live re-computation would pass either way.
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+        auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+        check (ed != nullptr, "ceilingUnit: (premise) the editor was created");
+        if (ed == nullptr)
+            return;
+
+        auto* knob = findSliderByTitle (*ed, ceil->getName (24));
+        check (knob != nullptr, "ceilingUnit: (premise) a Ceiling knob was found");
+        if (knob == nullptr)
+            return;
+        auto* box = findChildLabel (*knob);
+        check (box != nullptr, "ceilingUnit: (premise) the knob has a value box");
+        if (box == nullptr)
+            return;
+
+        check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
+               "ceilingUnit: the value box opens in the shipped default's unit");
+
+        tp->setValueNotifyingHost (1.0f);
+        ed->refreshCeilingUnit();          // the 24 Hz tick's edge, driven directly
+        check (box->getText().endsWith (" dBTP"),
+               "ceilingUnit: engaging true-peak mode refreshes the value box, not just getText");
+
+        tp->setValueNotifyingHost (0.0f);
+        ed->refreshCeilingUnit();
+        check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
+               "ceilingUnit: …and disengaging it refreshes back");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4160,8 +4210,18 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
                     sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
                 }
         }
-        const double rmsL = std::sqrt (sumSq[0] / (256.0 * 512.0));
-        const double rmsR = std::sqrt (sumSq[1] / (256.0 * 512.0));
+        // DERIVED from the loop, not written out again: the divisor read
+        // `256.0 * 512.0` against a settled half of 30 × 512 samples — an ~8.5×
+        // over-division. It did not fail (0.25-amplitude sines settle near
+        // 0.177 RMS, and even 0.061 clears the 0.05 bar), which is the whole
+        // problem: a permanent guard was passing by 20 % instead of 3.5× and
+        // printing a wrong number in its own failure message, so the next
+        // ordinary level change would have turned it red for a reason that was
+        // never about the channels. `blocks - blocks / 2` is the same count the
+        // `b >= blocks / 2` gate admits, at any `blocks`.
+        const double settledSamples = (double) (blocks - blocks / 2) * 512.0;
+        const double rmsL = std::sqrt (sumSq[0] / settledSamples);
+        const double rmsR = std::sqrt (sumSq[1] / settledSamples);
         juce::String msg;
         msg << "stereoWrapper (" << tag << "): LEFT carries audio (rmsL="
             << (float) rmsL << " rmsR=" << (float) rmsR << ")";

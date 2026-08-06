@@ -6,7 +6,34 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **PR #8 review round — ADR-0015 and the true-peak honesty pass
+**Last updated:** for the **second PR #8 review round — the Ceiling unit's missing refresh half
+(2026-08-06)**. The mode-aware unit was correct on the parameter side and its test passed there,
+but nothing refreshed the CACHED value-box label: a JUCE `Slider` recomputes it only in
+`updateText()` — on a value change, a `setTextBoxStyle`, a relayout or a look-and-feel change,
+never on a repaint — and flipping TP does none of those (the graph-well branch that used to call
+`resized()` from the tick is a visibility flip now). So a generic host editor showed the right
+unit while the plugin's own readout carried exactly the stale claim the change existed to remove.
+`refreshCeilingUnit()` runs on the same 24 Hz tick, edge-gated, refreshing both ceiling controls
+(one parameter shown twice), and is **public for the same reason `refreshInternalSettingsBoxes`
+is** — no message loop runs in the headless suite, and this is the second time a state→widget
+direction has been the missing half of a change that looked complete from the parameter side. The
+guard now checks the LABEL, not a live re-computation, and was mutation-verified: removing the two
+`updateText()` calls turns it red. Also corrected: the About copy said "hold a true-peak ceiling",
+the same inter-sample over-claim one panel over; the About snapshot test still reconstructed the
+old 400×232 geometry, so its "textured rows" heuristic sampled a band that no longer matched the
+content inset (440×290, copy stack 200 px of the 238 the inset leaves); the stereo guard's `run`
+lambda divided by `256.0 * 512.0` where the settled half is 30 × 512 — an ~8.5× over-division that
+left a permanent guard passing by 20 % instead of 3.5× and printing wrong numbers in its own
+failure message (now derived from the loop's own `blocks`); KI-009 and the CHANGELOG said "seven
+configurations" against their own six-item lists; both `nearest`-rule comments still worked their
+examples against the seven-step ladder (92 → 90, 50 → 80, 300 → 200, which are now 85/75/150); and
+the manual narrated the GR history as the bottom view a fresh instance shows, when `int_spectrumOn`
+defaults true so the well opens on the spectrum, and still described the TP meter row as something
+you hide rather than something you show. HANDOVER's Pending Tasks row gained item (g): an explicit
+owner acknowledgement of ADR-0015's **schema** half is owed — the directive named the display
+removal, the field removal followed from it, and a serialization change is its own Hard Stop.
+Suites 233 + 426.
+Previous: the **PR #8 review round — ADR-0015 and the true-peak honesty pass
 (2026-08-06)**. The round-2 batch changed three things the repository's own rules put behind a
 decision record — `ceiling`'s default, `truePeakMode`'s default, and the removal of the
 `int_meterTargets` session field — and landed them with prose justification only.
