@@ -1198,6 +1198,19 @@ static void testFactoryPresets()
            "factory: an unnamed parameter returns to its default (defaults + intents)");
 
     // Ceiling lock: browsing factory presets never moves a locked ceiling.
+    //
+    // WHICH HALF OF THE RULE THIS REACHES, since it is no longer both. An apply
+    // writes every non-excluded parameter to its default and then the table's
+    // intents over the top, and the lock skips the parameter in that one walk —
+    // so with no factory table naming `ceiling` (EDM Club's −0.5 override went
+    // with the ADR-0015 default change, which made it redundant), this check
+    // exercises the DEFAULTS pass alone: unlocked, the apply would reset the
+    // ceiling to −0.1, and the lock is what keeps it at −6. That is a real
+    // assertion, not a vacuous one. The other half — an OVERRIDE aimed at the
+    // locked parameter — has no expression left in the shipped bank, and is
+    // pinned instead by `testALockedCeilingSurvivesAPresetThatNamesIt` below,
+    // on the file-preset path where a document naming `ceiling` is reachable
+    // without adding a preset to the product to test with.
     auto* ceiling = apvts.getParameter (pid::ceiling);
     ceiling->setValueNotifyingHost (ceiling->getNormalisableRange().convertTo0to1 (-6.0f));
     proc.internalState.state().setProperty (iid::ceilingLock, true, nullptr);
@@ -1244,6 +1257,74 @@ static void testFactoryPresets()
         check (! p2.presetDirty(),
                "dirtyDatum: a session load drops the datum instead of marking the loaded name");
     }
+}
+
+// ---------------------------------------------------------------------------
+// The OTHER half of "browsing presets never moves a locked ceiling"
+// (DESIGN §4.2): a preset that explicitly NAMES the locked parameter.
+//
+// `testFactoryPresets` above reaches the defaults half only — no factory table
+// names `ceiling` since ADR-0015 made EDM Club's −0.5 override redundant, and
+// adding one to the shipped bank to have something to test with would change
+// the product to suit the suite. The file-preset path expresses the collision
+// directly: a `PARAM` element for `ceiling` IS an override aimed at a locked
+// parameter, and both apply paths share the rule (`applyOnePresetValue`'s skip
+// and `applyFactoryPreset`'s, the same `internal.ceilingLocked()` test).
+//
+// Driven through `applyPreset (const XmlElement&, …)` — the overload the
+// wrapper's own preset ring uses, so this is the shipped path with the
+// filesystem left out, not a private hook opened for the test.
+//
+// The UNLOCKED pass is the premise that makes the locked one mean something: it
+// proves the document really does move the ceiling, so the locked check cannot
+// pass by describing a preset that was never going to write it. A second,
+// unlocked parameter rides along to prove the apply ran at all rather than
+// bailing out early.
+static void testALockedCeilingSurvivesAPresetThatNamesIt()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceiling = proc.apvts.getParameter (pid::ceiling);
+    auto* knee    = proc.apvts.getParameter (pid::compKnee);
+    check (ceiling != nullptr && knee != nullptr,
+           "lockedOverride: (premise) the ceiling and the probe parameter exist");
+    if (ceiling == nullptr || knee == nullptr)
+        return;
+
+    const auto& ceilRange = ceiling->getNormalisableRange();
+    const float parked = -6.0f;              // away from BOTH the default and the preset's value
+    auto park = [&] { ceiling->setValueNotifyingHost (ceilRange.convertTo0to1 (parked)); };
+    auto ceilingNow = [&] { return proc.apvts.getRawParameterValue (pid::ceiling)->load(); };
+
+    juce::XmlElement doc ("AnabasisPreset");
+    auto* pc = doc.createNewChildElement ("PARAM");
+    pc->setAttribute ("id", pid::ceiling);
+    pc->setAttribute ("value", -12.0);
+    auto* pk = doc.createNewChildElement ("PARAM");
+    pk->setAttribute ("id", pid::compKnee);
+    pk->setAttribute ("value", 3.0);
+
+    PresetManager pm (proc.apvts, proc.internalState);
+    juce::StringArray mask;
+
+    // Unlocked: the override lands. Without this the locked check below would
+    // also pass against a document that names nothing.
+    park();
+    proc.internalState.state().setProperty (iid::ceilingLock, false, nullptr);
+    check (pm.applyPreset (doc, mask), "lockedOverride: (premise) the document applies");
+    check (std::abs (ceilingNow() - (-12.0f)) < 0.01f,
+           "lockedOverride: (premise) an UNLOCKED ceiling does take the preset's value");
+
+    // Locked: the same document, the same value, skipped.
+    park();
+    proc.internalState.state().setProperty (iid::ceilingLock, true, nullptr);
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (9.0f));
+    check (pm.applyPreset (doc, mask), "lockedOverride: (premise) the locked apply succeeds");
+    check (std::abs (ceilingNow() - parked) < 0.01f,
+           "lockedOverride: a preset override naming the locked ceiling does not move it");
+    check (std::abs (proc.apvts.getRawParameterValue (pid::compKnee)->load() - 3.0f) < 0.01f,
+           "lockedOverride: …while the rest of the same preset still applies");
+
+    proc.internalState.state().setProperty (iid::ceilingLock, false, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -4352,6 +4433,7 @@ int main (int argc, char** argv)
         testDetachAndReengageGrammar();
         testUndoIsPerSlotGestureCoalescedAndMaskWide();
         testFactoryPresets();
+        testALockedCeilingSurvivesAPresetThatNamesIt();
         testMeterResetClearsSessionHolds();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
