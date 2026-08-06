@@ -4195,6 +4195,36 @@ static void testTheCeilingAdvertisesTheUnitItEnforces()
         check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
                "ceilingUnit: …and disengaging it refreshes back");
     }
+
+    // AN EDITOR OPENED ON A TP-ON SESSION, then switched off before the first
+    // refresh. This is the case a hard-coded `shownTpMode = false` seed got
+    // wrong: the attachment renders " dBTP" at construction, the cache claims
+    // off, and the edge gate then sees `tp == shownTpMode == false` and skips
+    // the refresh — leaving " dBTP" over a sample-peak ceiling. Reachable in
+    // ~42 ms of real time (a host write, a state load, the other TP toggle),
+    // and permanent until something else forces a recompute.
+    {
+        tp->setValueNotifyingHost (1.0f);
+        std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+        auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+        check (ed != nullptr, "ceilingUnit: (premise) the TP-on editor was created");
+        if (ed == nullptr)
+            return;
+
+        auto* knob = findSliderByTitle (*ed, ceil->getName (24));
+        auto* box  = knob != nullptr ? findChildLabel (*knob) : nullptr;
+        check (box != nullptr, "ceilingUnit: (premise) the TP-on editor's value box was found");
+        if (box == nullptr)
+            return;
+        check (box->getText().endsWith (" dBTP"),
+               "ceilingUnit: (premise) an editor opened on TP-on shows dBTP straight away");
+
+        // The flip the seed has to have recorded, before any tick runs.
+        tp->setValueNotifyingHost (0.0f);
+        ed->refreshCeilingUnit();
+        check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
+               "ceilingUnit: TP off right after opening on TP-on still refreshes the box");
+    }
 }
 
 // ---------------------------------------------------------------------------

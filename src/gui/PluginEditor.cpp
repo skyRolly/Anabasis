@@ -790,6 +790,24 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     tooltipsOn = (bool) ist.getProperty (iid::tooltipsOn, false);
     applyTooltipsEnabled();
 
+    // The Ceiling boxes already show the right unit: their attachments were
+    // created above, and each rendered its text through the parameter's own
+    // `getText`, i.e. through `CeilingUnitSource`. So there is nothing to
+    // refresh here — only the CACHE to align with what is on screen, which is
+    // why this is an assignment and not a `refreshCeilingUnit()` call (that
+    // would repaint both boxes to redraw the string they already carry).
+    // Reading the same predicate the suffix came from is what makes
+    // "shownTpMode == the mode the visible suffix reflects" true by
+    // construction rather than by coincidence — including in the unwired-holder
+    // case, where both say off.
+    //
+    // BEFORE `startTimerHz`, deliberately: the tick is the one reader of this
+    // member, and seeding after arming it would make correctness depend on the
+    // message loop not running mid-constructor. It cannot — but that is the
+    // "safe by ordering" argument this file declines elsewhere, and the fix
+    // costs one line's placement.
+    shownTpMode = processor.ceilingUnit.truePeakEngaged();
+
     startTimerHz (24);
     seedAnimatedFromValues();          // after every attachment — see there
     refreshPresetDisplay (true);
@@ -1495,7 +1513,14 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
 // times a second.
 void AnabasisAudioProcessorEditor::refreshCeilingUnit()
 {
-    const bool tp = processor.apvts.getRawParameterValue (pid::truePeakMode)->load() >= 0.5f;
+    // Read through `CeilingUnitSource`, NOT through the raw parameter: that
+    // predicate is what the value-text lambda itself consults, so the gate and
+    // the suffix cannot disagree by construction. A raw read is the same answer
+    // whenever the holder is wired — and a different one when it is not, where
+    // the lambda falls back to " dB" while a raw `true` would say the box shows
+    // " dBTP". One decider, one truth; the constructor seeds `shownTpMode` from
+    // this same call for the same reason.
+    const bool tp = processor.ceilingUnit.truePeakEngaged();
     if (tp == shownTpMode)
         return;
     shownTpMode = tp;

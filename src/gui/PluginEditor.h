@@ -350,8 +350,18 @@ private:
     // the box kept the previous suffix until the ceiling itself was touched:
     // exactly the stale claim the mode-aware unit exists to remove. The tick
     // watches the mode and refreshes both ceiling boxes on the edge.
-    // Initialised to the parameter's own default so the first tick after a
-    // session that loads TP ON still counts as an edge.
+    //
+    // THIS CACHES WHAT THE BOXES ARE CURRENTLY SHOWING, not the product
+    // default — so it is SEEDED IN THE CONSTRUCTOR from the very predicate that
+    // decided the suffix (`CeilingUnitSource::truePeakEngaged()`), never
+    // guessed here. Hard-coded `false` was wrong for an editor opened on a
+    // TP-ON session: the attachment renders " dBTP" at construction while the
+    // cache claims off, and if the mode then went OFF before the first tick
+    // (~42 ms — a host write, a state load, the other TP toggle) the gate saw
+    // `tp == shownTpMode == false`, skipped `updateText()`, and left " dBTP"
+    // standing over a sample-peak ceiling until something else forced a
+    // recompute. The `= false` below only keeps the member from being
+    // indeterminate before that seed runs; it carries no meaning.
     bool shownTpMode = false;
 
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit

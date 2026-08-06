@@ -6,8 +6,25 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **DESIGN §4.3 attribution repair and the locked-override test
-(2026-08-06)**. The §4.3 supersession banner credited all of its rows to **ADR-0015**, including
+**Last updated:** for the **`shownTpMode` construction seed (2026-08-06)**. The editor's cached
+TP-display flag was hard-coded `false`, but it caches *what the Ceiling boxes are showing*, not
+the product default — and those two differ for an editor opened on a TP-ON session, where the
+attachment renders " dBTP" at construction. If the mode then went OFF before the first 24 Hz
+tick (~42 ms: a host write, a state load, the other TP toggle), the edge gate saw
+`tp == shownTpMode == false`, skipped the refresh, and left " dBTP" standing over a sample-peak
+ceiling until something else forced a recompute. Seeded in the constructor instead — from
+`CeilingUnitSource::truePeakEngaged()`, the predicate the value-text lambda itself consults, so
+"the cache equals the mode the visible suffix reflects" holds by construction rather than by
+coincidence (a raw parameter read agrees only while the holder is wired; with it unwired the
+lambda falls back to " dB" while a raw `true` would claim otherwise). `refreshCeilingUnit`
+now reads that same predicate, so the gate and the suffix cannot disagree. Placed BEFORE
+`startTimerHz` so the tick — the member's one reader — cannot observe the placeholder, rather
+than relying on the message loop not running mid-constructor. It is an assignment and not a
+`refreshCeilingUnit()` call because nothing needs refreshing at that point: only the cache has
+to catch up with what is already on screen. The guard gained the reported scenario
+(editor created TP-on, mode off before any tick) and is mutation-verified — restoring the
+hard-coded seed turns it red. Suites 233 + 436.
+Previous: the **DESIGN §4.3 attribution repair and the locked-override test (2026-08-06)**. The §4.3 supersession banner credited all of its rows to **ADR-0015**, including
 `int_uiScale`'s ladder (ADR-0017's), and did not mention **ADR-0016** at all while the
 `int_spectrumOn` row below it still read "spectrum overlay … dismissible". That is the widening
 the three-record split exists to prevent, committed in the one document whose job is to point at
