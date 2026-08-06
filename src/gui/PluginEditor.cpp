@@ -481,6 +481,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         s->setTextBoxStyle (juce::Slider::TextBoxRight, false, 62, 14);
     }
     setupCombo (ditherBox, pid::dither, tipFor (pid::dither));
+    ditherCaption.setText ("Dither", juce::dontSendNotification);
+    ditherCaption.setJustificationType (juce::Justification::centred);
+    ditherCaption.setColour (juce::Label::textColourId, colours::textDim);
+    ditherCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    addAndMakeVisible (ditherCaption);
     setupToggle (shapingToggle, pid::ditherShaping, "SHAPE", tipFor (pid::ditherShaping));
     setupToggle (compToggle, pid::loudnessComp, "COMP", tipFor (pid::loudnessComp));
     setupToggle (deltaToggle, pid::deltaMonitor, "DELTA", tipFor (pid::deltaMonitor));
@@ -1247,10 +1252,17 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
     // than relocating it. An earlier revision of this comment said "in the zone
     // HEADER, top-right beside the caption", which describes a layout the code
     // never produced.
+    //
+    // FULL panel width since 0.1.1 (owner directive): the half-width box
+    // clipped "Transparent" to "Transpar…" in the LIMITER's style combo, and
+    // the fix is applied to all FOUR zones so the row reads as one system —
+    // each combo spans its zone body with the same 10 px side margins the
+    // half-width box already had on its right (8 px panel reduce + 2 px cell
+    // reduce, now symmetric).
     {   // COMP
         auto a = panel (0);
         auto boxRow = a.removeFromTop (24);
-        detectorBox.setBounds (boxRow.removeFromRight (boxRow.getWidth() / 2).reduced (2, 1));
+        detectorBox.setBounds (boxRow.reduced (2, 1));
         placeRow (a, { { &ratioK, &ratioL }, { &thresholdK, &thresholdL } });
         placeRow (a, { { &attackK, &attackL }, { &releaseK, &releaseL } });
         placeRow (a, { { &kneeK, &kneeL }, { &compMixK, &compMixL } });
@@ -1262,7 +1274,7 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
     {   // CLIP / COLOUR
         auto a = panel (1);
         auto boxRow = a.removeFromTop (24);
-        modelBox.setBounds (boxRow.removeFromRight (boxRow.getWidth() / 2).reduced (2, 1));
+        modelBox.setBounds (boxRow.reduced (2, 1));
         placeRow (a, { { &shapeK, &shapeL }, { &driveK, &driveL } });
         placeRow (a, { { &clipMixK, &clipMixL }, { &depthK, &depthL } });
         placeRow (a, { { &balanceK, &balanceL }, { &colToneK, &colToneL } });
@@ -1282,7 +1294,7 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
     {   // LIMITER
         auto a = panel (2);
         auto boxRow = a.removeFromTop (24);
-        styleBox.setBounds (boxRow.removeFromRight (boxRow.getWidth() / 2).reduced (2, 1));
+        styleBox.setBounds (boxRow.reduced (2, 1));
         placeRow (a, { { &limGainK, &limGainL }, { &ceilingK, &ceilingL } });
         placeRow (a, { { &lookaheadK, &lookaheadL }, { &limReleaseK, &limReleaseL } });
         placeRow (a, { { &linkK, &linkL }, { &preserveK, &preserveL } });
@@ -1295,7 +1307,7 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
     {   // EQ (the densest panel: three-across rows, smaller cells)
         auto a = panel (3);
         auto boxRow = a.removeFromTop (24);
-        eqPosBox.setBounds (boxRow.removeFromRight (boxRow.getWidth() / 2).reduced (2, 1));
+        eqPosBox.setBounds (boxRow.reduced (2, 1));
         placeRow (a, { { &eqTiltK, &eqTiltL }, { &lsFreqK, &lsFreqL }, { &lsGainK, &lsGainL } }, 78);
         placeRow (a, { { &hsFreqK, &hsFreqL }, { &hsGainK, &hsGainL }, { &b1FreqK, &b1FreqL } }, 78);
         placeRow (a, { { &b1GainK, &b1GainL }, { &b1QK, &b1QL }, { &b2FreqK, &b2FreqL } }, 78);
@@ -1328,10 +1340,17 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         deltaToggle.setBounds (toggles.removeFromLeft (92).reduced (2, 14));
         freezeToggle.setBounds (toggles.removeFromLeft (100).reduced (2, 14));
 
-        auto mid = util.reduced (12, 14);
-        ditherBox.setBounds (mid.removeFromLeft (100));
-        mid.removeFromLeft (8);
-        shapingToggle.setBounds (mid.removeFromLeft (88));
+        // Caption UNDER the cluster, aligned with the fader captions to its
+        // left (same removeFromBottom(12) grammar), centred on the combo+SHAPE
+        // pair so it names the group, not one control.
+        auto mid = util.reduced (12, 4);
+        const int clusterW = 100 + 8 + 88;
+        auto cluster = mid.removeFromLeft (clusterW);
+        ditherCaption.setBounds (cluster.removeFromBottom (12));
+        auto row = cluster.withSizeKeepingCentre (clusterW, 26);
+        ditherBox.setBounds (row.removeFromLeft (100));
+        row.removeFromLeft (8);
+        shapingToggle.setBounds (row.removeFromLeft (88));
     }
 
     // Macro row: read-only L / C / T (badges land with the §5.3 grammar).
@@ -1454,7 +1473,7 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
         &b1FreqL, &b1GainL, &b1QL, &b2FreqL, &b2GainL, &b2QL,
         &eqPosBox,
         &inputGainK, &scHpfK, &inputGainL, &scHpfL,
-        &ditherBox, &shapingToggle,
+        &ditherBox, &ditherCaption, &shapingToggle,
         &macroLoudnessK, &macroCharacterK, &macroToneK,
         &macroLoudnessL, &macroCharacterL, &macroToneL,
     };

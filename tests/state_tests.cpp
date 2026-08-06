@@ -3668,13 +3668,20 @@ static void testTheGraphWellViewsOnlyClaimTheirModeChips()
                                  juce::Time::getCurrentTime(), 1, false);
     };
 
-    // Spectrum → GR: the "GR" chip sets int_spectrumOn false.
+    // The 0.1.1 switch is a two-segment SPEC|GR pill shared by both views
+    // (`abgui::graph_switch`): a press selects the SIDE OF THE DIVIDER it
+    // lands on, so pressing the active segment is a no-op and pressing the
+    // other one switches. Probe points, derived from the one geometry both
+    // views key on: W-10 sits in the GR (right) half, W-60 in the SPEC (left)
+    // half of the 78 px pill at inset 6.
+
+    // Spectrum view: GR segment switches away, SPEC segment is a no-op.
     {
         SpectrumView view (proc);
         view.setBounds (0, 0, 300, 120);
 
         check (view.hitTest (view.getWidth() - 10, 10),
-               "spectrumClicks: (premise) the chip corner is hit-tested");
+               "spectrumClicks: (premise) the switch corner is hit-tested");
         check (! view.hitTest (10, 60),
                "spectrumClicks: a click over the trace is not claimed by the overlay");
         check (! view.hitTest (view.getWidth() - 10, 60),
@@ -3684,18 +3691,21 @@ static void testTheGraphWellViewsOnlyClaimTheirModeChips()
         view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
         check ((bool) ist.getProperty (iid::spectrumOn, false),
                "spectrumClicks: a press over the trace does not switch the mode");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 60.0f, 10.0f }));
+        check ((bool) ist.getProperty (iid::spectrumOn, false),
+               "spectrumClicks: pressing the active SPEC segment is a no-op");
         view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
         check (! (bool) ist.getProperty (iid::spectrumOn, true),
-               "spectrumClicks: a press on the chip switches the well to GR");
+               "spectrumClicks: pressing the GR segment switches the well to GR");
     }
 
-    // GR → spectrum: the mirrored "SPEC" chip sets int_spectrumOn true.
+    // GR view: SPEC segment switches back, GR segment is a no-op.
     {
         GrHistoryView view (proc);
         view.setBounds (0, 0, 300, 120);
 
         check (view.hitTest (view.getWidth() - 10, 10),
-               "grChip: (premise) the chip corner is hit-tested");
+               "grChip: (premise) the switch corner is hit-tested");
         check (! view.hitTest (10, 60),
                "grChip: a click over the history trace is not claimed");
         check (! view.hitTest (view.getWidth() - 10, 60),
@@ -3706,8 +3716,11 @@ static void testTheGraphWellViewsOnlyClaimTheirModeChips()
         check (! (bool) ist.getProperty (iid::spectrumOn, true),
                "grChip: a press over the trace does not switch the mode");
         view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
+        check (! (bool) ist.getProperty (iid::spectrumOn, true),
+               "grChip: pressing the active GR segment is a no-op");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 60.0f, 10.0f }));
         check ((bool) ist.getProperty (iid::spectrumOn, false),
-               "grChip: a press on the chip switches the well back to the spectrum");
+               "grChip: pressing the SPEC segment switches the well back to the spectrum");
     }
 }
 

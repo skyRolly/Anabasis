@@ -301,6 +301,11 @@ private:
     Knob inputGainK, scHpfK;
     juce::Label inputGainL, scHpfL;
     juce::ComboBox ditherBox;
+    // The Dither cluster's caption (0.1.1, owner directive): the combo said
+    // Off/16-bit/24-bit and SHAPE said SHAPE, and nothing said "Dither" — the
+    // one utility-strip control group with no name. Same face and placement
+    // grammar as the fader captions beside it (label under the control).
+    juce::Label ditherCaption;
     juce::ToggleButton shapingToggle, compToggle, deltaToggle, freezeToggle;
 
     // -- macro row (Advanced: read-only with detach badges, §6.3) ------------
