@@ -23,8 +23,10 @@ void SpectrumView::visibilityChanged()
         clock.stop();
 }
 
-// The mode chip's hit-area (the corner affordance that flips the graph well to
-// the GR history — formerly the dismiss ×): the top-right corner. ONE
+// The mode chip's hit-area — the top-right corner affordance that flips the
+// graph well to the GR history. (It was the spectrum's dismiss × until
+// 2026-08-05; same corner, same rectangle, different meaning — the well now
+// always shows one of the two views, so there is nothing to dismiss TO.) ONE
 // definition, because `hitTest` and `mouseDown` both key on it and a click this
 // view accepts but then ignores is exactly the swallowing the hitTest below
 // removes — reintroduced one pixel at a time if the two rectangles were
@@ -38,7 +40,7 @@ juce::Rectangle<int> SpectrumView::chipHitArea() const noexcept
 }
 
 // ONLY the chip is interactive. Leaving JUCE's default (hit-test true
-// everywhere) made this overlay consume every click in the metering strip and
+// everywhere) made this view consume every click in the metering strip and
 // do nothing with it — the one region of the editor that took a click with no
 // affordance and no effect. `CurveView` opts out wholesale with
 // `setInterceptsMouseClicks (false, false)`; this view cannot, because it owns
@@ -51,26 +53,27 @@ juce::Rectangle<int> SpectrumView::chipHitArea() const noexcept
 // `hitTest` is what decides membership of JUCE's "under the mouse" set, so
 // declining a region declines EVERYTHING about it, not just the click.
 //
-//   1. THE TOOLTIP NARROWS. `setTooltip ("Spectrum")` now fires over the ×
-//      only, not over the whole trace: there is no way to stop claiming clicks
-//      in a region while still claiming the pointer there. The wording is a C8
-//      owner-supplied TODO, so the scoping is a brand-pass call if it is wanted
-//      back — and wanting it back means intercepting everywhere again, i.e.
-//      re-accepting consequence 2 below.
+//   1. THE TOOLTIP NARROWS to the chip. That is now the RIGHT scope rather
+//      than a cost: the tooltip names the chip's action ("Switch to the
+//      gain-reduction history", set in the constructor), so it belongs over the
+//      chip and nowhere else. It was written the other way round when the
+//      string was the identifier `"Spectrum"` and the wording was still an
+//      open C8 owner TODO — the R2 item-11 directive discharged that TODO and
+//      supplied the action wording, so there is no longer a brand-pass question
+//      about widening it back. Widening would mean intercepting everywhere
+//      again, i.e. re-accepting consequence 2 below, for a hint that would then
+//      be wrong over the trace.
 //
-//   2. CLICKS OVER THE TRACE NOW REACH WHATEVER IS BENEATH — today the editor
+//   2. CLICKS OVER THE TRACE REACH WHATEVER IS BENEATH — today the editor
 //      itself, which is the correct outcome and the point of the change, but it
 //      is a live routing decision rather than a void. The editor installs no
-//      tooltip on its background and no click handler under this strip, so
+//      tooltip on its background and no click handler under the graph well, so
 //      nothing happens there now. The thing to know before ADDING one: anything
-//      placed under the spectrum's footprint becomes reachable through the
-//      overlay while it is showing, which is a different arrangement from the
-//      dismissible overlay it looks like on screen. If a future affordance
-//      lands there and must NOT be clickable through the trace, the answer is
-//      to widen this hit-area — not to revert to intercepting everywhere, which
-//      would restore the swallow this removed. Recorded for the brand pass
-//      beside the tooltip question, since the two are the same trade seen from
-//      opposite ends.
+//      placed under this view's footprint becomes reachable through the trace
+//      while this mode is showing. If a future affordance lands there and must
+//      NOT be clickable through the trace, the answer is to widen this
+//      hit-area — not to revert to intercepting everywhere, which would restore
+//      the swallow this removed.
 bool SpectrumView::hitTest (int x, int y)
 {
     return chipHitArea().contains (x, y);
