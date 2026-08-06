@@ -38,7 +38,11 @@ static void check (bool condition, const char* what)
 // only while the compressor is below its knee and the limiter below its
 // ceiling. The knee bottom at defaults (threshold 0 dBFS, 6 dB knee) is
 // −3 dBFS ≈ 0.708 linear; the ±0.25 peak here (−12 dBFS) sits well under it
-// AND under the −1 dBTP ceiling. Raise this level past −3 dBFS and the test
+// AND under the ceiling (0.989 linear at the −0.1 dB default since ADR-0015;
+// it read −1 dBTP / 0.891 before, and the margin argument holds at either).
+// This test INHERITS the defaults deliberately — "all-defaults is a bit-exact
+// null" is its whole claim — so unlike the inv-4 guards it must not pin them.
+// Raise this level past −3 dBFS and the test
 // starts exercising the knee against trim-driven detector filtering — a
 // different (and weaker) claim. The assert below pins the margin.
 static void testNullWithDefaults()
@@ -178,7 +182,7 @@ static void testControlsPrimedOnPrepare()
     engine.prepare (sr, block, 2);
 
     anabasis::EngineParameters p;
-    p.ceilingDbTp = -12.0f;                 // 0.251 linear, far from the 0.891 default
+    p.ceilingDbTp = -12.0f;                 // 0.251 linear, far from the 0.989 default
     // This test pins the PRIMING of the engine's control smoothers, so the
     // detector must be memoryless and the attack instant: the true-peak
     // estimator honestly reports inter-sample overshoot at the 0→0.9 step
@@ -310,6 +314,19 @@ static void testOutputNeverExceedsCeiling()
         p.eqPosition         = eqPos;
         p.eqHighShelfGainDb  = 12.0f;    // in Post position this boosts the LIMITED signal
         p.eqHighShelfFreqHz  = 1000.0f;  // low corner so the 5 kHz probe sits in the boost
+        // BOTH PINNED, not inherited. This test is about the CLAMP — that it
+        // is downstream of the Post EQ and holds under a +12 dB shelf — not
+        // about whatever the product currently ships as its default. Left
+        // inheriting, a default move silently re-calibrates the guard: the
+        // ceiling going −1 → −0.1 (ADR-0015) raises the bar the clamp has to
+        // hold and makes both assertions easier, and `truePeakMode` going
+        // on → off changes which mechanism is under test. −1 dB is the value
+        // this stimulus was written against, and FALSE is the harder case for
+        // the sample-level backstop: with true-peak mode on, the TP-driven
+        // gain keeps the signal further from the clamp, so the clamp itself
+        // does less of the work this test exists to prove it does.
+        p.ceilingDbTp        = -1.0f;
+        p.truePeakMode       = false;
         const float ceilingLin = std::pow (10.0f, p.ceilingDbTp / 20.0f);
 
         juce::AudioBuffer<float> buf (2, 512);
@@ -950,7 +967,8 @@ static void testOfflineEntryClearsEqStateOnAPositionChange()
 // The stimulus is chosen so nothing else moves: 0.05 peak with +12 dB of
 // input gain is 0.2, still under the −3 dBFS comp knee bottom in BOTH runs,
 // and the clipper's level compensation leaves both outputs near 0.2 — well
-// below the −1 dBTP ceiling, so the limiter and the clamp stay out of it and
+// below the ceiling (0.989 at the default; it was 0.891 when this was
+// written), so the limiter and the clamp stay out of it and
 // what the FFT sees is the clipper alone.
 static void testLimiterPushDoesNotDriveTheClipper()
 {
@@ -1609,6 +1627,12 @@ static void testCeilingUnderOs()
         p.oversample  = (anabasis::OversampleFactor) f;
         p.limGainDb   = 12.0f;
         p.clipDriveDb = 6.0f;
+        // Pinned for the same reason as `testOutputNeverExceedsCeiling`: the
+        // property is "down-filter ringing after the limiter cannot get past
+        // the base-rate clamp", which is a statement about the clamp at a
+        // known ceiling, not about the shipped default.
+        p.ceilingDbTp  = -1.0f;
+        p.truePeakMode = false;
         const float ceilingLin = std::pow (10.0f, p.ceilingDbTp / 20.0f);
         juce::AudioBuffer<float> buf (2, 512);
         float maxOut = 0.0f;
@@ -3687,6 +3711,14 @@ static void testLimiterAlignment()
     p.truePeakMode      = false;
     p.transientPreserve = 0.0f;
     p.limAutoRelease    = false;
+    // The ceiling joins them: the two checks on the peak sample are TWO-SIDED
+    // (`<= ceilingLin` and `>= ceilingLin * 0.995`), so they assert that the
+    // envelope arrives at the ceiling and has not released off it — a claim
+    // calibrated against a known ceiling and a `steady` level chosen to sit
+    // under it. Inherited, a default move retunes the window: at −0.1 the
+    // 0.25 steady level sits further below the ceiling than the stimulus was
+    // written for. −1 dB is that calibration.
+    p.ceilingDbTp       = -1.0f;
     const int w = 96;
 
     const float steady  = 0.25f;
