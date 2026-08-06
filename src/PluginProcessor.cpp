@@ -403,8 +403,22 @@ juce::AudioProcessorParameter* AnabasisAudioProcessor::getBypassParameter() cons
 
 bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        && layouts.getMainInputChannelSet()  == juce::AudioChannelSet::stereo();
+    // Stereo out always; mono OR stereo in — the sibling's contract, restored
+    // here for KI-009. Refusing mono→stereo forced hosts with a mono source to
+    // negotiate stereo→stereo and feed whatever their convention puts on the
+    // two input pins — several put the signal on ONE pin and silence on the
+    // other, and this chain is strictly dual-mono (the comp/limiter "link"
+    // shares only the detector LEVEL), so a silent input pin is a silent
+    // output channel in both modes. Accepting mono and duplicating it below
+    // removes that negotiation entirely.
+    const auto& out = layouts.getMainOutputChannelSet();
+    const auto& in  = layouts.getMainInputChannelSet();
+
+    if (out != juce::AudioChannelSet::stereo())
+        return false;
+
+    return in == juce::AudioChannelSet::stereo()
+        || in == juce::AudioChannelSet::mono();
 }
 
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -508,6 +522,14 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
+
+    // mono → stereo: duplicate the mono input into the second channel (the
+    // clear loop above just zeroed it), exactly as the sibling does. The
+    // engine is prepared from getTotalNumOutputChannels() — stereo — so both
+    // channels are processed; without this the right channel would master
+    // silence. See isBusesLayoutSupported for why mono is accepted at all.
+    if (getMainBusNumInputChannels() == 1 && buffer.getNumChannels() >= 2)
+        buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
 
     // A block the engine short-circuited produced no render-tap values:
     // publishing anyway would re-report the previous block's peaks and push a

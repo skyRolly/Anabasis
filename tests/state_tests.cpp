@@ -4439,6 +4439,54 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
         p.setStateInformation (blob.getData(), (int) blob.getSize());
         return nullptr;
     });
+
+    // mono → stereo (KI-009): the layout Anabasis REFUSED until 0.1.1. A host
+    // with a mono source then negotiated stereo→stereo and fed the signal on
+    // whichever single input pin its convention chose — and this chain is
+    // strictly dual-mono, so the other output channel mastered silence. The
+    // wrapper now accepts mono in and duplicates it; both output channels must
+    // carry the (same) programme.
+    {
+        AnabasisAudioProcessor proc;
+        check (proc.checkBusesLayoutSupported (
+                   juce::AudioProcessor::BusesLayout { { juce::AudioChannelSet::mono() },
+                                                       { juce::AudioChannelSet::stereo() } }),
+               "stereoWrapper (mono in): the mono->stereo layout is accepted");
+        const bool applied = proc.setBusesLayout (
+            juce::AudioProcessor::BusesLayout { { juce::AudioChannelSet::mono() },
+                                                { juce::AudioChannelSet::stereo() } });
+        check (applied, "stereoWrapper (mono in): the mono->stereo layout applies");
+        proc.prepareToPlay (48000.0, 512);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        double sumSq[2] = { 0.0, 0.0 };
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                // The mono programme arrives on channel 0 ONLY — channel 1 is
+                // the host-convention silence the field report describes.
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) t / 48000.0f));
+                buf.setSample (1, n, 0.0f);
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n)
+                {
+                    sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                    sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                }
+        }
+        const double rmsL = std::sqrt (sumSq[0] / (30.0 * 512.0));
+        const double rmsR = std::sqrt (sumSq[1] / (30.0 * 512.0));
+        juce::String msg;
+        msg << "stereoWrapper (mono in): BOTH output channels carry the duplicated programme (L="
+            << (float) rmsL << " R=" << (float) rmsR << ")";
+        check (rmsL > 0.05 && rmsR > 0.05, msg.toRawUTF8());
+    }
 }
 
 int main (int argc, char** argv)

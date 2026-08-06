@@ -679,6 +679,25 @@ is heard or read off a meter. The six-configuration battery stays in the suite e
 is now the permanent guard on every headless-reachable stereo path, and whichever configuration
 eventually reproduces the report becomes its seventh case.
 
+**0.1.1 addendum — the input-side mechanism, closed.** The report persisted past the round-2
+probe, so 0.1.1 re-ran the investigation as a line-by-line wrapper/bus/CMake diff against the
+sibling plus a full re-audit of every channel-asymmetric expression in the engine and
+`LookaheadLimiter`. Finding: the audible path is provably channel-symmetric (every `ch == 0`
+asymmetry is an analysis tap), and no Anabasis source line can silence one channel — but the
+**bus contract** could. Anabasis refused the mono→stereo layout the sibling accepts
+(`isBusesLayoutSupported` demanded stereo→stereo exactly), so a host with a mono source — or a
+mono input device under the standalone — was forced to negotiate stereo→stereo and feed whatever
+its convention puts on the two input pins. Several conventions put the programme on ONE pin and
+silence on the other, and this chain is strictly dual-mono (the comp/limiter stereo "link"
+shares only the detector level; nothing cross-feeds), so a silent input pin propagated to a
+silent output channel in both modes — exactly the report, and unreachable by the battery, which
+always fed both channels. Fix: `isBusesLayoutSupported` now accepts mono→stereo (the sibling's
+contract), and `processBlock` duplicates the mono input into channel 1 before the engine runs.
+The battery gained its predicted seventh case (`mono in`, programme on channel 0 only, both
+outputs asserted live). If the field setup was instead a silent left channel *delivered by the
+routing upstream* (the other mechanism the audit ranks plausible), the plugin now also survives
+the mono half of that: the host can drop to the mono layout instead of feeding a dead pin.
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

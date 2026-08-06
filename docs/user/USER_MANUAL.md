@@ -33,8 +33,8 @@ driving an adaptive chain of compression, clipping/saturation and true-peak limi
 *better*, not merely *louder*.
 
 It is a stereo audio *effect* (no MIDI): VST3 on all platforms, Audio Unit on macOS, plus a
-Standalone application. It processes **stereo in, stereo out** — it is a mastering processor
-and will not appear on mono slots.
+Standalone application. It outputs **stereo**, from a stereo or mono input — a mono source is
+duplicated to both channels before mastering (since 0.1.1).
 
 ### Who it is for
 
@@ -88,8 +88,9 @@ other DAW uses the **VST3**.
 
 ### 2.3 Load it on the master
 
-Insert Anabasis on a **stereo** track — normally the master bus, or a mix bus. (A mono slot
-will not offer it: the layout is stereo→stereo only.) You'll see the **Simple** view: the
+Insert Anabasis on a **stereo** track — normally the master bus, or a mix bus. (A mono
+source also works: it is duplicated to both channels; the *output* is always stereo.)
+You'll see the **Simple** view: the
 top bar, the big **Loudness** knob with **Ceiling**, **Character** and **Tone** around it, a
 toggle row, and the metering strip.
 
@@ -402,7 +403,8 @@ Work through these in order:
 3. **Right place / permissions?** Check the install paths — and on Linux/macOS the
    `chmod` steps — in the [Installation guide](INSTALLATION.md). If you copied by hand,
    make sure you moved the *whole* `Anabasis.vst3` **folder**.
-4. **Right kind of track?** It is a stereo effect — a mono slot will not offer it.
+4. **Right kind of track?** The output is stereo — a slot whose *output* is mono will not
+   offer it (a mono *source* into a stereo slot is fine).
 5. **Blocklisted from an earlier failed scan?** Clear the host's plug-in cache/blocklist
    entry and scan again — common after a macOS quarantine problem: the first scan fails,
    the host remembers, and never retries on its own.
