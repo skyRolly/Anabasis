@@ -209,11 +209,37 @@ void SpectrumView::paint (juce::Graphics& g)
     // where that covers fewer than 1.5 bins, the value is a Catmull-Rom
     // interpolation across the four surrounding bins; where it covers 1.5 bins
     // or more (the HF end, many bins per column), it averages every covered
-    // bin. Adapted to this analyser's state: Anamorph interpolates LINEAR
-    // magnitudes before its dB conversion, but here the smoothed arrays
-    // already hold dB (the EMA runs in dB — see `analyse`), so both regimes
-    // read dB directly. The clamp floor stays at bin 1 — the nearest-bin read
-    // never showed DC and this port keeps that exclusion.
+    // bin.
+    //
+    // BOTH REGIMES WORK IN THE dB DOMAIN, AND SO DOES THE SIBLING — this is a
+    // faithful port, not an adaptation. Worth stating outright because the
+    // sibling's names say otherwise and have now misled a review: its array is
+    // called `mags` and its readers `magCubic`/`magForColumn`, but the array
+    // holds **decibels**, not linear magnitudes. The evidence, all in
+    // `Anamorph:src/gui/SpectrumImager.cpp`: it is seeded to `kMinDb` (−90) at
+    // `:105`; it is an attack-instant / release-decayed EMA of `magsDb`, which
+    // is itself `Decibels::gainToDecibels (fftData[k] * norm, kMinDb)` at
+    // `:796`; the clip-glow reader adds 6 dB to it as "window-gain compensated
+    // dBFS" at `:833`; and `magForColumn`'s result goes straight into
+    // `dbToY (…)` at `:1132` with no conversion on the way. A dB-domain mean
+    // IS a geometric mean of magnitudes, and it is the one the sibling has
+    // always drawn — so matching it is what preserves the family's display
+    // behaviour, and converting to linear here to "fix" the domain would be
+    // the divergence.
+    //
+    // An earlier revision of this comment claimed the sibling averaged linear
+    // magnitudes and that reading dB was an adaptation. That was wrong on both
+    // halves and is corrected rather than deleted, because the wrong version is
+    // what a reviewer read and repeated.
+    //
+    // The inclusive `[ka, kb]` span below is likewise the sibling's, verbatim
+    // (`floor` / `ceil` / `k <= kb` at `:685-689`): it reaches up to one bin
+    // past each edge of the column, which is deliberate overlap between
+    // neighbouring columns, not an off-by-one. A half-open form would drop the
+    // overlap and diverge.
+    //
+    // The clamp floor stays at bin 1 — the nearest-bin read this replaces never
+    // showed DC and this port keeps that exclusion.
     const float binHz = (float) (sr / (double) kSize);
     auto binAt = [&] (const std::vector<float>& bins, int j)
     {
