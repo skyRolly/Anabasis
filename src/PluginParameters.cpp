@@ -96,6 +96,39 @@ auto hzFrom  = [] (const juce::String& t)
     const float v = s.removeCharacters ("khz ").getFloatValue();
     return k ? v * 1000.0f : v;
 };
+// kHz-biased parsers (0.1.1, owner directive; the sibling's `khzFrom` idea
+// classed per knob range). Plain `hzFrom` reads every bare number as Hz, so
+// on wide-range knobs the natural mastering shorthand went dead: "8" on the
+// 1–20 kHz high shelf clamped to the 1 kHz floor instead of landing 8 kHz.
+// Two range classes, two pivots:
+//
+// `khzFrom` — knobs whose WHOLE range is ≥ 1 kHz (high shelf). The sibling's
+// rule verbatim: a bare number ≤ 20 is kHz (the entire legal range expressed
+// in kHz units is 1–20, so nothing is lost); above 20 it is Hz. "8" → 8 kHz,
+// "8000" → 8 kHz, "8k" → 8 kHz, "5570" → 5.57 kHz.
+auto khzFrom = [] (const juce::String& t)
+{
+    auto s = t.toLowerCase().trim();
+    const bool k = s.containsChar ('k');
+    const float v = s.removeCharacters ("khz ").getFloatValue();
+    if (k) return v * 1000.0f;
+    return (v <= 20.0f) ? v * 1000.0f : v;
+};
+// `hzKhzFrom` — full-range 20 Hz–20 kHz knobs (the bells). The pivot is the
+// knob's own 20 Hz FLOOR, exclusive: a bare number STRICTLY below 20 cannot
+// be a legal Hz value (it would only clamp to the floor), so it is read as
+// kHz — "19" → 19 kHz, "2.38" → 2.38 kHz, "8" → 8 kHz — while every legal
+// Hz value stays Hz: "20" → 20 Hz, "155" → 155 Hz, "5570" → 5.57 kHz shown.
+// (The owner's 0.1.1 examples pin both sides of the pivot: 19 → kHz,
+// 20 → Hz — hence `<`, not the sibling's `<=`.)
+auto hzKhzFrom = [] (const juce::String& t)
+{
+    auto s = t.toLowerCase().trim();
+    const bool k = s.containsChar ('k');
+    const float v = s.removeCharacters ("khz ").getFloatValue();
+    if (k) return v * 1000.0f;
+    return (v < 20.0f) ? v * 1000.0f : v;
+};
 
 // True logarithmic (octave-even) range for every ⊕(log) row in §4.2
 // (Anamorph:src/PluginParameters.cpp:107-113).
@@ -221,14 +254,14 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
     floatParam (pid::eqTilt, "Tilt", { -3.0f, 3.0f }, 0.0f, dbText, dbFrom);
     floatParam (pid::eqLowShelfFreq,  "LS Freq", logRange (20.0f, 500.0f),     100.0f,  hzText, hzFrom);
     floatParam (pid::eqLowShelfGain,  "LS Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
-    floatParam (pid::eqHighShelfFreq, "HS Freq", logRange (1000.0f, 20000.0f), 8000.0f, hzText, hzFrom);
+    floatParam (pid::eqHighShelfFreq, "HS Freq", logRange (1000.0f, 20000.0f), 8000.0f, hzText, khzFrom);
     floatParam (pid::eqHighShelfGain, "HS Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
-    floatParam (pid::eqBell1Freq, "Bell 1 Freq", logRange (20.0f, 20000.0f),   300.0f,  hzText, hzFrom);
+    floatParam (pid::eqBell1Freq, "Bell 1 Freq", logRange (20.0f, 20000.0f),   300.0f,  hzText, hzKhzFrom);
     floatParam (pid::eqBell1Gain, "Bell 1 Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
     floatParam (pid::eqBell1Q,    "Bell 1 Q",    logRange (0.3f, 8.0f),        1.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); });
-    floatParam (pid::eqBell2Freq, "Bell 2 Freq", logRange (20.0f, 20000.0f),   3000.0f, hzText, hzFrom);
+    floatParam (pid::eqBell2Freq, "Bell 2 Freq", logRange (20.0f, 20000.0f),   3000.0f, hzText, hzKhzFrom);
     floatParam (pid::eqBell2Gain, "Bell 2 Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
     floatParam (pid::eqBell2Q,    "Bell 2 Q",    logRange (0.3f, 8.0f),        1.0f,
                 [] (float v, int) { return juce::String (v, 2); },

@@ -3583,11 +3583,12 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
     // than it claimed to (it still passed, which is why it needed reading).
     //
     // The copy area is the panel's content inset, `reduced (30, 26)` — the same
-    // expression `Backdrop::paint` uses — trimmed to the height the copy stack
-    // actually occupies: 38 title + 20 subtitle + 14 + 18 version + 18 vendor
-    // + 10 + 60 description + 6 + 16 copyright = 200 px, of the 238 the inset
-    // leaves. Sampling only that band keeps the "textured rows" count about the
-    // copy rather than about the empty glass beneath it.
+    // expression `Backdrop::paint` uses — trimmed to the height the FLOW copy
+    // stack actually occupies: 38 title + 20 subtitle + 14 + 18 version
+    // + 18 vendor + 10 + 60 description = 178 px, of the 238 the inset leaves
+    // (the copyright is bottom-ANCHORED since 0.1.1 — the sibling's geometry —
+    // so it no longer belongs to this stack). Sampling a 200 px band keeps the
+    // "textured rows" count about the copy rather than the glass beneath it.
     const auto panel = ed->getLocalBounds().withSizeKeepingCentre (440, 290);
     const auto copyArea = panel.reduced (30, 26).withHeight (200);
     const auto shot = ed->createComponentSnapshot (copyArea, false);
@@ -3610,6 +3611,47 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
     }
     check (texturedRows >= 20,
            "about: the panel paints product copy, not an empty glass rectangle");
+}
+
+// 0.1.1 owner directive: frequency text entry speaks mastering shorthand,
+// classed by knob range. The owner's examples pin BOTH sides of the bells'
+// pivot — "19" (below the 20 Hz floor, illegal as Hz) reads 19 kHz while
+// "20" (the floor itself, legal) reads 20 Hz — and the all-kHz high shelf
+// takes the sibling's `khzFrom` rule verbatim (bare ≤ 20 → kHz). Each case
+// goes text → parser → normalise → denormalise through the REAL parameter,
+// so the range's snap/clamp participates exactly as it does in a host or
+// the value box.
+static void testFrequencyTextEntrySpeaksMasteringShorthand()
+{
+    AnabasisAudioProcessor proc;
+    auto hz = [&] (const char* id, const char* text) -> float
+    {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (proc.apvts.getParameter (id));
+        return p->convertFrom0to1 (p->getValueForText (text));
+    };
+    auto near = [] (float got, float want) { return std::abs (got - want) < 0.51f; };
+
+    // HS Freq (1000–20000, all-kHz knob): bare ≤ 20 is kHz.
+    check (near (hz (pid::eqHighShelfFreq, "8"),      8000.0f), "freqText: HS '8' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "8000"),   8000.0f), "freqText: HS '8000' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "8k"),     8000.0f), "freqText: HS '8k' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "8 kHz"),  8000.0f), "freqText: HS '8 kHz' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "5570"),   5570.0f), "freqText: HS '5570' stays Hz");
+    check (near (hz (pid::eqHighShelfFreq, "2.38"),   2380.0f), "freqText: HS '2.38' lands 2.38 kHz");
+
+    // Bells (20–20000, full-range knob): the pivot is the knob's own 20 Hz
+    // floor, EXCLUSIVE — every legal Hz value stays Hz.
+    check (near (hz (pid::eqBell1Freq, "19"),   19000.0f), "freqText: bell '19' (below the floor) lands 19 kHz");
+    check (near (hz (pid::eqBell1Freq, "20"),      20.0f), "freqText: bell '20' (the floor) stays 20 Hz");
+    check (near (hz (pid::eqBell1Freq, "155"),    155.0f), "freqText: bell '155' stays Hz");
+    check (near (hz (pid::eqBell1Freq, "2.38"),  2380.0f), "freqText: bell '2.38' lands 2.38 kHz");
+    check (near (hz (pid::eqBell2Freq, "5570"),  5570.0f), "freqText: bell '5570' stays Hz (shown 5.57 kHz)");
+    check (near (hz (pid::eqBell2Freq, "8k"),    8000.0f), "freqText: bell '8k' lands 8 kHz");
+
+    // Sub-kHz knobs keep the plain Hz parser (the sibling's convention for
+    // its 20–500 Hz knob): a bare number is Hz, k-suffix still honoured.
+    check (near (hz (pid::scHpfFreq,      "150"), 150.0f), "freqText: SC HPF '150' stays Hz");
+    check (near (hz (pid::eqLowShelfFreq, "0.1k"), 100.0f), "freqText: LS '0.1k' lands 100 Hz");
 }
 
 // R2 item 11: every parameter control carries a hover hint. The wording lives
@@ -4537,6 +4579,7 @@ int main (int argc, char** argv)
         testARewoundSpectrumRingDropsThePreviousTrace();
         testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
         testTheAboutPanelShowsTheBuildItIsRunning();
+        testFrequencyTextEntrySpeaksMasteringShorthand();
         testTheGraphWellViewsOnlyClaimTheirModeChips();
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();

@@ -161,16 +161,21 @@ void AnabasisAudioProcessorEditor::Backdrop::paint (juce::Graphics& g)
     // `CMakeLists.txt` sets (and `CI_CD.md` describes as "the run number becomes
     // the About-box build number") had no consumer in the tree at all. Restored
     // here rather than in a new child component: `resized()` already reserves
-    // this space — the panel is 400×232 with the link at `withTrimmedTop (176)`
-    // — and every other overlay's content is likewise painted by its Backdrop.
+    // this space — the panel is 440×290 with the link band at
+    // `panel.getBottom() - 50` — and every other overlay's content is likewise
+    // painted by its Backdrop.
     //
     // The strings are the ones this product already owns — plus, since
     // 2026-08-05, ONE flowing description sentence. C8 said product prose is
     // never invented in code; the owner's round-2 directive explicitly asked
     // for this copy to be generated here (⊕ — "I will let you know later if
     // it needs tweaking"), which is the owner supplying the authority if not
-    // the words. Layout mirrors the sibling's About panel exactly (its #3:
-    // one sentence that word-wraps naturally, drawFittedText over 4 lines).
+    // the words; the 0.1.1 directive then asked it shortened to the selling
+    // points. Layout mirrors the sibling's About panel exactly (its #3: one
+    // sentence that word-wraps naturally, drawFittedText over 4 lines, the
+    // desc in the Version line's textDim, and the copyright ANCHORED to the
+    // panel bottom BELOW the hyperlink — the flow-placed copyright this
+    // replaces had inverted the sibling's order and opened a 14 px gap).
     const auto copyright = juce::String::charToString ((juce::juce_wchar) 0x00A9);  // © , not mojibake
     const auto emdash    = juce::String::charToString ((juce::juce_wchar) 0x2014);
 
@@ -195,25 +200,29 @@ void AnabasisAudioProcessorEditor::Backdrop::paint (juce::Graphics& g)
 
     r.removeFromTop (10);
     // One flowing sentence that word-wraps naturally (the sibling's #3) —
-    // the family sentence-shape: what it is, the three things it does, the
-    // honest-monitoring hook after the dash. ⊕ owner-review wording.
+    // the family sentence-shape: what it is, the selling points, the
+    // honest-monitoring hook after the dash. Shortened for 0.1.1 (owner:
+    // concise, selling points only) and drawn in the SAME textDim as the
+    // Version line above — the sibling never switches colour here, and the
+    // bright `colours::text` this replaces made the paragraph shout over
+    // the title. ⊕ owner-review wording.
     // "hold the ceiling", NOT "hold a true-peak ceiling": with `truePeakMode`
     // off — the shipped default since ADR-0015 — the clamp decides on the
     // sample peak, so the stronger phrasing was the same inter-sample
     // over-claim that ADR removed from the Ceiling readout one panel over.
     const juce::String desc =
-        "A mastering loudness maximizer: push loudness through an adaptive chain, "
-        "hold the ceiling, and judge the result " + emdash + " loudness-matched, "
-        "so louder never masquerades as better.";
-    g.setColour (colours::text);
-    g.setFont (juce::Font (juce::FontOptions (13.0f)));
+        "A mastering loudness maximizer: an adaptive chain, a held ceiling, "
+        "loudness-matched compare " + emdash + " louder, never just louder-sounding.";
     g.drawFittedText (desc, r.removeFromTop (60), juce::Justification::topLeft, 4);
 
-    r.removeFromTop (6);
+    // Copyright anchored to the PANEL bottom, not the flow — the sibling's
+    // geometry verbatim: the link band `resized()` places at bottom−50…−30
+    // sits directly ABOVE this 16 px strip drawn bottomLeft at bottom−34…−18,
+    // so the two read as one block with no gap.
     g.setColour (colours::textDim.withAlpha (0.7f));
     g.setFont (juce::Font (juce::FontOptions (11.0f)));
     g.drawText (copyright + " 2026 RollyTech. All rights reserved.",
-                r.removeFromTop (16), juce::Justification::topLeft);
+                panel.reduced (30, 18).removeFromBottom (16), juce::Justification::bottomLeft);
 }
 
 void AnabasisAudioProcessorEditor::ABControl::paint (juce::Graphics& g)
