@@ -13,14 +13,20 @@ tolerate absence, removal is prohibited, and any change here is a **serializatio
 change — an AI-agent Hard Stop** (`ARCHITECTURE_REVIEW_GATE.md`), enacted only by a
 superseding ADR.
 
-**One removal has been enacted that way**, while the window described in that first sentence is
-still open: `int_meterTargets` left `ANABASIS_INTERNAL` on 2026-08-05 with the streaming-target
-display, under
-[**ADR-0015**](design-decisions/ADR-0015-pre-ship-contract-refreeze.md) — which is why the
-count below reads nine rather than the ten `ADR-0007`/`ADR-0010` decided. A Serialization Registry
-change is an `ARCHITECTURE_REVIEW_GATE.md` item and a Hard Stop, and **the owner cleared that gate
-on 2026-08-06**, signing off the field removal by name; the sign-off is quoted in ADR-0015's
-Status banner, which is the record of authority for it. The migration is §2's
+**Two removals and two additions have been enacted that way**, while the window described in
+that first sentence is still open. Removed: `int_meterTargets` on 2026-08-05 with the
+streaming-target display, under
+[**ADR-0015**](design-decisions/ADR-0015-pre-ship-contract-refreeze.md); and `int_tpMeterOn` in
+0.1.1 under [**ADR-0020**](design-decisions/ADR-0020-waveform-statistics-panel.md), because the
+statistics panel shows the true peak unconditionally and a field whose only job was hiding one
+row had nothing left to gate. Added by that same record: `int_integratedStd` and `int_rmsRef`,
+which select which STANDARD two shown readings follow (BS.1770-2+ gated vs -1 ungated; AES-17 vs
+mathematical RMS) — never whether a reading appears, which is the distinction the removed toggle
+failed to draw. Net, the count below reads **ten**, which is the number `ADR-0007`/`ADR-0010`
+decided arrived at by a different route. A Serialization Registry change is an
+`ARCHITECTURE_REVIEW_GATE.md` item and a Hard Stop, and **the owner cleared that gate on
+2026-08-06** for both records, signing the field changes by name; the sign-offs are quoted in
+each ADR's Status banner, which is the record of authority for them. The migration is §2's
 read rules doing their ordinary job: an older blob carrying the property loads with every other
 field intact and the unknown one ignored, and the writer emits the schema rather than the input,
 so it does not survive a re-save. No legacy read path is owed, because no build carrying the
@@ -47,7 +53,7 @@ AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, Plugin
 │                                 (×49 until 0.1.1 — ADR-0019 ADDED compStereoLink, an
 │                                  additive change under the §2 missing-field rule: an old
 │                                  session simply loads the default 100 %, no migration)
-├── ANABASIS_INTERNAL             host-hidden session state (9 int_* properties)
+├── ANABASIS_INTERNAL             host-hidden session state (10 int_* properties)
 ├── AB                            active = 0|1
 │   ├── SLOT                      (slot 0)
 │   │     presetName (string)

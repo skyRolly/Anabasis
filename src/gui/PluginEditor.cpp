@@ -653,6 +653,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     settingsRow (oversampleLabel, "Oversampling");
     settingsRow (phaseLabel,      "Phase");
     settingsRow (offlineLabel,    "Offline Render");
+    settingsRow (integratedLabel, "Integrated");
+    settingsRow (rmsRefLabel,     "RMS Reference");
     settingsRow (uiScaleLabel,    "UI Scale");
 
     setupComboInternal (oversampleBox, { "Off", "2x", "4x", "8x", "16x" },
@@ -668,6 +670,19 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
                         "Offline Render",
                         "Force Max bounces at maximum oversampling - Follow Online uses the live setting",
                         ist.getPropertyAsValue (iid::offlineQuality, nullptr));
+    // ADR-0020: which STANDARD two of the statistics rows follow. Both are
+    // display-side only — the processor publishes every reading and this
+    // choice selects among them, so neither box touches the audio thread.
+    // The item text names the revision rather than "gated"/"ungated" because
+    // a delivery spec is written as a revision number.
+    setupComboInternal (integratedBox, { "BS.1770-2+", "BS.1770-1" },
+                        "Integrated",
+                        "Which revision the INTEGRATED row follows - -2 onward gates quiet passages out, -1 does not",
+                        ist.getPropertyAsValue (iid::integratedStd, nullptr));
+    setupComboInternal (rmsRefBox, { "AES-17", "Mathematical" },
+                        "RMS Reference",
+                        "AES-17 reads a full-scale sine as 0 dBFS - Mathematical reads it as -3.01",
+                        ist.getPropertyAsValue (iid::rmsRef, nullptr));
     // int_uiScale stores PERCENT; the combo maps index<->percent through the
     // step list, so the stored value stays meaningful outside this editor.
     // Built FROM `kScaleSteps`, not written out beside it. The literal list
@@ -719,7 +734,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     registerAnimated (uiScaleBox);
     uiScaleBox.setTitle ("UI Scale");
     uiScaleBox.setTooltip (tidyTip ("Window size - M is the original"));
-    for (auto* b : { &oversampleBox, &phaseBox, &offlineBox })
+    for (auto* b : { &oversampleBox, &phaseBox, &offlineBox, &integratedBox, &rmsRefBox })
     {
         removeChildComponent (b);
         settingsBackdrop.addAndMakeVisible (b);
@@ -742,9 +757,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     setupToggleInternal (tooltipsToggle, "Tooltips", "Tooltips",
                          "Show these hover hints on every control",
                          ist.getPropertyAsValue (iid::tooltipsOn, nullptr));
-    setupToggleInternal (tpMeterToggle, "True-Peak Meter", "True-Peak Meter",
-                         "Show the true-peak row in the meter panel",
-                         ist.getPropertyAsValue (iid::tpMeterOn, nullptr));
+    // The True-Peak Meter toggle left Settings in 0.1.1 with the field behind
+    // it (ADR-0020): the statistics panel shows the true peak unconditionally,
+    // beside the sample peak, so there was no row left to hide. Its slot is
+    // taken by the two STANDARD selectors above, which choose how a shown
+    // reading is computed rather than whether it appears — the distinction
+    // the removed toggle failed to draw.
     // The Spectrum toggle left Settings 2026-08-05: the graph well itself
     // carries the GR/SPEC switch now (owner directive — the control lives on
     // the thing it controls).
@@ -753,7 +771,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // normalise; a modern master is pushed against the ceiling, not a
     // platform figure). `int_meterTargets` left the schema with them — an
     // old session carrying it is ignored by the §4.4 unknown-field rule.
-    for (auto* t : { &animToggle, &tooltipsToggle, &tpMeterToggle })
+    for (auto* t : { &animToggle, &tooltipsToggle })
     {
         removeChildComponent (t);
         settingsBackdrop.addAndMakeVisible (t);
@@ -1198,11 +1216,13 @@ void AnabasisAudioProcessorEditor::resized()
     // 170×20, 50 px up from the panel bottom — not centred.
     aboutLink.setBounds (aboutBackdrop.panel.reduced (30, 26).getX(),
                          aboutBackdrop.panel.getBottom() - 50, 170, 20);
-    // 310 fits the content exactly (title 24+6, four 30+6 combo rows, three
-    // 26+6 toggles, 16 px top/bottom): the 398 this held before the target
-    // checkboxes and the Spectrum toggle left Settings kept ~90 px of glass
-    // below the last row (R2 item 2).
-    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 310);
+    // 350 fits the content exactly (title 24+6, SIX 30+6 combo rows, two
+    // 26+6 toggles, 16 px top/bottom = 350): the 310 this held was sized for
+    // four combos and three toggles, and 0.1.1 traded the True-Peak Meter
+    // toggle for the two ADR-0020 standard selectors — a net +32. Recomputed
+    // rather than nudged, because the number this replaced was itself the
+    // recomputation that removed ~90 px of empty glass (R2 item 2).
+    settingsBackdrop.panel = getLocalBounds().withSizeKeepingCentre (380, 350);
     savePresetBackdrop.panel = getLocalBounds().withSizeKeepingCentre (340, 150);
 
     {
@@ -1218,10 +1238,11 @@ void AnabasisAudioProcessorEditor::resized()
         splitRow (row(), oversampleLabel, oversampleBox);
         splitRow (row(), phaseLabel,      phaseBox);
         splitRow (row(), offlineLabel,    offlineBox);
+        splitRow (row(), integratedLabel, integratedBox);
+        splitRow (row(), rmsRefLabel,     rmsRefBox);
         splitRow (row(), uiScaleLabel,    uiScaleBox);
         animToggle.setBounds (row (26));
         tooltipsToggle.setBounds (row (26));
-        tpMeterToggle.setBounds (row (26));
     }
     {
         auto sp = savePresetBackdrop.panel.reduced (20, 16);
@@ -1595,8 +1616,12 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
     reseed (oversampleBox, (int) ist.getProperty (iid::oversample, 0));
     reseed (phaseBox,      (int) ist.getProperty (iid::osPhase, 0));
     reseed (offlineBox,    (int) ist.getProperty (iid::offlineQuality, 0));
-
-
+    // The ADR-0020 pair joins the re-seeded set for the reason the header
+    // states: their widget state is an INDEX and the stored value is an int,
+    // so a `juce::Value` binding cannot carry them and a project load would
+    // otherwise leave both boxes showing the previous session's standards.
+    reseed (integratedBox, (int) ist.getProperty (iid::integratedStd, 0));
+    reseed (rmsRefBox,     (int) ist.getProperty (iid::rmsRef, 0));
 
     // uiScale is the same shape with one extra step: the box only DISPLAYS the
     // percent, so a stored change has to reach `applyUiScale()` as well or the

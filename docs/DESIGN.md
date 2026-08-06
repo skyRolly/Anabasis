@@ -562,7 +562,7 @@ ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
 
 > **Superseded in part (2026-08-06); left as written, per `SOURCE_OF_TRUTH.md` — `DESIGN.md` is the
 > signed-off P0 record and is superseded section by section, not rewritten.** Four rows below no
-> longer describe the code, and they are superseded by **three separate records**, each cleared at
+> longer describe the code, and they are superseded by **four separate records**, each cleared at
 > the Architecture Review Gate on its own terms. The forward pointer is per row on purpose:
 > `ADR_INDEX.md` keeps these as three decisions precisely so no one of them can be read as
 > covering another.
@@ -570,7 +570,7 @@ ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
 > | Row | No longer true | Record |
 > |---|---|---|
 > | `int_meterTargets` | **Gone** from the schema (removed 2026-08-05 with the streaming-target display), so the set is **nine** fields, not ten | [ADR-0015](architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md) |
-> | `int_tpMeterOn` | Defaults **off** | [ADR-0015](architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md) |
+> | `int_tpMeterOn` | **Gone** from the schema (removed in 0.1.1 — the statistics panel shows the true peak unconditionally, so the field had no row left to gate). Two fields joined in its place, `int_integratedStd` and `int_rmsRef`, which choose which STANDARD a shown reading follows; the set is **ten** | [ADR-0020](architecture/design-decisions/ADR-0020-waveform-statistics-panel.md) |
 > | `int_spectrumOn` | No longer "spectrum overlay, dismissible": it is the **graph-well mode** — true = spectrum, false = GR history, in both editor views | [ADR-0016](architecture/design-decisions/ADR-0016-spectrumon-becomes-the-graph-well-mode.md) |
 > | `int_uiScale` | The ladder is the five-step XS…XL one (**75/85/100/125/150 %**, default 100), not the seven steps printed below | [ADR-0017](architecture/design-decisions/ADR-0017-uiscale-ladder-narrowing.md) |
 >

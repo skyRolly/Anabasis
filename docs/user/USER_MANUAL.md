@@ -206,12 +206,18 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 
 Always along the bottom:
 
-- **LUFS** — Momentary / Short-term / Integrated bars (BS.1770-4, gated).
-- **TP** — true peak in dBTP with a max hold. **Hidden by default**: turn *True-Peak Meter*
-  on in Settings to show the row. It always measures true peak, whether or not the limiter's
-  TP mode is engaged — so it is the honest check on a sample-peak ceiling.
-- **PLR** — peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics
-  at-a-glance number.
+The **STATISTICS** panel — the same seven readings in both Simple and Advanced:
+
+| Row | What it is |
+|---|---|
+| **M** | Momentary loudness, the newest 400 ms (BS.1770). |
+| **S** | Short-term loudness, the last 3 s. |
+| **I** | Integrated loudness over the whole measurement. Which revision it follows is a Settings choice (§3.5). |
+| **TP** | True peak in dBTP, max hold. It always measures true peak, whether or not the limiter's TP mode is engaged — so it is the honest check on a sample-peak ceiling, and it turns red above your Ceiling. |
+| **SP** | Sample peak in dBFS, max hold. Read it against TP: the gap between them **is** the inter-sample overshoot. |
+| **RMS** | RMS level over a 50 ms Hann window. The reference is a Settings choice (§3.5). |
+| **LRA** | Loudness Range in LU (EBU R128 / Tech 3342) — how much the loudness moves across the programme. A steady master reads near 0; a dynamic one reads 8–15. |
+| **PLR** | Peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics at-a-glance number. |
 - **The graph well** — one panel, two switchable views, in both Simple and Advanced:
   - **Spectrum** — the input/output spectrum overlay (input dim, output in the accent).
   - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see
@@ -222,8 +228,10 @@ Always along the bottom:
   history, click **SPEC** on the history to return. The choice is session state, saved with
   your project, so it reopens on whichever you left it.
 
-**Click the LUFS/TP/PLR panel to reset** the integrated measurement and the held maxima —
-do it after changing the section you are judging.
+**Click the STATISTICS panel to reset** the integrated measurement, the loudness range and
+both peak holds — do it after changing the section you are judging. The rolling windows (M,
+S, RMS) are not reset: they measure the last few seconds and have nothing session-scoped in
+them.
 
 ### 3.5 Settings (gear)
 
@@ -237,7 +245,8 @@ Session state — saved with your DAW project, never in presets, invisible to au
 | **UI Scale** | XS / S / M / L / XL | Five steps; **M** is the original size, everything scales in proportion. |
 | **UI Animations** | on/off | Default on. Off never changes behaviour, only motion. |
 | **Tooltips** | on/off | Hover hints on every control — what it does, in a line. Default off. |
-| **True-Peak Meter** | on/off | Shows/hides the TP row. Default off. |
+| **Integrated** | BS.1770-2+ / BS.1770-1 | Which revision the **I** row follows. **-2 onward** (default) gates quiet passages out of the average, which is what every modern delivery spec means by "integrated LUFS". **-1** is the original ungated definition — the plain average, dragged down by silence. |
+| **RMS Reference** | AES-17 / Mathematical | What the **RMS** row calls 0 dB. **AES-17** (default) reads a full-scale sine as 0 dBFS, the mastering convention. **Mathematical** reads the same sine as −3.01, the literal root-mean-square. The two differ by exactly 3.01 dB and never by anything else. |
 
 (The Spectrum/GR choice is *not* here: switch it with the chip on the graph itself — §3.4.)
 

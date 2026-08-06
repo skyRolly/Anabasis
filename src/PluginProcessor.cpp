@@ -520,7 +520,7 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // clear — so no thread crossing is added to rescue it.
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
     grHistoryRing.reset();
-    dbTpMaxHold = -144.0f;
+    dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a
     // block completes — and indefinitely if the host prepares without ever
@@ -529,13 +529,15 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     updateLatency();
 }
 
-// The six published meter atomics, cleared — ONE list, because three sites
-// need exactly this and two of them had grown their own copy. Relaxed stores,
-// so it is callable from any thread: `prepareToPlay` (host), the block-top
-// meter-reset consume (audio) and `setStateInformation` (whichever thread the
-// host restores on) all use it. It deliberately does NOT touch `dbTpMaxHold`,
-// which is plain audio-thread state and stays with the two callers that own
-// that thread.
+// The published meter atomics, cleared — ONE list, because three sites need
+// exactly this and two of them had grown their own copy. (Ten since the
+// ADR-0020 stats row; the count is deliberately not repeated in prose here or
+// at the callers, because it was wrong within two commits of being written
+// the first time — the LIST is the count.) Relaxed stores, so it is callable
+// from any thread: `prepareToPlay` (host), the block-top meter-reset consume
+// (audio) and `setStateInformation` (whichever thread the host restores on)
+// all use it. It deliberately does NOT touch the two audio-thread max-holds,
+// which stay with the two callers that own that thread.
 void AnabasisAudioProcessor::publishSilentMeters() noexcept
 {
     pubLufsM.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
@@ -544,6 +546,10 @@ void AnabasisAudioProcessor::publishSilentMeters() noexcept
     pubDbTpMax.store (-144.0f, std::memory_order_relaxed);
     pubPlr.store (0.0f, std::memory_order_relaxed);
     pubGrDb.store (0.0f, std::memory_order_relaxed);
+    pubPeakMaxDb.store (-144.0f, std::memory_order_relaxed);
+    pubRmsDb.store (anabasis::RmsMeter::kSilentDb, std::memory_order_relaxed);
+    pubLufsIUngated.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubLra.store (anabasis::LoudnessMeter::kNoLra, std::memory_order_relaxed);
 }
 
 void AnabasisAudioProcessor::setNonRealtime (bool isNonRealtime) noexcept
@@ -589,7 +595,7 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (meterResetPending.exchange (false, std::memory_order_acquire))
     {
         engine.resetMeterHolds();
-        dbTpMaxHold = -144.0f;
+        dbTpMaxHold = samplePeakMaxHold = -144.0f;
         publishSilentMeters();   // superset of the three this needed; see there
     }
 
@@ -631,6 +637,13 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const auto& om = engine.outputLoudness();
     const float blockTpDb = juce::Decibels::gainToDecibels (engine.lastRenderTpMax(), -144.0f);
     dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
+    // The SAMPLE peak's own hold (ADR-0020). `lastRenderPeak()` already
+    // existed and fed the GR ring's waveform; the stats row needs it as a
+    // held level too, and it is a max-hold rather than a per-block figure for
+    // the same reason the true peak is — the question "did this master ever
+    // exceed X?" is a session question.
+    samplePeakMaxHold = juce::jmax (samplePeakMaxHold,
+                                    juce::Decibels::gainToDecibels (engine.lastRenderPeak(), -144.0f));
 
     // integratedLufs() walks the 751-bin histogram twice (~1500 iterations,
     // bounded and allocation-free) although the figure only moves when a
@@ -647,6 +660,15 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     pubPlr.store (lufsI > anabasis::LoudnessMeter::kSilentLufs + 1.0f
                       ? dbTpMaxHold - lufsI : 0.0f,
                   std::memory_order_relaxed);
+    // The stats row (ADR-0020). `integratedUngatedLufs()` and `lraLu()` are
+    // published UNCONDITIONALLY beside the gated figure — the Settings choice
+    // between BS.1770-1 and -2 and between the two RMS references is resolved
+    // by the VIEW, so the audio thread never reads a display preference and
+    // switching either one is instant with no audio involvement.
+    pubPeakMaxDb.store (samplePeakMaxHold, std::memory_order_relaxed);
+    pubRmsDb.store (engine.outputRms().rmsDb(), std::memory_order_relaxed);
+    pubLufsIUngated.store (om.integratedUngatedLufs(), std::memory_order_relaxed);
+    pubLra.store (om.lraLu(), std::memory_order_relaxed);
 
     const float grDb = juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f);
     pubGrDb.store (grDb, std::memory_order_relaxed);

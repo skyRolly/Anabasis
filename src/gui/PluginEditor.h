@@ -385,9 +385,15 @@ private:
 
     // -- Settings controls (all InternalState-bound, §6.4) -------------------
     juce::Label    settingsTitle;
-    juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox;
-    juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel;
-    juce::ToggleButton animToggle, tooltipsToggle, tpMeterToggle;
+    juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox,
+                   // ADR-0020: which standard the INTEGRATED and RMS rows of
+                   // the statistics panel follow. Display-side only.
+                   integratedBox, rmsRefBox;
+    juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel,
+                   integratedLabel, rmsRefLabel;
+    // `tpMeterToggle` left with `int_tpMeterOn` in 0.1.1 (ADR-0020): the
+    // statistics panel shows the true peak unconditionally.
+    juce::ToggleButton animToggle, tooltipsToggle;
 
     // -- Save-preset overlay -------------------------------------------------
     juce::Label      saveTitle;

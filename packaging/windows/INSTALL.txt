@@ -1,0 +1,75 @@
+Anabasis — Windows install / 安装说明
+====================================
+
+Both installation methods below install SYSTEM-WIDE (for all users), into
+the standard locations, and need administrator approval.
+下面两种安装方式都是系统级安装(对所有用户生效),装到标准位置,需要管理员权限。
+
+--------------------------------------------------------------------
+A) Installer installation (recommended) / 安装程序(推荐)
+--------------------------------------------------------------------
+  Run  Anabasis-<version>-Windows-Installer.exe  (a separate download from the
+  GitHub release — it is not inside this zip) and follow the wizard:
+  运行 Anabasis-<version>-Windows-Installer.exe(在 GitHub Release 里单独下载,
+  不在本 zip 包内),按向导操作:
+
+  1. Choose the components / 选择组件:
+       [x] Install VST3         (the plug-in for your DAW / DAW 里用的插件)
+       [x] Install Standalone   (the separate application / 独立运行的程序)
+     Both are selected by default; at least one must stay selected.
+     默认两个都勾选;至少要保留一个。
+
+  2. Confirm the install locations (both on one page, VST3 first) /
+     确认安装位置(同一页设置,VST3 在上):
+       VST3        ->  C:\Program Files\Common Files\VST3   (Anabasis.vst3 goes inside)
+       Standalone  ->  C:\Program Files\Anabasis            (+ Start-menu entry / 开始菜单)
+
+  The installer is not code-signed yet, so Windows SmartScreen may warn:
+  click "More info" > "Run anyway".
+  安装程序尚未数字签名,SmartScreen 可能提示——点"更多信息"再点"仍要运行"。
+
+  Uninstall / 卸载:
+    Settings > Apps > Installed apps > Anabasis > Uninstall
+    (or the "Uninstall Anabasis" Start-menu entry)
+
+--------------------------------------------------------------------
+B) Manual installation (zip) / 手动安装(zip 包)
+--------------------------------------------------------------------
+  From the zip, copy / 从 zip 里复制:
+    Anabasis.vst3   (the whole folder / 整个文件夹)
+        ->  C:\Program Files\Common Files\VST3\
+    Anabasis.exe
+        ->  C:\Program Files\Anabasis\   (create the folder / 新建这个文件夹)
+
+  Copying into Program Files needs administrator approval.
+  复制到 Program Files 需要管理员权限。
+
+  The zip also carries NOTICE and THIRD_PARTY_LICENSES.md (third-party
+  attribution). They are not installed anywhere — keep them with the zip if you
+  pass a build on.
+  zip 包里还有 NOTICE 和 THIRD_PARTY_LICENSES.md(第三方许可声明),它们不需要
+  安装——转发构建时请一并保留。
+
+--------------------------------------------------------------------
+Rescan in your DAW / 在 DAW 里重新扫描插件
+--------------------------------------------------------------------
+  * REAPER:      Options > Preferences > Plug-ins > VST > Re-scan.
+  * Ableton:     Options > Preferences > Plug-Ins > Rescan.
+  * FL Studio:   Plugin Manager > Find installed plugins.
+  * Cubase:      Studio > VST Plug-in Manager > Rescan All.
+
+--------------------------------------------------------------------
+Troubleshooting / 常见问题
+--------------------------------------------------------------------
+- Plug-in not found: make sure the WHOLE Anabasis.vst3 folder (not just a
+  file from inside it) is in Common Files\VST3, then rescan.
+  找不到插件:确认复制的是整个 Anabasis.vst3 文件夹,再重新扫描。
+- SmartScreen blocks the Standalone: "More info" > "Run anyway".
+- The plug-in is 64-bit; it will not appear in 32-bit hosts.
+  插件为 64 位,32 位宿主里不会出现。
+
+--------------------------------------------------------------------
+Copyright / 版权
+--------------------------------------------------------------------
+Anabasis is (c) 2026 RollyTech. All rights reserved.
+Anabasis (c) 2026 RollyTech,保留所有权利。

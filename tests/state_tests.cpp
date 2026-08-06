@@ -1120,6 +1120,79 @@ static void testMeterPublication()
            "meters: a zero-length block re-publishes nothing");
 }
 
+// The ADR-0020 Waveform-Statistics rows, driven through the REAL wrapper on
+// the same stimulus the row above uses: a −20 dBFS 997 Hz sine, whose every
+// statistic is known in closed form.
+//   sample peak  = −20.00 dBFS (the amplitude)
+//   RMS (math.)  = −23.01 dBFS (a sine's RMS is 1/√2 of its peak)
+//   RMS (AES-17) = −20.00 dBFS (the same number, +3.01, which is the WHOLE
+//                  content of the reference choice — so asserting both pins
+//                  the offset without a second stimulus)
+//   LRA          = 0 LU (a steady tone has no range at all)
+// The ungated and gated integrated readings agree here BY CONSTRUCTION — no
+// block of a continuous tone falls below either gate — which is what makes
+// the third case below meaningful rather than tautological: it feeds silence
+// after the tone, which the gates treat differently.
+static void testTheWaveformStatisticsRowsReadTheirStandards()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+    auto runTone = [&] (int blocks, float amp)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    runTone ((int) (8.0 * 48000.0 / 512.0), 0.1f);      // 8 s: LRA needs > 3 s of window
+
+    check (near (proc.meterPeakMaxDb(), -20.0f, 0.05f),
+           "stats: the sample-peak hold reads the tone's amplitude");
+    check (near (proc.meterRmsDb(), -23.01f, 0.15f),
+           "stats: the published RMS is the MATHEMATICAL reference (a full-scale sine is -3.01)");
+    check (proc.meterPeakMaxDb() > proc.meterRmsDb() + 2.5f,
+           "stats: …and it sits below the sample peak by the sine's crest factor");
+    check (near (proc.meterLra(), 0.0f, 0.6f),
+           "stats: a steady tone has essentially no loudness range");
+    check (near (proc.meterLufsIUngated(), proc.meterLufsI(), 0.1f),
+           "stats: on a continuous tone the gated and ungated integrated readings agree");
+
+    // SILENCE AFTER THE TONE is what separates the two integrated standards:
+    // BS.1770-2's absolute gate drops the silent blocks, so the gated figure
+    // holds at the tone's loudness; BS.1770-1 has no gate, so the ungated
+    // figure is dragged down by them. A mutant that publishes the same value
+    // twice, or that applies the -70 gate to the ungated accumulator, fails
+    // exactly here.
+    const float gatedBefore = proc.meterLufsI();
+    for (int b = 0; b < (int) (8.0 * 48000.0 / 512.0); ++b)
+    {
+        buf.clear();
+        proc.processBlock (buf, midi);
+    }
+    check (near (proc.meterLufsI(), gatedBefore, 0.2f),
+           "stats: the GATED integrated reading ignores the silence that follows");
+    check (proc.meterLufsIUngated() < gatedBefore - 2.0f,
+           "stats: the UNGATED (BS.1770-1) reading is dragged down by it");
+
+    // The reset clears both peak holds, not only the true peak's.
+    proc.requestMeterReset();
+    buf.clear();
+    proc.processBlock (buf, midi);
+    check (proc.meterPeakMaxDb() < -100.0f,
+           "stats: the meter reset clears the sample-peak hold too");
+}
+
 // ---------------------------------------------------------------------------
 // §7 factory presets: compiled-in override tables — defaults first, then the
 // intents — through the SAME lock/exclusion semantics as file presets, with
@@ -3752,12 +3825,19 @@ static void testEveryKnobAndComboCarriesATooltip()
         std::printf ("  tooltipless: %s\n", hoverless.joinIntoString (", ").toRawUTF8());
     check (hoverless.isEmpty(), "tooltips: every slider and combo carries a hover hint");
 
+    // "True-Peak Meter" left this list in 0.1.1 with the toggle and the field
+    // behind it (ADR-0020) — the statistics panel shows the true peak
+    // unconditionally, so there is no longer a toggle to carry a hint.
     for (auto* text : { "FREEZE", "COMP", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
-                        "UI Animations", "Tooltips", "True-Peak Meter" })
+                        "UI Animations", "Tooltips" })
     {
         auto* b = findButtonByText (*ed, text);
-        check (b != nullptr && b->getTooltip().isNotEmpty(),
-               "tooltips: the named toggles carry hints");
+        // The toggle's NAME in the message, not a shared sentence: this check
+        // ran eleven times under one wording, so a failure said only that one
+        // of eleven toggles was hoverless and cost a bisect to localise.
+        juce::String msg;
+        msg << "tooltips: the \"" << text << "\" toggle carries a hint";
+        check (b != nullptr && b->getTooltip().isNotEmpty(), msg.toRawUTF8());
     }
 }
 
@@ -4617,6 +4697,7 @@ int main (int argc, char** argv)
         testAbSwitchRequestsDuck();
         testUndoRequestsDuck();
         testMeterPublication();
+        testTheWaveformStatisticsRowsReadTheirStandards();
         testAGestureEndWithoutACountedBeginIsIgnored();
         testAMacroGestureWinsADetachRacingItInOneDrain();
         testTeardownAndReengageInvariants();
