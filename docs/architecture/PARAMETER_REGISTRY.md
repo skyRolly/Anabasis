@@ -128,7 +128,7 @@ automation by construction (out of the tree entirely — the only reliable hidin
 K). Inventory as implemented (`src/InternalState.h`): `int_oversample` (0–4 = Off/2×/4×/8×/16×),
 `int_osPhase` (0 min / 1 linear), `int_offlineQuality` (0 Follow / 1 Force Max),
 `int_ceilingLock`, `int_uiScale` (a percent from the XS–XL ladder, `ui_scale::steps`), `int_tooltipsOn`, `int_uiAnimations`,
-`int_spectrumOn` (since 2026-08-05 the graph-well MODE flag — true = spectrum, false = GR history; switched by the corner chips on the graph itself, no Settings toggle), `int_tpMeterOn` (default **off** since ADR-0015; `int_meterTargets` was removed 2026-08-05 with the streaming-target display, under the same ADR — an old session carrying it is ignored by the §4.4 unknown-field rule). The first three are the latency
+`int_spectrumOn` (since 2026-08-05 the graph-well MODE flag — true = spectrum, false = GR history; switched by the corner chips on the graph itself, no Settings toggle. That is a **semantic change** to a serialized field, not just a UI move: it used to mean "does the spectrum take half of the Advanced strip", and the Simple view did not read it. **ADR-0016** carries the before/after and the still-open gate clearance), `int_tpMeterOn` (default **off** since ADR-0015; `int_meterTargets` was removed 2026-08-05 with the streaming-target display, under the same ADR — an old session carrying it is ignored by the §4.4 unknown-field rule). The first three are the latency
 inputs (ADR-0004); their change callbacks are three of the five PDC recompute triggers.
 
 ## Changing anything here

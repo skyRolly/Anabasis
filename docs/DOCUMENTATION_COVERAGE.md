@@ -6,7 +6,28 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **Architecture Review Gate clearance and two cleanups (2026-08-06)**.
+**Last updated:** for **ADR-0016 — `int_spectrumOn`'s semantic migration recorded (2026-08-06)**.
+Review asked whether repurposing the field needed a record. It does, and by the repository's own
+terms it needs an **ADR**, not a registry line: `ARCHITECTURE_REVIEW_GATE.md` lists "any field
+add/remove/**semantic change**" and `SESSION_COMPATIBILITY_POLICY.md` rule 1 covers a field
+"removed **or have its meaning changed**" — the same class as the `int_meterTargets` removal,
+which got a full ADR. **ADR-0016** is deliberately its own record rather than a fourth item inside
+ADR-0015: that one was signed off naming three changes, and widening a signed-off record after the
+fact is the failure the last four rounds were about. Its gate is therefore **NOT cleared** and is
+tracked as `HANDOVER.md` item (h) — nothing urgent, the pre-ship window is open.
+The before/after was read from the commit that held it rather than recalled, which sharpened the
+story: the old meaning was *"does the spectrum take half of the Advanced strip?"* — Advanced split
+the strip and showed **both** views, and Simple did not read the field at all — so `false`
+sessions display exactly what they always did and only `true` ones lose the GR trace that used to
+sit beside the spectrum. Recorded at the two ledger rows (`SERIALIZATION_REGISTRY.md` §1.6 gains a
+meaning-change banner; `PARAMETER_REGISTRY.md`'s inventory line says it is a semantic change and
+not just a UI move) and in `ADR_INDEX.md`.
+Alongside: `SpectrumView`'s comments still described the corner as a dismiss ×, quoted the removed
+`setTooltip ("Spectrum")` identifier, and called the wording an open C8 owner TODO that the R2
+item-11 directive had already discharged — the header banner, the hit-area comment and both
+`hitTest` consequences now describe the mode chip that is actually there, including why the
+narrowed tooltip scope is now the *right* scope rather than a cost.
+Previous: the **Architecture Review Gate clearance and two cleanups (2026-08-06)**.
 The gate is **CLEARED** — the first clearance in this repository. Two of ADR-0015's three contract
 changes are `ARCHITECTURE_REVIEW_GATE.md` items in their own right (a Serialization Registry
 change and a Parameter Registry change) and both sit on `CLAUDE.md`'s Hard Stop list, which a

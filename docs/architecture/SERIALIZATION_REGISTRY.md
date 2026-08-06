@@ -127,6 +127,24 @@ placement was rejected for the trims, not for this (ADR-0007 §Options D).
 
 ### 1.6 `ANABASIS_INTERNAL`
 
+> **One field's MEANING changed, 2026-08-05 — recorded here because this ledger treats a semantic
+> change like a removal.** `int_spectrumOn` used to mean *"does the spectrum take half of the
+> Advanced metering strip?"* (the GR trace was never hidden by it, and the Simple view did not
+> read it at all). It now means *"which of the two graph-well views is active"*, in **both**
+> editor modes — `true` spectrum, `false` GR history.
+> [**ADR-0016**](design-decisions/ADR-0016-spectrumon-becomes-the-graph-well-mode.md) carries the
+> decision, the before/after table and the rejected alternatives.
+>
+> **No migration is owed and none exists**: the type (`bool`) and default (`true`) are unchanged,
+> so the defaults-first overlay below reads an old blob exactly as it always did. What differs is
+> what the same stored value *shows* — `false` displays what it always displayed, `true` now
+> hides the GR trace that used to sit beside it. Display-only, one click to change, and free
+> while the pre-ship window is open.
+>
+> **The Architecture Review Gate for this one is NOT yet cleared.** The 2026-08-06 sign-off named
+> the `int_meterTargets` removal and the two parameter defaults; this is a fourth item and needs
+> its own clearance. Tracked in `HANDOVER.md`.
+
 The host-hidden fields (`src/InternalState.h` — inventory in
 `PARAMETER_REGISTRY.md` §Host-hidden state). Read by `InternalState::replaceFrom`:
 **defaults first**, then overlay only properties the schema knows (unknown ignored), the
