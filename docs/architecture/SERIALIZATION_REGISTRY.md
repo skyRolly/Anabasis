@@ -152,8 +152,10 @@ placement was rejected for the trims, not for this (ADR-0007 §Options D).
 > and §2's out-of-range row both name it), so a stored **80 → 75, 90 → 85, 175/200 → 150**, and
 > because the normalisation happens at adoption the corrected percent is what the next save
 > writes. 100/125/150 are common to both ladders and survive untouched.
-> [**ADR-0017**](design-decisions/ADR-0017-uiscale-ladder-narrowing.md) carries it; **its gate is
-> NOT yet cleared** — neither 2026-08-06 sign-off names `int_uiScale`. Tracked in `HANDOVER.md`.
+> [**ADR-0017**](design-decisions/ADR-0017-uiscale-ladder-narrowing.md) carries it, and **its gate
+> was cleared 2026-08-06** — separately again, the owner's confirmation naming the reduced ladder,
+> the acceptance that out-of-set stored values normalise on adoption, and that this is a pre-1.0
+> decision with no released-session migration obligation.
 
 The host-hidden fields (`src/InternalState.h` — inventory in
 `PARAMETER_REGISTRY.md` §Host-hidden state). Read by `InternalState::replaceFrom`:

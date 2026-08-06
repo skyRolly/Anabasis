@@ -28,7 +28,7 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0014](ADR-0014-frozen-trim-restore.md) | Frozen trim vector **restored**: staged on ADR-0012's row, applied at the §2.8 duck's silent bottom (resolves OQ-013) | Accepted | Verified — `testFrozenTrimRestore`, every element killed by its own mutant (the ADR enumerates them) |
 | [ADR-0015](ADR-0015-pre-ship-contract-refreeze.md) | **Pre-ship contract re-freeze**: the round-2 `ceiling`/`truePeakMode` defaults, the `int_meterTargets` removal, and the Ceiling's mode-aware unit | Accepted | Verified — `testTheCeilingAdvertisesTheUnitItEnforces`, the re-frozen `testRegistrySnapshot`, `testFactoryPresets` and the §4.4 read-rule checks |
 | [ADR-0016](ADR-0016-spectrumon-becomes-the-graph-well-mode.md) | `int_spectrumOn` repurposed from "is the spectrum shown" to **which graph-well view is active** — a serialization **semantic** change; **gate cleared 2026-08-06** | Accepted | Verified — `testTheGraphWellViewsOnlyClaimTheirModeChips`; the pre-change behaviour is tabulated in the ADR from the commit that held it |
-| [ADR-0017](ADR-0017-uiscale-ladder-narrowing.md) | `int_uiScale`'s legal value set narrows 7 steps → 5; out-of-set stored values converge at adoption — a serialization **domain** change, recorded at the gate's bar; **gate NOT yet cleared** | Accepted | Verified — `testAnOutOfListUiScaleClampsConsistently`; the pre-change ladder is quoted in the ADR from the commit that held it |
+| [ADR-0017](ADR-0017-uiscale-ladder-narrowing.md) | `int_uiScale`'s legal value set narrows 7 steps → 5; out-of-set stored values converge at adoption — a serialization **domain** change, recorded at the gate's bar; **gate cleared 2026-08-06** | Accepted | Verified — `testAnOutOfListUiScaleClampsConsistently`; the pre-change ladder is quoted in the ADR from the commit that held it |
 
 ADR-0015 was taken on **2026-08-06**, ratifying contract changes the owner's round-2 directive
 (2026-08-05) had already landed in PR #8 — the same ratification shape as ADR-0012/0013/0014, and
@@ -47,12 +47,16 @@ inside ADR-0015 for the reason this index exists to make visible: that record wa
 naming three different changes, and widening a signed-off record after the fact is the failure
 mode, not the shortcut.
 
-**ADR-0017 is the one gated record still waiting.** `int_uiScale`'s ladder narrowed from seven
-steps to five in the same batch, which changes the field's accepted domain and therefore what its
-documented read rule does to a stored 80/90/175/200. Neither 2026-08-06 sign-off names it. Nothing
-is urgent — no build has left the repository, so re-shaping the field is still free — and the ADR
-states the two concrete outcomes a reviewer is being asked to accept rather than leaving them
-inside the phrase "no migration".
+**ADR-0017 was cleared the same day, and separately again.** `int_uiScale`'s ladder narrowed from
+seven steps to five in the same batch, changing the field's accepted domain and therefore what its
+documented read rule does to a stored 80/90/175/200. The owner's confirmation names the reduced
+ladder, the acceptance that out-of-set stored values normalise on adoption, and that this is a
+pre-1.0 decision with no released-session migration obligation.
+
+**All three gated records of the round-2 batch are therefore cleared, and each on its own terms:
+ADR-0015, ADR-0016, ADR-0017.** They were kept as three records rather than one precisely so that
+sentence can be true — a single record would have made the second and third clearances look like
+extensions of the first, which is the widening this index exists to make visible.
 
 ## ADRs amended by a later ADR
 

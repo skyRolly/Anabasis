@@ -6,7 +6,26 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **second gate clearance, ADR-0017, and DSP-test isolation (2026-08-06)**.
+**Last updated:** for the **third gate clearance and two rendering/comment fixes (2026-08-06)**.
+**ADR-0017 CLEARED**, separately again — the owner's confirmation naming the reduced ladder, the
+acceptance that out-of-set stored values normalise on adoption, and that this is a pre-1.0 decision
+with no released-session migration obligation. Recorded in the four places the previous two
+clearances were: the ADR's Status banner, `ADR_INDEX.md`, `HANDOVER.md` (item (i) struck plus a
+round-log entry) and the two ledger rows. **That closes the round-2 batch: ADR-0015, ADR-0016 and
+ADR-0017 are each cleared on their own terms** — the sentence the three-record split existed to
+make true, since one record would have made the second and third clearances read as extensions of
+the first.
+Two code fixes alongside. `GrHistoryView` drew its "SPEC" chip FIRST so it would survive the reader
+contract's three early returns, then stroked the trace and filled the waveform over the whole
+`area` — which contains the chip's footprint, so at zero reduction the trace crosses the glyph
+while `SpectrumView` (chip last) does not, contradicting the comment claiming the two chips share a
+face. The traces move into a private `paintHistory` that keeps all three early returns verbatim and
+the chip is drawn after it: same order as the sibling, same hit-area, no geometry change, and the
+chip still survives an empty ring or an in-flight clear. And `iid::spectrumOn`'s identifier comment
+still read "bool (dismissible, brief §6)" — the meaning ADR-0016 supersedes — in the very file that
+ADR names as the field's home; every other site had been updated. It now states the mode semantics
+and cites the ADR.
+Previous: the **second gate clearance, ADR-0017, and DSP-test isolation (2026-08-06)**.
 **ADR-0016 CLEARED** — separately from ADR-0015 and on its own terms, the owner's confirmation
 naming the semantic change, the pre-1.0 migration decision, and the acceptance that stored values
 keep loading with no migration path (an acceptance of the read delta the ADR tabulates, not a

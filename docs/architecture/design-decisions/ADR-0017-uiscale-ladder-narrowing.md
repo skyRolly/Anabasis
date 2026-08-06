@@ -4,16 +4,21 @@
 directive of 2026-08-05 item 12, which specified the sibling's XS…XL scale; the field treatment
 was the autonomous half)
 
-> **ARCHITECTURE REVIEW GATE — NOT YET CLEARED.** `ARCHITECTURE_REVIEW_GATE.md` lists
+> **ARCHITECTURE REVIEW GATE — CLEARED (2026-08-06).** `ARCHITECTURE_REVIEW_GATE.md` lists
 > "**Serialization Registry change** — any field add/remove/**semantic change**". This is the
-> third member of that class in the round-2 batch and the only one still without an explicit
-> clearance: the 2026-08-06 sign-offs covered ADR-0015's three changes and ADR-0016's
-> `int_spectrumOn` repurposing, and **neither names `int_uiScale`**. Recorded as its own ADR for
-> the same reason ADR-0016 is: a signed-off record must not be widened after the fact.
+> third member of that class in the round-2 batch, and it now has its own explicit clearance,
+> granted **separately** from ADR-0015's and ADR-0016's. The owner's confirmation covers three
+> things by name:
 >
-> Nothing here is urgent — no build has left the repository, so re-shaping the field is still
-> free. What is owed is a decision, not a fix: see §Decision item 3 for the two questions a
-> reviewer actually has to answer.
+> 1. **the reduced ladder itself**, accepted before the first shipped build;
+> 2. **that stored values outside the new set may normalise on adoption** — which is the
+>    acceptance of §Decision item 3's two concrete outcomes (80/90 reopen one step away;
+>    175/200 reopen at 150), not a statement that they do not happen;
+> 3. **that this is a pre-1.0 contract decision**, with **no released-session migration
+>    obligation** — because no session written by a released build exists to owe one to.
+>
+> **The clearance is ADR-0017's alone.** It does not widen ADR-0015 or ADR-0016, each of which
+> was signed off naming its own changes; all three records stay separate.
 
 ## Context
 
