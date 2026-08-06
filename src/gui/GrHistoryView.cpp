@@ -5,7 +5,43 @@ using namespace abgui;
 
 GrHistoryView::GrHistoryView (AnabasisAudioProcessor& p) : processor (p)
 {
-    setInterceptsMouseClicks (false, false);
+    // This view used to opt out of the mouse WHOLESALE
+    // (`setInterceptsMouseClicks (false, false)`) — it had no affordance. Since
+    // the combined graph well (2026-08-05) it owns the "SPEC" mode chip, so it
+    // opts out per-pixel through `hitTest` instead, exactly as `SpectrumView`
+    // does for its chip: JUCE's default interception stays on, and `hitTest`
+    // declines every point outside the chip.
+    //
+    // The tooltip therefore fires over the chip only — name its ACTION, the
+    // mirror of the spectrum's wording.
+    setTooltip ("Switch to the spectrum");
+}
+
+// The mode chip's hit-area (top-right corner). ONE definition, because
+// `hitTest` and `mouseDown` both key on it — computed separately, a click the
+// view accepts but then ignores creeps back in one pixel at a time. Larger
+// than the drawn chip (`paint` puts "SPEC" at `getWidth() - 40, 4, 36 × 16`):
+// the surplus is the touch target, the same proportions as `SpectrumView`'s.
+juce::Rectangle<int> GrHistoryView::chipHitArea() const noexcept
+{
+    return { getWidth() - 41, 0, 41, 24 };
+}
+
+bool GrHistoryView::hitTest (int x, int y)
+{
+    return chipHitArea().contains (x, y);
+}
+
+void GrHistoryView::mouseDown (const juce::MouseEvent& e)
+{
+    // Unreachable-false today (`hitTest` already refused everything outside the
+    // chip) and kept so this function is correct standing alone — the same
+    // reasoning `SpectrumView::mouseDown` records.
+    if (chipHitArea().contains (e.getPosition()))
+        // MODE SWITCH: the chip names what you switch TO. The spectrum view
+        // carries the mirrored "GR" chip back; Settings no longer owns this
+        // field (the toggle was removed with the combined well).
+        processor.internalState.state().setProperty (iid::spectrumOn, true, nullptr);
 }
 
 void GrHistoryView::visibilityChanged()
@@ -28,6 +64,26 @@ void GrHistoryView::tick (double)
 }
 
 void GrHistoryView::paint (juce::Graphics& g)
+{
+    // TRACES FIRST, CHIP LAST — the same order `SpectrumView::paint` uses, so
+    // the two chips genuinely look alike rather than only claiming to. Drawn
+    // the other way round, the GR trace (which sits at `area.getY()`, ~8 px,
+    // whenever there is no reduction) and the waveform run the full width and
+    // cross the glyph.
+    //
+    // The history is a SEPARATE function because it early-returns three times
+    // on the reader contract (odd epoch, empty window, epoch moved), and the
+    // chip has to survive all three: the way back to the spectrum must not
+    // disappear because the ring is empty or a clear is in flight. Returning
+    // from `paintHistory` skips the traces, never the chip.
+    paintHistory (g);
+
+    g.setColour (colours::textDim.withAlpha (0.7f));
+    g.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.1f));
+    g.drawText ("SPEC", getWidth() - 40, 4, 36, 16, juce::Justification::centred);
+}
+
+void GrHistoryView::paintHistory (juce::Graphics& g)
 {
     const auto& ring = processor.grHistory();
 

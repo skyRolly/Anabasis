@@ -27,8 +27,8 @@ headless Linux machine, no IDE.
   the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
-  display) and the P6 per-slot undo / 12-preset factory bank / performance bench — verified by
-  `tests/` (**621 checks** — re-count from the suites' own output when editing, the same rule
+  display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
+  `tests/` (**669 checks** — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
   [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and
@@ -51,8 +51,9 @@ headless Linux machine, no IDE.
 - **Advanced mode:** per-stage control over the same parameter model — switching modes must not
   change the sound.
 - **Metering:** LUFS (momentary / short-term / integrated, BS.1770-4 gated), true peak (dBTP),
-  PLR, gain-reduction history, input/output spectrum, streaming-target lines with a
-  loudness-penalty estimate.
+  PLR, gain-reduction history, input/output spectrum. (The brief's streaming-target lines were
+  removed by owner directive 2026-08-05 — platforms normalise; a master is pushed against the
+  ceiling, not a platform figure.)
 - **Formats:** VST3 (all platforms), **AU** (macOS, for Logic Pro), Standalone (debugging).
   **AAX is not supported.**
 - **Platforms:** Linux x86-64 (headless CI build), Windows x86-64, macOS universal (arm64 + x86_64).

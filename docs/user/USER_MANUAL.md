@@ -48,7 +48,8 @@ The **Loudness** knob does not map to a single gain — it drives the whole chai
 factor, spectral tilt, transient density) and continuously, *slowly* trims how the stages
 share the work: light compression and transparent limiting low on the dial, the clipper
 absorbing transients in the middle, saturation colour and a dynamic high-frequency tame at
-the top. The **Ceiling** is a true-peak limit the output never exceeds. **Loudness Comp**
+the top. The **Ceiling** is a limit the output never exceeds — a sample-peak limit as shipped,
+and a *true-peak* one once you engage **TP** (§3.2). **Loudness Comp**
 plays the processed signal back at matched loudness so the level increase cannot flatter
 you, and **Delta** lets you listen to exactly what the processing is removing.
 
@@ -96,15 +97,16 @@ toggle row, and the metering strip.
 
 1. Play the loudest section of your track.
 2. Raise **Loudness** until the gain-reduction history shows steady, musical work — watch
-   the **out LUFS** readout climb.
+   the **out LUFS** readout climb. (The graph well opens on the **spectrum**; click the
+   **GR** chip in its top-right corner to put the gain-reduction trace there — §3.4.)
 3. Switch **COMP** (loudness-compensated monitoring) on. The level jump disappears; what
    you hear now is the *sound* of the processing at matched loudness. If it still sounds
    better, keep going; if it only sounded better because it was louder, you just found out.
 4. Press **DELTA** to hear exactly what is being removed — transient tops, mostly. Short,
    dry ticks are healthy; tone or vocal body in the delta means you are pushing too hard.
-5. Check the **Ceiling** (default −1 dBTP) against your delivery target, and note the
-   streaming target lines on the LUFS meter — the tooltip shows each platform's reference
-   level and how far above it you are.
+5. Check the **Ceiling** (default −0.1 dB) against your delivery spec — and if that spec is
+   written in **dBTP**, engage **TP** beside it, which is what makes the number mean dBTP
+   (§3.2). The readout's unit follows the switch, so it always says which one you have.
 6. **Bypass** in the top bar A/Bs against the untouched signal — with COMP on, that
    comparison is loudness-matched too.
 
@@ -122,7 +124,7 @@ with the plug-in versions ([§7.2](#72-saving-and-managing)).
 
 - What the adaptive engine is doing under the knob, and how to lock it: [§4](#4-the-adaptive-engine-learn-and-freeze).
 - Per-stage control (compressor, clipper, limiter, EQ): press **ADV** — [§5](#5-simple-mode-and-advanced-mode).
-- A starting point rather than a blank slate: twelve factory presets — [§7](#7-presets-and-ab).
+- A starting point rather than a blank slate: thirteen factory presets — [§7](#7-presets-and-ab).
 - Concrete recipes: [§8](#8-workflow-examples).
 - Something not working? [§9](#9-faq--troubleshooting).
 
@@ -161,7 +163,7 @@ Universal gestures:
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −1 | The true-peak output limit. The **LOCK** toggle beside it keeps it fixed while you browse presets. |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, detection moves to the oversampled rate, inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling fixed while you browse presets. |
 | **Character** | 0 … 1 | Clean ↔ Colour: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -186,8 +188,9 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
   Tone, Colour Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
 - **LIMITER** — the true-peak lookahead limiter: Limiter Gain (the push into it), Lookahead
   (0.5–10 ms), Release (1–1000 ms) with **AUTO**, **Style** (Transparent / Punchy / Loud),
-  Stereo Link, Transients (transient preservation), **TP** (true-peak mode — detection at
-  oversampled rate so inter-sample peaks are caught), and its gain-reduction meter. The
+  Stereo Link, Transients (transient preservation), **TP** (true-peak mode — **off by
+  default**; on, detection moves to the oversampled rate so inter-sample peaks are caught
+  and the Ceiling becomes a dBTP limit), and its gain-reduction meter. The
   shared **SC HPF** (20–300 Hz) keeps low-frequency energy from pumping the detectors of
   both the compressor and the limiter.
 - **EQ** — Tilt (±3 dB around ~700 Hz), low shelf, high shelf, two bells (Freq/Gain/Q),
@@ -200,19 +203,21 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 
 Always along the bottom:
 
-- **LUFS** — Momentary / Short-term / Integrated bars (BS.1770-4, gated) with the
-  **streaming target lines** ticked on them. The panel tooltip lists each platform's
-  reference level with its "as of" date — the practical reading is the **loudness
-  penalty**: how far above a platform's line you are is how far that platform will turn
-  your track down.
-- **TP** — true peak in dBTP with a max hold (hidden if you turn the true-peak meter off
-  in Settings).
+- **LUFS** — Momentary / Short-term / Integrated bars (BS.1770-4, gated).
+- **TP** — true peak in dBTP with a max hold. **Hidden by default**: turn *True-Peak Meter*
+  on in Settings to show the row. It always measures true peak, whether or not the limiter's
+  TP mode is engaged — so it is the honest check on a sample-peak ceiling.
 - **PLR** — peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics
   at-a-glance number.
-- **GR history** — a scrolling trace of recent gain reduction, the fastest way to see how
-  hard and how often the limiter is working.
-- **Spectrum** (Advanced view) — an input/output spectrum overlay. Dismiss it with the
-  **×** in its top-right corner; bring it back with **Spectrum** in Settings.
+- **The graph well** — one panel, two switchable views, in both Simple and Advanced:
+  - **Spectrum** — the input/output spectrum overlay (input dim, output in the accent).
+  - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see
+    how hard and how often the limiter is working.
+
+  A fresh instance opens on the **spectrum**. The small chip in the graph's top-right corner
+  names the view you switch **to** — click **GR** on the spectrum to see the gain-reduction
+  history, click **SPEC** on the history to return. The choice is session state, saved with
+  your project, so it reopens on whichever you left it.
 
 **Click the LUFS/TP/PLR panel to reset** the integrated measurement and the held maxima —
 do it after changing the section you are judging.
@@ -225,13 +230,13 @@ Session state — saved with your DAW project, never in presets, invisible to au
 |---|---|---|
 | **Oversampling** | Off / 2× / 4× / 8× / 16× | For the nonlinear stages and true-peak accuracy. Higher = cleaner at higher CPU cost; adds host-compensated latency (§6). |
 | **Phase** | Minimum / Linear | Minimum phase = lowest latency; linear phase = symmetric ringing, more latency. |
-| **Offline quality** | Follow / Force Max | Force Max renders your bounce at maximum oversampling regardless of the live setting. |
-| **UI scale** | 80 – 200 % | Seven steps. |
-| **UI animation** | on/off | Default on. Off never changes behaviour, only motion. |
-| **Tooltips** | on/off | Default off. |
-| **True-peak meter** | on/off | Shows/hides the TP row. |
-| **Spectrum** | on/off | Shows/hides the spectrum overlay (the overlay's × sets this too). |
-| **Target lines** | Spotify / Apple Music / YouTube | Which streaming target ticks the LUFS bars show. |
+| **Offline Render** | Follow Online / Force Max | Force Max renders your bounce at maximum oversampling regardless of the live setting; Follow Online uses whatever the live setting is. |
+| **UI Scale** | XS / S / M / L / XL | Five steps; **M** is the original size, everything scales in proportion. |
+| **UI Animations** | on/off | Default on. Off never changes behaviour, only motion. |
+| **Tooltips** | on/off | Hover hints on every control — what it does, in a line. Default off. |
+| **True-Peak Meter** | on/off | Shows/hides the TP row. Default off. |
+
+(The Spectrum/GR choice is *not* here: switch it with the chip on the graph itself — §3.4.)
 
 The **Ceiling LOCK** lives next to the Ceiling knob itself, not here — but like these
 settings it is session state, so browsing presets never moves a locked ceiling.
@@ -308,7 +313,8 @@ Click the preset name for the menu — **FACTORY** and **USER** sections — or 
 **‹ ›** arrows (wrap-around). "Load Preset…" opens a file chooser for `.anabasis` files
 anywhere on disk. Loads are click-free and form **one undo step**.
 
-Twelve factory presets ship built in: *Transparent Master, Loud Pop, EDM Club, Vocal
+Thirteen factory presets ship built in: *Default* (the plug-in's opening state — re-apply
+it to get back to a clean slate), then *Transparent Master, Loud Pop, EDM Club, Vocal
 Forward, Tape Glue, Rock Punch, Hip-Hop Low End, Acoustic Warmth, Classical Dynamics,
 Podcast Voice, Cinematic Wide, Lo-Fi Crush*.
 
@@ -353,13 +359,15 @@ step. Both slots travel with your DAW session.
 
 ### A transparent master
 
-1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec
-   (−1 dBTP is the common streaming-safe choice; lock it).
-2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work.
+1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec (the −0.1
+   default suits most deliveries; lock it). If the spec is written in dBTP, engage **TP**
+   as well — that is what makes the ceiling hold inter-sample peaks.
+2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work
+   (click the **GR** chip on the graph well first — it opens on the spectrum).
 3. **COMP on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.
-4. Compare candidates with **A/B** + **Copy**, judge PLR and the target lines, and undo
-   freely — history is per slot.
+4. Compare candidates with **A/B** + **Copy**, judge PLR, and undo freely — history
+   is per slot.
 
 ### Competitive loudness (pop/EDM)
 
@@ -369,17 +377,15 @@ step. Both slots travel with your DAW session.
 3. In Advanced, try Limiter **Style → Loud**, and raise **Oversampling** (4× and up) —
    at heavy clipping it audibly cleans the top end. **Offline quality → Force Max**
    renders the bounce at 16× regardless.
-4. Watch **DELTA** for pumping or vocal damage, and the penalty tooltip for how far the
-   platforms will pull you back down.
+4. Watch **DELTA** for pumping or vocal damage.
 
 ### Spoken word / podcast
 
 1. Start from *Podcast Voice*. Modest **Loudness**; the compressor does most of the work.
 2. **LEARN** on a representative minute of the actual voice, then let it settle and
    **FREEZE** — one consistent sound for the whole episode, saved with the session.
-3. Target the platform line you deliver to (−14 to −16 LUFS integrated) rather than
-   maximum loudness; reset the integrated meter (click the panel), play the episode
-   through, and read **I**.
+3. Aim for your distributor's integrated-loudness spec rather than maximum loudness;
+   reset the integrated meter (click the panel), play the episode through, and read **I**.
 
 ---
 

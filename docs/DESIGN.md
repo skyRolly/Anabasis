@@ -549,6 +549,29 @@ ceiling. The lockable set is `{ceiling}` in v1; the mechanism is generic.
 
 ### 4.3 Host-hidden state (`ANABASIS_INTERNAL` — InternalState pattern, Anamorph ADR-0010)
 
+> **Superseded in part (2026-08-06); left as written, per `SOURCE_OF_TRUTH.md` — `DESIGN.md` is the
+> signed-off P0 record and is superseded section by section, not rewritten.** Four rows below no
+> longer describe the code, and they are superseded by **three separate records**, each cleared at
+> the Architecture Review Gate on its own terms. The forward pointer is per row on purpose:
+> `ADR_INDEX.md` keeps these as three decisions precisely so no one of them can be read as
+> covering another.
+>
+> | Row | No longer true | Record |
+> |---|---|---|
+> | `int_meterTargets` | **Gone** from the schema (removed 2026-08-05 with the streaming-target display), so the set is **nine** fields, not ten | [ADR-0015](architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md) |
+> | `int_tpMeterOn` | Defaults **off** | [ADR-0015](architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md) |
+> | `int_spectrumOn` | No longer "spectrum overlay, dismissible": it is the **graph-well mode** — true = spectrum, false = GR history, in both editor views | [ADR-0016](architecture/design-decisions/ADR-0016-spectrumon-becomes-the-graph-well-mode.md) |
+> | `int_uiScale` | The ladder is the five-step XS…XL one (**75/85/100/125/150 %**, default 100), not the seven steps printed below | [ADR-0017](architecture/design-decisions/ADR-0017-uiscale-ladder-narrowing.md) |
+>
+> §4.2's `ceiling` and `truePeakMode` defaults moved with the first of those — −0.1 and **off**,
+> [ADR-0015](architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md).
+> `docs/architecture/PARAMETER_REGISTRY.md` and `docs/architecture/SERIALIZATION_REGISTRY.md` are
+> the descriptive ledgers of what the code holds today.
+>
+> *(An earlier revision of this banner credited all of it to ADR-0015 and did not mention
+> ADR-0016 at all — which is the widening the three-record split exists to prevent, committed in
+> the one document whose job is to point at the right record.)*
+
 | Identifier | Meaning | Values | Default |
 |---|---|---|---|
 | `int_oversample` | OS factor | Off/2×/4×/8×/16× | ⊕ Off |

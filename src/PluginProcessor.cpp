@@ -11,9 +11,18 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "ANABASIS", createAnabasisLayout())
+      apvts (*this, nullptr, "ANABASIS", createAnabasisLayout (&ceilingUnit))
 {
     cached.resolve (apvts);
+    // The Ceiling's suffix follows the live true-peak mode (ADR-0015). Wired
+    // HERE and not in the layout because the layout builds `ceiling` (row 6)
+    // long before `truePeakMode` (row 33) exists. `ceilingUnit` is declared
+    // ahead of `apvts` in the header, so it is already constructed when the
+    // layout captures its address (the member's comment states what that
+    // ordering does and does not prove); until this store lands the suffix is
+    // the fallback " dB".
+    ceilingUnit.truePeakRaw.store (apvts.getRawParameterValue (pid::truePeakMode),
+                                   std::memory_order_relaxed);
     macroEngine   = std::make_unique<MacroEngine> (apvts);
     presetManager = std::make_unique<PresetManager> (apvts, internalState);
 
@@ -24,8 +33,15 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // audio-thread state, so this is safe from any non-audio thread.
     internalState.onLatencyInputChanged = [this] { updateLatency(); };
 
+    // The fresh state IS the "Default" preset (factory index 0, empty
+    // override table). Named BEFORE the default slot is captured so both
+    // slots open carrying it; the dirty baseline is seeded right after, so
+    // an untouched instance reads clean and the first edit stars.
+    livePresetName = "Default";
     defaultSlot = saveSlotFromLive();   // pristine defaults (missing-AB read rule)
     storedSlot  = defaultSlot.createCopy();   // slot B starts as a copy of defaults
+    presetBaseline       = presetShapeFromLive();
+    storedPresetBaseline = presetBaseline.createCopy();
 
     // §5.3 detach discriminator (ADR-0005's P5 half — see the header block).
     // The mapper asks the wrapper, never the reverse: the mask is per-slot
@@ -1049,7 +1065,7 @@ void AnabasisAudioProcessor::resetSlotFieldsToDefaults()
     // the previous session's mask/trims/name/slot behind, or the next save
     // serialises a chimera of two sessions.
     activeSlot = 0;
-    livePresetName.clear();
+    livePresetName = "Default";   // the field's default IS the Default preset's name
     liveBaseline    = juce::ValueTree();
     adoptFrozenMirror ({});
     replaceDetachMask ({});

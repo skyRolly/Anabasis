@@ -3,7 +3,7 @@ advancedMode|Advanced|0.000000|1.000000|0.000000|2|manual
 loudness|Loudness|0.000000|100.000000|0.000000|2147483647|manual
 character|Character|0.000000|1.000000|0.000000|2147483647|manual
 tone|Tone|-1.000000|1.000000|0.000000|2147483647|manual
-ceiling|Ceiling|-20.000000|0.000000|-1.000000|2147483647|auto
+ceiling|Ceiling|-20.000000|0.000000|-0.100000|2147483647|auto
 freeze|Freeze|0.000000|1.000000|0.000000|2|manual
 loudnessComp|Loudness Comp|0.000000|1.000000|0.000000|2|auto
 deltaMonitor|Delta|0.000000|1.000000|0.000000|2|auto
@@ -32,7 +32,7 @@ limAutoRelease|Lim Auto Rel|0.000000|1.000000|1.000000|2|auto
 limStyle|Style|0.000000|2.000000|0.000000|3|auto
 stereoLink|Stereo Link|0.000000|100.000000|100.000000|2147483647|auto
 transientPreserve|Transients|0.000000|100.000000|50.000000|2147483647|auto
-truePeakMode|True Peak|0.000000|1.000000|1.000000|2|manual
+truePeakMode|True Peak|0.000000|1.000000|0.000000|2|manual
 eqTilt|Tilt|-3.000000|3.000000|0.000000|2147483647|auto
 eqLowShelfFreq|LS Freq|20.000000|500.000000|100.000000|2147483647|auto
 eqLowShelfGain|LS Gain|-12.000000|12.000000|0.000000|2147483647|auto

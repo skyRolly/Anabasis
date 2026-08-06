@@ -10,7 +10,9 @@ SpectrumView::SpectrumView (AnabasisAudioProcessor& p) : processor (p)
     fftData.resize ((size_t) kSize * 2);
     inDb.assign (kBins, -120.0f);
     outDb.assign (kBins, -120.0f);
-    setTooltip ("Spectrum");   // owner wording TODO (C8); identifier only
+    // Fires over the corner chip only (`hitTest` narrows the pointer claim),
+    // so the hint names the chip's ACTION, not this view. R2 item-11 wording ⊕.
+    setTooltip ("Switch to the gain-reduction history");
 }
 
 void SpectrumView::visibilityChanged()
@@ -21,68 +23,73 @@ void SpectrumView::visibilityChanged()
         clock.stop();
 }
 
-// The dismiss affordance's hit-area (brief §6 "visible until dismissed"): the
-// top-right corner. ONE definition, because `hitTest` and `mouseDown` both key
-// on it and a click this view accepts but then ignores is exactly the swallowing
-// the hitTest below removes — reintroduced one pixel at a time if the two
-// rectangles were computed separately.
+// The mode chip's hit-area — the top-right corner affordance that flips the
+// graph well to the GR history. (It was the spectrum's dismiss × until
+// 2026-08-05; same corner, same rectangle, different meaning — the well now
+// always shows one of the two views, so there is nothing to dismiss TO.) ONE
+// definition, because `hitTest` and `mouseDown` both key on it and a click this
+// view accepts but then ignores is exactly the swallowing the hitTest below
+// removes — reintroduced one pixel at a time if the two rectangles were
+// computed separately.
 //
-// Deliberately LARGER than the drawn glyph (`paint` puts the × at
-// `getWidth() - 24, 4, 18 × 18`): the surplus is the touch target, and it is
-// unchanged from the predicate this replaces — `x > getWidth() - 26 && y < 24`
-// is the same set of in-bounds points as this rectangle.
-juce::Rectangle<int> SpectrumView::dismissHitArea() const noexcept
+// Deliberately LARGER than the drawn chip (`paint` puts "GR" at
+// `getWidth() - 26, 4, 22 × 16`): the surplus is the touch target.
+juce::Rectangle<int> SpectrumView::chipHitArea() const noexcept
 {
-    return { getWidth() - 25, 0, 25, 24 };
+    return { getWidth() - 27, 0, 27, 24 };
 }
 
-// ONLY the × is interactive. Leaving JUCE's default (hit-test true everywhere)
-// made this overlay consume every click in the metering strip and do nothing
-// with it — the one region of the editor that took a click with no affordance
-// and no effect. `GrHistoryView` and `CurveView` opt out wholesale with
+// ONLY the chip is interactive. Leaving JUCE's default (hit-test true
+// everywhere) made this view consume every click in the metering strip and
+// do nothing with it — the one region of the editor that took a click with no
+// affordance and no effect. `CurveView` opts out wholesale with
 // `setInterceptsMouseClicks (false, false)`; this view cannot, because it owns
-// the dismiss ×, so it opts out per-pixel instead, which is what `hitTest` is
-// for. `LoudnessMeterView` stays intercepting because its WHOLE surface is the
+// the mode chip, so it opts out per-pixel instead, which is what `hitTest` is
+// for — and `GrHistoryView` now does exactly the same for its mirrored "SPEC"
+// chip. `LoudnessMeterView` stays intercepting because its WHOLE surface is the
 // affordance (click = meter reset).
 //
 // TWO CONSEQUENCES, both inseparable from the fix rather than additions to it —
 // `hitTest` is what decides membership of JUCE's "under the mouse" set, so
 // declining a region declines EVERYTHING about it, not just the click.
 //
-//   1. THE TOOLTIP NARROWS. `setTooltip ("Spectrum")` now fires over the ×
-//      only, not over the whole trace: there is no way to stop claiming clicks
-//      in a region while still claiming the pointer there. The wording is a C8
-//      owner-supplied TODO, so the scoping is a brand-pass call if it is wanted
-//      back — and wanting it back means intercepting everywhere again, i.e.
-//      re-accepting consequence 2 below.
+//   1. THE TOOLTIP NARROWS to the chip. That is now the RIGHT scope rather
+//      than a cost: the tooltip names the chip's action ("Switch to the
+//      gain-reduction history", set in the constructor), so it belongs over the
+//      chip and nowhere else. It was written the other way round when the
+//      string was the identifier `"Spectrum"` and the wording was still an
+//      open C8 owner TODO — the R2 item-11 directive discharged that TODO and
+//      supplied the action wording, so there is no longer a brand-pass question
+//      about widening it back. Widening would mean intercepting everywhere
+//      again, i.e. re-accepting consequence 2 below, for a hint that would then
+//      be wrong over the trace.
 //
-//   2. CLICKS OVER THE TRACE NOW REACH WHATEVER IS BENEATH — today the editor
+//   2. CLICKS OVER THE TRACE REACH WHATEVER IS BENEATH — today the editor
 //      itself, which is the correct outcome and the point of the change, but it
 //      is a live routing decision rather than a void. The editor installs no
-//      tooltip on its background and no click handler under this strip, so
+//      tooltip on its background and no click handler under the graph well, so
 //      nothing happens there now. The thing to know before ADDING one: anything
-//      placed under the spectrum's footprint becomes reachable through the
-//      overlay while it is showing, which is a different arrangement from the
-//      dismissible overlay it looks like on screen. If a future affordance
-//      lands there and must NOT be clickable through the trace, the answer is
-//      to widen this hit-area — not to revert to intercepting everywhere, which
-//      would restore the swallow this removed. Recorded for the brand pass
-//      beside the tooltip question, since the two are the same trade seen from
-//      opposite ends.
+//      placed under this view's footprint becomes reachable through the trace
+//      while this mode is showing. If a future affordance lands there and must
+//      NOT be clickable through the trace, the answer is to widen this
+//      hit-area — not to revert to intercepting everywhere, which would restore
+//      the swallow this removed.
 bool SpectrumView::hitTest (int x, int y)
 {
-    return dismissHitArea().contains (x, y);
+    return chipHitArea().contains (x, y);
 }
 
 void SpectrumView::mouseDown (const juce::MouseEvent& e)
 {
-    // Re-enabled from Settings, which owns the same int_spectrumOn field.
-    //
-    // The test is now unreachable-false — `hitTest` already refused every click
+    // The test is unreachable-false — `hitTest` already refused every click
     // outside the area — and is kept rather than trimmed so this function is
     // correct standing alone instead of correct because of what another
     // function happens to return.
-    if (dismissHitArea().contains (e.getPosition()))
+    if (chipHitArea().contains (e.getPosition()))
+        // Since 2026-08-05 this is a MODE SWITCH, not a dismissal: the well
+        // flips to the GR history (the chip names what you switch TO), and the
+        // GR view carries the mirrored chip back. Same corner, same hit-area
+        // discipline (clicks over the trace still pass through).
         processor.internalState.state().setProperty (iid::spectrumOn, false, nullptr);
 }
 
@@ -194,17 +201,87 @@ void SpectrumView::paint (juce::Graphics& g)
     const float fLo = 20.0f, fHi = 20000.0f;
     const float dbLo = -90.0f, dbHi = 0.0f;
 
+    // Column reads: the two-regime rule adapted from Anamorph's SpectrumImager
+    // (ADR-0009 provenance: Anamorph src/gui/SpectrumImager.cpp, `magCubic` /
+    // `magForColumn`). On a log-f axis the low end packs many pixel columns
+    // into few FFT bins, so the nearest-bin read this replaces quantised the
+    // LF trace into a staircase. Instead, each column spans [cx−½, cx+½]:
+    // where that covers fewer than 1.5 bins, the value is a Catmull-Rom
+    // interpolation across the four surrounding bins; where it covers 1.5 bins
+    // or more (the HF end, many bins per column), it averages every covered
+    // bin.
+    //
+    // BOTH REGIMES WORK IN THE dB DOMAIN, AND SO DOES THE SIBLING — this is a
+    // faithful port, not an adaptation. Worth stating outright because the
+    // sibling's names say otherwise and have now misled a review: its array is
+    // called `mags` and its readers `magCubic`/`magForColumn`, but the array
+    // holds **decibels**, not linear magnitudes. The evidence, all in
+    // `Anamorph:src/gui/SpectrumImager.cpp`: it is seeded to `kMinDb` (−90) at
+    // `:105`; it is an attack-instant / release-decayed EMA of `magsDb`, which
+    // is itself `Decibels::gainToDecibels (fftData[k] * norm, kMinDb)` at
+    // `:796`; the clip-glow reader adds 6 dB to it as "window-gain compensated
+    // dBFS" at `:833`; and `magForColumn`'s result goes straight into
+    // `dbToY (…)` at `:1132` with no conversion on the way. A dB-domain mean
+    // IS a geometric mean of magnitudes, and it is the one the sibling has
+    // always drawn — so matching it is what preserves the family's display
+    // behaviour, and converting to linear here to "fix" the domain would be
+    // the divergence.
+    //
+    // An earlier revision of this comment claimed the sibling averaged linear
+    // magnitudes and that reading dB was an adaptation. That was wrong on both
+    // halves and is corrected rather than deleted, because the wrong version is
+    // what a reviewer read and repeated.
+    //
+    // The inclusive `[ka, kb]` span below is likewise the sibling's, verbatim
+    // (`floor` / `ceil` / `k <= kb` at `:685-689`): it reaches up to one bin
+    // past each edge of the column, which is deliberate overlap between
+    // neighbouring columns, not an off-by-one. A half-open form would drop the
+    // overlap and diverge.
+    //
+    // The clamp floor stays at bin 1 — the nearest-bin read this replaces never
+    // showed DC and this port keeps that exclusion.
+    const float binHz = (float) (sr / (double) kSize);
+    auto binAt = [&] (const std::vector<float>& bins, int j)
+    {
+        return bins[(size_t) juce::jlimit (1, kBins - 1, j)];
+    };
+    auto dbCubic = [&] (const std::vector<float>& bins, float binPos)
+    {
+        const int   i = (int) std::floor (binPos);
+        const float u = binPos - (float) i;
+        const float m0 = binAt (bins, i - 1), m1 = binAt (bins, i);
+        const float m2 = binAt (bins, i + 1), m3 = binAt (bins, i + 2);
+        return 0.5f * ((2.0f * m1) + (-m0 + m2) * u
+                       + (2.0f * m0 - 5.0f * m1 + 4.0f * m2 - m3) * u * u
+                       + (-m0 + 3.0f * m1 - 3.0f * m2 + m3) * u * u * u);
+    };
+    auto dbForColumn = [&] (const std::vector<float>& bins, float fa, float fb)
+    {
+        const float span = (fb - fa) / binHz;
+        if (span < 1.5f)
+            return dbCubic (bins, 0.5f * (fa + fb) / binHz);
+        const int ka = juce::jlimit (1, kBins - 1, (int) std::floor (fa / binHz));
+        const int kb = juce::jlimit (1, kBins - 1, (int) std::ceil  (fb / binHz));
+        float sum = 0.0f;
+        for (int k = ka; k <= kb; ++k)
+            sum += bins[(size_t) k];
+        return sum / (float) (kb - ka + 1);
+    };
+
     auto traceOf = [&] (const std::vector<float>& bins, juce::Path& path)
     {
         bool started = false;
         const int cols = juce::jmax (1, (int) area.getWidth());
+        auto freqAt = [&] (float cx)
+        {
+            return fLo * std::pow (fHi / fLo, cx / (float) cols);
+        };
         for (int cx = 0; cx <= cols; ++cx)
         {
-            const float t = (float) cx / (float) cols;
-            const float f = fLo * std::pow (fHi / fLo, t);
-            const int bin = juce::jlimit (1, kBins - 1,
-                                          (int) std::round (f * (double) kSize / sr));
-            const float db = juce::jlimit (dbLo, dbHi, bins[(size_t) bin]);
+            const float t  = (float) cx / (float) cols;
+            const float fa = freqAt ((float) cx - 0.5f);
+            const float fb = freqAt ((float) cx + 0.5f);
+            const float db = juce::jlimit (dbLo, dbHi, dbForColumn (bins, fa, fb));
             const float x = area.getX() + t * area.getWidth();
             const float y = area.getBottom()
                           - (db - dbLo) / (dbHi - dbLo) * area.getHeight();
@@ -221,9 +298,8 @@ void SpectrumView::paint (juce::Graphics& g)
     g.setColour (colours::accent);
     g.strokePath (pout, juce::PathStrokeType (1.3f));
 
-    // Dismiss × (top-right).
+    // Corner mode chip (top-right): names the view you switch TO.
     g.setColour (colours::textDim.withAlpha (0.7f));
-    g.setFont (juce::Font (juce::FontOptions (13.0f)));
-    g.drawText (juce::String::charToString ((juce::juce_wchar) 0x00D7),
-                getWidth() - 24, 4, 18, 18, juce::Justification::centred);
+    g.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.1f));
+    g.drawText ("GR", getWidth() - 26, 4, 22, 16, juce::Justification::centred);
 }

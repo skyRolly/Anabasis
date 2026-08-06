@@ -9,12 +9,18 @@
 class AnabasisAudioProcessor;
 
 // ============================================================================
-//  SpectrumView — the §2.9 dual-trace input/output overlay (brief §6:
-//  dismissible, visible until dismissed — `int_spectrumOn`). The audio thread
-//  only fills the two ScopeBuffer rings (engine taps: post-input-gain and
-//  post-chain); the FFT runs HERE, on the paint side, per the ADR-0011 /
-//  THREAD_MODEL division. Reads are stateless `readLatest` peeks; a frame
-//  with no new samples repaints nothing.
+//  SpectrumView — the §2.9 dual-trace input/output analyser, and one of the
+//  TWO MODES of the shared graph well (`int_spectrumOn` true selects it,
+//  false selects `GrHistoryView`; ADR-0016). It was brief §6's dismissible
+//  overlay — "visible until dismissed" — until 2026-08-05, when the owner's
+//  round-2 directive made the well a two-view switch: the corner chip now
+//  names the view it swaps TO rather than dismissing anything, because the
+//  well always shows one of the pair.
+//
+//  The audio thread only fills the two ScopeBuffer rings (engine taps:
+//  post-input-gain and post-chain); the FFT runs HERE, on the paint side, per
+//  the ADR-0011 / THREAD_MODEL division. Reads are stateless `readLatest`
+//  peeks; a frame with no new samples repaints nothing.
 //
 //  Display: 4096-point Hann FFT, mono-summed, log-f 20 Hz–20 kHz, −90..0 dB,
 //  per-bin EMA smoothing so the trace holds still enough to read. The input
@@ -39,10 +45,11 @@ public:
     ~SpectrumView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;   // top-right × dismisses
-    // Interactive ONLY over that ×; everything else falls through to whatever
+    void mouseDown (const juce::MouseEvent&) override;   // top-right chip → GR history
+    // Interactive ONLY over that chip; everything else falls through to whatever
     // is beneath. See the definition — this is how a partly-interactive overlay
-    // opts out, where `GrHistoryView`/`CurveView` opt out wholesale.
+    // opts out. `GrHistoryView` mirrors it for its own chip; `CurveView` opts
+    // out wholesale.
     bool hitTest (int x, int y) override;
     void visibilityChanged() override;
 
@@ -63,9 +70,9 @@ public:
     const std::vector<float>& analysedInDb() const noexcept { return inDb; }
 
 private:
-    // The × hit-area, in ONE place because `hitTest` and `mouseDown` must agree
-    // about it — see the definition.
-    juce::Rectangle<int> dismissHitArea() const noexcept;
+    // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
+    // agree about it — see the definition.
+    juce::Rectangle<int> chipHitArea() const noexcept;
     void analyse (const anabasis::ScopeBuffer&, std::vector<float>& smoothedDb, double dt);
 
     AnabasisAudioProcessor& processor;

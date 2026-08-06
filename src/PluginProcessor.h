@@ -66,13 +66,41 @@ public:
     int getNumPrograms() override                 { return 1; }
     int getCurrentProgram() override              { return 0; }
     void setCurrentProgram (int) override         {}
-    const juce::String getProgramName (int) override { return {}; }
+    const juce::String getProgramName (int) override { return "Default"; }   // the sibling's constant
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     // -- Anabasis -----------------------------------------------------------
+    // DECLARED BEFORE `apvts`, and that buys exactly ONE of the two halves.
+    //
+    // CONSTRUCTION — a real guarantee. `createAnabasisLayout (&ceilingUnit)`
+    // runs inside `apvts`'s member initialiser, so the holder has to be
+    // constructed already. Declaration order is what makes that true; moving
+    // this line below `apvts` would hand the layout the address of a member
+    // that does not exist yet.
+    //
+    // DESTRUCTION — NOT a guarantee, and this comment used to claim it was.
+    // The value-text lambda lives inside the `ceiling` parameter, and the
+    // parameter is NOT owned by `apvts`: the APVTS constructor hands every
+    // layout parameter to `AudioProcessor::addParameter`, so the base class
+    // owns them and `~AudioProcessor` — which runs AFTER every derived member
+    // — is what destroys them. So the lambda outlives this holder no matter
+    // where it is declared. `apvts` is destroyed before it too, which leaves
+    // `truePeakRaw` (a pointer into APVTS storage) dangling for the rest of
+    // the derived teardown.
+    //
+    // WHAT ACTUALLY MAKES IT SAFE is a runtime fact, not a structural one:
+    // `getText` is called by hosts and by the editor while the processor is
+    // live, and nothing in JUCE queries parameter text from a destructor. The
+    // hazard is latent, not live. It is written down rather than papered over
+    // because the fallback would NOT rescue a teardown-time read — reading a
+    // destroyed `std::atomic` is UB before any value it held matters — so a
+    // future change that queries parameter text during destruction needs a
+    // handle the parameters can own (a shared holder), not a re-ordering of
+    // these two lines. ADR-0015 §5 carries the same correction.
+    CeilingUnitSource ceilingUnit;
     juce::AudioProcessorValueTreeState apvts;
     InternalState internalState;
 

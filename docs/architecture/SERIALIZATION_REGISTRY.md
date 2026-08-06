@@ -13,6 +13,19 @@ tolerate absence, removal is prohibited, and any change here is a **serializatio
 change — an AI-agent Hard Stop** (`ARCHITECTURE_REVIEW_GATE.md`), enacted only by a
 superseding ADR.
 
+**One removal has been enacted that way**, while the window described in that first sentence is
+still open: `int_meterTargets` left `ANABASIS_INTERNAL` on 2026-08-05 with the streaming-target
+display, under
+[**ADR-0015**](design-decisions/ADR-0015-pre-ship-contract-refreeze.md) — which is why the
+count below reads nine rather than the ten `ADR-0007`/`ADR-0010` decided. A Serialization Registry
+change is an `ARCHITECTURE_REVIEW_GATE.md` item and a Hard Stop, and **the owner cleared that gate
+on 2026-08-06**, signing off the field removal by name; the sign-off is quoted in ADR-0015's
+Status banner, which is the record of authority for it. The migration is §2's
+read rules doing their ordinary job: an older blob carrying the property loads with every other
+field intact and the unknown one ignored, and the writer emits the schema rather than the input,
+so it does not survive a re-save. No legacy read path is owed, because no build carrying the
+field has left the repository.
+
 There are **two formats**, deliberately different in fidelity (ADR-0007 option H):
 
 | Format | Fidelity contract | Carrier |
@@ -31,7 +44,7 @@ There are **two formats**, deliberately different in fidelity (ADR-0007 option H
 AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, PluginProcessor.cpp:7)
 ├── ANABASIS                      the APVTS tree — the LIVE parameter surface
 │   └── PARAM ×49                 id · value (denormalised) · raw (normalised double, additive)
-├── ANABASIS_INTERNAL             host-hidden session state (10 int_* properties)
+├── ANABASIS_INTERNAL             host-hidden session state (9 int_* properties)
 ├── AB                            active = 0|1
 │   ├── SLOT                      (slot 0)
 │   │     presetName (string)
@@ -114,7 +127,37 @@ placement was rejected for the trims, not for this (ADR-0007 §Options D).
 
 ### 1.6 `ANABASIS_INTERNAL`
 
-The ten host-hidden fields (`src/InternalState.h` — inventory in
+> **One field's MEANING changed, 2026-08-05 — recorded here because this ledger treats a semantic
+> change like a removal.** `int_spectrumOn` used to mean *"does the spectrum take half of the
+> Advanced metering strip?"* (the GR trace was never hidden by it, and the Simple view did not
+> read it at all). It now means *"which of the two graph-well views is active"*, in **both**
+> editor modes — `true` spectrum, `false` GR history.
+> [**ADR-0016**](design-decisions/ADR-0016-spectrumon-becomes-the-graph-well-mode.md) carries the
+> decision, the before/after table and the rejected alternatives.
+>
+> **No migration is owed and none exists**: the type (`bool`) and default (`true`) are unchanged,
+> so the defaults-first overlay below reads an old blob exactly as it always did. What differs is
+> what the same stored value *shows* — `false` displays what it always displayed, `true` now
+> hides the GR trace that used to sit beside it. Display-only, one click to change, and free
+> while the pre-ship window is open.
+>
+> **Gate CLEARED 2026-08-06**, separately from ADR-0015's: the owner's confirmation names the
+> semantic change, the decision to keep it a pre-1.0 migration change, and the acceptance that
+> stored values load with no migration path.
+>
+> **A SECOND field's accepted DOMAIN changed in the same batch**, and that one is still open.
+> `int_uiScale`'s ladder narrowed from seven steps (80/90/100/125/150/175/200) to five
+> (75/85/100/125/150). Type, unit and default are unchanged — it is still a percent, 100 is still
+> the default — but the ladder is part of this field's read contract (§1.6's normalisation note
+> and §2's out-of-range row both name it), so a stored **80 → 75, 90 → 85, 175/200 → 150**, and
+> because the normalisation happens at adoption the corrected percent is what the next save
+> writes. 100/125/150 are common to both ladders and survive untouched.
+> [**ADR-0017**](design-decisions/ADR-0017-uiscale-ladder-narrowing.md) carries it, and **its gate
+> was cleared 2026-08-06** — separately again, the owner's confirmation naming the reduced ladder,
+> the acceptance that out-of-set stored values normalise on adoption, and that this is a pre-1.0
+> decision with no released-session migration obligation.
+
+The host-hidden fields (`src/InternalState.h` — inventory in
 `PARAMETER_REGISTRY.md` §Host-hidden state). Read by `InternalState::replaceFrom`:
 **defaults first**, then overlay only properties the schema knows (unknown ignored), the
 `int_uiScale` ladder normalisation applied at adoption with the default as the read

@@ -6,7 +6,323 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **three further review-confirmed corrections (2026-08-05)**, all
+**Last updated:** for the **`shownTpMode` construction seed (2026-08-06)**. The editor's cached
+TP-display flag was hard-coded `false`, but it caches *what the Ceiling boxes are showing*, not
+the product default — and those two differ for an editor opened on a TP-ON session, where the
+attachment renders " dBTP" at construction. If the mode then went OFF before the first 24 Hz
+tick (~42 ms: a host write, a state load, the other TP toggle), the edge gate saw
+`tp == shownTpMode == false`, skipped the refresh, and left " dBTP" standing over a sample-peak
+ceiling until something else forced a recompute. Seeded in the constructor instead — from
+`CeilingUnitSource::truePeakEngaged()`, the predicate the value-text lambda itself consults, so
+"the cache equals the mode the visible suffix reflects" holds by construction rather than by
+coincidence (a raw parameter read agrees only while the holder is wired; with it unwired the
+lambda falls back to " dB" while a raw `true` would claim otherwise). `refreshCeilingUnit`
+now reads that same predicate, so the gate and the suffix cannot disagree. Placed BEFORE
+`startTimerHz` so the tick — the member's one reader — cannot observe the placeholder, rather
+than relying on the message loop not running mid-constructor. It is an assignment and not a
+`refreshCeilingUnit()` call because nothing needs refreshing at that point: only the cache has
+to catch up with what is already on screen. The guard gained the reported scenario
+(editor created TP-on, mode off before any tick) and is mutation-verified — restoring the
+hard-coded seed turns it red. Suites 233 + 436.
+Previous: the **DESIGN §4.3 attribution repair and the locked-override test (2026-08-06)**. The §4.3 supersession banner credited all of its rows to **ADR-0015**, including
+`int_uiScale`'s ladder (ADR-0017's), and did not mention **ADR-0016** at all while the
+`int_spectrumOn` row below it still read "spectrum overlay … dismissible". That is the widening
+the three-record split exists to prevent, committed in the one document whose job is to point at
+the right record. The banner is now a per-row table — one forward pointer per superseded row, to
+the record that actually supersedes it — with §4.2's `ceiling`/`truePeakMode` defaults attributed
+to ADR-0015 alongside, and a note recording the earlier misattribution rather than hiding it.
+ADR-0016 and ADR-0017 gained the matching doc-sync bullet (each names `DESIGN.md` §4.3, which
+neither did), and ADR-0016's clearance banner no longer says ADR-0017's gate is open — it was
+cleared later the same day.
+**Locked-ceiling coverage:** `testFactoryPresets`' lock check reached only the DEFAULTS half of
+the rule once EDM Club's −0.5 override went with the ADR-0015 default change — no factory table
+names `ceiling` any more, so the stronger "an override aimed at a locked parameter is skipped"
+path had no coverage. Rather than add a preset to the shipped bank to have something to test
+with, the new `testALockedCeilingSurvivesAPresetThatNamesIt` drives the FILE path, where a
+document naming `ceiling` is exactly that collision, through `applyPreset (const XmlElement&, …)`
+— the overload the wrapper's own preset ring uses, so it is the shipped path with the filesystem
+left out. An unlocked pass first proves the document really does move the ceiling, so the locked
+check cannot pass vacuously; mutation-verified (removing the skip in `applyOnePresetValue` turns
+it red). The factory check keeps its assertion and gains a comment saying which half it reaches.
+Suites 233 + 432.
+Previous: the **third gate clearance and two rendering/comment fixes (2026-08-06)**.
+**ADR-0017 CLEARED**, separately again — the owner's confirmation naming the reduced ladder, the
+acceptance that out-of-set stored values normalise on adoption, and that this is a pre-1.0 decision
+with no released-session migration obligation. Recorded in the four places the previous two
+clearances were: the ADR's Status banner, `ADR_INDEX.md`, `HANDOVER.md` (item (i) struck plus a
+round-log entry) and the two ledger rows. **That closes the round-2 batch: ADR-0015, ADR-0016 and
+ADR-0017 are each cleared on their own terms** — the sentence the three-record split existed to
+make true, since one record would have made the second and third clearances read as extensions of
+the first.
+Two code fixes alongside. `GrHistoryView` drew its "SPEC" chip FIRST so it would survive the reader
+contract's three early returns, then stroked the trace and filled the waveform over the whole
+`area` — which contains the chip's footprint, so at zero reduction the trace crosses the glyph
+while `SpectrumView` (chip last) does not, contradicting the comment claiming the two chips share a
+face. The traces move into a private `paintHistory` that keeps all three early returns verbatim and
+the chip is drawn after it: same order as the sibling, same hit-area, no geometry change, and the
+chip still survives an empty ring or an in-flight clear. And `iid::spectrumOn`'s identifier comment
+still read "bool (dismissible, brief §6)" — the meaning ADR-0016 supersedes — in the very file that
+ADR names as the field's home; every other site had been updated. It now states the mode semantics
+and cites the ADR.
+Previous: the **second gate clearance, ADR-0017, and DSP-test isolation (2026-08-06)**.
+**ADR-0016 CLEARED** — separately from ADR-0015 and on its own terms, the owner's confirmation
+naming the semantic change, the pre-1.0 migration decision, and the acceptance that stored values
+keep loading with no migration path (an acceptance of the read delta the ADR tabulates, not a
+claim that none exists). Recorded in the same four places the first clearance was: the ADR's
+Status banner, `ADR_INDEX.md`, `HANDOVER.md` (item (h) struck plus a round-log entry) and the two
+ledger rows.
+**ADR-0017 opened** for a third member of the same class that had gone unrecorded anywhere:
+`int_uiScale`'s ladder narrowed from seven steps (80/90/100/125/150/175/200) to five
+(75/85/100/125/150). Type, unit and default are untouched — it is still a percent, 100 is still
+the default — so this is a **domain** change rather than a semantic one, and a reader could argue
+it sits below the gate's bar. It is recorded at the bar anyway, because
+`SERIALIZATION_REGISTRY.md` §1.6 and §2 both name the ladder as part of this field's read
+contract, and because over-recording a pre-ship change costs a paragraph while under-recording one
+costs a user's window size. A stored 80 → 75, 90 → 85, 175/200 → 150, and the correction persists
+at adoption; 100/125/150 are common to both ladders, so the ordinary session is untouched. Its
+gate is **open** — neither 2026-08-06 sign-off names `int_uiScale` — and it is its own ADR rather
+than a fourth item inside ADR-0016, which had just been signed off naming three.
+**DSP-test isolation:** three invariant guards derived their bound from the POD default instead of
+stating it, so a product default move silently re-calibrated them. `testOutputNeverExceedsCeiling`
+and `testCeilingUnderOs` now pin `ceilingDbTp = −1` **and** `truePeakMode = false` (the harder case
+for the sample-level backstop — with TP on, the TP-driven gain keeps the signal further from the
+clamp the test exists to prove), and `testLimiterAlignment` pins the ceiling its two-sided
+`>= ceilingLin * 0.995` check is calibrated against. `testNullWithDefaults` deliberately keeps
+inheriting — "all-defaults is a bit-exact null" is its whole claim — and its comment now says so;
+three stale "0.891 default" numbers in test comments corrected to 0.989.
+**TP-default rationale recorded** (no behaviour changed): ADR-0015 §Consequences now states why
+the meter row being off is deliberate — round-2 item 4 said "all TP toggles (**analyzer +
+processor**) default OFF", so the diagnostic default was specified, not inherited — and carries
+the two questions left for the fine review: whether the row should be the exception to the
+family's opt-in pattern (it is the only one of the three defaults that removes a *diagnostic*
+rather than a guarantee), and what the `warn` colour should compare against. The meter's own
+comment now records the same trade at the comparison.
+Previous: **ADR-0016 — `int_spectrumOn`'s semantic migration recorded (2026-08-06)**.
+Review asked whether repurposing the field needed a record. It does, and by the repository's own
+terms it needs an **ADR**, not a registry line: `ARCHITECTURE_REVIEW_GATE.md` lists "any field
+add/remove/**semantic change**" and `SESSION_COMPATIBILITY_POLICY.md` rule 1 covers a field
+"removed **or have its meaning changed**" — the same class as the `int_meterTargets` removal,
+which got a full ADR. **ADR-0016** is deliberately its own record rather than a fourth item inside
+ADR-0015: that one was signed off naming three changes, and widening a signed-off record after the
+fact is the failure the last four rounds were about. Its gate is therefore **NOT cleared** and is
+tracked as `HANDOVER.md` item (h) — nothing urgent, the pre-ship window is open.
+The before/after was read from the commit that held it rather than recalled, which sharpened the
+story: the old meaning was *"does the spectrum take half of the Advanced strip?"* — Advanced split
+the strip and showed **both** views, and Simple did not read the field at all — so `false`
+sessions display exactly what they always did and only `true` ones lose the GR trace that used to
+sit beside the spectrum. Recorded at the two ledger rows (`SERIALIZATION_REGISTRY.md` §1.6 gains a
+meaning-change banner; `PARAMETER_REGISTRY.md`'s inventory line says it is a semantic change and
+not just a UI move) and in `ADR_INDEX.md`.
+Alongside: `SpectrumView`'s comments still described the corner as a dismiss ×, quoted the removed
+`setTooltip ("Spectrum")` identifier, and called the wording an open C8 owner TODO that the R2
+item-11 directive had already discharged — the header banner, the hit-area comment and both
+`hitTest` consequences now describe the mode chip that is actually there, including why the
+narrowed tooltip scope is now the *right* scope rather than a cost.
+Previous: the **Architecture Review Gate clearance and two cleanups (2026-08-06)**.
+The gate is **CLEARED** — the first clearance in this repository. Two of ADR-0015's three contract
+changes are `ARCHITECTURE_REVIEW_GATE.md` items in their own right (a Serialization Registry
+change and a Parameter Registry change) and both sit on `CLAUDE.md`'s Hard Stop list, which a
+green build explicitly does not clear; they had landed on the round-2 directive plus a
+self-authored ADR, which the review flagged twice — correctly, since the gate's Procedure puts the
+human review *before* the merge, so an ADR written in the same PR is a record and not a clearance.
+The owner has now reviewed and signed off all three by name. Recorded where the repository's
+process puts it: **ADR-0015's Status banner** (an ADR's Status is where its authority lives, so
+the sign-off is quoted there verbatim), **`ADR_INDEX.md`** (so "was the gate cleared?" is
+answerable without opening the file), **`HANDOVER.md`** (item (g) of the fine-review list struck,
+plus a dated entry in the round log — the chronological record of record), and a line at each of
+the two ledger rows the change touches, **`PARAMETER_REGISTRY.md`** ¹⁵ and
+**`SERIALIZATION_REGISTRY.md`**'s header. Those three decisions are now **settled, not ⊕**;
+everything else under the v0.1.0 blanket approval keeps its ⊕, including the ⊕ on the mode-aware
+unit's *wording*. The ordering is written down as the part not to repeat.
+Two cleanups alongside: `LoudnessMeterView::paint`'s trailing `area.removeFromTop (6)` — the gap
+that used to sit above the §6.4 penalty rows, reserving nothing since they left with the
+streaming-target display — is gone (the 6 px gap *above* the TP row is a different, live one), and
+the manual's graph-well bullet said "the choice is session state" twice.
+Previous: the **third PR #8 review round — one false lifetime invariant withdrawn
+(2026-08-06)**. `CeilingUnitSource`'s member comment and ADR-0015 §5 argued that declaring the
+holder before `apvts` made it *outlive* the value-text lambda that captured its address. It does
+not: the APVTS constructor hands every layout parameter to `AudioProcessor::addParameter`, so the
+parameters — and their lambdas — belong to the **base** class and `~AudioProcessor` destroys them
+after every derived member; `apvts` also dies before the holder, leaving `truePeakRaw` dangling
+for the rest of the derived teardown. Declaration order buys the **construction** half and nothing
+more, and that half is real. What makes the arrangement safe is a runtime fact — `getText` is
+called while the processor is live and nothing in JUCE queries parameter text from a destructor —
+so the hazard is latent, not live. The ownership is deliberately **unchanged**: the wrong claim is
+withdrawn at all four sites that carried it (the member comment, `CeilingUnitSource`'s header
+block, the wiring comment, ADR-0015 §5 and its Consequences bullet) rather than repaired by
+inventing a shared handle for a display string, because the false invariant was the actual defect
+— it told a maintainer the lifetime was proven, and pointed the remedy at keeping two lines in
+order when the real remedy would be a handle the parameters can own. No behaviour change; suites
+and pluginval unchanged-green.
+Previous: the **second PR #8 review round — the Ceiling unit's missing refresh half
+(2026-08-06)**. The mode-aware unit was correct on the parameter side and its test passed there,
+but nothing refreshed the CACHED value-box label: a JUCE `Slider` recomputes it only in
+`updateText()` — on a value change, a `setTextBoxStyle`, a relayout or a look-and-feel change,
+never on a repaint — and flipping TP does none of those (the graph-well branch that used to call
+`resized()` from the tick is a visibility flip now). So a generic host editor showed the right
+unit while the plugin's own readout carried exactly the stale claim the change existed to remove.
+`refreshCeilingUnit()` runs on the same 24 Hz tick, edge-gated, refreshing both ceiling controls
+(one parameter shown twice), and is **public for the same reason `refreshInternalSettingsBoxes`
+is** — no message loop runs in the headless suite, and this is the second time a state→widget
+direction has been the missing half of a change that looked complete from the parameter side. The
+guard now checks the LABEL, not a live re-computation, and was mutation-verified: removing the two
+`updateText()` calls turns it red. Also corrected: the About copy said "hold a true-peak ceiling",
+the same inter-sample over-claim one panel over; the About snapshot test still reconstructed the
+old 400×232 geometry, so its "textured rows" heuristic sampled a band that no longer matched the
+content inset (440×290, copy stack 200 px of the 238 the inset leaves); the stereo guard's `run`
+lambda divided by `256.0 * 512.0` where the settled half is 30 × 512 — an ~8.5× over-division that
+left a permanent guard passing by 20 % instead of 3.5× and printing wrong numbers in its own
+failure message (now derived from the loop's own `blocks`); KI-009 and the CHANGELOG said "seven
+configurations" against their own six-item lists; both `nearest`-rule comments still worked their
+examples against the seven-step ladder (92 → 90, 50 → 80, 300 → 200, which are now 85/75/150); and
+the manual narrated the GR history as the bottom view a fresh instance shows, when `int_spectrumOn`
+defaults true so the well opens on the spectrum, and still described the TP meter row as something
+you hide rather than something you show. HANDOVER's Pending Tasks row gained item (g): an explicit
+owner acknowledgement of ADR-0015's **schema** half is owed — the directive named the display
+removal, the field removal followed from it, and a serialization change is its own Hard Stop.
+Suites 233 + 426.
+Previous: the **PR #8 review round — ADR-0015 and the true-peak honesty pass
+(2026-08-06)**. The round-2 batch changed three things the repository's own rules put behind a
+decision record — `ceiling`'s default, `truePeakMode`'s default, and the removal of the
+`int_meterTargets` session field — and landed them with prose justification only.
+**`ADR-0015`** is that record: it takes the pre-ship latitude
+`PARAMETER_COMPATIBILITY_POLICY.md` §"Getting it right the first time" already describes, names
+the §4.4 read rules as the migration `SESSION_COMPATIBILITY_POLICY.md` rule 1 demands, and states
+the condition that closes the window (**the first build that leaves this repository**, not the
+first tag). It amends rather than rewrites the two ADRs whose incidental numbers moved — ADR-0006
+(the two defaults it quotes in passing) and ADR-0010 (its ten-field host-hidden inventory) — each
+of which now carries a forward-pointing banner, and the index gained an **"ADRs amended by a later
+ADR"** registry so an auditor knows before reading whether any of a record has moved. `DESIGN.md`
+§4.3 carries the same banner and is otherwise untouched, per `SOURCE_OF_TRUTH.md`: it is the
+signed-off P0 record, superseded section by section, never rewritten.
+The ADR also settles the consequence the default change created: with `truePeakMode` off the
+ceiling is a **sample-peak** limit (`DSP_POLICY.md` invariant 3, ADR-0006 item 3), so the
+unconditional `" dBTP"` suffix claimed an inter-sample guarantee the shipped default does not
+make. The unit now follows the mode (`CeilingUnitSource` — the holder the processor declares
+*before* `apvts`, which is what puts its construction ahead of the layout call that captures its
+address; unwired it falls back to the weaker `" dB"`), and the tooltip and four manual sites say
+which limit is live. The DSP needed
+no change and neither invariant needed amending — both were already mode-conditional, which is the
+load-bearing observation. Also fixed: `LoudnessMeterView`'s TP snapshot seed and read fallback both
+encoded `true` against a default of `false`, so the first painted frame showed a row the default
+does not have; the UI-scale ladder comment still argued from the seven-step ladder's 80 %; the
+zone-combo comment described a header placement the code never produced (and the CLIP well's
+knob row gives back 8 px, which closes a curve overhang that predates the combo move); and two
+factory-index test comments went stale when "Default" took index 0 — one had quietly become the
+gentlest preset in the bank where it wanted the loudest, the other had stopped exercising the
+override path it exists for. New guard: `testTheCeilingAdvertisesTheUnitItEnforces` (suites
+233 + 420).
+Previous: **round-2 item 2 — the layout coherence pass, verified against
+rendered snapshots (2026-08-05, owner directive)**. The editor was actually LOOKED AT for
+this one: an env-gated `createComponentSnapshot` dump (temporary, not committed) rendered
+Simple, Advanced and Settings headlessly, and the pass fixed what the pixels showed rather
+than what the code implied. (1) Every Advanced zone's MODE combo now sits in the zone
+HEADER, top-right beside the caption — the slot EQ's Pre/Post already used; before, three
+zones parked it in three different places, and the LIMITER's foot row squeezed AUTO + TP +
+Style into one line where both toggle labels truncated to ".." (`drawToggleButton` fits text
+into what remains right of the pill; 44–52 px cells leave ~16 px). Foot rows now carry
+toggles only, at half-panel widths. (2) The Simple ceiling cell's TP/LOCK column widens
+54→74 px — "LOCK" truncated to "L…" at the shipped 52. (3) Input Gain and SC HPF become
+horizontal FADERS in the utility strip (the family's `drawLinearSlider` language, value box
+beside the track): a strip-squeezed rotary was the smallest control on the page for two
+set-by-ear parameters; same Knob objects, attachments, reset and tooltip — presentation
+only. (4) The Settings panel shrinks 398→310 px to fit its content — the target checkboxes
+and the Spectrum toggle left ~90 px of dead glass when they were removed. GUI appearance
+stays Level-5: the snapshots verified geometry (no truncation, consistent slots), not brand
+quality, which remains the fine review's item. No parameter, attachment or behaviour change;
+suites and pluginval unchanged-green.
+Previous: **round-2 item 11 — the complete tooltip set, the sibling's rules
+(2026-08-05, owner directive)**. The C8 rule ("free tooltip prose is owner-supplied, not
+invented") was discharged for tooltips by the directive itself — the owner asked for a
+generated set, so the copy ships ⊕ like the About description. `tidyTip` becomes the
+sibling's real rule (trailing full stops stripped centrally) instead of the stub it had been;
+every parameter's hint lives in ONE table (`tipFor`, keyed by parameter ID) so a knob and its
+Simple-view twin (ceiling, TP) cannot drift apart, with a debug assert on any parameter added
+without one. Voice is the sibling's: one terse line, plain " - " dash, no trailing period;
+its exact top-bar strings are taken verbatim (A/B "A/B Compare", Copy, Undo/Redo,
+Previous/Next preset, "Presets"); `bypass` stays deliberately tipless (the red pill labels
+itself) and the graph-well chips name their ACTION ("Switch to the …", firing over the chip
+only, since `hitTest` narrows the pointer claim). Accessibility titles deliberately do NOT
+follow the tooltips: they stay the registry names (brief §8) — `setupCombo`/`setupToggle` now
+derive the title from the parameter, and the Internal helpers take an explicit `name`
+parameter (the Settings row label, which is also what the state suite finds them by).
+Tests: `testEveryKnobAndComboCarriesATooltip` sweeps every slider/combo and the named toggles
+(13 new checks; suites 233 + 412). Manual's Tooltips row, HANDOVER's Test Status and README's
+count synced.
+Previous: **round-2 items 8/9 — the Simple-view TP switch and the combined
+Spectrum/GR graph well (2026-08-05, owner directive)**. Item 8: `truePeakMode` gets the
+"highly visible" main-UI switch the directive asked for — a second attachment (`tpSimpleToggle`)
+in the Simple ceiling cell, stacked **TP above LOCK** (dual attachments to one parameter are
+ordinary APVTS practice; the Advanced limiter zone's TP is unchanged). Item 9: ONE graph well,
+both editor modes, two switchable views — `int_spectrumOn` is now the MODE flag (true =
+spectrum, false = GR history), both views hold identical bounds and only visibility flips, and
+the switch lives on the graph itself as corner chips that name the view you switch TO ("GR" on
+the spectrum, "SPEC" on the history; `GrHistoryView` moved from wholesale mouse opt-out to the
+same per-pixel `hitTest` discipline the spectrum uses, so trace clicks still fall through). The
+Settings "Spectrum" toggle is REMOVED; the editor tick's mode follow is a visibility flip, not
+the old `resized()` re-partition. The sibling's LF spectrum smoothing is ported into the trace
+read (ADR-0009 provenance: `SpectrumImager::magForColumn`/`magCubic` two-regime rule — columns
+spanning <1.5 bins take a Catmull-Rom across the four surrounding bins, wider columns average
+every covered bin; adapted to this analyser's dB-domain EMA, and the DC-bin exclusion kept).
+The §6.2 "GR-only Simple strip" wireframe is superseded (recorded at the layout site). Tests:
+the spectrum-corner test generalised to both views' chips (`…OnlyClaimTheirModeChips`, 5 new
+checks; suites 233 + 399). Manual §3.2/§3.4/§3.5, PARAMETER_REGISTRY's host-hidden inventory,
+HANDOVER's Test Status row and README's count synced.
+Previous: **round-2 items 3/10 — the sibling's icons, About layout and A/B oval
+(2026-08-05, owner directive)**. Undo/redo carry the sibling's circle arrows (U+21BA/U+21BB) —
+the half-arrows they replace inverted their reading under the icon treatment's 180° rotation,
+which is what the "ugly icons" report was; the glyph test now pins the new pair and records
+the why. The About panel matches the sibling's content layout exactly: 440×290 geometry, the
+12 pt/0.22 subtitle tracking, and the link band LEFT-aligned at the content inset (170×20,
+50 px up from the bottom), styled the sibling's way — accent, 13 pt, **no underline**, no
+tooltip. The one-sentence product description the C8 rule had deliberately withheld is now IN,
+under the owner's explicit round-2 instruction to generate it ("I will let you know later if
+it needs tweaking" — the authority supplied, ⊕ on the words), in the family sentence-shape and
+drawn with the sibling's fitted-4-lines idiom. A/B takes the sibling's shorter oval
+(`removeFromRight (46).reduced (0, 1)`, its #4) instead of the 64 px slab. Brand-checklist
+Level-5 deviation candidates shrink accordingly.
+Previous: **round-2 items 12/13/14 — Settings polish (2026-08-05, owner
+directive)**. The UI-scale ladder is now the SIBLING'S: five steps 75/85/100/125/150 % shown
+as **XS/S/M/L/XL** (M = the original size; `ui_scale::names` index-locked to `steps` by a
+`static_assert`), keeping the field a percent so the schema's meaning is unchanged — an old
+seven-step session converges through `nearest` like any other out-of-list value, which the
+uiScaleClamp test now exercises with the new ladder's own numbers (92→85 keeps the
+displayed-step-doesn't-move property). Terminology to Title Case and the sibling's names:
+"Offline Render", "UI Scale", "UI Animations", "True-Peak Meter", and the vague "Follow" mode
+is now "**Follow Online**". The Save-Preset dialog's buttons swapped: **Save left, Cancel
+right**. Manual Settings table and both inventories synced.
+Previous: **round-2 item 5 — streaming-platform analysis removed outright
+(2026-08-05, owner directive; OQ-008 → Resolved-by-supersession)**. Gone together, because they
+were one feature: `LoudnessMeterView`'s `kTargets` table + tick overlay + penalty rows + the
+"as of" tooltip, the three §6.4 Settings checkboxes, and the `int_meterTargets` field itself —
+a pre-ship schema removal, free by the contract's own terms; an old session carrying the field
+is ignored by the §4.4 unknown-field rule (the registries record the removal rather than
+pretending the field never existed). The meter tooltip is now the click-to-reset line alone.
+Tests: the target-checkbox and tooltip-quotes-the-table sections of `settingsFollow` removed
+with the feature (suite 404 → 394); the TP-row comment's stale "EDM Club ships −0.5" example
+fixed in passing. Manual (five sites), README's planned-scope bullet (which now names the
+directive rather than silently contradicting the brief), HANDOVER's three OQ-008 rows and both
+registries synced.
+Previous: **round-2 item 6 — the "Default" preset (2026-08-05, owner directive,
+the sibling's pattern)**. Factory index 0 is now `{ "Default", nullptr, 0 }` — "defaults +
+intents" with zero intents IS the default patch — and the fresh-constructed state carries its
+identity: `livePresetName` seeds to "Default" before the default slot is captured (so both A/B
+slots open named), the dirty baseline seeds right after (so an untouched instance reads clean
+and the first edit stars), `resetSlotFieldsToDefaults` makes "Default" the field's §4.4
+default (a missing-AB session now shows it — `testAbToleranceRules` pins the new value), and
+`getProgramName` returns the sibling's constant. Bank count 12 → 13; EDM-Club-specific test
+indices shifted; new checks: index 0 shape, fresh-instance-clean, edit-stars,
+re-apply-restores-clean. Manual/README/HANDOVER counts synced.
+Previous: **round-2 items 4/7 — True Peak defaults OFF, every ceiling to −0.1 dBTP
+(2026-08-05, owner directive)**. `truePeakMode` default 1→0, `int_tpMeterOn` true→false,
+`ceiling` default −1→−0.1 (parameter, POD, and EDM Club's now-redundant −0.5 override removed —
+its slot in `testFactoryPresets` now proves the *un-overridden-sits-at-default* half instead).
+The registry snapshot was **deliberately re-frozen** — the Hard-Stop item, taken under the
+owner's round-2 autonomous-decision directive with nothing yet shipped, so the compatibility
+cost is zero by the contract's own terms. `testLimiterTruePeakMode` pins its ceiling explicitly
+now (its stimulus is calibrated against −1 dBTP and the test is about TP-awareness, not the
+default). PARAMETER_REGISTRY rows and the manual's three default mentions updated.
+Previous: **three further review-confirmed corrections (2026-08-05)**, all
 content-only:
 (1) **This file's own inventory understated what exists** — the architecture self-coverage row
 still listed five descriptive documents after `SERIALIZATION_REGISTRY.md` and

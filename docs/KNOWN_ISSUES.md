@@ -649,6 +649,36 @@ Evidence [Verified]:
 
 **For the post-v0.1.0 fine review — the highest-severity open item in this family.**
 
+### KI-009 — Field report: left channel silent — NOT REPRODUCIBLE headlessly (2026-08-05)
+
+**The report.** The owner reports the LEFT channel carrying no audio at all, right channel
+normal, "in both Simple and Advanced modes" (i.e. always). Host, OS and build not yet recorded.
+
+**What was probed, and found healthy.** `testBothChannelsCarryAudioThroughTheWrapper`
+(`tests/state_tests.cpp`) drives the REAL `AnabasisAudioProcessor::processBlock` — not the bare
+engine — with per-channel-distinct sines (220/330 Hz, so a swap or a sum-into-one-channel cannot
+masquerade as health) and measures settled per-channel RMS in **six configurations**: defaults ·
+loudness 50 · the editor alive across the whole processing loop · 16× linear-phase oversampling ·
+a factory preset applied · after a session save/load round-trip. (This paragraph said "seven"
+against its own six-item list for three commits — the list is the count, and the list is what the
+suite runs.) Both channels carry audio within
+6 dB of each other in every one. The DSP suite separately covers the engine's stereo path, and
+pluginval (both modes ×3, editor open) passes on the built VST3.
+
+**What that excludes, and what it cannot.** Every channel loop in the engine and wrapper is
+symmetric (`processChunk`'s five stages all iterate `[0, nCh)`; the wrapper adds no per-channel
+path), and the parameter surface contains **no per-channel gain, pan or balance** — there is no
+parameter whose value could mute one side. What the headless battery cannot reach: JUCE's
+VST3/AU/Standalone format glue as driven by a *particular* host, the standalone's audio-device
+channel mapping, and the possibility that the observation was a host meter reading rather than
+the plugin's output. Those are exactly this file's standing-note categories.
+
+**Status: OPEN — needs the environment.** To act on this, record: host + version, OS, which
+build (CI zip? local?), whether the standalone or a plugin format, and whether the left silence
+is heard or read off a meter. The six-configuration battery stays in the suite either way — it
+is now the permanent guard on every headless-reachable stereo path, and whichever configuration
+eventually reproduces the report becomes its seventh case.
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

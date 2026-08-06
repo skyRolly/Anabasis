@@ -697,8 +697,9 @@ static void testAbToleranceRules()
     const auto rAfter = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (after.getData(), (int) after.getSize()));
     const auto sAfter = rAfter.getChildWithName ("AB").getChild (0);
     check (! sAfter.getChildWithName ("FROZEN_TRIMS").isValid()
-             && sAfter.getProperty ("presetName").toString().isEmpty(),
-           "tolerance: a root without AB resets the slot fields to defaults");
+             && sAfter.getProperty ("presetName").toString() == "Default",
+           "tolerance: a root without AB resets the slot fields to defaults "
+           "(and the presetName field's default IS the Default preset's name)");
 
     // Unknown child inside AB must not shift the SLOT children.
     AnabasisAudioProcessor d;
@@ -1120,16 +1121,40 @@ static void testFactoryPresets()
 
     int count = 0;
     const auto* table = PresetManager::factoryPresets (count);
-    check (count == 12, "factory: the brief's >=12-preset bank is compiled in (5 named + 7 owner-approved 2026-08-02)");
+    check (count == 13, "factory: the bank is Default + the brief's >=12 (5 named + 7 owner-approved 2026-08-02)");
 
-    // Apply EDM Club (index 2): macros land, style lands, ceiling lands.
-    check (proc.applyFactoryPreset (2), "factory: apply succeeds");
-    check (proc.currentPresetName() == juce::String (table[2].name),
+    // Index 0 is "Default" with an EMPTY override table, and the fresh state
+    // already carries its identity: the plugin opens ON a preset, not on a
+    // nameless placeholder (owner directive 2026-08-05, the sibling's pattern).
+    check (juce::String (table[0].name) == "Default" && table[0].numOverrides == 0,
+           "factory: index 0 is Default with zero overrides");
+    check (proc.currentPresetName() == "Default" && ! proc.presetDirty(),
+           "factory: a fresh instance reads as a clean Default");
+    {
+        auto* push = apvts.getParameter (pid::loudness);
+        push->setValueNotifyingHost (push->getNormalisableRange().convertTo0to1 (30.0f));
+        check (proc.presetDirty(), "factory: editing the fresh Default stars it");
+        check (proc.applyFactoryPreset (0), "factory: (premise) re-apply Default");
+        check (std::abs (apvts.getRawParameterValue (pid::loudness)->load()) < 0.5f
+                   && ! proc.presetDirty(),
+               "factory: re-applying Default restores the default patch, clean");
+    }
+
+    // Apply EDM Club (index 3): macros land, style lands.
+    check (proc.applyFactoryPreset (3), "factory: apply succeeds");
+    check (proc.currentPresetName() == juce::String (table[3].name),
            "factory: the preset name is the table's");
     check (std::abs (apvts.getRawParameterValue (pid::loudness)->load() - 80.0f) < 0.5f,
            "factory: the loudness macro landed");
-    check (std::abs (apvts.getRawParameterValue (pid::ceiling)->load() - (-0.5f)) < 0.01f,
-           "factory: the ceiling override landed");
+    // EDM Club's explicit ceiling override was REMOVED 2026-08-05 when every
+    // ceiling moved to the -0.1 default (owner directive) — the slot now
+    // proves both halves of "defaults + intents": an override that exists
+    // lands (limStyle 2 = Loud), and a value with no override sits at the
+    // REGISTERED default rather than at some earlier preset's leftovers.
+    check (std::abs (apvts.getRawParameterValue (pid::limStyle)->load() - 2.0f) < 0.01f,
+           "factory: the limStyle override landed");
+    check (std::abs (apvts.getRawParameterValue (pid::ceiling)->load() - (-0.1f)) < 0.01f,
+           "factory: an un-overridden field sits at the registered default");
 
     // …and the macro position is TRANSLATED. A factory table is defaults plus a
     // few intents and expresses itself through the macros (PresetManager.h), so
@@ -1173,6 +1198,19 @@ static void testFactoryPresets()
            "factory: an unnamed parameter returns to its default (defaults + intents)");
 
     // Ceiling lock: browsing factory presets never moves a locked ceiling.
+    //
+    // WHICH HALF OF THE RULE THIS REACHES, since it is no longer both. An apply
+    // writes every non-excluded parameter to its default and then the table's
+    // intents over the top, and the lock skips the parameter in that one walk —
+    // so with no factory table naming `ceiling` (EDM Club's −0.5 override went
+    // with the ADR-0015 default change, which made it redundant), this check
+    // exercises the DEFAULTS pass alone: unlocked, the apply would reset the
+    // ceiling to −0.1, and the lock is what keeps it at −6. That is a real
+    // assertion, not a vacuous one. The other half — an OVERRIDE aimed at the
+    // locked parameter — has no expression left in the shipped bank, and is
+    // pinned instead by `testALockedCeilingSurvivesAPresetThatNamesIt` below,
+    // on the file-preset path where a document naming `ceiling` is reachable
+    // without adding a preset to the product to test with.
     auto* ceiling = apvts.getParameter (pid::ceiling);
     ceiling->setValueNotifyingHost (ceiling->getNormalisableRange().convertTo0to1 (-6.0f));
     proc.internalState.state().setProperty (iid::ceilingLock, true, nullptr);
@@ -1219,6 +1257,74 @@ static void testFactoryPresets()
         check (! p2.presetDirty(),
                "dirtyDatum: a session load drops the datum instead of marking the loaded name");
     }
+}
+
+// ---------------------------------------------------------------------------
+// The OTHER half of "browsing presets never moves a locked ceiling"
+// (DESIGN §4.2): a preset that explicitly NAMES the locked parameter.
+//
+// `testFactoryPresets` above reaches the defaults half only — no factory table
+// names `ceiling` since ADR-0015 made EDM Club's −0.5 override redundant, and
+// adding one to the shipped bank to have something to test with would change
+// the product to suit the suite. The file-preset path expresses the collision
+// directly: a `PARAM` element for `ceiling` IS an override aimed at a locked
+// parameter, and both apply paths share the rule (`applyOnePresetValue`'s skip
+// and `applyFactoryPreset`'s, the same `internal.ceilingLocked()` test).
+//
+// Driven through `applyPreset (const XmlElement&, …)` — the overload the
+// wrapper's own preset ring uses, so this is the shipped path with the
+// filesystem left out, not a private hook opened for the test.
+//
+// The UNLOCKED pass is the premise that makes the locked one mean something: it
+// proves the document really does move the ceiling, so the locked check cannot
+// pass by describing a preset that was never going to write it. A second,
+// unlocked parameter rides along to prove the apply ran at all rather than
+// bailing out early.
+static void testALockedCeilingSurvivesAPresetThatNamesIt()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceiling = proc.apvts.getParameter (pid::ceiling);
+    auto* knee    = proc.apvts.getParameter (pid::compKnee);
+    check (ceiling != nullptr && knee != nullptr,
+           "lockedOverride: (premise) the ceiling and the probe parameter exist");
+    if (ceiling == nullptr || knee == nullptr)
+        return;
+
+    const auto& ceilRange = ceiling->getNormalisableRange();
+    const float parked = -6.0f;              // away from BOTH the default and the preset's value
+    auto park = [&] { ceiling->setValueNotifyingHost (ceilRange.convertTo0to1 (parked)); };
+    auto ceilingNow = [&] { return proc.apvts.getRawParameterValue (pid::ceiling)->load(); };
+
+    juce::XmlElement doc ("AnabasisPreset");
+    auto* pc = doc.createNewChildElement ("PARAM");
+    pc->setAttribute ("id", pid::ceiling);
+    pc->setAttribute ("value", -12.0);
+    auto* pk = doc.createNewChildElement ("PARAM");
+    pk->setAttribute ("id", pid::compKnee);
+    pk->setAttribute ("value", 3.0);
+
+    PresetManager pm (proc.apvts, proc.internalState);
+    juce::StringArray mask;
+
+    // Unlocked: the override lands. Without this the locked check below would
+    // also pass against a document that names nothing.
+    park();
+    proc.internalState.state().setProperty (iid::ceilingLock, false, nullptr);
+    check (pm.applyPreset (doc, mask), "lockedOverride: (premise) the document applies");
+    check (std::abs (ceilingNow() - (-12.0f)) < 0.01f,
+           "lockedOverride: (premise) an UNLOCKED ceiling does take the preset's value");
+
+    // Locked: the same document, the same value, skipped.
+    park();
+    proc.internalState.state().setProperty (iid::ceilingLock, true, nullptr);
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (9.0f));
+    check (pm.applyPreset (doc, mask), "lockedOverride: (premise) the locked apply succeeds");
+    check (std::abs (ceilingNow() - parked) < 0.01f,
+           "lockedOverride: a preset override naming the locked ceiling does not move it");
+    check (std::abs (proc.apvts.getRawParameterValue (pid::compKnee)->load() - 3.0f) < 0.01f,
+           "lockedOverride: …while the rest of the same preset still applies");
+
+    proc.internalState.state().setProperty (iid::ceilingLock, false, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -2494,9 +2600,9 @@ static void testStateReplacementAndHistoryConsistency()
     // against the applied preset's baseline.
     {
         AnabasisAudioProcessor proc;
-        proc.applyFactoryPreset (1);
+        proc.applyFactoryPreset (2);          // Loud Pop (Default shifted the bank by one)
         check (! proc.presetDirty(), "undoBaseline: (premise) a fresh apply reads clean");
-        proc.applyFactoryPreset (2);
+        proc.applyFactoryPreset (3);          // EDM Club
         check (! proc.presetDirty(), "undoBaseline: (premise) …and so does the second");
         proc.undo();
         check (proc.currentPresetName() == "Loud Pop",
@@ -2901,11 +3007,15 @@ static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
     // The three sibling ids beside it (`"apply"`, `"metersicon"`, `"vtoggle"`)
     // were removed instead, because they style controls this product does not
     // have — there is nothing to assert about an id no component may carry.
-    for (const auto glyph : { (juce::juce_wchar) 0x21B6, (juce::juce_wchar) 0x21B7 })
+    // 0x21BA/0x21BB since 2026-08-05 — the SIBLING'S circle arrows, which
+    // still read as undo/redo under the icon treatment's 180° rotation; the
+    // half-arrows they replace (0x21B6/0x21B7) inverted their meaning when
+    // rotated, which is what the owner's "ugly icons" report was.
+    for (const auto glyph : { (juce::juce_wchar) 0x21BA, (juce::juce_wchar) 0x21BB })
     {
         auto* b = findButtonByText (*ed, juce::String::charToString (glyph));
         const juce::String msg = juce::String ("saveGlow: the ")
-                               + (glyph == (juce::juce_wchar) 0x21B6 ? "undo" : "redo")
+                               + (glyph == (juce::juce_wchar) 0x21BA ? "undo" : "redo")
                                + " glyph button is tagged for the icon treatment";
         check (b != nullptr && b->getComponentID() == "icon", msg.toRawUTF8());
     }
@@ -3013,7 +3123,7 @@ static void testTheSettingsCallbacksReachTheLiveTree()
     check (ed != nullptr, "settingsWrite: (premise) the editor was created");
     if (ed == nullptr)
         return;
-    auto* scale = findComboByTitle (*ed, "UI scale");
+    auto* scale = findComboByTitle (*ed, "UI Scale");
     auto* os    = findComboByTitle (*ed, "Oversampling");
     check (scale != nullptr && os != nullptr,
            "settingsWrite: (premise) both Settings combos were found");
@@ -3021,10 +3131,10 @@ static void testTheSettingsCallbacksReachTheLiveTree()
         return;
 
     // The hand-built combo (index ↔ PERCENT), whose closure re-fetches the tree.
-    scale->setSelectedItemIndex (5, juce::sendNotificationSync);        // "175%"
-    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 175,
+    scale->setSelectedItemIndex (4, juce::sendNotificationSync);        // "XL" = 150 %
+    check ((int) proc.internalState.state().getProperty (iid::uiScale, -1) == 150,
            "settingsWrite: the UI-scale closure writes the live InternalState tree");
-    check (std::abs (ed->getTransform().mat00 - 1.75f) < 1.0e-4f,
+    check (std::abs (ed->getTransform().mat00 - 1.50f) < 1.0e-4f,
            "settingsWrite: …and applies it, so the window follows the selection");
 
     // The helper-built combo (index ↔ 0-BASED value), whose closure captures the
@@ -3067,12 +3177,20 @@ static void testAFactoryApplyWritesEachParameterOnce()
     if (lookaheadIndex < 0)
         return;
 
-    // Preset 0 overrides lookahead, and the probe is parked away from BOTH its
-    // default and the preset's value first. That third position is what makes
-    // the count interesting: with the parameter already at its default the old
-    // two-pass apply also wrote once (the defaults pass had nothing to move),
-    // so the defect only shows from a state a user actually reaches — a knob
-    // they moved before browsing presets.
+    // Factory index 1 ("Transparent Master") overrides `lookahead` — to 3.0 ms,
+    // against the 2.0 ms registered default — and the probe is parked away from
+    // BOTH first. That third position is what makes the count interesting: with
+    // the parameter already at its default the old two-pass apply also wrote
+    // once (the defaults pass had nothing to move), so the defect only shows
+    // from a state a user actually reaches — a knob they moved before browsing
+    // presets.
+    //
+    // The index is 1 and not 0 SINCE "Default" JOINED THE BANK AT INDEX 0
+    // (2026-08-05): Default's override table is deliberately empty, so applying
+    // it exercises the defaults pass alone and the two-pass defect this test
+    // exists for has no override to duplicate. The check still passed there —
+    // one write is one write — which is precisely why the stale index had to be
+    // found by reading rather than by a red suite.
     auto* look = proc.apvts.getParameter (pid::lookahead);
     look->setValueNotifyingHost (look->getNormalisableRange().convertTo0to1 (7.5f));
     const float before = look->getValue();
@@ -3082,7 +3200,7 @@ static void testAFactoryApplyWritesEachParameterOnce()
     CountingListener counter;
     counter.watched = lookaheadIndex;
     proc.addListener (&counter);
-    check (proc.applyFactoryPreset (0), "presetNotify: (premise) the apply succeeds");
+    check (proc.applyFactoryPreset (1), "presetNotify: (premise) the apply succeeds");
     proc.removeListener (&counter);
 
     check (! juce::exactlyEqual (look->getValue(), before),
@@ -3104,7 +3222,7 @@ static void testAnOutOfListUiScaleClampsConsistently()
     check (ed != nullptr, "uiScaleClamp: (premise) the editor was created");
     if (ed == nullptr)
         return;
-    auto* box = findComboByTitle (*ed, "UI scale");
+    auto* box = findComboByTitle (*ed, "UI Scale");
     check (box != nullptr, "uiScaleClamp: (premise) the UI-scale box was found");
     if (box == nullptr)
         return;
@@ -3118,34 +3236,34 @@ static void testAnOutOfListUiScaleClampsConsistently()
     auto rendered = [ed] { return ed->getTransform().mat00; };
     check (std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: an out-of-list percent renders at the NEAREST step, not at 100 %");
-    check (box->getText() == "125%",
+    check (box->getText() == "L",
            "uiScaleClamp: …and the panel displays the same step it rendered");
 
-    // The item LABELS come from the same ladder the transform does. Checking
-    // that a label's number round-trips to its own INDEX is not enough — the
-    // clamp maps a wrong label back onto the nearest step, so the index still
-    // matches. What has to hold is that the label names the scale the window
-    // actually renders at, so each item is SELECTED and the transform read.
+    // The item LABELS are the XS..XL names (2026-08-05, the sibling's
+    // display); each name is index-locked to `ui_scale::steps` by the
+    // static_assert beside them, so the guard is that selecting item i really
+    // renders at steps[i] — the label→index→transform chain, with the percent
+    // read from the ladder rather than parsed out of the label.
     bool labelsMatchTransform = true;
     for (int i = 0; i < box->getNumItems(); ++i)
     {
         box->setSelectedItemIndex (i, juce::sendNotificationSync);
-        const float labelled = (float) box->getItemText (i).dropLastCharacters (1).getIntValue();
-        if (std::abs (rendered() * 100.0f - labelled) > 0.5f)
+        if (box->getItemText (i) != ui_scale::names[i]
+            || std::abs (rendered() * 100.0f - (float) ui_scale::steps[i]) > 0.5f)
             labelsMatchTransform = false;
     }
     check (labelsMatchTransform,
-           "uiScaleClamp: every combo label names the scale that item actually renders at");
+           "uiScaleClamp: every combo label names the step that item actually renders at");
 
     // The load direction, which is where the two used to part company: the box
     // holds a legal selection and the stored value changes to an illegal one.
-    proc.internalState.state().setProperty (iid::uiScale, 175, nullptr);
+    proc.internalState.state().setProperty (iid::uiScale, 150, nullptr);
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "175%" && std::abs (rendered() - 1.75f) < 1.0e-4f,
+    check (box->getText() == "XL" && std::abs (rendered() - 1.50f) < 1.0e-4f,
            "uiScaleClamp: (premise) a legal stored step reaches both halves");
     proc.internalState.state().setProperty (iid::uiScale, 130, nullptr);
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "125%",
+    check (box->getText() == "L",
            "uiScaleClamp: an illegal value arriving by LOAD moves the box off the stale step");
     check (std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …to the same step the window renders at");
@@ -3176,33 +3294,34 @@ static void testAnOutOfListUiScaleClampsConsistently()
     check (storedScale() == 125,
            "uiScaleClamp: an illegal stored value is normalised at adoption, not just clamped on read");
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "125%" && std::abs (rendered() - 1.25f) < 1.0e-4f,
+    check (box->getText() == "L" && std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …and the editor shows the step it converged on");
 
     // A LEGAL value is never rewritten — the convergence must not disturb a
     // scale the user actually chose.
-    loadWithScale (90);
-    check (storedScale() == 90, "uiScaleClamp: a legal stored step is left exactly as the user set it");
+    loadWithScale (85);
+    check (storedScale() == 85, "uiScaleClamp: a legal stored step is left exactly as the user set it");
     ed->refreshInternalSettingsBoxes();
-    check (std::abs (rendered() - 0.90f) < 1.0e-4f, "uiScaleClamp: …and renders at it");
+    check (std::abs (rendered() - 0.85f) < 1.0e-4f, "uiScaleClamp: …and renders at it");
 
     // THE CASE A BRANCH-OWNED CONVERGENCE MISSED, kept because it is the one
     // that made the old defect invisible: an illegal value whose nearest step is
-    // the one ALREADY DISPLAYED. 92 sits nearer 90 than 100 (unambiguously — 95
-    // would be a tie the ladder resolves by order, a different thing to test),
-    // so the re-seed's "has the selection changed?" branch is false, and while
-    // that branch owned the write-back nothing converged. Adoption does not
-    // consult the display at all, so the case is no longer special.
+    // the one ALREADY DISPLAYED. 92 sits nearer 85 than 100 on the 2026-08-05
+    // ladder (unambiguously — a midpoint would be a tie the ladder resolves by
+    // order, a different thing to test), so the re-seed's "has the selection
+    // changed?" branch is false, and while that branch owned the write-back
+    // nothing converged. Adoption does not consult the display at all, so the
+    // case is no longer special.
     loadWithScale (92);
-    check (storedScale() == 90,
+    check (storedScale() == 85,
            "uiScaleClamp: an illegal value converges even when the DISPLAYED step does not move");
     ed->refreshInternalSettingsBoxes();
-    check (box->getText() == "90%" && std::abs (rendered() - 0.90f) < 1.0e-4f,
+    check (box->getText() == "S" && std::abs (rendered() - 0.85f) < 1.0e-4f,
            "uiScaleClamp: …and the box and the transform agree with the converged value");
 
     // MISSING FIELD → THE DEFAULT, which is §4.4's read rule and the one case
     // the ladder can get wrong in a way that looks plausible: an absent property
-    // reads as `var()`, `var()` converts to 0, and 0's NEAREST step is 80 — so a
+    // reads as `var()`, `var()` converts to 0, and 0's NEAREST step is 75 — so a
     // read without a stated default turns "not present" into the smallest legal
     // scale rather than the default one. Reachable from a hand-edited session or
     // one written before the field existed.
@@ -3231,7 +3350,7 @@ static void testAnOutOfListUiScaleClampsConsistently()
     ed->refreshInternalSettingsBoxes();
     check (storedScale() == 130,
            "uiScaleClamp: the display poll does not write the InternalState tree");
-    check (box->getText() == "125%" && std::abs (rendered() - 1.25f) < 1.0e-4f,
+    check (box->getText() == "L" && std::abs (rendered() - 1.25f) < 1.0e-4f,
            "uiScaleClamp: …and still renders and displays the clamped step");
 }
 
@@ -3339,14 +3458,15 @@ static void testARewoundSpectrumRingDropsThePreviousTrace()
            "spectrumReset: a reset is caught even when the count never goes backwards");
 }
 
-// The spectrum overlay is interactive over its dismiss × and INERT everywhere
-// else. It used to leave `setInterceptsMouseClicks` at JUCE's default, so it
-// hit-tested true across its whole area and consumed every click in the metering
-// strip with no affordance and no effect — the one region of the editor that
-// took a click and did nothing. `GrHistoryView`/`CurveView` opt out wholesale;
-// this view cannot, because it owns the ×, so it opts out per-pixel through
-// `hitTest`. Both halves are checked: a click elsewhere must not be claimed, and
-// the dismiss must still work.
+// The graph-well views are interactive over their corner mode chips and INERT
+// everywhere else. The spectrum view used to leave `setInterceptsMouseClicks`
+// at JUCE's default, so it hit-tested true across its whole area and consumed
+// every click in the metering strip with no affordance and no effect — the one
+// region of the editor that took a click and did nothing; it opts out per-pixel
+// through `hitTest`, and since the combined well (2026-08-05) `GrHistoryView`
+// carries the mirrored "SPEC" chip and does the same (`CurveView` still opts
+// out wholesale). Both halves are checked for BOTH views: a click elsewhere
+// must not be claimed, and the chip must flip `int_spectrumOn` its way.
 // The About overlay opened BLANK: `Backdrop::aboutText` had one reader — the
 // dismiss-anywhere branch in `mouseDown` — so the flag named a panel whose copy
 // nothing painted, and `ANABASIS_VERSION_STRING`/`ANABASIS_BUILD_NUMBER` had no
@@ -3456,9 +3576,20 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
         return;
     title->onClick();
 
-    // The same expression `resized()` centres the panel with.
-    const auto panel = ed->getLocalBounds().withSizeKeepingCentre (400, 232);
-    const auto copyArea = panel.reduced (30, 26).withTrimmedBottom (232 - 26 - 150);
+    // The same expression `resized()` centres the panel with — 440×290 since
+    // the About layout took the sibling's geometry (2026-08-05). It read
+    // 400×232 for a commit after that, so the sampled band no longer lined up
+    // with the content inset and the heuristic was measuring a different strip
+    // than it claimed to (it still passed, which is why it needed reading).
+    //
+    // The copy area is the panel's content inset, `reduced (30, 26)` — the same
+    // expression `Backdrop::paint` uses — trimmed to the height the copy stack
+    // actually occupies: 38 title + 20 subtitle + 14 + 18 version + 18 vendor
+    // + 10 + 60 description + 6 + 16 copyright = 200 px, of the 238 the inset
+    // leaves. Sampling only that band keeps the "textured rows" count about the
+    // copy rather than about the empty glass beneath it.
+    const auto panel = ed->getLocalBounds().withSizeKeepingCentre (440, 290);
+    const auto copyArea = panel.reduced (30, 26).withHeight (200);
     const auto shot = ed->createComponentSnapshot (copyArea, false);
     check (shot.getWidth() == copyArea.getWidth() && shot.getHeight() > 0,
            "about: (premise) the panel's copy area rendered");
@@ -3481,38 +3612,103 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
            "about: the panel paints product copy, not an empty glass rectangle");
 }
 
-static void testTheSpectrumOverlayOnlyClaimsItsDismissCorner()
+// R2 item 11: every parameter control carries a hover hint. The wording lives
+// in ONE table (`tipFor`, file-static in PluginEditor.cpp) which this suite
+// cannot reach — what it CAN pin is the outcome: no slider or combo in the
+// editor is hoverless, and neither are the named toggles. Toggles are not
+// swept wholesale because `bypass` is DELIBERATELY tipless (the red pill
+// labels itself — the sibling's rule), so a sweep would either fail on it or
+// need the exemption this list states explicitly.
+static void collectTooltipless (juce::Component& root, juce::StringArray& names)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* sl = dynamic_cast<juce::Slider*> (c); sl != nullptr && sl->getTooltip().isEmpty())
+            names.add ("slider \"" + sl->getTitle() + "\"");
+        if (auto* bx = dynamic_cast<juce::ComboBox*> (c); bx != nullptr && bx->getTooltip().isEmpty())
+            names.add ("combo \"" + bx->getTitle() + "\"");
+        collectTooltipless (*c, names);
+    }
+}
+
+static void testEveryKnobAndComboCarriesATooltip()
 {
     AnabasisAudioProcessor proc;
-    SpectrumView view (proc);
-    view.setBounds (0, 0, 300, 120);
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "tooltips: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
 
-    check (view.hitTest (view.getWidth() - 10, 10),
-           "spectrumClicks: (premise) the dismiss corner is still hit-tested");
-    check (! view.hitTest (10, 60),
-           "spectrumClicks: a click over the trace is not claimed by the overlay");
-    check (! view.hitTest (view.getWidth() - 10, 60),
-           "spectrumClicks: …nor one below the corner, in the same column");
+    juce::StringArray hoverless;
+    collectTooltipless (*ed, hoverless);
+    if (! hoverless.isEmpty())
+        std::printf ("  tooltipless: %s\n", hoverless.joinIntoString (", ").toRawUTF8());
+    check (hoverless.isEmpty(), "tooltips: every slider and combo carries a hover hint");
 
-    // The dismiss itself, through the real event path. `int_spectrumOn` starts
-    // true, so a successful dismiss is observable as the property going false.
+    for (auto* text : { "FREEZE", "COMP", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
+                        "UI Animations", "Tooltips", "True-Peak Meter" })
+    {
+        auto* b = findButtonByText (*ed, text);
+        check (b != nullptr && b->getTooltip().isNotEmpty(),
+               "tooltips: the named toggles carry hints");
+    }
+}
+
+static void testTheGraphWellViewsOnlyClaimTheirModeChips()
+{
+    AnabasisAudioProcessor proc;
     auto& ist = proc.internalState.state();
-    ist.setProperty (iid::spectrumOn, true, nullptr);
-    juce::Component* comp = &view;
-    auto ev = [comp] (juce::Point<float> pos)
+
+    auto eventFor = [] (juce::Component& c, juce::Point<float> pos)
     {
         return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
                                  pos, juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                 comp, comp, juce::Time::getCurrentTime(), pos,
+                                 &c, &c, juce::Time::getCurrentTime(), pos,
                                  juce::Time::getCurrentTime(), 1, false);
     };
 
-    comp->mouseDown (ev ({ 10.0f, 60.0f }));
-    check ((bool) ist.getProperty (iid::spectrumOn, false),
-           "spectrumClicks: a press over the trace does not dismiss it");
-    comp->mouseDown (ev ({ (float) view.getWidth() - 10.0f, 10.0f }));
-    check (! (bool) ist.getProperty (iid::spectrumOn, true),
-           "spectrumClicks: a press on the × still dismisses the overlay");
+    // Spectrum → GR: the "GR" chip sets int_spectrumOn false.
+    {
+        SpectrumView view (proc);
+        view.setBounds (0, 0, 300, 120);
+
+        check (view.hitTest (view.getWidth() - 10, 10),
+               "spectrumClicks: (premise) the chip corner is hit-tested");
+        check (! view.hitTest (10, 60),
+               "spectrumClicks: a click over the trace is not claimed by the overlay");
+        check (! view.hitTest (view.getWidth() - 10, 60),
+               "spectrumClicks: …nor one below the corner, in the same column");
+
+        ist.setProperty (iid::spectrumOn, true, nullptr);
+        view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
+        check ((bool) ist.getProperty (iid::spectrumOn, false),
+               "spectrumClicks: a press over the trace does not switch the mode");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
+        check (! (bool) ist.getProperty (iid::spectrumOn, true),
+               "spectrumClicks: a press on the chip switches the well to GR");
+    }
+
+    // GR → spectrum: the mirrored "SPEC" chip sets int_spectrumOn true.
+    {
+        GrHistoryView view (proc);
+        view.setBounds (0, 0, 300, 120);
+
+        check (view.hitTest (view.getWidth() - 10, 10),
+               "grChip: (premise) the chip corner is hit-tested");
+        check (! view.hitTest (10, 60),
+               "grChip: a click over the history trace is not claimed");
+        check (! view.hitTest (view.getWidth() - 10, 60),
+               "grChip: …nor one below the corner, in the same column");
+
+        ist.setProperty (iid::spectrumOn, false, nullptr);
+        view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
+        check (! (bool) ist.getProperty (iid::spectrumOn, true),
+               "grChip: a press over the trace does not switch the mode");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
+        check ((bool) ist.getProperty (iid::spectrumOn, false),
+               "grChip: a press on the chip switches the well back to the spectrum");
+    }
 }
 
 static void testTheCurveWellCachesWithoutChangingWhatItDraws()
@@ -3593,38 +3789,10 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     if (ed == nullptr)
         return;
 
-    // Found by the table's own name, which is the point: the checkbox labels,
-    // the meter tooltip and the ticks all derive from `kTargets`, so a test
-    // that looked one of them up by a literal would be a fourth copy.
-    juce::ToggleButton* targets[3] = {};
-    for (int t = 0; t < 3; ++t)
-        targets[t] = dynamic_cast<juce::ToggleButton*> (
-            findButtonByText (*ed, LoudnessMeterView::kTargets[t].fullName));
-    check (targets[0] != nullptr && targets[1] != nullptr && targets[2] != nullptr,
-           "settingsFollow: (premise) the three target checkboxes were found");
-    if (targets[0] == nullptr || targets[1] == nullptr || targets[2] == nullptr)
-        return;
-
-    // All three default ON (`meterTargets` = ~0), so a mask that clears the
-    // middle bit is a change in BOTH directions across the row — a re-seed that
-    // only ever turned boxes off, or only on, would still fail one of them.
-    for (int t = 0; t < 3; ++t)
-        check (targets[t]->getToggleState(), "settingsFollow: (premise) targets start on");
-
     auto& tree = proc.internalState.state();
-    tree.setProperty (iid::meterTargets, 0b101, nullptr);      // Apple Music off
     tree.setProperty (iid::oversample, 3, nullptr);            // 8×
     tree.setProperty (iid::osPhase, 1, nullptr);               // linear
     ed->refreshInternalSettingsBoxes();
-
-    check (targets[0]->getToggleState() && ! targets[1]->getToggleState()
-               && targets[2]->getToggleState(),
-           "settingsFollow: the checkboxes followed the loaded mask, bit for bit");
-    // …and the re-seed must not write back through `onStateChange`: a
-    // notifying set would put the widget's own state into the tree, which is
-    // how a one-way binding "fixes" itself into overwriting the load.
-    check ((int) tree.getProperty (iid::meterTargets) == 0b101,
-           "settingsFollow: …without the re-seed writing the mask back");
     // The round-26 half, now guarded rather than assumed: a combo whose index
     // is not its value follows the same load.
     if (auto* box = findComboByTitle (*ed, "Oversampling"))
@@ -3633,11 +3801,6 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     else
         check (false, "settingsFollow: (premise) the oversampling combo was found by title");
 
-    // The OQ-008 table is the ONE source for every user-visible fact about a
-    // target: the ticks, the checkbox labels, and the meter's tooltip — which
-    // carried the names, the numbers and the "as of" date as free text. The
-    // expectation is REBUILT from the table, so the guard is that a per-release
-    // refresh of `kTargets` cannot leave a display quoting the old figures.
     // The micro-animation seed. `stepMicroAnims` eases `vpos` toward each
     // slider's real proportion and `drawRotarySlider` prefers `vpos` whenever
     // the control is not being dragged, so an unseeded editor opens with every
@@ -3669,13 +3832,8 @@ static void testTheSettingsPanelFollowsAProjectLoad()
     check (seeded > 0 && seeded == countSliders (*ed),
            "settingsFollow: every knob's animated position starts where the value already is");
 
-    const auto tip = LoudnessMeterView::tooltipText();
-    for (int t = 0; t < LoudnessMeterView::kNumTargets; ++t)
-        check (tip.contains (juce::String (LoudnessMeterView::kTargets[t].fullName) + " "
-                                 + juce::String (LoudnessMeterView::kTargets[t].lufs, 0)),
-               "settingsFollow: the meter tooltip quotes the table, target by target");
-    check (tip.contains (LoudnessMeterView::kTargetsAsOf),
-           "settingsFollow: …and the table's own \"as of\" date");
+    // The streaming-target table and its tooltip checks stood here until the
+    // 2026-08-05 removal (owner directive; the view's header carries the why).
 }
 
 // ---------------------------------------------------------------------------
@@ -3952,6 +4110,124 @@ static void testLearnCommitAndAdaptiveRoundTrip()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0015: the Ceiling ADVERTISES THE UNIT IT ACTUALLY ENFORCES. `ceiling` is
+// a dBTP limit only while true-peak mode is engaged (DSP_POLICY invariant 3,
+// ADR-0006 item 3); with it off — the shipped default since ADR-0015 — the
+// clamp decides on the sample peak, so the old unconditional " dBTP" suffix
+// promised an inter-sample guarantee the default configuration does not make.
+//
+// Checked through the HOST-FACING path (`getCurrentValueAsText`, i.e. the same
+// `getText` a generic editor and the value box call), in both modes, plus the
+// round-trip that makes the change safe: `dbFrom` parses the leading float, so
+// `getValueForText` is indifferent to which spelling it is handed. That last
+// half is what pins the suffix as display-only — a reader who wonders whether
+// a live-changing unit can disturb automation or state has the answer here.
+static void testTheCeilingAdvertisesTheUnitItEnforces()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    auto* tp   = proc.apvts.getParameter (pid::truePeakMode);
+    check (ceil != nullptr && tp != nullptr,
+           "ceilingUnit: (premise) the ceiling and true-peak parameters exist");
+    if (ceil == nullptr || tp == nullptr)
+        return;
+
+    check (tp->getValue() < 0.5f,
+           "ceilingUnit: (premise) true-peak mode ships OFF (ADR-0015)");
+
+    const auto offText = ceil->getCurrentValueAsText();
+    check (offText.endsWith (" dB"),
+           "ceilingUnit: with true-peak mode off the ceiling reads in plain dB");
+    check (! offText.contains ("dBTP"),
+           "ceilingUnit: …and does not claim dBTP the default cannot hold");
+
+    tp->setValueNotifyingHost (1.0f);
+    const auto onText = ceil->getCurrentValueAsText();
+    check (onText.endsWith (" dBTP"),
+           "ceilingUnit: engaging true-peak mode makes the ceiling read in dBTP");
+
+    // Both spellings name the same number, and both parse back to it.
+    check (std::abs (ceil->getValueForText (offText) - ceil->getValueForText (onText)) < 1.0e-6f,
+           "ceilingUnit: the suffix is display-only — both spellings parse identically");
+    check (std::abs (ceil->getValueForText (onText) - ceil->getValue()) < 1.0e-4f,
+           "ceilingUnit: …and round-trip to the value they were printed from");
+
+    tp->setValueNotifyingHost (0.0f);
+    check (ceil->getCurrentValueAsText().endsWith (" dB")
+             && ! ceil->getCurrentValueAsText().contains ("dBTP"),
+           "ceilingUnit: turning true-peak mode back off restores the weaker claim");
+
+    // ...AND THE READOUT THE USER ACTUALLY LOOKS AT, which the parameter half
+    // above does not reach. A JUCE Slider caches its value-box label and
+    // recomputes it only in `updateText()` — on a value change, a
+    // `setTextBoxStyle`, a relayout or a LookAndFeel change, never on a
+    // repaint. Flipping TP does none of those, so the box kept the previous
+    // suffix while `getText` returned the right one: the host was told the
+    // truth and the plugin's own panel was not. Checked on the LABEL rather
+    // than through `getTextFromValue`, because the cached string is the defect
+    // — a live re-computation would pass either way.
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+        auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+        check (ed != nullptr, "ceilingUnit: (premise) the editor was created");
+        if (ed == nullptr)
+            return;
+
+        auto* knob = findSliderByTitle (*ed, ceil->getName (24));
+        check (knob != nullptr, "ceilingUnit: (premise) a Ceiling knob was found");
+        if (knob == nullptr)
+            return;
+        auto* box = findChildLabel (*knob);
+        check (box != nullptr, "ceilingUnit: (premise) the knob has a value box");
+        if (box == nullptr)
+            return;
+
+        check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
+               "ceilingUnit: the value box opens in the shipped default's unit");
+
+        tp->setValueNotifyingHost (1.0f);
+        ed->refreshCeilingUnit();          // the 24 Hz tick's edge, driven directly
+        check (box->getText().endsWith (" dBTP"),
+               "ceilingUnit: engaging true-peak mode refreshes the value box, not just getText");
+
+        tp->setValueNotifyingHost (0.0f);
+        ed->refreshCeilingUnit();
+        check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
+               "ceilingUnit: …and disengaging it refreshes back");
+    }
+
+    // AN EDITOR OPENED ON A TP-ON SESSION, then switched off before the first
+    // refresh. This is the case a hard-coded `shownTpMode = false` seed got
+    // wrong: the attachment renders " dBTP" at construction, the cache claims
+    // off, and the edge gate then sees `tp == shownTpMode == false` and skips
+    // the refresh — leaving " dBTP" over a sample-peak ceiling. Reachable in
+    // ~42 ms of real time (a host write, a state load, the other TP toggle),
+    // and permanent until something else forces a recompute.
+    {
+        tp->setValueNotifyingHost (1.0f);
+        std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+        auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+        check (ed != nullptr, "ceilingUnit: (premise) the TP-on editor was created");
+        if (ed == nullptr)
+            return;
+
+        auto* knob = findSliderByTitle (*ed, ceil->getName (24));
+        auto* box  = knob != nullptr ? findChildLabel (*knob) : nullptr;
+        check (box != nullptr, "ceilingUnit: (premise) the TP-on editor's value box was found");
+        if (box == nullptr)
+            return;
+        check (box->getText().endsWith (" dBTP"),
+               "ceilingUnit: (premise) an editor opened on TP-on shows dBTP straight away");
+
+        // The flip the seed has to have recorded, before any tick runs.
+        tp->setValueNotifyingHost (0.0f);
+        ed->refreshCeilingUnit();
+        check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
+               "ceilingUnit: TP off right after opening on TP-on still refreshes the box");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
@@ -4002,6 +4278,156 @@ static void testCachedParamsMapping()
     check (near (e.ceilingDbTp, -3.0f),                                          "cache: shared/output fields");
 }
 
+// ============================================================================
+//  Both channels carry audio through the REAL wrapper (processBlock), at
+//  defaults and with the macro push engaged. Written to reproduce a field
+//  report of a silent LEFT channel; the DSP suite proves the ENGINE stereo
+//  path, but nothing before this drove the wrapper's processBlock and measured
+//  BOTH output channels.
+// ============================================================================
+static void testBothChannelsCarryAudioThroughTheWrapper()
+{
+    auto run = [] (float loudness, const char* tag)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        if (loudness > 0.0f)
+        {
+            auto* par = proc.apvts.getParameter (pid::loudness);
+            par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (loudness));
+        }
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        double sumSq[2] = { 0.0, 0.0 };
+        const int blocks = 60;                      // ~640 ms: latency + smoothing well cleared
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                // DIFFERENT frequencies per channel, so a channel swap or a
+                // sum-into-one-channel defect cannot masquerade as health.
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) t / 48000.0f));
+                buf.setSample (1, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 330.0f * (float) t / 48000.0f));
+            }
+            proc.processBlock (buf, midi);
+            if (b >= blocks / 2)                    // measure the settled half only
+                for (int n = 0; n < 512; ++n)
+                {
+                    sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                    sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                }
+        }
+        // DERIVED from the loop, not written out again: the divisor read
+        // `256.0 * 512.0` against a settled half of 30 × 512 samples — an ~8.5×
+        // over-division. It did not fail (0.25-amplitude sines settle near
+        // 0.177 RMS, and even 0.061 clears the 0.05 bar), which is the whole
+        // problem: a permanent guard was passing by 20 % instead of 3.5× and
+        // printing a wrong number in its own failure message, so the next
+        // ordinary level change would have turned it red for a reason that was
+        // never about the channels. `blocks - blocks / 2` is the same count the
+        // `b >= blocks / 2` gate admits, at any `blocks`.
+        const double settledSamples = (double) (blocks - blocks / 2) * 512.0;
+        const double rmsL = std::sqrt (sumSq[0] / settledSamples);
+        const double rmsR = std::sqrt (sumSq[1] / settledSamples);
+        juce::String msg;
+        msg << "stereoWrapper (" << tag << "): LEFT carries audio (rmsL="
+            << (float) rmsL << " rmsR=" << (float) rmsR << ")";
+        check (rmsL > 0.05, msg.toRawUTF8());
+        msg.clear();
+        msg << "stereoWrapper (" << tag << "): RIGHT carries audio (rmsR=" << (float) rmsR << ")";
+        check (rmsR > 0.05, msg.toRawUTF8());
+        msg.clear();
+        msg << "stereoWrapper (" << tag << "): channels within 6 dB of each other";
+        check (rmsL < rmsR * 2.0 && rmsR < rmsL * 2.0, msg.toRawUTF8());
+    };
+    run (0.0f,  "defaults");
+    run (50.0f, "loudness 50");
+
+    // The configurations the plain run above does NOT cover, each a candidate
+    // for a channel-asymmetric defect the DSP suite would miss: the editor
+    // alive while audio runs, the oversampler engaged (its polyphase state is
+    // per channel), a factory preset applied, and a session round-trip.
+    // setup returns a keep-alive token so a configuration can hold an object
+    // (the editor) LIVE across the processing loop, not merely construct it.
+    auto runWith = [] (const char* tag,
+                       std::function<std::shared_ptr<void> (AnabasisAudioProcessor&)> setup)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto keepAlive = setup (proc);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        double sumSq[2] = { 0.0, 0.0 };
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) t / 48000.0f));
+                buf.setSample (1, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 330.0f * (float) t / 48000.0f));
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n)
+                {
+                    sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                    sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                }
+        }
+        const double rmsL = std::sqrt (sumSq[0] / (30.0 * 512.0));
+        const double rmsR = std::sqrt (sumSq[1] / (30.0 * 512.0));
+        juce::String msg;
+        msg << "stereoWrapper (" << tag << "): both channels carry audio (L="
+            << (float) rmsL << " R=" << (float) rmsR << ")";
+        check (rmsL > 0.05 && rmsR > 0.05, msg.toRawUTF8());
+    };
+
+    runWith ("editor attached", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        // The editor stays ALIVE through the whole processing loop via the
+        // keep-alive token; the deleter runs editorBeingDeleted first, per the
+        // JUCE ownership contract.
+        auto* ed = p.createEditor();
+        return std::shared_ptr<void> (ed, [&p, ed] (void*)
+        {
+            p.editorBeingDeleted (ed);
+            delete ed;
+        });
+    });
+    runWith ("oversampling 16x linear", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        p.internalState.state().setProperty (iid::oversample, 4, nullptr);
+        p.internalState.state().setProperty (iid::osPhase, 1, nullptr);
+        p.prepareToPlay (48000.0, 512);      // re-prepare builds the OS chain
+        return nullptr;
+    });
+    runWith ("factory preset applied", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        // Index 3 = "EDM Club", the bank's LOUDEST table (loudness 80) — the
+        // point of this configuration is maximum macro push through the chain.
+        // It read `1` with the comment "Loud Pop" until 2026-08-05, when
+        // "Default" took index 0 and shifted every entry by one: index 1 is
+        // "Transparent Master" (loudness 25), so the case had quietly become
+        // the gentlest preset in the bank rather than the hardest-driven one.
+        p.applyFactoryPreset (3);
+        return nullptr;
+    });
+    runWith ("after a session round-trip", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        juce::MemoryBlock blob;
+        p.getStateInformation (blob);
+        p.setStateInformation (blob.getData(), (int) blob.getSize());
+        return nullptr;
+    });
+}
+
 int main (int argc, char** argv)
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -4030,12 +4456,14 @@ int main (int argc, char** argv)
         testTheFrozenLatchNeedsNoThreadCrossing();
         testAFrozenLatchDoesNotFollowTheSlotSwitch();
         testHistoryOwnershipAcrossAStateLoad();
+        testBothChannelsCarryAudioThroughTheWrapper();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
         testDetachAndReengageGrammar();
         testUndoIsPerSlotGestureCoalescedAndMaskWide();
         testFactoryPresets();
+        testALockedCeilingSurvivesAPresetThatNamesIt();
         testMeterResetClearsSessionHolds();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
@@ -4048,7 +4476,8 @@ int main (int argc, char** argv)
         testARewoundSpectrumRingDropsThePreviousTrace();
         testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
         testTheAboutPanelShowsTheBuildItIsRunning();
-        testTheSpectrumOverlayOnlyClaimsItsDismissCorner();
+        testTheGraphWellViewsOnlyClaimTheirModeChips();
+        testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
@@ -4067,6 +4496,7 @@ int main (int argc, char** argv)
         testMissingChildrenReadAsDefaults();
         testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();
+        testTheCeilingAdvertisesTheUnitItEnforces();
         testCachedParamsMapping();
     }
 

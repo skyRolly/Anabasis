@@ -28,11 +28,10 @@ namespace iid
     inline const juce::Identifier osPhase        { "int_osPhase" };        // 0 min, 1 linear
     inline const juce::Identifier offlineQuality { "int_offlineQuality" }; // 0 Follow, 1 Force Max
     inline const juce::Identifier ceilingLock    { "int_ceilingLock" };    // bool
-    inline const juce::Identifier uiScale        { "int_uiScale" };        // percent: 80..200
+    inline const juce::Identifier uiScale        { "int_uiScale" };        // percent; legal set = ui_scale::steps
     inline const juce::Identifier tooltipsOn     { "int_tooltipsOn" };     // bool
     inline const juce::Identifier uiAnimations   { "int_uiAnimations" };   // bool
-    inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool (dismissible, brief §6)
-    inline const juce::Identifier meterTargets   { "int_meterTargets" };   // bitmask, all on
+    inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool: graph-well mode — true spectrum, false GR history (ADR-0016)
     inline const juce::Identifier tpMeterOn      { "int_tpMeterOn" };      // bool
 }
 
@@ -45,13 +44,24 @@ namespace iid
 // removed the second).
 //
 // NEAREST rather than a range clamp, because the legal set is a ladder: 110 →
-// 100, 92 → 90, 50 → 80, 300 → 200. Returning an INDEX as well as a value is
+// 100, 92 → 85, 50 → 75, 300 → 150 (worked against the XS..XL steps below —
+// these read 90/80/200 while the seven-step ladder was current, so the examples
+// described a ladder the code no longer had). Returning an INDEX as well as a value is
 // what lets the editor make the rendered transform and the displayed combo
 // selection ONE decision instead of two that happen to agree.
 namespace ui_scale
 {
-    inline constexpr int steps[]  = { 80, 90, 100, 125, 150, 175, 200 };
+    // The SIBLING'S ladder, adopted 2026-08-05 (owner directive): five steps
+    // shown as XS/S/M/L/XL with M the original size — the percents are
+    // Anamorph's `applyUiScale` scales ×100. The field stays a PERCENT in the
+    // schema; only the legal set and the display changed. A session written by
+    // the old seven-step ladder converges through `nearest` like any other
+    // out-of-list value (80→75, 90→85, 175/200→150).
+    inline constexpr int steps[]  = { 75, 85, 100, 125, 150 };
+    inline constexpr const char* names[] = { "XS", "S", "M", "L", "XL" };
     inline constexpr int numSteps = (int) (sizeof (steps) / sizeof (steps[0]));
+    static_assert (sizeof (names) / sizeof (names[0]) == (size_t) numSteps,
+                   "one display name per ladder step");
 
     inline constexpr int nearestIndex (int pct) noexcept
     {
@@ -94,8 +104,7 @@ public:
         tree.setProperty (iid::tooltipsOn,     false, nullptr);
         tree.setProperty (iid::uiAnimations,   true,  nullptr);
         tree.setProperty (iid::spectrumOn,     true,  nullptr);
-        tree.setProperty (iid::meterTargets,   ~0,    nullptr);
-        tree.setProperty (iid::tpMeterOn,      true,  nullptr);
+        tree.setProperty (iid::tpMeterOn,      false, nullptr);
     }
 
     ~InternalState() override { tree.removeListener (this); }
@@ -172,9 +181,13 @@ public:
         // cannot miss today — but "correct because of what the line above did"
         // is the reasoning this file avoids elsewhere, and here it fails
         // QUIETLY rather than loudly: a missing property reads as `var()`,
-        // which converts to 0, and 0's nearest ladder step is 80. An absent
-        // field would silently become the SMALLEST legal scale instead of the
-        // default one. Naming the default in the read makes this total on its
+        // which converts to 0, and 0's nearest ladder step is the smallest one
+        // — **75** on the XS..XL ladder this now ships (it was 80 on the
+        // seven-step ladder the paragraph was written against, and the number
+        // is quoted rather than derived precisely because the argument is about
+        // a silent wrong answer). An absent field would silently become the
+        // SMALLEST legal scale instead of the default one, at either value.
+        // Naming the default in the read makes this total on its
         // own, and it is the same default `setDefaults()` writes — the value,
         // not a second opinion about it.
         tree.setProperty (iid::uiScale,

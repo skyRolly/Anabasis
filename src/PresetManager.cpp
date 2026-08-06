@@ -148,7 +148,7 @@ namespace
     // brief §9 name 3: club level; the Loud style carries the density.
     const O kEdmClub[] = {
         { pid::loudness, 80.0f }, { pid::character, 0.45f }, { pid::tone, 0.25f },
-        { pid::limStyle, 2.0f }, { pid::ceiling, -0.5f },
+        { pid::limStyle, 2.0f },
     };
     // brief §9 name 4: presence via the (non-managed) bells, macro modest.
     const O kVocalForward[] = {
@@ -206,6 +206,11 @@ namespace
     };
 
     const PresetManager::FactoryPreset kFactory[] = {
+        // Index 0, an EMPTY override table: "defaults + intents" with zero
+        // intents IS the default patch. The sibling's pattern (its bank also
+        // opens on { "Default", {} }); the fresh-constructed state is named
+        // by it, so the plugin never shows a nameless "Preset" placeholder.
+        { "Default",            nullptr,            0 },
         { "Transparent Master", kTransparentMaster, (int) std::size (kTransparentMaster) },
         { "Loud Pop",           kLoudPop,           (int) std::size (kLoudPop) },
         { "EDM Club",           kEdmClub,           (int) std::size (kEdmClub) },

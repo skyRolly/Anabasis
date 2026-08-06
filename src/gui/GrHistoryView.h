@@ -13,6 +13,13 @@ class AnabasisAudioProcessor;
 //  waveform peaks filled from the baseline, the gain-reduction trace hanging
 //  from the top, over a 10–30 s window.
 //
+//  Since 2026-08-05 this is one of the TWO MODES of the shared graph well
+//  (`int_spectrumOn` is the mode flag; both views hold identical bounds and
+//  only visibility flips). It carries the top-right "SPEC" corner chip that
+//  switches back to the spectrum — the mirror of `SpectrumView`'s "GR" chip,
+//  with the same hit-area discipline: interactive over the chip ONLY, inert
+//  everywhere else, so clicks over the trace pass through.
+//
 //  Reader contract (THREAD_MODEL, decided at the P5 opening): stateless
 //  `peek`s against `available()`, and the RESET EPOCH sampled before and
 //  after every batch — odd or moved means the batch raced a host-thread
@@ -25,7 +32,8 @@ class AnabasisAudioProcessor;
 //  from its prepared size, and only in display width, never in data.
 // ============================================================================
 
-class GrHistoryView : public juce::Component
+class GrHistoryView : public juce::Component,
+                      public juce::SettableTooltipClient
 {
 public:
     explicit GrHistoryView (AnabasisAudioProcessor&);
@@ -36,6 +44,10 @@ public:
     ~GrHistoryView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;   // top-right chip → spectrum
+    // Interactive ONLY over the chip; everything else falls through — the same
+    // per-pixel opt-out `SpectrumView::hitTest` documents at length.
+    bool hitTest (int x, int y) override;
     void visibilityChanged() override;
 
     // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band.
@@ -58,6 +70,13 @@ public:
     }
 
 private:
+    // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
+    // agree about it — the rule `SpectrumView::chipHitArea` states.
+    juce::Rectangle<int> chipHitArea() const noexcept;
+    // The traces, split out of `paint` so the corner chip can be drawn AFTER
+    // them (matching `SpectrumView`) without losing the reader contract's
+    // three early returns — see the definition.
+    void paintHistory (juce::Graphics&);
     void tick (double dt);
 
     AnabasisAudioProcessor& processor;

@@ -42,7 +42,7 @@ one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
 | `loudness` | Loudness | 0 … 100 | 0 | cont. | **no** | — |
 | `character` | Character | 0 … 1 | 0 | cont. | **no** | — |
 | `tone` | Tone | -1 … 1 | 0 | cont. | **no** | — |
-| `ceiling` | Ceiling | -20 … 0 | -1 | cont. | yes | — |
+| `ceiling` | Ceiling | -20 … 0 | -0.1 ¹⁵ | cont. | yes | — |
 | `freeze` | Freeze | 0 … 1 | 0 | 2 | **no** | preset-excl |
 | `loudnessComp` | Loudness Comp | 0 … 1 | 0 | 2 | yes | view |
 | `deltaMonitor` | Delta | 0 … 1 | 0 | 2 | yes | view |
@@ -71,7 +71,7 @@ one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
 | `limStyle` | Style | 0 … 2 | 0 | 3 | yes | — |
 | `stereoLink` | Stereo Link | 0 … 100 | 100 | cont. | yes | — |
 | `transientPreserve` | Transients | 0 … 100 | 50 | cont. | yes | — |
-| `truePeakMode` | True Peak | 0 … 1 | 1 | 2 | **no** | — |
+| `truePeakMode` | True Peak | 0 … 1 | 0 ¹⁵ | 2 | **no** | — |
 | `eqTilt` | Tilt | -3 … 3 | 0 | cont. | yes | — |
 | `eqLowShelfFreq` | LS Freq | 20 … 500 | 100 | cont. | yes | — |
 | `eqLowShelfGain` | LS Gain | -12 … 12 | 0 | cont. | yes | — |
@@ -86,6 +86,19 @@ one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
 | `eqPosition` | EQ Position | 0 … 1 | 0 | 2 | yes | — |
 | `dither` | Dither | 0 … 2 | 0 | 3 | **no** | — |
 | `ditherShaping` | Noise Shaping | 0 … 1 | 0 | 2 | **no** | — |
+
+¹⁵ **Re-frozen by [ADR-0015](design-decisions/ADR-0015-pre-ship-contract-refreeze.md)**
+(2026-08-06, owner round-2 directive): `ceiling` −1.0 → **−0.1**, `truePeakMode` on → **off**.
+Both are `PARAMETER_COMPATIBILITY_POLICY.md` rule 3 changes, taken while nothing has shipped and
+recorded with the condition that closes that window. The snapshot fixture was re-frozen with
+them. A Parameter Registry change is an `ARCHITECTURE_REVIEW_GATE.md` item and a Hard Stop:
+**the owner cleared that gate on 2026-08-06**, signing off both defaults by name (quoted in
+ADR-0015's Status banner). Neither is ⊕ any longer. A consequence worth carrying at the row: with `truePeakMode` off the ceiling is a
+**sample-peak** limit (`DSP_POLICY.md` invariant 3, ADR-0006 item 3), so `ceiling`'s value text
+prints `dB` and switches to `dBTP` only while the mode is engaged —
+`testTheCeilingAdvertisesTheUnitItEnforces`. The **text** is not part of the snapshot (ID · name ·
+range · default · steps · automatable), and both spellings parse back identically, so it is
+display-only.
 
 ## The nine non-automatable rows
 
@@ -114,8 +127,8 @@ registry entry + ADR (rule 6).
 automation by construction (out of the tree entirely — the only reliable hiding, ADR-0010 option
 K). Inventory as implemented (`src/InternalState.h`): `int_oversample` (0–4 = Off/2×/4×/8×/16×),
 `int_osPhase` (0 min / 1 linear), `int_offlineQuality` (0 Follow / 1 Force Max),
-`int_ceilingLock`, `int_uiScale` (80–200 %), `int_tooltipsOn`, `int_uiAnimations`,
-`int_spectrumOn`, `int_meterTargets` (bitmask), `int_tpMeterOn`. The first three are the latency
+`int_ceilingLock`, `int_uiScale` (a percent from the XS–XL ladder, `ui_scale::steps` — the ladder narrowed from seven steps to five in round 2, which changes the field's accepted DOMAIN and so what its read rule does to a stored 80/90/175/200; **ADR-0017**, gate cleared 2026-08-06), `int_tooltipsOn`, `int_uiAnimations`,
+`int_spectrumOn` (since 2026-08-05 the graph-well MODE flag — true = spectrum, false = GR history; switched by the corner chips on the graph itself, no Settings toggle. That is a **semantic change** to a serialized field, not just a UI move: it used to mean "does the spectrum take half of the Advanced strip", and the Simple view did not read it. **ADR-0016** carries the before/after; its gate was cleared 2026-08-06), `int_tpMeterOn` (default **off** since ADR-0015; `int_meterTargets` was removed 2026-08-05 with the streaming-target display, under the same ADR — an old session carrying it is ignored by the §4.4 unknown-field rule). The first three are the latency
 inputs (ADR-0004); their change callbacks are three of the five PDC recompute triggers.
 
 ## Changing anything here

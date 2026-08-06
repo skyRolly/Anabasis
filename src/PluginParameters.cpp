@@ -108,7 +108,8 @@ NormalisableRange<float> logRange (float lo, float hi)
 }
 } // namespace
 
-juce::AudioProcessorValueTreeState::ParameterLayout createAnabasisLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout
+createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
@@ -150,8 +151,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout createAnabasisLayout()
     floatParam (pid::tone, "Tone", { -1.0f, 1.0f }, 0.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); }, false);
-    floatParam (pid::ceiling, "Ceiling", { -20.0f, 0.0f }, -1.0f,
-                [] (float v, int) { return juce::String (v, 1) + " dBTP"; }, dbFrom);
+    // The UNIT FOLLOWS THE MODE (ADR-0015, `CeilingUnitSource` in the header):
+    // " dBTP" only while true-peak mode is engaged, " dB" otherwise — the
+    // ceiling is a sample-peak limit with it off (ADR-0006 item 3), so an
+    // unconditional dBTP suffix advertised an inter-sample guarantee the
+    // default configuration does not make. `dbFrom` parses the leading float,
+    // so both spellings round-trip through `getValueForText` identically.
+    floatParam (pid::ceiling, "Ceiling", { -20.0f, 0.0f }, -0.1f,
+                [ceilingUnit] (float v, int)
+                {
+                    const bool tp = ceilingUnit != nullptr && ceilingUnit->truePeakEngaged();
+                    return juce::String (v, 1) + (tp ? " dBTP" : " dB");
+                }, dbFrom);
     boolParam  (pid::freeze,       "Freeze",        false, false);
     boolParam  (pid::loudnessComp, "Loudness Comp", false);
     boolParam  (pid::deltaMonitor, "Delta",         false);
@@ -204,7 +215,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createAnabasisLayout()
     choiceParam (pid::limStyle, "Style", { "Transparent", "Punchy", "Loud" }, 0);
     floatParam (pid::stereoLink, "Stereo Link", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
     floatParam (pid::transientPreserve, "Transients", { 0.0f, 100.0f }, 50.0f, pctText, pctFrom);
-    boolParam  (pid::truePeakMode, "True Peak", true, false);
+    boolParam  (pid::truePeakMode, "True Peak", false, false);
 
     // Rows 34-45 (eq)
     floatParam (pid::eqTilt, "Tilt", { -3.0f, 3.0f }, 0.0f, dbText, dbFrom);

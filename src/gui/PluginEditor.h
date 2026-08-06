@@ -65,6 +65,15 @@ public:
     // carries the reasoning.
     void refreshInternalSettingsBoxes();
 
+    // The Ceiling value box's unit→mode direction, run on the same 24 Hz tick,
+    // and PUBLIC for the same reason as the line above: no message loop runs in
+    // the headless suite, so nothing else can drive it, and this is the second
+    // time a state→widget direction has been the missing half of a change that
+    // looked complete from the parameter side. `getText` was already
+    // mode-aware and its host-facing test passed; what nothing refreshed was
+    // the CACHED label, which is what the user actually reads.
+    void refreshCeilingUnit();
+
 private:
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -232,10 +241,14 @@ private:
     void setupCombo (juce::ComboBox&, const char* id, const juce::String& tip);
     void setupToggle (juce::ToggleButton&, const char* id, const juce::String& text,
                       const juce::String& tip);
+    // `name` is the accessibility title (the Settings row's label — these
+    // host-hidden controls have no registry name to fall back on); `tip` is
+    // the hover hint. Separate strings since the R2 tooltip set — the titles
+    // are load-bearing (the state suite finds these controls by title).
     void setupComboInternal (juce::ComboBox&, const juce::StringArray& items,
-                             const juce::String& tip, juce::Value);
+                             const juce::String& name, const juce::String& tip, juce::Value);
     void setupToggleInternal (juce::ToggleButton&, const juce::String& text,
-                              const juce::String& tip, juce::Value);
+                              const juce::String& name, const juce::String& tip, juce::Value);
     void passComboHoverThrough (juce::ComboBox&);
 
     AnabasisAudioProcessor& processor;
@@ -298,6 +311,13 @@ private:
     Knob bigLoudnessK, simpleCharacterK, simpleToneK, simpleCeilingK;
     juce::Label bigLoudnessL, simpleCharacterL, simpleToneL, simpleCeilingL;
     juce::ToggleButton ceilingLockToggle;          // int_ceilingLock (§4.2)
+    // The SECOND attachment on pid::truePeakMode (the limiter zone's tpToggle
+    // is the other): the ceiling is dBTP-aware only while TP mode is ON, so
+    // the switch that decides it sits beside the Ceiling knob in the DEFAULT
+    // view (owner directive 2026-08-05 — "a highly visible True Peak switch
+    // in the main UI"). Two ButtonAttachments on one parameter are the JUCE
+    // pattern for one value with two homes; they cannot disagree.
+    juce::ToggleButton tpSimpleToggle;
     juce::TextButton   learnButton { "LEARN" };    // §5.4 explicit start/end
     juce::Label outLufsCaption, outLufsValue;      // live render short-term
 
@@ -323,6 +343,26 @@ private:
     std::unique_ptr<CurveView>         clipCurve, eqCurve;
     GrMiniMeter compGrMeter, limGrMeter;
     bool shownSpectrumOn = true;
+    // The Ceiling's UNIT follows `truePeakMode` (ADR-0015), and a JUCE Slider
+    // recomputes its value-box text only in `updateText()` — on a value change,
+    // a `setTextBoxStyle`, a relayout or a look-and-feel change, never on a
+    // repaint. Flipping TP moves no ceiling value and triggers no relayout, so
+    // the box kept the previous suffix until the ceiling itself was touched:
+    // exactly the stale claim the mode-aware unit exists to remove. The tick
+    // watches the mode and refreshes both ceiling boxes on the edge.
+    //
+    // THIS CACHES WHAT THE BOXES ARE CURRENTLY SHOWING, not the product
+    // default — so it is SEEDED IN THE CONSTRUCTOR from the very predicate that
+    // decided the suffix (`CeilingUnitSource::truePeakEngaged()`), never
+    // guessed here. Hard-coded `false` was wrong for an editor opened on a
+    // TP-ON session: the attachment renders " dBTP" at construction while the
+    // cache claims off, and if the mode then went OFF before the first tick
+    // (~42 ms — a host write, a state load, the other TP toggle) the gate saw
+    // `tp == shownTpMode == false`, skipped `updateText()`, and left " dBTP"
+    // standing over a sample-peak ceiling until something else forced a
+    // recompute. The `= false` below only keeps the member from being
+    // indeterminate before that seed runs; it carries no meaning.
+    bool shownTpMode = false;
 
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit
     // end; an empty pass flashes the button in `warn` (wordless readout).
@@ -343,11 +383,6 @@ private:
     juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox;
     juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel;
     juce::ToggleButton animToggle, tooltipsToggle, tpMeterToggle;
-    // One per `LoudnessMeterView::kTargets` entry, sized FROM that table:
-    // three named members meant the count lived here as well as there, and
-    // in the two loops and the layout row that walked them.
-    std::array<juce::ToggleButton, (size_t) LoudnessMeterView::kNumTargets> targetToggles;
-    juce::ToggleButton spectrumToggle;
 
     // -- Save-preset overlay -------------------------------------------------
     juce::Label      saveTitle;
