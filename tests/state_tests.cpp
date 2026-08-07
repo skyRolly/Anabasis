@@ -3810,6 +3810,22 @@ static void collectTooltipless (juce::Component& root, juce::StringArray& names)
     }
 }
 
+// The §8 focus sweep's collector — same shape as `collectTooltipless`, and
+// deliberately a SECOND walk rather than a second condition inside the first:
+// the two answer different questions and a combined failure message could not
+// say which one failed.
+static void collectUnfocusable (juce::Component& root, juce::StringArray& names)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* sl = dynamic_cast<juce::Slider*> (c); sl != nullptr && ! sl->getWantsKeyboardFocus())
+            names.add ("slider \"" + sl->getTitle() + "\"");
+        if (auto* bx = dynamic_cast<juce::ComboBox*> (c); bx != nullptr && ! bx->getWantsKeyboardFocus())
+            names.add ("combo \"" + bx->getTitle() + "\"");
+        collectUnfocusable (*c, names);
+    }
+}
+
 static void testEveryKnobAndComboCarriesATooltip()
 {
     AnabasisAudioProcessor proc;
@@ -3821,6 +3837,18 @@ static void testEveryKnobAndComboCarriesATooltip()
 
     juce::StringArray hoverless;
     collectTooltipless (*ed, hoverless);
+    // §8 keyboard operability, landed 0.1.1: every slider and combo ACCEPTS
+    // keyboard focus, which is what lets tab traversal reach it and JUCE's own
+    // `Slider::keyPressed` arrow handling fire. Swept here rather than in its
+    // own test because it is the same walk over the same set — and asserted as
+    // "accepts", never "takes": `EDITOR_WANTS_KEYBOARD_FOCUS` stays FALSE so
+    // the plugin never steals the host's transport keys.
+    juce::StringArray unfocusable;
+    collectUnfocusable (*ed, unfocusable);
+    if (! unfocusable.isEmpty())
+        std::printf ("  unfocusable: %s\n", unfocusable.joinIntoString (", ").toRawUTF8());
+    check (unfocusable.isEmpty(),
+           "keyboard: every slider and combo accepts keyboard focus (brief section 8)");
     if (! hoverless.isEmpty())
         std::printf ("  tooltipless: %s\n", hoverless.joinIntoString (", ").toRawUTF8());
     check (hoverless.isEmpty(), "tooltips: every slider and combo carries a hover hint");

@@ -86,9 +86,15 @@ staging trees.
    both reasons. The `-debug` artifacts stay out of the release entirely — they are per-push CI
    outputs for symbolication, not customer deliverables.
 
-5. **`SUPPORT.md` is NOT invented.** The sibling ships one as a release asset; Anabasis has no
-   such file and a support contact is not a fact CI may fabricate (constraint C7). The asset is
-   dropped, and the omission is stated in the workflow rather than left to be noticed.
+5. **`SUPPORT.md` is written, not invented.** The sibling ships one as a release asset and
+   `DEVELOPMENT_BRIEF.md` §14.2 names it in the Internal/testing documentation class, but
+   Anabasis had none. It is now written — and it is *shorter* than the sibling's on purpose:
+   that class's rule is "restates the legal class, never diverges from it", and Anabasis has no
+   approved licence, EULA or privacy document to restate (OQ-002 / OQ-009 open, and
+   `HANDOVER.md` records that the owner-legal set was deliberately not produced). The file
+   states that as its own §1 and confines itself to what the repository can evidence: the
+   reporting channel, what a usable report contains, and that terms come from the owner rather
+   than from it. No support contact is fabricated (constraint C7).
 
 6. **Version 0.1.1**, `CMakeLists.txt` line 20, with a dated CHANGELOG entry. v0.1.0 was
    declared code-complete on 2026-08-02 but never tagged, so **0.1.1 is the first build this

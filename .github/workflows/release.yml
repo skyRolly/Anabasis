@@ -308,10 +308,13 @@ jobs:
           # THE CONSEQUENCE TO KEEP IN VIEW: dropping either line here removes
           # the notices from the distribution entirely rather than degrading
           # it — nothing else carries them.
-          # The sibling additionally ships SUPPORT.md as an asset. Anabasis has
-          # NO SUPPORT.md in its tree, and a support contact is not a fact this
-          # workflow may invent, so that asset is dropped entirely rather than
-          # substituted.
+          # SUPPORT.md — the internal-testing guide, written in the 0.1.1 round
+          # to close the DEVELOPMENT_BRIEF §14.2 documentation-class gap. It
+          # states only what the repository can evidence: Anabasis has no
+          # approved licence or privacy document (OQ-002 / OQ-009 open), so it
+          # restates nothing and says so, rather than inventing terms or a
+          # support contact this workflow has no authority to publish.
+          cp SUPPORT.md              "dist/Anabasis-${VERSION}-SUPPORT.md"
           cp NOTICE                  "dist/Anabasis-${VERSION}-NOTICE.txt"
           cp THIRD_PARTY_LICENSES.md "dist/Anabasis-${VERSION}-THIRD_PARTY_LICENSES.md"
           (cd dist && sha256sum Anabasis-* > SHA256SUMS.txt)
@@ -354,6 +357,7 @@ jobs:
             dist/Anabasis-"${VERSION}"-Windows-Installer.exe \
             dist/Anabasis-"${VERSION}"-macOS.pkg \
             dist/Anabasis-"${VERSION}"-UserManual.md \
+            dist/Anabasis-"${VERSION}"-SUPPORT.md \
             dist/Anabasis-"${VERSION}"-NOTICE.txt \
             dist/Anabasis-"${VERSION}"-THIRD_PARTY_LICENSES.md \
             dist/SHA256SUMS.txt \

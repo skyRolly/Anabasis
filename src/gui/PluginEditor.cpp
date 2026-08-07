@@ -962,6 +962,17 @@ void AnabasisAudioProcessorEditor::setupRotary (juce::Slider& s, juce::Label& l,
     // reader announces the same wording the automation lane shows.
     s.setTitle (name);
     s.setDescription (name);
+    // …and the OTHER half of §8, which had no implementation until 0.1.1:
+    // KEYBOARD OPERABILITY. JUCE sliders already handle the arrow keys in
+    // `Slider::keyPressed`; what they lack by default is the focus that lets
+    // the key reach them, so tab traversal and arrow adjustment were both
+    // dead. Accepting focus is all that is added, and the distinction matters:
+    // a focusABLE control never TAKES focus, it only receives it when the user
+    // tabs or clicks — so `EDITOR_WANTS_KEYBOARD_FOCUS FALSE` stays as it is
+    // and the plugin still never steals the host's transport keys. In a plugin
+    // the feature is therefore live exactly when the host has already given
+    // the editor focus, and in the Standalone it is live always.
+    s.setWantsKeyboardFocus (true);
 }
 
 void AnabasisAudioProcessorEditor::attachSlider (juce::Slider& s, const char* id)
@@ -1000,6 +1011,7 @@ void AnabasisAudioProcessorEditor::setupCombo (juce::ComboBox& box, const char* 
     // R2 tooltip set the two are different strings, and the title must keep
     // announcing what the automation lane shows.
     box.setTitle (cp != nullptr ? cp->getName (24) : tidyTip (tip));
+    box.setWantsKeyboardFocus (true);   // §8 keyboard operability — see setupRotary
 }
 
 void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const char* id,
@@ -1013,6 +1025,7 @@ void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const cha
     // Registry name as title (brief §8) — see setupCombo.
     auto* p = processor.apvts.getParameter (id);
     t.setTitle (p != nullptr ? p->getName (24) : text);
+    t.setWantsKeyboardFocus (true);                 // §8 — see setupRotary
 }
 
 void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
@@ -1067,6 +1080,7 @@ void AnabasisAudioProcessorEditor::setupToggleInternal (juce::ToggleButton& t,
     t.getToggleStateValue().referTo (value);
     registerAnimated (t);
     t.setTitle (name.isNotEmpty() ? name : text);   // as setupToggle does
+    t.setWantsKeyboardFocus (true);                 // §8 — see setupRotary
 }
 
 // ============================================================================
