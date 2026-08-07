@@ -171,6 +171,25 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
             gr.lineTo (x, gy);
         }
         lastX = x;
+
+        // ONE bucket is the whole history, and it has no second vertex to
+        // stretch to: `bucketX` degenerates to the left edge, a one-point
+        // polyline strokes NOTHING and a one-point fill closes a zero-width
+        // shape, so the panel went blank for the first few blocks after every
+        // reset and every transport start (three blocks ≈ 32 ms at 48 kHz/512,
+        // where `stride` is 3). The limit of the stretch as the bucket count
+        // falls to one is a CONSTANT trace, so the single reading is emitted at
+        // BOTH edges — the same two x's the two-bucket case already uses, and
+        // continuous with it. The rectangles the pre-0.1.1 draw used are not
+        // coming back: a filled path under a polyline is the design, and this
+        // is that design's own degenerate case handled inside it.
+        if (nb.count == 1)
+        {
+            const float xEnd = area.getRight() - 1.0f;   // == bucketX's right edge
+            wave.lineTo (xEnd, wy);
+            gr.lineTo (xEnd, gy);
+            lastX = xEnd;
+        }
     }
 
     // The batch raced a reset: throw the frame away, the next tick re-derives.

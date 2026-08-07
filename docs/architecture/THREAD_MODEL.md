@@ -89,6 +89,57 @@ already mandates: GUI-side reads of published state are stateless `const` peeks 
 such read is `getLatencySamples()` in `paint()`), so the identity of the painting thread carries
 no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amendment implied.
 
+## Audio-thread-only state behind a `const` accessor
+
+`LoudnessMeter::integratedLufs()` and `LoudnessMeter::lraLu()` are `const` and, since ADR-0020's
+third amendment, **write** `mutable` non-atomic members: each holds its histogram walk between
+gating blocks (`integratedCache`/`lraCache` and their validity flags, cleared by `finishSubBlock`
+and `clearSessionCumulative`). That is not a cross-thread edge — it is state with exactly **one**
+thread, which is why it is recorded here rather than in the table above.
+
+> **The invariant: every caller of `LoudnessMeter::integratedLufs()` and `LoudnessMeter::lraLu()`
+> must be on the audio thread.** They are not thread-safe, and they are deliberately not atomic.
+> `THREADING_POLICY.md` §"Forbidden cross-thread access" already forbids reaching non-atomic
+> shared state from a second thread; this is a case where obeying that rule is what makes the
+> cache correct, rather than merely tidy.
+
+It holds by construction today. The only production callers are the meter publish at the end of
+`processBlock`, and every writer of the accumulators they cache is on that same thread — the
+gating-block commit inside `finishSubBlock`, and the meter-reset consume (`resetMeterHolds` →
+`resetIntegrated`) at the block top.
+
+**What makes it worth recording is that the compiler will not defend it.**
+`AnabasisEngine::outputLoudness()` returns a public `const LoudnessMeter&`, and a `const` method
+that mutates advertises nothing: a GUI-side reader added through that reference would compile
+without complaint and race. `const` is exactly the signal a reviewer would otherwise rely on,
+which is why the constraint is written down rather than left to be re-derived.
+
+**Nothing on `LoudnessMeter` is safe to read from a second thread**, and the cache did not create
+that — `momentaryLufs()`/`shortTermLufs()` walk `subRing` while the audio thread writes it, and
+`integratedUngatedLufs()` reads two accumulators the same thread updates. What the cache changed
+is the sharpness: those three only READ audio-thread state, while the two cached getters also
+WRITE, so a second reader is a write-write race rather than a stale-value one. The invariant above
+is stated for the two because they are where a reviewer's `const`-based intuition now fails; the
+class-wide rule is the older and broader one.
+
+The accessor is deliberately **not** narrowed. Its other consumer is the engine's own §2.7
+compensation, reading `dryMeter`/`wetMeter` from inside `AnabasisEngine::process` — the same
+thread — so there is no GUI-side use to remove, and reshaping a public accessor to encode a
+constraint no caller currently violates is an API change this record does not require.
+
+**What a GUI-side reader should do instead:** read the published atomics — `meterLufsI()` and
+`meterLra()`, the "Meters → GUI" row above. They carry exactly these two figures, refreshed once
+per block, and they exist for this purpose. Reaching past them into the meter is the mistake this
+section is here to prevent.
+
+**Adding a second reader thread to these two getters is a threading-model change**, and therefore
+an Architecture Review Gate item (`CLAUDE.md`'s Hard Stop list): it needs atomics on the cache or
+a different mechanism, decided in an ADR and not at the call site.
+
+Recorded per ADR-0020's third amendment; **no policy amendment implied** — the rule that keeps
+this safe is one `THREADING_POLICY.md` already states, in the same way "Which context paints"
+above records a nuance without amending the ring rule.
+
 ## Planned edges (not yet in the tree)
 
 - **Spectrum capture rings — IMPLEMENTED (P5, 2026-08-02)**: two `anabasis::ScopeBuffer`

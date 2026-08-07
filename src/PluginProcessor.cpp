@@ -671,11 +671,16 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     samplePeakMaxHold = juce::jmax (samplePeakMaxHold,
                                     juce::Decibels::gainToDecibels (engine.lastRenderPeak(), -144.0f));
 
-    // integratedLufs() walks the 751-bin histogram twice (~1500 iterations,
-    // bounded and allocation-free) although the figure only moves when a
-    // gating block commits, every 100 ms. Caching it in finishSubBlock would
-    // remove ~99 % of that at 512-sample blocks — a candidate if the P6 CPU
-    // measurement puts metering near DESIGN §9's ≤ 0.5 % allocation.
+    // `integratedLufs()` and `lraLu()` are CACHED inside `LoudnessMeter` and
+    // cost a branch here between gating blocks; the histogram walks they hold
+    // (~1500 and ~2250 iterations) run at 10 Hz rather than per block. This
+    // used to carry a TODO proposing exactly that, on the grounds that the
+    // figures only move when a gating block commits: correct, and what made
+    // the change bit-identical rather than an approximation. The reason it
+    // stopped being optional is the block RATE — at 192 kHz with 32-sample
+    // buffers the per-block form was ~22 M iterations/s, the same order as
+    // DESIGN §9's whole ≤ 0.5 % metering allocation. See the note above
+    // `integratedLufs()` for the invalidation and the thread argument.
     const float lufsI = om.integratedLufs();
     pubLufsM.store (om.momentaryLufs(),  std::memory_order_relaxed);
     pubLufsS.store (om.shortTermLufs(),  std::memory_order_relaxed);

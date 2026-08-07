@@ -144,6 +144,8 @@ SEPARATOR = re.compile(r"^\|[\s:|-]*-[\s:|-]*$")
 LINK_OPEN = re.compile(r"\[[^\]]*\]\(")
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 TABLE_ROW = re.compile(r"^\s*\|")
+# The newest CHANGELOG entry, whose notes `release.yml` runs to end of file.
+CHANGELOG_VERSION_HEADING = re.compile(r"^## \[\d+\.\d+\.\d+\]")
 SKIP_DIRS = {".git", "build", "node_modules", "JUCE"}
 
 # Blocks that interrupt a paragraph, and therefore are NOT swallowed by a
@@ -471,6 +473,48 @@ def check_lazy_continuation(path: Path, lines: list[str], skip: list[bool]) -> l
     return findings
 
 
+def check_changelog_notes_boundary(path: Path, lines: list[str], skip: list[bool]) -> list[str]:
+    """Below the first version entry, every `## ` heading in CHANGELOG.md must be
+    a version entry.
+
+    `release.yml` extracts a release's notes as everything from its own version
+    heading to the next h2 -- so the h2 level is reserved for entry boundaries,
+    and any OTHER `## ` heading terminates a release's notes wherever it lands.
+    Two ways a future edit breaks that, neither visible until a tag is cut:
+
+      * demoting one of an entry's sub-sections from `### ` to `## ` silently
+        truncates that release's notes there, and
+      * appending an `## Acknowledgements`-style section to the foot of the file
+        truncates the notes of the oldest entry -- which today is 0.1.1, whose
+        notes deliberately run to end of file because the whole P1-P6 history
+        beneath them belongs to it, in `###` sections.
+
+    Older version headings are NOT findings: terminating on them is the
+    mechanism working. `## [Unreleased]` sits above the first version entry and
+    is likewise outside the rule. The CHANGELOG's preamble states this for a
+    human; this is the copy the build can fail on.
+    """
+    if path.name != "CHANGELOG.md":
+        return []
+    findings = []
+    first: int | None = None
+    for i, line in enumerate(lines):
+        if skip[i] or not line.startswith("## "):
+            continue
+        if CHANGELOG_VERSION_HEADING.match(line):
+            if first is None:
+                first = i
+            continue
+        if first is not None:
+            findings.append(
+                f"{path}:{i + 1}: `## ` heading that is not a version entry, below the "
+                f"first entry (line {first + 1}) -- release.yml ends a release's notes at "
+                f"any `## `, so everything from here to the next version heading is dropped "
+                f"from the published notes. Use `### ` or deeper"
+            )
+    return findings
+
+
 def analyse(path: Path, lines: list[str], root: Path) -> list[str]:
     """Run every check over one document's lines."""
     fenced, unclosed = fence_mask(lines)
@@ -486,6 +530,7 @@ def analyse(path: Path, lines: list[str], root: Path) -> list[str]:
     findings += check_tables(path, text, skip)
     findings += check_links(path, text, skip, root)
     findings += check_lazy_continuation(path, text, skip)
+    findings += check_changelog_notes_boundary(path, text, skip)
     return findings
 
 
@@ -610,6 +655,31 @@ def self_test() -> int:
                 f"self-test FAIL: link_destination({raw!r}) -> {got_dest!r}, want {want!r}",
                 file=sys.stderr,
             )
+
+    # The CHANGELOG boundary rule is file-scoped, so it cannot ride the `x.md`
+    # loop above. Both directions again: the shape the extractor relies on, and
+    # the two ways a future edit breaks it.
+    for label, expected, lines in [
+        ("entry sub-sections at ### are fine", 0,
+         ["# Changelog", "## [Unreleased]", "## [1.0.0] - d", "### Added", "- x"]),
+        ("`## [Unreleased]` above the first entry is not a subject", 0,
+         ["# Changelog", "## [Unreleased]", "## [1.0.0] - d", "### Added"]),
+        ("a fenced ## sample is data", 0,
+         ["# Changelog", "## [1.0.0] - d", "### Added", "```", "## [x.y.z] - date", "```"]),
+        ("no version entry yet", 0, ["# Changelog", "## [Unreleased]"]),
+        ("a trailing section truncates the oldest entry's notes", 1,
+         ["# Changelog", "## [1.0.0] - d", "### Added", "## Acknowledgements"]),
+        ("a demoted sub-section ends them early", 1,
+         ["# Changelog", "## [1.0.0] - d", "### Added", "## Fixed", "- y"]),
+        ("an older version entry is the mechanism working, not a finding", 0,
+         ["# Changelog", "## [1.0.0] - d", "### Added", "## [0.9.0] - e", "### Fixed"]),
+    ]:
+        got = len(analyse(root / "CHANGELOG.md", lines, root))
+        checked += 1
+        if got != expected:
+            failures += 1
+            print(f"self-test FAIL: changelog {label}: expected {expected}, got {got}",
+                  file=sys.stderr)
 
     for raw, want in [("`a`", "   "), ("x `|` y", "x     y"), ("``a`b`` c", "        c")]:
         got_line = blank_code_spans(raw)

@@ -2649,6 +2649,86 @@ static void testLoudnessRangeAndTheUngatedReading()
 }
 
 // ---------------------------------------------------------------------------
+// THE TWO CACHED READINGS MUST TRACK THEIR ACCUMULATORS. `integratedLufs()`
+// walks the 751-bin histogram twice and `lraLu()` walks it three times, and the
+// wrapper reads both once per processBlock — ~3750 iterations per block, which
+// is ~22 M/s at 192 kHz with 32-sample buffers against DESIGN §9's ≤ 0.5 %
+// metering allocation. Both are pure functions of the session-cumulative
+// accumulators, so they are held between gating blocks.
+//
+// The cache cannot change a value; it can only make one STALE, and there are
+// exactly two ways to get that wrong — forgetting to invalidate when a gating
+// block commits (the reading freezes at the first level ever measured) and
+// forgetting on a reset (the reading survives the clear it was asked for).
+// This drives both. The VALUES themselves are pinned by every other loudness
+// test in this file, unchanged: a cache that returned anything different would
+// fail there first.
+static void testTheCachedLoudnessReadingsAreNeverStale()
+{
+    const double sr = 48000.0;
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+    auto feed = [sr] (anabasis::LoudnessMeter& m, double seconds, float amp, double t0)
+    {
+        for (int n = 0; n < (int) (seconds * sr); ++n)
+        {
+            const double t = t0 * sr + n;
+            const float s = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 997.0f * (float) t / (float) sr);
+            const float fr[2] = { s, s };
+            m.processFrame (fr, 2);
+        }
+    };
+
+    anabasis::LoudnessMeter m;
+    m.prepare (sr);
+
+    // Read BEFORE any audio: the sentinels, and reading them must not poison
+    // the cache for the measurement that follows.
+    check (juce::exactlyEqual (m.integratedLufs(), anabasis::LoudnessMeter::kSilentLufs)
+           && juce::exactlyEqual (m.lraLu(), anabasis::LoudnessMeter::kNoLra),
+           "lufsCache: an unfed meter reads its sentinels");
+
+    feed (m, 20.0, 0.1f, 0.0);                       // −20 LUFS
+    check (near (m.integratedLufs(), -20.0f, 0.2f),
+           "lufsCache: …and the first real reading lands after the sentinel read");
+    const float loudLra = m.lraLu();
+    check (loudLra >= 0.0f, "lufsCache: (premise) LRA has a reading too");
+
+    // A repeated read with no audio between is the cache's whole point, and it
+    // must be the SAME value — not merely close.
+    check (juce::exactlyEqual (m.integratedLufs(), m.integratedLufs())
+           && juce::exactlyEqual (m.lraLu(), m.lraLu()),
+           "lufsCache: repeated reads inside one sub-block are identical");
+
+    // 20 s at −10 LUFS: gating blocks keep committing, so both figures MUST
+    // move. A cache that never invalidates on a commit freezes them at −20.
+    // The step is UPWARD deliberately — a −40 passage would be excluded by the
+    // integrated reading's own −10 LU relative gate and leave the figure at
+    // −20 legitimately, which would make this assertion pass against a frozen
+    // cache as well.
+    feed (m, 20.0, 0.316228f, 20.0);
+    check (m.integratedLufs() > -18.0f,
+           "lufsCache: a committed gating block moves the integrated reading");
+    check (! juce::exactlyEqual (m.lraLu(), loudLra),
+           "lufsCache: …and the LRA reading, which the same commit feeds");
+
+    // A reset clears the accumulators with no audio at all, so both must drop
+    // to their sentinels on the very next read. This is the failure a stale
+    // cache makes user-visible: the meter-reset button appearing to do nothing.
+    m.resetIntegrated();
+    check (juce::exactlyEqual (m.integratedLufs(), anabasis::LoudnessMeter::kSilentLufs),
+           "lufsCache: a reset invalidates immediately, without waiting for a block");
+    check (juce::exactlyEqual (m.lraLu(), anabasis::LoudnessMeter::kNoLra),
+           "lufsCache: …and clears the LRA reading with it");
+
+    // …and the meter still measures after the reset, so the invalidation did
+    // not simply pin the sentinels.
+    feed (m, 20.0, 0.1f, 40.0);
+    check (near (m.integratedLufs(), -20.0f, 0.3f),
+           "lufsCache: the meter measures again after the reset");
+}
+
+// ---------------------------------------------------------------------------
 // The 50 ms Hann RMS (ADR-0020). Every case is a closed-form level: a sine's
 // RMS is its amplitude/√2, DC's is its own value, and both are window-shape
 // independent BECAUSE the window sum normalises — which is the property the
@@ -4048,6 +4128,7 @@ int main()
     testLimiterControlSmoothing();
     testLufsCalibration();
     testLoudnessRangeAndTheUngatedReading();
+    testTheCachedLoudnessReadingsAreNeverStale();
     testRmsMeterReadsTrueLevels();
     testLufsGating();
     testLufsWindows();

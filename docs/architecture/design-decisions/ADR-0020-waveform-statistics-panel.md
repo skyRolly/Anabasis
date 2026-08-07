@@ -127,7 +127,8 @@ Four decisions, none mechanical:
   sample (RMS), one extra histogram walk and two scalar adds per gating block (LRA + ungated).
   The per-block `integratedLufs()` walk noted at `PluginProcessor.cpp` now has two siblings; the
   caching remark there ("compute only when a sub-block commits") becomes worth doing if the
-  fine review's profiler pass puts metering near DESIGN §9's ≤ 0.5 %.
+  fine review's profiler pass puts metering near DESIGN §9's ≤ 0.5 %. **Done — see the third
+  amendment**, which is what makes "per gating block" above describe the code.
 - Five new published atomics (10 total on THREAD_MODEL's meter row) — same contract, same
   clear list, no new cross-thread path, so **no threading-model change**.
 - `samplePeakMaxHold` joins `dbTpMaxHold` inside `requestMeterReset`'s session-cumulative
@@ -240,3 +241,48 @@ Evidence [Verified]:
 - Stated rather than implied: no headless test drives the panel's tick, so the suite pins the
   RULE and not its single call site — the same limit every other `shown*` value already has. The
   SP tolerance is likewise a `paint()` threshold with no headless driver.
+
+## Amendment — the two histogram readings are cached, so "per gating block" is now true (2026-08-07)
+
+§Consequences prices the LRA and ungated additions at "one extra histogram walk and two scalar
+adds **per gating block**", and the caching remark two bullets down treated the per-block walk as
+a profiler-pass question. Read against the code, the first was a description of the intent and
+not of the call site: `integratedLufs()` walks the 751-bin histogram twice (~1500 iterations) and
+`lraLu()` walks it three times (~2250 — once for the relative-gate total, once per percentile),
+and the wrapper reads BOTH once per `processBlock`.
+
+The figure that decides it is the block RATE, not the block cost. At 48 kHz/512 that is 94
+blocks/s and invisible. At 192 kHz with 32-sample buffers it is ~6000 blocks/s × ~3750 iterations
+≈ **22 M iterations/s** — the same order as DESIGN §9's entire ≤ 0.5 % metering allocation, and
+the shape ADR-0020 §Decision 1 already rejected once for `RmsMeter`: a meter whose cost scales
+with the host's buffer size is a meter that becomes someone else's CPU problem.
+
+Both figures are pure functions of the session-cumulative accumulators, and those change in
+exactly two places — `finishSubBlock` (a gating block commits, at most once per 100 ms) and
+`clearSessionCumulative` (every reset path routes through it). `LoudnessMeter` now holds each
+reading behind a validity flag those two functions clear, so the walks run at **10 Hz** and the
+returned value is **bit-identical** to the recomputed one: the inputs cannot have changed between
+a hit and the value it replaces. Measurement, update timing and the public surface are unmoved —
+which is why every existing loudness test passes unedited, and that is the correctness evidence.
+
+The flags are `mutable` and NOT atomic, deliberately: every reader of the two cached figures and
+every writer of the accumulators is on the audio thread (the publish at the end of `processBlock`,
+the gating-block commit inside it, the meter-reset consume at its top). That invariant is
+load-bearing and the type system does not carry it — `AnabasisEngine::outputLoudness()` hands out
+a public `const LoudnessMeter&`, and a `const` method that mutates advertises nothing — so it is
+recorded for maintainers in `THREAD_MODEL.md` §"Audio-thread-only state behind a `const`
+accessor", together with what a GUI-side reader should use instead. `momentaryLufs()` and
+`shortTermLufs()` — the readings the engine's §2.7 compensation calls from elsewhere — are NOT
+cached and are untouched: they walk 4 and 30 sub-block means and move every sub-block anyway.
+`integratedUngatedLufs()` stays uncached because it is already O(1).
+
+Evidence [Verified]:
+- `AnabasisTests` `testTheCachedLoudnessReadingsAreNeverStale` drives the two ways a cache goes
+  wrong: a committed gating block must move both readings (an upward level step, chosen because a
+  downward one is legitimately excluded by the −10 LU relative gate and would pass against a
+  frozen cache), and `resetIntegrated()` must drop both to their sentinels on the very next read
+  with no audio between — the failure a stale cache makes user-visible, the meter-reset button
+  appearing to do nothing. **Mutation-verified**: dropping either `invalidateReadings()` call
+  fails only its own assertions.
+- Every pre-existing loudness assertion in `AnabasisTests` passes unedited, which is the
+  bit-identity evidence: a cache returning anything different would fail there first.
