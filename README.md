@@ -28,7 +28,7 @@ headless Linux machine, no IDE.
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
   display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
-  `tests/` (**726 checks** — re-count from the suites' own output when editing, the same rule
+  `tests/` (**730 checks** — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
   [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and
@@ -166,9 +166,10 @@ open decision — `docs/OPEN_QUESTIONS.md` OQ-002.
 
 Third-party attribution: [`NOTICE`](NOTICE) carries the notices that must accompany a binary
 distribution, and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) is the complete verified
-inventory (component, purpose, licence, and the exact file each licence was read from). CI
-copies both into every customer artifact (`docs/policies/RELEASE_POLICY.md` §"Third-party
-attribution").
+inventory (component, purpose, licence, and the exact file each licence was read from). Since
+0.1.1 they ship as **version-named release-page assets** rather than being copied into the
+archives — the one carrier every download route passes through, since neither installer ever
+carried them (ADR-0021; `docs/policies/RELEASE_POLICY.md` §"Third-party attribution").
 
 Contributors and AI agents: read **[`CLAUDE.md`](CLAUDE.md)** and
 `docs/policies/AI_AGENT_POLICY.md` before changing code — some changes (parameter IDs,

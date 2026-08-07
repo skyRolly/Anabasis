@@ -87,7 +87,8 @@ Three behaviours shipped in 0.1.0 that the sibling product resolves differently,
 - One ADV click costs one undo step **that works** — Undo returns the editor to the previous
   view — instead of one that silently did nothing.
 - A/B compare behaviour is unchanged: switching slots never resizes the editor, and Copy never
-  moves the view.
+  moves the view — **including the undo of a Copy**, which is part of Copy's behaviour and which
+  the first implementation of this record got wrong. See the amendment note below.
 - The undo duck: an undo whose only diff is `advancedMode` still requests the §2.8 forced duck.
   Sibling parity (it ducks every undo), accepted here for uniformity — the restore path cannot
   know the diff is sound-neutral without diffing, and the duck is inaudible-by-design.
@@ -104,17 +105,46 @@ Three behaviours shipped in 0.1.0 that the sibling product resolves differently,
 ## Related code
 
 - `src/PluginProcessor.h` — `copySlotToOther` declaration, `applySlotToLive(slot, adoptAdvanced)`
-- `src/PluginProcessor.cpp` — `copySlotToOther` body, `strippedForUndoCompare`, the gesture
-  begin filter, the gesture-end compare, `undo()`/`redo()` passing `adoptAdvanced=true`
+- `src/PluginProcessor.cpp` — `copySlotToOther` body, `slotWithLiveAdvancedMode` (the amendment
+  below), `strippedForUndoCompare`, the gesture begin filter, the gesture-end compare,
+  `undo()`/`redo()` passing `adoptAdvanced=true`
 - `src/PluginParameters.cpp` — `isViewTierParam` (minus `advancedMode`), `isPresetExcludedParam`
   (plus `advancedMode` by name)
 
+## Amendment — the Copy entry pins `advancedMode` at PUSH time (2026-08-07)
+
+**Owner-confirmed 2026-08-07: "Copy undo should keep the current view mode."** No part of this
+record's Decision changes; the amendment is an implementation correction that makes §Consequences
+true, and it is recorded here rather than in a new ADR because it *restores* the stated contract
+rather than moving it.
+
+**What was wrong.** Decision item 3 pins `advancedMode` to live on every adoption path except
+undo/redo, which is correct for every undo entry BUT ONE. Every other entry is a
+`saveSlotFromLive()` taken at the moment of the step it records, so its `advancedMode` is by
+construction the view the user had then — which is exactly what makes adopting it on undo the
+right thing. The **Copy** entry is different: it is `storedSlot`, captured by the last
+`switchToSlot` and frozen since. Toggle ADV after that switch and then Copy, and the
+destination's undo entry carries the *pre-toggle* view mode; undoing the Copy — the one path with
+`adoptAdvanced = true` — writes it back, and the editor changes size for a reason the user never
+took. The adopt-side pin cannot cover it, because the entry itself predates the toggle.
+
+**The correction.** `copySlotToOther` now pushes its entry through
+`slotWithLiveAdvancedMode (storedSlot)`, which overwrites that one PARAM node's `value`/`raw`
+from the live parameter before the entry is stored — the same pin, applied at push time because
+that is where this entry's staleness enters. Deliberately not generalised into a helper shared
+with `applySlotToLive`: there the rule is "do not adopt what the tree carries", here it is "do
+not store what the tree carries", and they read alike only because they name the same parameter.
+Nothing else moves — the audio half of the Copy undo, A/B behaviour, ordinary view switching and
+serialization are untouched.
+
 Evidence [Verified]:
 - Test: `AnabasisStateTests` `testTeardownAndReengageInvariants` cases (3) — Copy undoable on
-  the destination, history kept beneath, source untouched, redo walk — and (5) — ADV toggle
-  mints a real step, undo restores the view, a bypass click mints nothing and stays pinned
-  across a restore; `testAbSlotsAndTiers` — `advancedMode` preset-excluded by name, pinned
-  across an A/B switch
+  the destination, history kept beneath, source untouched, redo walk — **(3b)** — the ADV toggle
+  landing between the freezing A/B switch and the Copy, after which undoing the Copy reverts the
+  sound and leaves the view alone (**mutation-verified**: removing the push-time pin fails that
+  assertion and no other) — and (5) — ADV toggle mints a real step, undo restores the view, a
+  bypass click mints nothing and stays pinned across a restore; `testAbSlotsAndTiers` —
+  `advancedMode` preset-excluded by name, pinned across an A/B switch
 - Sibling reference: `Anamorph/src/PluginProcessor.cpp` `abCopyToOther` (#12), read under
   ADR-0009's copy-and-adapt licence
 - Directive: the owner's 0.1.1 instruction of 2026-08-06, item 4

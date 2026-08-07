@@ -44,11 +44,15 @@ B) Manual installation (zip) / 手动安装(zip 包)
   Copying into Program Files needs administrator approval.
   复制到 Program Files 需要管理员权限。
 
-  The zip also carries NOTICE and THIRD_PARTY_LICENSES.md (third-party
-  attribution). They are not installed anywhere — keep them with the zip if you
-  pass a build on.
-  zip 包里还有 NOTICE 和 THIRD_PARTY_LICENSES.md(第三方许可声明),它们不需要
-  安装——转发构建时请一并保留。
+  Third-party attribution is NOT inside this zip and is not installed anywhere.
+  NOTICE and THIRD_PARTY_LICENSES.md are published on the release page beside
+  the downloads, version-named — Anabasis-<version>-NOTICE.txt and
+  Anabasis-<version>-THIRD_PARTY_LICENSES.md. Download them from there if you
+  need them, and pass them on with the build if you forward it.
+  第三方许可声明不在本 zip 内,也不会被安装。NOTICE 和 THIRD_PARTY_LICENSES.md
+  以带版本号的文件名(Anabasis-<版本>-NOTICE.txt、
+  Anabasis-<版本>-THIRD_PARTY_LICENSES.md)发布在 Release 页面上,与安装包并列;
+  需要时请从那里下载,转发构建时请一并附上。
 
 --------------------------------------------------------------------
 Rescan in your DAW / 在 DAW 里重新扫描插件

@@ -12,10 +12,14 @@ This package was built by CI for x86_64 Linux. Extracting the zip gives you:
 本包由 CI 为 x86_64 Linux 构建,解压后即可看到 VST3 插件、独立版程序,
 以及 install.sh(系统级安装,需要 root)和 uninstall.sh(卸载)。
 
-The zip also carries NOTICE and THIRD_PARTY_LICENSES.md — third-party
-attribution that must travel with the binaries; leave them in the folder if you
-pass a build along.
-本包还附带 NOTICE 与 THIRD_PARTY_LICENSES.md(第三方版权声明),转发时请一并保留。
+Third-party attribution is NOT inside this package. NOTICE and
+THIRD_PARTY_LICENSES.md are published on the release page beside the downloads,
+version-named — Anabasis-<version>-NOTICE.txt and
+Anabasis-<version>-THIRD_PARTY_LICENSES.md. Download them from there if you need
+them, and pass them on with the build if you forward it.
+第三方版权声明不在本包内。NOTICE 与 THIRD_PARTY_LICENSES.md 以带版本号的文件名
+(Anabasis-<版本>-NOTICE.txt、Anabasis-<版本>-THIRD_PARTY_LICENSES.md)发布在
+Release 页面上,与安装包并列;需要时请从那里下载,转发构建时请一并附上。
 
 Both installation methods below install SYSTEM-WIDE (for all users), into
 the standard locations every DAW scans by default.

@@ -72,17 +72,19 @@ Source: "{#StagingDir}\Anabasis.exe"; DestDir: "{app}"; Components: standalone; 
 ; The installer payload is deliberately lean: only what the user needs to run
 ; the product -- it installs no attribution file, and INSTALL.txt (which this
 ; installer does not install either) is installation-only.
-; DEVIATION from the sibling, because the staging tree differs: Anabasis's
-; StagingDir DOES contain NOTICE and THIRD_PARTY_LICENSES.md (build.yml's
-; "Stage Windows artifacts" step copies both; RELEASE_POLICY.md "Third-party
-; attribution" requires them to travel with every binary distribution), where
-; the sibling deliberately keeps them out of its staging tree and ships them as
-; release-page assets. They are deliberately NOT listed above, so the platform
-; zip -- not the installed tree -- carries them, and NOTICE is therefore the
-; carrier of the mandatory IJG acknowledgement. The sibling's SUPPORT.md
-; mention is dropped: Anabasis has no SUPPORT.md and one must not be invented.
-; Consequence worth an owner decision, not one this script may take: a user who
-; downloads ONLY the installer gets no attribution carrier at all.
+; NO DEVIATION from the sibling here, and the note that used to claim one is
+; gone with the behaviour it described. Since ADR-0021 the StagingDir does NOT
+; contain NOTICE or THIRD_PARTY_LICENSES.md either -- build.yml's "Stage
+; Windows artifacts" step stopped copying them -- and RELEASE_POLICY.md's
+; "Third-party attribution" section was amended by that ADR to say the
+; requirement is satisfied by VERSION-NAMED RELEASE-PAGE ASSETS
+; (Anabasis-<version>-NOTICE.txt and -THIRD_PARTY_LICENSES.md), which is the
+; one carrier every distribution route passes through: this installer, the
+; .pkg and the three zips alike. So the earlier note's closing worry -- "a user
+; who downloads ONLY the installer gets no attribution carrier at all" -- is
+; answered rather than outstanding: the carrier is on the page they downloaded
+; it from. The sibling's SUPPORT.md mention stays dropped from the payload;
+; Anabasis's SUPPORT.md is likewise a release-page asset.
 
 [Icons]
 Name: "{group}\Anabasis"; Filename: "{app}\Anabasis.exe"; Components: standalone

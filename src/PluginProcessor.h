@@ -291,6 +291,11 @@ private:
     // adoption path — A/B switch, Copy — pins it to the live value, because
     // an A/B compare is a sound compare and must not resize the editor.
     void applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced = false);
+    // The same ADR-0018 pin, applied at PUSH time instead of adopt time — see
+    // the definition. Only `copySlotToOther` needs it, and only because its
+    // undo entry is the one entry whose slot tree was not captured at the
+    // moment of the step it records.
+    juce::ValueTree slotWithLiveAdvancedMode (const juce::ValueTree& slot);
     void reassertFromRaw (const juce::ValueTree& apvtsTree);
     void resetSlotFieldsToDefaults();
 

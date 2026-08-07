@@ -10,10 +10,14 @@ the required de-quarantine step.
 没有经过 Apple 公证。zip 解压出来的文件会被 macOS 隔离(quarantine),手动安装
 时必须按下面步骤去掉隔离,否则 DAW 里加载不出来。
 
-The zip also carries NOTICE and THIRD_PARTY_LICENSES.md — third-party
-attribution that must travel with the binaries; leave them in the folder if you
-pass a build along.
-本包还附带 NOTICE 与 THIRD_PARTY_LICENSES.md(第三方版权声明),转发时请一并保留。
+Third-party attribution is NOT inside this package. NOTICE and
+THIRD_PARTY_LICENSES.md are published on the release page beside the downloads,
+version-named — Anabasis-<version>-NOTICE.txt and
+Anabasis-<version>-THIRD_PARTY_LICENSES.md. Download them from there if you need
+them, and pass them on with the build if you forward it.
+第三方版权声明不在本包内。NOTICE 与 THIRD_PARTY_LICENSES.md 以带版本号的文件名
+(Anabasis-<版本>-NOTICE.txt、Anabasis-<版本>-THIRD_PARTY_LICENSES.md)发布在
+Release 页面上,与安装包并列;需要时请从那里下载,转发构建时请一并附上。
 
 Both installation methods below install SYSTEM-WIDE (for all users), into
 the standard locations:

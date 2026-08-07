@@ -326,8 +326,13 @@ void AnabasisAudioProcessor::copySlotToOther()
 {
     syncHistory();                       // epoch reconcile before any stack touch
     const int other = 1 - activeSlot;
+    // …and `advancedMode` comes from LIVE, not from `storedSlot` — see
+    // `slotWithLiveAdvancedMode`. Without that pin, undoing a Copy could
+    // resize the editor, which is the one thing ADR-0018 says Copy and its
+    // undo must never do.
     pushCapped (undoStacks[other],
-                UndoEntry { storedSlot.createCopy(), storedPresetBaseline.createCopy() },
+                UndoEntry { slotWithLiveAdvancedMode (storedSlot),
+                            storedPresetBaseline.createCopy() },
                 kUndoCap);
     redoStacks[other].clear();
     storedSlot = saveSlotFromLive();
@@ -961,6 +966,46 @@ void AnabasisAudioProcessor::reassertFromRaw (const juce::ValueTree& apvtsTree)
         if (auto* p = apvts.getParameter (node.getProperty ("id").toString()))
             p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, (float) (double) node.getProperty ("raw")));
     }
+}
+
+// ADR-0018's `advancedMode` pin, applied to a slot tree at PUSH time. It
+// exists for exactly one caller, and the reason is a property no other undo
+// entry has.
+//
+// Every OTHER entry is a `saveSlotFromLive()` taken at the moment of the step
+// it records, so its `advancedMode` is by construction the view the user had
+// then — which is what makes adopting it on undo correct (`applySlotToLive`
+// with `adoptAdvanced = true`, the one path that does). The Copy entry is not
+// that: it is `storedSlot`, captured by the last `switchToSlot` and frozen
+// since. Toggle ADV after that switch and then Copy, and the destination's
+// entry carries the PRE-toggle view mode; undoing the Copy then writes it back
+// and the window changes size for a reason the user never took.
+//
+// ADR-0018 §Consequences states the contract this breaks in as many words:
+// "A/B compare behaviour is unchanged: switching slots never resizes the
+// editor, and Copy never moves the view." The undo of a Copy is part of Copy's
+// behaviour, so the fix belongs here rather than in the ADR. Owner-confirmed
+// 2026-08-07: Copy undo keeps the current view mode.
+//
+// The pin is the same one `applySlotToLive` applies on the Copy and A/B paths
+// — value from the live tree, raw from the parameter — deliberately NOT
+// generalised into a shared helper: there the rule is "do not adopt what the
+// tree carries", here it is "do not store what the tree carries", and the two
+// read alike only because they happen to name the same parameter.
+juce::ValueTree AnabasisAudioProcessor::slotWithLiveAdvancedMode (const juce::ValueTree& slot)
+{
+    auto copy = slot.createCopy();
+    auto params = copy.getChildWithName ("ANABASIS");
+    if (! params.isValid())
+        return copy;                     // no surface to pin; the caller's guards cover it
+    auto node = params.getChildWithProperty ("id", pid::advancedMode);
+    if (! node.isValid())
+        return copy;
+    if (auto live = apvts.state.getChildWithProperty ("id", pid::advancedMode); live.isValid())
+        node.setProperty ("value", live.getProperty ("value"), nullptr);
+    if (auto* lp = apvts.getParameter (pid::advancedMode))
+        node.setProperty ("raw", (double) lp->getValue(), nullptr);
+    return copy;
 }
 
 void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced)

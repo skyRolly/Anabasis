@@ -2245,6 +2245,41 @@ static void testTeardownAndReengageInvariants()
         check (proc.canUndo(), "copyUndo: the source slot's history is untouched");
     }
 
+    // (3b) COPY UNDO DOES NOT MOVE THE VIEW — ADR-0018 §Consequences: "Copy
+    // never moves the view", and the undo of a Copy is part of Copy's
+    // behaviour. The Copy entry is the ONE undo entry whose slot tree was not
+    // captured at the moment of its step (it is `storedSlot`, frozen since the
+    // last A/B switch), so it is the one entry whose `advancedMode` can be
+    // stale — and undo is the one adoption path that adopts `advancedMode`.
+    // The sequence below is the minimum that exposes it: the ADV toggle has to
+    // land AFTER the switch that froze `storedSlot` and BEFORE the Copy.
+    {
+        AnabasisAudioProcessor proc;
+        auto* adv   = proc.apvts.getParameter (pid::advancedMode);
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto advOn = [&] { return proc.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f; };
+
+        proc.switchToSlot (1);                       // give slot B a distinct value
+        drive->beginChangeGesture();
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (7.0f));
+        drive->endChangeGesture();
+        proc.switchToSlot (0);                       // …and FREEZE it into storedSlot, ADV off
+
+        adv->beginChangeGesture();                   // the toggle the frozen snapshot predates
+        adv->setValueNotifyingHost (1.0f);
+        adv->endChangeGesture();
+        check (advOn(), "copyUndoView: (premise) the user is in Advanced when they Copy");
+
+        proc.copySlotToOther();                      // A → B
+        proc.switchToSlot (1);
+        check (advOn(), "copyUndoView: (premise) the A/B switch left the view alone");
+        proc.undo();                                 // revert the Copy on the destination
+        check (advOn(),
+               "copyUndoView: undoing a Copy reverts the sound and leaves the view mode alone");
+        check (std::abs (proc.apvts.getRawParameterValue (pid::clipDrive)->load() - 7.0f) < 1.0e-3f,
+               "copyUndoView: …and the SOUND half of that undo still landed");
+    }
+
     // (5) ADV UNDO — ADR-0018's second half: an Advanced-mode toggle is a
     // real undo step (the click is gesture-bracketed by its ButtonAttachment;
     // this drives the same path directly), and the undo restore ADOPTS the

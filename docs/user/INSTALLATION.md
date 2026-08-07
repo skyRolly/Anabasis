@@ -14,9 +14,12 @@ the payload directly — there is no wrapper folder inside.
 | Windows | `Anabasis-Windows.zip` | `Anabasis.vst3` + `Anabasis.exe` (Standalone) |
 | macOS | `Anabasis-macOS.zip` | `Anabasis.vst3` + `Anabasis.component` (AU) + `Anabasis.app` — universal (Apple Silicon + Intel) |
 
-The plug-in is 64-bit only. Each archive also carries `NOTICE` and
-`THIRD_PARTY_LICENSES.md` — third-party attribution that must travel with the binaries;
-leave them in the folder if you pass a build along.
+The plug-in is 64-bit only. Third-party attribution is **not inside the archives**: `NOTICE`
+and `THIRD_PARTY_LICENSES.md` are published on the release page beside the downloads,
+version-named — `Anabasis-<version>-NOTICE.txt` and
+`Anabasis-<version>-THIRD_PARTY_LICENSES.md`. Take them from there if you need them, and pass
+them on with the build if you forward it. (The release page is the single carrier for every
+download route — the two installers never carried them either.)
 
 > **Two things to expect from a pre-release build:**
 >
