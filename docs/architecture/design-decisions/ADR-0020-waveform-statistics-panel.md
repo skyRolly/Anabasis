@@ -267,7 +267,11 @@ which is why every existing loudness test passes unedited, and that is the corre
 
 The flags are `mutable` and NOT atomic, deliberately: every reader of the two cached figures and
 every writer of the accumulators is on the audio thread (the publish at the end of `processBlock`,
-the gating-block commit inside it, the meter-reset consume at its top). `momentaryLufs()` and
+the gating-block commit inside it, the meter-reset consume at its top). That invariant is
+load-bearing and the type system does not carry it — `AnabasisEngine::outputLoudness()` hands out
+a public `const LoudnessMeter&`, and a `const` method that mutates advertises nothing — so it is
+recorded for maintainers in `THREAD_MODEL.md` §"Audio-thread-only state behind a `const`
+accessor", together with what a GUI-side reader should use instead. `momentaryLufs()` and
 `shortTermLufs()` — the readings the engine's §2.7 compensation calls from elsewhere — are NOT
 cached and are untouched: they walk 4 and 30 sub-block means and move every sub-block anyway.
 `integratedUngatedLufs()` stays uncached because it is already O(1).

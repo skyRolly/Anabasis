@@ -203,6 +203,13 @@ public:
     // readings called from elsewhere (the engine's §2.7 compensation) and are
     // deliberately NOT cached: they walk 4 and 30 sub-blocks, and they move
     // every sub-block anyway, so a cache would pay for itself with nothing.
+    // (They are not thread-safe either — nothing on this class is — but they
+    // only READ audio-thread state, where these two also WRITE it, which is
+    // what makes `const` misleading here. `AnabasisEngine::outputLoudness()`
+    // hands out a public `const LoudnessMeter&`, so the compiler will not stop
+    // a GUI-side reader from being added through it: the invariant is recorded
+    // in THREAD_MODEL.md §"Audio-thread-only state behind a `const` accessor",
+    // together with the published atomics such a reader should use instead.)
     float integratedLufs() const noexcept
     {
         if (! integratedValid)

@@ -1139,6 +1139,34 @@ the **`release.yml` implementation assumptions** (brace expansion, per-artifact 
 the fail-closed `chmod`, the prefix-compare anchor); and the **`RmsMeter` sanitise hook** that
 cannot currently fire.
 
+**Round 6 — documentation only.** One finding, and it is about a constraint rather than a defect.
+`LoudnessMeter::integratedLufs()`/`lraLu()` are `const` and, since round 5, write `mutable`
+non-atomic members; the invariant that makes that safe — every caller on the audio thread — was
+stated in the header and nowhere a maintainer would look before adding a reader. It is now
+recorded in `THREAD_MODEL.md` §"Audio-thread-only state behind a `const` accessor", which is where
+the file already keeps constraints that are not cross-thread edges (beside "Which context
+paints"). The section names what makes it worth writing down: `AnabasisEngine::outputLoudness()`
+hands out a public `const LoudnessMeter&`, and a `const` method that mutates advertises nothing,
+so a GUI-side reader added through that reference compiles cleanly and races. It also states the
+broader and older rule the cache did not create — **nothing** on `LoudnessMeter` is safe to read
+from a second thread, since the sliding-window readings walk `subRing` while the audio thread
+writes it; the two cached getters are the sharper case because they also WRITE. What a GUI-side
+reader should use instead is named: the published `meterLufsI()`/`meterLra()` atomics. Adding a
+second reader thread to those getters is a threading-model change and therefore an Architecture
+Review Gate item. **The accessor is deliberately not narrowed**: its other consumer is the
+engine's own §2.7 compensation reading `dryMeter`/`wetMeter` from inside `AnabasisEngine::process`
+— the same thread — so there is no GUI-side use to remove. No implementation, no atomics, no API
+change; ADR-0020's third amendment and the header comment now point at the record.
+
+**Reviewed and intentionally unchanged (owner sign-off, 2026-08-07, round 6).** Six items from the
+same round stand as implemented: the **CHANGELOG boundary validation** behaviour (the rule and its
+seven self-test cases); the **test count arithmetic** (259 + 522 = 781, derived from the suites'
+own output); the **GR history single-bucket rendering** (the reading emitted at both edges, which
+is the stretch's own limit rather than a return to per-column rectangles); the **`LoudnessMeter`
+cache invalidation coverage** (`finishSubBlock` and `clearSessionCumulative`, each mutation-killed
+by its own assertions); the **cached LRA/integrated implementation** itself; and **every existing
+audio-thread execution assumption**, which this round documents rather than alters.
+
 **Gate: suites 259 + 522 = 781, `check-docs.py` clean over 72 files, pluginval both modes ×3 at
 `build.yml`'s strictness with the editor under xvfb.** The one thing local evidence cannot cover
 was stated in ADR-0021 rather than implied — and **the first CI run on this branch closed it**:
