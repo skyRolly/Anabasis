@@ -4267,6 +4267,18 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                "grBuckets: a barely-filled ring starts at bucket 0 and draws only what it has");
         check (std::abs (GrHistoryView::bucketX (small, small.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
                "grBuckets: …and still reaches the right edge, so it fills as it grows");
+
+        // The DEGENERATE case, which the draw loop has to special-case: ONE
+        // bucket, reachable for the first few blocks after every reset. There
+        // is no second vertex to stretch to, so `bucketX` returns the left edge
+        // for the only bucket there is — and a one-point polyline strokes
+        // nothing, which is why `paintHistory` emits that single reading at
+        // BOTH edges instead of leaving the panel blank.
+        const auto one = GrHistoryView::buckets (1, want, 904);
+        check (one.count == 1 && one.kFirst == one.kHead,
+               "grBuckets: a just-reset ring yields exactly one bucket");
+        check (juce::exactlyEqual (GrHistoryView::bucketX (one, one.kHead, 0.0f, 904.0f), 0.0f),
+               "grBuckets: …whose x degenerates to the left edge, so the draw must close it itself");
     }
 }
 

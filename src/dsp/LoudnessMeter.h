@@ -179,7 +179,70 @@ public:
     float momentaryLufs() const noexcept  { return windowLoudness (4); }
     float shortTermLufs() const noexcept  { return windowLoudness (30); }
 
+    // CACHED, and the reason is a real audio-thread cost. `computeIntegratedLufs`
+    // walks the 751-bin histogram TWICE (~1500 iterations) and `computeLraLu`
+    // walks it three times (~2250), while the wrapper reads both once per
+    // `processBlock`. At 48 kHz/512 that is 94 blocks/s and invisible; at
+    // 192 kHz with 32-sample buffers it is ~6000 blocks/s × ~3750 iterations
+    // ≈ 22 M/s, which is the same order as DESIGN §9's entire ≤ 0.5 % metering
+    // allocation — a meter whose cost scales with the host's buffer size, the
+    // very shape `RmsMeter`'s 10 ms cadence was chosen to avoid.
+    //
+    // Both figures are pure functions of the session-cumulative accumulators,
+    // and those change in exactly TWO places — `finishSubBlock` (a gating
+    // block commits, at most once per 100 ms) and `clearSessionCumulative`
+    // (every reset path routes through it). So a second call inside the same
+    // sub-block cannot observe different inputs, and the cached value is
+    // BIT-IDENTICAL to the recomputed one: this is not an approximation, and
+    // the update timing does not move. The walks become 10 Hz.
+    //
+    // `mutable`, and deliberately NOT atomic: every reader of these two and
+    // every writer of the accumulators is on the AUDIO thread — the publish at
+    // the end of `processBlock`, the gating-block commit inside it, and the
+    // meter-reset consume at its top. `momentaryLufs`/`shortTermLufs` are the
+    // readings called from elsewhere (the engine's §2.7 compensation) and are
+    // deliberately NOT cached: they walk 4 and 30 sub-blocks, and they move
+    // every sub-block anyway, so a cache would pay for itself with nothing.
     float integratedLufs() const noexcept
+    {
+        if (! integratedValid)
+        {
+            integratedCache = computeIntegratedLufs();
+            integratedValid = true;
+        }
+        return integratedCache;
+    }
+
+    // The BS.1770-1 reading: the plain mean energy of every gating block with
+    // NO gate of either kind. It is a separate accumulator rather than a
+    // second pass over the histogram because the histogram never sees the
+    // sub-−70 blocks at all — the absolute gate is applied at INSERT, so the
+    // ungated figure is not recoverable from it. Two doubles and a counter.
+    float integratedUngatedLufs() const noexcept
+    {
+        if (ungatedCount == 0)
+            return kSilentLufs;
+        return (float) energyToLufs (ungatedSum / (double) ungatedCount);
+    }
+
+    // LOUDNESS RANGE in LU (EBU Tech 3342). `0` is a legitimate reading (a
+    // perfectly steady programme), so "not measured yet" is the negative
+    // sentinel — a range cannot be negative, and the callers that display it
+    // test for it rather than for a count they cannot see.
+    static constexpr float kNoLra = -1.0f;
+
+    float lraLu() const noexcept
+    {
+        if (! lraValid)
+        {
+            lraCache = computeLraLu();
+            lraValid = true;
+        }
+        return lraCache;
+    }
+
+private:
+    float computeIntegratedLufs() const noexcept
     {
         if (totalGatedBlocks == 0)
             return kSilentLufs;
@@ -205,25 +268,7 @@ public:
         return (float) energyToLufs (sum / (double) count);
     }
 
-    // The BS.1770-1 reading: the plain mean energy of every gating block with
-    // NO gate of either kind. It is a separate accumulator rather than a
-    // second pass over the histogram because the histogram never sees the
-    // sub-−70 blocks at all — the absolute gate is applied at INSERT, so the
-    // ungated figure is not recoverable from it. Two doubles and a counter.
-    float integratedUngatedLufs() const noexcept
-    {
-        if (ungatedCount == 0)
-            return kSilentLufs;
-        return (float) energyToLufs (ungatedSum / (double) ungatedCount);
-    }
-
-    // LOUDNESS RANGE in LU (EBU Tech 3342). `0` is a legitimate reading (a
-    // perfectly steady programme), so "not measured yet" is the negative
-    // sentinel — a range cannot be negative, and the callers that display it
-    // test for it rather than for a count they cannot see.
-    static constexpr float kNoLra = -1.0f;
-
-    float lraLu() const noexcept
+    float computeLraLu() const noexcept
     {
         if (lraCount == 0)
             return kNoLra;
@@ -259,7 +304,6 @@ public:
         return (float) juce::jmax (0.0, percentileLufs (0.95) - percentileLufs (0.10));
     }
 
-private:
     // The four session-cumulative accumulators, cleared as ONE unit — they are
     // fed together and every caller that clears one must clear all four, which
     // is exactly the kind of rule that rots when it is written twice.
@@ -274,6 +318,19 @@ private:
         lraSum = 0.0;
         lraCount = 0;
         lraFrom = 0;
+        invalidateReadings();
+    }
+
+    // The two cached readings are functions of the accumulators above and of
+    // nothing else, so this belongs beside every write to them — here, and at
+    // the end of `finishSubBlock`, which is the only other writer. Both are
+    // unconditional: a `finishSubBlock` that commits no gating block clears a
+    // still-valid cache, which costs one recompute at 10 Hz and cannot be
+    // wrong, where a conditional invalidation has to stay in step with three
+    // separate insert branches and would rot the first time one moves.
+    void invalidateReadings() const noexcept
+    {
+        integratedValid = lraValid = false;
     }
 
     void finishSubBlock() noexcept
@@ -363,6 +420,7 @@ private:
                 ++lraCount;
             }
         }
+        invalidateReadings();          // see the note beside the definition
     }
 
     float windowLoudness (int subBlocks) const noexcept
@@ -460,6 +518,13 @@ private:
     int32_t lraHist[kBins] = {};
     double  lraSum = 0.0;
     int64_t lraCount = 0;
+
+    // The two histogram-walk readings, held between gating blocks. Seeded
+    // INVALID rather than at a sentinel value, so the first call computes:
+    // a seeded value would be a second copy of `kSilentLufs`/`kNoLra` to keep
+    // in step with the compute functions that already return them.
+    mutable bool  integratedValid = false, lraValid = false;
+    mutable float integratedCache = kSilentLufs, lraCache = kNoLra;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoudnessMeter)
 };
