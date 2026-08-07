@@ -1,0 +1,361 @@
+# ============================================================================
+#  Release pipeline — the OQ-007 port of the sibling product's release workflow
+#  (code reuse across the family is ADR-0009; OQ-007, Resolved 2026-08-02, put
+#  the installer set AND this tag-triggered draft-release pipeline after
+#  v0.1.0, which is why the file lands at 0.1.1 and not at P6).
+#
+#  DEVIATION from the sibling's header, stated rather than papered over: the
+#  sibling opens by citing its release-hardening PR series and risk register
+#  (RH-PR-n / RISK-nnn / RELEASE_HARDENING_PLAN). Anabasis has no such tracker
+#  and no such document, so those citations are DROPPED rather than given
+#  invented Anabasis equivalents; OQ-007 and ADR-0009 are the real anchors here.
+#
+#  Trigger: pushing an ANNOTATED release tag  vMAJOR.MINOR.PATCH  (e.g. v0.1.1)
+#  on the release commit. Tag pushes do not trigger build.yml (its `branches`
+#  filter excludes tag events), so a release runs the full build+validation
+#  matrix exactly ONCE — by CALLING build.yml (workflow_call): same three OS
+#  jobs, same blocking DSP+state suites, same pluginval gates in both modes ×3,
+#  same artifact layout. Nothing is duplicated and no gate is weakened.
+#
+#  The pluginval STRICTNESS is deliberately not quoted anywhere in this file.
+#  `ANABASIS_PLUGINVAL_STRICTNESS` in build.yml is the single authority for the
+#  number (that block says so itself, and TESTING_POLICY.md / CI_CD.md already
+#  defer to it); a release workflow that restated it would be exactly the copy
+#  that goes stale on the next raise. The sibling's header does quote its
+#  number — that is the one place this port deliberately does not follow it.
+#
+#  Pipeline:   validate (tag ⇄ CMake version ⇄ CHANGELOG section, fail-closed)
+#            → build (reused build.yml — the existing release gates)
+#            → draft-release (versioned archives of the SAME validated staging
+#              trees + SHA256SUMS + RELEASE_MANIFEST + CHANGELOG excerpt as
+#              notes, published as a DRAFT GitHub Release — publishing stays a
+#              HUMAN action, after the Level-5 audition per RELEASE_POLICY.md
+#              precondition 8).
+#
+#  workflow_dispatch = pipeline REHEARSAL: runs validate (report-only where a
+#  real tag is required) + the full build, but never creates a release. This
+#  lets the pipeline be exercised without cutting a tag.
+#
+#  WHAT THIS CONSUMES, stated because it is a cross-file contract: the
+#  draft-release job takes FIVE artifacts —
+#  Anabasis-{Linux,Windows,macOS,Windows-installer,macOS-installer} — and
+#  expects install.sh / uninstall.sh / INSTALL.txt inside the Linux staging
+#  tree. build.yml produces all five as of 0.1.1 (ADR-0021): the three staging
+#  steps now copy `packaging/<os>/INSTALL.txt` (plus the two Linux scripts via
+#  `install -m 755`), and two new steps run ISCC and `build-pkg.sh` against the
+#  VALIDATED staging trees. Every consumer here is fail-closed — a missing
+#  tree, a missing installer or a lost executable bit aborts the release rather
+#  than publishing a partial one. That is deliberate and must stay: a release
+#  that silently dropped its installers would be worse than no release.
+#
+#  Deliberately NOT here: code signing and notarization. packaging/macos/
+#  build-pkg.sh already states the .pkg is unsigned and that Developer ID
+#  signing + notarization are not part of this port. The sibling names its own
+#  tracking tickets for that work and for an update-check feature; Anabasis has
+#  no equivalent tickets and no update-check plan, so those references are
+#  dropped rather than invented. Installers: BUILT by build.yml's per-platform
+#  packaging steps (Inno Setup exe / .pkg; the Linux zip itself carries
+#  install.sh) and only STAGED here — moved unmodified, never re-packed. The
+#  per-platform zips are archived here from the validated staging trees, behind
+#  a fail-closed permission check. Secrets: none — this workflow uses only the
+#  ephemeral GITHUB_TOKEN, scoped `contents: write` on the draft-release job.
+# ============================================================================
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:   # rehearsal mode: validate + build only, no release
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Fail-closed metadata validation BEFORE spending build minutes: the tag,
+  # the CMake project version, and the CHANGELOG must agree, and the tag must
+  # be annotated (it carries the tagger/date that make the release traceable).
+  # --------------------------------------------------------------------------
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      is-release: ${{ steps.meta.outputs.is-release }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate release metadata (tag ⇄ version ⇄ CHANGELOG)
+        id: meta
+        run: |
+          set -euo pipefail
+          CMAKE_VERSION="$(sed -nE 's/^project\(Anabasis VERSION ([0-9]+\.[0-9]+\.[0-9]+) .*/\1/p' CMakeLists.txt)"
+          [ -n "$CMAKE_VERSION" ] || { echo "::error::could not parse project VERSION from CMakeLists.txt"; exit 1; }
+          echo "CMake project version: $CMAKE_VERSION"
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            TAG_VERSION="${TAG#v}"
+            echo "release tag: $TAG (commit ${GITHUB_SHA})"
+
+            # The tag must be ANNOTATED (tagger + date = traceability metadata).
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}" >/dev/null 2>&1 || true
+            TYPE="$(git cat-file -t "refs/tags/${TAG}")"
+            if [ "$TYPE" != "tag" ]; then
+              echo "::error::release tag ${TAG} is ${TYPE}, not an annotated tag -- create it with: git tag -a ${TAG} -m 'Anabasis ${TAG_VERSION}'"
+              exit 1
+            fi
+
+            # RELEASE_PROCESS.md's "Tagging + release pipeline" list makes the
+            # version bump and the dated CHANGELOG section ONE step (step 1),
+            # where the sibling splits them across two -- so the three
+            # diagnostics below all point at step 1. Deviating silently would
+            # send a maintainer to a step number that does not describe the fix.
+            if [ "$TAG_VERSION" != "$CMAKE_VERSION" ]; then
+              echo "::error::tag ${TAG} does not match CMakeLists.txt project VERSION ${CMAKE_VERSION} -- bump the version (RELEASE_PROCESS.md 'Tagging + release pipeline' step 1) before tagging"
+              exit 1
+            fi
+            if ! grep -qE "^## \[${TAG_VERSION//./\\.}\]" CHANGELOG.md; then
+              echo "::error::CHANGELOG.md has no '## [${TAG_VERSION}]' section -- write the release entry (RELEASE_PROCESS.md 'Tagging + release pipeline' step 1) before tagging"
+              exit 1
+            fi
+            # The section is extracted VERBATIM as the release NOTES BODY (see the
+            # notes step below), heading included -- so an undated heading sits at
+            # the top of the published notes. (The release TITLE is set separately,
+            # to "Anabasis <version>", and is not affected.) The existence check
+            # above cannot catch this. Fail closed.
+            #
+            # Require an ISO DATE rather than merely rejecting the word
+            # "Unreleased": a heading written as a bare `## [x.y.z]` is equally
+            # undated and would otherwise slip through. Demanding the date covers
+            # both, and matches the format every existing entry already uses.
+            # The entry TEMPLATE cannot trip this: it lives above the entries
+            # and reads `## [x.y.z]`, which no tag can match. It was moved there
+            # in 0.1.1 for the neighbouring reason -- a template after the
+            # entries lands inside the extracted notes.
+            if ! grep -qE "^## \[${TAG_VERSION//./\\.}\][^0-9]*[0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
+              echo "::error::CHANGELOG.md '## [${TAG_VERSION}]' heading carries no release date (expected '## [${TAG_VERSION}] — YYYY-MM-DD') -- date it IN THE TAGGED COMMIT (RELEASE_PROCESS.md 'Tagging + release pipeline' step 1) before tagging"
+              exit 1
+            fi
+            echo "is-release=true"  >> "$GITHUB_OUTPUT"
+            echo "version=${TAG_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            # Rehearsal (workflow_dispatch): no tag to cross-check; report the
+            # state that a real tag would be validated against.
+            if grep -qE "^## \[${CMAKE_VERSION//./\\.}\]" CHANGELOG.md; then
+              echo "rehearsal: CHANGELOG already has a [${CMAKE_VERSION}] section"
+              if ! grep -qE "^## \[${CMAKE_VERSION//./\\.}\][^0-9]*[0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
+                echo "::warning::rehearsal: the [${CMAKE_VERSION}] heading carries no release date -- a real v${CMAKE_VERSION} tag would FAIL validation until it is dated"
+              fi
+            else
+              echo "::warning::rehearsal: CHANGELOG has no [${CMAKE_VERSION}] section yet -- a real v${CMAKE_VERSION} tag would FAIL validation until the release entry exists"
+            fi
+            echo "is-release=false" >> "$GITHUB_OUTPUT"
+            echo "version=${CMAKE_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # --------------------------------------------------------------------------
+  # The EXISTING build + validation matrix, unchanged: 3 OSes, DSP + state
+  # suites, pluginval both modes ×3 at build.yml's strictness, retain-then-strip
+  # symbol pipeline, fail-closed artifact gating. Artifacts (Anabasis-Linux/
+  # -Windows/-macOS loose-file payloads, the two installers once build.yml
+  # packages them, and *-debug) land in THIS run.
+  #
+  # build.yml's `preflight` job carries a documented LATENT HAZARD for
+  # workflow_call and asks for it to be re-checked "when release.yml lands".
+  # THIS IS THAT RE-CHECK, recorded where the caller lives:
+  #   * Inside a reusable workflow `github.event_name` is the CALLER's event.
+  #     This caller fires only on `push` (a tag) and `workflow_dispatch`, so
+  #     inside build.yml the value is 'push' or 'workflow_dispatch' -- never
+  #     'pull_request'. The `preflight` and `docs` guards
+  #     (`github.event_name != 'pull_request' || ...`) are therefore TRUE on
+  #     every release and rehearsal run: both jobs run, `preflight` sees
+  #     CMakeLists.txt and outputs ready=true, and all three build jobs run.
+  #     The hazard stays LATENT; this draft needs no code to account for it.
+  #   * It would bite the moment a `pull_request:` trigger is added to THIS
+  #     file (or build.yml is called from any PR-triggered workflow) on a
+  #     same-repo PR: `preflight` skips, every build job skips on
+  #     `needs.preflight.outputs.ready == 'true'`, skipped jobs do not fail,
+  #     and the `build` job here reports SUCCESS with zero binaries produced.
+  #     Do not add such a trigger without fixing the guard in build.yml first.
+  #     (The staging-tree existence check in draft-release would still catch a
+  #     zero-artifact TAG run -- but that is a backstop on the release job, not
+  #     a fix for a green build that built nothing.)
+  # --------------------------------------------------------------------------
+  build:
+    needs: validate
+    uses: ./.github/workflows/build.yml
+
+  # --------------------------------------------------------------------------
+  # Draft GitHub Release: the EXACT staging trees the platform packaging
+  # steps built and CI validated, archived here with the executable bits the
+  # artifact transport drops restored and verified fail-closed, plus the two
+  # installers moved unmodified, SHA-256 sums, a plain-text manifest (version /
+  # tag / commit / CI build number / per-platform hashes), and the CHANGELOG
+  # section as the notes.
+  # DRAFT only — publishing is the maintainer's action after the Level-5
+  # audition (RELEASE_POLICY.md precondition 8 — the sibling's precondition
+  # numbering differs; this cites Anabasis's own list). Debug-symbol artifacts
+  # stay internal per-run artifacts and are NOT attached. (The sibling cites an
+  # ADR for that rule; Anabasis has no equivalent ADR, so the citation is
+  # dropped rather than invented — RELEASE_POLICY.md §"Release artifacts" is
+  # the Anabasis statement that the -debug artifacts are per-push CI outputs
+  # and that the release carries the staging trees.)
+  # --------------------------------------------------------------------------
+  draft-release:
+    if: needs.validate.outputs.is-release == 'true'
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the draft release + upload assets (this job only)
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download customer artifacts (from the build call in this run)
+        uses: actions/download-artifact@v8
+        with:
+          # The Anabasis-<OS> artifacts hold each platform's validated
+          # staging tree as loose files; the release zips are archived from
+          # them below. The *-debug artifacts stay internal and are
+          # deliberately not matched.
+          # The two -installer entries are matched even though build.yml does
+          # not produce them yet (see the PREREQUISITE note in the header):
+          # a pattern that quietly omitted them would turn a missing installer
+          # into a silently installer-less release, which is precisely the
+          # regression the fail-closed move step below exists to prevent.
+          pattern: "Anabasis-{Linux,Windows,macOS,Windows-installer,macOS-installer}"
+          path: stage
+
+      - name: Stage versioned assets + sums + manifest
+        id: stage
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate.outputs.version }}"
+          TAG="v${VERSION}"
+          mkdir -p dist
+          DIST_ABS="$PWD/dist"
+          # Each Anabasis-<OS> artifact carries the platform's validated
+          # staging tree as loose files — the same tree the installers were
+          # built from, and the same one the per-push artifact serves. The
+          # artifact transport does not carry Unix file modes, so restore the
+          # executable bits on the payload paths, then archive each tree with
+          # its entries at the archive ROOT: extracting a published zip shows
+          # the payload directly (no wrapper folder, no nested archive).
+          # macOS: the ad-hoc signature lives inside each Mach-O and in
+          # Contents/_CodeSignature — ordinary files — so it survives the
+          # round-trip; only the mode bits need restoring.
+          for OS in Linux Windows macOS; do
+            SRC="stage/Anabasis-${OS}"
+            [ -d "$SRC" ] || { echo "::error::expected staging tree ${SRC} is missing from the build artifacts"; exit 1; }
+            case "$OS" in
+              Linux)
+                chmod 755 "$SRC/Anabasis" "$SRC/install.sh" "$SRC/uninstall.sh"
+                find "$SRC" -type f -name '*.so' -exec chmod 755 {} + ;;
+              macOS)
+                find "$SRC" -type f -path '*/Contents/MacOS/*' -exec chmod 755 {} + ;;
+              Windows)
+                : ;;   # the Windows payload carries no Unix modes
+            esac
+            (cd "$SRC" && zip -qry "${DIST_ABS}/Anabasis-${VERSION}-${OS}.zip" .)
+          done
+          # Fail-closed: every executable a platform needs must be present in
+          # the published zip AND carry its mode. A silent permission
+          # regression here would ship a package that cannot load or run.
+          # Anabasis builds no AU on Linux/Windows and the macOS bundle set is
+          # VST3 + AU + Standalone, so the entry list matches the sibling's
+          # one-for-one (identical format matrix, different product name).
+          for ENTRY in \
+            "Linux:Anabasis" \
+            "Linux:install.sh" \
+            "Linux:uninstall.sh" \
+            "Linux:Anabasis.vst3/Contents/x86_64-linux/Anabasis.so" \
+            "macOS:Anabasis.vst3/Contents/MacOS/Anabasis" \
+            "macOS:Anabasis.component/Contents/MacOS/Anabasis" \
+            "macOS:Anabasis.app/Contents/MacOS/Anabasis"; do
+            OS="${ENTRY%%:*}"; F="${ENTRY#*:}"
+            zipinfo "dist/Anabasis-${VERSION}-${OS}.zip" "$F" 2>/dev/null | grep -q '^-rwx' \
+              || { echo "::error::${F} is missing or lost its executable bit in Anabasis-${VERSION}-${OS}.zip"; exit 1; }
+          done
+          # Installers: built by build.yml's packaging steps with the version
+          # already embedded in the name (packaging/windows/Anabasis.iss sets
+          # OutputBaseFilename=Anabasis-<version>-Windows-Installer;
+          # packaging/macos/build-pkg.sh is passed its output path). The Linux
+          # installer is install.sh inside the zip above — no separate Linux
+          # package. Fail-closed on absence AND on a version mismatch (a skewed
+          # artifact would mean the build ran against a different CMake version
+          # than the tag validated). Move only — never re-packed.
+          for PKG in \
+            "Anabasis-Windows-installer/Anabasis-${VERSION}-Windows-Installer.exe" \
+            "Anabasis-macOS-installer/Anabasis-${VERSION}-macOS.pkg"; do
+            SRC="stage/${PKG}"
+            [ -f "$SRC" ] || { echo "::error::expected package ${SRC} is missing from the build artifacts (version skew or packaging step failure)"; exit 1; }
+            mv "$SRC" dist/
+          done
+          # The user manual ships as a release asset too (from this checkout,
+          # which the tag points at).
+          cp docs/user/USER_MANUAL.md "dist/Anabasis-${VERSION}-UserManual.md"
+          # Third-party attribution as release assets — and since ADR-0021
+          # this page is their SOLE carrier, the sibling's model adopted whole:
+          # build.yml no longer stages either file into any platform tree, and
+          # neither the .pkg (components = the three bundles) nor the Inno
+          # payload carries them. RELEASE_POLICY.md §"Third-party attribution"
+          # was amended to say the requirement is satisfied HERE, beside the
+          # archives, and to say why: the release page is the one carrier every
+          # distribution route passes through, and a loose UNVERSIONED copy
+          # inside an archive cannot be told apart from another version's once
+          # extracted. Version-named, so the SHA256SUMS glob below covers them
+          # like every other asset and the version is legible after extraction.
+          # THE CONSEQUENCE TO KEEP IN VIEW: dropping either line here removes
+          # the notices from the distribution entirely rather than degrading
+          # it — nothing else carries them.
+          # The sibling additionally ships SUPPORT.md as an asset. Anabasis has
+          # NO SUPPORT.md in its tree, and a support contact is not a fact this
+          # workflow may invent, so that asset is dropped entirely rather than
+          # substituted.
+          cp NOTICE                  "dist/Anabasis-${VERSION}-NOTICE.txt"
+          cp THIRD_PARTY_LICENSES.md "dist/Anabasis-${VERSION}-THIRD_PARTY_LICENSES.md"
+          (cd dist && sha256sum Anabasis-* > SHA256SUMS.txt)
+
+          {
+            echo "Anabasis ${VERSION} — release manifest"
+            echo "tag:          ${TAG}"
+            echo "commit:       ${GITHUB_SHA}"
+            echo "build number: ${GITHUB_RUN_NUMBER} (About-box build id, -DANABASIS_BUILD_NUMBER)"
+            echo "workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "date (UTC):   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "artifacts (sha256):"
+            cat dist/SHA256SUMS.txt | sed 's/^/  /'
+          } > dist/RELEASE_MANIFEST.txt
+          cat dist/RELEASE_MANIFEST.txt
+
+          # Release notes = this version's CHANGELOG section, verbatim.
+          # (exact prefix compare -- version dots are not treated as regex).
+          awk -v ver="${VERSION}" '
+            index($0, "## [" ver "]") == 1 {on=1; print; next}
+            on && /^## \[/ {exit}
+            on {print}' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::empty CHANGELOG extraction for ${VERSION}"; exit 1; }
+
+      - name: Create DRAFT GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --draft \
+            --verify-tag \
+            --title "Anabasis ${VERSION}" \
+            --notes-file notes.md \
+            dist/Anabasis-"${VERSION}"-Linux.zip \
+            dist/Anabasis-"${VERSION}"-Windows.zip \
+            dist/Anabasis-"${VERSION}"-macOS.zip \
+            dist/Anabasis-"${VERSION}"-Windows-Installer.exe \
+            dist/Anabasis-"${VERSION}"-macOS.pkg \
+            dist/Anabasis-"${VERSION}"-UserManual.md \
+            dist/Anabasis-"${VERSION}"-NOTICE.txt \
+            dist/Anabasis-"${VERSION}"-THIRD_PARTY_LICENSES.md \
+            dist/SHA256SUMS.txt \
+            dist/RELEASE_MANIFEST.txt
+          echo "Draft release v${VERSION} created -- publishing remains a manual step (RELEASE_POLICY.md precondition 8, the Level-5 audition, first)."

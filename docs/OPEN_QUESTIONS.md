@@ -291,7 +291,7 @@ before P5, since the §5.4 overlay in the Advanced view will otherwise display a
 cannot hear.
 
 
-### OQ-007 — Does the release pipeline ship installers at P6? · `Resolved 2026-08-02`
+### OQ-007 — Does the release pipeline ship installers at P6? · `Resolved 2026-08-02` · **superseded 2026-08-07**
 
 **Question.** Anamorph ships an Inno Setup installer (Windows), a `.pkg` (macOS) and shell
 installers inside the Linux zip, plus a tag-triggered draft-release pipeline. Anabasis's §11 P6
@@ -304,6 +304,13 @@ installer/packaging set (Inno Setup, `.pkg`, tag-triggered draft-release pipelin
 well-understood port from Anamorph and is deferred to the first commercial release, alongside
 OQ-002 (licence tier) and OQ-012 (validate-the-shipped-bytes), which gate that release anyway.
 Nothing in the v0.1.0 tree changes: this resolution records scope, not code.
+
+**Superseded by [ADR-0021](architecture/design-decisions/ADR-0021-release-pipeline-and-artifact-parity.md)
+(2026-08-07, owner 0.1.1 directive item 16).** The deferral is lifted: `packaging/` is populated,
+`build.yml` builds the Inno installer and the `.pkg`, and `release.yml` drives the tag-triggered
+draft-release pipeline — all at 0.1.1, ahead of the commercial release this resolution tied them
+to. The resolution's reasoning survives for the half ADR-0021 does NOT do: **signing and
+notarization** remain deferred with OQ-002 and OQ-012, and the `.pkg` ships unsigned and says so.
 
 ### OQ-015 — Does the learned-target restore need a THREADING_POLICY row, and which shape? · `Resolved 2026-08-01 (P4)`
 

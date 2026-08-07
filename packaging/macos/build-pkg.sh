@@ -19,13 +19,12 @@
 # all pre-selected — the default is a full install; Installer.app's
 # "Customize" button exposes the checkboxes).
 #
-# Anabasis stages NOTICE + THIRD_PARTY_LICENSES.md into <staged-dir> on every
-# platform (the sibling deliberately does not, shipping them as release-page
-# assets instead). Only the three bundles are copied into component roots
-# below, so those two files stay OUT of the package: RELEASE_POLICY.md's
-# "accompany every binary distribution" requirement is carried by the zip, and
-# whether the .pkg must carry them too is left to the fine review rather than
-# silently answered here by adding a fourth component.
+# NOTICE and THIRD_PARTY_LICENSES.md are not in <staged-dir> and not in this
+# package: since ADR-0021 they ship as version-named RELEASE-PAGE assets, which
+# is where RELEASE_POLICY.md's amended "accompany the distribution" requirement
+# is satisfied for every carrier — this .pkg, the Inno installer and the three
+# zips alike. Only the three bundles become component roots below, so no fourth
+# component is needed to carry them.
 set -euo pipefail
 
 DIST=${1:?usage: build-pkg.sh <staged-dir> <version> <output.pkg>}
