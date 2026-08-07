@@ -32,8 +32,13 @@ Anabasis/
 
 Of the legal/attribution class, the **factual half is Present since 2026-08-05**: `NOTICE` and
 `THIRD_PARTY_LICENSES.md` were produced against the real pinned dependency tree and this build's
-own object files (the method is stated inside the inventory), and CI copies both into every
-customer artifact. `SUPPORT.md` **landed in 0.1.1** — the internal-testing guide
+own object files (the method is stated inside the inventory). **Since 0.1.1 they ship as
+version-named assets on the release page** — `Anabasis-<version>-NOTICE.txt` and
+`Anabasis-<version>-THIRD_PARTY_LICENSES.md` — and are deliberately NOT copied into the zips,
+the `.pkg` or the Inno payload: the release page is the one carrier every distribution route
+passes through, and a loose unversioned copy cannot be told apart from another build's once
+extracted (`RELEASE_POLICY.md` §Third-party attribution, amended by **ADR-0021**).
+`SUPPORT.md` **landed in 0.1.1** — the internal-testing guide
 `DEVELOPMENT_BRIEF.md` §14.2 names, deliberately shorter than the sibling's because that
 documentation class restates the legal class and Anabasis has none to restate. The
 **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) remains absent: its wording is

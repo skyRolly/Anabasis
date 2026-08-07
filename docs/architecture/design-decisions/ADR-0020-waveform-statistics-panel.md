@@ -1,4 +1,4 @@
-# ADR-0020 — The Waveform Statistics panel: seven readings in both views, `int_tpMeterOn` removed, two standard selectors added
+# ADR-0020 — The Waveform Statistics panel: eight rows in both views, `int_tpMeterOn` removed, two standard selectors added
 
 **Status:** Accepted (2026-08-06 — owner directive of 2026-08-06, 0.1.1 round item 14: the meter
 panel must show, in BOTH modes, true peak · sample peak · RMS (50 ms Hann, AES-17/"scientific"
@@ -23,7 +23,10 @@ The 0.1.0 meter panel showed five readings — LUFS M/S/I, dBTP and PLR — with
 behind a Settings toggle that shipped **off** (ADR-0015). The owner's 0.1.1 directive replaces
 that panel with a full waveform-statistics readout and makes the true peak unconditional.
 
-Three of the seven required readings did not exist:
+Three of the directive's **seven** required readings did not exist. (Seven is the count the
+directive names; the panel shows **eight rows**, because PLR — not in the directive — was already
+there in 0.1.0 and is kept. §Decision 6 states the layout that way round: three M/S/I bar rows
+plus five numeric ones.)
 
 | Required | 0.1.0 state |
 |---|---|
@@ -109,7 +112,8 @@ Four decisions, none mechanical:
    by ONE `statRow` lambda: TP · SP · RMS · LRA · PLR. Identical in both views. 202 px of the
    234 the Advanced strip allows, so neither view relayouts. The sample-peak row warns against
    the ceiling **exactly** (with TP off the ceiling *is* a sample-peak limit; with it on the
-   clamp is stricter), which is what finally lets a user read the inter-sample excess directly
+   clamp is stricter — see the second amendment for the dB tolerance that makes the comparison
+   as exact as the reference), which is what finally lets a user read the inter-sample excess directly
    instead of inferring it from the TP row's deliberately mode-blind warn colour (ADR-0015's
    open fine-review question — unchanged, but no longer the only signal).
 
@@ -143,7 +147,7 @@ Four decisions, none mechanical:
 - `src/PluginProcessor.{h,cpp}` — five atomics + accessors, `samplePeakMaxHold`, the publish
   block, `publishSilentMeters`
 - `src/InternalState.h` — `int_tpMeterOn` removed, `int_integratedStd` / `int_rmsRef` added
-- `src/gui/LoudnessMeterView.{h,cpp}` — the seven-reading panel, `statRow`, the standard choices
+- `src/gui/LoudnessMeterView.{h,cpp}` — the eight-row panel, `statRow`, the standard choices
 - `src/gui/PluginEditor.{h,cpp}` — Settings rows, the two combos, the deleted toggle, panel height
 
 Evidence [Verified]:
@@ -186,3 +190,53 @@ Evidence [Verified]:
   the −163 case, and publishing the sentinel for silence fails only the silence case.
 - The five pre-existing assertions of that test (sine −3.01, DC 0.00, linearity, the
   partly-filled sentinel, the stereo mean-square convention) are unchanged and still pass.
+
+
+## Amendment — the PLR row follows the selected standard, and the SP warn gets a dB tolerance (2026-08-07)
+
+Two display corrections, neither of which moves a Decision. Both make §Decision 4's rule — the
+view resolves the standard, the audio thread never reads a display preference — reach a row it
+had not been applied to.
+
+**1. PLR was still the GATED difference under BS.1770-1.** `pubPlr` is computed on the audio
+thread as `TP − I_gated`, which is 0.1.0 code written before an ungated reading existed, and the
+panel read it verbatim — while the I row directly above it switched to `integratedUngatedLufs()`
+whenever `int_integratedStd == 1`. With that standard selected the panel printed
+`PLR = TP − I_gated` beneath `I = I_ungated`, so the row was not the difference of the two rows
+it sits under; after a passage of silence, which is precisely what separates the two standards,
+they diverge by several LU. The row's own "no reading" test already keyed on the SHOWN integrated
+value, so the two halves of the row did not agree with each other either.
+
+`LoudnessMeterView::plrFromShown (tpDb, integratedLufs)` now derives it from what the panel
+prints. It takes both operands rather than reading the processor, so the suite can pin the rule
+without driving the panel's `FrameClock` tick. Under the gated standard it reproduces
+`meterPlr()` exactly, so the shipped default is unchanged. **`pubPlr` deliberately keeps
+publishing**: it is the canonical gated PLR, it is one of the ten scalars `publishSilentMeters`
+clears (THREAD_MODEL's meter row), and removing a published atomic is a threading-model edit this
+correction does not need.
+
+**2. The SP row compared in dB a bound that holds in linear.** `CeilingClamp` guarantees
+`|x| ≤ ceilingLinear` on every clamped sample, but the row tests
+`gainToDecibels(|x|max) > ceiling_dB` while `ceilingLinear` is `dbToGain(ceiling_dB)` — a round
+trip the parameter itself never makes, and float does not survive it exactly. A fully limited
+master could read back −0.09999997 against a −0.1 dB ceiling and trip a warn that §Decision 6
+promises means "the clamp was genuinely exceeded". The comparison gains a **0.005 dB** tolerance:
+half this row's own print resolution, roughly four orders of magnitude above the round-trip
+error, and below anything the row can display — so every exceedance a user can read still warns.
+It also absorbs the LSB-scale noise the dither stage adds DOWNSTREAM of the clamp: near the
+ceiling 0.005 dB is ≈ 18 LSB at 16-bit, so flat and shaped TPDF both fit inside it, and a
+quantiser's noise floor is not a limiter failure. **The TP row keeps its exact comparison**: its
+over-warning is deliberate and documented (ADR-0015's open fine-review question), and it measures
+a quantity the clamp does not bound.
+
+Neither change touches the DSP, the published atomics, a parameter or a serialized field.
+
+Evidence [Verified]:
+- `AnabasisStateTests` `testTheWaveformStatisticsRowsReadTheirStandards` gains four assertions:
+  under BS.1770-2 the row reproduces the published gated PLR exactly; under BS.1770-1 it is TP
+  minus the ungated figure; the two differ by more than 2 LU after the test's trailing silence,
+  which is what makes the first two non-vacuous; and a sentinel integrated reading still yields
+  0. **Mutation-verified**: dropping the sentinel guard fails the fourth assertion and no other.
+- Stated rather than implied: no headless test drives the panel's tick, so the suite pins the
+  RULE and not its single call site — the same limit every other `shown*` value already has. The
+  SP tolerance is likewise a `paint()` threshold with no headless driver.

@@ -9,6 +9,13 @@ juce::String LoudnessMeterView::tooltipText()
            "measurement, the loudness range and both peak holds.";
 }
 
+float LoudnessMeterView::plrFromShown (float tpDb, float integratedLufs) noexcept
+{
+    return integratedLufs > anabasis::LoudnessMeter::kSilentLufs + 1.0f
+             ? tpDb - integratedLufs
+             : 0.0f;
+}
+
 LoudnessMeterView::LoudnessMeterView (AnabasisAudioProcessor& p) : processor (p)
 {
     setInterceptsMouseClicks (true, false);
@@ -42,7 +49,15 @@ void LoudnessMeterView::tick (double)
     const float s   = processor.meterLufsS();
     const float i   = ungated ? processor.meterLufsIUngated() : processor.meterLufsI();
     const float tp  = processor.meterDbTpMax();
-    const float plr = processor.meterPlr();
+    // NOT `processor.meterPlr()`, which is TP minus the GATED integrated
+    // figure and therefore the wrong reference the moment `int_integratedStd`
+    // selects BS.1770-1: the row would disagree with the two rows above it by
+    // however far the two standards have diverged. `plrFromShown` takes the
+    // difference of the values THIS panel prints, so the three agree under
+    // either standard and reproduce the published figure exactly under the
+    // gated one. The published value is unchanged — the audio thread keeps
+    // publishing the canonical gated PLR, which is what the suite pins.
+    const float plr = plrFromShown (tp, i);
     const float pk  = processor.meterPeakMaxDb();
     const float lra = processor.meterLra();
     // AES-17 references a full-scale SINE to 0 dBFS, which is +3.01 dB on the
@@ -174,12 +189,29 @@ void LoudnessMeterView::paint (juce::Graphics& g)
     // inferring it from the warn colour.
     statRow ("TP", fmt (shownTp, 2) + " dBTP",
              shownTp > shownCeiling && shownTp > silent);
-    // SAMPLE PEAK against the same ceiling, and here the comparison is exact
+    // SAMPLE PEAK against the same ceiling, and here the REFERENCE is exact
     // rather than mode-blind: with true-peak mode off the ceiling IS a
     // sample-peak limit, and with it on the clamp is stricter still, so this
     // row warning means the clamp was genuinely exceeded either way.
+    //
+    // The COMPARISON needs a tolerance to make that sentence true, because the
+    // exactness lives in the linear domain and this row compares in dB.
+    // `CeilingClamp` guarantees |x| ≤ ceilingLinear on every clamped sample,
+    // but `ceilingLinear` is `dbToGain(ceiling)` and `shownPeak` is
+    // `gainToDecibels(|x|max)` — a round trip the parameter itself never makes,
+    // and float loses a few ULPs each way, so a fully limited master can read
+    // back −0.09999997 against a −0.1 dB ceiling and test greater. The
+    // tolerance is HALF this row's own print resolution (it prints 2 dp), which
+    // is ~4 orders of magnitude above that error and still below anything the
+    // row can show: an exceedance the user can read still warns. It also
+    // absorbs the LSB-scale noise the dither stage adds AFTER the clamp — near
+    // the ceiling 0.005 dB is ≈ 18 LSB at 16-bit, so flat and shaped TPDF both
+    // fit inside it, and neither is a limiter failure. The TP row keeps its
+    // exact test deliberately: its over-warning is the documented one above,
+    // and it measures a quantity the clamp does not bound.
+    static constexpr float kCeilingWarnSlackDb = 0.005f;
     statRow ("SP", fmt (shownPeak, 2) + " dBFS",
-             shownPeak > shownCeiling && shownPeak > silent);
+             shownPeak > shownCeiling + kCeilingWarnSlackDb && shownPeak > silent);
     statRow ("RMS", fmt (shownRms, 1) + " dBFS", false);
     // LRA's "nothing measured yet" is a NEGATIVE sentinel rather than the
     // −99 the levels use: 0 LU is a legitimate reading (a perfectly steady

@@ -206,7 +206,7 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 
 Always along the bottom:
 
-The **STATISTICS** panel — the same seven readings in both Simple and Advanced:
+The **STATISTICS** panel — the same eight readings in both Simple and Advanced:
 
 | Row | What it is |
 |---|---|
@@ -217,7 +217,7 @@ The **STATISTICS** panel — the same seven readings in both Simple and Advanced
 | **SP** | Sample peak in dBFS, max hold. Read it against TP: the gap between them **is** the inter-sample overshoot. |
 | **RMS** | RMS level over a 50 ms Hann window. The reference is a Settings choice (§3.5). |
 | **LRA** | Loudness Range in LU (EBU R128 / Tech 3342) — how much the loudness moves across the programme. A steady master reads near 0; a dynamic one reads 8–15. |
-| **PLR** | Peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics at-a-glance number. |
+| **PLR** | Peak-to-loudness ratio: TP minus the **I** row above it — so it follows the same BS.1770 revision that row does (§3.5). A crest/dynamics at-a-glance number. |
 - **The graph well** — one panel, two switchable views, in both Simple and Advanced:
   - **Spectrum** — the input/output spectrum overlay (input dim, output in the accent).
   - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see

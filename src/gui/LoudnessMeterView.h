@@ -43,6 +43,18 @@ public:
     // the meter shows.
     static juce::String tooltipText();
 
+    // The PLR row, DERIVED rather than read. The processor publishes `pubPlr`
+    // against the GATED integrated figure, but the I row above follows §3.5's
+    // standard choice — so with BS.1770-1 selected the panel would print
+    // `TP − I_gated` beside `I = I_ungated` and the row would not be the
+    // difference of the two rows it sits under. PLR is a RELATIONSHIP between
+    // two shown values, so it is computed from what is shown, on the message
+    // thread where ADR-0020 resolves every display choice. Returns 0 while the
+    // integrated reading is still the meter's sentinel, exactly as the
+    // published figure does. Static so the suite can pin the rule without
+    // constructing and ticking an editor.
+    static float plrFromShown (float tpDb, float integratedLufs) noexcept;
+
     explicit LoudnessMeterView (AnabasisAudioProcessor&);
     // Detached FIRST — the tick reads the whole `shown*` snapshot, declared
     // after `clock`, so `= default` freed it under an armed attachment. Same

@@ -1185,6 +1185,28 @@ static void testTheWaveformStatisticsRowsReadTheirStandards()
     check (proc.meterLufsIUngated() < gatedBefore - 2.0f,
            "stats: the UNGATED (BS.1770-1) reading is dragged down by it");
 
+    // THE PLR ROW IS THE DIFFERENCE OF THE TWO ROWS ABOVE IT, under whichever
+    // integrated standard §3.5 selects. `meterPlr()` is published against the
+    // GATED figure alone, so it is the wrong reference the moment BS.1770-1 is
+    // showing — and the silence just run is what drives the two standards more
+    // than 2 LU apart, which makes that a visible disagreement rather than a
+    // theoretical one. The rule lives in `plrFromShown`, which takes both
+    // operands, so the suite can pin it without driving the panel's
+    // FrameClock tick.
+    const float tpNow = proc.meterDbTpMax();
+    check (near (LoudnessMeterView::plrFromShown (tpNow, proc.meterLufsI()),
+                 proc.meterPlr(), 1.0e-4f),
+           "stats: under BS.1770-2 the PLR row reproduces the published gated figure exactly");
+    check (near (LoudnessMeterView::plrFromShown (tpNow, proc.meterLufsIUngated()),
+                 tpNow - proc.meterLufsIUngated(), 1.0e-4f),
+           "stats: under BS.1770-1 the PLR row is TP minus the UNGATED figure it shows");
+    check (std::abs (LoudnessMeterView::plrFromShown (tpNow, proc.meterLufsIUngated())
+                     - proc.meterPlr()) > 2.0f,
+           "stats: …and that is NOT the published PLR, which is why the row derives its own");
+    check (juce::exactlyEqual (LoudnessMeterView::plrFromShown (
+                                   tpNow, anabasis::LoudnessMeter::kSilentLufs), 0.0f),
+           "stats: with no integrated reading the PLR row reads 0, as the published figure does");
+
     // The reset clears both peak holds, not only the true peak's.
     proc.requestMeterReset();
     buf.clear();
