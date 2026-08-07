@@ -122,15 +122,28 @@ Evidence [Verified]:
 At least one source is mandatory for any historical, design-decision, incident, risk, or
 known-issue claim.
 
-## Current state of the chain (P1)
+## Current state of the chain (0.1.1)
 
-Levels 1, 2 and 5 are **empty** — no `src/`, no `tests/`, no descriptive architecture set exists
-yet — **except that `docs/DESIGN.md` now occupies level 5**, having been signed off on
-2026-07-31 (see §"Where `DESIGN.md` sits"). Level 3 is populated: the Accepted set is whatever
-`docs/architecture/design-decisions/ADR_INDEX.md` registers — this file names the LEVEL, never its
-membership, so an accepted ADR cannot leave it stale (it read "ADR-0001…0011 are Accepted" through
-three later acceptances).
-Levels 1 and 2 stay empty until P1 lands `src/` and `tests/`, so every statement about Anabasis's
-*runtime* behaviour remains `Unverified` by construction and must be written as such. The policies in `docs/policies/`
-state the invariants the future code **must** satisfy; they carry no compliance evidence yet, and
-every such section is marked `TODO (no code yet)` rather than claimed (constraint C7).
+**Every level is populated.** Level 1 is `src/`; level 2 is `tests/` — two suites whose counts
+`HANDOVER.md`'s Test Status row carries (re-count from the suites' own output, never from a
+number quoted elsewhere). Level 3 is the Accepted set, which is whatever
+`docs/architecture/design-decisions/ADR_INDEX.md` registers — this file names the LEVEL, never
+its membership, so an accepted ADR cannot leave it stale (it read "ADR-0001…0011 are Accepted"
+through three later acceptances). Level 5 holds the descriptive architecture set
+(`PARAMETER_REGISTRY`, `SERIALIZATION_REGISTRY`, `THREAD_MODEL`, `LATENCY_MODEL`,
+`COMPATIBILITY_MATRIX`) alongside `docs/DESIGN.md`, which was signed off on 2026-07-31 and is
+now superseded section by section as those ledgers land (see §"Where `DESIGN.md` sits").
+
+**Consequently the C7 default has inverted, and this is the part that matters for how to write
+here.** Through P0 every statement about runtime behaviour was `Unverified` by construction and
+had to be written as such. It is now the opposite: a runtime claim must cite the code and the
+test that pins it, and `Unverified` is a deliberate mark for the things genuinely unmeasured —
+the human audition passes, the un-run CI legs — not a blanket disclaimer. A policy section still
+reading `TODO (no code yet)` is drift to report, not a state to preserve.
+
+*(This block described the P1-eve tree — "no `src/`, no `tests/`" — for the whole of P1 through
+P6 and past the 0.1.1 release round, ordering every runtime claim in the repository to be marked
+`Unverified` while the two suites were green. Found by the 0.1.1 migration audit. It is corrected
+rather than banner-marked because, unlike `DESIGN.md`, this file is not a signed-off historical
+record: it is the navigation document every contributor reads first, and a wrong instruction in
+it is followed.)*

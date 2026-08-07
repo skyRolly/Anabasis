@@ -443,6 +443,15 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addAndMakeVisible (presetPrev);
     addAndMakeVisible (presetNext);
     addAndMakeVisible (presetName);
+    // Hand-built, so they miss the setup helpers' `registerAnimated` tail call
+    // — and the LookAndFeel's hover branch reads the animated value, falling
+    // back to a binary is-the-mouse-over test without it. These three and the
+    // two save buttons below were the only controls in the editor still
+    // stepping between hover states while everything around them eased
+    // (0.1.1 migration audit; the sibling registers exactly this set).
+    for (auto* b : { (juce::Component*) &presetPrev, (juce::Component*) &presetNext,
+                     (juce::Component*) &presetName })
+        registerAnimated (*b);
 
     // -- COMP panel ----------------------------------------------------------
     auto rotary = [this, &paramName] (Knob& k, juce::Label& l, const char* id)
@@ -797,7 +806,29 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // choice between two kinds of field in THIS editor, not migrated Anamorph
     // state, so it is wired rather than deleted.
     saveNameEditor.getProperties().set ("glow", true);
+    // The family TextEditor palette. The `"glow"` property above only arms the
+    // LookAndFeel's focus-ring BRANCH; the branch draws against these colour
+    // ids, and without them the field rendered in JUCE's stock scheme — a
+    // light box in a dark panel, the one control in the product not wearing
+    // the palette. Ported from the sibling's own save field.
+    saveNameEditor.setFont (juce::Font (juce::FontOptions (14.0f)));
+    saveNameEditor.setColour (juce::TextEditor::backgroundColourId,     colours::bg);
+    saveNameEditor.setColour (juce::TextEditor::textColourId,           colours::text);
+    saveNameEditor.setColour (juce::TextEditor::outlineColourId,        colours::outline);
+    saveNameEditor.setColour (juce::TextEditor::focusedOutlineColourId, colours::accent.withAlpha (0.60f));
+    saveNameEditor.setColour (juce::TextEditor::highlightColourId,      colours::accent.withAlpha (0.30f));
+    // RETURN COMMITS, ESCAPE DISMISSES — the sibling's two lines, and the half
+    // of this overlay that was never ported. `juce::TextEditor::returnPressed`
+    // posts a command whose ONLY consumers are a registered Listener and these
+    // two std::functions; Anabasis registers neither, so both keys were inert
+    // and the dialog could be left only with the mouse. The knob value boxes
+    // never showed the defect because they are `juce::Label` editors, and
+    // Label implements the two callbacks itself.
+    saveNameEditor.onReturnKey = [this] { saveOkButton.triggerClick(); };
+    saveNameEditor.onEscapeKey = [this] { showSavePreset (false); };
     savePresetBackdrop.addAndMakeVisible (saveNameEditor);
+    for (auto* b : { (juce::Component*) &saveOkButton, (juce::Component*) &saveCancelButton })
+        registerAnimated (*b);      // as the top-bar three above
     saveOkButton.onClick = [this]
     {
         const auto name = juce::File::createLegalFileName (saveNameEditor.getText().trim());
@@ -963,15 +994,21 @@ void AnabasisAudioProcessorEditor::setupRotary (juce::Slider& s, juce::Label& l,
     s.setTitle (name);
     s.setDescription (name);
     // …and the OTHER half of §8, which had no implementation until 0.1.1:
-    // KEYBOARD OPERABILITY. JUCE sliders already handle the arrow keys in
-    // `Slider::keyPressed`; what they lack by default is the focus that lets
-    // the key reach them, so tab traversal and arrow adjustment were both
-    // dead. Accepting focus is all that is added, and the distinction matters:
-    // a focusABLE control never TAKES focus, it only receives it when the user
+    // KEYBOARD OPERABILITY. This line is the one that DOES something, and the
+    // reason is a JUCE default that differs per widget class — verified in the
+    // vendored source rather than assumed: `Slider` ends its constructor with
+    // `setWantsKeyboardFocus (false)`, while `Button` sets it true
+    // unconditionally and `ComboBox` sets `! isLabelEditable` (true for ours).
+    // So before 0.1.1 tab traversal reached every button and combo and SKIPPED
+    // all forty knobs, and `Slider::keyPressed`'s arrow handling — which JUCE
+    // already implements — was unreachable on every one of them.
+    //
+    // Accepting focus is all that is added, and the distinction matters: a
+    // focusABLE control never TAKES focus, it only receives it when the user
     // tabs or clicks — so `EDITOR_WANTS_KEYBOARD_FOCUS FALSE` stays as it is
     // and the plugin still never steals the host's transport keys. In a plugin
-    // the feature is therefore live exactly when the host has already given
-    // the editor focus, and in the Standalone it is live always.
+    // the feature is live exactly when the host has already given the editor
+    // focus; in the Standalone, always.
     s.setWantsKeyboardFocus (true);
 }
 
@@ -1011,7 +1048,12 @@ void AnabasisAudioProcessorEditor::setupCombo (juce::ComboBox& box, const char* 
     // R2 tooltip set the two are different strings, and the title must keep
     // announcing what the automation lane shows.
     box.setTitle (cp != nullptr ? cp->getName (24) : tidyTip (tip));
-    box.setWantsKeyboardFocus (true);   // §8 keyboard operability — see setupRotary
+    // REDUNDANT against JUCE's default (`ComboBox` already sets
+    // `! isLabelEditable`, and ours are not editable) and kept anyway: the
+    // default is JUCE's to change, and this file should not depend on it
+    // silently. Stated as redundant so nobody reads it as the fix — the fix is
+    // in `setupRotary`, where the default is the opposite way round.
+    box.setWantsKeyboardFocus (true);
 }
 
 void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const char* id,
@@ -1025,7 +1067,7 @@ void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const cha
     // Registry name as title (brief §8) — see setupCombo.
     auto* p = processor.apvts.getParameter (id);
     t.setTitle (p != nullptr ? p->getName (24) : text);
-    t.setWantsKeyboardFocus (true);                 // §8 — see setupRotary
+    t.setWantsKeyboardFocus (true);   // redundant vs Button's default — see setupCombo
 }
 
 void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
@@ -1067,6 +1109,13 @@ void AnabasisAudioProcessorEditor::setupComboInternal (juce::ComboBox& box,
     // source (`name`); the tooltip stopped being usable for this when the R2
     // set made it descriptive prose. The state suite finds these by title.
     box.setTitle (name);
+    // The §8 tail call the other helpers make. Redundant here for the same
+    // reason as in `setupCombo` — a non-editable `ComboBox` is focusable by
+    // JUCE default — so the Settings panel was never actually unreachable;
+    // the 0.1.1 audit reported it as a gap and the mutation check disproved
+    // the consequence. Kept for consistency and to pin the intent, and
+    // labelled so the next reader does not re-derive that.
+    box.setWantsKeyboardFocus (true);
 }
 
 void AnabasisAudioProcessorEditor::setupToggleInternal (juce::ToggleButton& t,
@@ -1080,7 +1129,7 @@ void AnabasisAudioProcessorEditor::setupToggleInternal (juce::ToggleButton& t,
     t.getToggleStateValue().referTo (value);
     registerAnimated (t);
     t.setTitle (name.isNotEmpty() ? name : text);   // as setupToggle does
-    t.setWantsKeyboardFocus (true);                 // §8 — see setupRotary
+    t.setWantsKeyboardFocus (true);   // redundant vs Button's default — see setupCombo
 }
 
 // ============================================================================

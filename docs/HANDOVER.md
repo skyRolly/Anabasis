@@ -953,18 +953,55 @@ Anabasis's only divergence is reading the user step from the persisted percent t
 and none was owed — recorded here so the next audit does not re-derive it.
 
 **Two brief-audit gaps closed alongside the directive's own items**, found by walking
-`DEVELOPMENT_BRIEF.md` against the tree. (1) **§8 keyboard operability** had *no* implementation:
+`DEVELOPMENT_BRIEF.md` against the tree. (1) **§8 keyboard operability** had no implementation:
 accessibility NAMES were done (`setTitle`/`setDescription` on every control) but nothing in
-`src/` called `setWantsKeyboardFocus` or handled a key, so JUCE's own `Slider::keyPressed` arrow
-handling was unreachable and tab traversal was dead. Every slider, combo and toggle now ACCEPTS
-focus — and only accepts: `EDITOR_WANTS_KEYBOARD_FOCUS` stays FALSE, so the plugin still never
-takes the host's transport keys, and the feature is live whenever the host has already focused
-the editor (always, in the Standalone). Swept by the tooltip test's sibling collector, which
-names every unfocusable control when it fails; mutation-verified. (2) **§14.2's `SUPPORT.md`**
+`src/` called `setWantsKeyboardFocus`. **The substance is the forty KNOBS**, and the reason is a
+JUCE default that differs by widget class — read from the vendored source rather than assumed:
+`Slider` ends its constructor with `setWantsKeyboardFocus (false)`, while `Button` sets it true
+unconditionally and `ComboBox` sets `! isLabelEditable`. So tab traversal was **not** dead, as
+this entry claimed for one commit: it reached every button and combo and skipped every knob,
+and `Slider::keyPressed`'s arrow handling — which JUCE already implements — was unreachable on
+all of them. The calls added to the combo and toggle helpers are therefore redundant against the
+default, kept deliberately and labelled as such. Every control now ACCEPTS focus — and only
+accepts: `EDITOR_WANTS_KEYBOARD_FOCUS` stays FALSE, so the plugin still never takes the host's
+transport keys. Swept by the tooltip test's sibling collector; mutation-verified, and the same
+mutation run is what showed the combo half to be inert. (2) **§14.2's `SUPPORT.md`**
 was a named member of the Internal/testing documentation class that did not exist. It exists
 now, and is deliberately shorter than the sibling's: that class restates the legal class, and
 Anabasis has no approved licence, EULA or privacy document to restate — the file says so rather
 than inventing terms or a support contact.
+
+**A four-lens migration audit closed the directive's item 5**, sweeping for other places where
+the sibling port was left half-done: GUI widget setup, wrapper/state plumbing, DSP module
+completeness, and doc claims about the code. 38 candidate findings, each then handed to an
+adversarial verifier told to REFUTE it — **17 were refuted, 21 survived**, and the refutations
+are as load-bearing as the confirmations (several named a deliberate ADR-recorded divergence the
+finder had read as an omission). Fixed in this round: the Save-Preset field's Return/Escape keys
+(inert — the sibling's two `onReturnKey`/`onEscapeKey` lines were never ported, so the dialog
+could only be left with the mouse) and its missing palette; five hand-built buttons that bypassed
+`registerAnimated`; the `int_integratedStd`/`int_rmsRef` read rule, whose absence let the
+statistics panel *show* one standard while *computing* the other; and seven doc-drift sites
+including `SOURCE_OF_TRUTH.md`, which had told every contributor since P0 that `src/` and
+`tests/` did not exist and that every runtime claim must be marked `Unverified`.
+
+**One audit finding was disproved by its own fix**, and the correction matters more than the
+finding: "the Settings panel is unreachable by keyboard" is false. Mutation-testing the fix
+showed removing the combo call changes nothing, and JUCE's vendored source says why —
+`ComboBox` sets `setWantsKeyboardFocus (! isLabelEditable)` and `Button` sets it true
+unconditionally, while `Slider` sets it **false**. So §8's real gap was the forty KNOBS alone,
+tab traversal was never dead, and this file's own first draft of that paragraph was wrong. It is
+corrected above rather than quietly amended.
+
+**Two findings were recorded rather than fixed** (`KNOWN_ISSUES.md` KI-010, KI-011). KI-010 is
+the sharpest: ADR-0004's §Consequences argues the constant-latency contract makes every bulk swap
+"always dry-fillable" and that "the forced duck keeps its best masking mode" — and the duck never
+dry-fills. It applies `duckGain` to the processed path only, so every preset load, A/B switch and
+undo step dips to silence. No invariant is broken (invariant 8 asks for click-free, and a
+raised-cosine dip is click-free; the duck tests pass and cannot tell the two modes apart), so
+this is a documentation-vs-code contradiction, not a defect in either alone. Implementing
+dry-fill is an audible change to every bulk swap, arriving on the day of a release round, on the
+one path no listening pass has covered — the entry states both ways out and deliberately does
+not choose.
 
 **Mutation verification** was applied to the two constants most likely to be quietly wrong: the
 LRA relative gate (−20 LU, *not* the integrated reading's −10) and the LRA reset watermark (30

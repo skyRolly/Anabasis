@@ -22,8 +22,15 @@ Subset of `COMPATIBILITY_POLICY.md`. Governs state serialization
    fixture in `tests/fixtures/`.
 4. **A save → load round-trip must reproduce** the sound, the preset name, the dirty marker, both
    A/B slots, the active slot, and any parameter locks.
-5. **View / session params are preserved on restore.** Applying an A/B slot, an undo step, or a
-   preset must not clobber the current view state (mode, window size, tooltips, meter options).
+5. **View / session params are preserved on restore — with the undo exception ADR-0018 added.**
+   Applying an **A/B slot** or a **preset** must not clobber the current view state (window size,
+   tooltips, and the Advanced/Simple mode). An **undo step** is deliberately different since
+   ADR-0018: it restores `advancedMode`, because an ADV toggle is a user action the user can take
+   back, and it is the ONLY adoption path that does — `applySlotToLive`'s adopt-flag pins the
+   value on every other. The authoritative membership of "view state" is the code predicate
+   `isViewTierParam`, not this list. *("meter options" named `int_meterTargets`, removed by
+   ADR-0015 with the streaming-target display; the phrase is dropped rather than re-pointed,
+   because no field replaced it — the ADR-0020 selectors choose a STANDARD, not what is shown.)*
 6. **Discrete parameters round-trip exactly.** Store the raw normalised value alongside the
    human-readable one where a choice/step parameter would otherwise be re-quantised on load.
 7. **Corrupt or foreign state must not crash or produce a bad sound.** An unreadable state falls

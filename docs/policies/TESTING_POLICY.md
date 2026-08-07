@@ -84,8 +84,14 @@ its methodology is not permitted (constraint C2).
 - Dependency-free console apps, not a test framework: a `check(cond, "what")` counter harness,
   `main()` calling every test, non-zero exit on any failure.
 - `AnabasisStateTests` compiles the **real** plugin sources into its own console target so it
-  exercises the actual `AudioProcessor` — the editor sources compile but are never instantiated
-  (the tests run headlessly and open no window).
+  exercises the actual `AudioProcessor` — **and, since P5, the actual editor**: a dozen-plus
+  cases call `createEditor()` and drive it (the Settings panel following a project load, the
+  graph-well mode switch, the tooltip and keyboard-focus sweeps, the About panel's snapshot, the
+  knob animation seed, the stereo battery's editor-alive configuration). They still run headlessly
+  and open no window — JUCE builds the component tree without a peer — which is what makes the
+  editor testable here at all. *(This bullet read "the editor sources compile but are never
+  instantiated" from P1 until the 0.1.1 audit; a policy that under-describes its own coverage
+  invites a reviewer to add a test that already exists.)*
 - The frozen `tests/fixtures/parameter_registry.snapshot` is re-written **only** via an explicit
   `AnabasisStateTests --write-snapshot` invocation, and only for an *intentional* parameter
   change. Re-freezing to make a red test green is a compatibility break in disguise.

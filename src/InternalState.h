@@ -207,6 +207,22 @@ public:
                               iid::uiScale, ui_scale::defaultPercent)),
                           nullptr);
 
+        // …and the SAME rule for the two ADR-0020 selectors, which arrived in
+        // 0.1.1 without it. They are two-valued ints with no atomic mirror to
+        // clamp them (`syncAtomics` covers the four latency/lock fields only),
+        // so an out-of-range stored value reached BOTH readers uncorrected —
+        // and the two readers disagreed about it: `LoudnessMeterView::tick`
+        // asks `== 1`, so a stored 7 read as "BS.1770-2+", while the Settings
+        // combo re-seed clamps the index with `jlimit`, so the same 7 DISPLAYED
+        // as "BS.1770-1". The panel then showed one standard and computed the
+        // other, with nothing to make the disagreement visible. Clamping at
+        // adoption — where the illegal value enters — makes both readers see
+        // the same number, which is the property the `uiScale` clause above
+        // exists for and the sentence beginning "Every OTHER field's read rule
+        // is already applied at adoption" claimed for the whole set.
+        for (const auto& id : { iid::integratedStd, iid::rmsRef })
+            tree.setProperty (id, juce::jlimit (0, 1, (int) tree.getProperty (id, 0)), nullptr);
+
         // …and the single fire happens in ~ScopedLatencyBatch, so an early
         // return could not skip it. A missing child still lands on defaults.
     }

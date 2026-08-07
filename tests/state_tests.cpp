@@ -3814,6 +3814,17 @@ static void collectTooltipless (juce::Component& root, juce::StringArray& names)
 // deliberately a SECOND walk rather than a second condition inside the first:
 // the two answer different questions and a combined failure message could not
 // say which one failed.
+//
+// WHAT THIS SWEEP ACTUALLY GUARDS, stated because the obvious reading is
+// wrong: only the SLIDERS. JUCE's per-class defaults were read from the
+// vendored source — `Slider` ends its constructor `setWantsKeyboardFocus
+// (false)`, `Button` sets it true unconditionally, `ComboBox` sets
+// `! isLabelEditable` — so combos and toggles were focusable all along and
+// their explicit calls in the setup helpers are redundant-but-deliberate.
+// Removing the SLIDER call fails this check and names all forty knobs;
+// removing the combo call changes nothing observable, which a mutation run
+// confirmed. Both facts are recorded so a future reader does not mistake the
+// sweep for broader cover than it has.
 static void collectUnfocusable (juce::Component& root, juce::StringArray& names)
 {
     for (auto* c : root.getChildren())
