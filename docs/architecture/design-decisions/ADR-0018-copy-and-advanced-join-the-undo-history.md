@@ -58,7 +58,8 @@ Three behaviours shipped in 0.1.0 that the sibling product resolves differently,
 1. **Copy** (`copySlotToOther`, body moved to the .cpp so it reaches `pushCapped`): the
    destination's pre-copy `{slot, presetBaseline}` is pushed onto the **destination's** undo
    stack through `pushCapped` (the one bounded push), its older entries are **kept**, and only
-   its redo stack is cleared. The entry pairs the destination's own dirty datum
+   its redo stack is cleared — and only when the Copy actually changes that slot (see the second
+   amendment). The entry pairs the destination's own dirty datum
    (`storedPresetBaseline`), not the active slot's — `pushUndoStep` cannot be reused, it
    targets the active stack. Undoing on the copied-into slot reverts the Copy; further undos
    walk the pre-copy history, coherent because entries are absolute SLOT snapshots. The source
@@ -148,3 +149,53 @@ Evidence [Verified]:
 - Sibling reference: `Anamorph/src/PluginProcessor.cpp` `abCopyToOther` (#12), read under
   ADR-0009's copy-and-adapt licence
 - Directive: the owner's 0.1.1 instruction of 2026-08-06, item 4
+
+## Amendment — a Copy that changes nothing records nothing (2026-08-07)
+
+Decision 1 made Copy an undo step. It did so unconditionally, and after the first Copy the
+destination already holds the live state: press Copy again with no edit between and the entry
+pushed restores exactly what it replaces, so one Undo press on that slot visibly does nothing.
+That is the **dead step** §Decision 4 set out to remove from the gesture path, reaching the stack
+by a different route — and every other push in the file is already guarded by a change test.
+
+`copySlotToOther` now applies the same one: `strippedForUndoCompare` on the entry's slot against
+the slot the Copy is about to store, which normalises the view-tier parameters an undo could not
+restore anyway, plus an equivalence test on the dirty datum — the other half of what the entry
+would restore, and a real difference even when the parameter surface is identical. When the test
+says nothing changes, **the redo line is left alone too**: redo is invalidated by a new action,
+and a Copy that changes nothing is not one, which is exactly how the gesture path behaves when
+its diff is empty.
+
+Copy's semantics, the A/B behaviour, the restore path and the push-time `advancedMode` pin of the
+first amendment are all untouched — the change is only *whether* an entry is recorded.
+
+Evidence [Verified]: `AnabasisStateTests` `testTeardownAndReengageInvariants` cases **(3c)** —
+three Copies in a row leave exactly one step, one undo returns the destination to its pre-copy
+state and nothing remains — and **(3d)** — a no-op Copy leaves the destination's redo line intact
+and that redo still re-lands the edit it belonged to. **Mutation-verified**: removing the change
+test fails (3c), and clearing redo unconditionally fails (3d) alone.
+
+## Review confirmation — an undo may adopt an `advancedMode` set in the OTHER slot (2026-08-07)
+
+**Owner-reviewed 2026-08-07: behaviour confirmed, no change requested.** Recorded because it is a
+near neighbour of the first amendment and would otherwise be re-derived by the next audit as the
+same defect.
+
+The sequence: in slot A (Simple) drag a knob — entry E is captured with `advancedMode` off;
+switch to B, which pins the view (Decision 3), so ADV stays off; toggle ADV **on in B**, minting a
+step on **B's** stack; switch back to A, pinned again, so ADV stays on; undo in A. The restore is
+the one path with `adoptAdvanced = true` and E carries off, so the editor returns to Simple for a
+toggle taken in the other slot.
+
+This is **not** the first amendment's defect. E is a `saveSlotFromLive()` taken at the moment of
+its own step, so its `advancedMode` is exactly the view the user had *in A* when they made that
+edit — the property Decision 3 relies on. The Copy entry was the exception only because it is
+`storedSlot`, frozen by an earlier switch and therefore contemporaneous with nothing. Undoing in A
+back to a state whose view was Simple is the contract working; §Consequences promises only that a
+*compare* never resizes, and this is an undo.
+
+What it costs is a surprise when the two slots' views have diverged, and both alternatives cost
+more: pinning `advancedMode` on the undo path as well would make this record's own second half
+unreachable (an ADV toggle is a real step *whose undo restores the view*), and letting
+`advancedMode` travel with A/B would reintroduce the editor resize on compare that ADR-0010
+option E's surviving half forbids. Left as it stands, deliberately, on the owner's review.

@@ -118,28 +118,35 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // a HiDPI display, where the 1 px bars also land on half-pixels).
     //
     // Buckets are now keyed to ABSOLUTE ring indices: a constant integer
-    // `stride` of entries per column, bucket k spanning [k·stride, (k+1)·stride).
+    // `stride` of entries per bucket, bucket k spanning [k·stride, (k+1)·stride).
     // A given entry therefore stays in the same bucket for its whole life on
-    // screen, and the display advances by whole columns as `head` crosses
-    // stride boundaries — pixel-quantised scroll instead of per-frame
-    // re-bucketing. Only the rightmost (still-filling) bucket changes between
-    // shifts, and a bucket's max can only grow while it fills.
+    // screen, so a completed bucket's decimated max never changes and the
+    // display scrolls instead of re-bucketing. Only the newest (still-filling)
+    // bucket changes between shifts, and its max can only grow while it fills.
     //
     // The waveform is ONE filled path under a polyline top edge rather than a
     // per-column rectangle comb, so the renderer anti-aliases a single shape.
-    const int64_t stride = juce::jmax<int64_t> (1, (want + cols - 1) / (int64_t) cols);
-    const int64_t kHead  = head / stride;           // the bucket currently filling
+    //
+    // BUCKET COUNT AND PIXEL COLUMN ARE SEPARATE QUESTIONS. Conflating them —
+    // one bucket per column, anchored at the newest — is what left a permanent
+    // blank strip on the left, because `stride` rounds up and the window only
+    // ever holds `want` entries, not `cols·stride` of them. `buckets` and
+    // `bucketX` carry that arithmetic and its argument; they live in the header
+    // for the reason `windowEntries` does — a version reachable only from
+    // `paint` is a version no test can pin, which is how this went unnoticed.
+    const auto nb = buckets (head, want, cols);
     juce::Path wave, gr;
     bool started = false;
     float lastX = area.getX();
 
-    for (int cx = 0; cx < cols; ++cx)
+    for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
     {
-        const int64_t k  = kHead - (int64_t) (cols - 1) + (int64_t) cx;
-        const int64_t e0 = juce::jmax (first, k * stride);
-        const int64_t e1 = juce::jmin (head, (k + 1) * stride);
+        const int64_t e0 = juce::jmax (first, k * nb.stride);
+        const int64_t e1 = juce::jmin (head, (k + 1) * nb.stride);
         if (e0 >= e1)
-            continue;                               // bucket not yet in the ring
+            continue;                               // unreachable by construction (see the
+                                                    // header); kept because an empty bucket
+                                                    // would plot a false zero, not nothing
         float peak = 0.0f, grDb = 0.0f;
         for (int64_t e = e0; e < e1; ++e)
         {
@@ -147,7 +154,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
             peak = juce::jmax (peak, entry.peak);
             grDb = juce::jmin (grDb, entry.grDb);
         }
-        const float x  = area.getX() + (float) cx;
+        const float x  = bucketX (nb, k, area.getX(), area.getWidth());
         const float wh = juce::jmax (0.5f, area.getHeight() * juce::jlimit (0.0f, 1.0f, peak));
         const float wy = area.getBottom() - wh;
         const float gy = area.getY()

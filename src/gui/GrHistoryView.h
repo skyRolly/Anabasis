@@ -69,6 +69,54 @@ public:
                                     (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
     }
 
+    // The decimation geometry one frame draws. Public and pure for the reason
+    // `windowEntries` is: the arithmetic with a correctness argument must be
+    // pinnable without a graphics context, and this arithmetic had two bugs
+    // that a `paint`-only version hid — a rightmost bucket that could come out
+    // empty, and a bucket-per-pixel mapping that left the left third of the
+    // panel permanently blank.
+    //
+    // Bucket k is the ABSOLUTE entry range [k·stride, (k+1)·stride), so an
+    // entry never changes bucket and a completed bucket's decimated max never
+    // changes — the property the 0.1.1 shimmer fix rests on. What the panel
+    // width decides is only how many entries share a bucket, never where the
+    // boundaries fall.
+    struct Buckets
+    {
+        int64_t stride;   // entries per bucket; ≥ 1, sized so `count` ≤ cols
+        int64_t kFirst;   // oldest bucket lying WHOLLY inside the window
+        int64_t kHead;    // bucket holding entry `head - 1`, so never empty
+        int64_t count;    // buckets to draw = kHead − kFirst + 1, ≥ 1
+    };
+
+    // `head` = entries ever pushed (≥ 1), `want` = `windowEntries(...)`,
+    // `cols` = the panel's pixel width (≥ 1).
+    static Buckets buckets (int64_t head, int64_t want, int cols) noexcept
+    {
+        const int64_t c      = juce::jmax<int64_t> (1, (int64_t) cols);
+        const int64_t stride = juce::jmax<int64_t> (1, (want + c - 1) / c);
+        const int64_t first  = juce::jmax<int64_t> (0, head - want);
+        const int64_t kHead  = juce::jmax<int64_t> (0, head - 1) / stride;
+        const int64_t kFirst = juce::jmin (kHead, (first + stride - 1) / stride);
+        return { stride, kFirst, kHead, kHead - kFirst + 1 };
+    }
+
+    // Where bucket `k` lands. The buckets are STRETCHED over the width rather
+    // than pinned one per pixel: `stride` rounds up, so a window's worth of
+    // entries yields fewer buckets than the panel has columns, and pinning
+    // them left the surplus columns blank forever (≈ 31 % of the Simple well
+    // at 48 kHz/512, ≈ 48 % at 1024). Widening the WINDOW to `cols·stride`
+    // would fill the panel by showing more time — 38.6 s at 48 kHz/1024 —
+    // which `kWindowSeconds` and DESIGN §2.9's 10–30 s band do not allow.
+    // Stretching keeps the window and fills the panel, and is also what the
+    // pre-0.1.1 draw did while the ring was still filling.
+    static float bucketX (const Buckets& b, int64_t k, float x0, float width) noexcept
+    {
+        return b.count > 1
+                 ? x0 + (float) (k - b.kFirst) * (width - 1.0f) / (float) (b.count - 1)
+                 : x0;
+    }
+
 private:
     // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
     // agree about it — the rule `SpectrumView::chipHitArea` states.

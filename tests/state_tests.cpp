@@ -2302,6 +2302,60 @@ static void testTeardownAndReengageInvariants()
                "copyUndoView: …and the SOUND half of that undo still landed");
     }
 
+    // (3c) A COPY THAT CHANGES NOTHING MINTS NOTHING. After the first Copy the
+    // destination already holds the live state, so a second press with no edit
+    // between would push an entry restoring exactly what it replaces — one
+    // Undo press that visibly does nothing, which is the dead step ADR-0018
+    // removed from the gesture path. Same change test, same answer.
+    {
+        AnabasisAudioProcessor proc;
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto driveDb = [&] { return proc.apvts.getRawParameterValue (pid::clipDrive)->load(); };
+
+        drive->beginChangeGesture();                 // one real edit in A
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (3.0f));
+        drive->endChangeGesture();
+
+        proc.copySlotToOther();                      // A → B: a real change to B
+        proc.copySlotToOther();                      // …and again, with nothing between
+        proc.copySlotToOther();
+
+        proc.switchToSlot (1);
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyNoOp: (premise) the copied state is on the destination");
+        check (proc.canUndo(), "copyNoOp: the FIRST Copy is still a step");
+        proc.undo();
+        check (std::abs (driveDb() - 0.0f) < 1.0e-3f,
+               "copyNoOp: one undo reverts to the pre-copy state — the repeats added no steps");
+        check (! proc.canUndo(), "copyNoOp: …and there is nothing left to undo on that slot");
+    }
+
+    // (3d) …AND IT DOES NOT CLEAR THE DESTINATION'S REDO LINE. Redo is
+    // invalidated by a new ACTION, and a Copy that changes nothing is not one —
+    // the gesture path likewise clears no redo when its diff is empty. Staged
+    // so the destination (A) is back at its default with a redo entry waiting,
+    // and the source (B) holds that same default, which makes the Copy a no-op.
+    {
+        AnabasisAudioProcessor proc;
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto driveDb = [&] { return proc.apvts.getRawParameterValue (pid::clipDrive)->load(); };
+
+        drive->beginChangeGesture();
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (3.0f));
+        drive->endChangeGesture();
+        proc.undo();                                 // A back to default, redo line armed
+        check (proc.canRedo() && std::abs (driveDb()) < 1.0e-3f,
+               "copyNoOp: (premise) slot A is at its default with a redo entry waiting");
+
+        proc.switchToSlot (1);                       // B active, also default
+        proc.copySlotToOther();                      // B → A: A already holds this state
+        proc.switchToSlot (0);
+        check (proc.canRedo(), "copyNoOp: a Copy that changes nothing does not clear redo");
+        proc.redo();
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyNoOp: …so the redo still re-lands the edit it belonged to");
+    }
+
     // (5) ADV UNDO — ADR-0018's second half: an Advanced-mode toggle is a
     // real undo step (the click is gesture-bracketed by its ButtonAttachment;
     // this drives the same path directly), and the undo restore ADOPTS the
@@ -4150,6 +4204,70 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
            "grWindow: below the clamp the window is the whole 20 s");
     check (GrHistoryView::windowEntries (0.0, 512) == GrHistoryView::windowEntries (48000.0, 512),
            "grWindow: an unprepared processor reads as 48 kHz, not as a divide by zero");
+
+    // THE DECIMATION GEOMETRY, and specifically that it FILLS THE PANEL. The
+    // 0.1.1 shimmer fix gave buckets a fixed absolute identity but drew one
+    // per pixel column anchored at the newest — and `stride` rounds up, so
+    // `cols` buckets span more entries than the window holds and the surplus
+    // ones, being older than the window, drew nothing: a permanent blank strip
+    // down the left, ~31 % of the Simple well at 48 kHz/512 and ~48 % at 1024.
+    // The columns are stretched over the width now, so the trace runs edge to
+    // edge whatever the rate/block/width combination.
+    {
+        struct Case { double sr; int bs; int cols; const char* what; };
+        const Case cases[] = {
+            { 48000.0,  512, 904, "Simple well, 48 kHz / 512" },
+            { 48000.0, 1024, 904, "Simple well, 48 kHz / 1024" },
+            { 48000.0, 2048, 904, "…and a block big enough that entries are SCARCER than columns" },
+            { 48000.0,  512, 604, "Advanced well, 48 kHz / 512" },
+            { 192000.0,  32, 604, "192 kHz / 32 — the window saturates at the ring clamp" },
+        };
+        for (const auto& c : cases)
+        {
+            const auto want = GrHistoryView::windowEntries (c.sr, c.bs);
+            const auto head = want * 4;                        // long settled, ring wrapped
+            const auto b    = GrHistoryView::buckets (head, want, c.cols);
+            const auto say  = [&c] (const char* what)
+            { return juce::String ("grBuckets: ") + what + " — " + c.what; };
+
+            const auto m1 = say ("2..cols buckets");
+            check (b.count >= 2 && b.count <= (int64_t) c.cols, m1.toRawUTF8());
+            // The panel is FULL: first bucket on the left edge, last on the
+            // right. This is the assertion the blank strip failed.
+            const auto m2 = say ("the trace spans the whole width");
+            check (std::abs (GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols)) < 1.0e-3f
+                   && std::abs (GrHistoryView::bucketX (b, b.kHead, 0.0f, (float) c.cols)
+                                - (float) (c.cols - 1)) < 1.0e-3f,
+                   m2.toRawUTF8());
+            // …and it spans it with the WINDOW's data, not by showing more
+            // time: widening the window to cols·stride would have filled the
+            // panel too, at 38.6 s instead of 20 (DESIGN §2.9 allows 10–30).
+            // The drawn entries are [kFirst·stride, head), which must be one
+            // window deep to within the bucket the boundary rounds off.
+            const auto drawn = head - b.kFirst * b.stride;
+            const auto m3 = say ("…carrying one window of entries, no more");
+            check (drawn <= want && drawn >= want - b.stride, m3.toRawUTF8());
+            // Every drawn bucket is non-empty: the oldest lies wholly inside
+            // the window, and the newest holds entry `head - 1` by keying on
+            // `head - 1` rather than `head` (which left it empty whenever the
+            // head landed on a stride boundary).
+            const auto m4 = say ("the oldest drawn bucket is inside the window");
+            check (b.kFirst * b.stride >= head - want, m4.toRawUTF8());
+            const auto m5 = say ("…and the newest holds the newest entry");
+            check (b.kHead * b.stride <= head - 1 && (b.kHead + 1) * b.stride > head - 1,
+                   m5.toRawUTF8());
+        }
+
+        // A ring with a handful of entries still spans the panel rather than
+        // drawing a stub in one corner — the pre-0.1.1 behaviour while the
+        // history fills. `head` here is far below one window.
+        const auto want  = GrHistoryView::windowEntries (48000.0, 512);
+        const auto small = GrHistoryView::buckets (12, want, 904);
+        check (small.kFirst == 0 && small.count == 11 / small.stride + 1,
+               "grBuckets: a barely-filled ring starts at bucket 0 and draws only what it has");
+        check (std::abs (GrHistoryView::bucketX (small, small.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
+               "grBuckets: …and still reaches the right edge, so it fills as it grows");
+    }
 }
 
 // ---------------------------------------------------------------------------

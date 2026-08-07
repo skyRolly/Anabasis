@@ -330,12 +330,33 @@ void AnabasisAudioProcessor::copySlotToOther()
     // `slotWithLiveAdvancedMode`. Without that pin, undoing a Copy could
     // resize the editor, which is the one thing ADR-0018 says Copy and its
     // undo must never do.
-    pushCapped (undoStacks[other],
-                UndoEntry { slotWithLiveAdvancedMode (storedSlot),
-                            storedPresetBaseline.createCopy() },
-                kUndoCap);
-    redoStacks[other].clear();
-    storedSlot = saveSlotFromLive();
+    UndoEntry pre { slotWithLiveAdvancedMode (storedSlot),
+                    storedPresetBaseline.createCopy() };
+    auto liveSlot = saveSlotFromLive();
+
+    // ONLY IF THE DESTINATION ACTUALLY CHANGES. Press Copy twice with no edit
+    // between and the second one overwrites the destination with what it
+    // already holds — the entry it would push restores the state it replaces,
+    // so one Undo press on that slot appears to do nothing. That is precisely
+    // the dead step ADR-0018 §Decision 4 set out to remove from the gesture
+    // path, arriving by a different route, so it takes the same answer: the
+    // gesture path's change test, `strippedForUndoCompare` on both sides,
+    // which normalises the view-tier entries an undo could not restore anyway.
+    // The dirty datum is compared too — it is the other half of what the entry
+    // would restore, and a baseline that moved is a real difference even when
+    // the parameter surface did not.
+    //
+    // The redo line is left alone in that case for the same reason nothing is
+    // pushed: a Copy that changes nothing is not a new action, and the gesture
+    // path likewise clears no redo when its diff is empty.
+    if (! strippedForUndoCompare (pre.slot)
+             .isEquivalentTo (strippedForUndoCompare (liveSlot))
+        || ! pre.baseline.isEquivalentTo (presetBaseline))
+    {
+        pushCapped (undoStacks[other], std::move (pre), kUndoCap);
+        redoStacks[other].clear();
+    }
+    storedSlot = std::move (liveSlot);
     // `createCopy()`, for the reason `undo()`/`redo()` carry: assigning a
     // `juce::ValueTree` shares the refcounted node, so the two slots' dirty
     // data would be ONE tree until the next wholesale replacement. Harmless
