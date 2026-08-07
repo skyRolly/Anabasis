@@ -47,11 +47,15 @@ void LoudnessMeterView::tick (double)
     const float lra = processor.meterLra();
     // AES-17 references a full-scale SINE to 0 dBFS, which is +3.01 dB on the
     // mathematical RMS the meter publishes (a sine's RMS is 1/√2 of its peak).
-    // Applied to the silent sentinel too would print a nonsense −140.99, so
-    // the sentinel passes through untouched.
-    const float rms = (aes17 && pk > -143.0f && processor.meterRmsDb() > -143.0f)
-                        ? processor.meterRmsDb() + 3.0103f
-                        : processor.meterRmsDb();
+    // The sentinel passes through UNTOUCHED — offsetting it would print a
+    // nonsense −140.99 where the row means "nothing measured yet" — and the
+    // test is on the RMS reading alone. It briefly also consulted the sample
+    // peak, which is incoherent whatever the values do: whether this row has
+    // a reading is a fact about this row.
+    const float rawRms = processor.meterRmsDb();
+    const float rms = (aes17 && rawRms > anabasis::RmsMeter::kSilentDb + 1.0f)
+                        ? rawRms + 3.0103f
+                        : rawRms;
     const float ceil = processor.apvts.getRawParameterValue (pid::ceiling)->load();
 
     // Bitwise compares, so even a NaN transition still repaints once.
