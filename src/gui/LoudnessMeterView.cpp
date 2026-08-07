@@ -52,8 +52,14 @@ void LoudnessMeterView::tick (double)
     // test is on the RMS reading alone. It briefly also consulted the sample
     // peak, which is incoherent whatever the values do: whether this row has
     // a reading is a fact about this row.
+    //
+    // `>= kFloorDb` is that test EXACTLY, because the meter guarantees every
+    // reading it computes lands at or above the floor and the sentinel sits
+    // strictly below it. The earlier `> kSilentDb + 1.0f` was a tolerance
+    // around the sentinel, needed only while the two ranges could overlap; a
+    // genuine reading in that band was silently denied its offset.
     const float rawRms = processor.meterRmsDb();
-    const float rms = (aes17 && rawRms > anabasis::RmsMeter::kSilentDb + 1.0f)
+    const float rms = (aes17 && rawRms >= anabasis::RmsMeter::kFloorDb)
                         ? rawRms + 3.0103f
                         : rawRms;
     const float ceil = processor.apvts.getRawParameterValue (pid::ceiling)->load();

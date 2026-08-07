@@ -100,8 +100,9 @@ staging trees.
    declared code-complete on 2026-08-02 but never tagged, so **0.1.1 is the first build this
    repository releases** and its notes are the whole P1–P6 development plus this round. The
    entry template moved to the file's preamble for a mechanical reason discovered here: notes
-   are extracted as everything between a version heading and the next `## [` one, so a template
-   after the entries was published inside the notes.
+   are extracted as everything from a version heading to the next h2 heading — and the newest
+   entry has none after it, so a template sitting after the entries was published inside the
+   notes. See the amendment below for how that boundary is drawn.
 
 ## Consequences
 
@@ -156,3 +157,32 @@ Evidence [Verified — with two named gaps]:
   real exercise is the `v0.1.1` tag, or the `workflow_dispatch` rehearsal that trigger exists
   for.
 - Directive: the owner's 0.1.1 instruction of 2026-08-06, item 16
+
+## Amendment — the notes extractor bounds a section on ANY h2, and reads fences as data (2026-08-07)
+
+No rule in §Decision changes; this corrects how item 6's extraction is implemented. The original
+terminator was `^## \[` — the next *version* heading — which is sound for every entry except the
+one that matters most. The **newest** entry has no version heading after it, so its notes run to
+end of file. That is deliberate and stays (0.1.1's notes ARE the whole P1–P6 development beneath
+them, carried in `###` sections), but it made every future h2 added below the newest entry a
+silent addition to that release's published notes. The file demonstrates the second half of the
+hazard itself: its preamble holds a `## [x.y.z] — YYYY-MM-DD` sample **inside a fence**, and an
+extractor blind to fences would have started there for any release whose version that sample ever
+named — publishing the template as the notes and stopping at the real heading.
+
+The extractor now terminates on any `^## ` — which does not match `### `, the third character
+being `#` rather than a space, so an entry's own sub-sections are untouched — and tracks fenced
+blocks, closing one only on the character that opened it, so a `~~~` line inside a ``` block
+stays data. Output for the release being cut is byte-identical to the earlier form; what changes
+is the releases after it. `CHANGELOG.md`'s preamble now states the two editing rules that follow
+from the boundary (an `## ` below the newest entry ends its notes; entry sub-sections stay at
+`### ` or deeper).
+
+Evidence [Verified]:
+- Both extractions run against `CHANGELOG.md` at `VERSION=0.1.1` produce identical 425-line
+  output (`cmp` clean), so the 0.1.1 notes are unchanged.
+- Against a fixture carrying a fenced version sample inside a newer entry and a trailing
+  `## Notes on this file` heading, the old form starts inside the fence and swallows the trailing
+  heading into the release notes; the new form extracts exactly the intended section in both
+  directions.
+- `.github/workflows/release.yml` parses (`yaml.safe_load`).

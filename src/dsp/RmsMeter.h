@@ -61,7 +61,26 @@ class RmsMeter
 {
 public:
     static constexpr int   kMaxChannels = 2;
-    static constexpr float kSilentDb    = -144.0f;   // "nothing measured yet"
+
+    // TWO constants, and their separation is the point. `kSilentDb` is a
+    // SENTINEL — "nothing measured yet", no full window has been seen or the
+    // state was sanitised — and it is not a level. `kFloorDb` is the lowest
+    // LEVEL this meter reports: every computed reading is clamped up to it, so
+    // exact digital silence (whose logarithm does not exist) still comes back
+    // as a measurement rather than as an absence. A reader distinguishes the
+    // two by comparing against `kFloorDb`, not by a tolerance around the
+    // sentinel.
+    //
+    // They must not overlap, which one constant could not guarantee: a floor
+    // applied to the mean square rather than to the dB reading let the computed
+    // range run to 10·log10(1e-15) = −150 dB, BELOW the sentinel, so a real
+    // reading of a near-silent passage could equal or undercut "nothing
+    // measured yet" — a distinction no consumer could then recover.
+    static constexpr float kSilentDb    = -144.0f;
+    static constexpr float kFloorDb     = -140.0f;
+
+    static_assert (kFloorDb > kSilentDb,
+                   "the sentinel must sit strictly below every reading this meter can compute");
 
     RmsMeter() = default;
 
@@ -142,7 +161,9 @@ public:
     // −3.01). `kSilentDb` until the first full 50 ms window has been seen —
     // a partially filled window would read low by the fraction still empty,
     // which on a transport start is a visibly wrong number rather than an
-    // absent one.
+    // absent one. Once one has been seen the value is a MEASUREMENT and is
+    // `>= kFloorDb`, silence included; `rmsDb() < kFloorDb` is the exact test
+    // for "no reading".
     float rmsDb() const noexcept { return publishedDb; }
 
 private:
@@ -158,9 +179,19 @@ private:
             idx = idx + 1 < len ? idx + 1 : 0;
         }
         const double ms = acc * invWindowSum;
-        publishedDb = ms > 1.0e-15
-                        ? (float) (10.0 * std::log10 (ms))   // 10·log10 of a MEAN SQUARE
-                        : kSilentDb;
+        // `ms == 0` is EXACT DIGITAL SILENCE, and it is a MEASUREMENT: the
+        // window was full, the walk ran, and the answer is "below what this
+        // meter resolves" — so it reports the floor, not the sentinel. `ms`
+        // cannot be negative (squares are non-negative, and so is a Hann
+        // window), so the only other case is an accumulation that is not a
+        // number at all, which is an absent reading and matches what
+        // `sanitiseState` publishes.
+        if (! std::isfinite (ms))
+            publishedDb = kSilentDb;
+        else
+            publishedDb = ms > 0.0                           // 10·log10 of a MEAN SQUARE
+                            ? juce::jmax (kFloorDb, (float) (10.0 * std::log10 (ms)))
+                            : kFloorDb;
     }
 
     std::vector<float> sq, window;

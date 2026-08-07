@@ -71,8 +71,9 @@ Four decisions, none mechanical:
    0.05·sr and the cadence is 0.01·sr, so the amortised cost is **5 multiply-adds per sample at
    every sample rate and every block size**. It reads the silent sentinel until the first full
    window: a partly filled window reads low by the fraction still empty, and a wrong number on a
-   transport start is worse than an absent one. Allocation-free after `prepare()`; joins the
-   invariant-9 unconditional sanitise list beside `outMeter`.
+   transport start is worse than an absent one. (That sentinel is a value no reading can take —
+   see the amendment below, which separates it from the meter's floor.) Allocation-free after
+   `prepare()`; joins the invariant-9 unconditional sanitise list beside `outMeter`.
 
 2. **BS.1770-1 vs -2 IS gated vs ungated.** That is the substantive difference between the
    revisions: -1 defined integrated loudness as the plain mean energy over the measurement
@@ -156,3 +157,32 @@ Evidence [Verified]:
   publication, both integrated standards separated by trailing silence, the sample-peak hold
   and its reset)
 - Directive: the owner's 0.1.1 instruction of 2026-08-06, item 14
+
+## Amendment — the silent sentinel and the reading floor are separate constants (2026-08-07)
+
+Decision item 1's contract does not change: no reading until the first full window, and the
+sentinel is what stands in until then. What was wrong is that the sentinel and the meter's
+computed range **overlapped**. `kSilentDb` is −144 dB, but the guard against `log(0)` was applied
+to the MEAN SQUARE at `1e-15` — so the computed range ran down to 10·log10(1e-15) = **−150 dB,
+beneath the sentinel**, and a mean square of 3.98e-15 published exactly −144.0. A consumer could
+not then tell a real reading of a near-silent passage from "nothing measured yet", and exact
+digital silence — a full window the meter *did* measure — was reported as an absence.
+
+`kFloorDb` (−140 dB) now names the lowest LEVEL the meter reports, with a `static_assert` holding
+it strictly above `kSilentDb`. Every computed reading is clamped up to it, digital silence
+included; only a non-finite accumulation reverts to the sentinel, which is the condition
+`sanitiseState` already published it for. `rmsDb() < kFloorDb` is therefore the exact test for
+"no reading", and `LoudnessMeterView`'s AES-17 guard now uses it in place of the
+`> kSilentDb + 1.0f` tolerance that had been standing in for the missing separation — a tolerance
+that silently denied the +3.01 dB offset to any genuine reading inside its band.
+
+Nothing displayed moves: the statistics rows print `-` below −99 dB, above both constants, so
+silence and the sentinel render as they always did. No audio path, parameter or serialized field
+is touched, and the meter's published value on every path with a signal is bit-identical.
+
+Evidence [Verified]:
+- `AnabasisTests` `testRmsMeterReadsTrueLevels` gains a digital-silence case and a −163 dBFS
+  case, both asserting `kFloorDb` exactly. **Mutation-verified**: removing the clamp fails only
+  the −163 case, and publishing the sentinel for silence fails only the silence case.
+- The five pre-existing assertions of that test (sine −3.01, DC 0.00, linearity, the
+  partly-filled sentinel, the stereo mean-square convention) are unchanged and still pass.

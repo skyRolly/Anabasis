@@ -2708,6 +2708,32 @@ static void testRmsMeterReadsTrueLevels()
         check (near (m.rmsDb(), -6.02f, 0.05f),
                "rms: one channel of a stereo frame reads 3 dB below the correlated case");
     }
+    {   // The sentinel and the readings must NOT overlap. Once a full window
+        // has been seen the meter has measured something, and "below what this
+        // meter resolves" is an answer — so it reports `kFloorDb`, which sits
+        // strictly above "nothing measured yet". Both stimuli here published
+        // the sentinel while a single constant served both jobs: exact silence
+        // has no logarithm, and −163 dBFS fell below where the computed range
+        // was cut off. Either would have been read as an absent measurement.
+        static_assert (anabasis::RmsMeter::kFloorDb > anabasis::RmsMeter::kSilentDb,
+                       "a reading must never be mistaken for the sentinel");
+
+        anabasis::RmsMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (0.5 * sr); ++n)
+        {
+            const float fr[2] = { 0.0f, 0.0f };
+            m.processFrame (fr, 2);
+        }
+        check (juce::exactlyEqual (m.rmsDb(), anabasis::RmsMeter::kFloorDb),
+               "rms: digital silence reads the floor — a measurement, not the sentinel");
+
+        // A real signal 23 dB below the floor: clamped to the floor, never to
+        // the sentinel. This is the case the clamp exists for; without it the
+        // reading is −163, which is on the wrong side of "nothing measured".
+        check (juce::exactlyEqual (settledDb (1.0e-8f, false), anabasis::RmsMeter::kFloorDb),
+               "rms: a signal under the meter's resolution reads the floor, not the sentinel");
+    }
 }
 
 // ---------------------------------------------------------------------------

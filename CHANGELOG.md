@@ -15,8 +15,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **Entry template.** It lives HERE, above the entries, and not at the foot of the file: the
-release workflow extracts a version's notes as everything between its heading and the next
-`## [` one, so a template sitting after the entries was published inside the release notes.
+release workflow extracts a version's notes as everything from a version heading to the next
+h2 heading — and the newest entry has none after it, so a template sitting after the entries
+was published inside the release notes. Two editing rules follow. An `## ` heading placed below
+the newest entry **ends** that release's notes; sub-sections belonging to an entry must stay at
+`### ` or deeper, which is why the P1–P6 history below runs in `###` sections. A fenced block is
+read as data, so the sample heading immediately below is not mistaken for structure.
 
 ```
 ## [x.y.z] — YYYY-MM-DD
