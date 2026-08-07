@@ -14,9 +14,114 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - **Renames are `Changed`, not `Removed`** (a display-name change with an unchanged parameter ID).
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
+**Entry template.** It lives HERE, above the entries, and not at the foot of the file: the
+release workflow extracts a version's notes as everything from a version heading to the next
+h2 heading — and the newest entry has none after it, so a template sitting after the entries
+was published inside the release notes. Two editing rules follow. An `## ` heading placed below
+the newest entry **ends** that release's notes; sub-sections belonging to an entry must stay at
+`### ` or deeper, which is why the P1–P6 history below runs in `###` sections. A fenced block is
+read as data, so the sample heading immediately below is not mistaken for structure.
+
+```
+## [x.y.z] — YYYY-MM-DD
+
+### Added
+- <user-visible change>.
+  Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
+```
+
 ---
 
 ## [Unreleased]
+
+Nothing yet.
+
+---
+
+## [0.1.1] — 2026-08-07
+
+**The first build released from this repository.** v0.1.0 was declared code-complete on
+2026-08-02 but was never tagged: the post-v0.1.0 review rounds landed first, and the owner cut
+the release one patch level on. This entry therefore carries the whole P1–P6 development *and*
+the 0.1.1 round — the sections below run newest first.
+
+### Added
+- **Waveform Statistics panel** — the metering panel now shows seven readings, identically in
+  Simple and Advanced: momentary (400 ms), short-term (3 s), integrated, **true peak**,
+  **sample peak**, **RMS** (50 ms Hann window) and **loudness range** (LRA, EBU Tech 3342),
+  plus PLR. Two new Settings choose which STANDARD two of them follow: *Integrated*
+  (BS.1770-2+ gated, the default, or BS.1770-1 ungated) and *RMS Reference* (AES-17, the
+  default, or mathematical). The true peak is no longer hideable — the *True-Peak Meter*
+  toggle and the field behind it are gone. Reading TP against the new SP row gives the
+  inter-sample overshoot directly. ADR-0020; session field `int_tpMeterOn` removed,
+  `int_integratedStd` / `int_rmsRef` added (an old session's value for any of the three is
+  handled by the schema's read rules — no migration needed).
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **Comp Stereo Link** — the glue compressor gains the adjustable stereo link the limiter
+  already had (0–100 %, default 100 %). At the default it is bit-for-bit the fully linked
+  detector it always was; lower values let each channel breathe on its own. Named apart from
+  the limiter's *Stereo Link* so the two automation lanes cannot be confused. The parameter
+  surface is now 50. ADR-0019.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **Installers, and a release pipeline that builds them** — a Windows Inno Setup installer, a
+  macOS `.pkg` with component selection (VST3 / AU / Standalone), and Linux
+  `install.sh`/`uninstall.sh` inside the zip, each with an `INSTALL.txt`. A tag now drives a
+  validate → build → draft-release pipeline that archives the per-platform trees, attaches the
+  installers, publishes SHA256SUMS and a build manifest, and takes its release notes from this
+  file. ADR-0021; closes the OQ-007 deferral.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+
+### Changed
+- **Copy (A/B) is undoable and no longer destroys history** — copying one slot's sound into the
+  other now records an undo step on the DESTINATION slot and keeps that slot's earlier history
+  beneath it, so one Undo reverts the Copy and further Undos walk back through the slot's own
+  edits. **The ADV view switch is undoable too.** Neither travels with an A/B compare: switching
+  slots still never resizes the editor. ADR-0018.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **Frequency text entry speaks mastering shorthand** — on the high shelf (1–20 kHz) a bare
+  number up to 20 is read as kHz, so `8` lands 8 kHz; on the full-range bells (20 Hz–20 kHz) the
+  pivot is the knob's own 20 Hz floor, so `19` lands 19 kHz while `20` stays 20 Hz. `8k`,
+  `8 kHz` and `8000` all mean the same thing everywhere.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **Graph-well switch, GR history and zone layout** — the single-name corner chip is replaced by
+  a two-segment SPEC | GR switch that shows both modes and floats translucently above the trace
+  (the old chip was masked by the GR zero-line); the GR history no longer shimmers while
+  scrolling (fixed-identity decimation buckets and a filled waveform path instead of a
+  re-phasing comb of 1 px bars); the four zone combos span their panel, so *Transparent* no
+  longer clips; the dither combo gains its caption.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **About panel** — a shorter description in the Version line's colour, and the URL sits
+  directly above the copyright, matching the family layout.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **The knob corner dot explains itself** — each of the nine macro-managed knobs carries the
+  detach legend in its tooltip, and the manual states what the dot is not: not an
+  edited-since-preset mark, and not cleared by turning the knob back, because the knob is still
+  off macro control.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **Artifact contents match the sibling product's** — `NOTICE` and `THIRD_PARTY_LICENSES.md` are
+  no longer copied inside the archives; they ship as version-named assets on the release page,
+  where they accompany every distribution route including the installers. ADR-0021 amends
+  `RELEASE_POLICY.md` accordingly.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+
+### Fixed
+- **The left channel could fall silent on a mono source** (KI-009). The plugin refused the
+  mono→stereo layout the sibling accepts, so a host with a mono source had to negotiate
+  stereo→stereo and feed the signal on one input pin and silence on the other; this chain is
+  strictly dual-mono, so the silent pin produced a silent output channel in both modes. Mono
+  input is now accepted and duplicated before the chain. The headless stereo battery gained the
+  case that reproduces it.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+- **A Bypass or monitor-toggle click no longer eats an Undo press** — those clicks used to mint
+  an undo step whose restore changed nothing. ADR-0018.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+
+### Removed
+- **The Settings *True-Peak Meter* toggle** and its session field, with the statistics panel that
+  makes it meaningless (see Added). ADR-0020.
+  Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
+
+---
 
 ### Added
 - **P1 skeleton — the plugin exists** (VST3 / AU-on-macOS / Standalone; JUCE 9.0.0 pinned):
@@ -355,16 +460,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
   KI-009 records what the probes exclude and the environment details needed to proceed.
   Evidence Source: **PR #8** (`skyRolly/Anabasis`). [Verified]
 
-The first entry will be `[0.1.0]`, cut when the post-v0.1.0 fine review clears the tag.
-
----
-
-## Entry template
-
-```
-## [0.1.0] — 2026-MM-DD
-
-### Added
-- <user-visible change>.
-  Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
-```
+These P1–P6 sections belong to the `[0.1.1]` entry above: the release the tag cuts is the first
+one this repository has produced, so its notes are the whole development, not a delta against a
+predecessor that was never published.

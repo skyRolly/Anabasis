@@ -32,10 +32,17 @@ Anabasis/
 
 Of the legal/attribution class, the **factual half is Present since 2026-08-05**: `NOTICE` and
 `THIRD_PARTY_LICENSES.md` were produced against the real pinned dependency tree and this build's
-own object files (the method is stated inside the inventory), and CI copies both into every
-customer artifact. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) and the
-internal-testing guide (`SUPPORT.md`) remain absent: their wording is owner-supplied (C8) and
-gated with OQ-002/OQ-009 — inventing them would violate constraint C7.
+own object files (the method is stated inside the inventory). **Since 0.1.1 they ship as
+version-named assets on the release page** — `Anabasis-<version>-NOTICE.txt` and
+`Anabasis-<version>-THIRD_PARTY_LICENSES.md` — and are deliberately NOT copied into the zips,
+the `.pkg` or the Inno payload: the release page is the one carrier every distribution route
+passes through, and a loose unversioned copy cannot be told apart from another build's once
+extracted (`RELEASE_POLICY.md` §Third-party attribution, amended by **ADR-0021**).
+`SUPPORT.md` **landed in 0.1.1** — the internal-testing guide
+`DEVELOPMENT_BRIEF.md` §14.2 names, deliberately shorter than the sibling's because that
+documentation class restates the legal class and Anabasis has none to restate. The
+**owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) remains absent: its wording is
+owner-supplied (C8) and gated with OQ-002/OQ-009 — inventing it would violate constraint C7.
 
 ## `src/` — layout (P1 skeleton in the tree; stages marked P2+ are not yet implemented)
 
@@ -45,15 +52,19 @@ gated with OQ-002/OQ-009 — inventing them would violate constraint C7.
 | `PluginParameters.{h,cpp}` | APVTS layout, `pid::` ID constants, atomic cache, `toEngine` → `EngineParameters`. |
 | `InternalState.h` | Host-hidden session/view params (Oversampling, phase mode, offline-render quality, window size, tooltips, animations, meter options). |
 | `PresetManager.{h,cpp}` | Factory + user `.anabasis` presets (sound params only) + parameter lock. |
-| `PluginEditor.{h,cpp}` | Simple/Advanced UI, render context, timers. |
-| `src/gui/` | `LookAndFeel`, the primary knob, GR-history scope, LUFS/dBTP meters, transfer-curve display, spectrum overlay. |
+| `MacroEngine.{h,cpp}` | The §5.5 macro mapper and the §5.3 detach/re-engage grammar — message-thread only. |
+| `src/gui/` | `PluginEditor.{h,cpp}` (Simple/Advanced UI, render context, timers) plus `LookAndFeel`, the primary knob, GR-history scope, the statistics panel, transfer-curve and EQ-response displays, the spectrum view. |
 | `src/dsp/` | Format-agnostic DSP core (`AnabasisDSP` INTERFACE lib) — depends only on `juce_dsp` / `juce_audio_basics`, never on the plugin wrapper. |
 
-Planned `src/dsp/` modules, one per signal-chain stage (`DEVELOPMENT_BRIEF.md` §3–§4):
-`EngineParameters.h` (the wrapper↔engine POD boundary), the chain orchestrator, input gain,
-EQ, compressor, clipper/saturation (ADAA), limiter (lookahead + true peak), ceiling clamp,
-dither, plus the measurement side: LUFS/BS.1770 meter, true-peak meter, loudness compensation,
-delta monitoring, feature extraction for the adaptive engine, and a lock-free scope ring.
+`src/dsp/` holds one module per signal-chain stage (`DEVELOPMENT_BRIEF.md` §3–§4), **all
+implemented**: `EngineParameters.h` (the wrapper↔engine POD boundary), `AnabasisEngine` (the
+chain orchestrator, which also carries input gain, dither, loudness compensation and delta
+monitoring inline), `MasteringEQ`, `MasteringComp`, `ClipSat` (ADAA), `LookaheadLimiter`,
+`CeilingClamp`, `Latency`, plus the measurement side: `LoudnessMeter` (BS.1770 + LRA),
+`RmsMeter`, `TruePeak`, `AdaptiveEngine`, `GrHistoryBuffer` and `ScopeBuffer`. *(This paragraph
+read "Planned … modules" from P0 through the 0.1.1 release round — every one of them had
+shipped by P3. The table above likewise placed `PluginEditor` at top-level `src/`, which it has
+never occupied, and omitted `MacroEngine` entirely.)*
 
 ## `tests/`
 
@@ -100,7 +111,7 @@ docs/
 ├── DEVELOPMENT_BRIEF.md   The owner-supplied product spec (Part I) + the inherited engineering
 │                          standard (Part II). See SOURCE_OF_TRUTH.md §"Where the product brief sits".
 ├── DESIGN.md              The P0 design deliverable (brief §11/§24), SIGNED OFF 2026-07-31:
-│                          architecture, the 49-parameter table, macro curves, wireframes.
+│                          architecture, the parameter table (49 at sign-off; 50 live per ADR-0019), macro curves, wireframes.
 │                          Answers to the brief; the ADRs it spawned (ADR_INDEX.md) now outrank
 │                          it and supersede it section by section as P1-P6 land.
 │                          See SOURCE_OF_TRUTH.md §"Where DESIGN.md sits".

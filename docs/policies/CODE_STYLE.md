@@ -29,8 +29,9 @@ the display wording*, so UI copy stays revisable under constraint C8
 
 ## Structure
 
-- DSP core lives in `namespace anabasis` under `src/dsp/`; the wrapper/editor are in the global
-  namespace under `src/`.
+- DSP core lives in `namespace anabasis` under `src/dsp/`; the wrapper is in the global namespace
+  under `src/`, and the **editor under `src/gui/`** — also global namespace, with its shared
+  drawing helpers in `namespace abgui`.
 - The DSP core never includes a plugin-client or GUI header — it depends only on `juce_dsp` /
   `juce_audio_basics` (`DSP_POLICY.md` invariant 13).
 - Small DSP utilities are **header-only**; larger modules are `.h`/`.cpp` pairs.

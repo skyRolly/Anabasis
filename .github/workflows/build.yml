@@ -310,15 +310,17 @@ jobs:
           mkdir -p "$DIST"
           cp -R build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 "$DIST/"
           cp    build/Anabasis_artefacts/Release/Standalone/Anabasis "$DIST/Anabasis"
-          # Third-party attribution travels WITH the binaries, not merely in the
-          # repository: the IJG/BSD notices attach to binary redistribution, and
-          # RELEASE_POLICY.md §"Third-party attribution" makes carrying both
-          # files a requirement of every binary distribution. Copied on all
-          # three platforms.
-          cp NOTICE THIRD_PARTY_LICENSES.md "$DIST/"
-          # Installer scripts + INSTALL.txt arrive with the packaging pipeline,
-          # deferred to the first commercial release (OQ-007 — v0.1.0 ships
-          # plain zips).
+          # ATTRIBUTION IS NOT STAGED (0.1.1, ADR-0021 — the sibling's model,
+          # adopted on the owner's directive that the artifacts match it):
+          # NOTICE and THIRD_PARTY_LICENSES.md ship as VERSION-NAMED RELEASE
+          # PAGE assets instead, where they accompany the distribution without
+          # being inside it. The package carries only what a user needs in
+          # order to install. RELEASE_POLICY.md §"Third-party attribution" was
+          # amended by that ADR to say "accompany", which the release page
+          # satisfies and an unversioned copy loose in a zip did not.
+          cp packaging/linux/INSTALL.txt "$DIST/INSTALL.txt"
+          install -m 755 packaging/linux/install.sh   "$DIST/install.sh"
+          install -m 755 packaging/linux/uninstall.sh "$DIST/uninstall.sh"
           # The customer artifact must contain no symbol table and no debug files.
           while IFS= read -r -d '' ELF; do
             if readelf -S "$ELF" 2>/dev/null | grep -q '\.symtab'; then
@@ -572,14 +574,13 @@ jobs:
           $exe = @(Get-ChildItem -Recurse -Path build -Filter Anabasis.exe -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq 'Standalone' })
           if ($exe.Count -ne 1) { Write-Error "expected exactly one Standalone Anabasis.exe, found $($exe.Count)" }
           $exe = $exe[0]
-          # 2) Copy the public artifact. (INSTALL.txt arrives with the OQ-007
-          #    packaging pipeline, first commercial release.) NOTICE +
-          #    THIRD_PARTY_LICENSES.md ride along on every platform:
-          #    RELEASE_POLICY.md §"Third-party attribution".
+          # 2) Copy the public artifact. Attribution is deliberately NOT staged
+          #    (ADR-0021): NOTICE and THIRD_PARTY_LICENSES.md ship as
+          #    version-named release-page assets. See the Linux stage step for
+          #    the full reasoning — it is the same rule on all three platforms.
           Copy-Item -Recurse -Force $vst3.FullName $dist
           Copy-Item -Force $exe.FullName $dist
-          Copy-Item -Force NOTICE $dist
-          Copy-Item -Force THIRD_PARTY_LICENSES.md $dist
+          Copy-Item -Force packaging\windows\INSTALL.txt $dist
           # 3) Purge ALL debug material from the public copy BEFORE any further
           #    step that can abort.
           Get-ChildItem -Recurse -Path $dist -File |
@@ -649,6 +650,38 @@ jobs:
           # but Windows PowerShell 5.1 would write UTF-16LE and the runner would
           # not parse the output at all.
           "debug_artifacts=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # The Inno Setup installer is built FROM the staged payload, so it gates
+      # on the same `public_ok` checkpoint the customer zip does: repacking a
+      # tree that failed validation would launder a rejected build into an
+      # installer. ISCC ships preinstalled on windows-latest.
+      - name: Package Windows installer (Inno Setup)
+        id: package_windows
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outputs.public_ok == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The version comes from CMakeLists.txt, the single source
+          # release.yml also validates the tag against — never from a workflow
+          # literal, which is the copy that goes stale on the next bump.
+          $m = Select-String -Path CMakeLists.txt -Pattern '^project\(Anabasis VERSION ([0-9]+\.[0-9]+\.[0-9]+) '
+          if (-not $m) { Write-Error 'could not read the version from CMakeLists.txt' }
+          $version = $m.Matches[0].Groups[1].Value
+          $staging = (Resolve-Path 'dist/Anabasis-Windows').Path
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { Write-Error "ISCC.exe not found at $iscc" }
+          & $iscc "/DAppVersion=$version" "/DStagingDir=$staging" '/Odist' 'packaging/windows/Anabasis.iss'
+          if ($LASTEXITCODE -ne 0) { Write-Error "ISCC failed with exit code $LASTEXITCODE" }
+          $out = "dist/Anabasis-$version-Windows-Installer.exe"
+          if (-not (Test-Path $out)) { Write-Error "installer not produced at $out" }
+
+      - name: Upload Windows installer
+        if: ${{ !cancelled() && steps.package_windows.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: Anabasis-Windows-installer
+          path: dist/Anabasis-*-Windows-Installer.exe
+          if-no-files-found: error
 
       - name: Upload Windows artifacts
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outputs.public_ok == 'true' }}
@@ -828,11 +861,10 @@ jobs:
           cp -R "$VST3" "$DIST/"
           cp -R "$AU"   "$DIST/"
           cp -R "$APP"  "$DIST/"
-          # Third-party attribution rides with the binaries on every platform
-          # (RELEASE_POLICY.md §"Third-party attribution").
-          cp NOTICE THIRD_PARTY_LICENSES.md "$DIST/"
-          # INSTALL.txt arrives with the OQ-007 packaging pipeline (first
-          # commercial release; v0.1.0 ships plain zips).
+          # Attribution is deliberately NOT staged (ADR-0021): NOTICE and
+          # THIRD_PARTY_LICENSES.md ship as version-named release-page assets.
+          # See the Linux stage step for the full reasoning.
+          cp packaging/macos/INSTALL.txt "$DIST/INSTALL.txt"
           # ASSERT both slices are present -- do not merely print them. `lipo -archs`
           # exits 0 for ANY valid Mach-O, including a thin one, so echoing its output
           # verifies nothing: an arm64-only build would ship labelled "universal" and
@@ -864,6 +896,28 @@ jobs:
           # zip. The ad-hoc signature lives inside each Mach-O and in
           # Contents/_CodeSignature (ordinary files), so it survives the round
           # trip -- only the mode bits need restoring.
+
+      # Built FROM the validated staged payload, exactly as the Windows
+      # installer is: `packaging/macos/build-pkg.sh` copies the three bundles
+      # into component roots and self-checks the result (identifiers,
+      # customise-allowed, all three components pre-selected).
+      - name: Package macOS installer (.pkg)
+        id: package_macos
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.package.outcome == 'success' }}
+        run: |
+          set -e
+          VERSION=$(sed -nE 's/^project\(Anabasis VERSION ([0-9]+\.[0-9]+\.[0-9]+) .*/\1/p' CMakeLists.txt)
+          [ -n "$VERSION" ] || { echo "::error::could not read the version from CMakeLists.txt"; exit 1; }
+          chmod +x packaging/macos/build-pkg.sh
+          packaging/macos/build-pkg.sh dist/Anabasis-macOS "$VERSION" "dist/Anabasis-${VERSION}-macOS.pkg"
+
+      - name: Upload macOS installer
+        if: ${{ !cancelled() && steps.package_macos.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: Anabasis-macOS-installer
+          path: dist/Anabasis-*-macOS.pkg
+          if-no-files-found: error
 
       - name: Upload macOS plugins (VST3 + AU + Standalone)
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.package.outcome == 'success' }}

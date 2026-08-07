@@ -48,8 +48,9 @@ buildability there and nothing about older systems.
 
 | Layout | Status | Evidence |
 |---|---|---|
-| **stereo → stereo** | **Verified** | The only accepted layout: bus declaration `src/PluginProcessor.cpp:10-13`, predicate `:388-392` (`isBusesLayoutSupported` requires stereo on both mains). The whole test suite runs this layout |
-| **mono → anything / anything → mono** | **Not Supported** | Deliberate: Anabasis is a **stereo mastering** maximizer (`DEVELOPMENT_BRIEF.md` §0); `isBusesLayoutSupported` rejects every non-stereo main. This differs from the sibling product, which accepts mono-in — a product-scope decision, not an omission |
+| **stereo → stereo** | **Verified** | The default layout: bus declaration `src/PluginProcessor.cpp:10-13`, predicate `isBusesLayoutSupported` (stereo out always). The whole test suite runs this layout |
+| **mono → stereo** | **Verified (headless)** | Accepted since 0.1.1 (KI-009 fix): `isBusesLayoutSupported` admits a mono main input; `processBlock` duplicates it into channel 1 before the engine, exactly as the sibling does. The refusal this replaces forced hosts with mono sources to negotiate stereo→stereo and feed one live pin + one silent pin — the KI-009 one-channel-silent mechanism. Evidence: the battery's `mono in` case (`tests/state_tests.cpp`, `testBothChannelsCarryAudioThroughTheWrapper`) |
+| **anything → mono / other** | **Not Supported** | Deliberate: Anabasis is a **stereo mastering** maximizer (`DEVELOPMENT_BRIEF.md` §0); the output main must be stereo, and inputs other than mono/stereo are rejected |
 
 ## DAW hosts — the audition target list
 

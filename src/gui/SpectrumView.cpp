@@ -10,9 +10,10 @@ SpectrumView::SpectrumView (AnabasisAudioProcessor& p) : processor (p)
     fftData.resize ((size_t) kSize * 2);
     inDb.assign (kBins, -120.0f);
     outDb.assign (kBins, -120.0f);
-    // Fires over the corner chip only (`hitTest` narrows the pointer claim),
-    // so the hint names the chip's ACTION, not this view. R2 item-11 wording ⊕.
-    setTooltip ("Switch to the gain-reduction history");
+    // Fires over the mode switch only (`hitTest` narrows the pointer claim),
+    // so the hint names the switch's ACTION. Same string in both views — it is
+    // one control drawn twice. Wording ⊕.
+    setTooltip ("Switch the graph between the spectrum and the GR history");
 }
 
 void SpectrumView::visibilityChanged()
@@ -23,20 +24,15 @@ void SpectrumView::visibilityChanged()
         clock.stop();
 }
 
-// The mode chip's hit-area — the top-right corner affordance that flips the
-// graph well to the GR history. (It was the spectrum's dismiss × until
-// 2026-08-05; same corner, same rectangle, different meaning — the well now
-// always shows one of the two views, so there is nothing to dismiss TO.) ONE
-// definition, because `hitTest` and `mouseDown` both key on it and a click this
-// view accepts but then ignores is exactly the swallowing the hitTest below
-// removes — reintroduced one pixel at a time if the two rectangles were
-// computed separately.
-//
-// Deliberately LARGER than the drawn chip (`paint` puts "GR" at
-// `getWidth() - 26, 4, 22 × 16`): the surplus is the touch target.
+// The mode switch's hit-area — since 0.1.1 the shared two-segment SPEC|GR
+// pill (`abgui::graph_switch`, one definition for both views; it was a
+// single-name corner chip before, and the spectrum's dismiss × before that).
+// Expanded 2 px beyond the drawn pill on every side: the surplus is the touch
+// target, and `hitTest` and `mouseDown` both key on this ONE rectangle so a
+// click the view accepts but then ignores cannot creep back in.
 juce::Rectangle<int> SpectrumView::chipHitArea() const noexcept
 {
-    return { getWidth() - 27, 0, 27, 24 };
+    return graph_switch::bounds (getWidth()).expanded (2);
 }
 
 // ONLY the chip is interactive. Leaving JUCE's default (hit-test true
@@ -85,11 +81,18 @@ void SpectrumView::mouseDown (const juce::MouseEvent& e)
     // outside the area — and is kept rather than trimmed so this function is
     // correct standing alone instead of correct because of what another
     // function happens to return.
-    if (chipHitArea().contains (e.getPosition()))
-        // Since 2026-08-05 this is a MODE SWITCH, not a dismissal: the well
-        // flips to the GR history (the chip names what you switch TO), and the
-        // GR view carries the mirrored chip back. Same corner, same hit-area
-        // discipline (clicks over the trace still pass through).
+    if (! chipHitArea().contains (e.getPosition()))
+        return;
+    // SEGMENT semantics (0.1.1): the pill shows both modes, so the click
+    // selects the segment it landed on rather than toggling — pressing the
+    // already-active segment is a no-op, including the property write (a
+    // same-value write is harmless, but not writing at all keeps the tree
+    // quiet). Resolved by WHICH SIDE OF THE DIVIDER the click falls on, so the
+    // 2 px touch surplus around the pill inherits its nearest segment instead
+    // of defaulting to one of them.
+    const bool wantSpectrum = e.getPosition().getX()
+                                < graph_switch::bounds (getWidth()).getCentreX();
+    if (! wantSpectrum)
         processor.internalState.state().setProperty (iid::spectrumOn, false, nullptr);
 }
 
@@ -298,8 +301,7 @@ void SpectrumView::paint (juce::Graphics& g)
     g.setColour (colours::accent);
     g.strokePath (pout, juce::PathStrokeType (1.3f));
 
-    // Corner mode chip (top-right): names the view you switch TO.
-    g.setColour (colours::textDim.withAlpha (0.7f));
-    g.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.1f));
-    g.drawText ("GR", getWidth() - 26, 4, 22, 16, juce::Justification::centred);
+    // The shared SPEC|GR mode switch, drawn LAST so it floats over the traces
+    // (it is translucent, so what it overlaps stays readable).
+    graph_switch::paint (g, getWidth(), true);
 }

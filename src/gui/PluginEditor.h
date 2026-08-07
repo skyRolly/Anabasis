@@ -274,8 +274,8 @@ private:
     juce::TextButton   presetPrev, presetNext, presetName;
 
     // -- COMP panel ----------------------------------------------------------
-    Knob ratioK, thresholdK, attackK, releaseK, kneeK, compMixK;
-    juce::Label ratioL, thresholdL, attackL, releaseL, kneeL, compMixL;
+    Knob ratioK, thresholdK, attackK, releaseK, kneeK, compMixK, compLinkK;
+    juce::Label ratioL, thresholdL, attackL, releaseL, kneeL, compMixL, compLinkL;
     juce::ToggleButton compAutoToggle;
     juce::ComboBox detectorBox;
 
@@ -301,6 +301,11 @@ private:
     Knob inputGainK, scHpfK;
     juce::Label inputGainL, scHpfL;
     juce::ComboBox ditherBox;
+    // The Dither cluster's caption (0.1.1, owner directive): the combo said
+    // Off/16-bit/24-bit and SHAPE said SHAPE, and nothing said "Dither" — the
+    // one utility-strip control group with no name. Same face and placement
+    // grammar as the fader captions beside it (label under the control).
+    juce::Label ditherCaption;
     juce::ToggleButton shapingToggle, compToggle, deltaToggle, freezeToggle;
 
     // -- macro row (Advanced: read-only with detach badges, §6.3) ------------
@@ -380,9 +385,15 @@ private:
 
     // -- Settings controls (all InternalState-bound, §6.4) -------------------
     juce::Label    settingsTitle;
-    juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox;
-    juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel;
-    juce::ToggleButton animToggle, tooltipsToggle, tpMeterToggle;
+    juce::ComboBox oversampleBox, phaseBox, offlineBox, uiScaleBox,
+                   // ADR-0020: which standard the INTEGRATED and RMS rows of
+                   // the statistics panel follow. Display-side only.
+                   integratedBox, rmsRefBox;
+    juce::Label    oversampleLabel, phaseLabel, offlineLabel, uiScaleLabel,
+                   integratedLabel, rmsRefLabel;
+    // `tpMeterToggle` left with `int_tpMeterOn` in 0.1.1 (ADR-0020): the
+    // statistics panel shows the true peak unconditionally.
+    juce::ToggleButton animToggle, tooltipsToggle;
 
     // -- Save-preset overlay -------------------------------------------------
     juce::Label      saveTitle;

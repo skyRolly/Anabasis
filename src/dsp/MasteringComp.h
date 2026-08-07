@@ -14,11 +14,16 @@
 //  the GR signal is smoothed in dB, attack when reduction deepens, release
 //  when it relaxes.
 //
-//  - Detector: stereo-linked (one gain for all channels — mastering glue must
-//    not wander the image). Per-channel sidechain HPF (20–300 Hz, RBJ
-//    Butterworth, detector-side ONLY — the audio path never passes through
-//    it), then max-of-channels magnitude. RMS mode squares through a fixed
-//    10 ms window; Peak mode uses the magnitude directly.
+//  - Detector: stereo link ADJUSTABLE since ADR-0019 (0.1.1) — the limiter's
+//    blend, applied at the same point: per-channel magnitude, then
+//    linked = link·max(all) + (1−link)·own, BEFORE the RMS integrator, so at
+//    full link every channel integrates the identical maximum and the
+//    per-channel envelopes compute identical gains — bit-for-bit the single
+//    shared-gain glue this stage always was (mastering glue must not wander
+//    the image; 100 % stays the default). Per-channel sidechain HPF
+//    (20–300 Hz, RBJ Butterworth, detector-side ONLY — the audio path never
+//    passes through it). RMS mode squares through a fixed 10 ms window;
+//    Peak mode uses the magnitude directly.
 //  - Static curve: soft knee of total width W dB centred on the threshold
 //    (quadratic interpolation inside the knee; W below a millidB is treated
 //    as hard to keep the 1/2W term finite).
@@ -63,10 +68,12 @@ public:
 
     void reset() noexcept
     {
-        grFastDb = grSlowDb = 0.0f;
-        meanSquare = 0.0f;
         for (int ch = 0; ch < kMaxChannels; ++ch)
+        {
+            grFastDb[ch] = grSlowDb[ch] = 0.0f;
+            meanSquare[ch] = 0.0f;
             hpfZ1[ch] = hpfZ2[ch] = 0.0f;
+        }
         primed = false;
     }
 
@@ -80,13 +87,15 @@ public:
     // is enough) without the envelope having seen anything.
     void sanitiseState() noexcept
     {
-        if (! std::isfinite (grFastDb) || ! std::isfinite (grSlowDb))
-            grFastDb = grSlowDb = 0.0f;          // paired: the auto path averages them
-        if (! std::isfinite (meanSquare))
-            meanSquare = 0.0f;
         for (int ch = 0; ch < kMaxChannels; ++ch)
+        {
+            if (! std::isfinite (grFastDb[ch]) || ! std::isfinite (grSlowDb[ch]))
+                grFastDb[ch] = grSlowDb[ch] = 0.0f;  // paired: the auto path averages them
+            if (! std::isfinite (meanSquare[ch]))
+                meanSquare[ch] = 0.0f;
             if (! std::isfinite (hpfZ1[ch]) || ! std::isfinite (hpfZ2[ch]))
                 hpfZ1[ch] = hpfZ2[ch] = 0.0f;
+        }
     }
 
     // Once per block, from the POD snapshot.
@@ -101,6 +110,7 @@ public:
         set (ratio,       juce::jlimit (1.01f, 40.0f, p.compRatio));
         set (kneeDb,      juce::jmax (0.0f, p.compKneeDb));
         set (mix,         juce::jlimit (0.0f, 1.0f, p.compMix));
+        set (link,        juce::jlimit (0.0f, 1.0f, p.compStereoLink));
         set (hpfFreq,     juce::jlimit (20.0f, 300.0f, p.scHpfFreqHz));
 
         // Time constants and mode switches are per-block by the same rule as
@@ -130,6 +140,7 @@ public:
         const float R = ratio.getNextValue();
         const float W = kneeDb.getNextValue();
         const float M = mix.getNextValue();
+        const float L = link.getNextValue();
         if (hpfFreq.isSmoothing())
         {
             hpfFreq.getNextValue();
@@ -137,7 +148,12 @@ public:
         }
 
         // -- detector (sidechain only, never the audio path) ----------------
-        float det = 0.0f;
+        // Per-channel magnitude, then the ADR-0019 stereo-link blend at the
+        // limiter's point: linked = L·max(all) + (1−L)·own, BEFORE the RMS
+        // integrator — at L == 1 both channels integrate the identical
+        // maximum, which is bit-for-bit the pre-0.1.1 single-detector glue.
+        float det[kMaxChannels] = {};
+        float maxDet = 0.0f;
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float x = chans[ch];
@@ -148,54 +164,68 @@ public:
                 hpfZ1[ch] = hb1 * x - ha1 * y + hpfZ2[ch];
                 hpfZ2[ch] = hb2 * x - ha2 * y;
             }
-            det = juce::jmax (det, std::abs (y));
-        }
-        float level = det;
-        if (rmsDetector)
-        {
-            meanSquare += (det * det - meanSquare) * aRms;
-            level = std::sqrt (meanSquare);
+            det[ch] = std::abs (y);
+            maxDet  = juce::jmax (maxDet, det[ch]);
         }
 
-        // -- static curve in dB ---------------------------------------------
-        const float levelDb = 20.0f * std::log10 (juce::jmax (level, 1.0e-9f));
-        const float invR    = 1.0f / R;
-        const float d       = levelDb - T;
-        float targetGrDb;
-        if (2.0f * d <= -W)
-            targetGrDb = 0.0f;
-        else if (2.0f * d >= W || W < 1.0e-3f)
-            targetGrDb = d * (invR - 1.0f);
-        else
-        {
-            const float t = d + W * 0.5f;
-            targetGrDb = (invR - 1.0f) * t * t / (2.0f * W);
-        }
-
-        // -- ballistics on the GR signal (dB domain) -------------------------
-        auto step = [this] (float& state, float target, float aRel) noexcept
-        {
-            state += (target - state) * (target < state ? aAtk : aRel);
-        };
-        if (autoRelease)
-        {
-            step (grFastDb, targetGrDb, aRelFast);
-            step (grSlowDb, targetGrDb, aRelSlow);
-        }
-        else
-        {
-            step (grFastDb, targetGrDb, aRelManual);
-            grSlowDb = grFastDb;          // keep the auto path from waking up stale
-        }
-        const float grDb = autoRelease ? 0.5f * (grFastDb + grSlowDb) : grFastDb;
-
-        // -- apply, with exact identity paths --------------------------------
-        if (grDb >= -1.0e-6f)
-            return;   // no reduction: wet == dry, so every mix value lands on
-                      // the input sample untouched — the bit-exact null path.
-        const float gain = std::pow (10.0f, grDb * (1.0f / 20.0f));
+        const float invR = 1.0f / R;
+        float grDbMin = 0.0f;
+        float grDb[kMaxChannels] = {};
         for (int ch = 0; ch < nCh; ++ch)
         {
+            const float linked = juce::exactlyEqual (L, 1.0f)
+                                     ? maxDet
+                                     : L * maxDet + (1.0f - L) * det[ch];
+            float level = linked;
+            if (rmsDetector)
+            {
+                meanSquare[ch] += (linked * linked - meanSquare[ch]) * aRms;
+                level = std::sqrt (meanSquare[ch]);
+            }
+
+            // -- static curve in dB -----------------------------------------
+            const float levelDb = 20.0f * std::log10 (juce::jmax (level, 1.0e-9f));
+            const float d       = levelDb - T;
+            float targetGrDb;
+            if (2.0f * d <= -W)
+                targetGrDb = 0.0f;
+            else if (2.0f * d >= W || W < 1.0e-3f)
+                targetGrDb = d * (invR - 1.0f);
+            else
+            {
+                const float t = d + W * 0.5f;
+                targetGrDb = (invR - 1.0f) * t * t / (2.0f * W);
+            }
+
+            // -- ballistics on the GR signal (dB domain) --------------------
+            auto step = [this] (float& state, float target, float aRel) noexcept
+            {
+                state += (target - state) * (target < state ? aAtk : aRel);
+            };
+            if (autoRelease)
+            {
+                step (grFastDb[ch], targetGrDb, aRelFast);
+                step (grSlowDb[ch], targetGrDb, aRelSlow);
+            }
+            else
+            {
+                step (grFastDb[ch], targetGrDb, aRelManual);
+                grSlowDb[ch] = grFastDb[ch];  // keep the auto path from waking up stale
+            }
+            grDb[ch] = autoRelease ? 0.5f * (grFastDb[ch] + grSlowDb[ch]) : grFastDb[ch];
+            grDbMin  = juce::jmin (grDbMin, grDb[ch]);
+        }
+
+        // -- apply, with exact identity paths --------------------------------
+        if (grDbMin >= -1.0e-6f)
+            return;   // no reduction anywhere: wet == dry, so every mix value
+                      // lands on the input sample untouched — the bit-exact
+                      // null path.
+        for (int ch = 0; ch < nCh; ++ch)
+        {
+            const float gain = grDb[ch] >= -1.0e-6f
+                                   ? 1.0f
+                                   : std::pow (10.0f, grDb[ch] * (1.0f / 20.0f));
             const float dry = chans[ch];
             const float wet = dry * gain;
             if (juce::exactlyEqual (M, 1.0f))      chans[ch] = wet;
@@ -206,8 +236,16 @@ public:
 
     // Audio-thread meter tap (P3 publishes it through an atomic per the
     // THREAD_MODEL planned-edges list; tests read it single-threaded).
+    // The DEEPEST channel since ADR-0019 — with the link below 100 % the two
+    // envelopes can differ, and the meter reports the most reduction applied.
     float currentGainReductionDb() const noexcept
-    { return autoRelease ? 0.5f * (grFastDb + grSlowDb) : grFastDb; }
+    {
+        float g = 0.0f;
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            g = juce::jmin (g, autoRelease ? 0.5f * (grFastDb[ch] + grSlowDb[ch])
+                                           : grFastDb[ch]);
+        return g;
+    }
 
 private:
     float onePole (float ms) const noexcept
@@ -246,24 +284,25 @@ private:
         ha2 = (1.0f - alpha) * inv;
     }
 
-    std::array<juce::SmoothedValue<float>*, 5> smoothers() noexcept
-    { return { &thresholdDb, &ratio, &kneeDb, &mix, &hpfFreq }; }
+    std::array<juce::SmoothedValue<float>*, 6> smoothers() noexcept
+    { return { &thresholdDb, &ratio, &kneeDb, &mix, &link, &hpfFreq }; }
 
     juce::SmoothedValue<float> thresholdDb { 0.0f }, ratio { 1.5f }, kneeDb { 6.0f },
-                               mix { 1.0f }, hpfFreq { 20.0f };
+                               mix { 1.0f }, link { 1.0f }, hpfFreq { 20.0f };
 
     // Detector HPF (normalised biquad) + per-channel state.
     float hb0 = 1.0f, hb1 = 0.0f, hb2 = 0.0f, ha1 = 0.0f, ha2 = 0.0f;
     float hpfZ1[kMaxChannels] = {}, hpfZ2[kMaxChannels] = {};
     bool  hpfOn = false;
 
-    float meanSquare = 0.0f, aRms = 0.01f;
+    float meanSquare[kMaxChannels] = {};
+    float aRms = 0.01f;
 
     // Ballistics. The auto constants are deliberately named, not exposed.
     static constexpr float kAutoFastMs = 80.0f, kAutoSlowMs = 900.0f;
     float aAtk = 0.01f, aRelManual = 0.01f;
     float aRelFast = 0.0f, aRelSlow = 0.0f;
-    float grFastDb = 0.0f, grSlowDb = 0.0f;
+    float grFastDb[kMaxChannels] = {}, grSlowDb[kMaxChannels] = {};
 
     bool  autoRelease = true, rmsDetector = true, primed = false;
     double sr = 48000.0;

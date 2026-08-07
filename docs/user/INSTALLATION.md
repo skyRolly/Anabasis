@@ -4,19 +4,26 @@ This guide is for **users and testers** — how to install a build you were give
 Maintainers building the project: [`docs/procedures/BUILD.md`](../procedures/BUILD.md).
 
 Anabasis v0.1.x is distributed as **plain ZIP archives**, one per platform, produced and
-validated by the project's CI — there are no installers yet (they arrive with the first
-commercial release, together with code-signing and notarization). Extracting a ZIP shows
-the payload directly — there is no wrapper folder inside.
+validated by the project's CI. Extracting a ZIP shows the payload directly — there is no
+wrapper folder inside. A Windows installer and a macOS `.pkg` are built too, as **separate
+downloads** rather than as archive contents; neither the archives nor the installers are
+code-signed or notarized yet.
+
+Each archive carries an `INSTALL.txt` with the same steps this guide gives, in English and
+Chinese. Linux additionally carries the two scripts its `INSTALL.txt` describes:
 
 | Platform | Archive | Contains |
 |---|---|---|
-| Linux | `Anabasis-Linux.zip` | `Anabasis.vst3` + `Anabasis` (Standalone) |
-| Windows | `Anabasis-Windows.zip` | `Anabasis.vst3` + `Anabasis.exe` (Standalone) |
-| macOS | `Anabasis-macOS.zip` | `Anabasis.vst3` + `Anabasis.component` (AU) + `Anabasis.app` — universal (Apple Silicon + Intel) |
+| Linux | `Anabasis-Linux.zip` | `Anabasis.vst3` + `Anabasis` (Standalone) + `install.sh` + `uninstall.sh` + `INSTALL.txt` |
+| Windows | `Anabasis-Windows.zip` | `Anabasis.vst3` + `Anabasis.exe` (Standalone) + `INSTALL.txt` |
+| macOS | `Anabasis-macOS.zip` | `Anabasis.vst3` + `Anabasis.component` (AU) + `Anabasis.app` — universal (Apple Silicon + Intel) — + `INSTALL.txt` |
 
-The plug-in is 64-bit only. Each archive also carries `NOTICE` and
-`THIRD_PARTY_LICENSES.md` — third-party attribution that must travel with the binaries;
-leave them in the folder if you pass a build along.
+The plug-in is 64-bit only. Third-party attribution is **not inside the archives**: `NOTICE`
+and `THIRD_PARTY_LICENSES.md` are published on the release page beside the downloads,
+version-named — `Anabasis-<version>-NOTICE.txt` and
+`Anabasis-<version>-THIRD_PARTY_LICENSES.md`. Take them from there if you need them, and pass
+them on with the build if you forward it. (The release page is the single carrier for every
+download route — the two installers never carried them either.)
 
 > **Two things to expect from a pre-release build:**
 >
@@ -118,10 +125,9 @@ two `/Library/…` ones).
 
 ## Verifying a download
 
-Checksums and a release manifest are part of the tag-triggered release pipeline, which is
-planned but not in place for v0.1.x — a build you receive today comes straight from CI. The
-plug-in's exact version and build number are on its About screen (click the **ANABASIS**
-title), so you can always confirm *what* you are running.
+`SHA256SUMS.txt` and a build manifest are published beside the downloads. The plug-in's
+exact version and build number are also on its About screen (click the **ANABASIS** title),
+so you can always confirm *what* you are running.
 
 ---
 

@@ -104,6 +104,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     dryMeter.prepare (sampleRate);
     wetMeter.prepare (sampleRate);
     outMeter.prepare (sampleRate);
+    outRms.prepare (sampleRate);
     outTp.prepare();
     adaptiveEngine.prepare (sampleRate, maxBlock);
     monitorGain.reset (sampleRate, 0.200);
@@ -195,6 +196,7 @@ void AnabasisEngine::reset() noexcept
     dryMeter.reset();
     wetMeter.reset();
     outMeter.reset();
+    outRms.reset();
     outTp.reset();
     renderTpMaxCall = renderPeakCall = 0.0f;
     adaptiveEngine.reset();
@@ -485,6 +487,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     dryMeter.sanitiseState();
     wetMeter.sanitiseState();
     outMeter.sanitiseState();
+    outRms.sanitiseState();
     adaptiveEngine.sanitiseState();
 
     // §5.4 adaptive trims: bounded deltas around the CURRENT values, applied
@@ -1040,6 +1043,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         wetMeter.processFrame (monFrameWet, nCh);
         adaptiveEngine.pushFrame (monFrameDry, nCh);
         outMeter.processFrame (renderFrame, nCh);
+        outRms.processFrame (renderFrame, nCh);      // §2.9 stats row (ADR-0020)
         {
             float tp[kMaxChannels] = {};
             outTp.processFrame (renderFrame, nCh, tp);

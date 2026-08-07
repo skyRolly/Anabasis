@@ -127,6 +127,31 @@ static int managedIndexOf (const juce::String& id)
     return -1;
 }
 
+// The §7 change test compares what an undo could RESTORE (ADR-0018): the
+// view-tier entries never travel with a slot restore — `applySlotToLive`
+// pins them — so both sides of the compare have them normalised away here.
+// Without this, a monitor toggle clicked while a knob drag was open minted a
+// step whose restore changed nothing. `advancedMode` is deliberately NOT
+// stripped: its diff is restorable (the undo path adopts it), so it must
+// keep minting steps.
+static juce::ValueTree strippedForUndoCompare (const juce::ValueTree& slot)
+{
+    auto copy = slot.createCopy();
+    auto params = copy.getChildWithName ("ANABASIS");
+    if (! params.isValid())
+        return copy;
+    for (int i = 0; i < params.getNumChildren(); ++i)
+    {
+        auto node = params.getChild (i);
+        if (node.hasType ("PARAM") && isViewTierParam (node.getProperty ("id").toString()))
+        {
+            node.setProperty ("value", 0.0, nullptr);
+            node.removeProperty ("raw", nullptr);
+        }
+    }
+    return copy;
+}
+
 void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*,
                                                                         int parameterIndex)
 {
@@ -158,7 +183,21 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin (juce::Au
     // step keys on a message-thread drag, because pushing one means copying
     // ValueTrees and that may not happen off the message thread. Stated here
     // because the two lines sit three apart and look like an oversight.
-    if (juce::MessageManager::existsAndIsCurrentThread()
+    // ADR-0018: the view-tier toggles (bypass and the two monitor functions)
+    // never travel with an undo restore — `applySlotToLive` pins them — so
+    // their clicks must not ARM the undo machinery either. Before this gate,
+    // a BYPASS click snapshotted the full tree, the end-compare saw the
+    // bypass diff, and a step was pushed whose restore changed nothing: one
+    // Undo press eaten per click. (`advancedMode` deliberately passes — its
+    // step is real since ADR-0018.) The sibling avoids the whole class by
+    // never listening to its view params; this listener hears everything, so
+    // the exclusion is spelled here.
+    const auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (
+        getParameters()[parameterIndex]);
+    const bool undoEligible = pw == nullptr || ! isViewTierParam (pw->getParameterID());
+
+    if (undoEligible
+        && juce::MessageManager::existsAndIsCurrentThread()
         && parameterIndex >= 0 && parameterIndex < kMaxCountedGestureIndex)
     {
         const uint64_t bit = 1ull << parameterIndex;
@@ -238,10 +277,14 @@ void AnabasisAudioProcessor::audioProcessorParameterChangeGestureEnd (juce::Audi
         // and `syncHistory()` is what drops it. Testing first would have read
         // a snapshot belonging to the previous session.
         syncHistory();
-        // One step per completed drag, and only if something CHANGED —
-        // an aborted gesture (press, no move) pushes nothing.
+        // One step per completed drag, and only if something an undo could
+        // RESTORE changed — an aborted gesture (press, no move) pushes
+        // nothing, and neither does a drag whose only diff is a view-tier
+        // toggle clicked mid-gesture (ADR-0018: `applySlotToLive` pins those
+        // entries, so their diff is unrestorable and must not mint a step).
         if (gesturePreState.isValid()
-            && ! gesturePreState.isEquivalentTo (saveSlotFromLive()))
+            && ! strippedForUndoCompare (gesturePreState)
+                   .isEquivalentTo (strippedForUndoCompare (saveSlotFromLive())))
             pushUndoStep (gesturePreState);
         gesturePreState = {};
     }
@@ -260,6 +303,69 @@ static void pushCapped (Stack& stack, Entry entry, int cap)
     stack.add (std::move (entry));
     while (stack.size() > cap)
         stack.remove (0);            // oldest first: the cap trims history, not the present
+}
+
+// §6.1 Copy, ADR-0018 semantics (the sibling's #12 rule, adopted verbatim):
+// the destination slot's PRE-COPY state becomes an undo entry on the
+// DESTINATION's stack, its older history is kept, and only its redo line is
+// cleared (a new action invalidates redo, same as any edit). Undoing on the
+// copied-into slot therefore reverts the Copy; further undos walk the
+// destination's own pre-copy history — coherent because entries are absolute
+// SLOT snapshots, not diffs. The 0.1.0 behaviour (clear both stacks, "as a
+// load does") argued the old entries described states the slot no longer has
+// — true only because the copy itself was not a step; making it one makes
+// them reachable again, which is the sibling's resolution and the owner's
+// 0.1.1 directive.
+//
+// The entry pairs the destination's OWN dirty datum (`storedPresetBaseline`),
+// not the active slot's live one — `pushUndoStep` targets the active stack
+// and pairs the live baseline, so it cannot be reused here.
+//
+// Still no duck and no engine involvement: nothing audible changes.
+void AnabasisAudioProcessor::copySlotToOther()
+{
+    syncHistory();                       // epoch reconcile before any stack touch
+    const int other = 1 - activeSlot;
+    // …and `advancedMode` comes from LIVE, not from `storedSlot` — see
+    // `slotWithLiveAdvancedMode`. Without that pin, undoing a Copy could
+    // resize the editor, which is the one thing ADR-0018 says Copy and its
+    // undo must never do.
+    UndoEntry pre { slotWithLiveAdvancedMode (storedSlot),
+                    storedPresetBaseline.createCopy() };
+    auto liveSlot = saveSlotFromLive();
+
+    // ONLY IF THE DESTINATION ACTUALLY CHANGES. Press Copy twice with no edit
+    // between and the second one overwrites the destination with what it
+    // already holds — the entry it would push restores the state it replaces,
+    // so one Undo press on that slot appears to do nothing. That is precisely
+    // the dead step ADR-0018 §Decision 4 set out to remove from the gesture
+    // path, arriving by a different route, so it takes the same answer: the
+    // gesture path's change test, `strippedForUndoCompare` on both sides,
+    // which normalises the view-tier entries an undo could not restore anyway.
+    // The dirty datum is compared too — it is the other half of what the entry
+    // would restore, and a baseline that moved is a real difference even when
+    // the parameter surface did not.
+    //
+    // The redo line is left alone in that case for the same reason nothing is
+    // pushed: a Copy that changes nothing is not a new action, and the gesture
+    // path likewise clears no redo when its diff is empty.
+    if (! strippedForUndoCompare (pre.slot)
+             .isEquivalentTo (strippedForUndoCompare (liveSlot))
+        || ! pre.baseline.isEquivalentTo (presetBaseline))
+    {
+        pushCapped (undoStacks[other], std::move (pre), kUndoCap);
+        redoStacks[other].clear();
+    }
+    storedSlot = std::move (liveSlot);
+    // `createCopy()`, for the reason `undo()`/`redo()` carry: assigning a
+    // `juce::ValueTree` shares the refcounted node, so the two slots' dirty
+    // data would be ONE tree until the next wholesale replacement. Harmless
+    // while a baseline is only ever replaced, never edited in place — which
+    // is true of every writer today — and a trap the moment one is not, since
+    // an edit made "for slot A" would appear in B. `storedSlot` above needs
+    // no such call: `saveSlotFromLive()` returns a freshly built tree that
+    // nothing else holds.
+    storedPresetBaseline = presetBaseline.createCopy();
 }
 
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
@@ -293,7 +399,7 @@ void AnabasisAudioProcessor::undo()
     const auto prev = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3: not a gesture
     engine.requestForcedDuck();
-    applySlotToLive (prev.slot);
+    applySlotToLive (prev.slot, /*adoptAdvanced*/ true);     // ADR-0018: ADV undoes
     // …and the datum that described it. `applySlotToLive` restores
     // `presetName` from the StateSet, so restoring one without the other left
     // the top bar comparing a previous preset's state against the applied
@@ -320,7 +426,7 @@ void AnabasisAudioProcessor::redo()
     const auto next = stack.removeAndReturn (stack.size() - 1);
     const MacroEngine::ScopedRestore guard (*macroEngine);
     engine.requestForcedDuck();                              // §2.8, as undo()
-    applySlotToLive (next.slot);
+    applySlotToLive (next.slot, /*adoptAdvanced*/ true);     // ADR-0018, as undo()
     presetBaseline = next.baseline.createCopy();             // paired, as undo()
 }
 
@@ -403,8 +509,22 @@ juce::AudioProcessorParameter* AnabasisAudioProcessor::getBypassParameter() cons
 
 bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        && layouts.getMainInputChannelSet()  == juce::AudioChannelSet::stereo();
+    // Stereo out always; mono OR stereo in — the sibling's contract, restored
+    // here for KI-009. Refusing mono→stereo forced hosts with a mono source to
+    // negotiate stereo→stereo and feed whatever their convention puts on the
+    // two input pins — several put the signal on ONE pin and silence on the
+    // other, and this chain is strictly dual-mono (the comp/limiter "link"
+    // shares only the detector LEVEL), so a silent input pin is a silent
+    // output channel in both modes. Accepting mono and duplicating it below
+    // removes that negotiation entirely.
+    const auto& out = layouts.getMainOutputChannelSet();
+    const auto& in  = layouts.getMainInputChannelSet();
+
+    if (out != juce::AudioChannelSet::stereo())
+        return false;
+
+    return in == juce::AudioChannelSet::stereo()
+        || in == juce::AudioChannelSet::mono();
 }
 
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -426,7 +546,7 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // clear — so no thread crossing is added to rescue it.
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
     grHistoryRing.reset();
-    dbTpMaxHold = -144.0f;
+    dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a
     // block completes — and indefinitely if the host prepares without ever
@@ -435,13 +555,15 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     updateLatency();
 }
 
-// The six published meter atomics, cleared — ONE list, because three sites
-// need exactly this and two of them had grown their own copy. Relaxed stores,
-// so it is callable from any thread: `prepareToPlay` (host), the block-top
-// meter-reset consume (audio) and `setStateInformation` (whichever thread the
-// host restores on) all use it. It deliberately does NOT touch `dbTpMaxHold`,
-// which is plain audio-thread state and stays with the two callers that own
-// that thread.
+// The published meter atomics, cleared — ONE list, because three sites need
+// exactly this and two of them had grown their own copy. (Ten since the
+// ADR-0020 stats row; the count is deliberately not repeated in prose here or
+// at the callers, because it was wrong within two commits of being written
+// the first time — the LIST is the count.) Relaxed stores, so it is callable
+// from any thread: `prepareToPlay` (host), the block-top meter-reset consume
+// (audio) and `setStateInformation` (whichever thread the host restores on)
+// all use it. It deliberately does NOT touch the two audio-thread max-holds,
+// which stay with the two callers that own that thread.
 void AnabasisAudioProcessor::publishSilentMeters() noexcept
 {
     pubLufsM.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
@@ -450,6 +572,10 @@ void AnabasisAudioProcessor::publishSilentMeters() noexcept
     pubDbTpMax.store (-144.0f, std::memory_order_relaxed);
     pubPlr.store (0.0f, std::memory_order_relaxed);
     pubGrDb.store (0.0f, std::memory_order_relaxed);
+    pubPeakMaxDb.store (-144.0f, std::memory_order_relaxed);
+    pubRmsDb.store (anabasis::RmsMeter::kSilentDb, std::memory_order_relaxed);
+    pubLufsIUngated.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
+    pubLra.store (anabasis::LoudnessMeter::kNoLra, std::memory_order_relaxed);
 }
 
 void AnabasisAudioProcessor::setNonRealtime (bool isNonRealtime) noexcept
@@ -495,7 +621,7 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (meterResetPending.exchange (false, std::memory_order_acquire))
     {
         engine.resetMeterHolds();
-        dbTpMaxHold = -144.0f;
+        dbTpMaxHold = samplePeakMaxHold = -144.0f;
         publishSilentMeters();   // superset of the three this needed; see there
     }
 
@@ -508,6 +634,14 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
+
+    // mono → stereo: duplicate the mono input into the second channel (the
+    // clear loop above just zeroed it), exactly as the sibling does. The
+    // engine is prepared from getTotalNumOutputChannels() — stereo — so both
+    // channels are processed; without this the right channel would master
+    // silence. See isBusesLayoutSupported for why mono is accepted at all.
+    if (getMainBusNumInputChannels() == 1 && buffer.getNumChannels() >= 2)
+        buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
 
     // A block the engine short-circuited produced no render-tap values:
     // publishing anyway would re-report the previous block's peaks and push a
@@ -529,6 +663,13 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const auto& om = engine.outputLoudness();
     const float blockTpDb = juce::Decibels::gainToDecibels (engine.lastRenderTpMax(), -144.0f);
     dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
+    // The SAMPLE peak's own hold (ADR-0020). `lastRenderPeak()` already
+    // existed and fed the GR ring's waveform; the stats row needs it as a
+    // held level too, and it is a max-hold rather than a per-block figure for
+    // the same reason the true peak is — the question "did this master ever
+    // exceed X?" is a session question.
+    samplePeakMaxHold = juce::jmax (samplePeakMaxHold,
+                                    juce::Decibels::gainToDecibels (engine.lastRenderPeak(), -144.0f));
 
     // integratedLufs() walks the 751-bin histogram twice (~1500 iterations,
     // bounded and allocation-free) although the figure only moves when a
@@ -545,6 +686,15 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     pubPlr.store (lufsI > anabasis::LoudnessMeter::kSilentLufs + 1.0f
                       ? dbTpMaxHold - lufsI : 0.0f,
                   std::memory_order_relaxed);
+    // The stats row (ADR-0020). `integratedUngatedLufs()` and `lraLu()` are
+    // published UNCONDITIONALLY beside the gated figure — the Settings choice
+    // between BS.1770-1 and -2 and between the two RMS references is resolved
+    // by the VIEW, so the audio thread never reads a display preference and
+    // switching either one is instant with no audio involvement.
+    pubPeakMaxDb.store (samplePeakMaxHold, std::memory_order_relaxed);
+    pubRmsDb.store (engine.outputRms().rmsDb(), std::memory_order_relaxed);
+    pubLufsIUngated.store (om.integratedUngatedLufs(), std::memory_order_relaxed);
+    pubLra.store (om.lraLu(), std::memory_order_relaxed);
 
     const float grDb = juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f);
     pubGrDb.store (grDb, std::memory_order_relaxed);
@@ -839,7 +989,47 @@ void AnabasisAudioProcessor::reassertFromRaw (const juce::ValueTree& apvtsTree)
     }
 }
 
-void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
+// ADR-0018's `advancedMode` pin, applied to a slot tree at PUSH time. It
+// exists for exactly one caller, and the reason is a property no other undo
+// entry has.
+//
+// Every OTHER entry is a `saveSlotFromLive()` taken at the moment of the step
+// it records, so its `advancedMode` is by construction the view the user had
+// then — which is what makes adopting it on undo correct (`applySlotToLive`
+// with `adoptAdvanced = true`, the one path that does). The Copy entry is not
+// that: it is `storedSlot`, captured by the last `switchToSlot` and frozen
+// since. Toggle ADV after that switch and then Copy, and the destination's
+// entry carries the PRE-toggle view mode; undoing the Copy then writes it back
+// and the window changes size for a reason the user never took.
+//
+// ADR-0018 §Consequences states the contract this breaks in as many words:
+// "A/B compare behaviour is unchanged: switching slots never resizes the
+// editor, and Copy never moves the view." The undo of a Copy is part of Copy's
+// behaviour, so the fix belongs here rather than in the ADR. Owner-confirmed
+// 2026-08-07: Copy undo keeps the current view mode.
+//
+// The pin is the same one `applySlotToLive` applies on the Copy and A/B paths
+// — value from the live tree, raw from the parameter — deliberately NOT
+// generalised into a shared helper: there the rule is "do not adopt what the
+// tree carries", here it is "do not store what the tree carries", and the two
+// read alike only because they happen to name the same parameter.
+juce::ValueTree AnabasisAudioProcessor::slotWithLiveAdvancedMode (const juce::ValueTree& slot)
+{
+    auto copy = slot.createCopy();
+    auto params = copy.getChildWithName ("ANABASIS");
+    if (! params.isValid())
+        return copy;                     // no surface to pin; the caller's guards cover it
+    auto node = params.getChildWithProperty ("id", pid::advancedMode);
+    if (! node.isValid())
+        return copy;
+    if (auto live = apvts.state.getChildWithProperty ("id", pid::advancedMode); live.isValid())
+        node.setProperty ("value", live.getProperty ("value"), nullptr);
+    if (auto* lp = apvts.getParameter (pid::advancedMode))
+        node.setProperty ("raw", (double) lp->getValue(), nullptr);
+    return copy;
+}
+
+void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced)
 {
     const auto params = slot.getChildWithName ("ANABASIS");
     if (params.isValid())
@@ -848,15 +1038,21 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot)
         // predicate): overwrite the incoming copy with the LIVE values —
         // value from the tree, raw from the parameter itself — so both the
         // replaceState and the raw re-assert leave them untouched.
+        // `advancedMode` left the view tier in ADR-0018 but stays PINNED on
+        // every path except the undo/redo restore (`adoptAdvanced`), so the
+        // pin is spelled out here rather than inherited from the predicate.
         auto incoming = params.createCopy();
         for (int i = 0; i < incoming.getNumChildren(); ++i)
         {
             auto node = incoming.getChild (i);
-            if (node.hasType ("PARAM") && isViewTierParam (node.getProperty ("id").toString()))
+            const auto id = node.getProperty ("id").toString();
+            const bool pinned = isViewTierParam (id)
+                             || (id == pid::advancedMode && ! adoptAdvanced);
+            if (node.hasType ("PARAM") && pinned)
                 if (auto live = apvts.state.getChildWithProperty ("id", node.getProperty ("id")); live.isValid())
                 {
                     node.setProperty ("value", live.getProperty ("value"), nullptr);
-                    if (auto* lp = apvts.getParameter (node.getProperty ("id").toString()))
+                    if (auto* lp = apvts.getParameter (id))
                         node.setProperty ("raw", (double) lp->getValue(), nullptr);
                 }
         }

@@ -8,6 +8,7 @@
 #include "LookaheadLimiter.h"
 #include "CeilingClamp.h"
 #include "LoudnessMeter.h"
+#include "RmsMeter.h"
 #include "TruePeak.h"
 #include "AdaptiveEngine.h"
 #include "ScopeBuffer.h"
@@ -280,6 +281,11 @@ public:
     // process() on the audio thread, so no atomics are needed.
     const LoudnessMeter& outputLoudness() const noexcept { return outMeter; }
 
+    // The §2.9 Waveform-Statistics RMS, off the SAME render tap and for the
+    // same reason (ADR-0020). Level, not loudness — see `RmsMeter`'s header
+    // for why the K-weighted meter above cannot answer this question.
+    const RmsMeter& outputRms() const noexcept { return outRms; }
+
     // §2.9 spectrum capture rings (THREAD_MODEL's planned edge, implemented
     // at P5 on the SPSC ring row): post-input-gain and post-chain (the render
     // tap), each published with one release-store per processed chunk. The
@@ -432,6 +438,7 @@ private:
     // the engine and not the wrapper: only the engine sees the sample before
     // the monitor-only stages touch it).
     LoudnessMeter     outMeter;
+    RmsMeter          outRms;      // §2.9 stats row: 50 ms Hann RMS (ADR-0020)
     TruePeakEstimator outTp;
     float renderTpMaxCall = 0.0f, renderPeakCall = 0.0f;
 public:

@@ -500,6 +500,10 @@ one `ldd` closure.
 both files into the customer artifact (the IJG/BSD notices attach to binary redistribution, and
 CI artifacts reach beta testers), and the three adjacent "added at P6 (packaging/)" comments now
 cite OQ-007 — the same passed-phase staleness the drift repair fixed elsewhere.
+**Superseded 2026-08-06 by ADR-0021**, and the record is left standing rather than rewritten
+because it states what THIS round did: the staging copies were removed, and the obligation now
+travels as version-named release-page assets — the one carrier the `.pkg` and Inno routes pass
+through, which the staging copies never reached at all.
 (3) Synced: README §Licensing (pointers to both files), the legal self-coverage row (factual
 half Present; owner-legal half — EULA/PRIVACY/TRADEMARKS — stays absent on C8/OQ-002, stated
 per the sibling delta: Anabasis has no EULA even as a draft), HANDOVER's post-v0.1.0 section.
@@ -5672,9 +5676,9 @@ landed — the staleness the same date's audit entry reports.)
 | docs root — testing/status (since P2) | `TEST_REPORT.md` (measured aliasing / TP / latency-matrix / dither / LUFS data, updated per phase) | Present |
 | user | `USER_MANUAL.md`, `INSTALLATION.md` | **Present (2026-08-05)** — written against the v0.1.0 surface with every stated fact taken from the tree (registry ranges, factory names, preset paths, Learn's 5 s minimum, the constant-latency contract, the chmod/quarantine realities of the OQ-007 zips). Derived class — never evidence (`SOURCE_OF_TRUTH.md`); prose voice adapted from the sibling's manual under ADR-0009 and ⊕ for the fine review like all product wording taken under a standing approval |
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
-| root — legal | `NOTICE`, `THIRD_PARTY_LICENSES.md` | **Factual attribution half Present (2026-08-05)** — produced against the actually-pinned JUCE tree per `RELEASE_POLICY.md`'s own prescription: inventory from JUCE's `LICENSE.md` plus a compiled-TU walk, compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides them), exclusions from their gates plus symbol absence; CI copies both files into every customer artifact. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) stays absent — waits on OQ-002 and owner wording, never invented (C8) |
-| root — internal/testing | — | SUPPORT.md ships with the first tester build (none has left the repository — Release Status row, `HANDOVER.md`) |
-| .github | workflows/{build,codeql,msvc,dependency-review,cxx23-canary}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present (release.yml deferred to the first commercial release — OQ-007, resolved 2026-08-02) |
+| root — legal | `NOTICE`, `THIRD_PARTY_LICENSES.md` | **Factual attribution half Present (2026-08-05)** — produced against the actually-pinned JUCE tree per `RELEASE_POLICY.md`'s own prescription: inventory from JUCE's `LICENSE.md` plus a compiled-TU walk, compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides them), exclusions from their gates plus symbol absence. **Delivery changed in 0.1.1** (**ADR-0021**, `RELEASE_POLICY.md` §Third-party attribution): both ship as version-named release-page assets — `Anabasis-<version>-NOTICE.txt` and `Anabasis-<version>-THIRD_PARTY_LICENSES.md` — and are no longer copied into the zips, the `.pkg` or the Inno payload, because the release page is the one carrier every distribution route passes through and a loose unversioned copy cannot be told apart from another build's once extracted. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) stays absent — waits on OQ-002 and owner wording, never invented (C8) |
+| root — internal/testing | `SUPPORT.md` (**landed 0.1.1**), `.github/ISSUE_TEMPLATE/` | The class's rule is "restates the legal class, never diverges from it" — and Anabasis has no approved licence, EULA or privacy document to restate (OQ-002 / OQ-009 open). `SUPPORT.md` states that as its own §1 and confines itself to what the repository can evidence: the reporting channel, what a usable report contains, and that terms come from the owner rather than from it. Deliberately SHORTER than the sibling's, which restates documents that exist there |
+| .github | workflows/{build,codeql,msvc,dependency-review,cxx23-canary,release}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present — **`release.yml` landed in 0.1.1** (**ADR-0021**: tag-triggered validate → build → draft-release, publishing left a human action). The OQ-007 deferral this row quoted is **superseded 2026-08-07** for the pipeline-and-installers half; only signing/notarization stays deferred |
 | scripts | setup-linux, build, run-tests, run-pluginval.{sh,ps1} | Present |
 
 ## Known coverage gaps / TODOs
@@ -5723,8 +5727,9 @@ These are **deliberate**, not oversights. Each names what would close it.
   post-v0.1.0 fine review's DAW-matrix audition (`HANDOVER.md` Pending Tasks), which needs
   `COMPATIBILITY_MATRIX.md` first (above).
 - ~~**Legal / attribution class absent**~~ — **factual half closed 2026-08-05**: `NOTICE` +
-  `THIRD_PARTY_LICENSES.md` landed (self-coverage row carries the method) and CI ships them
-  inside every customer artifact. Still genuinely absent: the owner-legal half (`EULA.md`,
+  `THIRD_PARTY_LICENSES.md` landed (self-coverage row carries the method); since 0.1.1 they
+  ship as version-named release-page assets rather than inside the packages (**ADR-0021** — the
+  legal row above carries the reasoning). Still genuinely absent: the owner-legal half (`EULA.md`,
   `PRIVACY.md`, `TRADEMARKS.md`) — waits on OQ-002 and owner wording (C8). (This bullet said
   "producible now" for one commit after the files existed — the attribution change synced the
   row and missed the bullet; caught by the 2026-08-05 verification round.)

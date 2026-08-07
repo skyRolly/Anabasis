@@ -548,6 +548,10 @@ record.
    toward the floor on an idle tick) is three lines once the answer is known.
 
 7. **RESOLVED 2026-08-03 (round 37) — Copy A→B and the destination's undo history.**
+   **[Superseded 2026-08-06 by ADR-0018 — the round-37 answer is reversed.]** The Copy is now an
+   undo step ON the destination whose pre-copy history is KEPT (the sibling's semantics, per the
+   owner's 0.1.1 directive); the clear-both-stacks resolution below is the historical record of
+   the 0.1.0 answer.
    `copySlotToOther()` replaced `storedSlot` but not `undoStacks[1 - activeSlot]`, so switching to
    the copied-into slot and pressing undo restored a pre-copy state the user never edited from the
    copied values — silently discarding the copy AND that slot's last edit, because the copy itself
@@ -678,6 +682,107 @@ build (CI zip? local?), whether the standalone or a plugin format, and whether t
 is heard or read off a meter. The six-configuration battery stays in the suite either way — it
 is now the permanent guard on every headless-reachable stereo path, and whichever configuration
 eventually reproduces the report becomes its seventh case.
+
+**0.1.1 addendum — the input-side mechanism, closed.** The report persisted past the round-2
+probe, so 0.1.1 re-ran the investigation as a line-by-line wrapper/bus/CMake diff against the
+sibling plus a full re-audit of every channel-asymmetric expression in the engine and
+`LookaheadLimiter`. Finding: the audible path is provably channel-symmetric (every `ch == 0`
+asymmetry is an analysis tap), and no Anabasis source line can silence one channel — but the
+**bus contract** could. Anabasis refused the mono→stereo layout the sibling accepts
+(`isBusesLayoutSupported` demanded stereo→stereo exactly), so a host with a mono source — or a
+mono input device under the standalone — was forced to negotiate stereo→stereo and feed whatever
+its convention puts on the two input pins. Several conventions put the programme on ONE pin and
+silence on the other, and this chain is strictly dual-mono (the comp/limiter stereo "link"
+shares only the detector level; nothing cross-feeds), so a silent input pin propagated to a
+silent output channel in both modes — exactly the report, and unreachable by the battery, which
+always fed both channels. Fix: `isBusesLayoutSupported` now accepts mono→stereo (the sibling's
+contract), and `processBlock` duplicates the mono input into channel 1 before the engine runs.
+The battery gained its predicted seventh case (`mono in`, programme on channel 0 only, both
+outputs asserted live). If the field setup was instead a silent left channel *delivered by the
+routing upstream* (the other mechanism the audit ranks plausible), the plugin now also survives
+the mono half of that: the host can drop to the mono layout instead of feeding a dead pin.
+
+### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** all platforms and formats — every preset load, A/B switch, undo step and discrete
+rewire (the §2.8 duck's whole set)
+
+**Workaround:** none needed — the transition is click-free either way; the dip is simply more
+audible than a dry-filled one would be.
+**Cause:** the dry-fill half of the sibling's duck was never ported; see below.
+
+**What the record claims.** ADR-0004's §Consequences argues that Anabasis's constant-latency
+contract makes every bulk swap *dry-fillable*: "A preset step, an A/B switch and an undo step are
+therefore **always** dry-fillable and never touch PDC", and "**The forced duck keeps its best
+masking mode in the workflow that matters** — the Anamorph gate `predictLatency == latched
+latency` is satisfied by construction for every bulk swap". The sibling's duck, when that gate
+passes, crossfades against the delay-aligned dry signal instead of dipping to silence.
+
+**What the code does.** `AnabasisEngine::processChunk` applies the duck as a scalar on the
+processed path only — `if (! exactlyEqual (duckGain, 1.0f)) processed *= duckGain;` — and no path
+anywhere in `src/` substitutes or blends the delay-aligned dry ring during a duck. So every
+preset load, A/B switch and undo step dips to **silence** for the duck's ~34 ms, which is the
+weaker of the two masking modes the ADR discusses. Confirmed by the 0.1.1 migration audit and
+independently re-verified against both trees.
+
+**Why this is recorded and not fixed.** No invariant is violated: `DSP_POLICY` invariant 8
+requires transitions to be **click-free**, and a raised-cosine dip to silence is click-free — the
+duck tests pin exactly that and pass. What is wrong is that an Accepted ADR's Consequences
+section describes a behaviour the tree does not have, which is a documentation-vs-code
+contradiction rather than a defect in either alone. Implementing dry-fill is an **audible**
+change to every bulk swap on the one path a listening pass has not yet covered, and it landed in
+the audit on the day of the 0.1.1 release round. Changing how every preset load sounds, unheard,
+to satisfy a sentence in a Consequences section is the wrong trade for a release.
+
+**For the fine review — the decision is which side moves.** Either (a) implement the dry-fill
+blend at the duck bottom and keep ADR-0004's text, which needs the delay-aligned dry ring routed
+into the duck and its own crossfade shape, plus a listening pass; or (b) amend ADR-0004's
+Consequences to say the latency contract makes dry-fill *possible* while the shipped duck dips to
+silence, and record dry-fill as a deliberate later option. (b) is the smaller change and is
+honest; (a) is what the ADR's author appears to have intended. This entry does not choose.
+
+**Evidence [Verified]:**
+- Source: `src/dsp/AnabasisEngine.cpp` (the duck application in `processChunk`); a repo-wide
+  search for a dry-fill/blend path in `src/` returns nothing
+- Record: `docs/architecture/design-decisions/ADR-0004-latency-contract-constant-lookahead-allowance.md`
+  §Consequences
+- Test: the duck tests (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`,
+  `testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) pass — they assert click-freeness, which
+  is unaffected either way, so nothing in the suite discriminates between the two masking modes
+
+### KI-011 — Ported helpers whose second half was left behind (2026-08-07)
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** (1) all hosts, on every session/preset/A-B restore; (2) all platforms, on a
+Peak → RMS compressor detector switch
+
+**Workaround:** none needed for (1) — no observed defect. For (2), leave the detector alone
+during a take, or give it a second to settle after switching.
+**Cause:** in both cases a sibling helper was ported without one of its rules; see below.
+
+The 0.1.1 migration audit swept the tree for places where a sibling mechanism was copied in part.
+Most findings were fixed in that round; these two were confirmed and deliberately left, both
+because the fix is a behaviour change rather than a repair:
+
+1. **`reassertFromRaw` is the degraded half of the sibling's `reassertParameters`.** The sibling
+   carries two rules this copy dropped: an idempotence guard (`if (std::abs (norm -
+   rp->getValue()) > 1.0e-6f)` — parameters already at the target are left untouched) and a
+   `notifyHost=false` mode used by `setStateInformation` only. Without the guard, every restore
+   notifies the host for all 50 parameters even when none moved; without the split, a session
+   load announces parameter changes to a host that is mid-restore. Neither has produced an
+   observed defect — pluginval's state-restoration tests pass at the gate strictness — but both
+   are host-behaviour changes and belong with the DAW-matrix audition, where a real host can show
+   whether the notification storm matters.
+2. **`MasteringComp`'s RMS integrator is neither kept warm nor cleared across the Peak/RMS
+   detector edge.** `meanSquare[ch]` advances only while `rmsDetector` is true, and the mode is
+   assigned per block with no edge handling, so switching Peak → RMS resumes from a mean square
+   that is however many blocks old. Every other mode-switched state in the tree is handled. The
+   audible consequence is a brief wrong gain immediately after the switch; which of "clear" or
+   "keep warm" is right is a listening-pass call, and the switch is duck-routed, so the artefact
+   is partly masked already.
 
 ## Standing note for P1 onward
 

@@ -11,6 +11,7 @@
 
 #include <AnabasisEngine.h>
 #include <LoudnessMeter.h>
+#include <RmsMeter.h>
 #include <Latency.h>
 #include <juce_dsp/juce_dsp.h>
 #include <cstdio>
@@ -594,6 +595,71 @@ static void testCompDetectorAndMix()
             if (! juce::exactlyEqual (frame[0], v)) { exact = false; break; }
         }
         check (exact, "comp: 0% mix is bit-exact dry even under heavy reduction");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0019 (0.1.1): the comp's stereo link is ADJUSTABLE — the limiter's
+// blend at the same point, linked = link·max(all) + (1−link)·own, before the
+// integrator. Stimulus: a loud sine on ch 0 (deep over threshold), a quiet
+// one on ch 1 (below the knee bottom). Full link must drag the quiet channel
+// down with the loud one (one shared gain — the pre-0.1.1 glue); zero link
+// must leave the quiet channel BIT-EXACT (its own detector never reaches the
+// knee, and the gain-1 path multiplies by exactly 1.0f); half link sits
+// between. A mutant that blends after the RMS integrator, or that keeps the
+// single shared envelope, fails the zero-link half.
+static void testCompStereoLink()
+{
+    const double sr = 48000.0;
+    anabasis::EngineParameters p;
+    p.compThresholdDb = -20.0f; p.compRatio = 4.0f; p.compKneeDb = 0.0f;
+    p.compAttackMs = 5.0f; p.compAutoRelease = false; p.compReleaseMs = 50.0f;
+    p.compMix = 1.0f; p.compDetector = 0;
+
+    auto quietOutDb = [&] (float link) -> float
+    {
+        p.compStereoLink = link;
+        anabasis::MasteringComp comp;
+        comp.prepare (sr);
+        comp.setPerBlock (p);
+        const int total = (int) sr;
+        double sumSq = 0.0; int counted = 0;
+        for (int n = 0; n < total; ++n)
+        {
+            const float ph = 2.0f * juce::MathConstants<float>::pi
+                           * 1000.0f * (float) n / (float) sr;
+            float frame[2] = { 0.31623f * std::sin (ph),      // −13 dB RMS: ~7 dB over
+                               0.02f    * std::sin (ph) };    // −37 dB RMS: far below
+            comp.processSample (frame, 2);
+            if (n >= total / 2) { sumSq += (double) frame[1] * frame[1]; ++counted; }
+        }
+        return (float) (20.0 * std::log10 (std::sqrt (sumSq / counted)));
+    };
+
+    const float linked   = quietOutDb (1.0f);
+    const float unlinked = quietOutDb (0.0f);
+    const float half     = quietOutDb (0.5f);
+    check (linked < unlinked - 2.0f,
+           "compLink: full link drags the quiet channel down with the loud one");
+    check (half < unlinked - 0.5f && half > linked + 0.5f,
+           "compLink: half link sits between full and none");
+
+    {   // zero link: the below-knee channel is BIT-EXACT while the other compresses
+        p.compStereoLink = 0.0f;
+        anabasis::MasteringComp comp;
+        comp.prepare (sr);
+        comp.setPerBlock (p);
+        bool exact = true;
+        for (int n = 0; n < 24000; ++n)
+        {
+            const float ph = 0.1309f * (float) n;
+            const float q  = 0.02f * std::sin (ph);
+            float frame[2] = { 0.5f * std::sin (ph), q };
+            comp.processSample (frame, 2);
+            if (! juce::exactlyEqual (frame[1], q)) { exact = false; break; }
+        }
+        check (exact, "compLink: at zero link a below-knee channel passes bit-exact "
+                      "while the other channel is deep in reduction");
     }
 }
 
@@ -2499,6 +2565,178 @@ static void testLufsGating()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0020's two additions to this class, each against the same stimuli the
+// gate tests above use, so a reader can compare the three answers directly.
+static void testLoudnessRangeAndTheUngatedReading()
+{
+    const double sr = 48000.0;
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+    auto feed = [sr] (anabasis::LoudnessMeter& m, double seconds, float amp, double t0)
+    {
+        for (int n = 0; n < (int) (seconds * sr); ++n)
+        {
+            const double t = t0 * sr + n;
+            const float s = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                            * 997.0f * (float) t / (float) sr);
+            const float fr[2] = { s, s };
+            m.processFrame (fr, 2);
+        }
+    };
+
+    {   // A steady tone has NO range. The one reading that would pass by
+        // accident if `lraLu()` returned its sentinel, so the count is checked
+        // by the case below rather than by trusting a zero here.
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        feed (m, 20.0, 0.1f, 0.0);
+        check (near (m.lraLu(), 0.0f, 0.3f), "lra: a steady tone reads ~0 LU");
+    }
+    {   // 20 s at −20 LUFS then 20 s at −30: the 95th percentile sits in the
+        // loud passage and the 10th in the quiet one, so LRA ≈ 10 LU. Both
+        // passages clear the −20 LU relative gate (the energy mean is ≈ −22.6,
+        // so the threshold is ≈ −42.6), which is what makes this a percentile
+        // measurement rather than a gate measurement.
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        feed (m, 20.0, 0.1f, 0.0);        // −20 LUFS
+        feed (m, 20.0, 0.0316228f, 20.0); // −30 LUFS
+        check (near (m.lraLu(), 10.0f, 1.0f), "lra: a 10 LU level step reads ~10 LU of range");
+    }
+    {   // The LRA relative gate is −20 LU, NOT the integrated reading's −10:
+        // a passage 15 LU down survives here and would be gated out there. So
+        // this stimulus separates the two constants — with −10 substituted the
+        // quiet passage vanishes and LRA collapses toward 0.
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        feed (m, 30.0, 0.1f, 0.0);         // −20 LUFS, the bulk of the programme
+        feed (m, 10.0, 0.0177828f, 30.0);  // −35 LUFS, 15 LU down
+        check (m.lraLu() > 10.0f, "lra: the -20 LU gate keeps a 15 LU-down passage in range");
+    }
+    {   // The ungated (BS.1770-1) reading against the gated one, on the
+        // absolute gate's own stimulus: 5 s of tone then 10 s of silence.
+        // Gated holds the programme; ungated is dragged down by two thirds of
+        // the measurement being silent. `energyToLufs` floors at 1e-12, so the
+        // silent blocks contribute a finite ~−120, not −inf.
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        feed (m, 5.0, 0.1f, 0.0);
+        for (int n = 0; n < (int) (10.0 * sr); ++n)
+        {
+            const float fr[2] = { 0.0f, 0.0f };
+            m.processFrame (fr, 2);
+        }
+        check (near (m.integratedLufs(), -20.0f, 0.15f),
+               "ungated: (premise) the GATED reading holds the programme");
+        check (m.integratedUngatedLufs() < -24.0f,
+               "ungated: BS.1770-1 has no absolute gate, so the silence drags it down");
+    }
+    {   // The reset clears both, and the LRA watermark is the SHORT-TERM
+        // window's rather than the integrated one's: a reset issued during
+        // loud playback must not leave a pre-reset short-term value setting
+        // the 95th percentile. Loud, reset, then quiet-but-steady — a shared
+        // watermark of +4 would readmit ~2.9 s of the loud passage and read a
+        // large range; the correct +30 reads ~0.
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        feed (m, 20.0, 0.3f, 0.0);
+        m.resetIntegrated();
+        feed (m, 20.0, 0.01f, 20.0);
+        check (near (m.lraLu(), 0.0f, 0.5f),
+               "lra: the reset watermark spans the short-term window, so no pre-reset value survives");
+        check (near (m.integratedLufs(), -40.0f, 0.5f),
+               "lra: (premise) the integrated reading restarted on the quiet passage");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The 50 ms Hann RMS (ADR-0020). Every case is a closed-form level: a sine's
+// RMS is its amplitude/√2, DC's is its own value, and both are window-shape
+// independent BECAUSE the window sum normalises — which is the property the
+// second case exists to pin (an un-normalised window reads ~3 dB low).
+static void testRmsMeterReadsTrueLevels()
+{
+    const double sr = 48000.0;
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+    auto settledDb = [sr] (float amp, bool dc)
+    {
+        anabasis::RmsMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (0.5 * sr); ++n)     // 10 windows: fully settled
+        {
+            const float s = dc ? amp
+                               : amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 1000.0f * (float) n / (float) sr);
+            const float fr[2] = { s, s };
+            m.processFrame (fr, 2);
+        }
+        return m.rmsDb();
+    };
+
+    check (near (settledDb (1.0f, false), -3.01f, 0.05f),
+           "rms: a full-scale sine reads -3.01 dBFS (the MATHEMATICAL reference)");
+    check (near (settledDb (1.0f, true), 0.0f, 0.05f),
+           "rms: full-scale DC reads 0 dBFS (the window normalisation is exact)");
+    check (near (settledDb (0.1f, false), -23.01f, 0.05f),
+           "rms: linearity — a -20 dBFS sine reads -23.01");
+
+    {   // Before the first full 50 ms window there is NO reading, deliberately:
+        // a partially filled window reads low by the fraction still empty, and
+        // a wrong number on a transport start is worse than an absent one.
+        anabasis::RmsMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (0.02 * sr); ++n)    // 20 ms — under the window
+        {
+            const float fr[2] = { 0.5f, 0.5f };
+            m.processFrame (fr, 2);
+        }
+        check (juce::exactlyEqual (m.rmsDb(), anabasis::RmsMeter::kSilentDb),
+               "rms: a partly filled window reads the silent sentinel, not a low number");
+    }
+    {   // Stereo is the MEAN square across channels, so a correlated signal
+        // reads the same as the same signal on one channel — and a signal on
+        // ONE channel of a stereo frame reads 3 dB lower, which is the half of
+        // the convention a correlated-only test cannot see.
+        anabasis::RmsMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (0.5 * sr); ++n)
+        {
+            const float s = std::sin (2.0f * juce::MathConstants<float>::pi
+                                      * 1000.0f * (float) n / (float) sr);
+            const float fr[2] = { s, 0.0f };
+            m.processFrame (fr, 2);
+        }
+        check (near (m.rmsDb(), -6.02f, 0.05f),
+               "rms: one channel of a stereo frame reads 3 dB below the correlated case");
+    }
+    {   // The sentinel and the readings must NOT overlap. Once a full window
+        // has been seen the meter has measured something, and "below what this
+        // meter resolves" is an answer — so it reports `kFloorDb`, which sits
+        // strictly above "nothing measured yet". Both stimuli here published
+        // the sentinel while a single constant served both jobs: exact silence
+        // has no logarithm, and −163 dBFS fell below where the computed range
+        // was cut off. Either would have been read as an absent measurement.
+        static_assert (anabasis::RmsMeter::kFloorDb > anabasis::RmsMeter::kSilentDb,
+                       "a reading must never be mistaken for the sentinel");
+
+        anabasis::RmsMeter m;
+        m.prepare (sr);
+        for (int n = 0; n < (int) (0.5 * sr); ++n)
+        {
+            const float fr[2] = { 0.0f, 0.0f };
+            m.processFrame (fr, 2);
+        }
+        check (juce::exactlyEqual (m.rmsDb(), anabasis::RmsMeter::kFloorDb),
+               "rms: digital silence reads the floor — a measurement, not the sentinel");
+
+        // A real signal 23 dB below the floor: clamped to the floor, never to
+        // the sentinel. This is the case the clamp exists for; without it the
+        // reading is −163, which is on the wrong side of "nothing measured".
+        check (juce::exactlyEqual (settledDb (1.0e-8f, false), anabasis::RmsMeter::kFloorDb),
+               "rms: a signal under the meter's resolution reads the floor, not the sentinel");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Window semantics: M is the newest 400 ms, S the last 3 s — after a level
 // step, M has fully adopted by 500 ms while S still remembers the old level.
 static void testLufsWindows()
@@ -3773,6 +4011,7 @@ int main()
     testEqPositionsAreDistinct();
     testCompStaticCurve();
     testCompDetectorAndMix();
+    testCompStereoLink();
     testCompAutoReleaseIsTwoStage();
     testCompSidechainHpf();
     testClipDriveZeroIsBitExact();
@@ -3808,6 +4047,8 @@ int main()
     testStaleDetectorStateIsNotReentered();
     testLimiterControlSmoothing();
     testLufsCalibration();
+    testLoudnessRangeAndTheUngatedReading();
+    testRmsMeterReadsTrueLevels();
     testLufsGating();
     testLufsWindows();
     testLoudnessCompensationDoesNotAlterRender();

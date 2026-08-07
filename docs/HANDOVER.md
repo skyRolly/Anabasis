@@ -22,14 +22,14 @@ empty Anabasis repository, together with the product brief (`docs/DEVELOPMENT_BR
 
 | Field | Value |
 |---|---|
-| **Current Version** | 0.1.0 (pre-release; `project(Anabasis VERSION 0.1.0)` in `CMakeLists.txt`). `CHANGELOG.md` has no released entry; the P1 skeleton is under `[Unreleased]`. |
+| **Current Version** | **0.1.1** (`project(Anabasis VERSION 0.1.1)` in `CMakeLists.txt`), with a dated `## [0.1.1] — 2026-08-07` CHANGELOG entry — **the first release this repository cuts**. v0.1.0 was declared code-complete on 2026-08-02 but never tagged: the post-v0.1.0 review rounds landed first and the owner cut the release one patch level on, so 0.1.1's notes are the whole P1–P6 development plus the 0.1.1 round. Tagging `v0.1.1` drives `release.yml` (ADR-0021); publishing the resulting draft stays a human action. |
 | **Current Phase** | **P6 — v0.1.0 CODE COMPLETE (2026-08-02, under the owner's blanket approval; every item taken under it is ⊕ for the post-v0.1.0 fine review).** The last two owner gates are decided and wired: **ADR-0013** (OQ-016 — the release trim scales the auto poles; all four adaptive behaviours audible at defaults) and **ADR-0014** (OQ-013 — the frozen-trim vector restores: captured at save, staged on ADR-0012's row, applied at the duck's silent bottom; MODE inv 3's last gap closed). OQ-014 resolved (reading 1 — listener-guard row) and OQ-007 resolved (v0.1.0 ships plain zips). The preset bank is Default + the brief's 12 (5 brief-named + 7 ⊕; Default added 2026-08-05, owner directive); the brand checklist is provisionally passed under the approval (the real Level-5 human pass is the first fine-review item); CI pluginval strictness is raised to the P6/release value (`build.yml`'s `env:` block — this row quotes no number). Still owed before tagging v0.1.0: the human fine review (brand pass, DAW matrix audition, preset/curve listening pass), OQ-002 (licence — blocks commercial distribution only), OQ-009. (OQ-008 was SUPERSEDED 2026-08-05: the streaming-target display it verified was removed outright by owner directive.) Previously: P5 UI code complete at L8 (2026-08-02); P0 closed 2026-07-31; P1 closed 2026-08-01; P2/P3/P4 complete 2026-08-01. |
-| **Branch Strategy** | Feature branch → PR into `main`. CI builds every branch; `main` carries shipped versions. Release tagging convention: annotated `vX.Y.Z`, wired to a `release.yml` at P6. |
+| **Branch Strategy** | Feature branch → PR into `main`. CI builds every branch; `main` carries shipped versions. Release tagging convention: annotated `vX.Y.Z` — **wired since 0.1.1**: `release.yml` validates the tag against `CMakeLists.txt` and a dated CHANGELOG heading, reuses `build.yml`, and opens a DRAFT release with the three zips, both installers, SHA256SUMS and a build manifest (ADR-0021). |
 | **Build Status** | **Builds green on Linux** (P1 skeleton, 2026-07-31): `CMakeLists.txt` per ADR-0008 (five targets, JUCE 9.0.0 @ the pinned SHA fetched via FetchContent, C++20, warning-free under the recommended flags), `src/` + `src/dsp/` + `src/gui/` exist. The `preflight` guard now takes its ready=true path, so the full 3-OS matrix runs in CI; Windows/macOS results arrive with the first CI run of this commit. The `docs` job continues to run on every push and gates nothing. **The §2.1 C++23 canary is wired as of 2026-08-05** (`cxx23-canary.yml` — weekly + `workflow_dispatch`, DSP suite built AND run at C++23 on all three platforms, non-blocking by structure and never a required check; OQ-006 Resolved ⊕). |
-| **Test Status** | **669 checks green on Linux**: `AnabasisTests` (233 — ADR-0013 auto-release-follows-the-trim-scale, null-with-defaults bit-exact, impulse-at-allowance for four lookahead values, ceiling clamp, control/gain priming, limiter window coverage and alignment, smoothing of ceiling and lookahead, hostile-input finiteness, self-heal recovery, recovery from a stage that overflows on a FINITE input (EQ biquad in BOTH positions, RMS detector, colour c⁵, polyphase IIR up and down — `testExtremeLevelDoesNotSilencePermanently`) and from the stages that emit no audio to check (the BS.1770 meters and the §5.4 feature extractor — `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`) and a Learn pass that measured through an overflow never becoming the saved reference (`testALearnPassThatOverflowedIsNotCommitted`), bypass null, EQ frequency response/smoothing/positions, the ADR-0002 post-shelf ceiling stimulus, compressor static curve/detectors/mix/two-stage auto release/sidechain HPF, clipper curve/compensation/ADAA aliasing/colour models/dynamic tame, true-peak accuracy, limiter link/styles/preserve/two-stage auto/detector HPF/dBTP mode, the full OS latency matrix, OS aliasing/transparency/bypass/ceiling, dither modes, the §2.8 duck on rewires/latches/requests, LUFS calibration/gating/windows, inv-10 monitoring honesty incl. the mid-stream offline flip snap, delta, the duck-bottom hold, the post-latch refill hold, a request held through the out-leg, delta covered by the duck, the last-staged-restore rule, stale detector state, limiter control smoothing incl. link/preserve/HPF glides) plus meter publication and the GR ring in the state suite and `AnabasisStateTests` (436 — the ADR-0014 frozen-trim restore (`testFrozenTrimRestore`: both landing sites, both staging sites, the capture, the no-audio mirror, the undo case, the consume-to-bottom save window, freeze-off inert — each killed by its own mutant), the undo duck (`testUndoRequestsDuck`), gesture begin/end symmetry, the 13-preset factory bank (Default + 12), registry snapshot vs the frozen fixture, 49/9 counts, raw-exact byte-identical round-trip and its fixed-point precondition, structural-tolerance read rules, batched latency notification, corrupt/foreign no-op, macro fixed point, restore-vs-macro-drain, A/B tier behaviour, preset contract, cache mapping, the ADAPTIVE missing-field defaults, meters reading the render not the monitor path, load-then-save with no audio between, the zero-length-block publish guard, and — first in the tree to construct the EDITOR — the Settings panel following a project load in both directions, the graph-well views claiming only their corner mode chips (spectrum ⇄ GR), the R2 tooltip set (no hoverless slider/combo, the named toggles tipped — `bypass` deliberately excluded), and every knob's animated position starting where its value already is), plus `testTeardownAndReengageInvariants` (no trigger drains after `stopDraining`; a macro gesture that moves nothing re-lands the curve; a copied-into slot starts a fresh undo history). `AnabasisTests` also pins the limiter push's chain position (`testLimiterPushDoesNotDriveTheClipper`) and that a realtime→offline flip does not duck the render (`testOfflineFlipDoesNotDuckTheRender`) while the return edge stays ducked (`testReturnFromOfflineIsDucked`), and that an EQ-position change on the offline-entry edge starts from cleared filter state (`testOfflineEntryClearsEqStateOnAPositionChange`). **pluginval green ×3 in both modes on Linux at the P6 strictness (editor under xvfb)**; CI gates at the same value on all three platforms — the number lives in `build.yml` alone. Re-count from the suites' own output when editing this row; it has gone stale once already. |
+| **Test Status** | **770 checks green on Linux**: `AnabasisTests` (250 — ADR-0013 auto-release-follows-the-trim-scale, null-with-defaults bit-exact, impulse-at-allowance for four lookahead values, ceiling clamp, control/gain priming, limiter window coverage and alignment, smoothing of ceiling and lookahead, hostile-input finiteness, self-heal recovery, recovery from a stage that overflows on a FINITE input (EQ biquad in BOTH positions, RMS detector, colour c⁵, polyphase IIR up and down — `testExtremeLevelDoesNotSilencePermanently`) and from the stages that emit no audio to check (the BS.1770 meters and the §5.4 feature extractor — `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`) and a Learn pass that measured through an overflow never becoming the saved reference (`testALearnPassThatOverflowedIsNotCommitted`), bypass null, EQ frequency response/smoothing/positions, the ADR-0002 post-shelf ceiling stimulus, compressor static curve/detectors/mix/two-stage auto release/sidechain HPF, clipper curve/compensation/ADAA aliasing/colour models/dynamic tame, true-peak accuracy, limiter link/styles/preserve/two-stage auto/detector HPF/dBTP mode, the full OS latency matrix, OS aliasing/transparency/bypass/ceiling, dither modes, the §2.8 duck on rewires/latches/requests, LUFS calibration/gating/windows, inv-10 monitoring honesty incl. the mid-stream offline flip snap, delta, the duck-bottom hold, the post-latch refill hold, a request held through the out-leg, delta covered by the duck, the last-staged-restore rule, stale detector state, limiter control smoothing incl. link/preserve/HPF glides) plus meter publication and the GR ring in the state suite and `AnabasisStateTests` (520 — the ADR-0014 frozen-trim restore (`testFrozenTrimRestore`: both landing sites, both staging sites, the capture, the no-audio mirror, the undo case, the consume-to-bottom save window, freeze-off inert — each killed by its own mutant), the undo duck (`testUndoRequestsDuck`), gesture begin/end symmetry, the 13-preset factory bank (Default + 12), registry snapshot vs the frozen fixture, 50/9 counts, raw-exact byte-identical round-trip and its fixed-point precondition, structural-tolerance read rules, batched latency notification, corrupt/foreign no-op, macro fixed point, restore-vs-macro-drain, A/B tier behaviour, preset contract, cache mapping, the ADAPTIVE missing-field defaults, meters reading the render not the monitor path, load-then-save with no audio between, the zero-length-block publish guard, and — first in the tree to construct the EDITOR — the Settings panel following a project load in both directions, the graph-well views claiming only their corner mode chips (spectrum ⇄ GR), the R2 tooltip set (no hoverless slider/combo, the named toggles tipped — `bypass` deliberately excluded), and every knob's animated position starting where its value already is), plus `testTeardownAndReengageInvariants` (no trigger drains after `stopDraining`; a macro gesture that moves nothing re-lands the curve; a Copy is an undo step on the DESTINATION whose earlier history survives beneath it, and an ADV toggle undoes while a bypass click mints nothing — ADR-0018). The 0.1.1 round added the ADR-0019 comp stereo link (`testCompStereoLink` — full/half/zero link plus the zero-link bit-exactness), the ADR-0020 statistics DSP (`testRmsMeterReadsTrueLevels`, `testLoudnessRangeAndTheUngatedReading` — the −20 LU LRA gate and the 30-sub-block reset watermark each mutation-verified) and its wrapper publication (`testTheWaveformStatisticsRowsReadTheirStandards`), the mono→stereo wrapper case that reproduces KI-009, and `testFrequencyTextEntrySpeaksMasteringShorthand`. The 0.1.1 review rounds added case (3b) of `testTeardownAndReengageInvariants` (an ADV toggle between the freezing A/B switch and a Copy: undoing the Copy reverts the sound and leaves the view — ADR-0018's amendment) and two `testRmsMeterReadsTrueLevels` assertions separating the RMS meter's sentinel from its floor (digital silence and a −163 dBFS signal both read `kFloorDb`, never “nothing measured yet”), and four `testTheWaveformStatisticsRowsReadTheirStandards` assertions pinning the PLR row as TP minus the integrated figure the panel SHOWS — reproducing the published gated value under the default, and more than 2 LU away from it under BS.1770-1. Round 4 added case **(3c)** (three Copies in a row leave one step) and **(3d)** (a no-op Copy leaves the destination's redo line intact), and `testGrHistoryWindowNeverAsksForTheHeadSlot` grew the GR decimation geometry — five rate/block/width cases plus a barely-filled ring, asserting that the trace spans the whole panel width while carrying exactly one window of entries and that every drawn bucket is non-empty. Case (3b), both floor assertions, the PLR sentinel guard, (3c), (3d), the stretched `bucketX` and the `head - 1` bucket key are each killed by their own mutant and no other. `AnabasisTests` also pins the limiter push's chain position (`testLimiterPushDoesNotDriveTheClipper`) and that a realtime→offline flip does not duck the render (`testOfflineFlipDoesNotDuckTheRender`) while the return edge stays ducked (`testReturnFromOfflineIsDucked`), and that an EQ-position change on the offline-entry edge starts from cleared filter state (`testOfflineEntryClearsEqStateOnAPositionChange`). **pluginval green ×3 in both modes on Linux at the P6 strictness (editor under xvfb)**; CI gates at the same value on all three platforms — the number lives in `build.yml` alone. Re-count from the suites' own output when editing this row; it has gone stale once already. |
 | **Release Status** | Pre-0.1.0. Nothing has ever left this repository, which is why the compatibility contract can still be shaped at zero cost (`COMPATIBILITY_POLICY.md` §"When the contract starts"). |
 | **Known Blockers** | **No code blockers.** Every formerly `Blocking` question is Resolved: OQ-013 by **ADR-0014** (2026-08-02 — the frozen-trim restore is wired and mutation-verified), OQ-016 by **ADR-0013**, OQ-014 (reading 1) and OQ-007 (plain zips) by the same owner call, OQ-010/OQ-011/OQ-004/OQ-005/OQ-015 earlier with their ADRs. What blocks the RELEASE rather than the code: the post-v0.1.0 human fine review (the blanket approval's other half — brand pass, DAW audition, listening pass over the ⊕ constants/presets), **OQ-002** (JUCE licence tier — blocks commercial distribution only), OQ-009 (owner metadata). (OQ-008 superseded 2026-08-05 — the display it verified is gone.) This row must agree with every `Blocking` entry in `docs/OPEN_QUESTIONS.md` — check it there, not here, when adding one. |
-| **Pending Tasks** | **P1–P6 code work is DONE** (phase histories in the summaries below; the v0.1.0 completion summary carries the final batch). What remains is the **post-v0.1.0 fine review** — the other half of the owner's blanket approval: (a) the item-by-item Level-5 brand pass (`BRAND_CONSISTENCY_CHECKLIST.md` — provisionally passed, boxes deliberately unchecked); (b) the DAW matrix audition (`COMPATIBILITY_MATRIX.md` targets); (c) the listening pass over every ⊕ — trim mapping constants, §5.5 macro curves, tame/model weights, the 12 factory preset value sets, the gold/amber accent; (d) a second look at every decision dated 2026-08-02 (ADR-0013, ADR-0014, OQ-007/OQ-014 readings, the 7 preset names/values); (e) ~~OQ-008's first-party value verification~~ — superseded 2026-08-05, the streaming-target display was removed outright; (f) the 3-OS CI confirmation of this batch (suites + pluginval at the `build.yml` strictness — the number lives there alone, as the Test Status row already says); (g) ~~an explicit owner acknowledgement of ADR-0015's schema half~~ — **CLOSED 2026-08-06**: the owner reviewed ADR-0015 and signed off all three contract changes by name (the `int_meterTargets` removal, the `ceiling` default, the `truePeakMode` default), clearing the Architecture Review Gate. The sign-off is recorded in ADR-0015's Status banner and indexed in `ADR_INDEX.md`; those three decisions are settled rather than ⊕, and the rest of the fine-review list is unaffected; (h) ~~the same clearance for ADR-0016~~ — **CLOSED 2026-08-06**: cleared separately and on its own terms, the owner's confirmation naming the semantic change, the pre-1.0 migration decision and the acceptance that stored values load with no migration path; (i) ~~the same clearance for ADR-0017~~ — **CLOSED 2026-08-06**: cleared separately again, the owner's confirmation naming the reduced ladder, the acceptance that out-of-set stored values normalise on adoption, and that this is a pre-1.0 decision with no released-session migration obligation. **All three gated records of the round-2 batch (ADR-0015/0016/0017) are now cleared, each on its own terms.** Commercial release additionally waits on OQ-002 (licence tier), OQ-009 (owner metadata), and the OQ-007-deferred packaging pipeline. |
+| **Pending Tasks** | **P1–P6 code work is DONE** (phase histories in the summaries below; the v0.1.0 completion summary carries the final batch). What remains is the **post-v0.1.0 fine review** — the other half of the owner's blanket approval: (a) the item-by-item Level-5 brand pass (`BRAND_CONSISTENCY_CHECKLIST.md` — provisionally passed, boxes deliberately unchecked); (b) the DAW matrix audition (`COMPATIBILITY_MATRIX.md` targets); (c) the listening pass over every ⊕ — trim mapping constants, §5.5 macro curves, tame/model weights, the 12 factory preset value sets, the gold/amber accent; (d) a second look at every decision dated 2026-08-02 (ADR-0013, ADR-0014, OQ-007/OQ-014 readings, the 7 preset names/values); (e) ~~OQ-008's first-party value verification~~ — superseded 2026-08-05, the streaming-target display was removed outright; (f) the 3-OS CI confirmation of this batch (suites + pluginval at the `build.yml` strictness — the number lives there alone, as the Test Status row already says); (g) ~~an explicit owner acknowledgement of ADR-0015's schema half~~ — **CLOSED 2026-08-06**: the owner reviewed ADR-0015 and signed off all three contract changes by name (the `int_meterTargets` removal, the `ceiling` default, the `truePeakMode` default), clearing the Architecture Review Gate. The sign-off is recorded in ADR-0015's Status banner and indexed in `ADR_INDEX.md`; those three decisions are settled rather than ⊕, and the rest of the fine-review list is unaffected; (h) ~~the same clearance for ADR-0016~~ — **CLOSED 2026-08-06**: cleared separately and on its own terms, the owner's confirmation naming the semantic change, the pre-1.0 migration decision and the acceptance that stored values load with no migration path; (i) ~~the same clearance for ADR-0017~~ — **CLOSED 2026-08-06**: cleared separately again, the owner's confirmation naming the reduced ladder, the acceptance that out-of-set stored values normalise on adoption, and that this is a pre-1.0 decision with no released-session migration obligation. **All three gated records of the round-2 batch (ADR-0015/0016/0017) are now cleared, each on its own terms.** (j) the 0.1.1 round's own ⊕ items — the ADR-0018/0019/0020/0021 decisions were taken under the owner's 0.1.1 directive and its standing sign-off instruction, so their gates are cleared but their *wording and values* (the statistics panel's labels and standards defaults, the comp-link default, the About copy) join the same fine-review list as every other ⊕; (k) ~~the first CI run of the 0.1.1 packaging steps~~ — **CLOSED 2026-08-07**: run 31135082913 built both installers, all three platforms green. What ADR-0021 still carries is narrower: the Linux install scripts have not been run as root, and `release.yml` awaits its first tag (or a `workflow_dispatch` rehearsal). Commercial release additionally waits on OQ-002 (licence tier) and OQ-009 (owner metadata); the OQ-007 packaging deferral is **lifted** (ADR-0021), signing and notarization excepted. |
 | **Roadmap** | P0 research & design → P1 skeleton (pluginval L5) → P2 DSP core → P3 metering engine → P4 Simple adaptive engine → P5 UI → P6 polish & release (pluginval L10, DAW matrix, docs). `DEVELOPMENT_BRIEF.md` §11. v2 candidates (codec preview, reference matching, dynamic EQ, multiband limiting) are out of scope — leave architectural room only. |
 | **Ownership** | `TODO: no owner/team metadata in the repository. Requires project-owner input (OQ-009).` Company of record: RollyTech. |
 
@@ -122,7 +122,11 @@ symbols — probing the `.so` says "absent" for components that are demonstrably
 exclusions confirmed by gate + symbol absence, structure adapted from the sibling under ADR-0009
 with the findings re-derived rather than copied. All three `build.yml` staging steps now copy
 both files into the customer artifact, so the obligation travels with the binaries — including
-the beta zips testers get. The owner-legal half (EULA / PRIVACY / TRADEMARKS) is deliberately
+the beta zips testers get. (**Superseded 2026-08-06 by ADR-0021**: those staging copies are gone
+and both files are now version-named release-page assets, `Anabasis-<version>-NOTICE.txt` and
+`Anabasis-<version>-THIRD_PARTY_LICENSES.md`. The zips were never the whole story — the `.pkg`
+and Inno routes carried nothing — so the release page replaces them as the one carrier every
+route passes through. This paragraph records the 2026-08-05 round, not what ships.) The owner-legal half (EULA / PRIVACY / TRADEMARKS) is deliberately
 NOT produced: no draft exists here (unlike the sibling), the wording is owner-supplied (C8), and
 OQ-002 gates the whole commercial question. Coverage's legal row carries the split.
 
@@ -914,6 +918,184 @@ routing decision rather than a void. Both are now stated as the same trade seen 
 with the guidance a future affordance under that strip needs: widen the hit-area, do not revert to
 intercepting everywhere, which would restore the swallow round 59 removed. Suites: 233 + 388.
 
+## 0.1.1 (2026-08-06/07) — the release round: sixteen owner items, four ADRs, the first tag
+
+The owner's 0.1.1 directive is the largest single round in this repository's history and the one
+that turns a code-complete tree into a release. Four Architecture Review Gate items were cleared
+under the round's standing instruction (anything needing human confirmation is confirmed by the
+owner directly; anything needing an ADR gets one immediately rather than a hard stop), and each
+is recorded in its own ADR's Status banner rather than in this file.
+
+**KI-009 closed — the left channel, root-caused on the third attempt.** Two prior rounds probed
+the engine and the wrapper and found nothing, because there was nothing there: a fresh
+line-by-line diff of the bus/CMake/format glue against the sibling, plus a re-audit of every
+channel-asymmetric expression in `AnabasisEngine` and `LookaheadLimiter`, established that the
+audible path is provably symmetric (every `ch == 0` asymmetry is an analysis tap). The defect was
+in the **bus contract**: `isBusesLayoutSupported` demanded stereo→stereo exactly, so a host with
+a mono source had to negotiate stereo→stereo and feed the programme on one input pin and silence
+on the other — and this chain is strictly dual-mono (the stereo "link" shares only the detector
+level), so the silent pin produced a silent output channel in both modes. Mono in is now accepted
+and duplicated. The battery gained the seventh case KI-009 itself predicted it would.
+
+**Four ADRs, each clearing its own gate.** **ADR-0018** — Copy becomes an undo step on the
+DESTINATION slot that keeps that slot's earlier history, and the Advanced toggle joins the undo
+history while staying pinned across A/B (partially superseding ADR-0010 option E: its A/B half
+survives, its undo half does not). The same change removes a class of dead undo step — a bypass
+or monitor click used to mint an entry whose restore changed nothing. **ADR-0019** — the comp's
+stereo link becomes adjustable, the 50th parameter, blended before the RMS integrator so the
+100 % default is bit-for-bit the glue that shipped. **ADR-0020** — the Waveform Statistics panel:
+a new 50 ms Hann `RmsMeter` (cost bounded at 5 multiply-adds per sample at *every* rate and block
+size), LRA and the BS.1770-1 ungated integrated reading in `LoudnessMeter`, the sample-peak hold
+published, `int_tpMeterOn` removed and two standard selectors added. **ADR-0021** — the packaging
+and release pipeline, lifting the OQ-007 deferral for everything but signing.
+
+**What the round did NOT change, verified rather than assumed.** The UI-scale × host-DPI compose
+(item 10) was audited against the sibling and found **already complete**: `setScaleFactor` stashes
+`hostScale` and re-applies the composed transform, which is the whole of the sibling's mechanism;
+Anabasis's only divergence is reading the user step from the persisted percent through
+`normalisedUiScale()` instead of a combo index, which is the stricter of the two. No code changed
+and none was owed — recorded here so the next audit does not re-derive it.
+
+**Two brief-audit gaps closed alongside the directive's own items**, found by walking
+`DEVELOPMENT_BRIEF.md` against the tree. (1) **§8 keyboard operability** had no implementation:
+accessibility NAMES were done (`setTitle`/`setDescription` on every control) but nothing in
+`src/` called `setWantsKeyboardFocus`. **The substance is the forty KNOBS**, and the reason is a
+JUCE default that differs by widget class — read from the vendored source rather than assumed:
+`Slider` ends its constructor with `setWantsKeyboardFocus (false)`, while `Button` sets it true
+unconditionally and `ComboBox` sets `! isLabelEditable`. So tab traversal was **not** dead, as
+this entry claimed for one commit: it reached every button and combo and skipped every knob,
+and `Slider::keyPressed`'s arrow handling — which JUCE already implements — was unreachable on
+all of them. The calls added to the combo and toggle helpers are therefore redundant against the
+default, kept deliberately and labelled as such. Every control now ACCEPTS focus — and only
+accepts: `EDITOR_WANTS_KEYBOARD_FOCUS` stays FALSE, so the plugin still never takes the host's
+transport keys. Swept by the tooltip test's sibling collector; mutation-verified, and the same
+mutation run is what showed the combo half to be inert. (2) **§14.2's `SUPPORT.md`**
+was a named member of the Internal/testing documentation class that did not exist. It exists
+now, and is deliberately shorter than the sibling's: that class restates the legal class, and
+Anabasis has no approved licence, EULA or privacy document to restate — the file says so rather
+than inventing terms or a support contact.
+
+**A four-lens migration audit closed the directive's item 5**, sweeping for other places where
+the sibling port was left half-done: GUI widget setup, wrapper/state plumbing, DSP module
+completeness, and doc claims about the code. 38 candidate findings, each then handed to an
+adversarial verifier told to REFUTE it — **17 were refuted, 21 survived**, and the refutations
+are as load-bearing as the confirmations (several named a deliberate ADR-recorded divergence the
+finder had read as an omission). Fixed in this round: the Save-Preset field's Return/Escape keys
+(inert — the sibling's two `onReturnKey`/`onEscapeKey` lines were never ported, so the dialog
+could only be left with the mouse) and its missing palette; five hand-built buttons that bypassed
+`registerAnimated`; the `int_integratedStd`/`int_rmsRef` read rule, whose absence let the
+statistics panel *show* one standard while *computing* the other; and seven doc-drift sites
+including `SOURCE_OF_TRUTH.md`, which had told every contributor since P0 that `src/` and
+`tests/` did not exist and that every runtime claim must be marked `Unverified`.
+
+**One audit finding was disproved by its own fix**, and the correction matters more than the
+finding: "the Settings panel is unreachable by keyboard" is false. Mutation-testing the fix
+showed removing the combo call changes nothing, and JUCE's vendored source says why —
+`ComboBox` sets `setWantsKeyboardFocus (! isLabelEditable)` and `Button` sets it true
+unconditionally, while `Slider` sets it **false**. So §8's real gap was the forty KNOBS alone,
+tab traversal was never dead, and this file's own first draft of that paragraph was wrong. It is
+corrected above rather than quietly amended.
+
+**Two findings were recorded rather than fixed** (`KNOWN_ISSUES.md` KI-010, KI-011). KI-010 is
+the sharpest: ADR-0004's §Consequences argues the constant-latency contract makes every bulk swap
+"always dry-fillable" and that "the forced duck keeps its best masking mode" — and the duck never
+dry-fills. It applies `duckGain` to the processed path only, so every preset load, A/B switch and
+undo step dips to silence. No invariant is broken (invariant 8 asks for click-free, and a
+raised-cosine dip is click-free; the duck tests pass and cannot tell the two modes apart), so
+this is a documentation-vs-code contradiction, not a defect in either alone. Implementing
+dry-fill is an audible change to every bulk swap, arriving on the day of a release round, on the
+one path no listening pass has covered — the entry states both ways out and deliberately does
+not choose.
+
+**Mutation verification** was applied to the two constants most likely to be quietly wrong: the
+LRA relative gate (−20 LU, *not* the integrated reading's −10) and the LRA reset watermark (30
+sub-blocks, the short-term window's span, *not* the integrated one's 4). Each mutant fails
+exactly its own assertion and no other.
+
+**Two post-directive review rounds landed on top of the batch.** Round 1 closed the one place
+ADR-0018's view pin did not reach — the Copy undo entry is `storedSlot`, frozen by the A/B
+switch, so an ADV toggle taken after that switch left the entry carrying a pre-toggle view that
+undoing the Copy then wrote back and resized the editor; the pin moved to PUSH time
+(`slotWithLiveAdvancedMode`, recorded as that ADR's amendment) — and corrected five packaging
+documents still promising `NOTICE` / `THIRD_PARTY_LICENSES.md` inside the archives after
+ADR-0021 made the release page their sole carrier. Round 2 fixed the release-notes extractor,
+whose `^## \[` terminator ran the NEWEST entry to end of file and read fenced text as structure
+(ADR-0021's amendment; the 0.1.1 notes are byte-identical either way), and separated the RMS
+meter's SENTINEL from its FLOOR. `kSilentDb` meant "nothing measured yet" while the computed
+range, floored on the mean square at 1e-15, reached −150 dB *beneath* it — so a real reading of
+a near-silent passage was indistinguishable from an absent one, and exact digital silence was
+reported as no measurement at all. `kFloorDb` (−140) is now the lowest LEVEL, every computed
+reading is clamped up to it, silence included, and only a non-finite accumulation still reverts
+to the sentinel; `LoudnessMeterView`'s AES-17 guard became the exact `>= kFloorDb` test in place
+of a tolerance around the sentinel. No audio path, parameter, serialized field or displayed
+value moves — the statistics rows floor their text at −99, above both constants.
+
+**Round 3** corrected two statistics rows and the last of the attribution-delivery drift. **PLR**
+was published as `TP − I_gated` and printed verbatim, while the I row directly above it follows
+§3.5's standard choice — so under BS.1770-1 the row was not the difference of the two rows it
+sits under, by however far a trailing silence had driven the two standards apart. It is derived
+in the view now (`plrFromShown`), reproducing the published figure exactly under the gated
+default; `pubPlr` keeps publishing as the canonical gated figure and stays in the cleared set.
+The **SP** row's warn compared in dB a bound `CeilingClamp` holds in LINEAR: `ceilingLinear` is
+`dbToGain(ceiling)` and the row reads `gainToDecibels(|x|max)`, a round trip the parameter never
+makes, so a fully limited master could read back −0.09999997 against a −0.1 dB ceiling and trip a
+warning ADR-0020 promises means a genuine exceedance. The comparison gains a 0.005 dB tolerance —
+half the row's own print resolution, four orders of magnitude above the round-trip error, below
+anything the row can display. The TP row's exact test is untouched: its over-warning is the
+deliberate, documented one. On the documentation side, three LIVE status statements still said CI
+copies `NOTICE` and `THIRD_PARTY_LICENSES.md` into every customer artifact — `REPOSITORY_MAP.md`,
+Coverage's legal row, and Coverage's `.github` row, which also still called `release.yml` deferred
+to the first commercial release — while the two dated round entries that describe the old
+delivery keep their text and gain supersession markers instead, because they record what those
+rounds did. Finally the panel is **eight rows**, not the "seven readings" the manual, ADR-0020's
+title and the ADR index all carried: seven is the count the owner's directive names, PLR being
+the 0.1.0 row it never mentioned.
+
+**Round 4** — one visible regression, one dead undo step, and a signed-off confirmation.
+
+The **GR history graph** left a permanent blank strip down its left side. The 0.1.1 shimmer fix
+gave buckets a fixed absolute identity — bucket k is the entry range [k·stride, (k+1)·stride), so
+a completed bucket's decimated max never changes — but drew one bucket per pixel column anchored
+at the newest. `stride` rounds up, so `cols` buckets span `cols·stride` entries while the window
+only ever holds `want`; the surplus buckets were older than the window, drew nothing, and the
+trace covered ≈ `want/stride` of the panel: ~31 % blank in the Simple well at 48 kHz/512, ~48 %
+at 1024, ~22 % in the Advanced well. **Bucket count and pixel column are separate questions** —
+the window still bounds the DATA, and the buckets it yields are now stretched across the full
+width (`bucketX`), which is also what the pre-0.1.1 draw did while the ring was filling. The
+reviewer's alternative, widening the window to `cols·stride`, fills the panel by showing more
+TIME — 38.6 s at 48 kHz/1024, outside `kWindowSeconds` and DESIGN §2.9's 10–30 s band — so the
+window length would have become a spare variable for making the arithmetic come out. Bucket
+identity is untouched, so the shimmer fix stands: only a bucket's X moves, and the whole trace
+moves with it, which is the scroll. `kHead` is keyed to entry `head - 1` rather than `head`, which
+also removes the one case where the rightmost bucket came out empty and dropped a column. The
+geometry moved into `buckets`/`bucketX` in the header for the reason `windowEntries` already
+lives there — arithmetic reachable only from `paint` is arithmetic no test can pin, which is how
+this shipped.
+
+**Copy pushed a dead undo step when it changed nothing.** After the first Copy the destination
+already holds the live state, so a second press with no edit between pushed an entry restoring
+what it replaced — one Undo press that visibly does nothing, the same defect shape §Decision 4 of
+ADR-0018 removed from the gesture path. It takes the same answer: that path's change test,
+`strippedForUndoCompare` both sides plus the dirty datum, and the redo line left alone when the
+test says nothing changed. Recorded as ADR-0018's second amendment.
+
+**The cross-slot ADV undo is confirmed, not changed.** An entry taken in slot A carries the view
+the user had in A; an ADV toggle made later in B does not update it, so undoing in A can return
+the editor to Simple. Unlike the Copy entry, that entry IS contemporaneous with its own step, so
+this is the contract working rather than the first amendment's defect. The owner reviewed it on
+2026-08-07 and asked for no change; the reasoning and the cost of both alternatives are recorded
+as ADR-0018's review-confirmation note so the next audit does not re-derive it as a bug.
+
+**Gate: suites 250 + 520 = 770, `check-docs.py` clean over 72 files, pluginval both modes ×3 at
+`build.yml`'s strictness with the editor under xvfb.** The one thing local evidence cannot cover
+was stated in ADR-0021 rather than implied — and **the first CI run on this branch closed it**:
+ISCC produced `Anabasis-0.1.1-Windows-Installer.exe`, `build-pkg.sh` passed its own
+component/identifier self-checks on the macOS runner, and all three platforms are green. Two
+narrower gaps remain, both named in that ADR: the Linux `install.sh`/`uninstall.sh` have not
+been EXECUTED as root anywhere (CI stages them and sets the mode bit, which is not the same
+thing), and `release.yml` itself has never run — it is tag-triggered, so its first exercise is
+the `v0.1.1` tag or a `workflow_dispatch` rehearsal.
+
 **Architecture Review Gate — CLEARED (2026-08-06). The first gate clearance in this repository.**
 Two of ADR-0015's three contract changes are `ARCHITECTURE_REVIEW_GATE.md` items in their own
 right — the `int_meterTargets` removal is a **Serialization Registry change**, the `ceiling` and
@@ -1020,7 +1202,9 @@ wording remain owner-supplied (C8).
 
 **Next phase plan (P6, remainder).** The rest of the preset bank (owner wording); pluginval L10 ×3 platforms; DAW matrix + automation/state smoke tests; performance
 measurement against DESIGN §9's ⊕ budget (bench target + TEST_REPORT/PERFORMANCE_BUDGET);
-accessibility polish (focus order audit); packaging/licensing decisions (OQ-002, OQ-007);
+~~accessibility polish (focus order audit)~~ — **DONE 0.1.1**: every slider, combo and toggle
+accepts keyboard focus, closing the §8 half that had no implementation (the names half was
+already done); packaging ~~(OQ-007)~~ — **DONE 0.1.1**, ADR-0021; licensing decisions (OQ-002);
 the owner calls that stayed open (OQ-008 first-party verification, OQ-009, OQ-012, OQ-013,
 OQ-014, OQ-016, accent ratification).
 

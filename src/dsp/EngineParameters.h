@@ -39,6 +39,7 @@ struct EngineParameters
     float compKneeDb        = 6.0f;
     int   compDetector      = 0;      // 0 RMS, 1 Peak
     float compMix           = 1.0f;   // 0..1
+    float compStereoLink    = 1.0f;   // 0..1 — 1 = one shared gain (ADR-0019)
 
     // -- clipper / colour (pass-through at P1) ------------------------------
     float clipShape         = 0.5f;

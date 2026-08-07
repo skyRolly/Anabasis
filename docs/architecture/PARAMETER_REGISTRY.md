@@ -27,18 +27,20 @@ changelog entry. `kVersion = 1` on every parameter; a parameter-set change bumps
 - Units render through the shared `db`/`ms`/`hz`/`pct` formatter lambdas with suffix-tolerant
   parsers.
 
-## The 49 rows
+## The 50 rows
 
 Range/default/steps/automation are the snapshot's columns verbatim ("cont." = a continuous range,
 `getNumSteps()`'s sentinel). Tier: **view** = excluded from A/B, undo *and* presets;
-**preset-excl** = excluded from presets only (travels in A/B and undo). Both are computed by the
-one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
-(`src/PluginParameters.cpp:236-245`) — a preset skips the union, view ∪ {freeze}.
+**preset-excl** = excluded from presets only (travels in A/B and undo);
+**adv** (`advancedMode` alone, since ADR-0018) = travels with **undo** but is pinned across
+A/B/Copy (`applySlotToLive`'s adopt-flag) and excluded from presets by name. The predicates are
+`isViewTierParam` / `isPresetExcludedParam` (`src/PluginParameters.cpp`) — a preset skips
+view ∪ {freeze, advancedMode}.
 
 | ID | Name | Range | Default | Steps | Auto | Tier |
 |---|---|---|---|---|---|---|
 | `bypass` | Bypass | 0 … 1 | 0 | 2 | yes | view |
-| `advancedMode` | Advanced | 0 … 1 | 0 | 2 | **no** | view |
+| `advancedMode` | Advanced | 0 … 1 | 0 | 2 | **no** | adv ¹⁸ |
 | `loudness` | Loudness | 0 … 100 | 0 | cont. | **no** | — |
 | `character` | Character | 0 … 1 | 0 | cont. | **no** | — |
 | `tone` | Tone | -1 … 1 | 0 | cont. | **no** | — |
@@ -56,6 +58,7 @@ one shared predicate pair `isViewTierParam` / `isPresetExcludedParam`
 | `compKnee` | Comp Knee | 0 … 12 | 6 | cont. | yes | — |
 | `compDetector` | Comp Detector | 0 … 1 | 0 | 2 | yes | — |
 | `compMix` | Comp Mix | 0 … 100 | 100 | cont. | yes | — |
+| `compStereoLink` | Comp Stereo Link | 0 … 100 | 100 | cont. | yes | — ¹⁹ |
 | `clipShape` | Clip Shape | 0 … 1 | 0.5 | cont. | yes | — |
 | `clipDrive` | Clip Drive | 0 … 24 | 0 | cont. | yes | — |
 | `clipMix` | Clip Mix | 0 … 100 | 100 | cont. | yes | — |
@@ -100,6 +103,22 @@ prints `dB` and switches to `dBTP` only while the mode is engaged —
 range · default · steps · automatable), and both spellings parse back identically, so it is
 display-only.
 
+¹⁹ **Added by [ADR-0019](design-decisions/ADR-0019-comp-stereo-link.md)** (2026-08-06, owner
+0.1.1 directive item 12) — the 50th row, the first parameter ADDED since the surface froze at 49.
+The comp's own stereo link: the limiter's blend applied at the comp detector
+(linked = link·max + (1−link)·own, before the RMS integrator), named "Comp Stereo Link" so the
+two automation lanes cannot be confused with the limiter's "Stereo Link". Default 100 % IS the
+fully linked single-gain glue the stage always had, so the addition is backwards-inert — an old
+session or preset simply loads the default (§4.4 missing-field rule). The snapshot fixture was
+re-frozen with the row; `PARAMETER_COMPATIBILITY_POLICY` rule 1 freezes the new ID from here on.
+
+¹⁸ **Re-tiered by [ADR-0018](design-decisions/ADR-0018-copy-and-advanced-join-the-undo-history.md)**
+(2026-08-06, owner 0.1.1 directive item 4, gate cleared in the ADR's Status banner): the Advanced
+toggle is an **undo step** now — `advancedMode` left `isViewTierParam`, the undo/redo restore
+adopts it, and every other adoption path (A/B switch, Copy) pins it to live, so a compare still
+never resizes the editor. Preset exclusion is by name in `isPresetExcludedParam`. Automation and
+the snapshot columns are untouched — the tier is not a snapshot column.
+
 ## The nine non-automatable rows
 
 `advancedMode` (the X11 editor-resize crash path if it travelled), the three macros
@@ -128,7 +147,7 @@ automation by construction (out of the tree entirely — the only reliable hidin
 K). Inventory as implemented (`src/InternalState.h`): `int_oversample` (0–4 = Off/2×/4×/8×/16×),
 `int_osPhase` (0 min / 1 linear), `int_offlineQuality` (0 Follow / 1 Force Max),
 `int_ceilingLock`, `int_uiScale` (a percent from the XS–XL ladder, `ui_scale::steps` — the ladder narrowed from seven steps to five in round 2, which changes the field's accepted DOMAIN and so what its read rule does to a stored 80/90/175/200; **ADR-0017**, gate cleared 2026-08-06), `int_tooltipsOn`, `int_uiAnimations`,
-`int_spectrumOn` (since 2026-08-05 the graph-well MODE flag — true = spectrum, false = GR history; switched by the corner chips on the graph itself, no Settings toggle. That is a **semantic change** to a serialized field, not just a UI move: it used to mean "does the spectrum take half of the Advanced strip", and the Simple view did not read it. **ADR-0016** carries the before/after; its gate was cleared 2026-08-06), `int_tpMeterOn` (default **off** since ADR-0015; `int_meterTargets` was removed 2026-08-05 with the streaming-target display, under the same ADR — an old session carrying it is ignored by the §4.4 unknown-field rule). The first three are the latency
+`int_spectrumOn` (since 2026-08-05 the graph-well MODE flag — true = spectrum, false = GR history; switched by the corner chips on the graph itself, no Settings toggle. That is a **semantic change** to a serialized field, not just a UI move: it used to mean "does the spectrum take half of the Advanced strip", and the Simple view did not read it. **ADR-0016** carries the before/after; its gate was cleared 2026-08-06), `int_integratedStd` and `int_rmsRef` (**added 0.1.1**, [ADR-0020](design-decisions/ADR-0020-waveform-statistics-panel.md): which STANDARD the statistics panel's INTEGRATED row follows — BS.1770-2+ gated, the default, or BS.1770-1 ungated — and which reference its RMS row uses, AES-17 by default or mathematical. Both are display-side: the processor publishes every reading and the view selects. `int_tpMeterOn` was **removed** by the same record — the true peak is shown unconditionally now, so a field whose only job was hiding one row had nothing left to gate; `int_meterTargets` was removed 2026-08-05 with the streaming-target display under ADR-0015. An old session carrying either is ignored by the §4.4 unknown-field rule). The first three are the latency
 inputs (ADR-0004); their change callbacks are three of the five PDC recompute triggers.
 
 ## Changing anything here

@@ -35,6 +35,19 @@ binary. They are produced at P6 against the actually-pinned dependency tree — 
 from another project is not evidence (constraint C7) — and must be **re-verified after any JUCE
 version bump**, since the inventory is derived from the pinned tree.
 
+**Where "accompany" is satisfied, amended by
+[ADR-0021](../architecture/design-decisions/ADR-0021-release-pipeline-and-artifact-parity.md)
+(2026-08-06, owner 0.1.1 directive):** as **version-named assets on the release page**, beside
+the archives and installers they belong to — `Anabasis-<version>-NOTICE.txt` and
+`Anabasis-<version>-THIRD_PARTY_LICENSES.md`. They are deliberately **not** copied inside the
+zips, the `.pkg` or the Inno payload. Two reasons, and the second is the one that decided it:
+the release page is the ONE carrier every distribution route passes through (an installer
+payload is not a directory the user browses, and the `.pkg`'s components are the three bundles),
+and a loose unversioned copy inside an archive cannot be told apart from a different version's
+once extracted, which is precisely the ambiguity attribution must not have. Until 0.1.1 both
+files were copied into all three staging trees, and the `.pkg`/installer routes carried nothing
+at all — the amendment makes the rule uniform rather than weaker.
+
 ## Versioning
 
 `MAJOR.MINOR.PATCH`, starting at **0.1.0**, pre-1.0 (< 1.0.0 = pre-release line), plus a CI

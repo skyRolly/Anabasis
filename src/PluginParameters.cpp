@@ -1,5 +1,6 @@
 // ============================================================================
-//  createAnabasisLayout — the 49 parameters of DESIGN §4.2, values verbatim.
+//  createAnabasisLayout — the 50 parameters of the surface: DESIGN §4.2's 49,
+//  values verbatim, plus ADR-0019's compStereoLink (0.1.1).
 //
 //  Copy-and-adapt provenance (ADR-0009): the Raw* exact-normalised discrete
 //  classes, the formatter/parser shapes and the log-range helper are adapted
@@ -96,6 +97,39 @@ auto hzFrom  = [] (const juce::String& t)
     const float v = s.removeCharacters ("khz ").getFloatValue();
     return k ? v * 1000.0f : v;
 };
+// kHz-biased parsers (0.1.1, owner directive; the sibling's `khzFrom` idea
+// classed per knob range). Plain `hzFrom` reads every bare number as Hz, so
+// on wide-range knobs the natural mastering shorthand went dead: "8" on the
+// 1–20 kHz high shelf clamped to the 1 kHz floor instead of landing 8 kHz.
+// Two range classes, two pivots:
+//
+// `khzFrom` — knobs whose WHOLE range is ≥ 1 kHz (high shelf). The sibling's
+// rule verbatim: a bare number ≤ 20 is kHz (the entire legal range expressed
+// in kHz units is 1–20, so nothing is lost); above 20 it is Hz. "8" → 8 kHz,
+// "8000" → 8 kHz, "8k" → 8 kHz, "5570" → 5.57 kHz.
+auto khzFrom = [] (const juce::String& t)
+{
+    auto s = t.toLowerCase().trim();
+    const bool k = s.containsChar ('k');
+    const float v = s.removeCharacters ("khz ").getFloatValue();
+    if (k) return v * 1000.0f;
+    return (v <= 20.0f) ? v * 1000.0f : v;
+};
+// `hzKhzFrom` — full-range 20 Hz–20 kHz knobs (the bells). The pivot is the
+// knob's own 20 Hz FLOOR, exclusive: a bare number STRICTLY below 20 cannot
+// be a legal Hz value (it would only clamp to the floor), so it is read as
+// kHz — "19" → 19 kHz, "2.38" → 2.38 kHz, "8" → 8 kHz — while every legal
+// Hz value stays Hz: "20" → 20 Hz, "155" → 155 Hz, "5570" → 5.57 kHz shown.
+// (The owner's 0.1.1 examples pin both sides of the pivot: 19 → kHz,
+// 20 → Hz — hence `<`, not the sibling's `<=`.)
+auto hzKhzFrom = [] (const juce::String& t)
+{
+    auto s = t.toLowerCase().trim();
+    const bool k = s.containsChar ('k');
+    const float v = s.removeCharacters ("khz ").getFloatValue();
+    if (k) return v * 1000.0f;
+    return (v < 20.0f) ? v * 1000.0f : v;
+};
 
 // True logarithmic (octave-even) range for every ⊕(log) row in §4.2
 // (Anamorph:src/PluginParameters.cpp:107-113).
@@ -182,6 +216,11 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
     floatParam (pid::compKnee, "Comp Knee", { 0.0f, 12.0f }, 6.0f, dbText, dbFrom);
     choiceParam (pid::compDetector, "Comp Detector", { "RMS", "Peak" }, 0);
     floatParam (pid::compMix, "Comp Mix", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
+    // ADR-0019 (0.1.1): the comp's own stereo link, named apart from the
+    // limiter's "Stereo Link" so the two automation lanes cannot be confused.
+    // Default 100 % = the fully linked detector the comp always had — the
+    // addition is backwards-inert (an old session simply loads the default).
+    floatParam (pid::compStereoLink, "Comp Stereo Link", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
 
     // Rows 20-25, 48-49 (clip / colour). colourModel defaults to Tape, NOT
     // Clean — Clean is the null model and would make the Character macro inert
@@ -221,14 +260,14 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
     floatParam (pid::eqTilt, "Tilt", { -3.0f, 3.0f }, 0.0f, dbText, dbFrom);
     floatParam (pid::eqLowShelfFreq,  "LS Freq", logRange (20.0f, 500.0f),     100.0f,  hzText, hzFrom);
     floatParam (pid::eqLowShelfGain,  "LS Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
-    floatParam (pid::eqHighShelfFreq, "HS Freq", logRange (1000.0f, 20000.0f), 8000.0f, hzText, hzFrom);
+    floatParam (pid::eqHighShelfFreq, "HS Freq", logRange (1000.0f, 20000.0f), 8000.0f, hzText, khzFrom);
     floatParam (pid::eqHighShelfGain, "HS Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
-    floatParam (pid::eqBell1Freq, "Bell 1 Freq", logRange (20.0f, 20000.0f),   300.0f,  hzText, hzFrom);
+    floatParam (pid::eqBell1Freq, "Bell 1 Freq", logRange (20.0f, 20000.0f),   300.0f,  hzText, hzKhzFrom);
     floatParam (pid::eqBell1Gain, "Bell 1 Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
     floatParam (pid::eqBell1Q,    "Bell 1 Q",    logRange (0.3f, 8.0f),        1.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); });
-    floatParam (pid::eqBell2Freq, "Bell 2 Freq", logRange (20.0f, 20000.0f),   3000.0f, hzText, hzFrom);
+    floatParam (pid::eqBell2Freq, "Bell 2 Freq", logRange (20.0f, 20000.0f),   3000.0f, hzText, hzKhzFrom);
     floatParam (pid::eqBell2Gain, "Bell 2 Gain", { -12.0f, 12.0f },            0.0f,    dbText, dbFrom);
     floatParam (pid::eqBell2Q,    "Bell 2 Q",    logRange (0.3f, 8.0f),        1.0f,
                 [] (float v, int) { return juce::String (v, 2); },
@@ -244,10 +283,17 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
 }
 
 // ----------------------------------------------------------------------------
+// The A/B-travel exclusion. `advancedMode` LEFT this set in ADR-0018: it now
+// travels with an UNDO step (the owner's 0.1.1 directive — an ADV toggle is
+// a user action the user can take back) while staying pinned across A/B
+// switches and Copies (`applySlotToLive`'s adoptAdvanced flag), because an
+// A/B compare is a SOUND compare and must not resize the editor (the half of
+// ADR-0010 option E that survives). It also stays out of PRESETS — explicitly,
+// below — and stays non-automatable (the X11 editor-resize crash path).
 bool isViewTierParam (const juce::String& paramID)
 {
     return paramID == pid::bypass || paramID == pid::loudnessComp
-        || paramID == pid::deltaMonitor || paramID == pid::advancedMode;
+        || paramID == pid::deltaMonitor;
 }
 
 // A NEW view-tier or monitor parameter MUST be added above (or here), and this
@@ -259,9 +305,15 @@ bool isViewTierParam (const juce::String& paramID)
 // flip off every time the user auditioned a preset, and the defaults pass would
 // look innocent while doing it. The exclusion set is the only thing standing
 // between that pass and the view state.
+//
+// `advancedMode` is named HERE rather than inherited from the view tier since
+// ADR-0018 (it undoes, so it is no longer view-tier), for exactly the hazard
+// this comment describes: without it, browsing a preset would slam the editor
+// back to Simple on every audition.
 bool isPresetExcludedParam (const juce::String& paramID)
 {
-    return isViewTierParam (paramID) || paramID == pid::freeze;
+    return isViewTierParam (paramID) || paramID == pid::freeze
+        || paramID == pid::advancedMode;
 }
 
 // ----------------------------------------------------------------------------
@@ -273,6 +325,7 @@ constexpr const char* kCacheOrder[] = {
     pid::inputGain, pid::scHpfFreq,
     pid::compRatio, pid::compThreshold, pid::compAttack, pid::compRelease,
     pid::compAutoRelease, pid::compKnee, pid::compDetector, pid::compMix,
+    pid::compStereoLink,
     pid::clipShape, pid::clipDrive, pid::clipMix, pid::colourModel,
     pid::colourBalance, pid::colourTone, pid::dynTilt, pid::colourDepth,
     pid::limGain, pid::lookahead, pid::limRelease, pid::limAutoRelease,
@@ -333,6 +386,7 @@ void CachedParams::toEngine (anabasis::EngineParameters& out) const noexcept
     out.compKneeDb        = f();
     out.compDetector      = c();
     out.compMix           = f() * 0.01f;
+    out.compStereoLink    = f() * 0.01f;
     out.clipShape         = f();
     out.clipDriveDb       = f();
     out.clipMix           = f() * 0.01f;

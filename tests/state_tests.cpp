@@ -118,7 +118,7 @@ static void testRegistrySnapshot (bool writeSnapshot)
             if (! rp->isAutomatable())
                 ++nonAuto;
         }
-    check (count == 49,  "registry: exactly 49 parameters (DESIGN §4.2)");
+    check (count == 50,  "registry: exactly 50 parameters (DESIGN §4.2's 49 + ADR-0019's compStereoLink)");
     check (nonAuto == 9, "registry: exactly nine non-automatable (ADR-0010)");
 }
 
@@ -210,6 +210,17 @@ static void testAbSlotsAndTiers()
 
     check (isPresetExcludedParam (pid::freeze) && ! isViewTierParam (pid::freeze),
            "tiers: freeze is preset-excluded only (travels in A/B and undo)");
+
+    // ADR-0018: advancedMode left the view tier (it undoes) but is still
+    // preset-excluded BY NAME, and still pinned across an A/B switch — the
+    // pin moved from the shared predicate into applySlotToLive.
+    check (isPresetExcludedParam (pid::advancedMode) && ! isViewTierParam (pid::advancedMode),
+           "tiers: advancedMode is preset-excluded by name, no longer view-tier (ADR-0018)");
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    proc.switchToSlot (1);
+    check (proc.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f,
+           "tiers: advancedMode stays live across the A/B switch (the editor never resizes on a compare)");
+    proc.switchToSlot (0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1118,101 @@ static void testMeterPublication()
            "meters: a zero-length block pushes no history entry");
     check (juce::exactlyEqual (proc.meterDbTpMax(), tpBefore),
            "meters: a zero-length block re-publishes nothing");
+}
+
+// The ADR-0020 Waveform-Statistics rows, driven through the REAL wrapper on
+// the same stimulus the row above uses: a −20 dBFS 997 Hz sine, whose every
+// statistic is known in closed form.
+//   sample peak  = −20.00 dBFS (the amplitude)
+//   RMS (math.)  = −23.01 dBFS (a sine's RMS is 1/√2 of its peak)
+//   RMS (AES-17) = −20.00 dBFS (the same number, +3.01, which is the WHOLE
+//                  content of the reference choice — so asserting both pins
+//                  the offset without a second stimulus)
+//   LRA          = 0 LU (a steady tone has no range at all)
+// The ungated and gated integrated readings agree here BY CONSTRUCTION — no
+// block of a continuous tone falls below either gate — which is what makes
+// the third case below meaningful rather than tautological: it feeds silence
+// after the tone, which the gates treat differently.
+static void testTheWaveformStatisticsRowsReadTheirStandards()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+    auto runTone = [&] (int blocks, float amp)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    runTone ((int) (8.0 * 48000.0 / 512.0), 0.1f);      // 8 s: LRA needs > 3 s of window
+
+    check (near (proc.meterPeakMaxDb(), -20.0f, 0.05f),
+           "stats: the sample-peak hold reads the tone's amplitude");
+    check (near (proc.meterRmsDb(), -23.01f, 0.15f),
+           "stats: the published RMS is the MATHEMATICAL reference (a full-scale sine is -3.01)");
+    check (proc.meterPeakMaxDb() > proc.meterRmsDb() + 2.5f,
+           "stats: …and it sits below the sample peak by the sine's crest factor");
+    check (near (proc.meterLra(), 0.0f, 0.6f),
+           "stats: a steady tone has essentially no loudness range");
+    check (near (proc.meterLufsIUngated(), proc.meterLufsI(), 0.1f),
+           "stats: on a continuous tone the gated and ungated integrated readings agree");
+
+    // SILENCE AFTER THE TONE is what separates the two integrated standards:
+    // BS.1770-2's absolute gate drops the silent blocks, so the gated figure
+    // holds at the tone's loudness; BS.1770-1 has no gate, so the ungated
+    // figure is dragged down by them. A mutant that publishes the same value
+    // twice, or that applies the -70 gate to the ungated accumulator, fails
+    // exactly here.
+    const float gatedBefore = proc.meterLufsI();
+    for (int b = 0; b < (int) (8.0 * 48000.0 / 512.0); ++b)
+    {
+        buf.clear();
+        proc.processBlock (buf, midi);
+    }
+    check (near (proc.meterLufsI(), gatedBefore, 0.2f),
+           "stats: the GATED integrated reading ignores the silence that follows");
+    check (proc.meterLufsIUngated() < gatedBefore - 2.0f,
+           "stats: the UNGATED (BS.1770-1) reading is dragged down by it");
+
+    // THE PLR ROW IS THE DIFFERENCE OF THE TWO ROWS ABOVE IT, under whichever
+    // integrated standard §3.5 selects. `meterPlr()` is published against the
+    // GATED figure alone, so it is the wrong reference the moment BS.1770-1 is
+    // showing — and the silence just run is what drives the two standards more
+    // than 2 LU apart, which makes that a visible disagreement rather than a
+    // theoretical one. The rule lives in `plrFromShown`, which takes both
+    // operands, so the suite can pin it without driving the panel's
+    // FrameClock tick.
+    const float tpNow = proc.meterDbTpMax();
+    check (near (LoudnessMeterView::plrFromShown (tpNow, proc.meterLufsI()),
+                 proc.meterPlr(), 1.0e-4f),
+           "stats: under BS.1770-2 the PLR row reproduces the published gated figure exactly");
+    check (near (LoudnessMeterView::plrFromShown (tpNow, proc.meterLufsIUngated()),
+                 tpNow - proc.meterLufsIUngated(), 1.0e-4f),
+           "stats: under BS.1770-1 the PLR row is TP minus the UNGATED figure it shows");
+    check (std::abs (LoudnessMeterView::plrFromShown (tpNow, proc.meterLufsIUngated())
+                     - proc.meterPlr()) > 2.0f,
+           "stats: …and that is NOT the published PLR, which is why the row derives its own");
+    check (juce::exactlyEqual (LoudnessMeterView::plrFromShown (
+                                   tpNow, anabasis::LoudnessMeter::kSilentLufs), 0.0f),
+           "stats: with no integrated reading the PLR row reads 0, as the published figure does");
+
+    // The reset clears both peak holds, not only the true peak's.
+    proc.requestMeterReset();
+    buf.clear();
+    proc.processBlock (buf, midi);
+    check (proc.meterPeakMaxDb() < -100.0f,
+           "stats: the meter reset clears the sample-peak hold too");
 }
 
 // ---------------------------------------------------------------------------
@@ -2119,27 +2225,169 @@ static void testTeardownAndReengageInvariants()
                "reengage: …and the SAME gesture re-landed the curve on it");
     }
 
-    // (3) COPY A→B. A per-slot undo stack records edits made from that slot's
-    // own values; a Copy replaces them wholesale from outside that history, so
-    // every entry describes a state the slot no longer has —
-    // `setStateInformation` already clears both stacks for that reason.
+    // (3) COPY A→B — ADR-0018 (the sibling's #12 rule): the Copy is an undo
+    // step ON THE DESTINATION whose older history is KEPT beneath it. One
+    // undo on the copied-into slot reverts the Copy; the next walks the
+    // slot's own pre-copy history. Entries are absolute snapshots, which is
+    // what makes the kept history coherent. (0.1.0 cleared both stacks here;
+    // that behaviour and its rationale are superseded — see the ADR.)
     {
         AnabasisAudioProcessor proc;
         auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto driveDb = [&] { return proc.apvts.getRawParameterValue (pid::clipDrive)->load(); };
         proc.switchToSlot (1);                       // edit B so it HAS a history
         drive->beginChangeGesture();
         drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (7.0f));
         drive->endChangeGesture();
         check (proc.canUndo(), "copyUndo: (premise) slot B has an undo step");
         proc.switchToSlot (0);
+        drive->beginChangeGesture();                 // give A a distinct value to copy
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (3.0f));
+        drive->endChangeGesture();
         proc.copySlotToOther();                      // A → B
         proc.switchToSlot (1);
-        check (! proc.canUndo(),
-               "copyUndo: a copied-into slot starts a fresh history, as a load does");
-        check (std::abs (proc.apvts.getRawParameterValue (pid::clipDrive)->load()
-                           - drive->getNormalisableRange().convertFrom0to1 (drive->getValue()))
-                   < 1.0e-3f,
-               "copyUndo: (premise) the copy itself landed");
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyUndo: (premise) the copy itself landed on B");
+        check (proc.canUndo(), "copyUndo: the Copy is an undo step on the destination");
+        proc.undo();
+        check (std::abs (driveDb() - 7.0f) < 1.0e-3f,
+               "copyUndo: one undo on the destination reverts the Copy");
+        check (proc.canUndo(), "copyUndo: …and the destination's OWN history survives beneath it");
+        proc.undo();
+        check (std::abs (driveDb() - 0.0f) < 1.0e-3f,
+               "copyUndo: the second undo walks the pre-copy history");
+        check (proc.canRedo(), "copyUndo: the redo line rebuilt by undoing");
+        proc.redo();
+        proc.redo();
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyUndo: redo twice re-lands the copied state");
+        // The SOURCE slot's history is untouched by a Copy: A had one step
+        // (the 3 dB edit) and still has exactly that.
+        proc.switchToSlot (0);
+        check (proc.canUndo(), "copyUndo: the source slot's history is untouched");
+    }
+
+    // (3b) COPY UNDO DOES NOT MOVE THE VIEW — ADR-0018 §Consequences: "Copy
+    // never moves the view", and the undo of a Copy is part of Copy's
+    // behaviour. The Copy entry is the ONE undo entry whose slot tree was not
+    // captured at the moment of its step (it is `storedSlot`, frozen since the
+    // last A/B switch), so it is the one entry whose `advancedMode` can be
+    // stale — and undo is the one adoption path that adopts `advancedMode`.
+    // The sequence below is the minimum that exposes it: the ADV toggle has to
+    // land AFTER the switch that froze `storedSlot` and BEFORE the Copy.
+    {
+        AnabasisAudioProcessor proc;
+        auto* adv   = proc.apvts.getParameter (pid::advancedMode);
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto advOn = [&] { return proc.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f; };
+
+        proc.switchToSlot (1);                       // give slot B a distinct value
+        drive->beginChangeGesture();
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (7.0f));
+        drive->endChangeGesture();
+        proc.switchToSlot (0);                       // …and FREEZE it into storedSlot, ADV off
+
+        adv->beginChangeGesture();                   // the toggle the frozen snapshot predates
+        adv->setValueNotifyingHost (1.0f);
+        adv->endChangeGesture();
+        check (advOn(), "copyUndoView: (premise) the user is in Advanced when they Copy");
+
+        proc.copySlotToOther();                      // A → B
+        proc.switchToSlot (1);
+        check (advOn(), "copyUndoView: (premise) the A/B switch left the view alone");
+        proc.undo();                                 // revert the Copy on the destination
+        check (advOn(),
+               "copyUndoView: undoing a Copy reverts the sound and leaves the view mode alone");
+        check (std::abs (proc.apvts.getRawParameterValue (pid::clipDrive)->load() - 7.0f) < 1.0e-3f,
+               "copyUndoView: …and the SOUND half of that undo still landed");
+    }
+
+    // (3c) A COPY THAT CHANGES NOTHING MINTS NOTHING. After the first Copy the
+    // destination already holds the live state, so a second press with no edit
+    // between would push an entry restoring exactly what it replaces — one
+    // Undo press that visibly does nothing, which is the dead step ADR-0018
+    // removed from the gesture path. Same change test, same answer.
+    {
+        AnabasisAudioProcessor proc;
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto driveDb = [&] { return proc.apvts.getRawParameterValue (pid::clipDrive)->load(); };
+
+        drive->beginChangeGesture();                 // one real edit in A
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (3.0f));
+        drive->endChangeGesture();
+
+        proc.copySlotToOther();                      // A → B: a real change to B
+        proc.copySlotToOther();                      // …and again, with nothing between
+        proc.copySlotToOther();
+
+        proc.switchToSlot (1);
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyNoOp: (premise) the copied state is on the destination");
+        check (proc.canUndo(), "copyNoOp: the FIRST Copy is still a step");
+        proc.undo();
+        check (std::abs (driveDb() - 0.0f) < 1.0e-3f,
+               "copyNoOp: one undo reverts to the pre-copy state — the repeats added no steps");
+        check (! proc.canUndo(), "copyNoOp: …and there is nothing left to undo on that slot");
+    }
+
+    // (3d) …AND IT DOES NOT CLEAR THE DESTINATION'S REDO LINE. Redo is
+    // invalidated by a new ACTION, and a Copy that changes nothing is not one —
+    // the gesture path likewise clears no redo when its diff is empty. Staged
+    // so the destination (A) is back at its default with a redo entry waiting,
+    // and the source (B) holds that same default, which makes the Copy a no-op.
+    {
+        AnabasisAudioProcessor proc;
+        auto* drive = proc.apvts.getParameter (pid::clipDrive);
+        const auto driveDb = [&] { return proc.apvts.getRawParameterValue (pid::clipDrive)->load(); };
+
+        drive->beginChangeGesture();
+        drive->setValueNotifyingHost (drive->getNormalisableRange().convertTo0to1 (3.0f));
+        drive->endChangeGesture();
+        proc.undo();                                 // A back to default, redo line armed
+        check (proc.canRedo() && std::abs (driveDb()) < 1.0e-3f,
+               "copyNoOp: (premise) slot A is at its default with a redo entry waiting");
+
+        proc.switchToSlot (1);                       // B active, also default
+        proc.copySlotToOther();                      // B → A: A already holds this state
+        proc.switchToSlot (0);
+        check (proc.canRedo(), "copyNoOp: a Copy that changes nothing does not clear redo");
+        proc.redo();
+        check (std::abs (driveDb() - 3.0f) < 1.0e-3f,
+               "copyNoOp: …so the redo still re-lands the edit it belonged to");
+    }
+
+    // (5) ADV UNDO — ADR-0018's second half: an Advanced-mode toggle is a
+    // real undo step (the click is gesture-bracketed by its ButtonAttachment;
+    // this drives the same path directly), and the undo restore ADOPTS the
+    // slot's advancedMode — the one adoption path that does. A bypass click,
+    // by contrast, arms nothing: its diff is unrestorable (applySlotToLive
+    // pins it), so it must not eat an Undo press.
+    {
+        AnabasisAudioProcessor proc;
+        auto* adv = proc.apvts.getParameter (pid::advancedMode);
+        const auto advOn = [&] { return proc.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f; };
+        check (! proc.canUndo(), "advUndo: (premise) fresh instance, empty history");
+
+        adv->beginChangeGesture();                   // the ButtonAttachment's bracket
+        adv->setValueNotifyingHost (1.0f);
+        adv->endChangeGesture();
+        check (advOn(), "advUndo: (premise) the toggle landed");
+        check (proc.canUndo(), "advUndo: the ADV toggle minted an undo step");
+        proc.undo();
+        check (! advOn(), "advUndo: undo restores the previous view mode");
+        proc.redo();
+        check (advOn(), "advUndo: redo re-applies it");
+
+        auto* bypass = proc.apvts.getParameter (pid::bypass);
+        bypass->beginChangeGesture();
+        bypass->setValueNotifyingHost (1.0f);
+        bypass->endChangeGesture();
+        // The bypass click must not have minted a step: undoing now must
+        // change ADV (the last real step), not bypass.
+        proc.undo();
+        check (! advOn(), "advUndo: a bypass click minted NO step — undo reached the ADV toggle");
+        check (proc.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f,
+               "advUndo: …and bypass itself was untouched by the restore (pinned view tier)");
     }
 
     // (4) `refreshMapping()`'s CONTRACT. Its header promised "this is what
@@ -3583,11 +3831,12 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
     // than it claimed to (it still passed, which is why it needed reading).
     //
     // The copy area is the panel's content inset, `reduced (30, 26)` — the same
-    // expression `Backdrop::paint` uses — trimmed to the height the copy stack
-    // actually occupies: 38 title + 20 subtitle + 14 + 18 version + 18 vendor
-    // + 10 + 60 description + 6 + 16 copyright = 200 px, of the 238 the inset
-    // leaves. Sampling only that band keeps the "textured rows" count about the
-    // copy rather than about the empty glass beneath it.
+    // expression `Backdrop::paint` uses — trimmed to the height the FLOW copy
+    // stack actually occupies: 38 title + 20 subtitle + 14 + 18 version
+    // + 18 vendor + 10 + 60 description = 178 px, of the 238 the inset leaves
+    // (the copyright is bottom-ANCHORED since 0.1.1 — the sibling's geometry —
+    // so it no longer belongs to this stack). Sampling a 200 px band keeps the
+    // "textured rows" count about the copy rather than the glass beneath it.
     const auto panel = ed->getLocalBounds().withSizeKeepingCentre (440, 290);
     const auto copyArea = panel.reduced (30, 26).withHeight (200);
     const auto shot = ed->createComponentSnapshot (copyArea, false);
@@ -3612,6 +3861,47 @@ static void testTheAboutPanelShowsTheBuildItIsRunning()
            "about: the panel paints product copy, not an empty glass rectangle");
 }
 
+// 0.1.1 owner directive: frequency text entry speaks mastering shorthand,
+// classed by knob range. The owner's examples pin BOTH sides of the bells'
+// pivot — "19" (below the 20 Hz floor, illegal as Hz) reads 19 kHz while
+// "20" (the floor itself, legal) reads 20 Hz — and the all-kHz high shelf
+// takes the sibling's `khzFrom` rule verbatim (bare ≤ 20 → kHz). Each case
+// goes text → parser → normalise → denormalise through the REAL parameter,
+// so the range's snap/clamp participates exactly as it does in a host or
+// the value box.
+static void testFrequencyTextEntrySpeaksMasteringShorthand()
+{
+    AnabasisAudioProcessor proc;
+    auto hz = [&] (const char* id, const char* text) -> float
+    {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (proc.apvts.getParameter (id));
+        return p->convertFrom0to1 (p->getValueForText (text));
+    };
+    auto near = [] (float got, float want) { return std::abs (got - want) < 0.51f; };
+
+    // HS Freq (1000–20000, all-kHz knob): bare ≤ 20 is kHz.
+    check (near (hz (pid::eqHighShelfFreq, "8"),      8000.0f), "freqText: HS '8' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "8000"),   8000.0f), "freqText: HS '8000' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "8k"),     8000.0f), "freqText: HS '8k' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "8 kHz"),  8000.0f), "freqText: HS '8 kHz' lands 8 kHz");
+    check (near (hz (pid::eqHighShelfFreq, "5570"),   5570.0f), "freqText: HS '5570' stays Hz");
+    check (near (hz (pid::eqHighShelfFreq, "2.38"),   2380.0f), "freqText: HS '2.38' lands 2.38 kHz");
+
+    // Bells (20–20000, full-range knob): the pivot is the knob's own 20 Hz
+    // floor, EXCLUSIVE — every legal Hz value stays Hz.
+    check (near (hz (pid::eqBell1Freq, "19"),   19000.0f), "freqText: bell '19' (below the floor) lands 19 kHz");
+    check (near (hz (pid::eqBell1Freq, "20"),      20.0f), "freqText: bell '20' (the floor) stays 20 Hz");
+    check (near (hz (pid::eqBell1Freq, "155"),    155.0f), "freqText: bell '155' stays Hz");
+    check (near (hz (pid::eqBell1Freq, "2.38"),  2380.0f), "freqText: bell '2.38' lands 2.38 kHz");
+    check (near (hz (pid::eqBell2Freq, "5570"),  5570.0f), "freqText: bell '5570' stays Hz (shown 5.57 kHz)");
+    check (near (hz (pid::eqBell2Freq, "8k"),    8000.0f), "freqText: bell '8k' lands 8 kHz");
+
+    // Sub-kHz knobs keep the plain Hz parser (the sibling's convention for
+    // its 20–500 Hz knob): a bare number is Hz, k-suffix still honoured.
+    check (near (hz (pid::scHpfFreq,      "150"), 150.0f), "freqText: SC HPF '150' stays Hz");
+    check (near (hz (pid::eqLowShelfFreq, "0.1k"), 100.0f), "freqText: LS '0.1k' lands 100 Hz");
+}
+
 // R2 item 11: every parameter control carries a hover hint. The wording lives
 // in ONE table (`tipFor`, file-static in PluginEditor.cpp) which this suite
 // cannot reach — what it CAN pin is the outcome: no slider or combo in the
@@ -3631,6 +3921,33 @@ static void collectTooltipless (juce::Component& root, juce::StringArray& names)
     }
 }
 
+// The §8 focus sweep's collector — same shape as `collectTooltipless`, and
+// deliberately a SECOND walk rather than a second condition inside the first:
+// the two answer different questions and a combined failure message could not
+// say which one failed.
+//
+// WHAT THIS SWEEP ACTUALLY GUARDS, stated because the obvious reading is
+// wrong: only the SLIDERS. JUCE's per-class defaults were read from the
+// vendored source — `Slider` ends its constructor `setWantsKeyboardFocus
+// (false)`, `Button` sets it true unconditionally, `ComboBox` sets
+// `! isLabelEditable` — so combos and toggles were focusable all along and
+// their explicit calls in the setup helpers are redundant-but-deliberate.
+// Removing the SLIDER call fails this check and names all forty knobs;
+// removing the combo call changes nothing observable, which a mutation run
+// confirmed. Both facts are recorded so a future reader does not mistake the
+// sweep for broader cover than it has.
+static void collectUnfocusable (juce::Component& root, juce::StringArray& names)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* sl = dynamic_cast<juce::Slider*> (c); sl != nullptr && ! sl->getWantsKeyboardFocus())
+            names.add ("slider \"" + sl->getTitle() + "\"");
+        if (auto* bx = dynamic_cast<juce::ComboBox*> (c); bx != nullptr && ! bx->getWantsKeyboardFocus())
+            names.add ("combo \"" + bx->getTitle() + "\"");
+        collectUnfocusable (*c, names);
+    }
+}
+
 static void testEveryKnobAndComboCarriesATooltip()
 {
     AnabasisAudioProcessor proc;
@@ -3642,16 +3959,35 @@ static void testEveryKnobAndComboCarriesATooltip()
 
     juce::StringArray hoverless;
     collectTooltipless (*ed, hoverless);
+    // §8 keyboard operability, landed 0.1.1: every slider and combo ACCEPTS
+    // keyboard focus, which is what lets tab traversal reach it and JUCE's own
+    // `Slider::keyPressed` arrow handling fire. Swept here rather than in its
+    // own test because it is the same walk over the same set — and asserted as
+    // "accepts", never "takes": `EDITOR_WANTS_KEYBOARD_FOCUS` stays FALSE so
+    // the plugin never steals the host's transport keys.
+    juce::StringArray unfocusable;
+    collectUnfocusable (*ed, unfocusable);
+    if (! unfocusable.isEmpty())
+        std::printf ("  unfocusable: %s\n", unfocusable.joinIntoString (", ").toRawUTF8());
+    check (unfocusable.isEmpty(),
+           "keyboard: every slider and combo accepts keyboard focus (brief section 8)");
     if (! hoverless.isEmpty())
         std::printf ("  tooltipless: %s\n", hoverless.joinIntoString (", ").toRawUTF8());
     check (hoverless.isEmpty(), "tooltips: every slider and combo carries a hover hint");
 
+    // "True-Peak Meter" left this list in 0.1.1 with the toggle and the field
+    // behind it (ADR-0020) — the statistics panel shows the true peak
+    // unconditionally, so there is no longer a toggle to carry a hint.
     for (auto* text : { "FREEZE", "COMP", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
-                        "UI Animations", "Tooltips", "True-Peak Meter" })
+                        "UI Animations", "Tooltips" })
     {
         auto* b = findButtonByText (*ed, text);
-        check (b != nullptr && b->getTooltip().isNotEmpty(),
-               "tooltips: the named toggles carry hints");
+        // The toggle's NAME in the message, not a shared sentence: this check
+        // ran eleven times under one wording, so a failure said only that one
+        // of eleven toggles was hoverless and cost a bisect to localise.
+        juce::String msg;
+        msg << "tooltips: the \"" << text << "\" toggle carries a hint";
+        check (b != nullptr && b->getTooltip().isNotEmpty(), msg.toRawUTF8());
     }
 }
 
@@ -3668,13 +4004,20 @@ static void testTheGraphWellViewsOnlyClaimTheirModeChips()
                                  juce::Time::getCurrentTime(), 1, false);
     };
 
-    // Spectrum → GR: the "GR" chip sets int_spectrumOn false.
+    // The 0.1.1 switch is a two-segment SPEC|GR pill shared by both views
+    // (`abgui::graph_switch`): a press selects the SIDE OF THE DIVIDER it
+    // lands on, so pressing the active segment is a no-op and pressing the
+    // other one switches. Probe points, derived from the one geometry both
+    // views key on: W-10 sits in the GR (right) half, W-60 in the SPEC (left)
+    // half of the 78 px pill at inset 6.
+
+    // Spectrum view: GR segment switches away, SPEC segment is a no-op.
     {
         SpectrumView view (proc);
         view.setBounds (0, 0, 300, 120);
 
         check (view.hitTest (view.getWidth() - 10, 10),
-               "spectrumClicks: (premise) the chip corner is hit-tested");
+               "spectrumClicks: (premise) the switch corner is hit-tested");
         check (! view.hitTest (10, 60),
                "spectrumClicks: a click over the trace is not claimed by the overlay");
         check (! view.hitTest (view.getWidth() - 10, 60),
@@ -3684,18 +4027,21 @@ static void testTheGraphWellViewsOnlyClaimTheirModeChips()
         view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
         check ((bool) ist.getProperty (iid::spectrumOn, false),
                "spectrumClicks: a press over the trace does not switch the mode");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 60.0f, 10.0f }));
+        check ((bool) ist.getProperty (iid::spectrumOn, false),
+               "spectrumClicks: pressing the active SPEC segment is a no-op");
         view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
         check (! (bool) ist.getProperty (iid::spectrumOn, true),
-               "spectrumClicks: a press on the chip switches the well to GR");
+               "spectrumClicks: pressing the GR segment switches the well to GR");
     }
 
-    // GR → spectrum: the mirrored "SPEC" chip sets int_spectrumOn true.
+    // GR view: SPEC segment switches back, GR segment is a no-op.
     {
         GrHistoryView view (proc);
         view.setBounds (0, 0, 300, 120);
 
         check (view.hitTest (view.getWidth() - 10, 10),
-               "grChip: (premise) the chip corner is hit-tested");
+               "grChip: (premise) the switch corner is hit-tested");
         check (! view.hitTest (10, 60),
                "grChip: a click over the history trace is not claimed");
         check (! view.hitTest (view.getWidth() - 10, 60),
@@ -3706,8 +4052,11 @@ static void testTheGraphWellViewsOnlyClaimTheirModeChips()
         check (! (bool) ist.getProperty (iid::spectrumOn, true),
                "grChip: a press over the trace does not switch the mode");
         view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
+        check (! (bool) ist.getProperty (iid::spectrumOn, true),
+               "grChip: pressing the active GR segment is a no-op");
+        view.mouseDown (eventFor (view, { (float) view.getWidth() - 60.0f, 10.0f }));
         check ((bool) ist.getProperty (iid::spectrumOn, false),
-               "grChip: a press on the chip switches the well back to the spectrum");
+               "grChip: pressing the SPEC segment switches the well back to the spectrum");
     }
 }
 
@@ -3855,6 +4204,70 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
            "grWindow: below the clamp the window is the whole 20 s");
     check (GrHistoryView::windowEntries (0.0, 512) == GrHistoryView::windowEntries (48000.0, 512),
            "grWindow: an unprepared processor reads as 48 kHz, not as a divide by zero");
+
+    // THE DECIMATION GEOMETRY, and specifically that it FILLS THE PANEL. The
+    // 0.1.1 shimmer fix gave buckets a fixed absolute identity but drew one
+    // per pixel column anchored at the newest — and `stride` rounds up, so
+    // `cols` buckets span more entries than the window holds and the surplus
+    // ones, being older than the window, drew nothing: a permanent blank strip
+    // down the left, ~31 % of the Simple well at 48 kHz/512 and ~48 % at 1024.
+    // The columns are stretched over the width now, so the trace runs edge to
+    // edge whatever the rate/block/width combination.
+    {
+        struct Case { double sr; int bs; int cols; const char* what; };
+        const Case cases[] = {
+            { 48000.0,  512, 904, "Simple well, 48 kHz / 512" },
+            { 48000.0, 1024, 904, "Simple well, 48 kHz / 1024" },
+            { 48000.0, 2048, 904, "…and a block big enough that entries are SCARCER than columns" },
+            { 48000.0,  512, 604, "Advanced well, 48 kHz / 512" },
+            { 192000.0,  32, 604, "192 kHz / 32 — the window saturates at the ring clamp" },
+        };
+        for (const auto& c : cases)
+        {
+            const auto want = GrHistoryView::windowEntries (c.sr, c.bs);
+            const auto head = want * 4;                        // long settled, ring wrapped
+            const auto b    = GrHistoryView::buckets (head, want, c.cols);
+            const auto say  = [&c] (const char* what)
+            { return juce::String ("grBuckets: ") + what + " — " + c.what; };
+
+            const auto m1 = say ("2..cols buckets");
+            check (b.count >= 2 && b.count <= (int64_t) c.cols, m1.toRawUTF8());
+            // The panel is FULL: first bucket on the left edge, last on the
+            // right. This is the assertion the blank strip failed.
+            const auto m2 = say ("the trace spans the whole width");
+            check (std::abs (GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols)) < 1.0e-3f
+                   && std::abs (GrHistoryView::bucketX (b, b.kHead, 0.0f, (float) c.cols)
+                                - (float) (c.cols - 1)) < 1.0e-3f,
+                   m2.toRawUTF8());
+            // …and it spans it with the WINDOW's data, not by showing more
+            // time: widening the window to cols·stride would have filled the
+            // panel too, at 38.6 s instead of 20 (DESIGN §2.9 allows 10–30).
+            // The drawn entries are [kFirst·stride, head), which must be one
+            // window deep to within the bucket the boundary rounds off.
+            const auto drawn = head - b.kFirst * b.stride;
+            const auto m3 = say ("…carrying one window of entries, no more");
+            check (drawn <= want && drawn >= want - b.stride, m3.toRawUTF8());
+            // Every drawn bucket is non-empty: the oldest lies wholly inside
+            // the window, and the newest holds entry `head - 1` by keying on
+            // `head - 1` rather than `head` (which left it empty whenever the
+            // head landed on a stride boundary).
+            const auto m4 = say ("the oldest drawn bucket is inside the window");
+            check (b.kFirst * b.stride >= head - want, m4.toRawUTF8());
+            const auto m5 = say ("…and the newest holds the newest entry");
+            check (b.kHead * b.stride <= head - 1 && (b.kHead + 1) * b.stride > head - 1,
+                   m5.toRawUTF8());
+        }
+
+        // A ring with a handful of entries still spans the panel rather than
+        // drawing a stub in one corner — the pre-0.1.1 behaviour while the
+        // history fills. `head` here is far below one window.
+        const auto want  = GrHistoryView::windowEntries (48000.0, 512);
+        const auto small = GrHistoryView::buckets (12, want, 904);
+        check (small.kFirst == 0 && small.count == 11 / small.stride + 1,
+               "grBuckets: a barely-filled ring starts at bucket 0 and draws only what it has");
+        check (std::abs (GrHistoryView::bucketX (small, small.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
+               "grBuckets: …and still reaches the right edge, so it fills as it grows");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4256,6 +4669,7 @@ static void testCachedParamsMapping()
     set (pid::eqBell2Q, 2.0f);
     set (pid::ceiling, -3.0f);
     set (pid::compMix, 40.0f);          // percent in, 0..1 out
+    set (pid::compStereoLink, 70.0f);   // ADR-0019 — distinct from the limiter's 80
     set (pid::stereoLink, 80.0f);
     set (pid::colourDepth, 60.0f);
 
@@ -4268,7 +4682,8 @@ static void testCachedParamsMapping()
     auto near = [] (float a, float b) { return std::abs (a - b) < 1.0e-3f; };
     check (near (e.inputGainDb, 7.0f)        && near (e.scHpfFreqHz, 120.0f),   "cache: input/detector fields");
     check (near (e.compRatio, 3.0f)          && near (e.compThresholdDb, -18.0f)
-            && near (e.compKneeDb, 9.0f)     && near (e.compMix, 0.40f),        "cache: compressor fields");
+            && near (e.compKneeDb, 9.0f)     && near (e.compMix, 0.40f)
+            && near (e.compStereoLink, 0.70f),                                   "cache: compressor fields");
     check (near (e.clipDriveDb, 5.0f)        && near (e.colourBalance, 0.5f)
             && near (e.dynTiltDb, 1.25f)     && near (e.colourDepth, 0.60f),    "cache: clip/colour fields");
     check (near (e.limGainDb, 11.0f)         && near (e.lookaheadMs, 4.0f)
@@ -4426,6 +4841,54 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
         p.setStateInformation (blob.getData(), (int) blob.getSize());
         return nullptr;
     });
+
+    // mono → stereo (KI-009): the layout Anabasis REFUSED until 0.1.1. A host
+    // with a mono source then negotiated stereo→stereo and fed the signal on
+    // whichever single input pin its convention chose — and this chain is
+    // strictly dual-mono, so the other output channel mastered silence. The
+    // wrapper now accepts mono in and duplicates it; both output channels must
+    // carry the (same) programme.
+    {
+        AnabasisAudioProcessor proc;
+        check (proc.checkBusesLayoutSupported (
+                   juce::AudioProcessor::BusesLayout { { juce::AudioChannelSet::mono() },
+                                                       { juce::AudioChannelSet::stereo() } }),
+               "stereoWrapper (mono in): the mono->stereo layout is accepted");
+        const bool applied = proc.setBusesLayout (
+            juce::AudioProcessor::BusesLayout { { juce::AudioChannelSet::mono() },
+                                                { juce::AudioChannelSet::stereo() } });
+        check (applied, "stereoWrapper (mono in): the mono->stereo layout applies");
+        proc.prepareToPlay (48000.0, 512);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        double sumSq[2] = { 0.0, 0.0 };
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                // The mono programme arrives on channel 0 ONLY — channel 1 is
+                // the host-convention silence the field report describes.
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) t / 48000.0f));
+                buf.setSample (1, n, 0.0f);
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n)
+                {
+                    sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                    sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                }
+        }
+        const double rmsL = std::sqrt (sumSq[0] / (30.0 * 512.0));
+        const double rmsR = std::sqrt (sumSq[1] / (30.0 * 512.0));
+        juce::String msg;
+        msg << "stereoWrapper (mono in): BOTH output channels carry the duplicated programme (L="
+            << (float) rmsL << " R=" << (float) rmsR << ")";
+        check (rmsL > 0.05 && rmsR > 0.05, msg.toRawUTF8());
+    }
 }
 
 int main (int argc, char** argv)
@@ -4448,6 +4911,7 @@ int main (int argc, char** argv)
         testAbSwitchRequestsDuck();
         testUndoRequestsDuck();
         testMeterPublication();
+        testTheWaveformStatisticsRowsReadTheirStandards();
         testAGestureEndWithoutACountedBeginIsIgnored();
         testAMacroGestureWinsADetachRacingItInOneDrain();
         testTeardownAndReengageInvariants();
@@ -4476,6 +4940,7 @@ int main (int argc, char** argv)
         testARewoundSpectrumRingDropsThePreviousTrace();
         testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
         testTheAboutPanelShowsTheBuildItIsRunning();
+        testFrequencyTextEntrySpeaksMasteringShorthand();
         testTheGraphWellViewsOnlyClaimTheirModeChips();
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();

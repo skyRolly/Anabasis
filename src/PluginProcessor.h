@@ -109,36 +109,13 @@ public:
 
     // Top-bar Copy (§6.1): the INACTIVE slot becomes a snapshot of the live
     // state. No duck and no engine involvement — nothing audible changes, the
-    // copy lands where the next A/B switch will read it.
-    // Copy A→B (or B→A): the dirty datum travels with the values, or the
-    // copy would land looking edited against whatever the other slot held.
-    void copySlotToOther()
-    {
-        storedSlot = saveSlotFromLive();
-        // `createCopy()`, for the reason `undo()`/`redo()` carry: assigning a
-        // `juce::ValueTree` shares the refcounted node, so the two slots' dirty
-        // data would be ONE tree until the next wholesale replacement. Harmless
-        // while a baseline is only ever replaced, never edited in place — which
-        // is true of every writer today — and a trap the moment one is not, since
-        // an edit made "for slot A" would appear in B. `storedSlot` above needs
-        // no such call: `saveSlotFromLive()` returns a freshly built tree that
-        // nothing else holds.
-        storedPresetBaseline = presetBaseline.createCopy();
-        // …and the destination's history goes with the state it described.
-        // A per-slot undo stack records edits made FROM that slot's own values
-        // (§7 / ADR-0010); a Copy replaces those values wholesale from outside
-        // that history, so every entry now describes a state the slot no
-        // longer has. Leaving them, the first undo after switching to B
-        // restored a pre-copy state the user never edited from — silently
-        // discarding the copy AND B's last edit, because the copy itself is
-        // not an undo step. `setStateInformation` already clears both slots'
-        // stacks for exactly this reason ("a load starts a fresh history");
-        // a copy is that event for one slot, so it takes the same answer.
-        syncHistory();
-        const int other = 1 - activeSlot;
-        undoStacks[other].clear();
-        redoStacks[other].clear();
-    }
+    // copy lands where the next A/B switch will read it. Since ADR-0018 the
+    // Copy is an UNDO STEP on the destination slot — its pre-copy state is
+    // pushed onto that slot's stack, whose older entries are KEPT (entries are
+    // absolute snapshots, so the pre-copy history stays reachable beneath the
+    // new entry) — the sibling's semantics, replacing the clear-both-stacks
+    // answer 0.1.0 shipped. Body in the .cpp: it pushes through `pushCapped`.
+    void copySlotToOther();
 
     // Preset apply goes through here, never through PresetManager directly:
     // the wrapper lands the slot-level fields (name, detach mask) and drops
@@ -309,7 +286,16 @@ private:
     // BOTH sides of its compare. See the definition for why the slot tree is
     // not that datum.
     juce::ValueTree presetShapeFromLive() const;
-    void applySlotToLive (const juce::ValueTree& slot);
+    // adoptAdvanced (ADR-0018): the UNDO/REDO restore adopts `advancedMode`
+    // from the slot tree (an ADV toggle is an undoable step); every other
+    // adoption path — A/B switch, Copy — pins it to the live value, because
+    // an A/B compare is a sound compare and must not resize the editor.
+    void applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced = false);
+    // The same ADR-0018 pin, applied at PUSH time instead of adopt time — see
+    // the definition. Only `copySlotToOther` needs it, and only because its
+    // undo entry is the one entry whose slot tree was not captured at the
+    // moment of the step it records.
+    juce::ValueTree slotWithLiveAdvancedMode (const juce::ValueTree& slot);
     void reassertFromRaw (const juce::ValueTree& apvtsTree);
     void resetSlotFieldsToDefaults();
 
@@ -484,6 +470,18 @@ public:
     float meterDbTpMax()  const noexcept { return pubDbTpMax.load (std::memory_order_relaxed); }
     float meterPlr()      const noexcept { return pubPlr.load (std::memory_order_relaxed); }
     float meterGrDb()     const noexcept { return pubGrDb.load (std::memory_order_relaxed); }
+    // The §2.9 Waveform-Statistics additions (ADR-0020). Same row, same
+    // contract — relaxed, one publish per block, cleared by the same list.
+    float meterPeakMaxDb()  const noexcept { return pubPeakMaxDb.load (std::memory_order_relaxed); }
+    // MATHEMATICAL reference (a full-scale sine reads -3.01). The AES-17
+    // convention is +3.01 dB and is applied at DISPLAY time from the Settings
+    // choice — see `RmsMeter`'s header for why the offset is deferred.
+    float meterRmsDb()      const noexcept { return pubRmsDb.load (std::memory_order_relaxed); }
+    // BOTH integrated readings are published; WHICH is shown is the Settings
+    // choice, resolved on the message thread. Publishing both is what keeps
+    // the audio thread from ever reading a UI preference (ADR-0020).
+    float meterLufsIUngated() const noexcept { return pubLufsIUngated.load (std::memory_order_relaxed); }
+    float meterLra()          const noexcept { return pubLra.load (std::memory_order_relaxed); }
     float meterCompGrDb() const noexcept { return engine.lastCompGrDb(); }   // per-stage (P5 panels)
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
     const anabasis::ScopeBuffer& spectrumInRing()  const noexcept { return engine.spectrumInRing(); }
@@ -556,12 +554,20 @@ private:
     // only the engine sees the sample before the monitor-only stages touch
     // it. The wrapper keeps the session max-hold and the publish atomics.
     anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes
-    float dbTpMaxHold = -144.0f;                  // audio-thread session max
+    // Audio-thread session max-holds. `samplePeakMaxHold` joined `dbTpMaxHold`
+    // with the stats row (ADR-0020) and is cleared by exactly the same two
+    // sites, for the same reason: both are session-cumulative, so both belong
+    // to `requestMeterReset`'s contract rather than to the rolling windows.
+    float dbTpMaxHold = -144.0f, samplePeakMaxHold = -144.0f;
     std::atomic<bool> meterResetPending { false };
     std::atomic<float> pubLufsM { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsS { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsI { anabasis::LoudnessMeter::kSilentLufs },
-                       pubDbTpMax { -144.0f }, pubPlr { 0.0f }, pubGrDb { 0.0f };
+                       pubDbTpMax { -144.0f }, pubPlr { 0.0f }, pubGrDb { 0.0f },
+                       pubPeakMaxDb { -144.0f },
+                       pubRmsDb { anabasis::RmsMeter::kSilentDb },
+                       pubLufsIUngated { anabasis::LoudnessMeter::kSilentLufs },
+                       pubLra { anabasis::LoudnessMeter::kNoLra };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnabasisAudioProcessor)
 };

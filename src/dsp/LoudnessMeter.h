@@ -24,6 +24,19 @@
 //    histogram accumulator (751 bins of 0.1 LU across −70…+5 LUFS, count +
 //    mean-square sum per bin) — REALTIME_AUDIO_POLICY's named consequence
 //    for exactly this spot: never a growing per-block container.
+//  - INTEGRATED, UNGATED — the BS.1770-**1** reading (0.1.1, ADR-0020): the
+//    plain mean energy of every gating block, no absolute gate and no
+//    relative gate, because -1 defined no gating at all; the two-stage gate
+//    arrived in BS.1770-**2** and is what every later revision kept. Both
+//    figures are computed always and published side by side; WHICH ONE THE
+//    USER SEES is a Settings choice resolved on the message thread, so the
+//    meter itself carries no preference.
+//  - LOUDNESS RANGE (LRA, EBU Tech 3342, 0.1.1): a second fixed-size
+//    histogram over SHORT-TERM values sampled at the 100 ms sub-block
+//    cadence (far above the standard's ≥ 1 Hz), absolute-gated at −70 LUFS,
+//    then relative-gated at (mean − **20 LU** — LRA's threshold, not the
+//    integrated reading's −10), and read as the 95th minus the 10th
+//    percentile of what survives.
 //
 //  Loudness = −0.691 + 10·log10(Σ_ch z_ch). The standard's own compliance
 //  point pins the calibration: a 0 dBFS 997 Hz sine in ONE channel reads
@@ -64,9 +77,7 @@ public:
         subFill  = 0;
         integratedFrom = 0;
         for (auto& s : subRing) s = 0.0;
-        for (auto& c : histCount) c = 0;
-        for (auto& s : histSum) s = 0.0;
-        totalGatedBlocks = 0;
+        clearSessionCumulative();
     }
 
     // Invariant 9, the unconditional half — called once per block by the
@@ -111,9 +122,7 @@ public:
     // top of processBlock): bounded stores, no allocation.
     void resetIntegrated() noexcept
     {
-        for (auto& c : histCount) c = 0;
-        for (auto& s : histSum) s = 0.0;
-        totalGatedBlocks = 0;
+        clearSessionCumulative();
         // The watermark is the half that is easy to miss: gating blocks are
         // assembled from the last FOUR 100 ms sub-blocks, so the first ones
         // committed after this call straddle up to 300 ms of PRE-reset
@@ -136,6 +145,13 @@ public:
         // watermark exists to prevent. Land the reset on a sub-block boundary
         // (subFill == 0) and there is no straddler, so +4 is right there.
         integratedFrom = subCount + 4 + (subFill > 0 ? 1 : 0);
+        // The LRA watermark is the SAME rule at the short-term window's
+        // length: an LRA sample IS a 3 s window, so the first one carrying no
+        // pre-reset material is 30 sub-blocks out, plus the straddler. Getting
+        // this wrong would not merely bias the number — one retained loud
+        // pre-reset short-term value sets the 95th percentile for the rest of
+        // the session, and LRA has no averaging to dilute it.
+        lraFrom = subCount + 30 + (subFill > 0 ? 1 : 0);
     }
 
     // One frame (all channels of one sample step).
@@ -189,7 +205,77 @@ public:
         return (float) energyToLufs (sum / (double) count);
     }
 
+    // The BS.1770-1 reading: the plain mean energy of every gating block with
+    // NO gate of either kind. It is a separate accumulator rather than a
+    // second pass over the histogram because the histogram never sees the
+    // sub-−70 blocks at all — the absolute gate is applied at INSERT, so the
+    // ungated figure is not recoverable from it. Two doubles and a counter.
+    float integratedUngatedLufs() const noexcept
+    {
+        if (ungatedCount == 0)
+            return kSilentLufs;
+        return (float) energyToLufs (ungatedSum / (double) ungatedCount);
+    }
+
+    // LOUDNESS RANGE in LU (EBU Tech 3342). `0` is a legitimate reading (a
+    // perfectly steady programme), so "not measured yet" is the negative
+    // sentinel — a range cannot be negative, and the callers that display it
+    // test for it rather than for a count they cannot see.
+    static constexpr float kNoLra = -1.0f;
+
+    float lraLu() const noexcept
+    {
+        if (lraCount == 0)
+            return kNoLra;
+        // Pass 1: the relative threshold, 20 LU below the mean of everything
+        // that cleared the absolute gate.
+        const double relThreshold = energyToLufs (lraSum / (double) lraCount) - 20.0;
+        const int firstBin = juce::jlimit (0, kBins - 1,
+                                           (int) std::ceil ((relThreshold - kBinFloor) / kBinWidth));
+        int64_t total = 0;
+        for (int b = firstBin; b < kBins; ++b)
+            total += lraHist[(size_t) b];
+        if (total < 2)
+            return kNoLra;               // a single surviving value has no range
+
+        // Pass 2: the 10th and 95th percentiles of the surviving distribution,
+        // by cumulative count. Bin CENTRES are the reported values, so the
+        // figure is quantised to the 0.1 LU bin width — the same bound the
+        // integrated reading carries, and the same reason: a fixed-size
+        // accumulator is the only allocation-free way to hold a distribution
+        // whose length is the session's.
+        const auto percentileLufs = [&] (double fraction) noexcept
+        {
+            const int64_t want = (int64_t) std::ceil (fraction * (double) total);
+            int64_t cum = 0;
+            for (int b = firstBin; b < kBins; ++b)
+            {
+                cum += lraHist[(size_t) b];
+                if (cum >= juce::jmax<int64_t> (1, want))
+                    return kBinFloor + ((double) b + 0.5) * kBinWidth;
+            }
+            return kBinFloor + ((double) (kBins - 1) + 0.5) * kBinWidth;
+        };
+        return (float) juce::jmax (0.0, percentileLufs (0.95) - percentileLufs (0.10));
+    }
+
 private:
+    // The four session-cumulative accumulators, cleared as ONE unit — they are
+    // fed together and every caller that clears one must clear all four, which
+    // is exactly the kind of rule that rots when it is written twice.
+    void clearSessionCumulative() noexcept
+    {
+        for (auto& c : histCount) c = 0;
+        for (auto& s : histSum) s = 0.0;
+        totalGatedBlocks = 0;
+        ungatedSum = 0.0;
+        ungatedCount = 0;
+        for (auto& c : lraHist) c = 0;
+        lraSum = 0.0;
+        lraCount = 0;
+        lraFrom = 0;
+    }
+
     void finishSubBlock() noexcept
     {
         double frameSum = 0.0;
@@ -223,6 +309,18 @@ private:
                 z += subRing[(size_t) ((subCount - 1 - k) % kSubRing)];
             z *= 0.25;
             const double lufs = energyToLufs (z);
+            // BS.1770-1: every gating block, no gate of either kind. Fed here
+            // rather than beside the histogram insert so the ungated figure
+            // cannot silently inherit a gate someone adds to that branch.
+            // Non-finite energies are excluded — `finishSubBlock` keeps them
+            // out of the ring, so `z` can only be non-finite if a stored
+            // finite value overflowed the sum, and one such block would make
+            // the mean NaN for the session with no gate to reject it.
+            if (std::isfinite (z))
+            {
+                ungatedSum += z;
+                ++ungatedCount;
+            }
             if (lufs >= -70.0)                 // absolute gate
             {
                 // The clamp is a HARD RANGE LIMIT, not a rounding detail:
@@ -242,6 +340,29 @@ private:
                 ++totalGatedBlocks;
             }
         }
+
+        // LRA sample (EBU Tech 3342): one SHORT-TERM value per sub-block, so
+        // 10 Hz — far above the standard's ≥ 1 Hz floor, and free, because
+        // `windowLoudness` is the same 30-entry walk the display already does.
+        // Its own watermark, not `integratedFrom`: a short-term window reaches
+        // ten times further back, so sharing the integrated one would admit
+        // 2.9 s of pre-reset programme.
+        if (subCount >= 30 && subCount >= lraFrom)
+        {
+            const float st = windowLoudness (30);
+            if (st >= -70.0f && std::isfinite (st))       // the absolute gate
+            {
+                const int bin = juce::jlimit (0, kBins - 1,
+                                              (int) (((double) st - kBinFloor) / kBinWidth));
+                ++lraHist[(size_t) bin];
+                // The relative threshold is computed in the ENERGY domain like
+                // the integrated reading's, so the sum accumulates energies —
+                // averaging the dB values instead would answer a different
+                // question and would not match the integrated gate's grammar.
+                lraSum += lufsToEnergy (st);
+                ++lraCount;
+            }
+        }
     }
 
     float windowLoudness (int subBlocks) const noexcept
@@ -257,6 +378,14 @@ private:
     static double energyToLufs (double z) noexcept
     {
         return -0.691 + 10.0 * std::log10 (juce::jmax (z, 1.0e-12));
+    }
+
+    // The exact inverse of the line above, for the LRA gate's energy-domain
+    // mean. Written as the inverse rather than re-deriving the constant so a
+    // change to one is a compile-visible mismatch with the other.
+    static double lufsToEnergy (double lufs) noexcept
+    {
+        return std::pow (10.0, (lufs + 0.691) * 0.1);
     }
 
     void designKWeighting() noexcept
@@ -317,6 +446,20 @@ private:
     int32_t histCount[kBins] = {};
     double  histSum[kBins] = {};
     int64_t totalGatedBlocks = 0;
+
+    // BS.1770-1 (ungated) — two scalars, no histogram: with no gate there is
+    // no threshold to re-derive later, so the running mean IS the answer.
+    double  ungatedSum = 0.0;
+    int64_t ungatedCount = 0;
+
+    // LRA (Tech 3342): counts only. The energy sum lives beside it for the
+    // relative gate; the percentiles need the distribution, which is what the
+    // bins are, and nothing needs the per-bin energy the integrated histogram
+    // carries — so this one is ~3 KB against that one's ~9 KB.
+    int64_t lraFrom = 0;
+    int32_t lraHist[kBins] = {};
+    double  lraSum = 0.0;
+    int64_t lraCount = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoudnessMeter)
 };

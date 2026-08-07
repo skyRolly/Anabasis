@@ -32,7 +32,13 @@ namespace iid
     inline const juce::Identifier tooltipsOn     { "int_tooltipsOn" };     // bool
     inline const juce::Identifier uiAnimations   { "int_uiAnimations" };   // bool
     inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool: graph-well mode — true spectrum, false GR history (ADR-0016)
-    inline const juce::Identifier tpMeterOn      { "int_tpMeterOn" };      // bool
+    // ADR-0020 (0.1.1). `int_tpMeterOn` was REMOVED with the same record: the
+    // stats panel shows the true peak unconditionally, so a field whose only
+    // job was hiding one row had nothing left to gate. These two replace it —
+    // both select which STANDARD a shown reading follows, never whether it is
+    // shown, which is the distinction the removed field failed to draw.
+    inline const juce::Identifier integratedStd  { "int_integratedStd" };  // 0 BS.1770-2+ (gated), 1 BS.1770-1 (ungated)
+    inline const juce::Identifier rmsRef         { "int_rmsRef" };         // 0 AES-17 (FS sine = 0 dB), 1 mathematical
 }
 
 // The LEGAL VALUES of `iid::uiScale`, beside the identifier that names it
@@ -104,7 +110,13 @@ public:
         tree.setProperty (iid::tooltipsOn,     false, nullptr);
         tree.setProperty (iid::uiAnimations,   true,  nullptr);
         tree.setProperty (iid::spectrumOn,     true,  nullptr);
-        tree.setProperty (iid::tpMeterOn,      false, nullptr);
+        // ⊕ Defaults: the GATED integrated reading, because it is what
+        // BS.1770-2 onward and every delivery spec written since mean by
+        // "integrated LUFS"; and the AES-17 RMS reference, because a
+        // full-scale sine reading 0 dBFS is the mastering convention. Both
+        // alternatives exist for the engineer who needs the other one.
+        tree.setProperty (iid::integratedStd,  0,     nullptr);
+        tree.setProperty (iid::rmsRef,         0,     nullptr);
     }
 
     ~InternalState() override { tree.removeListener (this); }
@@ -194,6 +206,22 @@ public:
                           ui_scale::nearest ((int) tree.getProperty (
                               iid::uiScale, ui_scale::defaultPercent)),
                           nullptr);
+
+        // …and the SAME rule for the two ADR-0020 selectors, which arrived in
+        // 0.1.1 without it. They are two-valued ints with no atomic mirror to
+        // clamp them (`syncAtomics` covers the four latency/lock fields only),
+        // so an out-of-range stored value reached BOTH readers uncorrected —
+        // and the two readers disagreed about it: `LoudnessMeterView::tick`
+        // asks `== 1`, so a stored 7 read as "BS.1770-2+", while the Settings
+        // combo re-seed clamps the index with `jlimit`, so the same 7 DISPLAYED
+        // as "BS.1770-1". The panel then showed one standard and computed the
+        // other, with nothing to make the disagreement visible. Clamping at
+        // adoption — where the illegal value enters — makes both readers see
+        // the same number, which is the property the `uiScale` clause above
+        // exists for and the sentence beginning "Every OTHER field's read rule
+        // is already applied at adoption" claimed for the whole set.
+        for (const auto& id : { iid::integratedStd, iid::rmsRef })
+            tree.setProperty (id, juce::jlimit (0, 1, (int) tree.getProperty (id, 0)), nullptr);
 
         // …and the single fire happens in ~ScopedLatencyBatch, so an early
         // return could not skip it. A missing child still lands on defaults.

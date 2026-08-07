@@ -33,8 +33,8 @@ driving an adaptive chain of compression, clipping/saturation and true-peak limi
 *better*, not merely *louder*.
 
 It is a stereo audio *effect* (no MIDI): VST3 on all platforms, Audio Unit on macOS, plus a
-Standalone application. It processes **stereo in, stereo out** — it is a mastering processor
-and will not appear on mono slots.
+Standalone application. It outputs **stereo**, from a stereo or mono input — a mono source is
+duplicated to both channels before mastering (since 0.1.1).
 
 ### Who it is for
 
@@ -88,8 +88,9 @@ other DAW uses the **VST3**.
 
 ### 2.3 Load it on the master
 
-Insert Anabasis on a **stereo** track — normally the master bus, or a mix bus. (A mono slot
-will not offer it: the layout is stereo→stereo only.) You'll see the **Simple** view: the
+Insert Anabasis on a **stereo** track — normally the master bus, or a mix bus. (A mono
+source also works: it is duplicated to both channels; the *output* is always stereo.)
+You'll see the **Simple** view: the
 top bar, the big **Loudness** knob with **Ceiling**, **Character** and **Tone** around it, a
 toggle row, and the metering strip.
 
@@ -153,7 +154,7 @@ Universal gestures:
 | **‹ Preset name ›** | Steps through presets (wraps at the ends). Clicking the name opens the preset menu (§7). An `*` after the name means the sound no longer matches the loaded preset. |
 | **A / B** | Two independent sound slots for comparing settings; click to switch (§7.4). |
 | **Copy** | Copies the current slot's sound into the other slot. |
-| **↶ / ↷** | Undo / Redo — sound parameters only, kept **per A/B slot**. |
+| **↶ / ↷** | Undo / Redo — kept **per A/B slot**. Covers sound parameters, preset loads, Copy (on the destination slot) and the ADV view switch; bypass and the monitor toggles are never recorded. |
 | **Settings (gear)** | Opens the Settings overlay (§3.5). |
 | **ADV** | Switches Simple ↔ Advanced view (§5). |
 | **BYPASS** | Click-free bypass; with Loudness Comp on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
@@ -181,7 +182,9 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 
 - **COMP** — the mastering glue compressor: Ratio (1.1–4:1), Threshold, Attack (5–100 ms),
   Release (50–1000 ms) with **AUTO** (program-dependent two-stage release), Knee, RMS/Peak
-  detector, Mix (parallel compression), and its gain-reduction meter.
+  detector, Mix (parallel compression), **Comp Stereo Link** (how much both channels share
+  one gain — full link keeps the image stable, lower lets each channel breathe on its own;
+  since 0.1.1), and its gain-reduction meter.
 - **CLIP / COLOUR** — the transient-absorbing clipper and the colour stage: Shape
   (hard ↔ soft, with a live transfer-curve display), Drive (level-compensated), Mix,
   **Colour** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Colour
@@ -203,12 +206,18 @@ Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMI
 
 Always along the bottom:
 
-- **LUFS** — Momentary / Short-term / Integrated bars (BS.1770-4, gated).
-- **TP** — true peak in dBTP with a max hold. **Hidden by default**: turn *True-Peak Meter*
-  on in Settings to show the row. It always measures true peak, whether or not the limiter's
-  TP mode is engaged — so it is the honest check on a sample-peak ceiling.
-- **PLR** — peak-to-loudness ratio (true peak − integrated LUFS): a crest/dynamics
-  at-a-glance number.
+The **STATISTICS** panel — the same eight readings in both Simple and Advanced:
+
+| Row | What it is |
+|---|---|
+| **M** | Momentary loudness, the newest 400 ms (BS.1770). |
+| **S** | Short-term loudness, the last 3 s. |
+| **I** | Integrated loudness over the whole measurement. Which revision it follows is a Settings choice (§3.5). |
+| **TP** | True peak in dBTP, max hold. It always measures true peak, whether or not the limiter's TP mode is engaged — so it is the honest check on a sample-peak ceiling, and it turns red above your Ceiling. |
+| **SP** | Sample peak in dBFS, max hold. Read it against TP: the gap between them **is** the inter-sample overshoot. |
+| **RMS** | RMS level over a 50 ms Hann window. The reference is a Settings choice (§3.5). |
+| **LRA** | Loudness Range in LU (EBU R128 / Tech 3342) — how much the loudness moves across the programme. A steady master reads near 0; a dynamic one reads 8–15. |
+| **PLR** | Peak-to-loudness ratio: TP minus the **I** row above it — so it follows the same BS.1770 revision that row does (§3.5). A crest/dynamics at-a-glance number. |
 - **The graph well** — one panel, two switchable views, in both Simple and Advanced:
   - **Spectrum** — the input/output spectrum overlay (input dim, output in the accent).
   - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see
@@ -219,8 +228,10 @@ Always along the bottom:
   history, click **SPEC** on the history to return. The choice is session state, saved with
   your project, so it reopens on whichever you left it.
 
-**Click the LUFS/TP/PLR panel to reset** the integrated measurement and the held maxima —
-do it after changing the section you are judging.
+**Click the STATISTICS panel to reset** the integrated measurement, the loudness range and
+both peak holds — do it after changing the section you are judging. The rolling windows (M,
+S, RMS) are not reset: they measure the last few seconds and have nothing session-scoped in
+them.
 
 ### 3.5 Settings (gear)
 
@@ -234,7 +245,8 @@ Session state — saved with your DAW project, never in presets, invisible to au
 | **UI Scale** | XS / S / M / L / XL | Five steps; **M** is the original size, everything scales in proportion. |
 | **UI Animations** | on/off | Default on. Off never changes behaviour, only motion. |
 | **Tooltips** | on/off | Hover hints on every control — what it does, in a line. Default off. |
-| **True-Peak Meter** | on/off | Shows/hides the TP row. Default off. |
+| **Integrated** | BS.1770-2+ / BS.1770-1 | Which revision the **I** row follows. **-2 onward** (default) gates quiet passages out of the average, which is what every modern delivery spec means by "integrated LUFS". **-1** is the original ungated definition — the plain average, dragged down by silence. |
+| **RMS Reference** | AES-17 / Mathematical | What the **RMS** row calls 0 dB. **AES-17** (default) reads a full-scale sine as 0 dBFS, the mastering convention. **Mathematical** reads the same sine as −3.01, the literal root-mean-square. The two differ by exactly 3.01 dB and never by anything else. |
 
 (The Spectrum/GR choice is *not* here: switch it with the chip on the graph itself — §3.4.)
 
@@ -274,11 +286,20 @@ Simple is a **macro layer over the Advanced parameters** — one parameter model
 and **switching views never changes the sound**.
 
 When you edit a stage parameter in Advanced that the macros manage, that parameter
-**detaches** from the macro (it shows a badge) and keeps your value — returning to Simple
-moves nothing. The next time you move a macro knob, detached parameters **re-engage** and
-glide back under macro control; that gesture is the "the macros are in charge again"
-moment, and it is smooth, not a jump. The **edited dot** in Simple view is the summary
-indicator — click it to re-land everything on the macro sound at once (undoable).
+**detaches** from the macro (it shows a corner-dot badge) and keeps your value — returning
+to Simple moves nothing. The next time you move a macro knob, detached parameters
+**re-engage** and glide back under macro control; that gesture is the "the macros are in
+charge again" moment, and it is smooth, not a jump. The **edited dot** in Simple view is
+the summary indicator — click it to re-land everything on the macro sound at once
+(undoable).
+
+Two things the corner dot is **not**: it is not an "edited since the preset" mark (that is
+the `*` after the preset name), and it never appears on knobs the macros don't manage —
+only the nine managed parameters can detach, because only they have a macro curve to
+detach *from*. Consequently, manually turning a detached knob back to its old value does
+**not** clear the dot: the knob is still off macro control, holding *your* value. Moving a
+macro, clicking Simple's edited dot, or loading a preset is what re-attaches it. Each
+managed knob's tooltip carries this legend.
 
 ---
 
@@ -349,9 +370,10 @@ ones. (A *session* restores anything an old file doesn't mention to its default;
 
 **A/B** switches between two complete, independent sound setups; **Copy** pushes the
 current one into the other slot. Each slot keeps its own preset name, edited state and
-undo history — and because Copy *replaces* the destination's sound, the destination's undo
-history starts fresh at that point. Switching is click-free and is not itself an undo
-step. Both slots travel with your DAW session.
+undo history — and the Copy itself is an **undo step on the destination**: switch to the
+copied-into slot and press Undo to revert the Copy, then keep undoing through that slot's
+own earlier history. Switching is click-free and is not itself an undo step. Both slots
+travel with your DAW session.
 
 ---
 
@@ -402,7 +424,8 @@ Work through these in order:
 3. **Right place / permissions?** Check the install paths — and on Linux/macOS the
    `chmod` steps — in the [Installation guide](INSTALLATION.md). If you copied by hand,
    make sure you moved the *whole* `Anabasis.vst3` **folder**.
-4. **Right kind of track?** It is a stereo effect — a mono slot will not offer it.
+4. **Right kind of track?** The output is stereo — a slot whose *output* is mono will not
+   offer it (a mono *source* into a stereo slot is fine).
 5. **Blocklisted from an earlier failed scan?** Clear the host's plug-in cache/blocklist
    entry and scan again — common after a macOS quarantine problem: the first scan fails,
    the host remembers, and never retries on its own.
