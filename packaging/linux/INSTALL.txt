@@ -1,7 +1,7 @@
 Anabasis — Linux install / 安装说明
 ====================================
 
-This package was built by CI for x86_64 Linux. Extracting the zip gives you:
+This package is for x86_64 Linux. Extracting the zip gives you:
 
   Anabasis.vst3/   the VST3 plug-in bundle
   Anabasis         the Standalone application
@@ -9,7 +9,7 @@ This package was built by CI for x86_64 Linux. Extracting the zip gives you:
   uninstall.sh     removes what install.sh installed
   INSTALL.txt      this file
 
-本包由 CI 为 x86_64 Linux 构建,解压后即可看到 VST3 插件、独立版程序,
+本包适用于 x86_64 Linux,解压后即可看到 VST3 插件、独立版程序,
 以及 install.sh(系统级安装,需要 root)和 uninstall.sh(卸载)。
 
 Third-party attribution is NOT inside this package. NOTICE and
@@ -63,8 +63,7 @@ Rescan in your DAW / 在 DAW 里重新扫描插件
 Troubleshooting / 常见问题
 --------------------------------------------------------------------
 - "Permission denied" when launching the Standalone: the executable bit
-  was lost (per-push CI artifact downloads and some archive tools drop it;
-  release zips keep it). Fix / 如果提示没有执行权限:
+  was lost in transit (some archive tools drop it). Fix / 如果提示没有执行权限:
       sudo chmod +x /usr/local/bin/Anabasis
       sudo chmod +x /usr/lib/vst3/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so
 - DAW doesn't find the plug-in: make sure the WHOLE Anabasis.vst3 folder

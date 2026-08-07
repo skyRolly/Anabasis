@@ -1,12 +1,12 @@
 Anabasis — macOS install / 安装说明
 ====================================
 
-This bundle was built by CI as a UNIVERSAL binary (Apple Silicon + Intel).
+This bundle is a UNIVERSAL binary (Apple Silicon + Intel).
 It is ad-hoc code-signed but NOT notarized by Apple, so macOS Gatekeeper will
 quarantine anything extracted from the zip — the manual method below includes
 the required de-quarantine step.
 
-本插件由 CI 编译为通用二进制(Apple 芯片 + Intel 都可用),做了 ad-hoc 签名但
+本插件为通用二进制(Apple 芯片 + Intel 都可用),做了 ad-hoc 签名但
 没有经过 Apple 公证。zip 解压出来的文件会被 macOS 隔离(quarantine),手动安装
 时必须按下面步骤去掉隔离,否则 DAW 里加载不出来。
 
@@ -30,13 +30,13 @@ the standard locations:
 --------------------------------------------------------------------
 A) Installer installation (.pkg, recommended) / 安装程序(.pkg,推荐)
 --------------------------------------------------------------------
-  Open  Anabasis-<version>-macOS.pkg  (from the GitHub release) and follow
-  the installer. The default is a FULL install (VST3 + AU + Standalone);
-  click "Customize" on the Installation Type step to choose which
-  components to install. Files installed by the package carry NO
-  quarantine flag, so none of the Terminal steps below are needed.
+  Open  Anabasis-<version>-macOS.pkg  (a separate download — it is not inside
+  this zip) and follow the installer. The default is a FULL install
+  (VST3 + AU + Standalone); click "Customize" on the Installation Type step
+  to choose which components to install. Files installed by the package
+  carry NO quarantine flag, so none of the Terminal steps below are needed.
 
-  打开 Anabasis-<version>-macOS.pkg(GitHub Release 里提供)按提示安装。
+  打开 Anabasis-<version>-macOS.pkg(单独下载,不在本 zip 包内)按提示安装。
   默认完整安装(VST3 + AU + 独立版);在"安装类型"一步点"自定义"可以
   选择要安装的组件。用安装包装的文件没有隔离标记,不需要下面的终端命令。
 
@@ -90,11 +90,9 @@ Notes / 说明
 - If macOS still complains, right-click the .component/.vst3/.app in Finder
   once and choose "Open", or check System Settings > Privacy & Security for
   an "Open Anyway" button.
-- Downloaded as a per-push CI artifact (not from a release)? That transport
-  drops the Unix executable bit — if Anabasis.app then refuses to open,
-  restore it (release zips are unaffected):
-  如果是从 CI 构建产物(非 Release)下载的,可执行权限会丢失;Anabasis.app
-  打不开时执行(Release 的 zip 不受影响):
+- Anabasis.app refuses to open after a manual install? The executable bit can
+  be lost in transit (some archive tools drop it). Restore it:
+  Anabasis.app 打不开时,可能是解压丢了可执行权限,执行:
       sudo chmod +x /Applications/Anabasis.app/Contents/MacOS/Anabasis
 
 --------------------------------------------------------------------
