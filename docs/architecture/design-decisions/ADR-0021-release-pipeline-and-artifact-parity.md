@@ -135,14 +135,24 @@ staging trees.
 - `docs/policies/RELEASE_POLICY.md` — the amended attribution section
 - `CMakeLists.txt` — `project(Anabasis VERSION 0.1.1 …)`; `CHANGELOG.md` — the dated entry
 
-Evidence [Partially Verified]:
-- **Verified**: both workflow files parse; `packaging/` contents are byte-reviewed ports whose
-  names match what `release.yml` consumes (`Anabasis-<version>-Windows-Installer.exe` from the
-  `.iss`'s `OutputBaseFilename`, `Anabasis-<version>-macOS.pkg` from `build-pkg.sh`'s third
-  argument); the local suites and `check-docs.py` are green at 0.1.1.
-- **Unverified, and named rather than implied**: no installer has been BUILT — ISCC and
-  `pkgbuild` exist only on the Windows and macOS runners, so the first real evidence for those
-  two steps is the first CI run on this branch. The Linux scripts have not been executed as
-  root anywhere. This is a CI-evidence gap, not a human-audition one, and it closes on the
-  first green run rather than at the fine review.
+Evidence [Verified — with two named gaps]:
+- **Verified locally**: both workflow files parse; `packaging/` contents are byte-reviewed ports
+  whose names match what `release.yml` consumes; the suites and `check-docs.py` are green at
+  0.1.1.
+- **Verified in CI** (run 31135082913 on this branch, all three platforms green — the run that
+  closed this record's original Unverified claim). The **Windows installer built**: ISCC 6.7.1
+  compiled `packaging/windows/Anabasis.iss` against the staged tree and produced
+  `Anabasis-0.1.1-Windows-Installer.exe`, uploaded as `Anabasis-Windows-installer`. The
+  **macOS `.pkg` built**: `package_macos` carries no `continue-on-error`, so a failure in
+  `build-pkg.sh` — including any of its own post-build self-checks on the three component
+  identifiers, `customize="allow"` and the three `start_selected="true"` — would have failed the
+  job and the run; the run is green, so those checks passed and `Anabasis-macOS-installer`
+  uploaded. Both filenames took their version from `CMakeLists.txt`, which is the property
+  `release.yml`'s skew check depends on.
+- **Still unverified, and named rather than implied**: (1) the Linux `install.sh` /
+  `uninstall.sh` have not been EXECUTED as root anywhere — CI stages them and sets the mode bit,
+  which is not the same as running them; (2) `release.yml` itself has never run. It is
+  tag-triggered and no tag exists yet, so the validate → build → draft-release chain's first
+  real exercise is the `v0.1.1` tag, or the `workflow_dispatch` rehearsal that trigger exists
+  for.
 - Directive: the owner's 0.1.1 instruction of 2026-08-06, item 16
