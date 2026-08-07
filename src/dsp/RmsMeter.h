@@ -19,8 +19,16 @@
 //  Window. `w[n] = 0.5 - 0.5·cos(2πn/(N-1))` over N = 50 ms of samples, and
 //  the reading is `sqrt(Σ w·x² / Σ w)` — normalised by the window's own sum so
 //  a stationary signal reads its true RMS rather than the window's average of
-//  it. Hann is symmetric, so which end of the ring carries `w[0]` does not
-//  change the result; the walk below runs newest-first for cache reasons only.
+//  it. The walk pairs `w[0]` with the OLDEST entry and runs forward in time, so
+//  the window's peak lands on the middle-aged sample: a CENTRED window. Two
+//  consequences worth stating rather than discovering. (1) The reading lags the
+//  signal by half a window — ~25 ms — which is the ordinary behaviour of a
+//  windowed RMS meter and is invisible against the 42 ms display refresh. (2)
+//  Hann being symmetric, a reversed walk would give the same answer for a
+//  stationary signal, which is exactly why the tests below cannot catch a
+//  reversal: they use stationary stimuli because those are the ones with a
+//  closed-form level. The centring is a design statement here, not a test
+//  claim.
 //
 //  Stereo. The frame's MEAN square across channels, so a correlated signal at
 //  full scale reads the same on stereo as it would on one channel — the
