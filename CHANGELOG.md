@@ -14,6 +14,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - **Renames are `Changed`, not `Removed`** (a display-name change with an unchanged parameter ID).
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
+**No tag has been cut yet, so nothing has left this repository.** A version entry here means its
+notes are written, dated and complete — not that the build shipped. Two such entries now exist
+(`[0.1.1]`, `[0.1.2]`) and neither has been tagged; WHICH version the first annotated `vX.Y.Z`
+tag cuts is a decision nobody has taken yet, and this file does not presume it.
+`release.yml` is what turns a tag into a DRAFT release, and
+publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
+version entry because the workflow extracts a version's section VERBATIM as the published release
+notes, so a sentence about the tag not existing would ship inside the notes that prove it does.
+The compatibility window this keeps open is `COMPATIBILITY_POLICY.md` §"When the contract starts",
+which is the copy of record for whether anything has shipped.
+
 **Entry template.** It lives HERE, above the entries, and not at the foot of the file: the
 release workflow extracts a version's notes as everything from a version heading to the next
 h2 heading — and the oldest entry has none after it, so a template sitting after the entries
@@ -119,7 +130,7 @@ decisions are ADR-0023). This entry also releases the preset-identity work that 
 
 ## [0.1.1] — 2026-08-07
 
-**The first build released from this repository.** v0.1.0 was declared code-complete on
+**The first release entry this repository writes.** v0.1.0 was declared code-complete on
 2026-08-02 but was never tagged: the post-v0.1.0 review rounds landed first, and the owner cut
 the release one patch level on. This entry therefore carries the whole P1–P6 development *and*
 the 0.1.1 round — the sections below run newest first.

@@ -27,7 +27,7 @@ is live; the loss is in the processed leg; the fingerprint is not expressible in
 source with intact state), the shipped instrumentation, and what the field must still supply.
 Coverage: **Full** for the round's contracts (ADR + registries + policy + manual + tests);
 confidence **Verified** — the tests in ADR-0023's evidence block, with eight negative controls
-across two mutant builds, each killed by its own assertions. Suites 261 + 659.
+across two mutant builds, each killed by its own assertions. Suites 262 + 659.
 Previous: the **ADR-0022 preset-identity port and its three review rounds
 (2026-08-08)**. The port gave factory presets immutable internal ids and identified a user preset
 by its file, so a shared name is a shared *label*; the documentation set moved with it. **New:**

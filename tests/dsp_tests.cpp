@@ -45,7 +45,9 @@ static void check (bool condition, const char* what)
 // detector unfiltered and the comp's filtered magnitude clamped to the raw
 // one, every stage is inert below its engagement level and the null holds.
 // The adaptive trims stay LIVE throughout — inertness is a property of the
-// stages, not of the trims being zero.
+// stages, not of the trims being zero, and the premise that makes that true
+// for the one trim which could reach a stage (`dynTilt` → ClipSat's Dynamic
+// Tame) is asserted in the body rather than assumed.
 //
 // The second pass asserts the same property through the DELTA monitor: at a
 // bit-exact null the difference leg is exactly `delayedDry − processed = 0`
@@ -103,6 +105,30 @@ static void testNullWithDefaults()
         check (stimPeak < 0.9885f, "null: the stimulus stays below the -0.1 dB ceiling");
         check (stimPeak > 0.708f,
                "null: …and above the old centred knee's -3 dBFS bottom (the negative control)");
+
+        // THE ADAPTATION PREMISE, asserted rather than assumed. The §5.4 trims
+        // run LIVE here, and exactly ONE of them can reach a stage able to
+        // break a bit-exact null: `dynTilt`, whose host is ClipSat's Dynamic
+        // Tame. (The other three are inert while their stages are, which the
+        // two zero-reduction assertions below establish directly.) That stage
+        // is "EXACTLY idle (skipped) when nothing clips OR dynTilt is 0"
+        // (`ClipSat.h` §3), and `clipOn` is an exact-zero test on the DRIVE —
+        // so at the factory drive of 0 the tame is skipped WHATEVER the trim
+        // maps, and the null does not rest on the trim's value at all.
+        //
+        // Asserting the DRIVE rather than the trim is the point: the trim
+        // mapping is ⊕ listening material and must stay free to move, while
+        // this default is the property the inertness argument actually uses.
+        // Pin the trim instead and a legitimate re-tuning fails a null test
+        // for a reason that is not a defect. If this default ever leaves 0 the
+        // argument is gone, and this says WHICH premise died instead of
+        // leaving a bit mismatch 40 blocks downstream to be bisected.
+        // ClipSat's own `activityEnvelope()` invariant-7 tripwire — the same
+        // argument's other half, "nothing clips" — is asserted at the stage
+        // level by `testClipDynamicTame`.
+        check (juce::exactlyEqual (p.clipDriveDb, 0.0f),
+               "null: (premise) the factory drive is 0, so the Dynamic Tame — the only stage "
+               "an adaptive trim can reach — is skipped whatever the trims map");
 
         bool exact = true;
         for (size_t n = (size_t) delay; n < outL.size(); ++n)
