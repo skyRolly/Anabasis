@@ -231,15 +231,21 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
                 [] (const juce::String& t) { return t.getFloatValue(); });
     floatParam (pid::clipDrive, "Clip Drive", { 0.0f, 24.0f }, 0.0f, dbText, dbFrom);
     floatParam (pid::clipMix, "Clip Mix", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
-    choiceParam (pid::colourModel, "Colour", { "Clean", "Tape", "Tube", "Transistor" }, 1);
+    // "Color", US spelling, in every user-facing NAME since 0.1.3 (owner
+    // directive, item 6) — the IDs keep their historical `colour*` spelling:
+    // an ID is a compatibility key, never shown to anyone, and renaming one
+    // is the hard-stop PARAMETER_COMPATIBILITY_POLICY rule 1 forbids. A NAME
+    // is rule 2's legal move: snapshot re-frozen, same as 0.1.2's "Limiter
+    // Stereo Link".
+    choiceParam (pid::colourModel, "Color", { "Clean", "Tape", "Tube", "Transistor" }, 1);
     floatParam (pid::colourBalance, "Odd/Even", { -1.0f, 1.0f }, 0.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); });
-    floatParam (pid::colourTone, "Colour Tone", { -1.0f, 1.0f }, 0.0f,
+    floatParam (pid::colourTone, "Color Tone", { -1.0f, 1.0f }, 0.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); });
     floatParam (pid::dynTilt, "Dynamic Tame", { 0.0f, 2.0f }, 0.0f, dbText, dbFrom);
-    floatParam (pid::colourDepth, "Colour Depth", { 0.0f, 100.0f }, 0.0f, pctText, pctFrom);
+    floatParam (pid::colourDepth, "Color Depth", { 0.0f, 100.0f }, 0.0f, pctText, pctFrom);
 
     // Rows 26-33 (limiter). lookahead: log taper, NO zero/off position
     // (§3.4 / OQ-010 — a 0 ms limiter degenerates into a clipper); it is

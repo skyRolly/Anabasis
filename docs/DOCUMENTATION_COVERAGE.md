@@ -6,7 +6,23 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **0.1.2 field-fix round (2026-08-09, ADR-0023)**. The round's
+**Last updated:** for the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
+naming only, no DSP change, no new ADR (nothing decided at contract level: the three
+Colour → Color NAME renames and the MATCH caption ride PARAMETER_COMPATIBILITY_POLICY rule 2
+with the snapshot re-frozen, the same lane as 0.1.2's "Limiter Stereo Link"). **Amended:**
+`CHANGELOG.md` `[0.1.3]` and its header (entry count); `KNOWN_ISSUES.md` KI-009 (the 0.1.3
+addendum: the owner's per-channel GR-lane observation localises the left-channel kill to the
+comp-output → wet-ring span, the span's audit against the new constraint, the permanent
+field-configuration battery pair at OS Off/4×, and the OS-toggle field experiment it hands
+back); `PARAMETER_REGISTRY.md` (three NAME cells); `docs/user/USER_MANUAL.md` (MATCH, Color,
+the panel caption); `HANDOVER.md` (version/test rows); `README.md` (the suite count). In code
+comments, the judgement calls are recorded where they act: the RMS readout hold in
+`LoudnessMeterView` (the volatility was a display-cadence property, not a measurement defect —
+the 50 ms ADR-0020 window is untouched), the GR-history left-edge fix in `GrHistoryView.cpp`
+(the unmeasured-region zero line was also drawn for a full scrolling window, dropping
+vertically into the trace at bucket-expiry phase), and the EQ band-per-row grid in
+`PluginEditor.cpp`. Suites 264 + 670; pluginval ×3 both modes at the `build.yml` strictness.
+Previous: for the **0.1.2 field-fix round (2026-08-09, ADR-0023)**. The round's
 documentation moved with its contracts. **New:** `ADR-0023` (the round's decision record: the
 knee-above static curve, the unfiltered limiter detector with the comp-side clamp, the three
 bus layouts, the fixed-scale GR history, the bottom-left toggle pill with GR the default view,

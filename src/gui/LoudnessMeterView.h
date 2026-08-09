@@ -89,5 +89,15 @@ private:
           // along with the field it mirrored.
           shownPeak = 1.0f, shownRms = 1.0f, shownLra = -1.0f;
 
+    // The RMS readout hold (0.1.3 item 1 — see tick() for the analysis-vs-
+    // display judgement). `shownRmsValid` is a bool rather than a decode of
+    // `shownRms` because the shown value carries the AES-17 offset and starts
+    // at the impossible-reading seed — deriving validity from the float would
+    // re-create exactly the sentinel-overlap trap RmsMeter's two constants
+    // exist to prevent.
+    static constexpr double kRmsReadoutHoldSecs = 1.0 / 3.0;
+    double rmsSinceAdopt = 0.0;
+    bool   shownRmsValid = false;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoudnessMeterView)
 };

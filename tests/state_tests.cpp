@@ -4793,7 +4793,9 @@ static void testEveryKnobAndComboCarriesATooltip()
     // "True-Peak Meter" left this list in 0.1.1 with the toggle and the field
     // behind it (ADR-0020) — the statistics panel shows the true peak
     // unconditionally, so there is no longer a toggle to carry a hint.
-    for (auto* text : { "FREEZE", "COMP", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
+    // "COMP" became "MATCH" at 0.1.3 (item 2): the loudness-compensation
+    // toggle's caption, renamed so it stops reading as a compressor switch.
+    for (auto* text : { "FREEZE", "MATCH", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
                         "UI Animations", "Tooltips" })
     {
         auto* b = findButtonByText (*ed, text);
@@ -5871,6 +5873,89 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
         p.prepareToPlay (44100.0, 512);      // the sines shift ~8 %; still programme
         return nullptr;
     });
+
+    // The KI-009 0.1.3 field configuration, pinned EXACTLY as the owner ran
+    // it: both stereo links at 0 (per-channel detectors and envelopes), the
+    // comp threshold pulled low and the limiter gain pushed high so BOTH
+    // stages draw reduction on BOTH channels. The field observation was comp
+    // GR on both lanes but limiter GR on the RIGHT lane only, with the left
+    // output silent — which localises the field kill to the span between the
+    // comp's output and the limiter's detector tap (the wet ring): comp GR on
+    // L proves the left channel alive INTO the comp, zero limiter GR on L
+    // proves it dead AT the tap. This case asserts the whole fingerprint
+    // headlessly — per-channel comp GR, per-channel limiter GR, both outputs
+    // alive — at BOTH oversampling extremes of that span: OS Off (the
+    // shipped default), where the span holds NO per-channel recursive state
+    // at all (ClipSat at any setting is channel-symmetric and self-healing,
+    // the push is one shared scalar, the ring indices are shared), and 4×,
+    // where JUCE's per-channel polyphase oversampler is the one stateful
+    // occupant. The pair is the decisive field experiment in headless form:
+    // a field bug that follows the OS toggle names the oversampler; one that
+    // survives OS Off has no in-plugin site left. See KNOWN_ISSUES KI-009,
+    // 0.1.3 addendum.
+    {
+        auto runFieldConfig = [] (int osIdx, const char* tag)
+        {
+            AnabasisAudioProcessor proc;
+            proc.internalState.state().setProperty (iid::oversample, osIdx, nullptr);
+            proc.prepareToPlay (48000.0, 512);
+            auto set = [&proc] (const char* id, float denorm)
+            {
+                auto* par = proc.apvts.getParameter (id);
+                par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+            };
+            set (pid::compStereoLink, 0.0f);
+            set (pid::stereoLink,     0.0f);
+            set (pid::compThreshold,  -30.0f);
+            // The FULL +18 dB push, not a midway value: the comp above takes
+            // ~4 dB first (−15 dBFS RMS against the −30 threshold at 1.5:1),
+            // so the −12 dBFS sines reach the limiter near −16 dBFS + push —
+            // +12 left them ~4 dB UNDER the ceiling and the limiter idle,
+            // which failed this case's own premise on first run.
+            set (pid::limGain,        18.0f);
+
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer midi;
+            double sumSq[2] = { 0.0, 0.0 };
+            for (int b = 0; b < 60; ++b)
+            {
+                for (int n = 0; n < 512; ++n)
+                {
+                    const int t = b * 512 + n;
+                    buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                           * 220.0f * (float) t / 48000.0f));
+                    buf.setSample (1, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                           * 330.0f * (float) t / 48000.0f));
+                }
+                proc.processBlock (buf, midi);
+                if (b >= 30)
+                    for (int n = 0; n < 512; ++n)
+                    {
+                        sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                        sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                    }
+            }
+            const double rmsL = std::sqrt (sumSq[0] / (30.0 * 512.0));
+            const double rmsR = std::sqrt (sumSq[1] / (30.0 * 512.0));
+            juce::String msg;
+            msg << "stereoWrapper (" << tag << "): both channels carry audio (L="
+                << (float) rmsL << " R=" << (float) rmsR << ")";
+            check (rmsL > 0.02 && rmsR > 0.02, msg.toRawUTF8());
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                msg.clear();
+                msg << "stereoWrapper (" << tag << "): comp GR engaged on channel " << ch
+                    << " (" << proc.meterCompGrDbCh (ch) << " dB)";
+                check (proc.meterCompGrDbCh (ch) < -0.5f, msg.toRawUTF8());
+                msg.clear();
+                msg << "stereoWrapper (" << tag << "): limiter GR engaged on channel " << ch
+                    << " (" << proc.meterLimGrDbCh (ch) << " dB)";
+                check (proc.meterLimGrDbCh (ch) < -0.5f, msg.toRawUTF8());
+            }
+        };
+        runFieldConfig (0, "field config, links 0, OS off");
+        runFieldConfig (2, "field config, links 0, OS 4x");
+    }
 }
 
 int main (int argc, char** argv)

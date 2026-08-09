@@ -15,9 +15,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Two such entries now exist
-(`[0.1.1]`, `[0.1.2]`) and neither has been tagged; WHICH version the first annotated `vX.Y.Z`
-tag cuts is a decision nobody has taken yet, and this file does not presume it.
+notes are written, dated and complete — not that the build shipped. Three such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`) and none has been tagged; WHICH version the first annotated
+`vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
 version entry because the workflow extracts a version's section VERBATIM as the published release
@@ -44,6 +44,55 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.1.3] — 2026-08-09
+
+**The polish round** (the owner's seven-item 0.1.3 directive): display and naming fixes only —
+no DSP behaviour changes anywhere in this entry.
+
+### Changed
+- **The loudness-compensation toggle reads MATCH, not COMP** — beside a compressor panel
+  captioned COMP, the old caption read as a compressor switch. The parameter and its
+  automation name ("Loudness Comp") are unchanged. Evidence Source: PR #13 (item 2). [Verified]
+- **"Colour" is now "Color" in every user-facing string** — the CLIP / COLOR panel caption,
+  the knob tooltips, and the automation names of the three colour-stage parameters ("Color",
+  "Color Tone", "Color Depth"; registry snapshot re-frozen per
+  PARAMETER_COMPATIBILITY_POLICY rule 2, exactly as 0.1.2's "Limiter Stereo Link"). Parameter
+  IDs keep their historical spelling — they are compatibility keys, never shown. Evidence
+  Source: PR #13 (item 6). [Verified]
+- **The EQ panel is reorganised into one band per row** — bands in ascending frequency order
+  (Tilt + low shelf · Bell 1 · Bell 2 · high shelf), bells on a strict Freq | Gain | Q column
+  grid and the two shelves framing them in matching columns. The previous layout packed the
+  eleven knobs in declaration order, splitting every band across rows. Same cell sizes and
+  panel budget, so nothing else moved. Evidence Source: PR #13 (item 5). [Verified]
+- **The RMS statistics row updates at reading pace (~3 Hz)** — the 50 ms windowed measurement
+  (ADR-0020) is unchanged and was never wrong; the readout was re-printed at the full ~24 Hz
+  meter cadence, so the digits churned faster than they could be read. The row now adopts a
+  fresh value roughly three times a second and holds it between adoptions; a meter reset
+  still clears it immediately. Evidence Source: PR #13 (item 1). [Verified]
+
+### Fixed
+- **The GR history no longer flashes a vertical accent line at its left edge** while the
+  gain-reduction trace there is non-zero. The "unmeasured region" zero-line was also drawn
+  for a *full, scrolling* window whenever bucket-expiry phase left a sub-pitch gap at the
+  edge, and the trace then dropped vertically from the zero line to its real value at the
+  same x — flashing at the bucket-expiry rate. The zero region now draws only while the ring
+  is genuinely still filling; a full window extends its oldest bucket to the edge. Evidence
+  Source: PR #13 (item 4). [Verified]
+
+### Removed
+- **The corner-dot legend appended to the nine macro-managed knob tooltips** ("A corner dot
+  means this knob is detached from the macros…"), by owner directive. The detach badge itself
+  and Simple view's clickable reset dot are unchanged. Evidence Source: PR #13 (item 7).
+  [Verified]
+
+### Investigation (KI-009, no code change to the audio path)
+- The owner's new per-channel GR observation (comp GR on both lanes, limiter GR on the right
+  lane only, both stereo links at 0) localises the left-channel kill to the span between the
+  compressor's output and the limiter's detector tap. The exact field configuration is now a
+  permanent headless case at both oversampling extremes (both green), and the OS toggle is
+  the decisive field experiment — `docs/KNOWN_ISSUES.md` KI-009, 0.1.3 addendum, carries the
+  full argument. Evidence Source: PR #13 (item 3). [Verified]
 
 ## [0.1.2] — 2026-08-09
 

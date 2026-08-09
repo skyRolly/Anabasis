@@ -35,7 +35,7 @@ void LoudnessMeterView::mouseDown (const juce::MouseEvent&)
     processor.requestMeterReset();   // §2.9 momentary-request row
 }
 
-void LoudnessMeterView::tick (double)
+void LoudnessMeterView::tick (double dt)
 {
     const auto& ist = processor.internalState.state();
     // The §4.4 read fallback is the SHIPPED DEFAULT for both, never `var()`'s
@@ -74,9 +74,32 @@ void LoudnessMeterView::tick (double)
     // around the sentinel, needed only while the two ranges could overlap; a
     // genuine reading in that band was silently denied its offset.
     const float rawRms = processor.meterRmsDb();
-    const float rms = (aes17 && rawRms >= anabasis::RmsMeter::kFloorDb)
-                        ? rawRms + 3.0103f
-                        : rawRms;
+    const float rmsNow = (aes17 && rawRms >= anabasis::RmsMeter::kFloorDb)
+                           ? rawRms + 3.0103f
+                           : rawRms;
+    // The RMS READOUT cadence (0.1.3 item 1). The judgement call, recorded:
+    // the fast-moving number is NOT a measurement defect — the 50 ms Hann
+    // window is ADR-0020's owner-directed spec, and a 50 ms RMS of programme
+    // material genuinely swings several dB at syllable rate — it is a DISPLAY
+    // property: this tick re-printed that correct, volatile measurement at
+    // the full ~24 Hz meter cadence, so the digits churned faster than they
+    // could be read. The fix therefore lives here and not in `RmsMeter`
+    // (whose reading the suite pins and the bars/holds do not consume): the
+    // numeric row adopts a fresh value at a readable ~3 Hz and holds it
+    // between adoptions — every printed number is still a real, current
+    // 50 ms measurement, just sampled at reading pace. Sentinel transitions
+    // bypass the hold in BOTH directions: a meter reset must print "-"
+    // immediately, and the first reading after one must not wait out a stale
+    // hold interval.
+    rmsSinceAdopt += dt;
+    float rms = shownRms;
+    const bool newIsReading = rawRms >= anabasis::RmsMeter::kFloorDb;
+    if (! newIsReading || ! shownRmsValid || rmsSinceAdopt >= kRmsReadoutHoldSecs)
+    {
+        rms           = rmsNow;
+        rmsSinceAdopt = 0.0;
+        shownRmsValid = newIsReading;
+    }
     const float ceil = processor.apvts.getRawParameterValue (pid::ceiling)->load();
 
     // Bitwise compares, so even a NaN transition still repaints once.

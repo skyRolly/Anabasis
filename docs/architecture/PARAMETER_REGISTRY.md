@@ -62,11 +62,11 @@ view ∪ {freeze, advancedMode}.
 | `clipShape` | Clip Shape | 0 … 1 | 0.5 | cont. | yes | — |
 | `clipDrive` | Clip Drive | 0 … 24 | 0 | cont. | yes | — |
 | `clipMix` | Clip Mix | 0 … 100 | 100 | cont. | yes | — |
-| `colourModel` | Colour | 0 … 3 | 1 | 4 | yes | — |
+| `colourModel` | Color | 0 … 3 | 1 | 4 | yes | — |
 | `colourBalance` | Odd/Even | -1 … 1 | 0 | cont. | yes | — |
-| `colourTone` | Colour Tone | -1 … 1 | 0 | cont. | yes | — |
+| `colourTone` | Color Tone | -1 … 1 | 0 | cont. | yes | — |
 | `dynTilt` | Dynamic Tame | 0 … 2 | 0 | cont. | yes | — |
-| `colourDepth` | Colour Depth | 0 … 100 | 0 | cont. | yes | — |
+| `colourDepth` | Color Depth | 0 … 100 | 0 | cont. | yes | — |
 | `limGain` | Limiter Gain | 0 … 18 | 0 | cont. | yes | — |
 | `lookahead` | Lookahead | 0.5 … 10 | 2 | cont. | **no** | — |
 | `limRelease` | Lim Release | 1 … 1000 | 100 | cont. | yes | — |

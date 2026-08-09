@@ -101,7 +101,7 @@ toggle row, and the metering strip.
 2. Raise **Loudness** until the gain-reduction history shows steady, musical work — watch
    the **out LUFS** readout climb. (The graph well opens on the **GR history** — the
    GR|SPEC pill in its bottom-left corner toggles to the spectrum and back — §3.4.)
-3. Switch **COMP** (loudness-compensated monitoring) on. The level jump disappears; what
+3. Switch **MATCH** (loudness-compensated monitoring) on. The level jump disappears; what
    you hear now is the *sound* of the processing at matched loudness. If it still sounds
    better, keep going; if it only sounded better because it was louder, you just found out.
 4. Press **DELTA** to hear exactly what is being removed — transient tops, mostly. Short,
@@ -109,7 +109,7 @@ toggle row, and the metering strip.
 5. Check the **Ceiling** (default −0.1 dB) against your delivery spec — and if that spec is
    written in **dBTP**, engage **TP** beside it, which is what makes the number mean dBTP
    (§3.2). The readout's unit follows the switch, so it always says which one you have.
-6. **Bypass** in the top bar A/Bs against the untouched signal — with COMP on, that
+6. **Bypass** in the top bar A/Bs against the untouched signal — with MATCH on, that
    comparison is loudness-matched too.
 
 ### 2.5 The Standalone application
@@ -166,10 +166,10 @@ Universal gestures:
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
 | **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, detection moves to the oversampled rate, inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling fixed while you browse presets. |
-| **Character** | 0 … 1 | Clean ↔ Colour: how much of the push is done with saturation character rather than clean limiting. |
+| **Character** | 0 … 1 | Clean ↔ Color: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
-The toggle row underneath: **COMP** (loudness-compensated monitoring), **DELTA**
+The toggle row underneath: **MATCH** (loudness-compensated monitoring), **DELTA**
 (difference monitoring — solo what the processing removes), **FREEZE** and **LEARN** (§4),
 plus the live **out LUFS** readout. A small **edited dot** appears when Advanced edits have
 detached parameters from the macros — clicking it returns everything to the macro sound
@@ -177,7 +177,7 @@ detached parameters from the macros — clicking it returns everything to the ma
 
 ### 3.3 Advanced view
 
-Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMITER**,
+Four zones over the same parameter model — **COMP**, **CLIP / COLOR**, **LIMITER**,
 **EQ** — plus the utility row and the metering well. (Until 0.1.2 a read-only mirror of the
 three macro knobs sat between them; it was display-only and has been removed — the macros
 live in the Simple view, and the accent detach dots on the zone knobs still show which
@@ -195,8 +195,8 @@ the automation lane keeps the full name, so "Ratio" here is "Comp Ratio" to your
   since 0.1.2, L above R**, which read identically at full link and diverge below it.
 - **CLIP / COLOUR** — the transient-absorbing clipper and the colour stage: Shape
   (hard ↔ soft, with a live transfer-curve display), Drive (level-compensated), Mix,
-  **Colour** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Colour
-  Tone, Colour Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
+  **Color** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Color
+  Tone, Color Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
 - **LIMITER** — the true-peak lookahead limiter: Gain ("Limiter Gain" in automation — the
   push into it), Lookahead (0.5–10 ms), Release ("Lim Release") with **AUTO**, **Style**
   (Transparent / Punchy / Loud), Stereo Link ("Limiter Stereo Link"), Transients (transient
@@ -320,7 +320,7 @@ managed knob's tooltip carries this legend.
 ## 6. Signal flow and latency
 
 ```
-Input Gain → EQ (Pre position) → Compressor → Clipper + Colour
+Input Gain → EQ (Pre position) → Compressor → Clipper + Color
            → Limiter (lookahead, true peak) → EQ (Post position) → Ceiling
            → Dither → Output
 ```
@@ -400,7 +400,7 @@ travel with your DAW session.
    as well — that is what makes the ceiling hold inter-sample peaks.
 2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work
    (click the **GR** chip on the graph well first — it opens on the spectrum).
-3. **COMP on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
+3. **MATCH on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.
 4. Compare candidates with **A/B** + **Copy**, judge PLR, and undo freely — history
    is per slot.
@@ -463,7 +463,7 @@ The short dip is deliberate — parameter jumps and engine rewires execute in a 
 moment instead of clicking.
 
 **It gets louder but not better.**
-That is exactly what **COMP** exists to reveal. Judge with it on; use **DELTA** to hear
+That is exactly what **MATCH** exists to reveal. Judge with it on; use **DELTA** to hear
 the cost; back off Loudness or shift work to Character. If the top end hardens, raise
 **Dynamic Tame** (Advanced) or darken **Tone** slightly.
 

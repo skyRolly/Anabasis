@@ -749,6 +749,43 @@ surface (ADR-0023 item 5). **Still needed from the field, unchanged since round 
 version, OS, build provenance, format, the session file, and now the two GR lanes' readings
 while the silence is audible.
 
+**0.1.3 addendum — the owner used instrument (b), and the reading localises the kill.** With
+BOTH stereo links at 0 (per-channel detectors and envelopes), the comp threshold pulled low and
+the limiter gain pushed high, the owner observes: **comp GR on both lanes; limiter GR on the
+RIGHT lane only; left output silent.** The two lanes are independent taps of the engine's own
+state (`compGrDbCh[ch]` is the comp's per-channel envelope, `limGrDbCh[ch]` the per-channel
+minimum of the limiter's applied gains), so together they bracket the kill:
+
+- Comp GR on L, at link 0, requires the LEFT channel's detector level over the threshold —
+  the left channel is **alive into the compressor** (stage A). This retires the 0.1.1
+  dead-input-pin mechanism for the current report a second way (the 0.1.2 Delta observation
+  already had).
+- Limiter GR at zero on L, at link 0 and a push that reduces R by several dB, requires the
+  LEFT channel's tapped level under the ceiling — the left channel is **dead at the wet
+  ring**, which also carries the audible path (`delayedWet · gain`), consistent with the
+  silence. Had the left lane instead been *pinned deep*, the diagnosis would have been
+  per-channel envelope collapse; zero points the other way.
+
+The kill zone is therefore the span **compressor output → staging → [oversampler] → ClipSat →
+push → wet ring**. Audit of that span against the new constraint: the staging write, the push
+(one shared scalar per sample), the ring indices (shared across channels) and every ClipSat
+sub-block are channel-symmetric, and ClipSat's per-channel state is value-repaired every chunk
+(invariant 9) — **at OS Off (the shipped default) the span contains no per-channel recursive
+state at all**. With a factor engaged, JUCE's per-channel polyphase oversampler is the span's
+one stateful occupant (its poisoning is detected per sample and reset per chunk, but it is the
+single component whose internals this audit cannot inspect value by value). The exact field
+configuration is now a permanent battery case at both extremes
+(`testBothChannelsCarryAudioThroughTheWrapper`, "field config" pair: per-channel comp GR,
+per-channel limiter GR and both outputs asserted alive at OS Off AND 4×) — both green, so the
+fingerprint remains headlessly unreproducible in the very configuration that shows it in the
+field. **The decisive field experiment this hands back:** with the silence audible, switch
+oversampling Off (Settings). If the left channel returns, the mechanism lives in the engaged
+oversampler path and the session's OS factor is the missing datum; if the silence survives OS
+Off, no in-plugin site remains on the localised span, and the standing suspects narrow to a
+stale/mismatched installed binary or host-side channel handling — record host + version, OS,
+build provenance and format (unchanged asks since round 2), which that outcome would make
+conclusive.
+
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 
 **Severity:** Low

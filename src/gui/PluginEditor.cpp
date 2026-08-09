@@ -36,7 +36,7 @@ static juce::String tipFor (const char* id)
         { pid::bypass,            "" },   // the red pill labels itself (sibling: no tip)
         { pid::advancedMode,      "Per-stage control over the same sound - switching views never changes it" },
         { pid::loudness,          "How hard the adaptive chain pushes - 0 adds no push, but the Ceiling still holds" },
-        { pid::character,         "Clean to Colour - how much of the push comes from saturation rather than clean limiting" },
+        { pid::character,         "Clean to Color - how much of the push comes from saturation rather than clean limiting" },
         { pid::tone,              "Dark to bright tilt of the overall result" },
         { pid::ceiling,           "The output limit - nothing leaves the plugin above it. Sample peak by default; engage TP to hold it in dBTP" },
         { pid::freeze,            "Hold the adaptive trims exactly where they are now" },
@@ -57,9 +57,9 @@ static juce::String tipFor (const char* id)
         { pid::clipDrive,         "Push into the clipper, level-compensated - adds density, not volume" },
         { pid::clipMix,           "Blend clipped with dry" },
         { pid::colourModel,       "The saturation voicing - Clean, Tape, Tube or Transistor" },
-        { pid::colourBalance,     "Odd to even harmonic balance of the colour" },
+        { pid::colourBalance,     "Odd to even harmonic balance of the color" },
         { pid::colourTone,        "Dark to bright voicing of the added harmonics" },
-        { pid::colourDepth,       "How much colour the stage adds" },
+        { pid::colourDepth,       "How much color the stage adds" },
         { pid::dynTilt,           "Dynamic Tame - softens harsh highs only when the material turns aggressive" },
         { pid::limGain,           "The push into the limiter" },
         { pid::lookahead,         "How far ahead the limiter sees - longer catches transients more cleanly" },
@@ -84,28 +84,16 @@ static juce::String tipFor (const char* id)
         { pid::dither,            "Bit-depth dither for the final export - Off, 16-bit or 24-bit TPDF" },
         { pid::ditherShaping,     "Shape the dither noise away from where the ear is most sensitive" },
     };
+    // The table row is the WHOLE tip. The nine macro-managed knobs used to
+    // get a detach-badge legend appended here ("A corner dot means this knob
+    // is detached from the macros…" — 0.1.1's answer to the owner's "why only
+    // these knobs" question); the 0.1.3 owner directive removed every
+    // corner-dot explanation from the knob tooltips. The badge itself
+    // (paint()'s accent dot) and Simple's clickable reset dot are untouched —
+    // only the tooltip suffix is gone.
     for (const auto& r : rows)
         if (std::strcmp (r.id, id) == 0)
-        {
-            // §5.3/§6.3 detach-badge legend (0.1.1, owner item 9: the dot's
-            // semantics read as arbitrary — "why only these knobs, and why
-            // doesn't returning to the preset value clear it?"). The answer
-            // lives ON the only controls that can ever show it — the nine
-            // macro-managed knobs — appended here from the ONE managed list
-            // rather than written into nine strings, so the badge set and
-            // the legend set cannot drift apart. The dot marks detachment
-            // FROM THE MACROS, not difference from the preset: it appears
-            // when a manual edit takes the knob off its macro curve, and
-            // clears when a macro gesture (or Simple's reset dot, or a
-            // preset load's own mask) re-lands the curve — matching the
-            // value alone never re-attaches, so it never clears the dot.
-            for (int i = 0; i < managed_params::kCount; ++i)
-                if (std::strcmp (managed_params::ids[i], id) == 0)
-                    return juce::String (r.tip)
-                         + ". A corner dot means this knob is detached from the macros"
-                           " and holds your value - move a macro to re-land it";
             return r.tip;
-        }
     // Reaching here means a parameter was added without a tooltip — make the
     // gap visible in a debug build instead of silently hoverless.
     jassertfalse;
@@ -587,7 +575,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     ditherCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
     addAndMakeVisible (ditherCaption);
     setupToggle (shapingToggle, pid::ditherShaping, "SHAPE", tipFor (pid::ditherShaping));
-    setupToggle (compToggle, pid::loudnessComp, "COMP", tipFor (pid::loudnessComp));
+    // "MATCH", not "COMP" (0.1.3 item 2): beside a compressor whose panel is
+    // captioned COMP, a toggle reading COMP said "compressor on/off" — this is
+    // the §2.7 loudness-MATCHED monitoring, and the caption now says what it
+    // does. Display only; the parameter and its registry name are untouched.
+    setupToggle (compToggle, pid::loudnessComp, "MATCH", tipFor (pid::loudnessComp));
     setupToggle (deltaToggle, pid::deltaMonitor, "DELTA", tipFor (pid::deltaMonitor));
     setupToggle (freezeToggle, pid::freeze, "FREEZE", tipFor (pid::freeze));
     setupToggle (tpSimpleToggle, pid::truePeakMode, "TP", tipFor (pid::truePeakMode));
@@ -1213,7 +1205,7 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
     if (advanced)
     {
         // §6.3 — four panel zones, utility + macro rows, bottom metering well.
-        const char* titles[] = { "COMP", "CLIP / COLOUR", "LIMITER", "EQ" };
+        const char* titles[] = { "COMP", "CLIP / COLOR", "LIMITER", "EQ" };
         const int panelW = (getWidth() - 5 * 8) / 4;
         for (int i = 0; i < 4; ++i)
         {
@@ -1399,6 +1391,13 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         for (auto& [s, l] : cells)
         {
             auto cell = rowArea.removeFromLeft (w);
+            // A null pair is a GRID SPACER (0.1.3 item 5): the cell is
+            // consumed so the row keeps the shared column pitch, and nothing
+            // is placed in it — what lets a two-knob row sit ON the grid of
+            // its three-knob neighbours instead of re-centring at its own
+            // pitch, which is the misalignment the EQ redesign removed.
+            if (s == nullptr)
+                continue;
             l->setBounds (cell.removeFromBottom (13));
             s->setBounds (cell.reduced (2, 0));
         }
@@ -1483,10 +1482,22 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         auto a = panel (3);
         auto boxRow = a.removeFromTop (24);
         eqPosBox.setBounds (boxRow.reduced (2, 1));
+        // ONE BAND PER ROW, bands in ascending frequency order (0.1.3
+        // item 5). The previous flow packed the eleven knobs in declaration
+        // order, which split every band across rows (the high shelf shared a
+        // row with Bell 1's frequency, both bells straddled two rows) — the
+        // owner's "杂乱无序" report. Now: row 1 is Tilt (the global control,
+        // macro Tone's landing site) beside the LOW shelf; rows 2–3 are the
+        // two bells on a strict Freq | Gain | Q column grid; row 4 is the
+        // HIGH shelf, spacer-led so its Freq/Gain land in the SAME columns as
+        // the low shelf's — the two shelves frame the bells symmetrically,
+        // and no knob re-centres at a private pitch. Same 78 px cells and
+        // row budget as before, so the response curve keeps its height and
+        // the panel stays visually level with its three neighbours.
         placeRow (a, { { &eqTiltK, &eqTiltL }, { &lsFreqK, &lsFreqL }, { &lsGainK, &lsGainL } }, 78);
-        placeRow (a, { { &hsFreqK, &hsFreqL }, { &hsGainK, &hsGainL }, { &b1FreqK, &b1FreqL } }, 78);
-        placeRow (a, { { &b1GainK, &b1GainL }, { &b1QK, &b1QL }, { &b2FreqK, &b2FreqL } }, 78);
-        placeRow (a, { { &b2GainK, &b2GainL }, { &b2QK, &b2QL } }, 78);
+        placeRow (a, { { &b1FreqK, &b1FreqL }, { &b1GainK, &b1GainL }, { &b1QK, &b1QL } }, 78);
+        placeRow (a, { { &b2FreqK, &b2FreqL }, { &b2GainK, &b2GainL }, { &b2QK, &b2QL } }, 78);
+        placeRow (a, { { nullptr, nullptr }, { &hsFreqK, &hsFreqL }, { &hsGainK, &hsGainL } }, 78);
         a.removeFromTop (4);
         eqCurve->setBounds (a);                         // [response curve]
     }
