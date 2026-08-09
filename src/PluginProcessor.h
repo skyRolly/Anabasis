@@ -22,7 +22,8 @@
 //
 //  State: schema v1 (ADR-0007) — root AnabasisRoot { schemaVersion=1,
 //  ANABASIS (+ additive exact `raw` attribute per PARAM), ANABASIS_INTERNAL,
-//  AB { active + per-slot params/presetName/BASELINE/FROZEN_TRIMS/
+//  AB { active + per-slot params/presetName/presetSource+presetFactoryId+
+//  presetUserFile (the ADR-0022 identity trio)/BASELINE/FROZEN_TRIMS/
 //  DETACH_MASK }, ADAPTIVE }. Read rules: unknown ignored, missing default,
 //  indices clamped.
 //
@@ -133,6 +134,10 @@ public:
     // for the same reason applyPresetFile does — the slot-level fields (name,
     // detach mask) belong to the wrapper, not to PresetManager's file I/O.
     const juce::String& currentPresetName() const noexcept { return livePresetName; }
+    // …and WHICH row produced it (ADR-0022) — the identity the menu tick and
+    // ‹ › stepping resolve through `PresetManager::selectedPresetRow`. The
+    // name stays what is DISPLAYED; this is never shown.
+    const PresetManager::Selection& currentPresetSelection() const noexcept { return liveSelection; }
 
     // Preset dirty marker (Anamorph grammar): the live state differs from the
     // state the named preset landed, MEASURED IN WHAT A PRESET CAN CARRY —
@@ -157,6 +162,11 @@ public:
         if (! presetManager->savePreset (file, liveDetachMask))
             return false;
         livePresetName = file.getFileNameWithoutExtension();
+        // Saving SELECTS what was just written, by file (ADR-0022). This is
+        // the case the identity split exists for: saving a user preset under
+        // a factory preset's name moves the tick to the USER row instead of
+        // leaving it on the factory one.
+        liveSelection  = { PresetManager::Selection::Kind::userFile, {}, file };
         presetBaseline = presetShapeFromLive();   // a just-saved preset is clean
         return true;
     }
@@ -307,8 +317,10 @@ private:
     std::unique_ptr<PresetManager> presetManager;
 
     // A/B: the live APVTS is the active slot; the inactive one is stored here.
-    // Per-slot StateSet = {params, presetName, baseline, frozenTrims,
-    // detachMask} (ADR-0007) — all five fields or none on every copy path.
+    // Per-slot StateSet = {params, presetName, selection, baseline,
+    // frozenTrims, detachMask} — ADR-0007's five fields plus the ADR-0022
+    // preset identity, which rides the SLOT tree for exactly this reason:
+    // all six travel together or none do, on every copy path.
     int activeSlot = 0;
     // A §7 history entry is the StateSet PLUS the dirty datum that described
     // it. `presetBaseline` is deliberately NOT in the StateSet — it is not
@@ -349,9 +361,12 @@ private:
     // than laziness (THREADING_POLICY's publication-flag row): observing this
     // counter gates a CLEAR, not a read of state the loader wrote, so it
     // announces no payload. The session data the loader writes beside it —
-    // `apvts.replaceState`, `liveDetachMask`, `livePresetName` — is unordered
-    // against the editor for reasons KI-003 owns and that no ordering here
-    // would fix.
+    // `apvts.replaceState`, `liveDetachMask`, `livePresetName`,
+    // `liveSelection` (ADR-0022) and `liveFrozenTrims` — is unordered against
+    // the editor for reasons KI-003 owns and that no ordering here would fix.
+    // KI-003 is the enumeration of record; keep this list and that one in
+    // step, since a member missing from either reads as one the restore does
+    // not write.
     std::atomic<juce::uint32> historyEpoch { 0 };
     juce::uint32 historyEpochSeen = 0;    // message thread only, hence not atomic
 
@@ -403,6 +418,11 @@ private:
     juce::ValueTree defaultSlot;         // pristine defaults, for the missing-AB read rule
     juce::ValueTree storedSlot;          // the inactive slot's SLOT tree
     juce::String    livePresetName;
+    // The ADR-0022 identity of `livePresetName`'s preset — active slot only,
+    // exactly like the name: the inactive slot's rides inside `storedSlot`
+    // (the trio `saveSlotFromLive` writes), and undo entries carry it the
+    // same way, so every existing slot path moves it with no extra plumbing.
+    PresetManager::Selection liveSelection;
     juce::ValueTree liveBaseline;        // BASELINE (absent until a macro gesture, §5.3/P4)
     juce::ValueTree liveFrozenTrims;     // FROZEN_TRIMS (captured at save, staged at restore — ADR-0014)
     juce::StringArray liveDetachMask;

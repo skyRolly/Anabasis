@@ -21,14 +21,14 @@ headless Linux machine, no IDE.
   it is the copy whose staleness costs most. Two numerals in this document disagreed with each
   other for exactly one round; the index is the registry.
   [`docs/HANDOVER.md`](docs/HANDOVER.md) carries the status of record.
-- **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 49-parameter
-  surface, the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
+- **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 50-parameter
+  surface (49 at the P0 freeze; ADR-0019 added `compStereoLink`), the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
   true-peak lookahead limiter · oversampling to 16× · dither) behind the POD engine boundary on
   the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
   display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
-  `tests/` (**781 checks** — re-count from the suites' own output when editing, the same rule
+  `tests/` (**893 checks** — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
   [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and

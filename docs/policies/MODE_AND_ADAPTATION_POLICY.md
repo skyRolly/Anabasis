@@ -257,7 +257,8 @@ than host-initiated; the marker now compares `presetShapeFromLive()`, which touc
 That narrows the window — it does not remove it, because the readers named above remain.)
 The refcounted-pointer race ThreadSanitizer
 reported for the round-40 code therefore still exists **on the load path**, exactly as it does for
-`apvts.replaceState()`, `liveDetachMask` and `livePresetName` written from the same function. That
+`apvts.replaceState()`, `liveDetachMask`, `livePresetName` and — since ADR-0022 — `liveSelection`,
+all written from the same function (`KNOWN_ISSUES.md` KI-003 carries the enumeration of record). That
 is the residual `KNOWN_ISSUES.md` KI-003 keeps open and which closes with the thread-model decision,
 not separately. What rounds 41–42 changed is that the mirror is no longer written from a SECOND
 host callback (`prepareToPlay`) as well — the exposure is back to the one path KI-003 already owned,

@@ -3779,8 +3779,9 @@ static void testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset()
     if (prev == nullptr || next == nullptr || save == nullptr || nameBox == nullptr)
         return;
 
-    // Land on the factory entry whose name we are about to take, so the stale
-    // hint the bug relies on is genuinely in place.
+    // Land on the factory entry whose name we are about to take, so the live
+    // identity really is the factory row when the save moves it (ADR-0022 —
+    // this used to stage a stale editor-local hint; the identity replaced it).
     check (proc.applyFactoryPreset (2), "saveSource: (premise) the factory preset applies");
 
     // A value the table does NOT name — a factory apply therefore parks it at
@@ -3798,12 +3799,773 @@ static void testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset()
            "saveSource: (premise) the live name now collides with the factory entry");
 
     // Next then previous is exactly reversible through the ring, so a correctly
-    // resolved position returns to the SAVED preset. Under the stale hint it
+    // resolved position returns to the SAVED preset. Under name resolution it
     // returns to the factory entry instead — same name, different content.
     next->onClick();
     prev->onClick();
     check (std::abs (knee->getValue() - mark) < 1.0e-6f,
            "saveSource: the arrows step from the saved USER preset, not the same-named factory one");
+}
+
+// ---------------------------------------------------------------------------
+// A preset file that cannot be applied must not TRAP the ‹ › ring. Resolving
+// the ring's position from the ADR-0022 identity makes this a live hazard
+// rather than a hypothetical: the identity moves only on a SUCCESSFUL apply,
+// so a step that lands on a corrupt file leaves the position where it was and
+// the next press recomputes the same row — one bad `.anabasis` in the folder
+// would wall the arrows off in that direction for ever. The ring therefore
+// keeps walking until an entry actually loads, which is the ungated-hint
+// rationale the identity replaced, carried forward.
+static void testTheRingWalksPastAnUnreadablePreset()
+{
+    int factoryCount = 0;
+    const auto* factory = PresetManager::factoryPresets (factoryCount);
+    check (factoryCount >= 2, "ring: (premise) factory presets ship");
+    if (factoryCount < 2)
+        return;
+
+    // Adjacent by construction: one prefix, "-1-" before "-2-", so the sorted
+    // list cannot put anything between them and the corrupt row is exactly the
+    // one a ‹ press from the readable row must step over.
+    const auto dir = PresetManager::userPresetDirectory();
+    dir.createDirectory();
+    const auto corrupt  = dir.getChildFile ("AnabasisRingHarness-1-corrupt.anabasis");
+    const auto readable = dir.getChildFile ("AnabasisRingHarness-2-good.anabasis");
+    struct RemoveRingFiles      // real preset folder, so RAII (see the identity tests)
+    {
+        juce::File a, b;
+        ~RemoveRingFiles() { a.deleteFile(); b.deleteFile(); }
+    } removeRingFiles { corrupt, readable };
+
+    AnabasisAudioProcessor proc;
+    check (proc.savePresetFile (readable), "ring: (premise) the readable harness preset saved");
+    // Refused by `parsePresetFile` (foreign root), which is the reachable
+    // failure `applyPresetFile` returns false on.
+    check (corrupt.replaceWithText ("<NotAnAnabasisPreset/>"),
+           "ring: (premise) the unreadable harness preset staged");
+    check (PresetManager::parsePresetFile (corrupt) == nullptr,
+           "ring: (premise) the harness file really is unreadable");
+
+    auto rows = []
+    {
+        auto files = PresetManager::userPresetDirectory()
+                         .findChildFiles (juce::File::findFiles, false, "*.anabasis");
+        files.sort();
+        return files;
+    };
+    auto rowOf = [&] (const juce::File& f)
+    {
+        const auto files = rows();
+        for (int i = 0; i < files.size(); ++i)
+            if (files.getReference (i) == f)
+                return factoryCount + i;
+        return -1;
+    };
+    auto row = [&]
+    {
+        return PresetManager::selectedPresetRow (proc.currentPresetSelection(),
+                                                 proc.currentPresetName(),
+                                                 factory, factoryCount, rows());
+    };
+
+    const int corruptRow  = rowOf (corrupt);
+    const int readableRow = rowOf (readable);
+    check (corruptRow >= factoryCount && readableRow == corruptRow + 1,
+           "ring: (premise) the unreadable row sits immediately before the readable one");
+    if (corruptRow < factoryCount || readableRow != corruptRow + 1)
+        return;
+
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "ring: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+    auto* prev = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x2039));
+    check (prev != nullptr, "ring: (premise) the ‹ arrow was found");
+    if (prev == nullptr)
+        return;
+
+    check (proc.applyPresetFile (readable), "ring: (premise) the readable preset applies");
+    check (row() == readableRow, "ring: (premise) the readable preset is the selected row");
+
+    // ONE press. The row below is the corrupt file: the ring must step over it
+    // and land on whatever precedes it, not stall on the row it started from.
+    prev->onClick();
+    const int afterOne = row();
+    check (afterOne != readableRow,
+           "ring: a ‹ press onto an unreadable preset does not leave the arrows where they were");
+    check (afterOne != corruptRow,
+           "ring: ...and does not select the unreadable entry either");
+
+    // ...and the ring is still moving afterwards, in both directions.
+    prev->onClick();
+    check (row() != afterOne, "ring: the next ‹ press keeps moving");
+    auto* next = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x203A));
+    check (next != nullptr, "ring: (premise) the › arrow was found");
+    if (next != nullptr)
+    {
+        const int beforeNext = row();
+        next->onClick();
+        check (row() != beforeNext, "ring: › moves too");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0022, live behaviour: identity — a factory preset's immutable id vs a
+// user preset's FILE — decides the selected row, so a user preset saved under
+// a factory preset's name is the one selected, both rows stay individually
+// selectable, undo and A/B carry the identity, and a known identity that is on
+// no row (an outside-folder file, a deleted preset) selects NOTHING — never a
+// same-named substitute. The restore matrix lives in
+// testPresetIdentityAcrossRestore; the arrows-through-the-editor half is
+// testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset.
+static void testPresetIdentitySharedName()
+{
+    int factoryCount = 0;
+    const auto* factory = PresetManager::factoryPresets (factoryCount);
+    const int factoryIdx = 3;   // "EDM Club"
+    // The suite's own precedent (testSavingOverAFactoryNameKeepsTheArrows…):
+    // a guarded premise, not an unchecked read — the bank's contents are ⊕
+    // for the fine review, and a shrunk table must fail loudly, not read OOB.
+    check (factoryCount > factoryIdx, "identity: (premise) the factory bank reaches the shared-name row");
+    if (factoryCount <= factoryIdx)
+        return;
+    const juce::String shared (factory[factoryIdx].name);
+
+    const auto dir  = PresetManager::userPresetDirectory();
+    dir.createDirectory();
+    const auto file = dir.getChildFile (shared + ".anabasis");
+    const auto backup = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("anabasis-identity-backup.anabasis");
+    const bool hadFile = file.existsAsFile();
+    if (hadFile)
+        file.copyFileTo (backup);
+    struct Restore
+    {
+        juce::File f, b; bool had;
+        ~Restore() { f.deleteFile(); if (had) { b.copyFileTo (f); b.deleteFile(); } }
+    } restore { file, backup, hadFile };
+    file.deleteFile();   // start from "no user preset of this name"
+
+    AnabasisAudioProcessor proc;
+    // The row the resolver answers for the CURRENT state, against the same
+    // ordered list the menu and the ‹ › ring build (non-recursive scan,
+    // sorted) — recomputed per call because the cases below create and delete
+    // files. One int, so "exactly one row is marked" holds by construction;
+    // what the cases prove is that it is the RIGHT row, or none.
+    auto row = [&]
+    {
+        auto files = PresetManager::userPresetDirectory()
+                         .findChildFiles (juce::File::findFiles, false, "*.anabasis");
+        files.sort();
+        return PresetManager::selectedPresetRow (proc.currentPresetSelection(),
+                                                 proc.currentPresetName(),
+                                                 factory, factoryCount, files);
+    };
+    auto userRowOf = [&] (const juce::File& f)
+    {
+        auto files = PresetManager::userPresetDirectory()
+                         .findChildFiles (juce::File::findFiles, false, "*.anabasis");
+        files.sort();
+        for (int i = 0; i < files.size(); ++i)
+            if (files.getReference (i) == f)
+                return factoryCount + i;
+        return -1;
+    };
+
+    check (row() == 0, "identity: a fresh instance selects the factory Default row");
+
+    // The constructor SEEDS the identity with the name, and this is the case
+    // that can tell: with a user preset called "Default" on disk, a fresh
+    // instance must still select the FACTORY row — an unseeded (unknown)
+    // identity would name-scan and land there too, but only because the
+    // factory block is list-front; the seed makes it identity, not luck, and
+    // saving/loading that user file must still be able to select the USER row.
+    {
+        const auto userDefault = dir.getChildFile ("Default.anabasis");
+        const auto defBackup = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                   .getChildFile ("anabasis-identity-default-backup.anabasis");
+        const bool hadDefault = userDefault.existsAsFile();
+        if (hadDefault)
+            userDefault.copyFileTo (defBackup);
+        // RAII, like the outer harness's `Restore`: this writes into the
+        // developer's REAL preset folder, so the un-staging cannot sit on the
+        // success path — an early return from a failed premise would leave a
+        // stray "Default" user preset that the next run sees as an extra row.
+        struct RestoreDefault
+        {
+            juce::File f, b; bool had;
+            ~RestoreDefault() { f.deleteFile(); if (had) { b.copyFileTo (f); b.deleteFile(); } }
+        } restoreDefault { userDefault, defBackup, hadDefault };
+        const bool staged = [&]
+        {
+            AnabasisAudioProcessor writer;
+            return writer.savePresetFile (userDefault);
+        }();
+        check (staged, "identity: (premise) a user preset named Default staged");
+        if (staged)
+        {
+            AnabasisAudioProcessor fresh;
+            auto files = PresetManager::userPresetDirectory()
+                             .findChildFiles (juce::File::findFiles, false, "*.anabasis");
+            files.sort();
+            check (PresetManager::selectedPresetRow (fresh.currentPresetSelection(),
+                                                     fresh.currentPresetName(),
+                                                     factory, factoryCount, files) == 0,
+                   "identity: a fresh instance selects the factory Default even with a user Default on disk");
+        }
+    }
+
+    check (proc.applyFactoryPreset (factoryIdx), "identity: (premise) the factory preset applies");
+    check (row() == factoryIdx, "identity: the factory preset is selected before any user file exists");
+
+    // The case the split exists for: save a user preset under the factory name.
+    check (proc.savePresetFile (file), "identity: saveUser succeeds under a factory preset's name");
+    check (proc.currentPresetName() == shared, "identity: the shared name is still what is DISPLAYED");
+    const int userIdx = userRowOf (file);
+    check (userIdx >= factoryCount, "identity: (premise) the saved file is a user row");
+    check (row() == userIdx, "identity: the save SELECTS the user row, not the same-named factory one");
+
+    // The user preset FILE gained nothing from this change: the identity trio
+    // lives in the session blob only, so a `.anabasis` written by this build
+    // parses to PARAM + DETACH_MASK children and no identity attribute —
+    // byte-compatible with what earlier versions wrote (ADR-0022 §Decision 7).
+    {
+        const auto xml = juce::XmlDocument::parse (file);
+        check (xml != nullptr, "identity: (premise) the saved preset file parses");
+        bool onlyKnownChildren = xml != nullptr;
+        if (xml != nullptr)
+        {
+            check (! xml->hasAttribute ("presetSource") && ! xml->hasAttribute ("presetFactoryId")
+                       && ! xml->hasAttribute ("presetUserFile"),
+                   "identity: the preset FILE carries no identity fields");
+            for (auto* c : xml->getChildIterator())
+                onlyKnownChildren = onlyKnownChildren
+                    && (c->hasTagName ("PARAM") || c->hasTagName ("DETACH_MASK"));
+        }
+        check (onlyKnownChildren, "identity: the preset FILE's children are PARAM/DETACH_MASK only");
+    }
+
+    // Both rows remain individually selectable, in both directions.
+    check (proc.applyFactoryPreset (factoryIdx), "identity: (premise) re-select the factory row");
+    check (row() == factoryIdx, "identity: selecting the factory row returns the mark to it");
+    check (proc.applyPresetFile (file), "identity: (premise) re-select the user row");
+    check (row() == userIdx, "identity: selecting the user row moves the mark back to it");
+
+    // A/B carries the identity inside the SLOT tree, so a switch away and
+    // back does not snap the selection onto the same-named factory row.
+    proc.switchToSlot (1);
+    proc.switchToSlot (0);
+    check (row() == userIdx, "identity: an A/B switch away and back preserves the user identity");
+
+    // Undo after a save keeps the saved preset's identity: the gesture's
+    // pre-state snapshot is taken AFTER the save, so the entry it pushes
+    // already carries the user-file identity (the pre-state-snapshot shape —
+    // Anamorph needed an onSaved re-baseline hook here; this build does not).
+    check (proc.applyFactoryPreset (factoryIdx), "identity: (premise) back to the factory row");
+    check (proc.savePresetFile (file), "identity: (premise) re-save under the shared name");
+    check (row() == userIdx, "identity: the re-save selects the user row");
+    {
+        auto* limGain = proc.apvts.getParameter (pid::limGain);
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (2.0f));
+        limGain->endChangeGesture();
+        proc.flushPendingDetach();
+    }
+    check (proc.canUndo(), "identity: (premise) the knob edit after the save is undoable");
+    proc.undo();
+    check (row() == userIdx, "identity: undo after a save keeps the saved preset's identity");
+
+    // A `.anabasis` file from OUTSIDE the preset folder is on no row: nothing
+    // is selected — it must NOT fall back to the same-named factory row.
+    {
+        const auto outside = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getChildFile (shared + ".anabasis");
+        outside.deleteFile();
+        const bool staged = file.copyFileTo (outside);
+        check (staged, "identity: (premise) outside-folder copy staged");
+        if (staged)
+        {
+            check (proc.applyPresetFile (outside), "identity: an outside file applies");
+            check (proc.currentPresetName() == shared, "identity: an outside file still displays its name");
+            check (row() < 0, "identity: an outside file selects nothing, not the same-named factory row");
+            outside.deleteFile();
+        }
+    }
+
+    // Same rule when the selected user preset disappears from disk.
+    check (proc.applyPresetFile (file), "identity: (premise) back on the user row");
+    check (file.deleteFile(), "identity: (premise) the user preset file removed while selected");
+    check (row() < 0, "identity: a deleted user preset selects nothing, not the same-named factory row");
+}
+
+// ---------------------------------------------------------------------------
+// The factory ids are the identity half of ADR-0022. Nothing in the type
+// system stops a duplicated, empty or edited id, and the failure would be
+// quiet: a duplicate makes an earlier row answer for a later one, and an
+// edited id silently unhooks every saved session that stored the old one.
+// These checks make that loud.
+static void testFactoryPresetIdIntegrity()
+{
+    int factoryCount = 0;
+    const auto* factory = PresetManager::factoryPresets (factoryCount);
+
+    bool everyIdIsSet = true;
+    juce::StringArray ids;
+    for (int i = 0; i < factoryCount; ++i)
+    {
+        everyIdIsSet = everyIdIsSet && factory[i].id != nullptr
+                           && juce::String (factory[i].id).isNotEmpty();
+        ids.add (factory[i].id);
+    }
+    check (factoryCount >= 2, "factoryId: (premise) factory presets ship");
+    check (everyIdIsSet, "factoryId: every factory row carries a non-empty id");
+
+    juce::StringArray uniqueIds (ids);
+    uniqueIds.removeDuplicates (false);   // case-SENSITIVE: the ids are exact tokens
+    check (uniqueIds.size() == ids.size(), "factoryId: the ids are unique");
+
+    // Every id RESOLVES to its own row: apply row i, and the identity the
+    // wrapper recorded must select row i again through the resolver. A
+    // duplicated or mistyped id would land on the wrong row here, positionally
+    // visible. And the same loop carries Anamorph's cardinality check in
+    // Anabasis-observable form: every applied preset's FULL raw snapshot is
+    // compared against a fresh instance's, and exactly ONE row — index 0, the
+    // empty override table — may land on the all-defaults sound. A second one
+    // would mean an override table that silently applied nothing.
+    const auto defaultsRaw = [&]
+    {
+        AnabasisAudioProcessor pristine;
+        std::vector<float> v;
+        for (auto* param : pristine.getParameters())
+            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (param))
+                v.push_back (rp->getValue());
+        return v;
+    }();
+    AnabasisAudioProcessor proc;
+    const juce::Array<juce::File> noFiles;   // factory resolution needs no user list
+    int atDefaults = 0;
+    for (int i = 0; i < factoryCount; ++i)
+    {
+        proc.applyFactoryPreset (i);
+        const juce::String m = "factoryId: id round-trips to its own row ("
+                                   + juce::String (factory[i].id) + ")";
+        check (PresetManager::selectedPresetRow (proc.currentPresetSelection(),
+                                                 proc.currentPresetName(),
+                                                 factory, factoryCount, noFiles) == i,
+               m.toRawUTF8());
+
+        size_t k = 0;
+        bool same = true;
+        for (auto* param : proc.getParameters())
+            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (param))
+                same = same && k < defaultsRaw.size()
+                            && juce::exactlyEqual (rp->getValue(), defaultsRaw[k++]);
+        if (same && k == defaultsRaw.size())
+            ++atDefaults;
+    }
+    check (atDefaults == 1,
+           "factoryId: exactly one factory preset is the all-defaults one — every other table applies");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0022's restore matrix: the identity is carried in the session (three
+// additive strings per SLOT), so reopening a project puts the selection back
+// on the row that produced the sound — even against a same-named factory
+// preset — and anything the stored identity cannot resolve selects NOTHING.
+// Every path asserts the restored PARAMETERS are bit-identical, because the
+// identity is metadata and must never influence the sound, including when it
+// fails to resolve.
+static void testPresetIdentityAcrossRestore()
+{
+    int factoryCount = 0;
+    const auto* factory = PresetManager::factoryPresets (factoryCount);
+    const int factoryIdx = 3;   // "EDM Club"
+    check (factoryCount > factoryIdx, "restoreId: (premise) the factory bank reaches the shared-name row");
+    if (factoryCount <= factoryIdx)
+        return;                 // same guarded-premise rule as the live test
+    const juce::String shared (factory[factoryIdx].name);
+
+    auto rawSnapshot = [] (AnabasisAudioProcessor& p)
+    {
+        std::vector<float> v;
+        for (auto* param : p.getParameters())
+            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (param))
+                v.push_back (rp->getValue());
+        return v;
+    };
+    auto sameRaw = [] (const std::vector<float>& a, const std::vector<float>& b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (! juce::exactlyEqual (a[i], b[i]))
+                return false;
+        return true;
+    };
+    auto filesNow = []
+    {
+        auto files = PresetManager::userPresetDirectory()
+                         .findChildFiles (juce::File::findFiles, false, "*.anabasis");
+        files.sort();
+        return files;
+    };
+    // Restore `blob` into a NEW processor and report (row, name, params-match).
+    struct Restored { int row; juce::String name; bool paramsMatch; };
+    auto restoreInto = [&] (const juce::MemoryBlock& blob, const std::vector<float>& expectRaw)
+    {
+        AnabasisAudioProcessor q;
+        q.setStateInformation (blob.getData(), (int) blob.getSize());
+        return Restored { PresetManager::selectedPresetRow (q.currentPresetSelection(),
+                                                            q.currentPresetName(),
+                                                            factory, factoryCount, filesNow()),
+                          q.currentPresetName(),
+                          sameRaw (rawSnapshot (q), expectRaw) };
+    };
+    auto unwrap = [] (const juce::MemoryBlock& blob)
+    {
+        const auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        return xml != nullptr ? juce::ValueTree::fromXml (*xml) : juce::ValueTree();
+    };
+    auto wrap = [] (const juce::ValueTree& root)
+    {
+        juce::MemoryBlock mb;
+        if (const auto xml = root.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, mb);
+        return mb;
+    };
+    auto slotOf = [] (const juce::ValueTree& root, int slotIndex)
+    {
+        juce::Array<juce::ValueTree> slots;
+        const auto ab = root.getChildWithName ("AB");
+        for (int i = 0; i < ab.getNumChildren(); ++i)
+            if (ab.getChild (i).hasType ("SLOT"))
+                slots.add (ab.getChild (i));
+        return slotIndex < slots.size() ? slots[slotIndex] : juce::ValueTree();
+    };
+
+    const auto dir  = PresetManager::userPresetDirectory();
+    dir.createDirectory();
+    const auto file = dir.getChildFile (shared + ".anabasis");
+    const auto backup = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("anabasis-identity-restore-backup.anabasis");
+    const bool hadFile = file.existsAsFile();
+    if (hadFile)
+        file.copyFileTo (backup);
+    struct Restore
+    {
+        juce::File f, b; bool had;
+        ~Restore() { f.deleteFile(); if (had) { b.copyFileTo (f); b.deleteFile(); } }
+    } restoreFiles { file, backup, hadFile };
+    file.deleteFile();
+
+    AnabasisAudioProcessor p;
+
+    // Schema pin (SERIALIZATION_REGISTRY §1.2): both SLOTs carry the trio.
+    {
+        juce::MemoryBlock pristine;
+        p.getStateInformation (pristine);
+        const auto root = unwrap (pristine);
+        for (int s = 0; s < 2; ++s)
+        {
+            const auto slot = slotOf (root, s);
+            const juce::String m = "restoreId: SLOT " + juce::String (s)
+                                       + " carries presetSource/presetFactoryId/presetUserFile";
+            check (slot.hasProperty ("presetSource") && slot.hasProperty ("presetFactoryId")
+                       && slot.hasProperty ("presetUserFile"),
+                   m.toRawUTF8());
+            // ...and a FRESH instance's slots record the factory Default by
+            // ID, not an empty identity: the constructor seeds the selection
+            // with the name, so the saved session says WHICH row produced the
+            // untouched state — the name fallback happens to give the same
+            // row today only because the factory block is list-front, which
+            // is luck, not a record (ADR-0022; the ctor comment).
+            const juce::String mSeed = "restoreId: SLOT " + juce::String (s)
+                                           + " of a fresh session records the factory Default id";
+            check (slot.getProperty ("presetSource").toString() == "factory"
+                       && slot.getProperty ("presetFactoryId").toString() == "default",
+                   mSeed.toRawUTF8());
+        }
+    }
+
+    // --- Case 1: a FACTORY preset is current --------------------------------
+    check (p.applyFactoryPreset (factoryIdx), "restoreId: (premise) the factory preset applies");
+    const auto factoryRaw = rawSnapshot (p);
+    juce::MemoryBlock factoryBlob;
+    p.getStateInformation (factoryBlob);
+    {
+        const auto r = restoreInto (factoryBlob, factoryRaw);
+        check (r.row == factoryIdx, "restoreId: a restored session selects the factory preset it was on");
+        check (r.name == shared, "restoreId: the displayed name restores");
+        check (r.paramsMatch, "restoreId: factory case restores parameters bit-identically");
+    }
+
+    // --- Case 1 fallback: the stored factory id no longer exists ------------
+    {
+        auto root = unwrap (factoryBlob);
+        slotOf (root, 0).setProperty ("presetFactoryId", "aPresetThatWasRemoved", nullptr);
+        const auto r = restoreInto (wrap (root), factoryRaw);
+        check (r.row < 0, "restoreId: an unresolvable factory id selects NOTHING");
+        check (r.paramsMatch, "restoreId: unresolvable-id case still restores parameters bit-identically");
+    }
+
+    // --- Case 2: a USER preset sharing the factory name is current ----------
+    {
+        auto* knee = p.apvts.getParameter (pid::compKnee);
+        knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (1.0f));
+    }
+    check (p.savePresetFile (file), "restoreId: (premise) a user preset saved under the factory name");
+    const auto userRaw = rawSnapshot (p);
+    juce::MemoryBlock userBlob;
+    p.getStateInformation (userBlob);
+    const int userIdx = [&]
+    {
+        const auto files = filesNow();
+        for (int i = 0; i < files.size(); ++i)
+            if (files.getReference (i) == file)
+                return factoryCount + i;
+        return -1;
+    }();
+    check (userIdx >= factoryCount, "restoreId: (premise) the saved file is a user row");
+    {
+        const auto r = restoreInto (userBlob, userRaw);
+        check (r.row == userIdx, "restoreId: a restored session selects the USER row, not the same-named factory one");
+        check (r.name == shared, "restoreId: the shared display name restores");
+        check (r.paramsMatch, "restoreId: user case restores parameters bit-identically");
+    }
+
+    // --- Case 2, nested: a preset in a SUB-folder of the preset folder ------
+    // Every list this build shows is a non-recursive scan, so a nested file is
+    // on no row and must select nothing — before AND after a reload. This is
+    // the case where encoding by bare file NAME would silently re-point the
+    // identity at the same-named preset sitting directly in the folder, which
+    // still exists at this point (the direct-child-not-isAChildOf condition).
+    {
+        auto nestedDir = dir.getChildFile ("AnabasisHarnessNested");
+        auto nested    = nestedDir.getChildFile (shared + ".anabasis");
+        nested.deleteFile();
+        // RAII for the same reason the file harnesses use it: the sub-folder
+        // is created inside the developer's REAL preset folder, so removing it
+        // on the success path only would leave an empty directory behind after
+        // an early return or a failed staging.
+        struct RemoveNested
+        {
+            juce::File d;
+            ~RemoveNested() { d.deleteRecursively(); }
+        } removeNested { nestedDir };
+        const bool staged = nestedDir.createDirectory() && file.copyFileTo (nested);
+        check (staged, "restoreId: (premise) nested sub-folder copy staged");
+        if (staged)
+        {
+            check (p.applyPresetFile (nested), "restoreId: (premise) a nested preset applies");
+            const auto nestedRaw = rawSnapshot (p);
+            juce::MemoryBlock nestedBlob;
+            p.getStateInformation (nestedBlob);
+            const auto r = restoreInto (nestedBlob, nestedRaw);
+            check (r.row < 0,
+                   "restoreId: a reloaded nested preset selects nothing, not the same-named flat row");
+            check (r.paramsMatch, "restoreId: nested case restores parameters bit-identically");
+            nested.deleteFile();
+        }
+    }
+
+    // --- Case 2 fallback: the user preset file is gone ----------------------
+    {
+        check (file.deleteFile(), "restoreId: (premise) the user preset file removed");
+        const auto r = restoreInto (userBlob, userRaw);
+        check (r.row < 0, "restoreId: a missing user preset selects NOTHING, not the same-named factory row");
+        check (r.name == shared, "restoreId: the display name still restores for a missing file");
+        check (r.paramsMatch, "restoreId: missing-file case still restores parameters bit-identically");
+    }
+
+    // --- Case 3: a pre-ADR-0022 session, no identity stored ------------------
+    {
+        auto root = unwrap (userBlob);
+        for (int s = 0; s < 2; ++s)
+        {
+            auto slot = slotOf (root, s);
+            slot.removeProperty ("presetSource",    nullptr);
+            slot.removeProperty ("presetFactoryId", nullptr);
+            slot.removeProperty ("presetUserFile",  nullptr);
+        }
+        check (! slotOf (root, 0).hasProperty ("presetSource"),
+               "restoreId: (premise) the pre-ADR-0022 fixture really has no identity");
+        // The file is still deleted, so the ONLY thing the name can resolve to
+        // is the factory row — exactly the documented pre-ADR-0022 answer.
+        const auto r = restoreInto (wrap (root), userRaw);
+        check (r.row == factoryIdx, "restoreId: a session with no stored identity falls back to the name");
+        check (r.paramsMatch, "restoreId: the name-fallback case still restores parameters bit-identically");
+    }
+
+    // --- A/B: each slot carries its own identity across the reload ----------
+    {
+        check (p.savePresetFile (file), "restoreId: (premise) the user preset re-created for the A/B check");
+        p.switchToSlot (1);
+        check (p.applyFactoryPreset (factoryIdx), "restoreId: (premise) slot B takes the factory preset");
+        const auto abRaw = rawSnapshot (p);
+        juce::MemoryBlock abBlob;
+        p.getStateInformation (abBlob);
+
+        AnabasisAudioProcessor q;
+        q.setStateInformation (abBlob.getData(), (int) abBlob.getSize());
+        auto qRow = [&]
+        {
+            return PresetManager::selectedPresetRow (q.currentPresetSelection(),
+                                                     q.currentPresetName(),
+                                                     factory, factoryCount, filesNow());
+        };
+        check (qRow() == factoryIdx, "restoreId: the restored session lands on slot B's factory identity");
+        check (sameRaw (rawSnapshot (q), abRaw), "restoreId: slot B restores parameters bit-identically");
+        q.switchToSlot (0);
+        check (qRow() == userIdx, "restoreId: slot A's USER identity restores independently of slot B's");
+        p.switchToSlot (0);   // leave p back on slot A for the cases below
+    }
+
+    auto pRow = [&]
+    {
+        return PresetManager::selectedPresetRow (p.currentPresetSelection(),
+                                                 p.currentPresetName(),
+                                                 factory, factoryCount, filesNow());
+    };
+
+    // --- Copy carries the identity, and ONLY a real move mints a step -------
+    // Copy is a named ADR-0022 carrier: the destination inherits the live
+    // SLOT tree, trio included. Three cases, one per way the guard can err:
+    // the identity must TRAVEL; an identity-ONLY difference (same name, same
+    // sound — the saved-under-a-factory-name shape) is a REAL change and must
+    // push a step; and a pre-ADR-0022 stored slot (no trio at all) compared
+    // against a fresh save (empty trio) is NOT a change — both decode to
+    // `unknown`, and minting a step there is the dead-undo class the guard's
+    // own comment forbids.
+    {
+        // live (slot A) is the user preset from the A/B block above.
+        p.copySlotToOther();
+        p.switchToSlot (1);
+        check (pRow() == userIdx, "restoreId: Copy carries the USER identity to the destination slot");
+
+        // Stage "identical in everything but identity": factory-apply on B,
+        // copy it to A, then SAVE on B — the save moves only the identity.
+        check (p.applyFactoryPreset (factoryIdx), "restoreId: (premise) slot B takes the factory preset again");
+        p.copySlotToOther();                       // A := factory state, identity included
+        check (p.savePresetFile (file), "restoreId: (premise) the save that moves only the identity");
+        p.copySlotToOther();                       // A: factory identity vs live: user identity
+        p.switchToSlot (0);
+        check (pRow() == userIdx, "restoreId: an identity-only Copy still lands the user identity");
+        check (p.canUndo(), "restoreId: ...and it minted an undo step — an identity move is a real change");
+        p.undo();
+        check (pRow() == factoryIdx, "restoreId: undoing that Copy restores the factory identity");
+
+        // The phantom case: a pre-ADR-0022 session's stored slot carries no
+        // trio; the first Copy after loading it must be the no-op it is.
+        AnabasisAudioProcessor q2;
+        juce::MemoryBlock pristine;
+        q2.getStateInformation (pristine);
+        auto root = unwrap (pristine);
+        for (int s = 0; s < 2; ++s)
+        {
+            auto slot = slotOf (root, s);
+            slot.removeProperty ("presetSource",    nullptr);
+            slot.removeProperty ("presetFactoryId", nullptr);
+            slot.removeProperty ("presetUserFile",  nullptr);
+        }
+        const auto blob = wrap (root);
+        q2.setStateInformation (blob.getData(), (int) blob.getSize());
+        q2.copySlotToOther();
+        q2.switchToSlot (1);
+        check (! q2.canUndo(),
+               "restoreId: a Copy straight after a pre-ADR-0022 load mints no phantom undo step");
+    }
+
+    // --- A no-AB restore resets the identity WITH the other slot fields -----
+    // `resetSlotFieldsToDefaults` seeds the identity beside the name; without
+    // that seed a valid root lacking an AB child would keep the PREVIOUS
+    // session's selection under a freshly defaulted name — the chimera the
+    // function exists to prevent, landing the mark on a stale user row.
+    {
+        AnabasisAudioProcessor r2;
+        check (r2.applyPresetFile (file), "restoreId: (premise) the chimera setup is on the user preset");
+        const int r2UserRow = PresetManager::selectedPresetRow (r2.currentPresetSelection(),
+                                                                r2.currentPresetName(),
+                                                                factory, factoryCount, filesNow());
+        check (r2UserRow >= factoryCount, "restoreId: (premise) the user row is selected before the restore");
+        juce::MemoryBlock own;
+        r2.getStateInformation (own);
+        auto root = unwrap (own);
+        root.removeChild (root.getChildWithName ("AB"), nullptr);
+        const auto blob = wrap (root);
+        r2.setStateInformation (blob.getData(), (int) blob.getSize());
+        check (r2.currentPresetName() == "Default",
+               "restoreId: a no-AB restore defaults the preset name (the existing read rule)");
+        check (PresetManager::selectedPresetRow (r2.currentPresetSelection(),
+                                                 r2.currentPresetName(),
+                                                 factory, factoryCount, filesNow()) == 0,
+               "restoreId: ...and the identity resets WITH it — the factory Default row, not the stale user row");
+    }
+
+    // --- A user preset whose FILE NAME looks like an absolute path ----------
+    // Nothing stops a user dropping `~foo.anabasis` into the preset folder by
+    // hand, and `juce::File::isAbsolutePath` accepts a leading `~` on POSIX.
+    // Encoding such a direct child by BARE NAME would come back from the
+    // decoder as the literal relative string and the row would lose its
+    // selection on reload — the encoder must fall back to the absolute path.
+    {
+        // Built from a full path string on purpose: getChildFile would
+        // short-circuit on the very ambiguity under test.
+        auto tilde = juce::File (dir.getFullPathName() + juce::File::getSeparatorString()
+                                     + "~AnabasisTildeHarness.anabasis");
+        tilde.deleteFile();
+        struct RemoveTilde        // as above: real preset folder, so RAII
+        {
+            juce::File f;
+            ~RemoveTilde() { f.deleteFile(); }
+        } removeTilde { tilde };
+        const bool staged = file.copyFileTo (tilde);
+        check (staged, "restoreId: (premise) tilde-named preset staged");
+        if (staged)
+        {
+            check (p.applyPresetFile (tilde), "restoreId: (premise) the tilde-named preset applies");
+            const int tildeIdx = [&]
+            {
+                const auto files = filesNow();
+                for (int i = 0; i < files.size(); ++i)
+                    if (files.getReference (i) == tilde)
+                        return factoryCount + i;
+                return -1;
+            }();
+            check (tildeIdx >= factoryCount, "restoreId: (premise) the tilde-named preset is a row");
+            const auto tildeRaw = rawSnapshot (p);
+            juce::MemoryBlock tildeBlob;
+            p.getStateInformation (tildeBlob);
+            const auto r = restoreInto (tildeBlob, tildeRaw);
+            check (r.row == tildeIdx,
+                   "restoreId: a tilde-named preset keeps its selection across a reload (encode round-trips)");
+            check (r.paramsMatch, "restoreId: tilde case restores parameters bit-identically");
+        }
+    }
+
+    // --- A repeated restore must not inherit the previous state's identity --
+    // Hosts call setStateInformation on ONE live processor any number of
+    // times. The slot overlay assigns the identity UNCONDITIONALLY (absent
+    // trio → unknown), so a stripped blob restored over a live factory
+    // selection must resolve from the blob alone: its name matches no row →
+    // nothing selected — never the previous state's row.
+    {
+        check (p.applyFactoryPreset (1), "restoreId: (premise) the live instance sits on a factory row");
+        auto root = unwrap (factoryBlob);
+        auto slot = slotOf (root, 0);
+        slot.removeProperty ("presetSource",    nullptr);
+        slot.removeProperty ("presetFactoryId", nullptr);
+        slot.removeProperty ("presetUserFile",  nullptr);
+        slot.setProperty ("presetName", "NoSuchPresetAnywhere", nullptr);
+        const auto blob = wrap (root);
+        p.setStateInformation (blob.getData(), (int) blob.getSize());   // SAME live instance
+        check (p.currentPresetName() == "NoSuchPresetAnywhere",
+               "restoreId: a repeated restore takes the session's name, not the previous state's");
+        check (PresetManager::selectedPresetRow (p.currentPresetSelection(),
+                                                 p.currentPresetName(),
+                                                 factory, factoryCount, filesNow()) < 0,
+               "restoreId: ...and the previous state's identity does not survive it");
+    }
 }
 
 static void testTheAboutPanelShowsTheBuildItIsRunning()
@@ -4951,6 +5713,10 @@ int main (int argc, char** argv)
         testTheCurveWellCachesWithoutChangingWhatItDraws();
         testARewoundSpectrumRingDropsThePreviousTrace();
         testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
+        testTheRingWalksPastAnUnreadablePreset();
+        testPresetIdentitySharedName();
+        testFactoryPresetIdIntegrity();
+        testPresetIdentityAcrossRestore();
         testTheAboutPanelShowsTheBuildItIsRunning();
         testFrequencyTextEntrySpeaksMasteringShorthand();
         testTheGraphWellViewsOnlyClaimTheirModeChips();

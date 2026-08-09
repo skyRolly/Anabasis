@@ -80,8 +80,9 @@ mirror. ADR-0012's contract covers the engine-side record, not this copy.
 the wrapper's drain even inside a `ScopedRestore` — the restore guard sat one level down, in
 `drainPendingMapping` — which made the tick a SECOND concurrent writer of `liveDetachMask` on this
 path. The guard now covers the whole tick, so the restore is again the only writer; the underlying
-exposure (the restore itself writing `replaceState` / `liveDetachMask` / `livePresetName` while the
-editor reads them) is untouched and still needs the thread-model decision below.
+exposure (the restore itself writing `replaceState` / `liveDetachMask` / `livePresetName` /
+`liveSelection` while the editor reads them) is untouched and still needs the thread-model
+decision below.
 
 A **third** member, added 2026-08-03 (review round 28) and **CLOSED 2026-08-03
 (round 42)**: the §7 undo/redo stacks. `setStateInformation` used to clear
@@ -99,8 +100,11 @@ and write of the history passes through (`canUndo`/`canRedo`, `undo`/`redo`,
 `pushUndoStep`, both gesture callbacks' message-thread branches,
 `copySlotToOther`). No lock, and nothing blocks in a host callback. What remains
 unclosed here is the state the restore genuinely must write — `replaceState`,
-`liveDetachMask`, `livePresetName` and **`liveFrozenTrims`** — which has no such
-option and still needs the decision below.
+`liveDetachMask`, `livePresetName`, `liveSelection` (ADR-0022 — the preset
+identity beside the name, same exposure shape: written by the restore's slot
+overlay and by `applySlotToLive`, read by the editor's menu and ‹ › ring
+through `currentPresetSelection()`) and **`liveFrozenTrims`** — which has no
+such option and still needs the decision below.
 
 `liveFrozenTrims` is named explicitly because two rounds of work around it could
 otherwise read as having closed it. Round 40 added a SECOND writer of that member
@@ -459,12 +463,17 @@ record.
    `MODE_AND_ADAPTATION_POLICY` invariant-3 question, and it is the same question **KI-006**
    asks about a re-prepare. Settle them together or the two answers will disagree.
 
-2. **Preset-ring navigation identifies the current entry by NAME.** `stepPreset`
-   (`src/gui/PluginEditor.cpp`) matches `currentPresetName()` against the factory table first and
-   the user files second, so a user preset saved as "EDM Club" resolves to the factory index and
-   the arrows walk from the wrong place. Robust fix is to track the last applied SOURCE (factory
-   index vs file) instead of re-deriving it from the display string — which is state the editor
-   does not currently keep, hence not a one-line change.
+2. **RESOLVED 2026-08-08 (ADR-0022) — preset-ring navigation identified the current entry by
+   NAME.** `stepPreset` matched `currentPresetName()` against the factory table first and the
+   user files second, so a user preset saved as "EDM Club" resolved to the factory index and the
+   arrows walked from the wrong place. The fix is the SOURCE-tracking this item asked for, held
+   where it survives: the wrapper records the identity (a factory id or the user file —
+   `liveSelection`, carried on the SLOT tree through undo, A/B, Copy and the session), and
+   `stepPreset` and the menu mark both resolve through
+   `PresetManager::selectedPresetRow` — identity first, the name scan only for identity-less
+   (pre-ADR-0022) state, where the factory-first answer remains the documented tie-break.
+   An interim editor-local hint (round 44's `rememberPresetSource`) was replaced by that
+   identity, not kept beside it.
 
 3. **RESOLVED 2026-08-03 (round 38) — undo/redo restore `presetBaseline`.** They restored the whole
    SLOT tree, `presetName` included, while `applyFactoryPreset` / `applyPresetFile` /

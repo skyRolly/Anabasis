@@ -153,6 +153,16 @@ public:
     // pre-detached; the mask it carries is empty.
     struct FactoryPreset
     {
+        // `id` is the preset's INTERNAL identity (ADR-0022) and is never
+        // shown: the menu, the top bar and the Save Preset field all display
+        // `name`. It exists so a factory preset is selected by something a
+        // user preset can never collide with — a user preset is identified by
+        // its FILE, so the two namespaces are disjoint and a user preset
+        // saved as e.g. "EDM Club" no longer steals the factory row's tick.
+        // Treat the ids as immutable: renaming a preset is a display change,
+        // renaming an id would silently re-point A/B slots, undo entries and
+        // saved sessions that still hold the old one.
+        const char* id;
         const char* name;
         struct Override { const char* id; float value; };
         const Override* overrides;
@@ -160,6 +170,66 @@ public:
     };
     static const FactoryPreset* factoryPresets (int& countOut);
     bool applyFactoryPreset (int index, juce::StringArray& detachMaskOut);
+
+    // -- preset identity (ADR-0022) ------------------------------------------
+    // What PRODUCED the current sound, as opposed to what it is CALLED. The
+    // list used to be resolved by NAME everywhere (the menu ticked every row
+    // whose name matched — BOTH rows on a clash — and ‹ › stepped from
+    // whichever row the scan hit first). Identity no longer travels as a
+    // name: a factory preset is its immutable `FactoryPreset::id`, a user
+    // preset is its file on disk, and the two namespaces cannot collide, so a
+    // duplicate name is merely a duplicate label. The wrapper holds the live
+    // value (`liveSelection`) beside `livePresetName` and carries it on the
+    // SLOT tree, so undo, A/B, Copy and the session all inherit it from the
+    // slot plumbing that already carries the name.
+    struct Selection
+    {
+        enum class Kind { unknown, factory, userFile };
+        Kind         kind = Kind::unknown;   // unknown = "no identity" → name fallback
+        juce::String factoryId;              // kind == factory
+        juce::File   file;                   // kind == userFile
+    };
+
+    // The wire form of a Selection: three plain strings, so the encoding
+    // lives with the type rather than being spelled out at each serialization
+    // site (the SLOT properties `presetSource` / `presetFactoryId` /
+    // `presetUserFile` — SERIALIZATION_REGISTRY §1.2).
+    //
+    // A user preset sitting DIRECTLY in the preset folder is stored as its
+    // FILE NAME, not its full path: there the name is already a complete
+    // identity (every list this build shows is a non-recursive scan of that
+    // folder), it keeps the user's home directory out of the saved project,
+    // and a project moved to another machine still resolves. Anything else
+    // stores its absolute path, which keeps `decode(encode(s)) == s` true:
+    // a file loaded from outside the folder, one nested in a SUB-folder of it
+    // (the test is `getParentDirectory() == userPresetDirectory()` — the
+    // recursive `juce::File::isAChildOf` would store a nested file by bare
+    // name and decode it to a DIFFERENT same-named file sitting directly in
+    // the folder), and one whose name `juce::File::isAbsolutePath` would
+    // accept — a leading `~` on POSIX — which would decode to a literal
+    // relative path instead. Both conditions are ports of defects the sibling
+    // product's reviews found (Anamorph ADR-0024; its worklog §§7, 9).
+    struct SelectionFields { juce::String kind, factoryId, userFile; };
+    static SelectionFields encodeSelection (const Selection&);
+    static Selection       decodeSelection (const juce::String& kind,
+                                            const juce::String& factoryId,
+                                            const juce::String& userFile);
+
+    // Which row of the flat preset list (the FACTORY block first, then
+    // `userFiles` in the order given) is the CURRENT one — the single answer
+    // the menu tick and ‹ › stepping share, so exactly one row is ever
+    // marked. Identity first; when the identity is KNOWN but absent from the
+    // list (a file loaded from outside the preset folder, a user preset
+    // deleted or renamed on disk, a factory id a later version removed) the
+    // answer is -1 — NO row. Falling through to the name scan there is
+    // precisely the mis-tick ADR-0022 removes. The name fallback below it
+    // covers only state that carries no identity at all (a pre-ADR-0022
+    // session), where it keeps the old answer: first matching row, factory
+    // block first — a documented tie-break, not an accident.
+    static int selectedPresetRow (const Selection& sel,
+                                  const juce::String& currentName,
+                                  const FactoryPreset* factory, int factoryCount,
+                                  const juce::Array<juce::File>& userFiles);
 
 private:
     juce::AudioProcessorValueTreeState& apvts;

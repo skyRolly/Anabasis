@@ -6,7 +6,30 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **`shownTpMode` construction seed (2026-08-06)**. The editor's cached
+**Last updated:** for the **ADR-0022 preset-identity port and its three review rounds
+(2026-08-08)**. The port gave factory presets immutable internal ids and identified a user preset
+by its file, so a shared name is a shared *label*; the documentation set moved with it. **New:**
+`ADR-0022`, with the owner's serialization sign-off quoted in its Status banner and its scope
+bounded to those fields. **Amended:** `ADR_INDEX.md` (the ADR-0022 row); `SERIALIZATION_REGISTRY.md`
+§1.2 (the three additive `SLOT` properties, their defaults-on-absence, both encoder conditions, and
+the inactive-slot absence-survives-re-save exception); `SESSION_COMPATIBILITY_POLICY.md` rule 4
+(the round-trip list gains the indicator identity); `CHANGELOG.md`; `HANDOVER.md`. **Corrected:**
+`KNOWN_ISSUES.md` KI-007 item 2, which recorded as OPEN the name-based ring defect this change
+removes, and KI-003, whose restore-writer enumeration gained `liveSelection` — a set the
+`historyEpoch` comment and `MODE_AND_ADAPTATION_POLICY.md` §KI-003 residual state in parallel, and
+which the third round brought back into agreement (a member missing from one copy reads as one the
+restore does not write). **Superseded in place**, per this file's own convention: the three
+round-61/63 records of the deleted `rememberPresetSource` hint, whose ungated-RING half survives
+the deletion as a requirement rather than as history — it is why `stepPreset` walks on past an
+entry it cannot apply. Coverage: **Full** for the identity model, its wire form and its fallbacks
+(ADR + registry + policy + tests all carry it); confidence **Verified** — `testPresetIdentitySharedName`,
+`testFactoryPresetIdIntegrity`, `testPresetIdentityAcrossRestore` and
+`testTheRingWalksPastAnUnreadablePreset`, with fourteen negative controls each killed by its own
+assertions. **A known gap, recorded rather than filled:** this audit has no entries for the 0.1.1
+release round or for review rounds 4–6; `HANDOVER.md` and `CHANGELOG.md` carry their records, and
+reconstructing them here after the fact would be invention rather than audit (constraint C7).
+Suites 259 + 634.
+Previous: the **`shownTpMode` construction seed (2026-08-06)**. The editor's cached
 TP-display flag was hard-coded `false`, but it caches *what the Ceiling boxes are showing*, not
 the product default — and those two differ for an editor opened on a TP-ON session, where the
 attachment renders " dBTP" at construction. If the mode then went OFF before the first 24 Hz
@@ -613,7 +636,16 @@ drive a session LOAD, and a new check asserts the poll writes nothing (an illega
 straight into the live tree must survive a display refresh untouched while still being clamped on
 read). Two mutants — dropping the adoption-time normalisation, and reinstating the poll write — each
 fail their own check.
-(2) **The preset-source hint could describe a preset that never loaded.** `showPresetMenu` and
+(2) **The preset-source hint could describe a preset that never loaded.** *(Superseded 2026-08-08
+by ADR-0022 — `rememberPresetSource` and its members were deleted with the hint pattern; the
+wrapper-held identity records only successful applies by construction. **The ungated-RING half of
+this record survives the deletion as a requirement**, and it is why `stepPreset` now walks on
+until an entry actually loads: the identity moves only on a successful apply, so a single-shot
+step would re-offer a corrupt file for ever — the trap this paragraph's "advancing its hint" was
+avoiding. Pinned since 2026-08-08 by `testTheRingWalksPastAnUnreadablePreset`, so the "not tested"
+sentence below no longer applies to the ring (the two menu/chooser paths it also names are still
+untested, for the reason given). The record is left standing rather than rewritten.)*
+`showPresetMenu` and
 `showLoadPreset` called `rememberPresetSource` regardless of `applyPresetFile`'s result, so a corrupt
 or foreign file (a documented no-op — `parsePresetFile` refuses a foreign root) left the editor
 believing it was the active source while the processor had not moved. Both gate on the return value
@@ -659,6 +691,9 @@ is cross-TU inlining the optimiser can do here anyway). The residual gap is stat
 rather than argued away. `TEST_REPORT.md`'s performance summary points at that note instead of
 repeating it, keeping one authority. No methodology, build configuration or measured value changed.
 Previous: **review round 61 (2026-08-05)** — a preset source-tracking regression:
+*(Superseded 2026-08-08 by ADR-0022 — the editor-local hint this round patched was replaced
+outright by the wrapper-held preset identity, which `savePresetFile` itself now sets; the record
+is left standing rather than rewritten.)*
 **Saving a preset did not record itself as the preset now in use.** `stepPreset` resolves "where am
 I in the list?" from a remembered source first, and only falls back to searching by display name
 when that hint no longer describes what the processor shows. The fallback exists because names are
@@ -1305,7 +1340,8 @@ now serves all three; behaviour is unchanged today because `setupRotary` builds 
 builds only rotary sliders. `stepPreset` re-derived its position from the display NAME, which is not
 unique across the two sources, so a user preset called "EDM Club" walked from the factory index; the
 editor now remembers the source it last applied and uses it only while the name still confirms it,
-falling back to the name search when anything else changed the name. And `resized()`'s early-return
+falling back to the name search when anything else changed the name *(superseded 2026-08-08 by
+ADR-0022: that remembered source became the wrapper-held identity, and the hint was deleted)*. And `resized()`'s early-return
 guard gained a `jassertfalse` plus an unconditional `resized()` at the end of the constructor,
 because `setSize` is a no-op on an unchanged size — so the guard could have produced a silently
 blank window rather than a diagnosable failure.

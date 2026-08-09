@@ -205,24 +205,29 @@ namespace
         { pid::colourModel, 3.0f }, { pid::limStyle, 2.0f },
     };
 
+    // The `id` column is the ADR-0022 identity: immutable internal tokens,
+    // never displayed, never renamed (saved sessions, A/B slots and undo
+    // entries may hold them). Reordering or renaming the PRESETS is safe —
+    // nothing resolves by position or by name once an identity exists.
     const PresetManager::FactoryPreset kFactory[] = {
         // Index 0, an EMPTY override table: "defaults + intents" with zero
         // intents IS the default patch. The sibling's pattern (its bank also
-        // opens on { "Default", {} }); the fresh-constructed state is named
-        // by it, so the plugin never shows a nameless "Preset" placeholder.
-        { "Default",            nullptr,            0 },
-        { "Transparent Master", kTransparentMaster, (int) std::size (kTransparentMaster) },
-        { "Loud Pop",           kLoudPop,           (int) std::size (kLoudPop) },
-        { "EDM Club",           kEdmClub,           (int) std::size (kEdmClub) },
-        { "Vocal Forward",      kVocalForward,      (int) std::size (kVocalForward) },
-        { "Tape Glue",          kTapeGlue,          (int) std::size (kTapeGlue) },
-        { "Rock Punch",         kRockPunch,         (int) std::size (kRockPunch) },
-        { "Hip-Hop Low End",    kHipHopLowEnd,      (int) std::size (kHipHopLowEnd) },
-        { "Acoustic Warmth",    kAcousticWarmth,    (int) std::size (kAcousticWarmth) },
-        { "Classical Dynamics", kClassicalDynamics, (int) std::size (kClassicalDynamics) },
-        { "Podcast Voice",      kPodcastVoice,      (int) std::size (kPodcastVoice) },
-        { "Cinematic Wide",     kCinematicWide,     (int) std::size (kCinematicWide) },
-        { "Lo-Fi Crush",        kLoFiCrush,         (int) std::size (kLoFiCrush) },
+        // opens on { "default", "Default", {} }); the fresh-constructed state
+        // is named by it, so the plugin never shows a nameless "Preset"
+        // placeholder.
+        { "default",            "Default",            nullptr,            0 },
+        { "transparentMaster",  "Transparent Master", kTransparentMaster, (int) std::size (kTransparentMaster) },
+        { "loudPop",            "Loud Pop",           kLoudPop,           (int) std::size (kLoudPop) },
+        { "edmClub",            "EDM Club",           kEdmClub,           (int) std::size (kEdmClub) },
+        { "vocalForward",       "Vocal Forward",      kVocalForward,      (int) std::size (kVocalForward) },
+        { "tapeGlue",           "Tape Glue",          kTapeGlue,          (int) std::size (kTapeGlue) },
+        { "rockPunch",          "Rock Punch",         kRockPunch,         (int) std::size (kRockPunch) },
+        { "hipHopLowEnd",       "Hip-Hop Low End",    kHipHopLowEnd,      (int) std::size (kHipHopLowEnd) },
+        { "acousticWarmth",     "Acoustic Warmth",    kAcousticWarmth,    (int) std::size (kAcousticWarmth) },
+        { "classicalDynamics",  "Classical Dynamics", kClassicalDynamics, (int) std::size (kClassicalDynamics) },
+        { "podcastVoice",       "Podcast Voice",      kPodcastVoice,      (int) std::size (kPodcastVoice) },
+        { "cinematicWide",      "Cinematic Wide",     kCinematicWide,     (int) std::size (kCinematicWide) },
+        { "loFiCrush",          "Lo-Fi Crush",        kLoFiCrush,         (int) std::size (kLoFiCrush) },
     };
 } // namespace
 
@@ -340,4 +345,118 @@ bool PresetManager::applyFactoryPreset (int index, juce::StringArray& detachMask
 
     detachMaskOut.clear();     // factory presets load nothing pre-detached
     return true;
+}
+
+// ----------------------------------------------------------------------------
+//  Preset identity (ADR-0022). Metadata only: nothing here reads or writes a
+//  parameter, and nothing here touches a user preset FILE — the `.anabasis`
+//  format is untouched, the trio lives in the session blob's SLOT unit.
+// ----------------------------------------------------------------------------
+PresetManager::SelectionFields PresetManager::encodeSelection (const Selection& s)
+{
+    switch (s.kind)
+    {
+        case Selection::Kind::factory:
+            return { "factory", s.factoryId, {} };
+
+        case Selection::Kind::userFile:
+        {
+            // DIRECT child, not descendant — `juce::File::isAChildOf` recurses,
+            // so it is also true for a file nested in a SUB-folder of the
+            // preset folder, and that file would then be stored as its bare
+            // name and decode back to a DIFFERENT same-named file sitting
+            // directly in the folder. Every list this build shows is a
+            // non-recursive scan, so a direct child is the only thing that can
+            // ever be a menu row anyway; everything else takes the
+            // absolute-path branch and round-trips exactly.
+            //
+            // ...and the bare name has to be one the decoder cannot mistake
+            // for a path. Nothing stops a user dropping `~foo.anabasis` into
+            // the preset folder by hand, and `juce::File::isAbsolutePath`
+            // accepts a leading `~` on POSIX — so a bare `~foo.anabasis` would
+            // come back as the literal relative string rather than the file in
+            // the folder, and the row would lose its tick. Such a name takes
+            // the absolute-path branch instead: less portable for that one
+            // preset, but `decode(encode(s)) == s` holds, which is the
+            // invariant the whole design rests on (Anamorph worklog §§7, 9).
+            const auto name = s.file.getFileName();
+            const bool nameIsUnambiguous = ! juce::File::isAbsolutePath (name);
+            return { "user", {}, (s.file.getParentDirectory() == userPresetDirectory()
+                                      && nameIsUnambiguous)
+                                     ? name
+                                     : s.file.getFullPathName() };
+        }
+
+        case Selection::Kind::unknown:
+        default:
+            return {};
+    }
+}
+
+PresetManager::Selection PresetManager::decodeSelection (const juce::String& kind,
+                                                         const juce::String& factoryId,
+                                                         const juce::String& userFile)
+{
+    // Anything unrecognised, empty or half-written decodes to `unknown`,
+    // which is the pre-ADR-0022 behaviour (resolve by name). A
+    // wrong-but-well-formed value cannot select the wrong row either:
+    // `selectedPresetRow` answers -1 for an identity it cannot find, rather
+    // than falling back to a same-named preset.
+    if (kind == "factory" && factoryId.isNotEmpty())
+        return { Selection::Kind::factory, factoryId, {} };
+
+    if (kind == "user" && userFile.isNotEmpty())
+        return { Selection::Kind::userFile, {},
+                 juce::File::isAbsolutePath (userFile)
+                     ? juce::File (userFile)
+                     : userPresetDirectory().getChildFile (userFile) };
+
+    return {};
+}
+
+int PresetManager::selectedPresetRow (const Selection& sel,
+                                      const juce::String& currentName,
+                                      const FactoryPreset* factory, int factoryCount,
+                                      const juce::Array<juce::File>& userFiles)
+{
+    if (sel.kind == Selection::Kind::factory)
+    {
+        for (int i = 0; i < factoryCount; ++i)
+            if (sel.factoryId == factory[i].id)
+                return i;
+        return -1;   // a known id that resolves to no row ticks NOTHING —
+                     // the name scan below must not answer for it
+    }
+
+    if (sel.kind == Selection::Kind::userFile)
+    {
+        // A PATH-STRING compare, deliberately: `juce::File::operator==` goes
+        // through `compareFilenames`, which does NO canonicalisation — no
+        // symlink resolution, no `/private/var`↔`/var` folding, no UNC↔mapped
+        // drive folding, no relative-path normalisation — but IS
+        // case-insensitive on Windows and macOS, and case-sensitive on Linux.
+        // So the property is narrower than "any different spelling misses": a
+        // differently-CASED spelling matches on the two case-insensitive
+        // platforms (the same file, which is the answer wanted anyway), while
+        // every other re-spelling misses on all three and shows no tick. That
+        // is the safe direction — a miss, never a WRONG row — and it is the
+        // documented contract rather than an oversight: `getLinkedTarget()`
+        // would change what "the same preset" means and brings its own
+        // per-platform failure modes (ADR-0022 §Decision 8).
+        for (int i = 0; i < userFiles.size(); ++i)
+            if (userFiles.getReference (i) == sel.file)
+                return factoryCount + i;
+        return -1;   // outside the folder, or deleted/renamed on disk — no row
+    }
+
+    // No identity at all (a pre-ADR-0022 session): the name fallback, first
+    // matching row with the factory block first — the documented tie-break
+    // this build gave before identities existed.
+    for (int i = 0; i < factoryCount; ++i)
+        if (currentName == factory[i].name)
+            return i;
+    for (int i = 0; i < userFiles.size(); ++i)
+        if (userFiles.getReference (i).getFileNameWithoutExtension() == currentName)
+            return factoryCount + i;
+    return -1;
 }

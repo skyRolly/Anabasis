@@ -32,6 +32,13 @@ field intact and the unknown one ignored, and the writer emits the schema rather
 so it does not survive a re-save. No legacy read path is owed, because no build carrying the
 field has left the repository.
 
+**A third addition landed the same way on 2026-08-08**: the preset-identity trio
+`presetSource` / `presetFactoryId` / `presetUserFile` on the `SLOT` unit, under
+[**ADR-0022**](design-decisions/ADR-0022-preset-identity.md) — the owner cleared the gate in
+writing, approving exactly that trio and its defaults-on-absence. It touches no `int_*` count:
+the fields live on the slots, and absence decodes to the pre-ADR-0022 name-fallback behaviour,
+so an older blob loads unchanged. See §1.2.
+
 There are **two formats**, deliberately different in fidelity (ADR-0007 option H):
 
 | Format | Fidelity contract | Carrier |
@@ -57,6 +64,9 @@ AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, Plugin
 ├── AB                            active = 0|1
 │   ├── SLOT                      (slot 0)
 │   │     presetName (string)
+│   │     presetSource (string)      "" | "factory" | "user"    [ADR-0022]
+│   │     presetFactoryId (string)   factory id, else ""        [ADR-0022]
+│   │     presetUserFile (string)    file name or path, else "" [ADR-0022]
 │   │     ├── ANABASIS            full parameter tree copy, raw attributes included
 │   │     ├── BASELINE            [optional — see §1.4]
 │   │     ├── FROZEN_TRIMS        [only while Freeze is ON — see §1.3]
@@ -80,7 +90,8 @@ Pinned by: `testStateRoundTrip` (byte-identical `getState → setState → getSt
 ### 1.2 The `SLOT` unit — StateSet on disk
 
 A slot serialises the **widened StateSet** `{params, presetName, baseline, frozenTrims,
-detachMask}` (ADR-0007) via `saveSlotFromLive()` (`src/PluginProcessor.cpp:695-752`). Two
+detachMask}` (ADR-0007) — plus, since **ADR-0022**, the preset-identity trio described below —
+via `saveSlotFromLive()` (`src/PluginProcessor.cpp:695-752`). Two
 properties of the shape that are rules, not accidents:
 
 - **The slot's `ANABASIS` copy carries the full surface, view-tier entries included.** The
@@ -91,6 +102,45 @@ properties of the shape that are rules, not accidents:
 - **`DETACH_MASK` is always written**, even empty — its children are `PARAM` nodes with an
   `id` property each, one per §5.3-detached parameter. On read, a missing mask means
   all-clear (the missing-fields rule).
+
+**The preset-identity trio** (`presetSource` / `presetFactoryId` / `presetUserFile`,
+**ADR-0022** — the gate for this addition was cleared by the owner on 2026-08-08; the sign-off
+and its non-transferable scope are quoted in that ADR's Status banner):
+
+| field | type | default if absent | meaning |
+|---|---|---|---|
+| `presetSource` | string `""` / `"factory"` / `"user"` | `""` → identity `unknown` | which namespace produced this slot's sound |
+| `presetFactoryId` | string | `""` | the immutable factory id (`presetSource == "factory"`) |
+| `presetUserFile` | string | `""` | the user preset file (`presetSource == "user"`) |
+
+Rules the shape encodes, each pinned by `testPresetIdentityAcrossRestore`:
+
+- **Metadata only.** Written by `saveSlotFromLive` beside `presetName`, decoded after the
+  parameter adopt; no fallback path touches a parameter — the sound restores bit-identically
+  whether or not the identity resolves.
+- **Absence decodes to `unknown`**, which selects the name fallback — the pre-ADR-0022
+  behaviour, so an older blob loads unchanged (`SESSION_COMPATIBILITY_POLICY` rule 2). A
+  known identity that no longer resolves ticks **no row**, never a same-named substitute.
+- **`presetUserFile` holds the bare file name** only when the preset sits **directly in**
+  `PresetManager::userPresetDirectory()` (a direct-child test, deliberately not the recursive
+  `juce::File::isAChildOf`) **and** its name is not something `juce::File::isAbsolutePath`
+  accepts (a leading `~` on POSIX). Everything else — outside the folder, nested in a
+  sub-folder, or a path-like name — stores the absolute path, so `decode(encode(s)) == s`
+  holds. Identity matching is a path-string compare with **no canonicalisation** — but
+  `juce::File::operator==` is case-INSENSITIVE on Windows and macOS, so a differently-cased
+  spelling matches there (the same file, the answer wanted) while every other re-spelling
+  misses on all three platforms and shows no tick: the safe direction, a miss rather than a
+  wrong row.
+- **User preset FILES are untouched** — the trio lives in the session blob only; the
+  `.anabasis` format is unchanged (§3).
+- **On the INACTIVE slot, absence survives a re-save** — a deliberate, narrow exception to
+  this file's "the writer emits the schema rather than the input" pattern. `getStateInformation`
+  rebuilds the ACTIVE slot through `saveSlotFromLive()` (which always writes the trio) but
+  writes the inactive slot verbatim from `storedSlot`, and a pre-ADR-0022 session's stored
+  SLOT carries no trio — so a load→re-save of such a session emits the trio on the active
+  slot only, until a slot switch rebuilds the stored tree. Harmless by construction: absence
+  and the empty trio decode to the same `unknown`, and the undo change-guard normalises the
+  two before comparing (ADR-0022 §Consequences), so no behaviour depends on the difference.
 
 ### 1.3 `FROZEN_TRIMS` — written conditionally, by design
 

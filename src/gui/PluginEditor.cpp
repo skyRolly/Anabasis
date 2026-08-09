@@ -394,43 +394,77 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         const int total = factoryCount + files.size();
         if (total == 0)
             return;
-        // WHERE ARE WE? The display NAME cannot answer on its own: names are not
-        // unique across the two sources, so a user preset saved as "EDM Club"
-        // resolved to the factory entry and the arrows walked from the wrong
-        // place. What the name can do is CONFIRM a remembered source — so the
-        // last preset this editor applied is consulted first, and only trusted
-        // while it still describes what the processor is showing. Anything that
-        // changed the name behind us (a session load, an undo, an A/B switch)
-        // fails that test and falls through to the name search, which is the
-        // best answer available once the source is genuinely unknown.
-        int idx = -1;
-        if (lastPresetWasFactory && lastPresetFactoryIdx >= 0 && lastPresetFactoryIdx < factoryCount
-            && processor.currentPresetName() == factory[lastPresetFactoryIdx].name)
-            idx = lastPresetFactoryIdx;
-        else if (! lastPresetWasFactory && lastPresetFile != juce::File()
-                 && processor.currentPresetName() == lastPresetFile.getFileNameWithoutExtension())
-            for (int i = 0; i < files.size(); ++i)
-                if (files.getReference (i) == lastPresetFile) { idx = factoryCount + i; break; }
-
-        if (idx < 0)
-            for (int i = 0; i < factoryCount; ++i)
-                if (processor.currentPresetName() == factory[i].name) { idx = i; break; }
-        if (idx < 0)
-            for (int i = 0; i < files.size(); ++i)
-                if (files.getReference (i).getFileNameWithoutExtension()
-                        == processor.currentPresetName())
-                    { idx = factoryCount + i; break; }
-        idx = (idx < 0 ? (dir > 0 ? 0 : total - 1) : (idx + dir + total) % total);
-        if (idx < factoryCount)
+        // WHERE ARE WE? The IDENTITY answers (ADR-0022): the wrapper records
+        // which row produced the current sound — a factory id or a user file,
+        // two namespaces that cannot collide — and it travels with undo, A/B
+        // and the session, so it is right after every path that changes what
+        // is showing. A known identity that is on no row (an outside-folder
+        // file, a preset deleted on disk) answers -1 and the arrows start
+        // from the list edge; the resolver's name fallback covers only state
+        // that carries no identity at all. This replaced the editor-local
+        // "remembered source" hint, which died with the window and needed the
+        // NAME — the very thing that fails on a clash — to confirm it.
+        const int here = PresetManager::selectedPresetRow (processor.currentPresetSelection(),
+                                                           processor.currentPresetName(),
+                                                           factory, factoryCount, files);
+        // ...and the ring KEEPS WALKING past an entry it cannot apply, which
+        // is a requirement of resolving the position from the identity rather
+        // than a refinement of it. The identity is set only by a SUCCESSFUL
+        // apply (`applyPresetFile` returns before it on an unreadable file),
+        // so a single-shot step would re-derive the same starting row on the
+        // next press and offer the same broken file for ever: one corrupt
+        // `.anabasis` in the folder would wall the arrows off in that
+        // direction permanently. The editor-local hint this replaced was
+        // advanced UNCONDITIONALLY for exactly this reason; the loop carries
+        // that rationale forward, and lands on the next preset that actually
+        // loads instead of merely stepping over the broken one.
+        //
+        // Bounded by `total`, so the pass visits every entry at most once and
+        // terminates. The last candidate that bound admits is the row the
+        // press STARTED from, and re-applying it would mint an undo step for
+        // a press that moved nothing — UNREACHABLE rather than tolerated,
+        // which is worth writing down because it reads like a live edge case.
+        // The walk only reaches it if every OTHER entry failed first, and it
+        // cannot: the factory rows are a CONTIGUOUS PREFIX of the ring and a
+        // factory apply cannot fail (`applyFactoryPreset` returns false only
+        // for an out-of-range index, and both its range checks pass for one
+        // this loop produces). So the longest run of failable candidates is
+        // the user block — `files.size()` of them, NOT `factoryCount`, which
+        // is the wrong way round and was written here once — and any walk
+        // meets a factory row by step `files.size()`, which is short of the
+        // `total - 1` step where the starting row sits whenever there are at
+        // least TWO factory rows. A folder of nothing but unreadable USER
+        // files therefore lands on a FACTORY preset: not a no-op, and not
+        // back where it started.
+        //
+        // Both halves of that are premises, not laws. A single-row factory
+        // bank would put the sole applyable row under the press itself and
+        // re-apply it; a factory source that can fail removes the argument
+        // outright. `testTheRingWalksPastAnUnreadablePreset` pins the first
+        // (`factoryCount >= 2`); if either changes, this bound needs the
+        // starting row excluded explicitly. Note the scope: the claim is that
+        // the WALK cannot wrap onto its own starting row, not that a press
+        // can never re-land the sound it started with — an identity the
+        // resolver cannot place (-1) starts from the list edge by ADR-0022
+        // §Decision 3, and that edge may hold the same preset under a name it
+        // no longer matches.
+        //
+        // Retrying costs nothing either. Both reachable failures — a file
+        // that vanished between the scan above and the press, and
+        // `parsePresetFile` refusing a corrupt or foreign one — return BEFORE
+        // the undo bracket and the §2.8 duck, and the post-bracket failure is
+        // unreachable (`applyPreset` re-tests the root tag `parsePresetFile`
+        // already enforced). So one press still mints exactly one undo step,
+        // the one for the preset that landed.
+        int idx = (here < 0 ? (dir > 0 ? 0 : total - 1) : (here + dir + total) % total);
+        for (int tried = 0; tried < total; ++tried)
         {
-            processor.applyFactoryPreset (idx);
-            rememberPresetSource (idx);
-        }
-        else
-        {
-            const auto f = files.getReference (idx - factoryCount);
-            processor.applyPresetFile (f);
-            rememberPresetSource (f);
+            const bool applied = idx < factoryCount
+                                     ? processor.applyFactoryPreset (idx)
+                                     : processor.applyPresetFile (files.getReference (idx - factoryCount));
+            if (applied)
+                break;
+            idx = (idx + dir + total) % total;
         }
         refreshPresetDisplay (true);
     };
@@ -840,24 +874,13 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         if (processor.savePresetFile (file))
         {
             // A SAVE IS AN APPLY as far as "which preset is in use" is
-            // concerned, and this was the one route that did not say so. Every
-            // other path that changes the live preset records its source — the
-            // menu, the ‹ › ring, the load chooser — because `stepPreset` cannot
-            // recover it from the display NAME: names are not unique across the
-            // two collections, which is precisely why the remembered source
-            // exists. Saving left the PREVIOUS source standing, so saving over a
-            // factory name (apply "EDM Club", Save Preset as "EDM Club") left a
-            // factory hint that the unchanged name then CONFIRMED, and the
-            // arrows walked the factory ring from an entry the user had just
-            // replaced — silently changing the sound.
-            //
-            // Here rather than in `AnabasisAudioProcessor::savePresetFile`: the
-            // remembered source is editor state (this window's idea of where it
-            // is in the list), and the processor deliberately holds no view of
-            // it — a second editor, or a host that saves through some other
-            // route, has its own answer. The wrapper's job is the name and the
-            // dirty datum, which it already does.
-            rememberPresetSource (file);
+            // concerned, and the wrapper says so itself now: `savePresetFile`
+            // sets the ADR-0022 identity to the file it just wrote, so the
+            // tick and the ‹ › arrows land on the USER row — even when the
+            // name matches a factory preset's. Nothing for this editor to
+            // record: the identity is wrapper state, shared by every window
+            // and carried with the session, which is what the editor-local
+            // hint that used to live here could never be.
             showSavePreset (false);
             refreshPresetDisplay (true);
         }
@@ -1944,17 +1967,24 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     // static-destruction order at DLL unload.
     int factoryCount = 0;
     const auto* factory = PresetManager::factoryPresets (factoryCount);
+    // ONE resolved row, ticked in whichever section it falls (ADR-0022). Each
+    // row used to test its own NAME against the current one, so a user preset
+    // sharing a factory preset's name ticked BOTH rows; the resolver answers
+    // identity-first (exactly one row, or none — an outside-folder file and a
+    // deleted preset are on no row and must not tick a same-named substitute)
+    // and falls back to the name only for identity-less state.
+    const int cur = PresetManager::selectedPresetRow (processor.currentPresetSelection(),
+                                                      processor.currentPresetName(),
+                                                      factory, factoryCount, files);
     m.addSectionHeader ("FACTORY");
     for (int i = 0; i < factoryCount; ++i)
-        m.addItem (20001 + i, factory[i].name, true,
-                   processor.currentPresetName() == factory[i].name);
+        m.addItem (20001 + i, factory[i].name, true, i == cur);
     if (! files.isEmpty())
     {
         m.addSectionHeader ("USER");
         for (int i = 0; i < files.size(); ++i)
             m.addItem (i + 1, files.getReference (i).getFileNameWithoutExtension(), true,
-                       files.getReference (i).getFileNameWithoutExtension()
-                           == processor.currentPresetName());
+                       factoryCount + i == cur);
     }
     const juce::String ellip = juce::String::charToString ((juce::juce_wchar) 0x2026);
     m.addSeparator();
@@ -1979,20 +2009,17 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             if (r >= 20001)
             {
                 safeThis->processor.applyFactoryPreset (r - 20001);
-                safeThis->rememberPresetSource (r - 20001);
                 safeThis->refreshPresetDisplay (true);
                 return;
             }
             if (r - 1 < files.size())
             {
-                // The hint records what actually produced the current state, so
-                // it is set only when the apply SUCCEEDED. A corrupt or foreign
-                // file is a documented no-op (`parsePresetFile` refuses it), and
-                // recording it would have the editor believe a file is the
-                // active source while the processor never moved.
-                const auto& f = files.getReference (r - 1);
-                if (safeThis->processor.applyPresetFile (f))
-                    safeThis->rememberPresetSource (f);
+                // A corrupt or foreign file is a documented no-op
+                // (`parsePresetFile` refuses it before the undo bracket), and
+                // the wrapper records the identity only on a successful apply
+                // — so the indicator cannot claim a file is the active source
+                // while the processor never moved.
+                safeThis->processor.applyPresetFile (files.getReference (r - 1));
                 safeThis->refreshPresetDisplay (true);
             }
         });
@@ -2011,11 +2038,10 @@ void AnabasisAudioProcessorEditor::showLoadPreset()
             const auto f = fc.getResult();
             if (safeThis != nullptr && f.existsAsFile())
             {
-                // Only on success — see the menu path above. `existsAsFile()`
-                // is not the readability test; `parsePresetFile` is, and it
-                // refuses a foreign root.
-                if (safeThis->processor.applyPresetFile (f))
-                    safeThis->rememberPresetSource (f);
+                // `existsAsFile()` is not the readability test;
+                // `parsePresetFile` is, and it refuses a foreign root — a
+                // failed apply moves nothing and records no identity.
+                safeThis->processor.applyPresetFile (f);
                 safeThis->refreshPresetDisplay (true);
             }
         });
