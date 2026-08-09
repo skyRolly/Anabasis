@@ -3808,6 +3808,109 @@ static void testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset()
 }
 
 // ---------------------------------------------------------------------------
+// A preset file that cannot be applied must not TRAP the ‹ › ring. Resolving
+// the ring's position from the ADR-0022 identity makes this a live hazard
+// rather than a hypothetical: the identity moves only on a SUCCESSFUL apply,
+// so a step that lands on a corrupt file leaves the position where it was and
+// the next press recomputes the same row — one bad `.anabasis` in the folder
+// would wall the arrows off in that direction for ever. The ring therefore
+// keeps walking until an entry actually loads, which is the ungated-hint
+// rationale the identity replaced, carried forward.
+static void testTheRingWalksPastAnUnreadablePreset()
+{
+    int factoryCount = 0;
+    const auto* factory = PresetManager::factoryPresets (factoryCount);
+    check (factoryCount >= 2, "ring: (premise) factory presets ship");
+    if (factoryCount < 2)
+        return;
+
+    // Adjacent by construction: one prefix, "-1-" before "-2-", so the sorted
+    // list cannot put anything between them and the corrupt row is exactly the
+    // one a ‹ press from the readable row must step over.
+    const auto dir = PresetManager::userPresetDirectory();
+    dir.createDirectory();
+    const auto corrupt  = dir.getChildFile ("AnabasisRingHarness-1-corrupt.anabasis");
+    const auto readable = dir.getChildFile ("AnabasisRingHarness-2-good.anabasis");
+    struct RemoveRingFiles      // real preset folder, so RAII (see the identity tests)
+    {
+        juce::File a, b;
+        ~RemoveRingFiles() { a.deleteFile(); b.deleteFile(); }
+    } removeRingFiles { corrupt, readable };
+
+    AnabasisAudioProcessor proc;
+    check (proc.savePresetFile (readable), "ring: (premise) the readable harness preset saved");
+    // Refused by `parsePresetFile` (foreign root), which is the reachable
+    // failure `applyPresetFile` returns false on.
+    check (corrupt.replaceWithText ("<NotAnAnabasisPreset/>"),
+           "ring: (premise) the unreadable harness preset staged");
+    check (PresetManager::parsePresetFile (corrupt) == nullptr,
+           "ring: (premise) the harness file really is unreadable");
+
+    auto rows = []
+    {
+        auto files = PresetManager::userPresetDirectory()
+                         .findChildFiles (juce::File::findFiles, false, "*.anabasis");
+        files.sort();
+        return files;
+    };
+    auto rowOf = [&] (const juce::File& f)
+    {
+        const auto files = rows();
+        for (int i = 0; i < files.size(); ++i)
+            if (files.getReference (i) == f)
+                return factoryCount + i;
+        return -1;
+    };
+    auto row = [&]
+    {
+        return PresetManager::selectedPresetRow (proc.currentPresetSelection(),
+                                                 proc.currentPresetName(),
+                                                 factory, factoryCount, rows());
+    };
+
+    const int corruptRow  = rowOf (corrupt);
+    const int readableRow = rowOf (readable);
+    check (corruptRow >= factoryCount && readableRow == corruptRow + 1,
+           "ring: (premise) the unreadable row sits immediately before the readable one");
+    if (corruptRow < factoryCount || readableRow != corruptRow + 1)
+        return;
+
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "ring: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+    auto* prev = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x2039));
+    check (prev != nullptr, "ring: (premise) the ‹ arrow was found");
+    if (prev == nullptr)
+        return;
+
+    check (proc.applyPresetFile (readable), "ring: (premise) the readable preset applies");
+    check (row() == readableRow, "ring: (premise) the readable preset is the selected row");
+
+    // ONE press. The row below is the corrupt file: the ring must step over it
+    // and land on whatever precedes it, not stall on the row it started from.
+    prev->onClick();
+    const int afterOne = row();
+    check (afterOne != readableRow,
+           "ring: a ‹ press onto an unreadable preset does not leave the arrows where they were");
+    check (afterOne != corruptRow,
+           "ring: ...and does not select the unreadable entry either");
+
+    // ...and the ring is still moving afterwards, in both directions.
+    prev->onClick();
+    check (row() != afterOne, "ring: the next ‹ press keeps moving");
+    auto* next = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x203A));
+    check (next != nullptr, "ring: (premise) the › arrow was found");
+    if (next != nullptr)
+    {
+        const int beforeNext = row();
+        next->onClick();
+        check (row() != beforeNext, "ring: › moves too");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ADR-0022, live behaviour: identity — a factory preset's immutable id vs a
 // user preset's FILE — decides the selected row, so a user preset saved under
 // a factory preset's name is the one selected, both rows stay individually
@@ -5610,6 +5713,7 @@ int main (int argc, char** argv)
         testTheCurveWellCachesWithoutChangingWhatItDraws();
         testARewoundSpectrumRingDropsThePreviousTrace();
         testSavingOverAFactoryNameKeepsTheArrowsOnTheUserPreset();
+        testTheRingWalksPastAnUnreadablePreset();
         testPresetIdentitySharedName();
         testFactoryPresetIdIntegrity();
         testPresetIdentityAcrossRestore();

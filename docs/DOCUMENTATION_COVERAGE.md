@@ -615,8 +615,14 @@ read). Two mutants — dropping the adoption-time normalisation, and reinstating
 fail their own check.
 (2) **The preset-source hint could describe a preset that never loaded.** *(Superseded 2026-08-08
 by ADR-0022 — `rememberPresetSource` and its members were deleted with the hint pattern; the
-wrapper-held identity records only successful applies by construction. The record is left standing
-rather than rewritten.)* `showPresetMenu` and
+wrapper-held identity records only successful applies by construction. **The ungated-RING half of
+this record survives the deletion as a requirement**, and it is why `stepPreset` now walks on
+until an entry actually loads: the identity moves only on a successful apply, so a single-shot
+step would re-offer a corrupt file for ever — the trap this paragraph's "advancing its hint" was
+avoiding. Pinned since 2026-08-08 by `testTheRingWalksPastAnUnreadablePreset`, so the "not tested"
+sentence below no longer applies to the ring (the two menu/chooser paths it also names are still
+untested, for the reason given). The record is left standing rather than rewritten.)*
+`showPresetMenu` and
 `showLoadPreset` called `rememberPresetSource` regardless of `applyPresetFile`'s result, so a corrupt
 or foreign file (a documented no-op — `parsePresetFile` refuses a foreign root) left the editor
 believing it was the active source while the processor had not moved. Both gate on the return value

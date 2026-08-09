@@ -160,6 +160,18 @@ metadata and never reaches the sound.
   step from the encoding difference alone. A REAL identity move under an unchanged name and
   sound — the saved-under-a-factory-name shape — still differs and still mints its step;
   both directions are pinned by the Copy cases in `testPresetIdentityAcrossRestore`.
+- **The `‹ ›` ring walks on past an entry it cannot apply**, and that is a consequence of
+  Decision 3 rather than a refinement of it. The identity moves only on a *successful* apply,
+  so a single-shot step would re-derive the same starting row on the next press and re-offer an
+  unreadable file for ever — one corrupt `.anabasis` would wall the arrows off in that
+  direction. `stepPreset` therefore keeps stepping in the pressed direction until an entry
+  loads, bounded by the list length (a folder of nothing but unreadable files is a clean
+  no-op). This carries forward the reason the deleted hint was advanced *unconditionally*
+  (`DOCUMENTATION_COVERAGE.md`, round 63 item 2) and improves on it: the press lands on the
+  next preset that actually loads rather than merely stepping over the broken one. Retrying is
+  free — the only reachable failure is `parsePresetFile` refusing the file, which returns
+  before the undo bracket and the §2.8 duck, so one press still mints one undo step. Pinned by
+  `testTheRingWalksPastAnUnreadablePreset`.
 - The editor's `lastPresetWasFactory` / `lastPresetFactoryIdx` / `lastPresetFile` members and
   both `rememberPresetSource` overloads are **removed**. Deliberately not deprecated in place:
   the hint pattern is the thing the identity replaces, and Anamorph's review recorded it as
@@ -186,7 +198,7 @@ metadata and never reaches the sound.
   `resetSlotFieldsToDefaults`; identity assignments in `applyFactoryPreset`,
   `applyPresetFile`, `savePresetFile`
 - `src/gui/PluginEditor.cpp` — `showPresetMenu` single-tick resolution, `stepPreset`
-  resolver-based position
+  resolver-based position and its walk-past-an-unreadable-entry loop
 - `docs/architecture/SERIALIZATION_REGISTRY.md` §1.2 — the three field rows
 - `docs/policies/SESSION_COMPATIBILITY_POLICY.md` rule 4 — round-trip list
 

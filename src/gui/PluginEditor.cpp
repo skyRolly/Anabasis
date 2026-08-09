@@ -404,14 +404,38 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         // that carries no identity at all. This replaced the editor-local
         // "remembered source" hint, which died with the window and needed the
         // NAME — the very thing that fails on a clash — to confirm it.
-        int idx = PresetManager::selectedPresetRow (processor.currentPresetSelection(),
-                                                    processor.currentPresetName(),
-                                                    factory, factoryCount, files);
-        idx = (idx < 0 ? (dir > 0 ? 0 : total - 1) : (idx + dir + total) % total);
-        if (idx < factoryCount)
-            processor.applyFactoryPreset (idx);
-        else
-            processor.applyPresetFile (files.getReference (idx - factoryCount));
+        const int here = PresetManager::selectedPresetRow (processor.currentPresetSelection(),
+                                                           processor.currentPresetName(),
+                                                           factory, factoryCount, files);
+        // ...and the ring KEEPS WALKING past an entry it cannot apply, which
+        // is a requirement of resolving the position from the identity rather
+        // than a refinement of it. The identity is set only by a SUCCESSFUL
+        // apply (`applyPresetFile` returns before it on an unreadable file),
+        // so a single-shot step would re-derive the same starting row on the
+        // next press and offer the same broken file for ever: one corrupt
+        // `.anabasis` in the folder would wall the arrows off in that
+        // direction permanently. The editor-local hint this replaced was
+        // advanced UNCONDITIONALLY for exactly this reason; the loop carries
+        // that rationale forward, and lands on the next preset that actually
+        // loads instead of merely stepping over the broken one.
+        //
+        // Bounded by `total`, so the pass visits every entry at most once and
+        // a folder of nothing but unreadable files is a clean no-op rather
+        // than a spin. Retrying costs nothing either: the only reachable
+        // failure is `parsePresetFile` refusing a corrupt or foreign file,
+        // which returns BEFORE the undo bracket and the §2.8 duck — so one
+        // press still mints exactly one undo step, the one for the preset
+        // that landed.
+        int idx = (here < 0 ? (dir > 0 ? 0 : total - 1) : (here + dir + total) % total);
+        for (int tried = 0; tried < total; ++tried)
+        {
+            const bool applied = idx < factoryCount
+                                     ? processor.applyFactoryPreset (idx)
+                                     : processor.applyPresetFile (files.getReference (idx - factoryCount));
+            if (applied)
+                break;
+            idx = (idx + dir + total) % total;
+        }
         refreshPresetDisplay (true);
     };
     presetPrev.setTooltip ("Previous preset");
