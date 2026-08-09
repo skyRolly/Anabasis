@@ -36,7 +36,22 @@ read as data, so the sample heading immediately below is not mistaken for struct
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **Preset identity** (ADR-0022, the product-family port of Anamorph's ADR-0024): a factory
+  preset is identified by an immutable internal id and a user preset by its file on disk, so a
+  user preset saved under a factory preset's name is now the one selected — the drop-down marks
+  exactly one row, `‹ ›` steps from the row that was actually loaded, and the selection survives
+  undo, A/B, Copy and a session reload. A stored identity that no longer resolves (a preset
+  deleted, renamed or moved; a file loaded from outside the preset folder) selects **no** row
+  rather than a same-named substitute; sound restoration is unaffected in every such case. The
+  identity is three additive per-slot strings in the **session** only — user `.anabasis` preset
+  files are byte-for-byte unchanged, and sessions saved before this change load exactly as
+  before. Evidence Source: PR #11.
+
+### Fixed
+- A user preset sharing a factory preset's name no longer shows the selection mark on **both**
+  menu rows, and saving over a factory preset's name no longer leaves the mark on the factory
+  row. Evidence Source: PR #11.
 
 ---
 

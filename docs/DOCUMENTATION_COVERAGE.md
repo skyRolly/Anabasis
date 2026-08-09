@@ -613,7 +613,10 @@ drive a session LOAD, and a new check asserts the poll writes nothing (an illega
 straight into the live tree must survive a display refresh untouched while still being clamped on
 read). Two mutants — dropping the adoption-time normalisation, and reinstating the poll write — each
 fail their own check.
-(2) **The preset-source hint could describe a preset that never loaded.** `showPresetMenu` and
+(2) **The preset-source hint could describe a preset that never loaded.** *(Superseded 2026-08-08
+by ADR-0022 — `rememberPresetSource` and its members were deleted with the hint pattern; the
+wrapper-held identity records only successful applies by construction. The record is left standing
+rather than rewritten.)* `showPresetMenu` and
 `showLoadPreset` called `rememberPresetSource` regardless of `applyPresetFile`'s result, so a corrupt
 or foreign file (a documented no-op — `parsePresetFile` refuses a foreign root) left the editor
 believing it was the active source while the processor had not moved. Both gate on the return value
@@ -659,6 +662,9 @@ is cross-TU inlining the optimiser can do here anyway). The residual gap is stat
 rather than argued away. `TEST_REPORT.md`'s performance summary points at that note instead of
 repeating it, keeping one authority. No methodology, build configuration or measured value changed.
 Previous: **review round 61 (2026-08-05)** — a preset source-tracking regression:
+*(Superseded 2026-08-08 by ADR-0022 — the editor-local hint this round patched was replaced
+outright by the wrapper-held preset identity, which `savePresetFile` itself now sets; the record
+is left standing rather than rewritten.)*
 **Saving a preset did not record itself as the preset now in use.** `stepPreset` resolves "where am
 I in the list?" from a remembered source first, and only falls back to searching by display name
 when that hint no longer describes what the processor shows. The fallback exists because names are
@@ -1305,7 +1311,8 @@ now serves all three; behaviour is unchanged today because `setupRotary` builds 
 builds only rotary sliders. `stepPreset` re-derived its position from the display NAME, which is not
 unique across the two sources, so a user preset called "EDM Club" walked from the factory index; the
 editor now remembers the source it last applied and uses it only while the name still confirms it,
-falling back to the name search when anything else changed the name. And `resized()`'s early-return
+falling back to the name search when anything else changed the name *(superseded 2026-08-08 by
+ADR-0022: that remembered source became the wrapper-held identity, and the hint was deleted)*. And `resized()`'s early-return
 guard gained a `jassertfalse` plus an unconditional `resized()` at the end of the constructor,
 because `setSize` is a no-op on an unchanged size — so the guard could have produced a silently
 blank window rather than a diagnosable failure.

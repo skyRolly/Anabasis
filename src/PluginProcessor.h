@@ -133,6 +133,10 @@ public:
     // for the same reason applyPresetFile does — the slot-level fields (name,
     // detach mask) belong to the wrapper, not to PresetManager's file I/O.
     const juce::String& currentPresetName() const noexcept { return livePresetName; }
+    // …and WHICH row produced it (ADR-0022) — the identity the menu tick and
+    // ‹ › stepping resolve through `PresetManager::selectedPresetRow`. The
+    // name stays what is DISPLAYED; this is never shown.
+    const PresetManager::Selection& currentPresetSelection() const noexcept { return liveSelection; }
 
     // Preset dirty marker (Anamorph grammar): the live state differs from the
     // state the named preset landed, MEASURED IN WHAT A PRESET CAN CARRY —
@@ -157,6 +161,11 @@ public:
         if (! presetManager->savePreset (file, liveDetachMask))
             return false;
         livePresetName = file.getFileNameWithoutExtension();
+        // Saving SELECTS what was just written, by file (ADR-0022). This is
+        // the case the identity split exists for: saving a user preset under
+        // a factory preset's name moves the tick to the USER row instead of
+        // leaving it on the factory one.
+        liveSelection  = { PresetManager::Selection::Kind::userFile, {}, file };
         presetBaseline = presetShapeFromLive();   // a just-saved preset is clean
         return true;
     }
@@ -403,6 +412,11 @@ private:
     juce::ValueTree defaultSlot;         // pristine defaults, for the missing-AB read rule
     juce::ValueTree storedSlot;          // the inactive slot's SLOT tree
     juce::String    livePresetName;
+    // The ADR-0022 identity of `livePresetName`'s preset — active slot only,
+    // exactly like the name: the inactive slot's rides inside `storedSlot`
+    // (the trio `saveSlotFromLive` writes), and undo entries carry it the
+    // same way, so every existing slot path moves it with no extra plumbing.
+    PresetManager::Selection liveSelection;
     juce::ValueTree liveBaseline;        // BASELINE (absent until a macro gesture, §5.3/P4)
     juce::ValueTree liveFrozenTrims;     // FROZEN_TRIMS (captured at save, staged at restore — ADR-0014)
     juce::StringArray liveDetachMask;

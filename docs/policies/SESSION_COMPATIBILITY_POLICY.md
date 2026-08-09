@@ -20,7 +20,9 @@ Subset of `COMPATIBILITY_POLICY.md`. Governs state serialization
 3. **Every legacy read path stays.** Once a state format has shipped in any build that left this
    repository, its read path is permanent and is listed in `COMPATIBILITY_POLICY.md` with a frozen
    fixture in `tests/fixtures/`.
-4. **A save → load round-trip must reproduce** the sound, the preset name, the dirty marker, both
+4. **A save → load round-trip must reproduce** the sound, the preset name, the preset indicator
+   identity (which row is ticked — ADR-0022; when the stored identity no longer resolves, the
+   reproduction is "no row", never a same-named substitute), the dirty marker, both
    A/B slots, the active slot, and any parameter locks.
 5. **View / session params are preserved on restore — with the undo exception ADR-0018 added.**
    Applying an **A/B slot** or a **preset** must not clobber the current view state (window size,

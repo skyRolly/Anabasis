@@ -37,7 +37,14 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // override table). Named BEFORE the default slot is captured so both
     // slots open carrying it; the dirty baseline is seeded right after, so
     // an untouched instance reads clean and the first edit stars.
+    // The identity is seeded WITH the name (ADR-0022): the tick starts on the
+    // factory row even if a user preset called "Default" exists on disk.
     livePresetName = "Default";
+    {
+        int factoryCount = 0;
+        liveSelection = { PresetManager::Selection::Kind::factory,
+                          PresetManager::factoryPresets (factoryCount)[0].id, {} };
+    }
     defaultSlot = saveSlotFromLive();   // pristine defaults (missing-AB read rule)
     storedSlot  = defaultSlot.createCopy();   // slot B starts as a copy of defaults
     presetBaseline       = presetShapeFromLive();
@@ -137,6 +144,18 @@ static int managedIndexOf (const juce::String& id)
 static juce::ValueTree strippedForUndoCompare (const juce::ValueTree& slot)
 {
     auto copy = slot.createCopy();
+    // The ADR-0022 identity trio compares only as far as the DECODER can tell
+    // it apart: an ABSENT property and an EMPTY one both decode to `unknown`,
+    // but `isEquivalentTo` fails on the property-count mismatch first — so a
+    // pre-ADR-0022 stored slot (no trio) compared against a fresh
+    // `saveSlotFromLive()` (empty trio) read as different, and the first Copy
+    // after loading such a session minted a dead undo step: exactly the class
+    // this compare exists to suppress. Defaulting absent to "" here makes the
+    // compare see through the encoding, while a REAL identity move (factory
+    // vs user under one name) still differs and still mints its step.
+    for (const auto* key : { "presetSource", "presetFactoryId", "presetUserFile" })
+        if (! copy.hasProperty (key))
+            copy.setProperty (key, juce::String(), nullptr);
     auto params = copy.getChildWithName ("ANABASIS");
     if (! params.isValid())
         return copy;
@@ -875,6 +894,16 @@ juce::ValueTree AnabasisAudioProcessor::saveSlotFromLive()
     // first.
     juce::ValueTree slot ("SLOT");
     slot.setProperty ("presetName", livePresetName, nullptr);
+    // The ADR-0022 identity trio, beside the name it disambiguates. Always
+    // written; all-empty means "no identity", which is exactly what a
+    // pre-ADR-0022 session decodes as. The SLOT tree is the one carrier —
+    // undo, A/B, Copy and the session all take it from here.
+    {
+        const auto sf = PresetManager::encodeSelection (liveSelection);
+        slot.setProperty ("presetSource",    sf.kind,      nullptr);
+        slot.setProperty ("presetFactoryId", sf.factoryId, nullptr);
+        slot.setProperty ("presetUserFile",  sf.userFile,  nullptr);
+    }
     slot.appendChild (copyStateWithRaw(), nullptr);
     if (liveBaseline.isValid())
         slot.appendChild (liveBaseline.createCopy(), nullptr);
@@ -1065,6 +1094,15 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot, bool 
     }
 
     livePresetName  = slot.getProperty ("presetName").toString();
+    // ADR-0022: the identity adopts with the name it belongs to. Assigned
+    // unconditionally — a slot tree that carries no trio (a pre-ADR-0022
+    // session's) decodes to `unknown`, never to whatever the previous state
+    // left here, so an undo/A/B/Copy adoption can never mix one slot's name
+    // with another slot's identity.
+    liveSelection   = PresetManager::decodeSelection (
+                          slot.getProperty ("presetSource").toString(),
+                          slot.getProperty ("presetFactoryId").toString(),
+                          slot.getProperty ("presetUserFile").toString());
     liveBaseline    = slot.getChildWithName ("BASELINE").createCopy();
     adoptFrozenMirror (slot.getChildWithName ("FROZEN_TRIMS").createCopy());
     // ADR-0014 (OQ-013 resolved 2026-08-02, owner-approved — the Hard Stop
@@ -1188,6 +1226,11 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
         replaceDetachMask (mask);
         liveBaseline   = {};                   // defaults-based: no macro baseline survives
         livePresetName = table[index].name;
+        // ADR-0022: name and identity from the SAME table row, so the two can
+        // never disagree. The id, not the index — the stored identity must
+        // survive a reordering of the table.
+        liveSelection  = { PresetManager::Selection::Kind::factory,
+                           table[index].id, {} };
     }   // the guard drops here, DELIBERATELY before the mapping below
 
     // A FACTORY preset is not a file preset, and this is where they part.
@@ -1255,6 +1298,10 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     // restores it with everything else.
     liveBaseline   = {};
     livePresetName = file.getFileNameWithoutExtension();
+    // ADR-0022: the FILE is the identity whether or not it lives in the
+    // preset folder — a file loaded from outside simply matches no list row
+    // and leaves the menu unticked, which is what it should show.
+    liveSelection  = { PresetManager::Selection::Kind::userFile, {}, file };
     presetBaseline = presetShapeFromLive();    // dirty marker datum
     return true;
 }
@@ -1267,6 +1314,16 @@ void AnabasisAudioProcessor::resetSlotFieldsToDefaults()
     // serialises a chimera of two sessions.
     activeSlot = 0;
     livePresetName = "Default";   // the field's default IS the Default preset's name
+    {
+        // …and the identity default IS that preset's id (ADR-0022) — the same
+        // seed the constructor plants, so "no AB child" and "fresh instance"
+        // cannot disagree about what the tick shows. A restored SLOT overlays
+        // this unconditionally (absent trio → `unknown`), so a pre-ADR-0022
+        // session still gets its name fallback, not this seed.
+        int factoryCount = 0;
+        liveSelection = { PresetManager::Selection::Kind::factory,
+                          PresetManager::factoryPresets (factoryCount)[0].id, {} };
+    }
     liveBaseline    = juce::ValueTree();
     adoptFrozenMirror ({});
     replaceDetachMask ({});
@@ -1420,8 +1477,16 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         if (live.isValid())
         {
             // The ANABASIS child above is already the live surface; take the
-            // slot's non-parameter fields (name/baseline/trims/mask) from AB.
+            // slot's non-parameter fields (name/identity/baseline/trims/mask)
+            // from AB. The identity decode is unconditional: an older blob
+            // whose SLOT carries no trio reads as `unknown` — the name
+            // fallback, this build's pre-ADR-0022 behaviour — never as the
+            // defaults seed above or the previous session's selection.
             livePresetName  = live.getProperty ("presetName").toString();
+            liveSelection   = PresetManager::decodeSelection (
+                                  live.getProperty ("presetSource").toString(),
+                                  live.getProperty ("presetFactoryId").toString(),
+                                  live.getProperty ("presetUserFile").toString());
             liveBaseline    = live.getChildWithName ("BASELINE").createCopy();
             adoptFrozenMirror (live.getChildWithName ("FROZEN_TRIMS").createCopy());
             juce::StringArray loadedMask;
