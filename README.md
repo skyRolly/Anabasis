@@ -21,8 +21,8 @@ headless Linux machine, no IDE.
   it is the copy whose staleness costs most. Two numerals in this document disagreed with each
   other for exactly one round; the index is the registry.
   [`docs/HANDOVER.md`](docs/HANDOVER.md) carries the status of record.
-- **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 49-parameter
-  surface, the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
+- **In the tree**: `CMakeLists.txt` (ADR-0008's five-target graph) and `src/` — the 50-parameter
+  surface (49 at the P0 freeze; ADR-0019 added `compStereoLink`), the full §2 processing chain (EQ · glue compressor · ADAA clipper/saturation ·
   true-peak lookahead limiter · oversampling to 16× · dither) behind the POD engine boundary on
   the constant 10 ms allowance, the §2.8 click-free transition layer, BS.1770-4 metering with the
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014

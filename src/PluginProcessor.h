@@ -361,9 +361,12 @@ private:
     // than laziness (THREADING_POLICY's publication-flag row): observing this
     // counter gates a CLEAR, not a read of state the loader wrote, so it
     // announces no payload. The session data the loader writes beside it —
-    // `apvts.replaceState`, `liveDetachMask`, `livePresetName` — is unordered
-    // against the editor for reasons KI-003 owns and that no ordering here
-    // would fix.
+    // `apvts.replaceState`, `liveDetachMask`, `livePresetName`,
+    // `liveSelection` (ADR-0022) and `liveFrozenTrims` — is unordered against
+    // the editor for reasons KI-003 owns and that no ordering here would fix.
+    // KI-003 is the enumeration of record; keep this list and that one in
+    // step, since a member missing from either reads as one the restore does
+    // not write.
     std::atomic<juce::uint32> historyEpoch { 0 };
     juce::uint32 historyEpochSeen = 0;    // message thread only, hence not atomic
 

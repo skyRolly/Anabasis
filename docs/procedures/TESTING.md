@@ -25,7 +25,7 @@ Not an audio test, but it is a CI gate — recorded here because
 `DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger map routes CI-workflow changes through this file:
 
 ```bash
-python3 scripts/check-docs.py --self-test   # the checker's own guarantees, ~40 pinned cases
+python3 scripts/check-docs.py --self-test   # the checker's own guarantees; it prints its own case count
 python3 scripts/check-docs.py               # whole-repo scan; exit 1 on any finding
 ```
 

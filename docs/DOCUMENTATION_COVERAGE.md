@@ -6,7 +6,30 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **`shownTpMode` construction seed (2026-08-06)**. The editor's cached
+**Last updated:** for the **ADR-0022 preset-identity port and its three review rounds
+(2026-08-08)**. The port gave factory presets immutable internal ids and identified a user preset
+by its file, so a shared name is a shared *label*; the documentation set moved with it. **New:**
+`ADR-0022`, with the owner's serialization sign-off quoted in its Status banner and its scope
+bounded to those fields. **Amended:** `ADR_INDEX.md` (the ADR-0022 row); `SERIALIZATION_REGISTRY.md`
+§1.2 (the three additive `SLOT` properties, their defaults-on-absence, both encoder conditions, and
+the inactive-slot absence-survives-re-save exception); `SESSION_COMPATIBILITY_POLICY.md` rule 4
+(the round-trip list gains the indicator identity); `CHANGELOG.md`; `HANDOVER.md`. **Corrected:**
+`KNOWN_ISSUES.md` KI-007 item 2, which recorded as OPEN the name-based ring defect this change
+removes, and KI-003, whose restore-writer enumeration gained `liveSelection` — a set the
+`historyEpoch` comment and `MODE_AND_ADAPTATION_POLICY.md` §KI-003 residual state in parallel, and
+which the third round brought back into agreement (a member missing from one copy reads as one the
+restore does not write). **Superseded in place**, per this file's own convention: the three
+round-61/63 records of the deleted `rememberPresetSource` hint, whose ungated-RING half survives
+the deletion as a requirement rather than as history — it is why `stepPreset` walks on past an
+entry it cannot apply. Coverage: **Full** for the identity model, its wire form and its fallbacks
+(ADR + registry + policy + tests all carry it); confidence **Verified** — `testPresetIdentitySharedName`,
+`testFactoryPresetIdIntegrity`, `testPresetIdentityAcrossRestore` and
+`testTheRingWalksPastAnUnreadablePreset`, with fourteen negative controls each killed by its own
+assertions. **A known gap, recorded rather than filled:** this audit has no entries for the 0.1.1
+release round or for review rounds 4–6; `HANDOVER.md` and `CHANGELOG.md` carry their records, and
+reconstructing them here after the fact would be invention rather than audit (constraint C7).
+Suites 259 + 634.
+Previous: the **`shownTpMode` construction seed (2026-08-06)**. The editor's cached
 TP-display flag was hard-coded `false`, but it caches *what the Ceiling boxes are showing*, not
 the product default — and those two differ for an editor opened on a TP-ON session, where the
 attachment renders " dBTP" at construction. If the mode then went OFF before the first 24 Hz
