@@ -162,33 +162,49 @@ public:
 };
 
 // ============================================================================
-//  The graph-well mode switch (0.1.1, owner directive) — ONE definition for
-//  the two views that share the well. A two-segment rounded pill in the
-//  well's top-right corner showing BOTH modes ("SPEC | GR"), the active
-//  segment highlighted, the whole control translucent so the trace it floats
-//  over stays readable. Both `SpectrumView` and `GrHistoryView` draw it LAST
-//  (over their traces) and key `hitTest`/`mouseDown` on the same rectangles,
-//  so the two views cannot drift apart in geometry or behaviour — the defect
-//  the single-name corner chips this replaces had started to grow (different
-//  widths, and the GR trace's zero line ran through the glyph).
+//  The graph-well mode switch (0.1.1, owner directive; reworked 0.1.2 items
+//  4+5) — ONE definition for the two views that share the well. A two-segment
+//  rounded pill in the well's BOTTOM-LEFT corner showing BOTH modes
+//  ("GR | SPEC" — GR first, the default mode), the active segment
+//  highlighted, the whole control translucent so what it floats over stays
+//  readable. Both `SpectrumView` and `GrHistoryView` draw it LAST and key
+//  `hitTest`/`mouseDown` on the same rectangle, so the two views cannot
+//  drift apart in geometry or behaviour.
+//
+//  PLACEMENT (item 4): the top-right corner the 0.1.1 pill occupied is where
+//  the GR view's NEWEST data lands — the reduction the user is actively
+//  watching — and the owner reported the collision. The bottom-left is the
+//  least informative corner in both modes: in GR it is the OLDEST end of the
+//  waveform (and, since the item-3 fixed scale, the empty zero region until
+//  a full window has played); in SPEC it sits under the low-frequency fill,
+//  whose information lives on the curve's top edge.
+//
+//  INTERACTION (item 5): the pill is ONE TOGGLE — any press inside it
+//  switches the well to the other mode. The 0.1.1 side-of-divider semantics
+//  made a press on the active segment a silent no-op, which read as a stuck
+//  control ("clicking SPEC does not switch back"); the segments remain as
+//  the state display, not as separate targets.
 // ============================================================================
 namespace graph_switch
 {
     inline constexpr int kW = 78, kH = 18, kInsetX = 6, kInsetY = 4;
 
-    inline juce::Rectangle<int> bounds (int viewWidth) noexcept
-    { return { viewWidth - kInsetX - kW, kInsetY, kW, kH }; }
-
-    // Segment order matches the mode flag's truth table: SPEC (true) left,
-    // GR (false) right.
-    inline juce::Rectangle<int> specHalf (int viewWidth) noexcept
-    { return bounds (viewWidth).removeFromLeft (kW / 2); }
-    inline juce::Rectangle<int> grHalf (int viewWidth) noexcept
-    { return bounds (viewWidth).removeFromRight (kW - kW / 2); }
-
-    inline void paint (juce::Graphics& g, int viewWidth, bool spectrumActive)
+    inline juce::Rectangle<int> bounds (int viewWidth, int viewHeight) noexcept
     {
-        const auto r = bounds (viewWidth).toFloat();
+        juce::ignoreUnused (viewWidth);
+        return { kInsetX, viewHeight - kInsetY - kH, kW, kH };
+    }
+
+    // Segment order (0.1.2 item 4): GR (false, the default mode) left,
+    // SPEC (true) right. Display only — see the banner's interaction note.
+    inline juce::Rectangle<int> grHalf (int viewWidth, int viewHeight) noexcept
+    { return bounds (viewWidth, viewHeight).removeFromLeft (kW / 2); }
+    inline juce::Rectangle<int> specHalf (int viewWidth, int viewHeight) noexcept
+    { return bounds (viewWidth, viewHeight).removeFromRight (kW - kW / 2); }
+
+    inline void paint (juce::Graphics& g, int viewWidth, int viewHeight, bool spectrumActive)
+    {
+        const auto r = bounds (viewWidth, viewHeight).toFloat();
         const float rad = r.getHeight() * 0.5f;
 
         // Translucent body: present enough to read, never a solid mask over
@@ -203,23 +219,23 @@ namespace graph_switch
             juce::Path clip;
             clip.addRoundedRectangle (r, rad);
             g.reduceClipRegion (clip);
-            const auto seg = (spectrumActive ? specHalf (viewWidth)
-                                             : grHalf (viewWidth)).toFloat();
+            const auto seg = (spectrumActive ? specHalf (viewWidth, viewHeight)
+                                             : grHalf (viewWidth, viewHeight)).toFloat();
             g.setColour (colours::accent.withAlpha (0.26f));
             g.fillRect (seg);
         }
 
         g.setColour (colours::outline.withAlpha (0.85f));
         g.drawRoundedRectangle (r, rad, 1.0f);
-        // The divider between the two modes.
-        g.drawVerticalLine (bounds (viewWidth).getX() + kW / 2,
+        // The divider between the two mode labels.
+        g.drawVerticalLine (bounds (viewWidth, viewHeight).getX() + kW / 2,
                             r.getY() + 3.0f, r.getBottom() - 3.0f);
 
         g.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.08f));
-        g.setColour (spectrumActive ? colours::accent : colours::textDim);
-        g.drawText ("SPEC", specHalf (viewWidth), juce::Justification::centred);
         g.setColour (spectrumActive ? colours::textDim : colours::accent);
-        g.drawText ("GR", grHalf (viewWidth), juce::Justification::centred);
+        g.drawText ("GR", grHalf (viewWidth, viewHeight), juce::Justification::centred);
+        g.setColour (spectrumActive ? colours::accent : colours::textDim);
+        g.drawText ("SPEC", specHalf (viewWidth, viewHeight), juce::Justification::centred);
     }
 } // namespace graph_switch
 

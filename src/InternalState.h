@@ -31,7 +31,7 @@ namespace iid
     inline const juce::Identifier uiScale        { "int_uiScale" };        // percent; legal set = ui_scale::steps
     inline const juce::Identifier tooltipsOn     { "int_tooltipsOn" };     // bool
     inline const juce::Identifier uiAnimations   { "int_uiAnimations" };   // bool
-    inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool: graph-well mode — true spectrum, false GR history (ADR-0016)
+    inline const juce::Identifier spectrumOn     { "int_spectrumOn" };     // bool: graph-well mode — true spectrum, false GR history (ADR-0016; default GR since 0.1.2 item 4)
     // ADR-0020 (0.1.1). `int_tpMeterOn` was REMOVED with the same record: the
     // stats panel shows the true peak unconditionally, so a field whose only
     // job was hiding one row had nothing left to gate. These two replace it —
@@ -109,7 +109,7 @@ public:
         tree.setProperty (iid::uiScale,        ui_scale::defaultPercent, nullptr);
         tree.setProperty (iid::tooltipsOn,     false, nullptr);
         tree.setProperty (iid::uiAnimations,   true,  nullptr);
-        tree.setProperty (iid::spectrumOn,     true,  nullptr);
+        tree.setProperty (iid::spectrumOn,     false, nullptr);   // GR is the default view (0.1.2 item 4)
         // ⊕ Defaults: the GATED integrated reading, because it is what
         // BS.1770-2 onward and every delivery spec written since mean by
         // "integrated LUFS"; and the AES-17 RMS reference, because a

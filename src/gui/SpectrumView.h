@@ -45,7 +45,7 @@ public:
     ~SpectrumView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;   // top-right chip → GR history
+    void mouseDown (const juce::MouseEvent&) override;   // bottom-left pill → GR history
     // Interactive ONLY over that chip; everything else falls through to whatever
     // is beneath. See the definition — this is how a partly-interactive overlay
     // opts out. `GrHistoryView` mirrors it for its own chip; `CurveView` opts

@@ -24,15 +24,16 @@ void SpectrumView::visibilityChanged()
         clock.stop();
 }
 
-// The mode switch's hit-area — since 0.1.1 the shared two-segment SPEC|GR
+// The mode switch's hit-area — since 0.1.1 the shared two-segment GR|SPEC
 // pill (`abgui::graph_switch`, one definition for both views; it was a
-// single-name corner chip before, and the spectrum's dismiss × before that).
+// single-name corner chip before, and the spectrum's dismiss × before that;
+// bottom-left and toggle-anywhere since 0.1.2, items 4+5).
 // Expanded 2 px beyond the drawn pill on every side: the surplus is the touch
 // target, and `hitTest` and `mouseDown` both key on this ONE rectangle so a
 // click the view accepts but then ignores cannot creep back in.
 juce::Rectangle<int> SpectrumView::chipHitArea() const noexcept
 {
-    return graph_switch::bounds (getWidth()).expanded (2);
+    return graph_switch::bounds (getWidth(), getHeight()).expanded (2);
 }
 
 // ONLY the chip is interactive. Leaving JUCE's default (hit-test true
@@ -83,17 +84,11 @@ void SpectrumView::mouseDown (const juce::MouseEvent& e)
     // function happens to return.
     if (! chipHitArea().contains (e.getPosition()))
         return;
-    // SEGMENT semantics (0.1.1): the pill shows both modes, so the click
-    // selects the segment it landed on rather than toggling — pressing the
-    // already-active segment is a no-op, including the property write (a
-    // same-value write is harmless, but not writing at all keeps the tree
-    // quiet). Resolved by WHICH SIDE OF THE DIVIDER the click falls on, so the
-    // 2 px touch surplus around the pill inherits its nearest segment instead
-    // of defaulting to one of them.
-    const bool wantSpectrum = e.getPosition().getX()
-                                < graph_switch::bounds (getWidth()).getCentreX();
-    if (! wantSpectrum)
-        processor.internalState.state().setProperty (iid::spectrumOn, false, nullptr);
+    // The whole pill is ONE toggle (0.1.2 item 5): from the spectrum any
+    // press inside it switches the well to the GR history. The 0.1.1
+    // side-of-divider semantics made a press on the active segment a silent
+    // no-op — the owner-reported "clicking SPEC does not switch back".
+    processor.internalState.state().setProperty (iid::spectrumOn, false, nullptr);
 }
 
 void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
@@ -303,5 +298,5 @@ void SpectrumView::paint (juce::Graphics& g)
 
     // The shared SPEC|GR mode switch, drawn LAST so it floats over the traces
     // (it is translucent, so what it overlaps stays readable).
-    graph_switch::paint (g, getWidth(), true);
+    graph_switch::paint (g, getWidth(), getHeight(), true);
 }

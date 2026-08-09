@@ -44,8 +44,10 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // change left up to 4096 frames captured at the old rate readable, and
     // `SpectrumView` maps bins through the CURRENT rate — the trace was drawn
     // at the wrong frequencies until the ring refilled (~85 ms of audio). The
-    // wrapper already clears `grHistoryRing` at `prepareToPlay` for exactly
-    // this reason; these two were the analyser state that survived.
+    // wrapper clears `grHistoryRing` at `prepareToPlay` for exactly this
+    // reason — since 0.1.2 only when the rate or block size actually changed,
+    // so a transport-start re-prepare keeps the scrolling timeline; these two
+    // were the analyser state that survived.
     specInRing.reset();
     specOutRing.reset();
 
@@ -193,6 +195,11 @@ void AnabasisEngine::reset() noexcept
     lastNonRealtime = false;
     grMinLinear.store (1.0f, std::memory_order_relaxed);
     compGrDb.store (0.0f, std::memory_order_relaxed);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        limGrDbCh[ch].store (0.0f, std::memory_order_relaxed);
+        compGrDbCh[ch].store (0.0f, std::memory_order_relaxed);
+    }
     dryMeter.reset();
     wetMeter.reset();
     outMeter.reset();
@@ -470,20 +477,18 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // block top sees the previous block's state, and "the sweep happens later
     // in the same function" is a fact about call order that nothing enforces.
     //
-    // These four stages need an unconditional check rather than the recovery
-    // flag because their corruption produces NO non-finite audio to detect.
-    // The limiter's detector high-pass: `det` goes NaN, every wedge value goes
-    // NaN, and `peak > ceilingLinear` is FALSE for NaN — `needed` stays 1.0f
-    // and the limiter emits unity gain for ever, which is the failure a
-    // maximizer can least afford (the CeilingClamp then hard-clips what the
-    // limiter should have caught). The §2.7/§2.9 meters and the §5.4 feature
-    // extractor emit no audio at all: NaN readings compare false against every
-    // gate, so the loudness compensation freezes, the integrated histogram
-    // stops accumulating, and the trim vector holds its last value for the
-    // session while looking entirely plausible. A few comparisons per block
-    // each. `outTp` is deliberately absent: its history is FIR, so a poisoned
-    // entry flushes itself in 12 samples.
-    limiter.sanitiseDetectorState();
+    // These stages need an unconditional check rather than the recovery flag
+    // because their corruption produces NO non-finite audio to detect: the
+    // §2.7/§2.9 meters and the §5.4 feature extractor emit no audio at all —
+    // NaN readings compare false against every gate, so the loudness
+    // compensation freezes, the integrated histogram stops accumulating, and
+    // the trim vector holds its last value for the session while looking
+    // entirely plausible. A few comparisons per block each. `outTp` is
+    // deliberately absent: its history is FIR, so a poisoned entry flushes
+    // itself in 12 samples. The limiter left this list with its detector HPF
+    // (0.1.2, ADR-0023) — its detector is now the tapped magnitude itself,
+    // which the ring writes keep finite, so it has no recursive detector
+    // state whose corruption could hide.
     dryMeter.sanitiseState();
     wetMeter.sanitiseState();
     outMeter.sanitiseState();
@@ -513,15 +518,17 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         pApplied.limReleaseMs = juce::jlimit (1.0f, 1000.0f, p.limReleaseMs * releaseScale);
         limiter.setAutoReleaseScale (releaseScale);
         pApplied.stereoLink   = juce::jlimit (0.0f, 1.0f, p.stereoLink + t.stereoLink);
-        // The scHpf trim is the one that changes a DETECTOR rather than a
-        // gain: pushing the shared sidechain HPF off its 20 Hz exact-skip
-        // floor engages a second-order high-pass in BOTH detectors, so
-        // low-frequency peaks are under-reported and bass transients reach the
-        // unconditional CeilingClamp instead of being limited. Invariant 4
-        // still holds — but the failure mode becomes hard clipping rather than
-        // limiting, on exactly the material a maximizer sees most. Inside the
-        // declared bound and therefore intended; recorded because it is a
-        // steady-state trade, not a transition artefact.
+        // The scHpf trim changes a DETECTOR rather than a gain — the COMP's
+        // detector only, since 0.1.2 (ADR-0023). Until then the shared
+        // sidechain HPF also fed the LIMITER's detector, and this trim
+        // engaging it at factory defaults was one of the round's field bugs
+        // twice over: LF peaks were under-reported (bass transients reached
+        // the unconditional CeilingClamp as hard clips instead of being
+        // limited) AND the filter's transient overshoot over-reported them by
+        // up to ~6 dB, drawing gain reduction on material whose samples never
+        // crossed the ceiling. The comp's copy of the filter is magnitude-
+        // clamped to a raw-magnitude ceiling for the same reason (MasteringComp's
+        // detector comment).
         pApplied.scHpfFreqHz  = juce::jlimit (20.0f, 300.0f, p.scHpfFreqHz + t.scHpfHz);
         pApplied.dynTiltDb    = juce::jlimit (0.0f, 2.0f, p.dynTiltDb + t.dynTiltDb);
     }
@@ -535,7 +542,6 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // for inter-sample peaks to be sample-visible - read it directly; below
     // that the tap runs its own 4x estimator (8x effective at 2x).
     limiter.setTruePeakMode (p.truePeakMode && osN < 4);
-    limiter.setDetectorHpf (pApplied.scHpfFreqHz);
     eq.setTargets (pApplied);
     comp.setPerBlock (pApplied);
     clip.setPerBlock (pApplied);
@@ -589,6 +595,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // ---- chunked processing: oversize host blocks degrade to extra chunk
     //      overhead, never to unprocessed audio -----------------------------
     grMinThisCall   = 1.0f;
+    grMinThisCallCh[0] = grMinThisCallCh[1] = 1.0f;
     renderTpMaxCall = 0.0f;
     renderPeakCall  = 0.0f;
     for (int start = 0; start < totalSamples; start += maxBlock)
@@ -596,6 +603,14 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                       p, eqPre, eqPost);
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
     compGrDb.store (comp.currentGainReductionDb(), std::memory_order_relaxed);
+    // Per-channel per-stage copies (0.1.2 item 12) — the same meter row, one
+    // store per channel per block.
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        limGrDbCh[ch].store (juce::Decibels::gainToDecibels (grMinThisCallCh[ch], -60.0f),
+                             std::memory_order_relaxed);
+        compGrDbCh[ch].store (comp.currentGainReductionDb (ch), std::memory_order_relaxed);
+    }
     adaptiveEngine.finishBlock (p.freeze);
     return true;
 }
@@ -778,15 +793,19 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // While that glide runs the tap advances by more or less than one
         // sample per step, so the sequence handed to the detector has a
         // duplicated or skipped sample in it. For the peak wedge that is the
-        // documented coverage cost of a moving window. It also reaches the
-        // detector HIGH-PASS, which is recursive and therefore sees a
-        // discontinuous input rather than a resampled one: a bounded spectral
-        // error in the DETECTOR for the ~20 ms of the move, on a filter whose
-        // only job is to keep sub-bass out of the gain computer. Invariant 4
-        // is untouched (the clamp is downstream and unconditional). Recorded
-        // rather than fixed: reading the ring at a fractional position would
-        // put an interpolator in the detector path to remove an error smaller
-        // than the window change that caused it.
+        // documented coverage cost of a moving window. In TRUE-PEAK mode it
+        // also reaches the estimator's 12-tap history, which interpolates
+        // across a discontinuous sequence rather than a resampled one — but
+        // that history is FIR, so the error flushes itself within kTaps frames
+        // instead of persisting. (This paragraph argued about a RECURSIVE
+        // detector high-pass until 0.1.2: ADR-0023 removed the limiter's
+        // biquad outright, so there is no filter state on this path left to
+        // see the discontinuity at all, and the bounded-spectral-error
+        // reasoning went with it.) Invariant 4 is untouched (the clamp is
+        // downstream and unconditional). Recorded rather than fixed: reading
+        // the ring at a fractional position would put an interpolator in the
+        // detector path to remove an error smaller than the window change that
+        // caused it.
         int detPos = writePosOs - (delayOs - wOs);
         if (detPos < 0)
             detPos += ringSizeOs;
@@ -806,6 +825,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // once the measure converges. A P5 item (the meter legend has to say
         // which reduction it is showing) rather than a defect today.
         grMinThisCall = juce::jmin (grMinThisCall, gains[0], gains[nCh - 1]);
+        for (int ch = 0; ch < nCh; ++ch)
+            grMinThisCallCh[ch] = juce::jmin (grMinThisCallCh[ch], gains[ch]);
 
         int readPos = writePosOs - delayOs;
         if (readPos < 0)
@@ -1150,6 +1171,18 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         comp.sanitiseState();
         clip.sanitiseState();
     }
+    // The dither error-feedback pair, swept on EITHER flag (0.1.2): while
+    // dither + shaping are ON this is per-channel recursive state — the one
+    // such state the lists above never covered — and a non-finite value in it
+    // makes every later `y − x` non-finite too, i.e. permanent one-channel
+    // silence behind the output boundary's zeros. Unreachable today (`x` is
+    // clamp-bounded and the quantiser cannot overflow it), but "the input is
+    // probably finite" is exactly the argument the rule above rejects. Two
+    // isfinite checks per contaminated chunk.
+    if (sawNonFinite || stageGeneratedNonFinite)
+        for (auto& e : ditherErr)
+            if (! std::isfinite (e))
+                e = 0.0f;
     if (regionInputNonFinite && osActive != nullptr)
     {
         // The oversampler is the exception to the rule above, twice over: its

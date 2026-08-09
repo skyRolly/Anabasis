@@ -25,7 +25,7 @@ of line with its allocation", and none is:
 | Stage | §9 allocation | measured standalone (48 kHz) | verdict |
 |---|---|---|---|
 | EQ (six sections engaged) | ≤0.3 % | 0.10 % | inside |
-| Compressor (RMS + HPF) | ≤0.3 % | 0.10 % | inside |
+| Compressor (RMS + HPF) | ≤0.3 % | **0.24 %** (re-measured 2026-08-09, same bench/machine, after ADR-0023's detector work — the overshoot ceiling adds a compare and a one-pole per sample per channel, running unconditionally so the off→on filter edge cannot start it cold) | inside |
 | Clipper/ADAA + colour + tame | ≤0.8 % | 0.21 % (×OS rate in-chain) | inside |
 | Limiter + TP detector | ≤1.5 % | 0.42 % (×OS rate in-chain) | inside |
 | Metering + features | ≤0.5 % | 0.10 % for one meter + TP + adaptive; the chain runs three meters — ≈0.3 % worst case | inside |

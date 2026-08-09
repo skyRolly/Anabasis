@@ -221,8 +221,11 @@ private:
     // control still carries JUCE's default range and value.
     void seedAnimatedFromValues();
 
+    // `accessibleName` (0.1.2 items 8–10): the REGISTRY name for the a11y
+    // title/description when the visible caption drops the stage prefix;
+    // empty = the caption is the registry name and serves both.
     void setupRotary (juce::Slider&, juce::Label&, const juce::String& name,
-                      const juce::String& tip);
+                      const juce::String& tip, const juce::String& accessibleName = {});
     void attachSlider (juce::Slider&, const char* id);
     void setupCombo (juce::ComboBox&, const char* id, const juce::String& tip);
     void setupToggle (juce::ToggleButton&, const char* id, const juce::String& text,
@@ -295,8 +298,6 @@ private:
     juce::ToggleButton shapingToggle, compToggle, deltaToggle, freezeToggle;
 
     // -- macro row (Advanced: read-only with detach badges, §6.3) ------------
-    Knob macroLoudnessK, macroCharacterK, macroToneK;
-    juce::Label macroLoudnessL, macroCharacterL, macroToneL;
 
     // -- Simple view (§6.2): the big knob IS the product ---------------------
     Knob bigLoudnessK, simpleCharacterK, simpleToneK, simpleCeilingK;
@@ -333,7 +334,10 @@ private:
     std::unique_ptr<SpectrumView>      spectrumView;
     std::unique_ptr<CurveView>         clipCurve, eqCurve;
     GrMiniMeter compGrMeter, limGrMeter;
-    bool shownSpectrumOn = true;
+    // Seeded from the live tree in the constructor (see there) — this
+    // initialiser is only pre-construction safety, the same shape `advanced`
+    // uses, and is deliberately NOT the place the mode's default is decided.
+    bool shownSpectrumOn = false;
     // The Ceiling's UNIT follows `truePeakMode` (ADR-0015), and a JUCE Slider
     // recomputes its value-box text only in `updateText()` — on a value change,
     // a `setTextBoxStyle`, a relayout or a look-and-feel change, never on a
@@ -418,9 +422,12 @@ private:
 
     // Geometry of record (see the banner). Simple keeps the family frame; the
     // Advanced height is DERIVED: 46 top bar + 446 panel row (EQ: header 22 +
-    // combo row 26 + four 78 px knob rows + curve well) + 64 utility + 78
-    // macro row + 266 metering strip = 900, which lands on the family number
-    // by construction rather than by copying it.
+    // combo row 26 + four 78 px knob rows + curve well) + 64 utility + 266
+    // metering strip = 822. Until 0.1.2 a 78 px read-only macro row sat
+    // between utility and metering and the sum landed on the family 900;
+    // item 11 removed the row (ADR-0023), and the height follows the content
+    // rather than the family number — the Simple view still carries the
+    // family frame.
     // §5.4 minimum Learn pass: the features are ~1.5 s integrated, so a pass
     // must outlast several time constants before the sums describe the passage
     // rather than what preceded it (the P4-recorded grammar debt).
@@ -431,9 +438,8 @@ private:
     static constexpr int kBarH       = 46;
     static constexpr int kPanelRowH  = 446;
     static constexpr int kUtilityH   = 64;
-    static constexpr int kMacroRowH  = 78;
     static constexpr int kMeterRowH  = 266;
-    static constexpr int kAdvancedH  = kBarH + kPanelRowH + kUtilityH + kMacroRowH + kMeterRowH;
+    static constexpr int kAdvancedH  = kBarH + kPanelRowH + kUtilityH + kMeterRowH;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnabasisAudioProcessorEditor)
 };

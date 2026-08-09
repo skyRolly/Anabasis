@@ -11,9 +11,11 @@ headless Linux machine, no IDE.
 
 ## Project status
 
-- **Version 0.1.0 (pre-release) — CODE COMPLETE** (2026-08-02, under the owner's blanket
-  approval; what remains is the post-v0.1.0 human fine review — the brand pass, the DAW matrix
-  audition and the listening pass over every constant marked ⊕). P0 closed on 2026-07-31 with the
+- **v0.1.0 CODE COMPLETE** (2026-08-02, under the owner's blanket approval; what remains is the
+  post-v0.1.0 human fine review — the brand pass, the DAW matrix audition and the listening pass
+  over every constant marked ⊕) — a MILESTONE, not the current version: the tree has moved on
+  through later rounds, `CMakeLists.txt` carries the version of record and `HANDOVER.md`'s
+  Release Status row carries whether anything has shipped. P0 closed on 2026-07-31 with the
   owner's sign-off of [`docs/DESIGN.md`](docs/DESIGN.md); the Accepted ADRs registered in
   [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md)
   govern the implementation. **No count is written here on purpose** — the same rule the pluginval
@@ -28,7 +30,7 @@ headless Linux machine, no IDE.
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
   display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
-  `tests/` (**893 checks** — re-count from the suites' own output when editing, the same rule
+  `tests/` (**924 checks** — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
   [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and

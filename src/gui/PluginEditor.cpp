@@ -488,9 +488,36 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         registerAnimated (*b);
 
     // -- COMP panel ----------------------------------------------------------
-    auto rotary = [this, &paramName] (Knob& k, juce::Label& l, const char* id)
+    // EDITOR captions vs AUTOMATION names (0.1.2 items 8–10): inside a
+    // captioned panel the stage prefix is noise — the panel already says
+    // COMP or LIMITER — so the knob captions drop it ("Ratio", "Threshold",
+    // "Gain", "Release", both modules' links read "Stereo Link"). The
+    // REGISTRY names keep the prefix: an automation lane floats free of any
+    // panel, so there the prefix is the disambiguation ("Comp Ratio",
+    // "Limiter Gain", "Comp Stereo Link" vs "Limiter Stereo Link").
+    // Accessibility deliberately follows the REGISTRY name (`setupRotary`'s
+    // title/description): a screen reader announces controls in a flat list,
+    // the same no-panel context an automation lane has (brief §8's "the same
+    // wording the automation lane shows" survives this split unchanged).
+    // IDs are untouched — this table is display only.
+    auto displayName = [&paramName] (const char* id) -> juce::String
     {
-        setupRotary (k, l, paramName (id), tipFor (id));
+        static const std::pair<const char*, const char*> overrides[] = {
+            { pid::compRatio,      "Ratio" },     { pid::compThreshold, "Threshold" },
+            { pid::compAttack,     "Attack" },    { pid::compRelease,   "Release" },
+            { pid::compKnee,       "Knee" },      { pid::compMix,       "Mix" },
+            { pid::compStereoLink, "Stereo Link" },
+            { pid::limGain,        "Gain" },      { pid::limRelease,    "Release" },
+            { pid::stereoLink,     "Stereo Link" },
+        };
+        for (const auto& [pid_, caption] : overrides)
+            if (std::strcmp (pid_, id) == 0)
+                return caption;
+        return paramName (id);
+    };
+    auto rotary = [this, &paramName, &displayName] (Knob& k, juce::Label& l, const char* id)
+    {
+        setupRotary (k, l, displayName (id), tipFor (id), paramName (id));
         attachSlider (k, id);
     };
     rotary (ratioK, ratioL, pid::compRatio);
@@ -565,16 +592,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     setupToggle (freezeToggle, pid::freeze, "FREEZE", tipFor (pid::freeze));
     setupToggle (tpSimpleToggle, pid::truePeakMode, "TP", tipFor (pid::truePeakMode));
 
-    // -- macro row (read-only in Advanced, §6.3: the macros are driven from
-    //    the Simple view; here they display position + detach badges) --------
-    rotary (macroLoudnessK, macroLoudnessL, pid::loudness);
-    rotary (macroCharacterK, macroCharacterL, pid::character);
-    rotary (macroToneK, macroToneL, pid::tone);
-    for (auto* k : { &macroLoudnessK, &macroCharacterK, &macroToneK })
-    {
-        k->setInterceptsMouseClicks (false, false);   // display only
-        k->setAlpha (0.75f);
-    }
+    // The Advanced macro row (read-only Loudness/Character/Tone mirrors,
+    // §6.3) was REMOVED at 0.1.2 (item 11, ADR-0023): three non-adjustable
+    // knobs bought 78 px of the window and answered no question the detach
+    // badges (paint()) and the Simple view do not. The macros themselves are
+    // untouched — mapping, detach and re-engage all live below the view
+    // layer — and the Advanced height dropped to kAdvancedH (822).
 
     // -- Simple view (§6.2) --------------------------------------------------
     rotary (bigLoudnessK, bigLoudnessL, pid::loudness);
@@ -895,6 +918,13 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     advanced   = apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f;
     uiAnimOn   = (bool) ist.getProperty (iid::uiAnimations, true);
     tooltipsOn = (bool) ist.getProperty (iid::tooltipsOn, false);
+    // …and the graph well's cached mode, from the SAME read the layout below
+    // and the 24 Hz tick both use. It caches WHAT IS CURRENTLY SHOWN, so its
+    // seed has to be the observed state rather than the product default —
+    // the `shownTpMode` lesson (DOCUMENTATION_COVERAGE, 2026-08-06), and the
+    // reason a hard-coded seed here is a defect waiting for the default to
+    // move: it did move, at 0.1.2, when GR became the default view.
+    shownSpectrumOn = (bool) ist.getProperty (iid::spectrumOn, false);
     applyTooltipsEnabled();
 
     // The Ceiling boxes already show the right unit: their attachments were
@@ -994,7 +1024,8 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
 //  Setup helpers (family grammar — provenance in the header)
 // ============================================================================
 void AnabasisAudioProcessorEditor::setupRotary (juce::Slider& s, juce::Label& l,
-                                                const juce::String& name, const juce::String& tip)
+                                                const juce::String& name, const juce::String& tip,
+                                                const juce::String& accessibleName)
 {
     s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
     s.setColour (juce::Slider::textBoxTextColourId, colours::text);
@@ -1012,10 +1043,14 @@ void AnabasisAudioProcessorEditor::setupRotary (juce::Slider& s, juce::Label& l,
     addAndMakeVisible (l);
     registerAnimated (s);
     // Accessibility (brief §8, the deliberate delta from Anamorph): every
-    // control carries its registry name as title/description, so a screen
-    // reader announces the same wording the automation lane shows.
-    s.setTitle (name);
-    s.setDescription (name);
+    // control carries its REGISTRY name as title/description, so a screen
+    // reader announces the same wording the automation lane shows. Since the
+    // 0.1.2 caption/name split (items 8–10) the visible caption may drop the
+    // stage prefix; a reader announces controls in a flat list — the same
+    // no-panel context an automation lane has — so the full name stays here.
+    const auto& a11y = accessibleName.isNotEmpty() ? accessibleName : name;
+    s.setTitle (a11y);
+    s.setDescription (a11y);
     // …and the OTHER half of §8, which had no implementation until 0.1.1:
     // KEYBOARD OPERABILITY. This line is the one that DOES something, and the
     // reason is a JUCE default that differs per widget class — verified in the
@@ -1191,14 +1226,11 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
                         juce::Justification::centredLeft);
         }
         const int utilTop  = kBarH + kPanelRowH;
-        const int macroTop = utilTop + kUtilityH;
-        const int meterTop = macroTop + kMacroRowH;
+        const int meterTop = utilTop + kUtilityH;
         auto util  = juce::Rectangle<int> (0, utilTop, getWidth(), kUtilityH).toFloat().reduced (8.0f, 4.0f);
-        auto macro = juce::Rectangle<int> (0, macroTop, getWidth(), kMacroRowH).toFloat().reduced (8.0f, 4.0f);
         auto meter = juce::Rectangle<int> (0, meterTop, getWidth(), kMeterRowH).toFloat().reduced (8.0f, 6.0f);
         g.setColour (colours::bgPanel.withAlpha (0.45f));
         g.fillRoundedRectangle (util, 10.0f);
-        g.fillRoundedRectangle (macro, 10.0f);
         glass::fillPanel (g, meter, 10.0f, colours::bgPanel.withAlpha (0.5f), 0.8f);
 
         // §5.3 / §6.3: per-parameter detach badges — an accent dot on each
@@ -1485,8 +1517,11 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
 
         // Caption UNDER the cluster, aligned with the fader captions to its
         // left (same removeFromBottom(12) grammar), centred on the combo+SHAPE
-        // pair so it names the group, not one control.
-        auto mid = util.reduced (12, 4);
+        // pair so it names the group, not one control. HORIZONTAL inset only
+        // (0.1.2 item 7): the previous `.reduced (12, 4)` trimmed 4 px off the
+        // bottom too, so this caption's baseline floated 4 px above the
+        // Input Gain / SC HPF captions it sits beside.
+        auto mid = util.reduced (12, 0);
         const int clusterW = 100 + 8 + 88;
         auto cluster = mid.removeFromLeft (clusterW);
         ditherCaption.setBounds (cluster.removeFromBottom (12));
@@ -1496,33 +1531,19 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         shapingToggle.setBounds (row.removeFromLeft (88));
     }
 
-    // Macro row: read-only L / C / T (badges land with the §5.3 grammar).
-    auto macro = juce::Rectangle<int> (0, kBarH + kPanelRowH + kUtilityH, getWidth(), kMacroRowH)
-                     .reduced (16, 2);
-    {
-        const int w = macro.getWidth() / 3;
-        auto cell = [&macro, w]() { return macro.removeFromLeft (w).reduced (60, 0); };
-        auto place = [] (juce::Rectangle<int> c, Knob& k, juce::Label& l)
-        {
-            l.setBounds (c.removeFromBottom (12));
-            k.setBounds (c);
-        };
-        place (cell(), macroLoudnessK, macroLoudnessL);
-        place (cell(), macroCharacterK, macroCharacterL);
-        place (cell(), macroToneK, macroToneL);
-    }
-
     // §6.3 shared metering strip: ONE graph well (GR history / spectrum,
-    // switched by the corner chip on the graph itself — int_spectrumOn is the
+    // switched by the toggle pill on the graph itself — int_spectrumOn is the
     // mode) · loudness block right. The two views share the SAME bounds and
-    // only visibility flips, so a mode switch needs no relayout.
-    auto strip = juce::Rectangle<int> (0, kBarH + kPanelRowH + kUtilityH + kMacroRowH,
+    // only visibility flips, so a mode switch needs no relayout. Directly
+    // under the utility row since 0.1.2 — the read-only macro row that sat
+    // between them was removed (item 11).
+    auto strip = juce::Rectangle<int> (0, kBarH + kPanelRowH + kUtilityH,
                                        getWidth(), kMeterRowH).reduced (8, 6);
     meterView->setBounds (strip.removeFromRight (300));
     spectrumView->setBounds (strip);
     grView->setBounds (strip);
     const bool spectrumOn = (bool) processor.internalState.state()
-                                .getProperty (iid::spectrumOn, true);
+                                .getProperty (iid::spectrumOn, false);
     spectrumView->setVisible (spectrumOn);
     grView->setVisible (! spectrumOn);
 
@@ -1580,7 +1601,7 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     // view directive; DESIGN is superseded section by section as built).
     {
         const bool spectrumOn = (bool) processor.internalState.state()
-                                    .getProperty (iid::spectrumOn, true);
+                                    .getProperty (iid::spectrumOn, false);
         spectrumView->setVisible (spectrumOn);
         grView->setVisible (! spectrumOn);
     }
@@ -1617,8 +1638,6 @@ void AnabasisAudioProcessorEditor::updateModeVisibility()
         &eqPosBox,
         &inputGainK, &scHpfK, &inputGainL, &scHpfL,
         &ditherBox, &ditherCaption, &shapingToggle,
-        &macroLoudnessK, &macroCharacterK, &macroToneK,
-        &macroLoudnessL, &macroCharacterL, &macroToneL,
     };
     for (auto* c : advOnly)
         c->setVisible (adv);
@@ -1869,8 +1888,16 @@ void AnabasisAudioProcessorEditor::timerCallback()
     // -- Advanced panel wells: per-stage GR + curve refreshes ----------------
     if (advanced)
     {
-        compGrMeter.setGrDb (processor.meterCompGrDb());
-        limGrMeter.setGrDb (processor.meterGrDb());
+        // Per-channel lanes (0.1.2 item 12). The limiter lanes read the
+        // per-channel copies rather than `meterGrDb()`: that figure is the
+        // wrapper-published deepest-channel value the GR history shares, and
+        // the two lanes exist precisely to stop folding the channels. Mono
+        // layouts draw one full-height lane.
+        const bool monoOut = processor.getTotalNumOutputChannels() < 2;
+        compGrMeter.setGrDb (processor.meterCompGrDbCh (0),
+                             processor.meterCompGrDbCh (1), monoOut);
+        limGrMeter.setGrDb (processor.meterLimGrDbCh (0),
+                            processor.meterLimGrDbCh (1), monoOut);
         clipCurve->refresh();
         eqCurve->refresh();
     }
@@ -1881,7 +1908,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
     // -- graph-well mode follows int_spectrumOn (the corner chips) -----------
     {
         const bool on = (bool) processor.internalState.state()
-                            .getProperty (iid::spectrumOn, true);
+                            .getProperty (iid::spectrumOn, false);
         if (on != shownSpectrumOn)
         {
             shownSpectrumOn = on;

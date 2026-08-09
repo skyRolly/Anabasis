@@ -14,11 +14,12 @@ class AnabasisAudioProcessor;
 //  from the top, over a 10–30 s window.
 //
 //  Since 2026-08-05 this is one of the TWO MODES of the shared graph well
-//  (`int_spectrumOn` is the mode flag; both views hold identical bounds and
-//  only visibility flips). It carries the top-right "SPEC" corner chip that
-//  switches back to the spectrum — the mirror of `SpectrumView`'s "GR" chip,
-//  with the same hit-area discipline: interactive over the chip ONLY, inert
-//  everywhere else, so clicks over the trace pass through.
+//  (`int_spectrumOn` is the mode flag — GR the default since 0.1.2; both
+//  views hold identical bounds and only visibility flips). It carries the
+//  bottom-left GR|SPEC toggle pill (`abgui::graph_switch`, one geometry and
+//  one interaction for both views since 0.1.2 items 4+5), with the same
+//  hit-area discipline: interactive over the pill ONLY, inert everywhere
+//  else, so clicks over the trace pass through.
 //
 //  Reader contract (THREAD_MODEL, decided at the P5 opening): stateless
 //  `peek`s against `available()`, and the RESET EPOCH sampled before and
@@ -44,7 +45,7 @@ public:
     ~GrHistoryView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;   // top-right chip → spectrum
+    void mouseDown (const juce::MouseEvent&) override;   // bottom-left pill → spectrum
     // Interactive ONLY over the chip; everything else falls through — the same
     // per-pixel opt-out `SpectrumView::hitTest` documents at length.
     bool hitTest (int x, int y) override;
@@ -83,10 +84,11 @@ public:
     // boundaries fall.
     struct Buckets
     {
-        int64_t stride;   // entries per bucket; ≥ 1, sized so `count` ≤ cols
-        int64_t kFirst;   // oldest bucket lying WHOLLY inside the window
+        int64_t stride;   // entries per bucket; ≥ 1, sized so `kFull` ≤ cols
+        int64_t kFirst;   // oldest bucket drawn; see `buckets` for both bounds
         int64_t kHead;    // bucket holding entry `head - 1`, so never empty
         int64_t count;    // buckets to draw = kHead − kFirst + 1, ≥ 1
+        int64_t kFull;    // buckets one FULL window renders; fixes the pitch
     };
 
     // `head` = entries ever pushed (≥ 1), `want` = `windowEntries(...)`,
@@ -97,24 +99,38 @@ public:
         const int64_t stride = juce::jmax<int64_t> (1, (want + c - 1) / c);
         const int64_t first  = juce::jmax<int64_t> (0, head - want);
         const int64_t kHead  = juce::jmax<int64_t> (0, head - 1) / stride;
-        const int64_t kFirst = juce::jmin (kHead, (first + stride - 1) / stride);
-        return { stride, kFirst, kHead, kHead - kFirst + 1 };
+        // `kFull` ≥ 2 so the pitch below divides by at least 1 — reachable
+        // only when the whole window fits in one bucket (want ≤ stride, i.e.
+        // a panel around one pixel wide), where any pitch draws the same one
+        // bucket at the right edge.
+        const int64_t kFull  = juce::jmax<int64_t> (2, (want + stride - 1) / stride);
+        // Two lower bounds on the oldest bucket, and both are needed: the
+        // window bound (a bucket must lie WHOLLY inside [first, head)) and the
+        // width bound (at the fixed pitch only `kFull` buckets fit on the
+        // panel, so when the window's bucket count oscillates one above it —
+        // stride-boundary phase — the oldest is truncated rather than the
+        // pitch compressed; a truncated bucket is ≤ `stride` entries of the
+        // oldest edge, the fixed-scale trade the 0.1.2 directive picks).
+        const int64_t kFirst = juce::jmax (juce::jmin (kHead, (first + stride - 1) / stride),
+                                           kHead - kFull + 1);
+        return { stride, kFirst, kHead, kHead - kFirst + 1, kFull };
     }
 
-    // Where bucket `k` lands. The buckets are STRETCHED over the width rather
-    // than pinned one per pixel: `stride` rounds up, so a window's worth of
-    // entries yields fewer buckets than the panel has columns, and pinning
-    // them left the surplus columns blank forever (≈ 31 % of the Simple well
-    // at 48 kHz/512, ≈ 48 % at 1024). Widening the WINDOW to `cols·stride`
-    // would fill the panel by showing more time — 38.6 s at 48 kHz/1024 —
-    // which `kWindowSeconds` and DESIGN §2.9's 10–30 s band do not allow.
-    // Stretching keeps the window and fills the panel, and is also what the
-    // pre-0.1.1 draw did while the ring was still filling.
+    // Where bucket `k` lands: anchored at the RIGHT edge (bucket `kHead` at
+    // `x0 + width − 1`) on a FIXED pitch — the width divided by the bucket
+    // count of one FULL window — so a filling ring renders at exactly the
+    // scale a settled one does and new entries appear at the right while the
+    // unmeasured region stays empty on the left (0.1.2 item 3; the owner
+    // directive that removed the previous stretch-to-fill, which zoomed the
+    // early trace across the whole panel and re-spaced it as buckets grew).
+    // The settled trace still spans the panel edge to edge — `kFull` is
+    // derived from the same `want`/`stride` pair, so a full window lands its
+    // oldest bucket on the left edge, which is the 0.1.1 blank-strip fix's
+    // property carried over unchanged.
     static float bucketX (const Buckets& b, int64_t k, float x0, float width) noexcept
     {
-        return b.count > 1
-                 ? x0 + (float) (k - b.kFirst) * (width - 1.0f) / (float) (b.count - 1)
-                 : x0;
+        return x0 + (width - 1.0f)
+             - (float) (b.kHead - k) * ((width - 1.0f) / (float) (b.kFull - 1));
     }
 
 private:

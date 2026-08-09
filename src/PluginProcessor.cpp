@@ -528,22 +528,30 @@ juce::AudioProcessorParameter* AnabasisAudioProcessor::getBypassParameter() cons
 
 bool AnabasisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    // Stereo out always; mono OR stereo in — the sibling's contract, restored
-    // here for KI-009. Refusing mono→stereo forced hosts with a mono source to
-    // negotiate stereo→stereo and feed whatever their convention puts on the
-    // two input pins — several put the signal on ONE pin and silence on the
-    // other, and this chain is strictly dual-mono (the comp/limiter "link"
-    // shares only the detector LEVEL), so a silent input pin is a silent
-    // output channel in both modes. Accepting mono and duplicating it below
-    // removes that negotiation entirely.
+    // Three layouts (0.1.2 item 13, ADR-0023): stereo→stereo · mono→stereo ·
+    // mono→mono. The mono INPUT acceptance is the KI-009 0.1.1 repair —
+    // refusing it forced hosts with a mono source to negotiate stereo→stereo
+    // and feed whatever their convention puts on the two input pins, several
+    // of which put the signal on ONE pin and silence on the other, and this
+    // chain is strictly dual-mono (the comp/limiter "link" shares only the
+    // detector LEVEL), so a silent input pin was a silent output channel.
+    // mono→mono closes the remaining negotiation surface: hosts that insert
+    // plugins per-channel (dual-mono/multi-mono racks) need the matched
+    // layout, and without it they either refuse the plugin or improvise a
+    // mapping. The engine prepares from the OUTPUT count and every stage
+    // loops [0, nCh), so one channel is simply the stereo path with nCh = 1;
+    // latency, parameters and serialization are all channel-count-free.
+    // stereo→mono stays refused — it would need a downmix rule this product
+    // does not define.
     const auto& out = layouts.getMainOutputChannelSet();
     const auto& in  = layouts.getMainInputChannelSet();
 
-    if (out != juce::AudioChannelSet::stereo())
-        return false;
+    if (out == juce::AudioChannelSet::stereo())
+        return in == juce::AudioChannelSet::stereo()
+            || in == juce::AudioChannelSet::mono();
 
-    return in == juce::AudioChannelSet::stereo()
-        || in == juce::AudioChannelSet::mono();
+    return out == juce::AudioChannelSet::mono()
+        && in  == juce::AudioChannelSet::mono();
 }
 
 void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -564,7 +572,22 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // lock-free — `AdaptiveEngine`'s retained trim set, which `reset()` does not
     // clear — so no thread crossing is added to rescue it.
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
-    grHistoryRing.reset();
+    // The GR history ring survives a re-prepare at the SAME rate and block
+    // size (0.1.2 item 6). Hosts re-prepare on transport start, and an
+    // unconditional clear here wiped the scrolling timeline on every
+    // pause/resume — the display then restarted instead of continuing from
+    // where it stopped. The ring's time base is entries-per-host-block mapped
+    // through the PREPARED rate and size (GrHistoryView's banner), so history
+    // recorded under the same pair is still drawn true; a changed pair is the
+    // case the clear has always existed for (stale entries would be mapped
+    // through the wrong time base) and still clears.
+    if (! juce::exactlyEqual (grRingPreparedRate, sampleRate)
+        || grRingPreparedBlock != samplesPerBlock)
+    {
+        grHistoryRing.reset();
+        grRingPreparedRate  = sampleRate;
+        grRingPreparedBlock = samplesPerBlock;
+    }
     dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a
@@ -575,10 +598,13 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 }
 
 // The published meter atomics, cleared — ONE list, because three sites need
-// exactly this and two of them had grown their own copy. (Ten since the
-// ADR-0020 stats row; the count is deliberately not repeated in prose here or
-// at the callers, because it was wrong within two commits of being written
-// the first time — the LIST is the count.) Relaxed stores, so it is callable
+// exactly this and two of them had grown their own copy. The count is
+// deliberately not written here, at the declaration or at the callers: it was
+// wrong within two commits of being written the first time, and the header
+// said "six" long after it was ten — the LIST is the count. Since 0.1.2 the
+// list also reaches the ENGINE's per-stage GR figures, which is why it ends
+// in a call rather than a store (see `clearPublishedStageGr`).
+// Relaxed stores, so it is callable
 // from any thread: `prepareToPlay` (host), the block-top meter-reset consume
 // (audio) and `setStateInformation` (whichever thread the host restores on)
 // all use it. It deliberately does NOT touch the two audio-thread max-holds,
@@ -595,6 +621,13 @@ void AnabasisAudioProcessor::publishSilentMeters() noexcept
     pubRmsDb.store (anabasis::RmsMeter::kSilentDb, std::memory_order_relaxed);
     pubLufsIUngated.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
     pubLra.store (anabasis::LoudnessMeter::kNoLra, std::memory_order_relaxed);
+    // The two per-stage GR lanes live on the ENGINE's atomics rather than
+    // here (the panel meters read them per channel), so the one list reaches
+    // them through the engine instead of by holding its own copies — see
+    // `clearPublishedStageGr`. Without this the limiter lane stopped obeying
+    // this list at 0.1.2, when it moved off `pubGrDb` onto the per-channel
+    // pair; the comp lane had never obeyed it at all.
+    engine.clearPublishedStageGr();
 }
 
 void AnabasisAudioProcessor::setNonRealtime (bool isNonRealtime) noexcept
@@ -659,6 +692,9 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     // engine is prepared from getTotalNumOutputChannels() — stereo — so both
     // channels are processed; without this the right channel would master
     // silence. See isBusesLayoutSupported for why mono is accepted at all.
+    // In the mono→mono layout (0.1.2 item 13) the buffer has ONE channel and
+    // the guard below is false: nothing to duplicate, the engine was prepared
+    // mono and processes the one channel.
     if (getMainBusNumInputChannels() == 1 && buffer.getNumChannels() >= 2)
         buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
 

@@ -280,7 +280,7 @@ private:
         // deferral is not a retry: the arm is dropped, not queued.
         macroEngine->refreshMapping();
     }
-    void publishSilentMeters() noexcept;   // the six meter atomics, cleared (one list)
+    void publishSilentMeters() noexcept;   // the published meters, cleared (ONE list; see the .cpp)
     void adoptFrozenMirror (juce::ValueTree frozen);   // the ONLY writer of liveFrozenTrims
     juce::ValueTree engineFrozenTrimsIfLive();   // ADR-0014 ownership test (one rule, one reader)
     // The retained-trim generation at the moment the live surface's frozen
@@ -503,6 +503,10 @@ public:
     float meterLufsIUngated() const noexcept { return pubLufsIUngated.load (std::memory_order_relaxed); }
     float meterLra()          const noexcept { return pubLra.load (std::memory_order_relaxed); }
     float meterCompGrDb() const noexcept { return engine.lastCompGrDb(); }   // per-stage (P5 panels)
+    // Per-channel per-stage GR (0.1.2 item 12) — the panel meters' L/R lanes
+    // and the KI-009 field disambiguator; see the engine getters.
+    float meterCompGrDbCh (int ch) const noexcept { return engine.lastCompGrDbCh (ch); }
+    float meterLimGrDbCh  (int ch) const noexcept { return engine.lastLimGrDbCh (ch); }
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
     const anabasis::ScopeBuffer& spectrumInRing()  const noexcept { return engine.spectrumInRing(); }
     const anabasis::ScopeBuffer& spectrumOutRing() const noexcept { return engine.spectrumOutRing(); }
@@ -574,6 +578,11 @@ private:
     // only the engine sees the sample before the monitor-only stages touch
     // it. The wrapper keeps the session max-hold and the publish atomics.
     anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes
+    // The (rate, block) pair the ring's entries were recorded under — the
+    // clear-on-change gate in prepareToPlay (0.1.2 item 6: pause/resume
+    // re-prepares at the same pair keep the timeline). Host-thread only.
+    double grRingPreparedRate  = 0.0;
+    int    grRingPreparedBlock = 0;
     // Audio-thread session max-holds. `samplePeakMaxHold` joined `dbTpMaxHold`
     // with the stats row (ADR-0020) and is cleared by exactly the same two
     // sites, for the same reason: both are session-cumulative, so both belong

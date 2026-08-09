@@ -32,60 +32,140 @@ static void check (bool condition, const char* what)
 
 // ---------------------------------------------------------------------------
 // inv 7: with defaults and no processing engaged, output is a bit-exact
-// delay-aligned copy of the input. THE STIMULUS LEVEL IS LOAD-BEARING, not a
-// convenience: with the adaptive trims live, the null survives because every
-// STAGE is inert, not because the trims are zero — the scHpf trim can switch
-// both detector HPFs on even at factory defaults, and that stays inaudible
-// only while the compressor is below its knee and the limiter below its
-// ceiling. The knee bottom at defaults (threshold 0 dBFS, 6 dB knee) is
-// −3 dBFS ≈ 0.708 linear; the ±0.25 peak here (−12 dBFS) sits well under it
-// AND under the ceiling (0.989 linear at the −0.1 dB default since ADR-0015;
-// it read −1 dBTP / 0.891 before, and the margin argument holds at either).
-// This test INHERITS the defaults deliberately — "all-defaults is a bit-exact
-// null" is its whole claim — so unlike the inv-4 guards it must not pin them.
-// Raise this level past −3 dBFS and the test
-// starts exercising the knee against trim-driven detector filtering — a
-// different (and weaker) claim. The assert below pins the margin.
+// delay-aligned copy of the input — FOR ANY SUB-CEILING INPUT since 0.1.2
+// (ADR-0023). This stimulus is deliberately hostile to the old curves: a
+// 30 Hz square at 0.93 plus noise (peak ≤ 0.96, under the −0.1 dB ceiling's
+// 0.989 linear) whose detector RMS sits near −0.6 dBFS. Under the pre-0.1.2
+// code this drew real gain reduction two ways at factory defaults — the
+// comp's centred knee computed gain from −3 dBFS up, and the §5.4 scHpf trim
+// engaged the LIMITER's detector HPF, whose edge overshoot (≈ 2× on a −A→+A
+// step) pushed detection over the ceiling on samples that never crossed it —
+// which is exactly the 0.1.2 item-2 field report ("GR at the default preset
+// on legal material"). With the knee above the threshold, the limiter
+// detector unfiltered and the comp's filtered magnitude clamped to the raw
+// one, every stage is inert below its engagement level and the null holds.
+// The adaptive trims stay LIVE throughout — inertness is a property of the
+// stages, not of the trims being zero, and the premise that makes that true
+// for the one trim which could reach a stage (`dynTilt` → ClipSat's Dynamic
+// Tame) is asserted in the body rather than assumed.
+//
+// The second pass asserts the same property through the DELTA monitor: at a
+// bit-exact null the difference leg is exactly `delayedDry − processed = 0`
+// once the delta fade lands on its exact endpoint, so Delta at defaults on
+// sub-ceiling material is digital silence — the owner's item-2 observation
+// ("Delta carries a GR-flavoured residue on the default preset") is pinned
+// out by construction.
 static void testNullWithDefaults()
 {
-    anabasis::AnabasisEngine engine;
     const double sr = 48000.0;
     const int block = 512, blocks = 40;
-    engine.prepare (sr, block, 2);
-    const int delay = engine.groupDelaySamples();
-    check (delay == anabasis::maxLookaheadSamples (sr),
-           "null: engine group delay equals the constant allowance");
 
-    anabasis::EngineParameters p;   // POD defaults == §4.2 defaults
-    std::vector<float> inL, outL;
-    juce::AudioBuffer<float> buf (2, block);
-    uint32_t rng = 0x12345678u;
-
-    for (int b = 0; b < blocks; ++b)
+    auto stimulus = [] (uint32_t& rng, int t)
     {
-        for (int n = 0; n < block; ++n)
+        rng = rng * 1664525u + 1013904223u;                           // deterministic
+        const float noise  = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.03f;
+        const float square = (std::sin (2.0f * juce::MathConstants<float>::pi
+                                        * 30.0f * (float) t / 48000.0f) >= 0.0f)
+                                 ? 0.93f : -0.93f;
+        return square + noise;                                        // peak ≤ 0.96
+    };
+
+    {   // Pass 1: the render null, bit-exact.
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        const int delay = engine.groupDelaySamples();
+        check (delay == anabasis::maxLookaheadSamples (sr),
+               "null: engine group delay equals the constant allowance");
+
+        anabasis::EngineParameters p;   // POD defaults == §4.2 defaults
+        std::vector<float> inL, outL;
+        juce::AudioBuffer<float> buf (2, block);
+        uint32_t rng = 0x12345678u;
+
+        for (int b = 0; b < blocks; ++b)
         {
-            rng = rng * 1664525u + 1013904223u;                       // deterministic
-            const float v = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.25f;   // ±0.25
-            buf.setSample (0, n, v);
-            buf.setSample (1, n, -v);
-            inL.push_back (v);
+            for (int n = 0; n < block; ++n)
+            {
+                const float v = stimulus (rng, b * block + n);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, -v);
+                inL.push_back (v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < block; ++n)
+                outL.push_back (buf.getSample (0, n));
         }
-        engine.process (buf, p);
-        for (int n = 0; n < block; ++n)
-            outL.push_back (buf.getSample (0, n));
+
+        // Self-enforcing stimulus constraints: sub-ceiling (the null's only
+        // remaining engagement bound), and hot enough that the OLD centred
+        // knee would have engaged — so this test fails against the pre-0.1.2
+        // curve rather than merely not exercising it.
+        float stimPeak = 0.0f;
+        for (float v : inL) stimPeak = juce::jmax (stimPeak, std::abs (v));
+        check (stimPeak < 0.9885f, "null: the stimulus stays below the -0.1 dB ceiling");
+        check (stimPeak > 0.708f,
+               "null: …and above the old centred knee's -3 dBFS bottom (the negative control)");
+
+        // THE ADAPTATION PREMISE, asserted rather than assumed. The §5.4 trims
+        // run LIVE here, and exactly ONE of them can reach a stage able to
+        // break a bit-exact null: `dynTilt`, whose host is ClipSat's Dynamic
+        // Tame. (The other three are inert while their stages are, which the
+        // two zero-reduction assertions below establish directly.) That stage
+        // is "EXACTLY idle (skipped) when nothing clips OR dynTilt is 0"
+        // (`ClipSat.h` §3), and `clipOn` is an exact-zero test on the DRIVE —
+        // so at the factory drive of 0 the tame is skipped WHATEVER the trim
+        // maps, and the null does not rest on the trim's value at all.
+        //
+        // Asserting the DRIVE rather than the trim is the point: the trim
+        // mapping is ⊕ listening material and must stay free to move, while
+        // this default is the property the inertness argument actually uses.
+        // Pin the trim instead and a legitimate re-tuning fails a null test
+        // for a reason that is not a defect. If this default ever leaves 0 the
+        // argument is gone, and this says WHICH premise died instead of
+        // leaving a bit mismatch 40 blocks downstream to be bisected.
+        // ClipSat's own `activityEnvelope()` invariant-7 tripwire — the same
+        // argument's other half, "nothing clips" — is asserted at the stage
+        // level by `testClipDynamicTame`.
+        check (juce::exactlyEqual (p.clipDriveDb, 0.0f),
+               "null: (premise) the factory drive is 0, so the Dynamic Tame — the only stage "
+               "an adaptive trim can reach — is skipped whatever the trims map");
+
+        bool exact = true;
+        for (size_t n = (size_t) delay; n < outL.size(); ++n)
+            if (! juce::exactlyEqual (outL[n], inL[n - (size_t) delay])) { exact = false; break; }
+        check (exact, "null: output is a bit-exact copy delayed by the allowance");
+        check (juce::exactlyEqual (engine.lastBlockMinGain(), 1.0f),
+               "null: the limiter computed no reduction on sub-ceiling material");
+        check (juce::exactlyEqual (engine.lastCompGrDb(), 0.0f),
+               "null: the compressor computed no reduction at or below its 0 dBFS threshold");
     }
 
-    // Self-enforcing form of the header's stimulus constraint: peak must stay
-    // under the −3 dBFS knee bottom (see the comment above for why).
-    float stimPeak = 0.0f;
-    for (float v : inL) stimPeak = juce::jmax (stimPeak, std::abs (v));
-    check (stimPeak < 0.708f, "null: the stimulus stays below the comp knee bottom (-3 dBFS)");
-
-    bool exact = true;
-    for (size_t n = (size_t) delay; n < outL.size(); ++n)
-        if (! juce::exactlyEqual (outL[n], inL[n - (size_t) delay])) { exact = false; break; }
-    check (exact, "null: output is a bit-exact copy delayed by the allowance");
+    {   // Pass 2: Delta at defaults is digital silence on the same material.
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        anabasis::EngineParameters p;
+        p.deltaMonitor = true;
+        juce::AudioBuffer<float> buf (2, block);
+        uint32_t rng = 0x9e3779b9u;
+        float maxAfterFade = 0.0f;
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < block; ++n)
+            {
+                const float v = stimulus (rng, b * block + n);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, -v);
+            }
+            engine.process (buf, p);
+            if (b >= 4)   // past the ~10 ms delta fade and the delay pipeline
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int n = 0; n < block; ++n)
+                        maxAfterFade = juce::jmax (maxAfterFade,
+                                                   std::abs (buf.getSample (ch, n)));
+        }
+        check (juce::exactlyEqual (maxAfterFade, 0.0f),
+               "null: Delta at defaults on sub-ceiling material is exact digital silence");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -535,11 +615,19 @@ static void testCompStaticCurve()
         check (near (outDb, inDb + (7.0f * (0.25f - 1.0f)), 0.5f),
                "comp: hard-knee ratio line lands where the static curve says");
     }
-    {   // At exactly threshold with a 12 dB knee: GR = (invR−1)·(W/2)²/2W = −1.125 dB
+    {   // The knee sits ABOVE the threshold since 0.1.2 (ADR-0023): at
+        // exactly T the curve computes ZERO (the old centred knee put
+        // −1.125 dB here — the item-2 "GR below the threshold" defect), and
+        // the quadratic applies inside (T, T+W]: at T + W/2 = −14 dB it is
+        // GR = (invR−1)·(W/2)²/2W = −1.125 dB — the same figure, moved to
+        // where the definition says it belongs.
         p.compKneeDb = 12.0f;
-        const float outDb = compOutputRmsDb (p, 0.14142f, sr);   // RMS −20.00
-        check (near (outDb, -20.0f - 1.125f, 0.4f),
-               "comp: soft knee applies the quadratic reduction at the threshold");
+        const float atT = compOutputRmsDb (p, 0.14142f, sr);     // RMS −20.00 = T
+        check (near (atT, -20.0f, 0.1f),
+               "comp: zero reduction at exactly the threshold (the knee is above it)");
+        const float atMid = compOutputRmsDb (p, 0.28184f, sr);   // RMS −14.00 = T + W/2
+        check (near (atMid, -14.0f - 1.125f, 0.4f),
+               "comp: soft knee applies the quadratic reduction at threshold + W/2");
         p.compKneeDb = 0.0f;
     }
     {   // Below the knee bottom: BIT-EXACT identity (the null path)
@@ -1492,32 +1580,138 @@ static void testLimiterTransientPreserve()
 }
 
 // ---------------------------------------------------------------------------
-// Brief §3: the shared sidechain HPF also serves the limiter detector — a
-// 30 Hz tone over the ceiling ducks hard at the floor (= no filtering) and
-// far less at 300 Hz. The floor is an EXACT skip: the default detector is the
-// tapped sample itself, byte-for-byte.
-static void testLimiterDetectorHpf()
+// ADR-0023 (0.1.2): the limiter's detector is UNFILTERED — its threshold IS
+// the ceiling, so detection must track the actual peak whatever the SC HPF
+// is set to. Until 0.1.2 the shared HPF also fed this detector (brief §3),
+// breaking the ceiling relationship in both directions: a 30 Hz over was
+// invisible to the limiter (the CeilingClamp then flat-topped it — hard
+// clipping instead of limiting), and the filter's edge overshoot drew
+// reduction on legal material (the item-2 field report). The first half pins
+// the repaired deaf direction at the engine level; the second pins the
+// over-read direction at the COMP (the stage that keeps the filter): its
+// filtered detector magnitude is clamped to the raw one, so filtering can
+// only lower detection, never raise it.
+static void testLimiterDetectorIsUnfiltered()
 {
     const double sr = 48000.0;
-    auto settled = [&] (float hpfHz)
-    {
-        anabasis::LookaheadLimiter lim;
-        lim.prepare (sr, 480);
-        lim.setRelease (400.0f);
-        lim.setDetectorHpf (hpfHz);
-        float g[2] = { 1.0f, 1.0f };
-        for (int t = 0; t < 48000; ++t)
+
+    {   // A 30 Hz tone driven over the ceiling DUCKS with the SC HPF at
+        // 300 Hz — the setting under which the old filtered detector was
+        // deaf to it and the limiter passed it at unity.
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.scHpfFreqHz = 300.0f;
+        juce::AudioBuffer<float> buf (2, 512);
+        float minGain = 1.0f;
+        for (int b = 0; b < 100; ++b)
         {
-            const float v = 1.0f * std::sin (2.0f * juce::MathConstants<float>::pi
-                                             * 30.0f * (float) t / (float) sr);
-            const float fed[2] = { v, v };
-            lim.processSample (fed, 2, 96, 0.5f, g);
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 1.9f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 30.0f * (float) (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            if (b >= 50)
+                minGain = juce::jmin (minGain, engine.lastBlockMinGain());
         }
-        return g[0];
-    };
-    const float atFloor = settled (20.0f), at300 = settled (300.0f);
-    check (atFloor < 0.6f, "limHpf: at the floor a loud 30 Hz tone ducks hard");
-    check (at300 > atFloor + 0.2f, "limHpf: at 300 Hz the same tone ducks far less");
+        check (minGain < 0.75f,
+               "limDet: a 30 Hz over ducks with the SC HPF at 300 Hz — the detector is unfiltered");
+    }
+
+    {   // The comp's filtered detector never reduces deeper than the raw one
+        // on an LF square, whose edges the biquad overshoots by ~2×: the
+        // magnitude clamp caps detection at the raw sample.
+        auto minGrOnSquare = [&] (float hpfHz)
+        {
+            anabasis::MasteringComp comp;
+            comp.prepare (sr);
+            anabasis::EngineParameters q;
+            q.compThresholdDb = -6.0f; q.compKneeDb = 0.0f; q.compRatio = 4.0f;
+            q.compAttackMs = 0.1f; q.compAutoRelease = false; q.compReleaseMs = 1000.0f;
+            q.compDetector = 1;                 // Peak: the overshoot reaches the curve directly
+            q.compMix = 1.0f; q.scHpfFreqHz = hpfHz;
+            comp.setPerBlock (q);
+            float minGr = 0.0f;
+            for (int n = 0; n < 48000; ++n)
+            {
+                const float v = std::sin (2.0f * juce::MathConstants<float>::pi
+                                          * 30.0f * (float) n / (float) sr) >= 0.0f
+                                    ? 0.45f : -0.45f;   // −6.9 dBFS peak, under the −6 threshold
+                float fr[2] = { v, v };
+                comp.processSample (fr, 2);
+                minGr = juce::jmin (minGr, comp.currentGainReductionDb());
+            }
+            return minGr;
+        };
+        const float raw = minGrOnSquare (20.0f), filtered = minGrOnSquare (100.0f);
+        check (juce::exactlyEqual (raw, 0.0f),
+               "limDet/comp: the raw detector computes nothing under the threshold (the baseline)");
+        check (filtered >= raw - 0.05f,
+               "limDet/comp: the filtered detector never reduces deeper than the raw one");
+    }
+
+    {   // …and the guard must not RE-COUPLE the detector to the bass it
+        // exists to ignore (0.1.2 review). The first form of the overshoot
+        // bound was pointwise — `min(|filtered|, |raw|)` — and `|raw|` passes
+        // through zero twice per bass cycle, so the clamp gated the detector
+        // at the BASS rate whatever the passband content was doing.
+        //
+        // Stimulus: a loud 30 Hz fundamental under quiet 3 kHz programme,
+        // with the SC HPF at 300 Hz — the configuration the control is sold
+        // for. The 3 kHz content is steady, the filter removes the 30 Hz
+        // (−40 dB, two octaves down at 12 dB/oct), so a detector that is
+        // genuinely deaf to bass produces STEADY reduction. Ripple in the
+        // settled gain reduction is precisely the modulation this fix
+        // removes, and RMS mode is where it shows: the 10 ms integrator
+        // smooths the 3 kHz carrier but not a 30 Hz envelope.
+        auto grRipple = [&] (float hpfHz)
+        {
+            anabasis::MasteringComp comp;
+            comp.prepare (sr);
+            anabasis::EngineParameters q;
+            q.compThresholdDb = -30.0f; q.compKneeDb = 0.0f; q.compRatio = 20.0f;
+            q.compAttackMs = 1.0f; q.compAutoRelease = false; q.compReleaseMs = 5.0f;
+            q.compDetector = 0;                 // RMS, the factory mode
+            q.compMix = 1.0f; q.scHpfFreqHz = hpfHz;
+            comp.setPerBlock (q);
+            float lo = 0.0f, hi = -200.0f;
+            for (int n = 0; n < 48000; ++n)
+            {
+                const float t    = (float) n / (float) sr;
+                const float bass = 0.90f * std::sin (2.0f * juce::MathConstants<float>::pi * 30.0f * t);
+                const float hf   = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi * 3000.0f * t);
+                float fr[2] = { bass + hf, bass + hf };
+                comp.processSample (fr, 2);
+                if (n >= 24000)                 // settled half only
+                {
+                    const float gr = comp.currentGainReductionDb();
+                    lo = juce::jmin (lo, gr);
+                    hi = juce::jmax (hi, gr);
+                }
+            }
+            return hi - lo;                     // peak-to-peak GR, dB
+        };
+        // The HPF-OFF run is the reference for what bass-coupled reduction
+        // looks like: there the detector is SUPPOSED to follow the 30 Hz
+        // envelope, so its ripple is large. Engaging the filter must collapse
+        // that ripple — the whole point of the control — and the pointwise
+        // clamp did not, because it reinstated the same envelope through the
+        // ceiling. Bounds an order of magnitude apart, not a tolerance.
+        const float rippleOff = grRipple (20.0f), rippleOn = grRipple (300.0f);
+        // MEASURED, 48 kHz: 1.295 dB unfiltered · 0.291 dB with the pointwise
+        // clamp this fix replaced · 0.0026 dB with the envelope ceiling. The
+        // pointwise form left 22 % of the unfiltered bass modulation standing;
+        // the ceiling leaves 0.2 %. The bounds sit an order of magnitude clear
+        // of BOTH the measurement and the superseded form, so the pointwise
+        // clamp is a mutant this test kills rather than a variant it tolerates.
+        check (rippleOff > 1.0f,
+               "limDet/comp: (premise) with the HPF off the detector tracks the bass envelope");
+        check (rippleOn < 0.05f,
+               "limDet/comp: with the HPF on the bass no longer modulates the detector");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2137,11 +2331,11 @@ static void testAdaptiveRestoreLastStagedWins()
 // ---------------------------------------------------------------------------
 // Detector state that is not advanced while its path is off must not be
 // re-entered when the path comes back: the true-peak estimator's 12-tap
-// history freezes whenever tpMode is false (the OS factor flips it), and the
-// detector HPF's biquad keeps its delay line when the frequency drops to the
-// range floor (the adaptive scHpf trim can drive that edge). Both are
-// observable as gain reduction on silence, which is impossible from a clean
-// detector.
+// history freezes whenever tpMode is false (the OS factor flips it), which
+// is observable as gain reduction on silence — impossible from a clean
+// detector. (The detector HPF's half of this test left with the filter
+// itself, 0.1.2 / ADR-0023: the limiter's detector is unfiltered now, so
+// there is no biquad delay line to re-enter.)
 static void testStaleDetectorStateIsNotReentered()
 {
     const double sr = 48000.0;
@@ -2149,7 +2343,7 @@ static void testStaleDetectorStateIsNotReentered()
     // converges, it does not arrive) cannot be mistaken for the effect: the
     // SAME sequence is run with the charging passage present and replaced by
     // silence. Only stale state can separate them.
-    auto minGainOnSilence = [&] (bool useTruePeak, bool chargeIt)
+    auto minGainOnSilence = [&] (bool chargeIt)
     {
         anabasis::LookaheadLimiter lim;
         lim.prepare (sr, 480);
@@ -2157,8 +2351,7 @@ static void testStaleDetectorStateIsNotReentered()
         lim.setRelease (1.0f);              // so the envelope releases fast
         lim.setStereoLink (1.0f);
         lim.setTransientPreserve (0.0f);
-        lim.setTruePeakMode (useTruePeak);
-        lim.setDetectorHpf (useTruePeak ? 20.0f : 200.0f);
+        lim.setTruePeakMode (true);
 
         float g[2] = { 1.0f, 1.0f };
         const float ceiling = 0.5f;
@@ -2177,36 +2370,19 @@ static void testStaleDetectorStateIsNotReentered()
             const float fr[2] = { v, v };
             lim.processSample (fr, 2, 480, ceiling, g);
         }
-        // 2a) command the path OFF — and KEEP THE LOUD SIGNAL RUNNING while
-        //     the HPF frequency GLIDES to its floor (~960 samples at 20 ms),
-        //     so the biquad state is still charged when the off edge actually
-        //     fires. Feeding silence here instead would let the glide drain
-        //     the state naturally and the missing-clear mutant would survive
-        //     on an empty delay line — the same put-the-property-where-the-
-        //     assertion-looks rule as the crest alignment above. The TP mode
-        //     flips instantly (a bool), so its history freezes at the crest
-        //     regardless; the extra loud samples advance nothing there.
+        // 2) command the path OFF (the TP mode flips instantly — a bool — so
+        //    its history freezes at the crest), then silence: the envelope
+        //    releases to unity while the frozen state (if any survived the
+        //    off edge) keeps its charge.
         lim.setTruePeakMode (false);
-        lim.setDetectorHpf (20.0f);
-        for (int n = 4200; n < 4200 + 1100; ++n)
-        {
-            const float v = chargeIt ? 4.0f * std::sin (2.0f * juce::MathConstants<float>::pi
-                                                        * 60.0f * (float) n / (float) sr)
-                                     : 0.0f;
-            const float fr[2] = { v, v };
-            lim.processSample (fr, 2, 480, ceiling, g);
-        }
-        // 2b) silence with the path off: the envelope releases to unity, the
-        //     frozen state (if any survived the off edge) keeps its charge.
         for (int n = 0; n < 8000; ++n)
         {
             const float fr[2] = { 0.0f, 0.0f };
             lim.processSample (fr, 2, 480, ceiling, g);
         }
         // 3) turn it back ON and keep feeding silence: a clean detector sees
-        //    exactly zero, a stale one interpolates/rings the old passage.
-        lim.setTruePeakMode (useTruePeak);
-        lim.setDetectorHpf (useTruePeak ? 20.0f : 200.0f);
+        //    exactly zero, a stale one interpolates the old passage.
+        lim.setTruePeakMode (true);
         float minGain = 1.0f;
         for (int n = 0; n < 600; ++n)
         {
@@ -2217,31 +2393,28 @@ static void testStaleDetectorStateIsNotReentered()
         return minGain;
     };
 
-    const float tpClean = minGainOnSilence (true, false),  tpStale = minGainOnSilence (true, true);
-    const float hpClean = minGainOnSilence (false, false), hpStale = minGainOnSilence (false, true);
+    const float tpClean = minGainOnSilence (false), tpStale = minGainOnSilence (true);
     // Bound reasoning, measured rather than assumed: a never-charged run
     // returns EXACTLY 1.0, a charged one stalls at 0.99999857 — the one-pole
     // release's float floor (once (1−env)·a drops below half an ULP near
     // unity the addition rounds away, so the limiter never returns to bit-
     // exact unity after any reduction; −0.00001 dB, recorded, not chased).
-    // The defect being tested is nothing like that size: a stale 4.0 tap or a
-    // ringing biquad against a 0.5 ceiling pins the gain near 0.125. 0.999
-    // sits between the two by four orders of magnitude.
-    check (tpClean > 0.9999f && hpClean > 0.9999f,
+    // The defect being tested is nothing like that size: a stale 4.0 tap
+    // against a 0.5 ceiling pins the gain near 0.125. 0.999 sits between the
+    // two by four orders of magnitude.
+    check (tpClean > 0.9999f,
            "staleDetector: silence into a never-charged detector is unity gain (the baseline)");
     check (tpStale > 0.999f,
            "staleDetector: re-enabling true-peak mode does not resurrect the frozen tap history");
-    check (hpStale > 0.999f,
-           "staleDetector: re-enabling the detector HPF does not ring on its old delay line");
 }
 
 // ---------------------------------------------------------------------------
-// Invariant 8 at the limiter's own control boundary: stereo link, transient
-// preserve and the detector HPF are LEVEL-affecting (link blends the detector
-// level, preserve selects the attack alpha, the HPF moves the detector
-// spectrum), so a per-block step in any of them must glide, not jump. The
-// release/style/autoRelease setters stay unsmoothed by design — there the
-// envelope IS the smoother.
+// Invariant 8 at the limiter's own control boundary: stereo link and
+// transient preserve are LEVEL-affecting (link blends the detector level,
+// preserve selects the attack alpha), so a per-block step in either must
+// glide, not jump. The release/style/autoRelease setters stay unsmoothed by
+// design — there the envelope IS the smoother. (The detector HPF's third of
+// this test left with the filter, 0.1.2 / ADR-0023.)
 static void testLimiterControlSmoothing()
 {
     const double sr = 48000.0;
@@ -2257,7 +2430,6 @@ static void testLimiterControlSmoothing()
         lim.setRelease (200.0f);
         lim.setTransientPreserve (0.0f);
         lim.setTruePeakMode (false);
-        lim.setDetectorHpf (20.0f);
         lim.setStereoLink (0.0f);
 
         float g[2] = { 1.0f, 1.0f };
@@ -2293,7 +2465,6 @@ static void testLimiterControlSmoothing()
         lim.setRelease (200.0f);
         lim.setStereoLink (1.0f);
         lim.setTruePeakMode (false);
-        lim.setDetectorHpf (20.0f);
         lim.setTransientPreserve (0.0f);
 
         float g[2] = { 1.0f, 1.0f };
@@ -2313,47 +2484,6 @@ static void testLimiterControlSmoothing()
                "limSmooth/preserve: a step to full preserve cannot blunt the NEXT transient's attack");
     }
 
-    {   // DETECTOR HPF: 1 kHz content limited with the filter far above it
-        // (3 kHz → detector ~0.1, no limiting), stepped to the floor (off →
-        // detector 0.9 → gain ~0.55). Unsmoothed, the detector level and the
-        // gain jump in one sample; smoothed, the frequency glides and the
-        // gain follows the ramp.
-        anabasis::LookaheadLimiter lim;
-        lim.prepare (sr, 480);
-        lim.setAutoRelease (false);
-        lim.setRelease (200.0f);
-        lim.setStereoLink (1.0f);
-        lim.setTransientPreserve (0.0f);
-        lim.setTruePeakMode (false);
-        lim.setDetectorHpf (3000.0f);
-
-        float g[2] = { 1.0f, 1.0f };
-        auto feed = [&] (int from, int count, auto&& each)
-        {
-            for (int n = from; n < from + count; ++n)
-            {
-                const float v = 0.9f * std::sin (2.0f * juce::MathConstants<float>::pi
-                                                 * 1000.0f * (float) n / (float) sr);
-                const float fr[2] = { v, v };
-                lim.processSample (fr, 2, 480, 0.5f, g);
-                each();
-            }
-        };
-        feed (0, 3000, []{});
-        const float before = g[0];
-
-        lim.setDetectorHpf (20.0f);                    // the step under test
-        float maxDelta = 0.0f, prev = g[0];
-        feed (3000, 3000, [&]
-        {
-            maxDelta = juce::jmax (maxDelta, std::abs (g[0] - prev));
-            prev = g[0];
-        });
-        check (before > 0.95f,  "limSmooth/hpf: with the HPF above the content there is no limiting");
-        check (g[0] < 0.60f,    "limSmooth/hpf: the change ARRIVES (full detector level engages the limiter)");
-        check (maxDelta < 0.05f,
-               "limSmooth/hpf: an HPF step to the floor glides (unsmoothed = ~0.4 in one sample)");
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4110,7 +4240,7 @@ int main()
     testLimiterAutoReleaseIsTwoStage();
     testLimiterStyles();
     testLimiterTransientPreserve();
-    testLimiterDetectorHpf();
+    testLimiterDetectorIsUnfiltered();
     testOsLatencyMatrix();
     testBypassNullUnderOs();
     testOsTransparency();

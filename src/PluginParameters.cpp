@@ -252,7 +252,12 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
     floatParam (pid::limRelease, "Lim Release", logRange (1.0f, 1000.0f), 100.0f, msText, msFrom);
     boolParam  (pid::limAutoRelease, "Lim Auto Rel", true);
     choiceParam (pid::limStyle, "Style", { "Transparent", "Punchy", "Loud" }, 0);
-    floatParam (pid::stereoLink, "Stereo Link", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
+    // "Limiter Stereo Link" since 0.1.2 (a display-name rename, ID unchanged;
+    // PARAMETER_COMPATIBILITY_POLICY rule 2, snapshot re-frozen): with the
+    // ADR-0019 "Comp Stereo Link" beside it, a bare "Stereo Link" left the
+    // limiter's automation lane the ambiguous one of the pair. Both modules'
+    // EDITOR captions read "Stereo Link" — the panel says which stage.
+    floatParam (pid::stereoLink, "Limiter Stereo Link", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
     floatParam (pid::transientPreserve, "Transients", { 0.0f, 100.0f }, 50.0f, pctText, pctFrom);
     boolParam  (pid::truePeakMode, "True Peak", false, false);
 
