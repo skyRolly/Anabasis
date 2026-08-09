@@ -33,8 +33,9 @@ driving an adaptive chain of compression, clipping/saturation and true-peak limi
 *better*, not merely *louder*.
 
 It is a stereo audio *effect* (no MIDI): VST3 on all platforms, Audio Unit on macOS, plus a
-Standalone application. It outputs **stereo**, from a stereo or mono input — a mono source is
-duplicated to both channels before mastering (since 0.1.1).
+Standalone application. Three I/O layouts: **stereo→stereo**, **mono→stereo** (a mono source
+is duplicated to both channels before mastering; since 0.1.1) and **mono→mono** (the same
+processing on one channel — for dual-mono and multi-mono racks; since 0.1.2).
 
 ### Who it is for
 
@@ -98,8 +99,8 @@ toggle row, and the metering strip.
 
 1. Play the loudest section of your track.
 2. Raise **Loudness** until the gain-reduction history shows steady, musical work — watch
-   the **out LUFS** readout climb. (The graph well opens on the **spectrum**; click the
-   **GR** chip in its top-right corner to put the gain-reduction trace there — §3.4.)
+   the **out LUFS** readout climb. (The graph well opens on the **GR history** — the
+   GR|SPEC pill in its bottom-left corner toggles to the spectrum and back — §3.4.)
 3. Switch **COMP** (loudness-compensated monitoring) on. The level jump disappears; what
    you hear now is the *sound* of the processing at matched loudness. If it still sounds
    better, keep going; if it only sounded better because it was louder, you just found out.
@@ -177,25 +178,34 @@ detached parameters from the macros — clicking it returns everything to the ma
 ### 3.3 Advanced view
 
 Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMITER**,
-**EQ** — plus the utility and macro rows and the metering well. Each stage's controls
-(ranges are the registry's, shown on each control):
+**EQ** — plus the utility row and the metering well. (Until 0.1.2 a read-only mirror of the
+three macro knobs sat between them; it was display-only and has been removed — the macros
+live in the Simple view, and the accent detach dots on the zone knobs still show which
+controls Advanced edits have taken off the macro curves.) Each stage's controls (ranges are
+the registry's, shown on each control; inside a zone the captions drop the stage prefix —
+the automation lane keeps the full name, so "Ratio" here is "Comp Ratio" to your DAW):
 
 - **COMP** — the mastering glue compressor: Ratio (1.1–4:1), Threshold, Attack (5–100 ms),
-  Release (50–1000 ms) with **AUTO** (program-dependent two-stage release), Knee, RMS/Peak
-  detector, Mix (parallel compression), **Comp Stereo Link** (how much both channels share
-  one gain — full link keeps the image stable, lower lets each channel breathe on its own;
-  since 0.1.1), and its gain-reduction meter.
+  Release (50–1000 ms) with **AUTO** (program-dependent two-stage release), Knee (softens
+  the onset **above** the threshold — at or below it the compressor computes nothing, so
+  the default threshold of 0 dBFS means no reduction on any legal level), RMS/Peak
+  detector, Mix (parallel compression), **Stereo Link** ("Comp Stereo Link" in automation —
+  how much both channels share one gain; full link keeps the image stable, lower lets each
+  channel breathe on its own; since 0.1.1), and its gain-reduction meter — **two lanes
+  since 0.1.2, L above R**, which read identically at full link and diverge below it.
 - **CLIP / COLOUR** — the transient-absorbing clipper and the colour stage: Shape
   (hard ↔ soft, with a live transfer-curve display), Drive (level-compensated), Mix,
   **Colour** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Colour
   Tone, Colour Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
-- **LIMITER** — the true-peak lookahead limiter: Limiter Gain (the push into it), Lookahead
-  (0.5–10 ms), Release (1–1000 ms) with **AUTO**, **Style** (Transparent / Punchy / Loud),
-  Stereo Link, Transients (transient preservation), **TP** (true-peak mode — **off by
-  default**; on, detection moves to the oversampled rate so inter-sample peaks are caught
-  and the Ceiling becomes a dBTP limit), and its gain-reduction meter. The
-  shared **SC HPF** (20–300 Hz) keeps low-frequency energy from pumping the detectors of
-  both the compressor and the limiter.
+- **LIMITER** — the true-peak lookahead limiter: Gain ("Limiter Gain" in automation — the
+  push into it), Lookahead (0.5–10 ms), Release ("Lim Release") with **AUTO**, **Style**
+  (Transparent / Punchy / Loud), Stereo Link ("Limiter Stereo Link"), Transients (transient
+  preservation), **TP** (true-peak mode — **off by default**; on, detection moves to the
+  oversampled rate so inter-sample peaks are caught and the Ceiling becomes a dBTP limit),
+  and its two-lane L/R gain-reduction meter. The **SC HPF** (20–300 Hz) keeps low-frequency
+  energy from pumping the **compressor's** detector; since 0.1.2 the limiter's detector is
+  deliberately unfiltered — its job is the Ceiling, so it always sees the true peak, and a
+  bass-heavy over is limited rather than left to the safety clamp.
 - **EQ** — Tilt (±3 dB around ~700 Hz), low shelf, high shelf, two bells (Freq/Gain/Q),
   and the **Pre / Post** position switch (before the compressor, or after the limiter —
   either way the ceiling still holds), with a live response curve.
@@ -223,10 +233,14 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   - **GR history** — a scrolling trace of recent gain reduction, the fastest way to see
     how hard and how often the limiter is working.
 
-  A fresh instance opens on the **spectrum**. The small chip in the graph's top-right corner
-  names the view you switch **to** — click **GR** on the spectrum to see the gain-reduction
-  history, click **SPEC** on the history to return. The choice is session state, saved with
-  your project, so it reopens on whichever you left it.
+  A fresh instance opens on the **GR history** (since 0.1.2). The GR|SPEC pill in the
+  graph's bottom-left corner shows both views with the active one lit; clicking the pill —
+  anywhere on it — toggles to the other view. The choice is session state, saved with your
+  project, so it reopens on whichever you left it. The history draws at a fixed scale: a
+  fresh instance grows its trace from the right edge, and the region to the left stays
+  empty until twenty seconds of audio have actually been measured — nothing is estimated
+  or stretched. Pausing and resuming continues the timeline; it restarts only when the
+  sample rate or block size changes.
 
 **Click the STATISTICS panel to reset** the integrated measurement, the loudness range and
 both peak holds — do it after changing the section you are judging. The rolling windows (M,
@@ -424,8 +438,9 @@ Work through these in order:
 3. **Right place / permissions?** Check the install paths — and on Linux/macOS the
    `chmod` steps — in the [Installation guide](INSTALLATION.md). If you copied by hand,
    make sure you moved the *whole* `Anabasis.vst3` **folder**.
-4. **Right kind of track?** The output is stereo — a slot whose *output* is mono will not
-   offer it (a mono *source* into a stereo slot is fine).
+4. **Right kind of track?** Stereo→stereo, mono→stereo and mono→mono are all offered
+   (since 0.1.2); the one shape refused is a stereo source into a mono output — there is
+   no downmix rule, so such a slot will not offer the plugin.
 5. **Blocklisted from an earlier failed scan?** Clear the host's plug-in cache/blocklist
    entry and scan again — common after a macOS quarantine problem: the first scan fails,
    the host remembers, and never retries on its own.

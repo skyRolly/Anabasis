@@ -326,7 +326,6 @@ int main()
         lim.setAutoRelease (true);
         lim.setStereoLink (1.0f);
         lim.setTransientPreserve (0.5f);
-        lim.setDetectorHpf (60.0f);
         lim.setTruePeakMode (true);
         stageRow ("Limiter + TP detector (W=96)", [&] (float* f, int)
         {

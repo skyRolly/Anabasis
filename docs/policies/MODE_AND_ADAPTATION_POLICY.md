@@ -169,7 +169,7 @@ preset bank, recorded here rather than half-built.
 spectral tilt, transient density, silence-gated at ~−70 dBFS; the P4 trim mapping consumes
 **transient density and tilt** — crest is extracted and published for the UI, reserved for a
 future mapping) and the bounded trim vector
-(release ±1 octave, stereo link ±0.2, scHpf 0…+30 Hz, dynTilt 0…+0.5 dB), slewed at ~2 s with a
+(release ±1 octave, stereo link ±0.2, scHpf 0…+30 Hz — reaching the COMP's detector only since 0.1.2/ADR-0023, the limiter's being unfiltered — dynTilt 0…+0.5 dB), slewed at ~2 s with a
 hysteresis deadband, applied to the per-block effective settings inside `AnabasisEngine` — never
 parameter writes, never lookahead or the OS factor (inv 4 holds structurally: the class emits
 only the four values). **All four are audible in the factory state** (since ADR-0013,

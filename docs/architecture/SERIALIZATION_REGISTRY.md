@@ -200,6 +200,12 @@ placement was rejected for the trims, not for this (ADR-0007 §Options D).
 > hides the GR trace that used to sit beside it. Display-only, one click to change, and free
 > while the pre-ship window is open.
 >
+> **0.1.2 flips the DEFAULT to `false`** — GR is the graph well's default view (owner directive
+> item 4, [**ADR-0023**](design-decisions/ADR-0023-012-field-fix-contracts.md)). A default-only
+> change under this ledger's rules: the type and the ADR-0016 semantics are untouched, a stored
+> value still wins over the default on every load, so only a fresh instance (or a blob without
+> the field) reads differently — it opens on the GR history instead of the spectrum.
+>
 > **Gate CLEARED 2026-08-06**, separately from ADR-0015's: the owner's confirmation names the
 > semantic change, the decision to keep it a pre-1.0 migration change, and the acceptance that
 > stored values load with no migration path.

@@ -24,9 +24,12 @@
 //    (20–300 Hz, RBJ Butterworth, detector-side ONLY — the audio path never
 //    passes through it). RMS mode squares through a fixed 10 ms window;
 //    Peak mode uses the magnitude directly.
-//  - Static curve: soft knee of total width W dB centred on the threshold
-//    (quadratic interpolation inside the knee; W below a millidB is treated
-//    as hard to keep the 1/2W term finite).
+//  - Static curve: ZERO at or below the threshold; a soft knee of width W dB
+//    ABOVE it (quadratic over [T, T+W], then the ratio line; W below a
+//    millidB is treated as hard to keep the 1/2W term finite). The knee was
+//    centred on T until 0.1.2 (ADR-0023): its lower half computed real gain
+//    from T − W/2 up, so the 0 dBFS default threshold drew reduction on
+//    legal material above −3 dBFS.
 //  - Release: manual = one pole at `compRelease`. Auto = TWO parallel poles
 //    (fast ≈ 80 ms, slow ≈ 900 ms), averaged in dB — the "two-pole
 //    program-dependent release" of DESIGN §2.3: a short peak recovers mostly
@@ -37,8 +40,9 @@
 //  - Mix: parallel blend with exact endpoints — mix == 1 applies the wet
 //    branch alone, and a unity-gain wet branch returns the input SAMPLE
 //    UNTOUCHED (gr == 0 short-circuits), which is what keeps the
-//    all-defaults null bit-exact (threshold 0 dBFS: nothing below the knee
-//    bottom ever computes a gain).
+//    all-defaults null bit-exact (threshold 0 dBFS: nothing AT or below the
+//    threshold ever computes a gain — since 0.1.2 for any legal level, not
+//    only below the old centred knee's −3 dBFS bottom).
 //
 //  Runs at base rate (DESIGN §2.3: the gain signal is band-limited by the
 //  5 ms minimum attack; the P2 aliasing measurement revisits this and moving
@@ -165,6 +169,17 @@ public:
                 hpfZ2[ch] = hb2 * x - ha2 * y;
             }
             det[ch] = std::abs (y);
+            // The sidechain HPF may only DEAFEN the detector, never sharpen
+            // it (0.1.2, ADR-0023): a 2nd-order high-pass is unity-magnitude
+            // only in steady state — its transient response on an LF edge
+            // overshoots the input by up to ~6 dB (b0·2A on a −A→+A step), so
+            // an unclamped filtered magnitude drew gain reduction on material
+            // whose samples never crossed the curve's own engagement level.
+            // The filter's purpose is to remove bass from the detection, i.e.
+            // to LOWER it; any instant where the filtered magnitude exceeds
+            // the raw one is filter ringing, not programme information.
+            if (hpfOn)
+                det[ch] = juce::jmin (det[ch], std::abs (x));
             maxDet  = juce::jmax (maxDet, det[ch]);
         }
 
@@ -184,18 +199,26 @@ public:
             }
 
             // -- static curve in dB -----------------------------------------
+            // ZERO at or below the threshold — the knee softens the onset
+            // ABOVE it (over [T, T+W]), it does not reach below (0.1.2 owner
+            // directive, ADR-0023). The previous curve centred the knee on T,
+            // so its lower half computed real gain from T − W/2 up: at the
+            // 0 dBFS default threshold with the 6 dB default knee, material
+            // whose detector level sat above −3 dBFS drew reduction the
+            // "threshold 0 = no compression" definition says it must not.
+            // C1-continuous: the quadratic's slope is 0 at T and (1/R − 1) at
+            // T + W, where the full-ratio line (offset by W/2) takes over; at
+            // W → 0 the curve degenerates to the hard-knee ratio line at T
+            // exactly, which is what keeps the hard-knee tests byte-stable.
             const float levelDb = 20.0f * std::log10 (juce::jmax (level, 1.0e-9f));
             const float d       = levelDb - T;
             float targetGrDb;
-            if (2.0f * d <= -W)
+            if (d <= 0.0f)
                 targetGrDb = 0.0f;
-            else if (2.0f * d >= W || W < 1.0e-3f)
-                targetGrDb = d * (invR - 1.0f);
+            else if (d >= W || W < 1.0e-3f)
+                targetGrDb = (d - W * 0.5f) * (invR - 1.0f);
             else
-            {
-                const float t = d + W * 0.5f;
-                targetGrDb = (invR - 1.0f) * t * t / (2.0f * W);
-            }
+                targetGrDb = (invR - 1.0f) * d * d / (2.0f * W);
 
             // -- ballistics on the GR signal (dB domain) --------------------
             auto step = [this] (float& state, float target, float aRel) noexcept
@@ -242,9 +265,17 @@ public:
     {
         float g = 0.0f;
         for (int ch = 0; ch < kMaxChannels; ++ch)
-            g = juce::jmin (g, autoRelease ? 0.5f * (grFastDb[ch] + grSlowDb[ch])
-                                           : grFastDb[ch]);
+            g = juce::jmin (g, currentGainReductionDb (ch));
         return g;
+    }
+
+    // The single-channel figure (0.1.2 item 12): the per-lane meter tap the
+    // combined getter above folds. Meaningful per channel only below 100 %
+    // link — at full link both envelopes are identical by construction.
+    float currentGainReductionDb (int ch) const noexcept
+    {
+        ch &= 1;
+        return autoRelease ? 0.5f * (grFastDb[ch] + grSlowDb[ch]) : grFastDb[ch];
     }
 
 private:

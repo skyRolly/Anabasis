@@ -267,6 +267,18 @@ public:
     float lastCompGrDb() const noexcept
     { return compGrDb.load (std::memory_order_relaxed); }
 
+    // PER-CHANNEL per-stage GR (0.1.2 item 12, ADR-0023): the panel meters
+    // show L and R separately, which is also the KI-009 field disambiguator —
+    // one channel silent with its GR lane pinned deep says "per-channel gain
+    // collapse (link < 100 %)", one channel silent at unity GR says "the kill
+    // is not the dynamics stages". Combined figures above are unchanged
+    // (pubGrDb, the GR history ring and the §2.7 predict floor still read the
+    // deepest channel). Same relaxed-atomic meter row as lastCompGrDb.
+    float lastCompGrDbCh (int ch) const noexcept
+    { return compGrDbCh[ch & 1].load (std::memory_order_relaxed); }
+    float lastLimGrDbCh (int ch) const noexcept
+    { return limGrDbCh[ch & 1].load (std::memory_order_relaxed); }
+
     // -- §2.9 output metering: the RENDER tap ---------------------------------
     // Fed per sample from the bypass-mixed programme path BEFORE the two
     // monitor-only stages (§2.7 delta substitution and loudness-comp gain).
@@ -356,7 +368,12 @@ private:
     std::atomic<int> engagedWindow { 96 };
     std::atomic<float> grMinLinear { 1.0f };
     std::atomic<float> compGrDb { 0.0f };
+    // Per-channel copies of the two per-stage figures (0.1.2 item 12) —
+    // published beside the combined ones, never instead of them.
+    std::atomic<float> compGrDbCh[2] { 0.0f, 0.0f };
+    std::atomic<float> limGrDbCh[2]  { 0.0f, 0.0f };
     float grMinThisCall = 1.0f;
+    float grMinThisCallCh[2] = { 1.0f, 1.0f };
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;

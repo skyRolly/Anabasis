@@ -1118,6 +1118,33 @@ static void testMeterPublication()
            "meters: a zero-length block pushes no history entry");
     check (juce::exactlyEqual (proc.meterDbTpMax(), tpBefore),
            "meters: a zero-length block re-publishes nothing");
+
+    // The per-channel per-stage lanes (0.1.2 item 12): quiet tone → both
+    // stages at zero on both channels; then +18 dB of limiter push → real
+    // reduction on BOTH lanes, and at the default 100 % link the two lanes
+    // agree exactly (one shared detector level, identical envelopes).
+    check (juce::exactlyEqual (proc.meterLimGrDbCh (0), 0.0f)
+               && juce::exactlyEqual (proc.meterCompGrDbCh (0), 0.0f),
+           "meters: the per-channel GR lanes read zero on a -20 dBFS tone");
+    {
+        auto* par = proc.apvts.getParameter (pid::limGain);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (18.0f));
+        for (int b = 0; b < 30; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+        check (proc.meterLimGrDbCh (0) < -3.0f && proc.meterLimGrDbCh (1) < -3.0f,
+               "meters: +18 dB of push shows real reduction on both limiter lanes");
+        check (std::abs (proc.meterLimGrDbCh (0) - proc.meterLimGrDbCh (1)) < 1.0e-4f,
+               "meters: at 100% link the two lanes agree");
+    }
 }
 
 // The ADR-0020 Waveform-Statistics rows, driven through the REAL wrapper on
@@ -3110,7 +3137,17 @@ static void testGrRingResetEpoch()
     check (ring.available() == 8, "grEpoch: (premise) entries pushed");
     check (ring.resetEpoch() == e0, "grEpoch: pushing does not move the epoch");
 
-    proc.prepareToPlay (48000.0, 512);                 // reaches GrHistoryBuffer::reset()
+    // Same rate and block size: NO reset (0.1.2 item 6) — this is the
+    // pause/resume path, where hosts re-prepare on transport start and the
+    // scrolling timeline must continue rather than restart.
+    proc.prepareToPlay (48000.0, 512);
+    check (ring.resetEpoch() == e0 && ring.available() == 8,
+           "grEpoch: a re-prepare at the same rate/block keeps the history (pause/resume)");
+
+    // A CHANGED configuration is what the clear exists for: the view maps the
+    // window through the prepared rate/size, so stale entries would draw at
+    // the wrong time base.
+    proc.prepareToPlay (44100.0, 512);                 // reaches GrHistoryBuffer::reset()
     check (ring.resetEpoch() == e0 + 2, "grEpoch: one reset moves the epoch by exactly 2");
     check ((ring.resetEpoch() & 1u) == 0u, "grEpoch: and lands even");
     check (ring.available() == 0,
@@ -4766,59 +4803,65 @@ static void testTheGraphWellViewsOnlyClaimTheirModeChips()
                                  juce::Time::getCurrentTime(), 1, false);
     };
 
-    // The 0.1.1 switch is a two-segment SPEC|GR pill shared by both views
-    // (`abgui::graph_switch`): a press selects the SIDE OF THE DIVIDER it
-    // lands on, so pressing the active segment is a no-op and pressing the
-    // other one switches. Probe points, derived from the one geometry both
-    // views key on: W-10 sits in the GR (right) half, W-60 in the SPEC (left)
-    // half of the 78 px pill at inset 6.
+    // The switch is a two-segment GR|SPEC pill shared by both views
+    // (`abgui::graph_switch`) — BOTTOM-LEFT and a WHOLE-PILL TOGGLE since
+    // 0.1.2 (items 4+5): any press inside the pill switches the well to the
+    // other mode, so no press on it is ever a silent no-op (the 0.1.1
+    // side-of-divider semantics made "clicking the active SPEC segment" do
+    // nothing, the owner-reported stuck control). Probe points, derived from
+    // the one geometry both views key on: the 78×18 pill sits at inset (6, 4)
+    // off the bottom-left of a 300×120 view — x 6..84, y 98..116 — so (20,107)
+    // lands in the GR (left) half, (70,107) in the SPEC (right) half, and the
+    // OLD top-right corner (W−10, 10) must no longer be claimed.
 
-    // Spectrum view: GR segment switches away, SPEC segment is a no-op.
+    // Spectrum view: any pill press switches to GR; the trace stays inert.
     {
         SpectrumView view (proc);
         view.setBounds (0, 0, 300, 120);
 
-        check (view.hitTest (view.getWidth() - 10, 10),
-               "spectrumClicks: (premise) the switch corner is hit-tested");
-        check (! view.hitTest (10, 60),
+        check (view.hitTest (20, 107) && view.hitTest (70, 107),
+               "spectrumClicks: (premise) both pill segments are hit-tested at the bottom-left");
+        check (! view.hitTest (view.getWidth() - 10, 10),
+               "spectrumClicks: the old top-right corner is no longer claimed");
+        check (! view.hitTest (150, 60),
                "spectrumClicks: a click over the trace is not claimed by the overlay");
-        check (! view.hitTest (view.getWidth() - 10, 60),
-               "spectrumClicks: …nor one below the corner, in the same column");
 
         ist.setProperty (iid::spectrumOn, true, nullptr);
-        view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
+        view.mouseDown (eventFor (view, { 150.0f, 60.0f }));
         check ((bool) ist.getProperty (iid::spectrumOn, false),
                "spectrumClicks: a press over the trace does not switch the mode");
-        view.mouseDown (eventFor (view, { (float) view.getWidth() - 60.0f, 10.0f }));
-        check ((bool) ist.getProperty (iid::spectrumOn, false),
-               "spectrumClicks: pressing the active SPEC segment is a no-op");
-        view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
+        view.mouseDown (eventFor (view, { 70.0f, 107.0f }));
         check (! (bool) ist.getProperty (iid::spectrumOn, true),
-               "spectrumClicks: pressing the GR segment switches the well to GR");
+               "spectrumClicks: pressing the pill on the active SPEC segment toggles to GR");
+        ist.setProperty (iid::spectrumOn, true, nullptr);
+        view.mouseDown (eventFor (view, { 20.0f, 107.0f }));
+        check (! (bool) ist.getProperty (iid::spectrumOn, true),
+               "spectrumClicks: …and pressing its GR segment switches to GR too");
     }
 
-    // GR view: SPEC segment switches back, GR segment is a no-op.
+    // GR view: any pill press switches to the spectrum; the trace stays inert.
     {
         GrHistoryView view (proc);
         view.setBounds (0, 0, 300, 120);
 
-        check (view.hitTest (view.getWidth() - 10, 10),
-               "grChip: (premise) the switch corner is hit-tested");
-        check (! view.hitTest (10, 60),
+        check (view.hitTest (20, 107) && view.hitTest (70, 107),
+               "grChip: (premise) both pill segments are hit-tested at the bottom-left");
+        check (! view.hitTest (view.getWidth() - 10, 10),
+               "grChip: the old top-right corner is no longer claimed");
+        check (! view.hitTest (150, 60),
                "grChip: a click over the history trace is not claimed");
-        check (! view.hitTest (view.getWidth() - 10, 60),
-               "grChip: …nor one below the corner, in the same column");
 
         ist.setProperty (iid::spectrumOn, false, nullptr);
-        view.mouseDown (eventFor (view, { 10.0f, 60.0f }));
+        view.mouseDown (eventFor (view, { 150.0f, 60.0f }));
         check (! (bool) ist.getProperty (iid::spectrumOn, true),
                "grChip: a press over the trace does not switch the mode");
-        view.mouseDown (eventFor (view, { (float) view.getWidth() - 10.0f, 10.0f }));
-        check (! (bool) ist.getProperty (iid::spectrumOn, true),
-               "grChip: pressing the active GR segment is a no-op");
-        view.mouseDown (eventFor (view, { (float) view.getWidth() - 60.0f, 10.0f }));
+        view.mouseDown (eventFor (view, { 20.0f, 107.0f }));
         check ((bool) ist.getProperty (iid::spectrumOn, false),
-               "grChip: pressing the SPEC segment switches the well back to the spectrum");
+               "grChip: pressing the pill on the active GR segment toggles to the spectrum");
+        ist.setProperty (iid::spectrumOn, false, nullptr);
+        view.mouseDown (eventFor (view, { 70.0f, 107.0f }));
+        check ((bool) ist.getProperty (iid::spectrumOn, false),
+               "grChip: …and pressing its SPEC segment switches to the spectrum too");
     }
 }
 
@@ -4967,14 +5010,21 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
     check (GrHistoryView::windowEntries (0.0, 512) == GrHistoryView::windowEntries (48000.0, 512),
            "grWindow: an unprepared processor reads as 48 kHz, not as a divide by zero");
 
-    // THE DECIMATION GEOMETRY, and specifically that it FILLS THE PANEL. The
-    // 0.1.1 shimmer fix gave buckets a fixed absolute identity but drew one
-    // per pixel column anchored at the newest — and `stride` rounds up, so
-    // `cols` buckets span more entries than the window holds and the surplus
-    // ones, being older than the window, drew nothing: a permanent blank strip
-    // down the left, ~31 % of the Simple well at 48 kHz/512 and ~48 % at 1024.
-    // The columns are stretched over the width now, so the trace runs edge to
-    // edge whatever the rate/block/width combination.
+    // THE DECIMATION GEOMETRY — FIXED SCALE, RIGHT-ANCHORED (0.1.2 item 3).
+    // This section previously pinned the 0.1.1 stretch-to-fill, which spread
+    // however many buckets existed across the whole width — so a filling ring
+    // rendered zoomed and re-spaced as it grew, the startup behaviour the
+    // 0.1.2 directive removes. What is pinned now:
+    //   • the pitch between adjacent buckets is a constant of (want, cols),
+    //     identical while the ring fills and after it has wrapped;
+    //   • the newest bucket sits on the right edge in every fill state;
+    //   • a SETTLED window still spans the panel to within one truncated
+    //     bucket of the left edge (the 0.1.1 blank-strip fix's property,
+    //     carried over through `kFull` being derived from the same
+    //     want/stride pair);
+    //   • a filling ring occupies only the right portion at that same pitch —
+    //     the left remainder is the unmeasured region `paintHistory` draws as
+    //     ZERO data (level 0, GR 0), never as a stretched trace.
     {
         struct Case { double sr; int bs; int cols; const char* what; };
         const Case cases[] = {
@@ -4991,24 +5041,25 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             const auto b    = GrHistoryView::buckets (head, want, c.cols);
             const auto say  = [&c] (const char* what)
             { return juce::String ("grBuckets: ") + what + " — " + c.what; };
+            const float pitch = ((float) c.cols - 1.0f) / (float) (b.kFull - 1);
 
             const auto m1 = say ("2..cols buckets");
-            check (b.count >= 2 && b.count <= (int64_t) c.cols, m1.toRawUTF8());
-            // The panel is FULL: first bucket on the left edge, last on the
-            // right. This is the assertion the blank strip failed.
-            const auto m2 = say ("the trace spans the whole width");
-            check (std::abs (GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols)) < 1.0e-3f
-                   && std::abs (GrHistoryView::bucketX (b, b.kHead, 0.0f, (float) c.cols)
-                                - (float) (c.cols - 1)) < 1.0e-3f,
+            check (b.count >= 2 && b.count <= (int64_t) c.cols && b.kFull <= (int64_t) c.cols,
+                   m1.toRawUTF8());
+            // Settled: newest on the right edge, oldest within one pitch of
+            // the left edge (exactly on it when the stride divides the window;
+            // one truncated bucket short at the other boundary phase).
+            const auto m2 = say ("a settled window spans the panel at the fixed pitch");
+            check (std::abs (GrHistoryView::bucketX (b, b.kHead, 0.0f, (float) c.cols)
+                             - (float) (c.cols - 1)) < 1.0e-3f
+                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) > -1.0e-3f
+                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) < pitch + 1.0e-3f,
                    m2.toRawUTF8());
-            // …and it spans it with the WINDOW's data, not by showing more
-            // time: widening the window to cols·stride would have filled the
-            // panel too, at 38.6 s instead of 20 (DESIGN §2.9 allows 10–30).
-            // The drawn entries are [kFirst·stride, head), which must be one
-            // window deep to within the bucket the boundary rounds off.
+            // …carrying one window of entries to within the truncation the
+            // fixed pitch imposes (never MORE time than the window).
             const auto drawn = head - b.kFirst * b.stride;
             const auto m3 = say ("…carrying one window of entries, no more");
-            check (drawn <= want && drawn >= want - b.stride, m3.toRawUTF8());
+            check (drawn <= want && drawn >= want - 2 * b.stride, m3.toRawUTF8());
             // Every drawn bucket is non-empty: the oldest lies wholly inside
             // the window, and the newest holds entry `head - 1` by keying on
             // `head - 1` rather than `head` (which left it empty whenever the
@@ -5018,29 +5069,52 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             const auto m5 = say ("…and the newest holds the newest entry");
             check (b.kHead * b.stride <= head - 1 && (b.kHead + 1) * b.stride > head - 1,
                    m5.toRawUTF8());
+
+            // FIXED SCALE across fill states — the item-3 property itself. A
+            // quarter-full ring derives the same stride, the same kFull and
+            // therefore the same pitch, keeps its newest bucket on the right
+            // edge, and does NOT reach back to the left edge: the old stretch
+            // put kFirst at x = 0 in exactly this state, which is the
+            // behaviour this assertion exists to keep out.
+            const auto q = GrHistoryView::buckets (juce::jmax<int64_t> (2, want / 4),
+                                                   want, c.cols);
+            const auto m6 = say ("a quarter-full ring draws at the settled pitch, right-anchored");
+            check (q.stride == b.stride && q.kFull == b.kFull
+                   && std::abs (GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
+                                - (float) (c.cols - 1)) < 1.0e-3f
+                   && std::abs ((GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
+                                 - GrHistoryView::bucketX (q, q.kHead - 1, 0.0f, (float) c.cols))
+                                - pitch) < 1.0e-3f,
+                   m6.toRawUTF8());
+            const auto m7 = say ("…and leaves the unmeasured left region empty, not stretched");
+            check (GrHistoryView::bucketX (q, q.kFirst, 0.0f, (float) c.cols)
+                       > 0.5f * (float) c.cols,
+                   m7.toRawUTF8());
         }
 
-        // A ring with a handful of entries still spans the panel rather than
-        // drawing a stub in one corner — the pre-0.1.1 behaviour while the
-        // history fills. `head` here is far below one window.
+        // A ring with a handful of entries is a short stub at the RIGHT edge
+        // at the same fixed pitch — the zero region covers the rest of the
+        // panel. (Under the stretch this drew from the left edge across the
+        // full width.)
         const auto want  = GrHistoryView::windowEntries (48000.0, 512);
         const auto small = GrHistoryView::buckets (12, want, 904);
         check (small.kFirst == 0 && small.count == 11 / small.stride + 1,
                "grBuckets: a barely-filled ring starts at bucket 0 and draws only what it has");
-        check (std::abs (GrHistoryView::bucketX (small, small.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
-               "grBuckets: …and still reaches the right edge, so it fills as it grows");
+        check (std::abs (GrHistoryView::bucketX (small, small.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f
+                   && GrHistoryView::bucketX (small, small.kFirst, 0.0f, 904.0f) > 890.0f,
+               "grBuckets: …as a stub on the right edge, at the fixed pitch");
 
-        // The DEGENERATE case, which the draw loop has to special-case: ONE
-        // bucket, reachable for the first few blocks after every reset. There
-        // is no second vertex to stretch to, so `bucketX` returns the left edge
-        // for the only bucket there is — and a one-point polyline strokes
-        // nothing, which is why `paintHistory` emits that single reading at
-        // BOTH edges instead of leaving the panel blank.
+        // The DEGENERATE case: ONE bucket, reachable for the first few blocks
+        // after every reset. Right-anchoring puts it on the right edge (the
+        // stretch draw put it at the LEFT edge and needed a both-edges special
+        // case in the paint); the zero region to its left is what the paint
+        // now draws unconditionally whenever the first bucket is off the left
+        // edge, so no special case remains.
         const auto one = GrHistoryView::buckets (1, want, 904);
         check (one.count == 1 && one.kFirst == one.kHead,
                "grBuckets: a just-reset ring yields exactly one bucket");
-        check (juce::exactlyEqual (GrHistoryView::bucketX (one, one.kHead, 0.0f, 904.0f), 0.0f),
-               "grBuckets: …whose x degenerates to the left edge, so the draw must close it itself");
+        check (std::abs (GrHistoryView::bucketX (one, one.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
+               "grBuckets: …anchored on the right edge, zero region to its left");
     }
 }
 
@@ -5663,6 +5737,124 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
             << (float) rmsL << " R=" << (float) rmsR << ")";
         check (rmsL > 0.05 && rmsR > 0.05, msg.toRawUTF8());
     }
+
+    // mono → mono (0.1.2 item 13, ADR-0023): the same plugin at nCh = 1 — the
+    // layout dual-mono/multi-mono host racks need. One channel in, one out,
+    // the engine prepared mono; the programme must come through.
+    {
+        AnabasisAudioProcessor proc;
+        const juce::AudioProcessor::BusesLayout monoMono { { juce::AudioChannelSet::mono() },
+                                                           { juce::AudioChannelSet::mono() } };
+        check (proc.checkBusesLayoutSupported (monoMono),
+               "stereoWrapper (mono->mono): the layout is accepted");
+        check (! proc.checkBusesLayoutSupported (
+                   juce::AudioProcessor::BusesLayout { { juce::AudioChannelSet::stereo() },
+                                                       { juce::AudioChannelSet::mono() } }),
+               "stereoWrapper (mono->mono): stereo->mono stays refused (no downmix rule)");
+        check (proc.setBusesLayout (monoMono),
+               "stereoWrapper (mono->mono): the layout applies");
+        proc.prepareToPlay (48000.0, 512);
+
+        juce::AudioBuffer<float> buf (1, 512);
+        juce::MidiBuffer midi;
+        double sumSq = 0.0;
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) (b * 512 + n) / 48000.0f));
+            proc.processBlock (buf, midi);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n)
+                    sumSq += (double) buf.getSample (0, n) * buf.getSample (0, n);
+        }
+        const double rms = std::sqrt (sumSq / (30.0 * 512.0));
+        juce::String msg;
+        msg << "stereoWrapper (mono->mono): the one channel masters the programme (rms="
+            << (float) rms << ")";
+        check (rms > 0.05, msg.toRawUTF8());
+    }
+
+    // The DIAGNOSTIC configurations of the KI-009 0.1.2 field report — the
+    // modes the owner had engaged when observing the asymmetry, none of which
+    // the battery covered: Delta (the observation instrument itself), the
+    // loudness-comp monitor, an unlinked limiter, dither with shaping, true
+    // peak, and a non-48k rate. Each feeds per-channel-distinct sines and
+    // asserts BOTH channels alive; Delta additionally pins the channels
+    // within 6 dB of each other, since "one delta channel loud, the other
+    // quiet" was the report's fingerprint.
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        // Drive the limiter hard so the difference signal EXISTS (+18 dB push
+        // into the ceiling), then listen to Delta.
+        auto set = [&proc] (const char* id, float denorm)
+        {
+            auto* par = proc.apvts.getParameter (id);
+            par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+        };
+        set (pid::limGain, 18.0f);
+        set (pid::deltaMonitor, 1.0f);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        double sumSq[2] = { 0.0, 0.0 };
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const int t = b * 512 + n;
+                buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 220.0f * (float) t / 48000.0f));
+                buf.setSample (1, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                       * 330.0f * (float) t / 48000.0f));
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n)
+                {
+                    sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                    sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                }
+        }
+        const double rmsL = std::sqrt (sumSq[0] / (30.0 * 512.0));
+        const double rmsR = std::sqrt (sumSq[1] / (30.0 * 512.0));
+        juce::String msg;
+        msg << "stereoWrapper (delta engaged): both delta channels carry the difference (L="
+            << (float) rmsL << " R=" << (float) rmsR << ")";
+        check (rmsL > 0.01 && rmsR > 0.01, msg.toRawUTF8());
+        msg.clear();
+        msg << "stereoWrapper (delta engaged): the delta channels sit within 6 dB of each other";
+        check (rmsL < rmsR * 2.0 && rmsR < rmsL * 2.0, msg.toRawUTF8());
+    }
+    runWith ("loudness comp monitor on", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        auto* par = p.apvts.getParameter (pid::loudnessComp);
+        par->setValueNotifyingHost (1.0f);
+        return nullptr;
+    });
+    runWith ("limiter link 0%", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        p.apvts.getParameter (pid::stereoLink)->setValueNotifyingHost (0.0f);
+        return nullptr;
+    });
+    runWith ("dither 16-bit shaped", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        auto* d = p.apvts.getParameter (pid::dither);
+        d->setValueNotifyingHost (d->getNormalisableRange().convertTo0to1 (1.0f));
+        p.apvts.getParameter (pid::ditherShaping)->setValueNotifyingHost (1.0f);
+        return nullptr;
+    });
+    runWith ("true peak on", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        p.apvts.getParameter (pid::truePeakMode)->setValueNotifyingHost (1.0f);
+        return nullptr;
+    });
+    runWith ("44.1 kHz", [] (AnabasisAudioProcessor& p) -> std::shared_ptr<void>
+    {
+        p.prepareToPlay (44100.0, 512);      // the sines shift ~8 %; still programme
+        return nullptr;
+    });
 }
 
 int main (int argc, char** argv)

@@ -49,7 +49,7 @@ view ∪ {freeze, advancedMode}.
 | `loudnessComp` | Loudness Comp | 0 … 1 | 0 | 2 | yes | view |
 | `deltaMonitor` | Delta | 0 … 1 | 0 | 2 | yes | view |
 | `inputGain` | Input Gain | -12 … 24 | 0 | cont. | yes | — |
-| `scHpfFreq` | SC HPF | 20 … 300 | 20 | cont. | yes | — |
+| `scHpfFreq` | SC HPF ²³ | 20 … 300 | 20 | cont. | yes | — |
 | `compRatio` | Comp Ratio | 1.1 … 4 | 1.5 | cont. | yes | — |
 | `compThreshold` | Comp Threshold | -40 … 0 | 0 | cont. | yes | — |
 | `compAttack` | Comp Attack | 5 … 100 | 30 | cont. | yes | — |
@@ -72,7 +72,7 @@ view ∪ {freeze, advancedMode}.
 | `limRelease` | Lim Release | 1 … 1000 | 100 | cont. | yes | — |
 | `limAutoRelease` | Lim Auto Rel | 0 … 1 | 1 | 2 | yes | — |
 | `limStyle` | Style | 0 … 2 | 0 | 3 | yes | — |
-| `stereoLink` | Stereo Link | 0 … 100 | 100 | cont. | yes | — |
+| `stereoLink` | Limiter Stereo Link ²³ | 0 … 100 | 100 | cont. | yes | — |
 | `transientPreserve` | Transients | 0 … 100 | 50 | cont. | yes | — |
 | `truePeakMode` | True Peak | 0 … 1 | 0 ¹⁵ | 2 | **no** | — |
 | `eqTilt` | Tilt | -3 … 3 | 0 | cont. | yes | — |
@@ -103,11 +103,23 @@ prints `dB` and switches to `dBTP` only while the mode is engaged —
 range · default · steps · automatable), and both spellings parse back identically, so it is
 display-only.
 
+²³ **Amended by [ADR-0023](design-decisions/ADR-0023-012-field-fix-contracts.md)** (2026-08-09,
+owner 0.1.2 directive; gate cleared in the ADR's Status banner) — two changes, neither touching
+an ID, range or default. `stereoLink`'s display NAME becomes **"Limiter Stereo Link"** (rule 2:
+snapshot re-frozen, `Changed` changelog entry): beside ADR-0019's "Comp Stereo Link" a bare
+"Stereo Link" was the ambiguous automation lane of the pair; the editor caption reads
+"Stereo Link" in both modules — the panel says which stage. `scHpfFreq`'s SCOPE narrows to the
+**comp's detector only**: the limiter's detector is unfiltered since 0.1.2 (its threshold is the
+Ceiling, so its detector must track the actual peak — the shared filter both under-read bass
+overs into the clamp and over-read LF transients into false reduction), and the comp's filtered
+magnitude is clamped to the raw one. The §5.4 scHpf trim follows the parameter's scope.
+
 ¹⁹ **Added by [ADR-0019](design-decisions/ADR-0019-comp-stereo-link.md)** (2026-08-06, owner
 0.1.1 directive item 12) — the 50th row, the first parameter ADDED since the surface froze at 49.
 The comp's own stereo link: the limiter's blend applied at the comp detector
 (linked = link·max + (1−link)·own, before the RMS integrator), named "Comp Stereo Link" so the
-two automation lanes cannot be confused with the limiter's "Stereo Link". Default 100 % IS the
+two automation lanes cannot be confused with the limiter's (which 0.1.2 renamed to
+"Limiter Stereo Link" for the same reason from the other side — footnote ²³). Default 100 % IS the
 fully linked single-gain glue the stage always had, so the addition is backwards-inert — an old
 session or preset simply loads the default (§4.4 missing-field rule). The snapshot fixture was
 re-frozen with the row; `PARAMETER_COMPATIBILITY_POLICY` rule 1 freezes the new ID from here on.

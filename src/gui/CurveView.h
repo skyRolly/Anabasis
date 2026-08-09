@@ -61,32 +61,58 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CurveView)
 };
 
-// A one-bar GR meter for a panel well (COMP / LIMITER), fed by the editor's
-// timer from the per-stage published atomics.
+// A per-channel GR meter for a panel well (COMP / LIMITER), fed by the
+// editor's timer from the per-stage published atomics. TWO LANES since 0.1.2
+// (item 12): one well split horizontally, L above R — the convention every
+// stacked channel meter uses — same right-anchored fill and 24 dB span per
+// lane. Below 100 % stereo link the lanes diverge, which is both the feature
+// and the KI-009 field disambiguator (a channel silent with its lane pinned
+// deep says "per-channel gain collapse"; silent at zero says "not the
+// dynamics stages"). In a mono layout the editor feeds `mono = true` and one
+// full-height lane is drawn instead of two identical ones.
 class GrMiniMeter : public juce::Component
 {
 public:
-    void setGrDb (float grDb)
+    void setGrDb (float grDbL, float grDbR, bool monoIn = false)
     {
-        if (! juce::exactlyEqual (grDb, shownGrDb))
+        if (! juce::exactlyEqual (grDbL, shownL) || ! juce::exactlyEqual (grDbR, shownR)
+            || monoIn != mono)
         {
-            shownGrDb = grDb;
+            shownL = grDbL;
+            shownR = grDbR;
+            mono   = monoIn;
             repaint();
         }
     }
     void paint (juce::Graphics& g) override
     {
-        auto bar = getLocalBounds().toFloat().reduced (1.0f);
+        auto well = getLocalBounds().toFloat().reduced (1.0f);
         g.setColour (abgui::colours::bgRaised);
-        g.fillRoundedRectangle (bar, 3.0f);
-        const float t = juce::jlimit (0.0f, 1.0f, -shownGrDb / 24.0f);
-        if (t > 0.001f)
+        g.fillRoundedRectangle (well, 3.0f);
+
+        auto lane = [&g] (juce::Rectangle<float> r, float grDb)
         {
-            g.setColour (abgui::colours::accent);
-            g.fillRoundedRectangle (bar.removeFromRight (bar.getWidth() * t), 3.0f);
+            const float t = juce::jlimit (0.0f, 1.0f, -grDb / 24.0f);
+            if (t > 0.001f)
+            {
+                g.setColour (abgui::colours::accent);
+                g.fillRoundedRectangle (r.removeFromRight (r.getWidth() * t), 2.0f);
+            }
+        };
+        if (mono)
+            lane (well, shownL);
+        else
+        {
+            // A 1 px gap between the lanes so they read as two, not one
+            // striped bar; the gap stays background-coloured from the fill.
+            auto top = well.removeFromTop (well.getHeight() * 0.5f - 0.5f);
+            well.removeFromTop (1.0f);
+            lane (top,  shownL);
+            lane (well, shownR);
         }
     }
 
 private:
-    float shownGrDb = 0.0f;
+    float shownL = 0.0f, shownR = 0.0f;
+    bool  mono = false;
 };

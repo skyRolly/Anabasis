@@ -711,6 +711,44 @@ outputs asserted live). If the field setup was instead a silent left channel *de
 routing upstream* (the other mechanism the audit ranks plausible), the plugin now also survives
 the mono half of that: the host can drop to the mono layout instead of feeding a dead pin.
 
+**0.1.2 addendum — the report persists, and the Delta observation narrows it decisively.** The
+owner reports the left channel still silent (stereo input, both editor modes), with a new datum:
+**engaging Delta makes the left channel audible while the right carries a GR-flavoured
+residue.** That observation is algebraically decisive, because the delta leg is computed
+per channel *inside the engine* — `wetLeg = dryForDelta − processed`
+(`src/dsp/AnabasisEngine.cpp`, stage E), with `dryForDelta` read from the dry ring the engine
+fills from its own input. Delta-L being audible therefore proves `dry_L ≠ 0` — **the host is
+delivering programme on the left input pin** — and normal-mode silence then requires
+`processed_L ≈ 0`: the kill is inside the processed leg, between the stage-A dry-ring write and
+the stage-E output. This *rules out* the 0.1.1 dead-pin mechanism for the current report (a dead
+pin gives Delta-L = 0 − 0 = 0, inaudible).
+
+Two independent 0.1.2 audits (the wrapper/engine trace and the monitor-path map) then failed to
+find any expression on that leg able to hold exactly one channel at zero while the other plays:
+every modulator is channel-shared (duck, bypass/delta mixes, monitor gain, smoothers, ring
+positions), every per-channel gain is strictly positive (comp `10^(grDb/20)`, limiter
+`ceiling/peak`), and every recursive state self-heals within the block (invariant 9; the one
+uncovered per-channel state — the dither error-feedback pair — is now swept too, though a fault
+there was unreachable). The fingerprint is **not expressible in the current source with intact
+state**, which narrows the field cause to: a session holding limiter link < 100 % with divergent
+per-channel envelope state, a stale or mismatched installed binary, host-side channel handling,
+or in-process memory corruption (the KI-003/KI-008 windows remain the recorded vectors).
+
+What 0.1.2 ships for it, mechanism by mechanism: **(a)** the GR-at-defaults confound is gone
+(ADR-0023 — knee above threshold, unfiltered limiter detector, comp detector clamp), so on
+sub-ceiling material Delta at defaults is now *exact digital silence* and the "GR-flavoured
+residue on the right" observation should disappear with it — if it does not, what remains in
+Delta **is** the anomaly, isolated; **(b)** the panel GR meters are per-channel
+(`meterLimGrDbCh`/`meterCompGrDbCh`), so one field glance now disambiguates "L silent with its
+GR lane pinned deep" (per-channel gain collapse — record the session's link values) from "L
+silent at zero GR" (not the dynamics stages); **(c)** the battery gained the six diagnostic
+configurations the report was observed under and never covered headlessly — Delta engaged
+(channels asserted within 6 dB), loudness-comp on, limiter link 0 %, dither 16-bit shaped,
+true peak on, 44.1 kHz — all green; **(d)** mono→mono closes the last layout-negotiation
+surface (ADR-0023 item 5). **Still needed from the field, unchanged since round 2:** host +
+version, OS, build provenance, format, the session file, and now the two GR lanes' readings
+while the silence is audible.
+
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 
 **Severity:** Low

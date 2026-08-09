@@ -34,24 +34,86 @@ read as data, so the sample heading immediately below is not mistaken for struct
 
 ---
 
-## [Unreleased]
+## [0.1.2] — 2026-08-09
+
+**The field-fix round** (the owner's thirteen-item 0.1.2 directive; the contract-level
+decisions are ADR-0023). This entry also releases the preset-identity work that sat in
+`[Unreleased]` since PR #12.
 
 ### Added
-- **Preset identity** (ADR-0022, the product-family port of Anamorph's ADR-0024): a factory
-  preset is identified by an immutable internal id and a user preset by its file on disk, so a
-  user preset saved under a factory preset's name is now the one selected — the drop-down marks
-  exactly one row, `‹ ›` steps from the row that was actually loaded, and the selection survives
-  undo, A/B, Copy and a session reload. A stored identity that no longer resolves (a preset
-  deleted, renamed or moved; a file loaded from outside the preset folder) selects **no** row
-  rather than a same-named substitute; sound restoration is unaffected in every such case. The
-  identity is three additive per-slot strings in the **session** only — user `.anabasis` preset
-  files are byte-for-byte unchanged, and sessions saved before this change load exactly as
-  before. Evidence Source: PR #12.
+- **A mono→mono I/O layout** — the same plugin at one channel, for dual-mono and multi-mono
+  host racks. Stereo→stereo and mono→stereo behave exactly as before; a stereo source into a
+  mono output stays unsupported (no downmix rule exists). Evidence Source: PR #13 (ADR-0023
+  item 5). [Verified]
+- **Per-channel gain-reduction meters** in the COMP and LIMITER zones — each meter is two
+  lanes, L above R, identical at 100 % stereo link and diverging below it. (Beyond the
+  display, this is the field instrument for the KI-009 investigation: it distinguishes a
+  per-channel gain collapse from a kill outside the dynamics stages at a glance.) Evidence
+  Source: PR #13 (ADR-0023 item 10). [Verified]
+- **Preset identity** (carried from PR #12, previously unreleased; ADR-0022, the
+  product-family port of Anamorph's ADR-0024): a factory preset is identified by an immutable
+  internal id and a user preset by its file on disk, so a user preset saved under a factory
+  preset's name is now the one selected — the drop-down marks exactly one row, `‹ ›` steps
+  from the row that was actually loaded, and the selection survives undo, A/B, Copy and a
+  session reload. A stored identity that no longer resolves (a preset deleted, renamed or
+  moved; a file loaded from outside the preset folder) selects **no** row rather than a
+  same-named substitute; sound restoration is unaffected in every such case. The identity is
+  three additive per-slot strings in the **session** only — user `.anabasis` preset files are
+  byte-for-byte unchanged, and sessions saved before this change load exactly as before.
+  Evidence Source: PR #12. [Verified]
+
+### Changed
+- **No gain reduction below the engagement level — the item-2 field fix, three mechanisms
+  deep (ADR-0023):** the compressor's knee now softens the onset *above* the threshold
+  (zero gain at or below it; the old centred knee computed real gain from −3 dBFS up at the
+  0 dBFS default), the limiter's detector is *unfiltered* (the shared SC HPF both under-read
+  bass overs into the safety clamp and over-read low-frequency transients by up to ~6 dB of
+  filter overshoot — reduction on material that never crossed the ceiling), and the
+  compressor's filtered detector magnitude is clamped to the raw one (a sidechain HPF may
+  only deafen a detector, never sharpen it). The all-defaults null now holds for **any**
+  sub-ceiling input, and Delta at the default preset on such material is exact digital
+  silence. Peaks above the −0.1 dB Ceiling still draw their by-definition reduction. **SC
+  HPF is therefore a compressor-side control now**; a bass-heavy over is limited rather than
+  hard-clipped whatever it is set to. Evidence Source: PR #13. [Verified]
+- **The GR history draws at a fixed scale** — no startup zoom: a fresh trace grows from the
+  right edge at the settled pitch, and the unmeasured region to its left stays empty (level
+  0, GR 0 — nothing estimated, interpolated or stretched). **Pause/resume continues the
+  timeline**: the history now survives a transport-start re-prepare and clears only when the
+  sample rate or block size actually changes. Evidence Source: PR #13 (ADR-0023 item 6).
+  [Verified]
+- **The graph well opens on the GR history** (was the spectrum), and its GR|SPEC switch
+  moved to the bottom-left corner — the old top-right position covered the newest reduction,
+  the data being watched — with GR as the left segment and **the whole pill acting as one
+  toggle**: clicking it always switches to the other view, so no press on it is a silent
+  no-op (clicking the active SPEC segment previously did nothing). Stored sessions keep
+  whichever view they saved. Evidence Source: PR #13 (ADR-0023 item 7). [Verified]
+- **Editor captions drop the stage prefix** inside the captioned zones — Ratio, Threshold,
+  Attack, Release, Knee, Mix and Stereo Link in COMP; Gain, Release and Stereo Link in
+  LIMITER — while automation names keep it, and the limiter's automation name gains its
+  prefix: **"Stereo Link" → "Limiter Stereo Link"** (a display-name rename, ID unchanged,
+  snapshot re-frozen per PARAMETER_COMPATIBILITY_POLICY rule 2; beside 0.1.1's "Comp Stereo
+  Link" the bare name was the ambiguous lane of the pair). Screen readers keep announcing
+  the full automation names. Evidence Source: PR #13 (ADR-0023 item 8). [Verified]
+- **The Advanced view's read-only macro row is removed** and the window tightens to
+  940×822 — the three Loudness/Character/Tone mirrors were display-only; the macros live in
+  the Simple view and the per-control detach dots remain. The Dither caption now sits on the
+  same baseline as Input Gain and SC HPF. Evidence Source: PR #13 (ADR-0023 item 9).
+  [Verified]
 
 ### Fixed
+- **KI-009 (left channel silent) — narrowed, instrumented, and its confound removed.** The
+  0.1.2 report's Delta observation proves the left input pin is live and the loss sits in
+  the processed leg — a fingerprint two independent audits could not express in the current
+  source with intact state (KNOWN_ISSUES KI-009, 0.1.2 addendum, carries the analysis). What
+  ships: the false GR that contaminated the Delta diagnosis is gone (above), the per-channel
+  GR lanes disambiguate the remaining hypotheses in one field glance, the channel-symmetry
+  battery gained the six diagnostic configurations the report was observed under (Delta
+  engaged, loudness-comp on, limiter link 0 %, shaped 16-bit dither, true peak, 44.1 kHz),
+  and mono→mono closes the last layout-negotiation surface. Evidence Source: PR #13.
+  [Verified]
 - A user preset sharing a factory preset's name no longer shows the selection mark on **both**
   menu rows, and saving over a factory preset's name no longer leaves the mark on the factory
-  row. Evidence Source: PR #12.
+  row (carried from PR #12, previously unreleased). Evidence Source: PR #12. [Verified]
 
 ---
 

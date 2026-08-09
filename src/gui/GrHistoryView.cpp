@@ -7,23 +7,24 @@ GrHistoryView::GrHistoryView (AnabasisAudioProcessor& p) : processor (p)
 {
     // This view used to opt out of the mouse WHOLESALE
     // (`setInterceptsMouseClicks (false, false)`) — it had no affordance. Since
-    // the combined graph well (2026-08-05) it owns the "SPEC" mode chip, so it
+    // the combined graph well (2026-08-05) it owns the GR|SPEC mode pill, so it
     // opts out per-pixel through `hitTest` instead, exactly as `SpectrumView`
-    // does for its chip: JUCE's default interception stays on, and `hitTest`
-    // declines every point outside the chip.
+    // does for its copy: JUCE's default interception stays on, and `hitTest`
+    // declines every point outside the pill.
     //
     // The tooltip therefore fires over the mode switch only — the same string
     // as `SpectrumView`'s, because it is one control drawn twice.
     setTooltip ("Switch the graph between the spectrum and the GR history");
 }
 
-// The mode switch's hit-area — the shared SPEC|GR pill (`abgui::graph_switch`,
-// 0.1.1; ONE geometry for both views, expanded 2 px for the touch target).
-// `hitTest` and `mouseDown` key on this one rectangle — computed separately,
-// a click the view accepts but then ignores creeps back in one pixel at a time.
+// The mode switch's hit-area — the shared GR|SPEC pill (`abgui::graph_switch`,
+// 0.1.1, reworked 0.1.2; ONE geometry for both views, expanded 2 px for the
+// touch target). `hitTest` and `mouseDown` key on this one rectangle —
+// computed separately, a click the view accepts but then ignores creeps back
+// in one pixel at a time.
 juce::Rectangle<int> GrHistoryView::chipHitArea() const noexcept
 {
-    return graph_switch::bounds (getWidth()).expanded (2);
+    return graph_switch::bounds (getWidth(), getHeight()).expanded (2);
 }
 
 bool GrHistoryView::hitTest (int x, int y)
@@ -38,10 +39,11 @@ void GrHistoryView::mouseDown (const juce::MouseEvent& e)
     // reasoning `SpectrumView::mouseDown` records.
     if (! chipHitArea().contains (e.getPosition()))
         return;
-    // Segment semantics — see `SpectrumView::mouseDown`: the click selects the
-    // side of the divider it falls on; the already-active GR segment is a no-op.
-    if (e.getPosition().getX() < graph_switch::bounds (getWidth()).getCentreX())
-        processor.internalState.state().setProperty (iid::spectrumOn, true, nullptr);
+    // The whole pill is ONE toggle (0.1.2 item 5): from the GR view any press
+    // inside it switches the well to the spectrum. The 0.1.1 side-of-divider
+    // semantics made a press on the active segment a silent no-op, which read
+    // as a stuck control.
+    processor.internalState.state().setProperty (iid::spectrumOn, true, nullptr);
 }
 
 void GrHistoryView::visibilityChanged()
@@ -78,10 +80,12 @@ void GrHistoryView::paint (juce::Graphics& g)
     // from `paintHistory` skips the traces, never the chip.
     paintHistory (g);
 
-    // The shared SPEC|GR mode switch — translucent, so the GR zero-line it can
-    // overlap stays readable beneath it (the single-name chip this replaces sat
-    // exactly on that line and was masked by it).
-    graph_switch::paint (g, getWidth(), false);
+    // The shared GR|SPEC mode switch — translucent, and in the BOTTOM-LEFT
+    // since 0.1.2 (item 4): the top-right it used to occupy is where the
+    // newest reduction lands, the data the user is actively watching. Down
+    // here it floats over the waveform's oldest end — the empty zero region
+    // until a full window has played.
+    graph_switch::paint (g, getWidth(), getHeight(), false);
 }
 
 void GrHistoryView::paintHistory (juce::Graphics& g)
@@ -139,6 +143,28 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     bool started = false;
     float lastX = area.getX();
 
+    // The UNMEASURED region (0.1.2 item 3): everything left of the oldest
+    // bucket has no history behind it — the ring has not lived that long —
+    // and it is drawn as ZERO data (waveform at the floor, GR at its zero
+    // line), never estimated, interpolated or stretched over. The step where
+    // the zero region meets the first bucket is the honest boundary between
+    // "not measured" and "measured". This also covers the one-bucket first
+    // frames after a reset (the newest bucket sits at the right edge by
+    // anchoring, and this region is the rest), which the stretch draw needed
+    // a special case for.
+    const float zeroWy = area.getBottom() - 0.5f;       // == the wh floor below
+    {
+        const float xFirst = bucketX (nb, nb.kFirst, area.getX(), area.getWidth());
+        if (xFirst > area.getX() + 0.5f)
+        {
+            wave.startNewSubPath (area.getX(), zeroWy);
+            gr.startNewSubPath (area.getX(), area.getY());
+            wave.lineTo (xFirst, zeroWy);
+            gr.lineTo (xFirst, area.getY());
+            started = true;
+        }
+    }
+
     for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
     {
         const int64_t e0 = juce::jmax (first, k * nb.stride);
@@ -171,25 +197,6 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
             gr.lineTo (x, gy);
         }
         lastX = x;
-
-        // ONE bucket is the whole history, and it has no second vertex to
-        // stretch to: `bucketX` degenerates to the left edge, a one-point
-        // polyline strokes NOTHING and a one-point fill closes a zero-width
-        // shape, so the panel went blank for the first few blocks after every
-        // reset and every transport start (three blocks ≈ 32 ms at 48 kHz/512,
-        // where `stride` is 3). The limit of the stretch as the bucket count
-        // falls to one is a CONSTANT trace, so the single reading is emitted at
-        // BOTH edges — the same two x's the two-bucket case already uses, and
-        // continuous with it. The rectangles the pre-0.1.1 draw used are not
-        // coming back: a filled path under a polyline is the design, and this
-        // is that design's own degenerate case handled inside it.
-        if (nb.count == 1)
-        {
-            const float xEnd = area.getRight() - 1.0f;   // == bucketX's right edge
-            wave.lineTo (xEnd, wy);
-            gr.lineTo (xEnd, gy);
-            lastX = xEnd;
-        }
     }
 
     // The batch raced a reset: throw the frame away, the next tick re-derives.

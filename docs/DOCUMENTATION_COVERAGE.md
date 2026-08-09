@@ -6,7 +6,29 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **ADR-0022 preset-identity port and its three review rounds
+**Last updated:** for the **0.1.2 field-fix round (2026-08-09, ADR-0023)**. The round's
+documentation moved with its contracts. **New:** `ADR-0023` (the round's decision record: the
+knee-above static curve, the unfiltered limiter detector with the comp-side clamp, the three
+bus layouts, the fixed-scale GR history, the bottom-left toggle pill with GR the default view,
+the caption/name split with the one deliberate NAME rename, the 940×822 Advanced layout, and
+the per-channel GR publication). **Amended:** `ADR_INDEX.md` (the row); `PARAMETER_REGISTRY.md`
+(footnote ²³ — the `stereoLink` name, `scHpfFreq`'s comp-only scope — and ADR-0019's footnote
+cross-reference); `SERIALIZATION_REGISTRY.md` §1.6 (the `int_spectrumOn` default flip, recorded
+as a default-only change under ADR-0016's unchanged semantics); `THREAD_MODEL.md` (the
+per-channel `compGrDbCh`/`limGrDbCh` meter atomics on the existing relaxed row);
+`MODE_AND_ADAPTATION_POLICY.md` (the scHpf trim reaches the comp's detector only);
+`docs/user/USER_MANUAL.md` (layouts incl. mono→mono, the GR-default well and its pill, the
+zone captions, the SC HPF scope, the fixed-scale history); `CHANGELOG.md` `[0.1.2]` (which
+also releases the PR #12 `[Unreleased]` entries); `HANDOVER.md` (version/status/test rows and
+the round summary — including the correction of the "Pre-0.1.0" Release Status drift);
+`README.md` (the suite count, under its re-count rule). **Corrected:** `KNOWN_ISSUES.md`
+KI-009 — the 0.1.2 addendum records the Delta observation's algebraic narrowing (the input pin
+is live; the loss is in the processed leg; the fingerprint is not expressible in the current
+source with intact state), the shipped instrumentation, and what the field must still supply.
+Coverage: **Full** for the round's contracts (ADR + registries + policy + manual + tests);
+confidence **Verified** — the tests in ADR-0023's evidence block, with eight negative controls
+across two mutant builds, each killed by its own assertions. Suites 261 + 659.
+Previous: the **ADR-0022 preset-identity port and its three review rounds
 (2026-08-08)**. The port gave factory presets immutable internal ids and identified a user preset
 by its file, so a shared name is a shared *label*; the documentation set moved with it. **New:**
 `ADR-0022`, with the owner's serialization sign-off quoted in its Status banner and its scope

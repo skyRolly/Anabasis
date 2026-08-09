@@ -31,7 +31,7 @@ lookahead|Lookahead|0.500000|10.000000|2.000000|2147483647|manual
 limRelease|Lim Release|1.000000|1000.000000|100.000015|2147483647|auto
 limAutoRelease|Lim Auto Rel|0.000000|1.000000|1.000000|2|auto
 limStyle|Style|0.000000|2.000000|0.000000|3|auto
-stereoLink|Stereo Link|0.000000|100.000000|100.000000|2147483647|auto
+stereoLink|Limiter Stereo Link|0.000000|100.000000|100.000000|2147483647|auto
 transientPreserve|Transients|0.000000|100.000000|50.000000|2147483647|auto
 truePeakMode|True Peak|0.000000|1.000000|0.000000|2|manual
 eqTilt|Tilt|-3.000000|3.000000|0.000000|2147483647|auto
