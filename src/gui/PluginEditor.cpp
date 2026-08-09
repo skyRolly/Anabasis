@@ -918,6 +918,13 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     advanced   = apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f;
     uiAnimOn   = (bool) ist.getProperty (iid::uiAnimations, true);
     tooltipsOn = (bool) ist.getProperty (iid::tooltipsOn, false);
+    // …and the graph well's cached mode, from the SAME read the layout below
+    // and the 24 Hz tick both use. It caches WHAT IS CURRENTLY SHOWN, so its
+    // seed has to be the observed state rather than the product default —
+    // the `shownTpMode` lesson (DOCUMENTATION_COVERAGE, 2026-08-06), and the
+    // reason a hard-coded seed here is a defect waiting for the default to
+    // move: it did move, at 0.1.2, when GR became the default view.
+    shownSpectrumOn = (bool) ist.getProperty (iid::spectrumOn, false);
     applyTooltipsEnabled();
 
     // The Ceiling boxes already show the right unit: their attachments were

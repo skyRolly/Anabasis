@@ -1144,6 +1144,22 @@ static void testMeterPublication()
                "meters: +18 dB of push shows real reduction on both limiter lanes");
         check (std::abs (proc.meterLimGrDbCh (0) - proc.meterLimGrDbCh (1)) < 1.0e-4f,
                "meters: at 100% link the two lanes agree");
+
+        // …and the display-clear guarantee reaches them (0.1.2 review). A
+        // meter reset with NO audio flowing must blank the lanes — that is
+        // what `publishSilentMeters` promises for every published meter, and
+        // the reason it now ends in an engine call: the limiter lane moved off
+        // the wrapper's `pubGrDb` onto the engine's per-channel atomics at
+        // 0.1.2 and stopped obeying the list, while the comp lane had never
+        // obeyed it. Driven from the message-thread path deliberately: the
+        // audio-thread consume would clear them by processing a block, which
+        // is not the case that was broken.
+        proc.requestMeterReset();
+        check (juce::exactlyEqual (proc.meterLimGrDbCh (0), 0.0f)
+                   && juce::exactlyEqual (proc.meterLimGrDbCh (1), 0.0f)
+                   && juce::exactlyEqual (proc.meterCompGrDbCh (0), 0.0f)
+                   && juce::exactlyEqual (proc.meterCompGrDbCh (1), 0.0f),
+               "meters: a meter reset with no audio blanks both GR lanes on both stages");
     }
 }
 

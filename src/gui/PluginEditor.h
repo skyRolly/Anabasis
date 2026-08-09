@@ -334,7 +334,10 @@ private:
     std::unique_ptr<SpectrumView>      spectrumView;
     std::unique_ptr<CurveView>         clipCurve, eqCurve;
     GrMiniMeter compGrMeter, limGrMeter;
-    bool shownSpectrumOn = true;
+    // Seeded from the live tree in the constructor (see there) — this
+    // initialiser is only pre-construction safety, the same shape `advanced`
+    // uses, and is deliberately NOT the place the mode's default is decided.
+    bool shownSpectrumOn = false;
     // The Ceiling's UNIT follows `truePeakMode` (ADR-0015), and a JUCE Slider
     // recomputes its value-box text only in `updateText()` — on a value change,
     // a `setTextBoxStyle`, a relayout or a look-and-feel change, never on a

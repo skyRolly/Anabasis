@@ -274,7 +274,7 @@ settings it is session state, so browsing presets never moves a locked ceiling.
 The **Loudness** knob drives a macro mapping into the real stage parameters, and around
 that mapping the **adaptive engine** applies small, bounded trims based on what it hears —
 release times open up on sparse material and tighten on dense material, stereo linking,
-the detector high-pass and the dynamic tame all follow the programme. Adaptation is
+the compressor's detector high-pass and the dynamic tame all follow the programme. Adaptation is
 deliberately **slow** — second-scale, with hysteresis — so it never sounds like
 modulation; it is the difference between a setting that is right for the chorus and one
 that is right for the whole song.

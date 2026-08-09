@@ -793,15 +793,19 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // While that glide runs the tap advances by more or less than one
         // sample per step, so the sequence handed to the detector has a
         // duplicated or skipped sample in it. For the peak wedge that is the
-        // documented coverage cost of a moving window. It also reaches the
-        // detector HIGH-PASS, which is recursive and therefore sees a
-        // discontinuous input rather than a resampled one: a bounded spectral
-        // error in the DETECTOR for the ~20 ms of the move, on a filter whose
-        // only job is to keep sub-bass out of the gain computer. Invariant 4
-        // is untouched (the clamp is downstream and unconditional). Recorded
-        // rather than fixed: reading the ring at a fractional position would
-        // put an interpolator in the detector path to remove an error smaller
-        // than the window change that caused it.
+        // documented coverage cost of a moving window. In TRUE-PEAK mode it
+        // also reaches the estimator's 12-tap history, which interpolates
+        // across a discontinuous sequence rather than a resampled one — but
+        // that history is FIR, so the error flushes itself within kTaps frames
+        // instead of persisting. (This paragraph argued about a RECURSIVE
+        // detector high-pass until 0.1.2: ADR-0023 removed the limiter's
+        // biquad outright, so there is no filter state on this path left to
+        // see the discontinuity at all, and the bounded-spectral-error
+        // reasoning went with it.) Invariant 4 is untouched (the clamp is
+        // downstream and unconditional). Recorded rather than fixed: reading
+        // the ring at a fractional position would put an interpolator in the
+        // detector path to remove an error smaller than the window change that
+        // caused it.
         int detPos = writePosOs - (delayOs - wOs);
         if (detPos < 0)
             detPos += ringSizeOs;

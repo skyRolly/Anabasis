@@ -598,10 +598,13 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 }
 
 // The published meter atomics, cleared — ONE list, because three sites need
-// exactly this and two of them had grown their own copy. (Ten since the
-// ADR-0020 stats row; the count is deliberately not repeated in prose here or
-// at the callers, because it was wrong within two commits of being written
-// the first time — the LIST is the count.) Relaxed stores, so it is callable
+// exactly this and two of them had grown their own copy. The count is
+// deliberately not written here, at the declaration or at the callers: it was
+// wrong within two commits of being written the first time, and the header
+// said "six" long after it was ten — the LIST is the count. Since 0.1.2 the
+// list also reaches the ENGINE's per-stage GR figures, which is why it ends
+// in a call rather than a store (see `clearPublishedStageGr`).
+// Relaxed stores, so it is callable
 // from any thread: `prepareToPlay` (host), the block-top meter-reset consume
 // (audio) and `setStateInformation` (whichever thread the host restores on)
 // all use it. It deliberately does NOT touch the two audio-thread max-holds,
@@ -618,6 +621,13 @@ void AnabasisAudioProcessor::publishSilentMeters() noexcept
     pubRmsDb.store (anabasis::RmsMeter::kSilentDb, std::memory_order_relaxed);
     pubLufsIUngated.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
     pubLra.store (anabasis::LoudnessMeter::kNoLra, std::memory_order_relaxed);
+    // The two per-stage GR lanes live on the ENGINE's atomics rather than
+    // here (the panel meters read them per channel), so the one list reaches
+    // them through the engine instead of by holding its own copies — see
+    // `clearPublishedStageGr`. Without this the limiter lane stopped obeying
+    // this list at 0.1.2, when it moved off `pubGrDb` onto the per-channel
+    // pair; the comp lane had never obeyed it at all.
+    engine.clearPublishedStageGr();
 }
 
 void AnabasisAudioProcessor::setNonRealtime (bool isNonRealtime) noexcept

@@ -280,7 +280,7 @@ private:
         // deferral is not a retry: the arm is dropped, not queued.
         macroEngine->refreshMapping();
     }
-    void publishSilentMeters() noexcept;   // the six meter atomics, cleared (one list)
+    void publishSilentMeters() noexcept;   // the published meters, cleared (ONE list; see the .cpp)
     void adoptFrozenMirror (juce::ValueTree frozen);   // the ONLY writer of liveFrozenTrims
     juce::ValueTree engineFrozenTrimsIfLive();   // ADR-0014 ownership test (one rule, one reader)
     // The retained-trim generation at the moment the live surface's frozen

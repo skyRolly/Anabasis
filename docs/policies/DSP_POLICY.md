@@ -185,14 +185,18 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    that the limiter's ATTACK is what bounds it, and that a short lookahead leaves the envelope at
    ~0.29 while a fully boosted EQ multiplies by ~3.4. Where a stage's corruption produces no
    non-finite output at all to detect, the check is unconditional and per block rather than hung on
-   a flag. **Three stages are in that class**, and they are the ones whose failure is invisible
-   rather than loud: the limiter's detector high-pass (a `NaN` level compares false against the
-   ceiling, so the gain computer emits unity for ever), the BS.1770 meters (a `NaN` reading
+   a flag. **Two stages are in that class**, and they are the ones whose failure is invisible
+   rather than loud: the BS.1770 meters (a `NaN` reading
    compares false against every gate, so the §2.7 compensation freezes and the integrated
    histogram stops accumulating), and the §5.4 feature extractor (a `NaN` feature fails the trim
    hysteresis, so the trim vector holds its last value for the session and looks plausible doing
-   it). All three are fed signals the engine keeps finite but does not BOUND, which is why a legal
-   float can break them at all.
+   it). Both are fed signals the engine keeps finite but does not BOUND, which is why a legal
+   float can break them at all. **A third used to be listed here** — the limiter's detector
+   high-pass, whose `NaN` level compared false against the ceiling and left the gain computer
+   emitting unity for ever — and it left the class with the filter itself: ADR-0023 removed the
+   limiter's biquad, so that path holds no recursive state to poison. The failure mode it
+   describes is worth keeping in mind for any detector filter added later, which is why it is
+   recorded here rather than deleted.
    **Repair belongs at the writer when the damage would OUTLIVE the block.** The per-block repairs
    above run late in `process()`, so anything consumed at a block top — the §5.4 Learn commands —
    sees the previous block's state. A commit is therefore checked where it writes

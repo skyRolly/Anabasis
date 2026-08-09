@@ -30,12 +30,20 @@
 //  argument weaker than the other three's, stated rather than averaged over.
 //  release and link only shape an envelope that never leaves 1.0: inert as a
 //  matter of ARITHMETIC. scHpf is different in kind — it engages a real
-//  second-order detector high-pass in both the compressor and the limiter, and
-//  its inertness rests on the detector's output never crossing the knee bottom
-//  or the ceiling. The RBJ high-pass at Q=0.707 has unity passband and can
-//  only LOWER a detector level, so the argument holds for any stimulus already
-//  below both thresholds — which is a property of the stimulus, and is why
-//  testNullWithDefaults now asserts its own −3 dBFS precondition.
+//  second-order detector high-pass in the COMPRESSOR (only: ADR-0023 removed
+//  the limiter's, whose detector is now the tapped magnitude itself), and its
+//  inertness rests on that detector's output never crossing the threshold.
+//  The RBJ high-pass at Q=0.707 has unity passband, and since 0.1.2 the comp
+//  CLAMPS its filtered magnitude to the raw one — so the trim can only LOWER
+//  a detector level by construction rather than by a passband argument that
+//  the filter's transient overshoot did not actually honour. That overshoot
+//  was one of the 0.1.2 field defects (ADR-0023), and it is why this claim is
+//  now enforced in the detector rather than reasoned about here. The argument
+//  therefore holds for any stimulus already below the threshold, which is a
+//  property of the stimulus — `testNullWithDefaults` asserts its own
+//  sub-ceiling precondition, and the null's remaining premise (the factory
+//  clip drive of 0, which keeps the dynTilt trim's host stage skipped) is
+//  asserted there too.
 //
 //  dynTilt is a THIRD mechanism again, and the weakest to state loosely: its
 //  target does NOT sit at zero — with the features un-converged

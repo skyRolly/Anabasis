@@ -313,6 +313,30 @@ public:
     // is not what a meter-reset button means) and the GR ring (a rolling ~43 s
     // window that clears itself; the wrapper owns it in any case).
     void resetMeterHolds() noexcept { outMeter.resetIntegrated(); }
+
+    // The per-stage GR figures the panel meters read, cleared. Called by the
+    // wrapper's `publishSilentMeters()` so the two GR lanes obey the SAME
+    // display-clear guarantee as every other published meter: before 0.1.2 the
+    // limiter lane read the wrapper's `pubGrDb` (which that list clears) and
+    // the comp lane already read this side (which it did not), so a state load
+    // or a meter reset with no audio flowing left one lane stale and the other
+    // blank. Relaxed stores from whichever thread clears — the same
+    // last-writer-wins reasoning `publishSilentMeters` states for its own set,
+    // and the audio thread rewrites all of these at the next block.
+    //
+    // `grMinLinear` is deliberately NOT here. It is not display state: the
+    // §2.7 predict floor reads it, so clearing it off-thread would nudge the
+    // monitor gain. The wrapper draws the same line — it clears `pubGrDb` and
+    // leaves the engine's linear minimum to the audio thread.
+    void clearPublishedStageGr() noexcept
+    {
+        compGrDb.store (0.0f, std::memory_order_relaxed);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            compGrDbCh[ch].store (0.0f, std::memory_order_relaxed);
+            limGrDbCh[ch].store (0.0f, std::memory_order_relaxed);
+        }
+    }
     float lastRenderTpMax() const noexcept { return renderTpMaxCall; }   // linear
     float lastRenderPeak() const noexcept  { return renderPeakCall; }    // plain |x| max
 

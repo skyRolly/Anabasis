@@ -27,7 +27,26 @@ is live; the loss is in the processed leg; the fingerprint is not expressible in
 source with intact state), the shipped instrumentation, and what the field must still supply.
 Coverage: **Full** for the round's contracts (ADR + registries + policy + manual + tests);
 confidence **Verified** — the tests in ADR-0023's evidence block, with eight negative controls
-across two mutant builds, each killed by its own assertions. Suites 262 + 659.
+across two mutant builds, each killed by its own assertions.
+**Two review rounds followed**, both folded into this entry rather than given their own: the
+first reconciled the release state (the CHANGELOG header now carries the no-tag fact, since
+`release.yml` publishes a version's section verbatim and a sentence about the tag not existing
+would ship inside the notes that disprove it) and asserted the null test's adaptation premise.
+The second cleared the **detector-path drift ADR-0023 left behind** — four live copies still
+described the removed limiter high-pass: the detector-tap paragraph in `AnabasisEngine.cpp`
+(which argued about a recursive filter on a path that now holds no filter state at all),
+`AdaptiveEngine.h`'s null argument (the scHpf trim reaches the COMP's detector only, and its
+"can only lower a level" claim is now enforced by the raw-magnitude clamp rather than reasoned
+from the RBJ passband the overshoot did not honour), `DSP_POLICY.md`'s invisible-failure class
+(three stages → **two**, the limiter's high-pass recorded as having left with the filter rather
+than deleted, since the failure mode still applies to any detector filter added later) and
+`USER_MANUAL.md`'s adaptation paragraph. `DESIGN.md` §2.5 got a supersession banner in the
+§4.3 shape — the signed-off P0 record is superseded section by section, never rewritten. That
+round also seeded the editor's cached graph-well flag from the live tree instead of a
+hard-coded default (the `shownTpMode` lesson, recorded below, repeating itself once the default
+moved) and brought both per-stage GR lanes back under `publishSilentMeters`' one clear list,
+which the limiter lane had left when it moved onto the engine's per-channel atomics and the
+comp lane had never joined — mutation-verified. Suites 262 + 660.
 Previous: the **ADR-0022 preset-identity port and its three review rounds
 (2026-08-08)**. The port gave factory presets immutable internal ids and identified a user preset
 by its file, so a shared name is a shared *label*; the documentation set moved with it. **New:**

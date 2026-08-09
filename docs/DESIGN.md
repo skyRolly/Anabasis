@@ -209,6 +209,17 @@ mismatch, this one was a value match whose *audible effect* was switched off els
 belong to the P4 macro review.
 
 ### 2.5 Limiter
+
+> **Superseded in part (2026-08-09); left as written, same rule as §4.3's banner.** "detector HPF
+> shared with §2.3" below — and the matching "shared … with the limiter" in §2.3 — is no longer the
+> code. [ADR-0023](architecture/design-decisions/ADR-0023-012-field-fix-contracts.md) (owner 0.1.2
+> directive, gate cleared in its Status banner) made this stage's detector **unfiltered**: its
+> threshold IS the ceiling, so its detector must track the actual peak, and the shared filter both
+> under-read bass overs into the safety clamp and over-read LF transients into reduction on
+> material that never crossed the ceiling. `scHpfFreq` survives as the COMPRESSOR's sidechain
+> control (§2.3), with its filtered magnitude clamped to the raw one. Everything else in this
+> section — the ceiling-is-the-threshold decision immediately below most of all — still stands.
+
 Lookahead 0.5–10 ms (default 2 ms), dual-stage release (fast transient stage + slow program
 stage, 1–1000 ms + Auto), styles Transparent/Punchy/Loud as attack-shaping/envelope presets,
 stereo link 0–100%, transient preservation, detector HPF shared with §2.3. The gain computer
