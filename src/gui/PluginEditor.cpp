@@ -420,12 +420,42 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         // loads instead of merely stepping over the broken one.
         //
         // Bounded by `total`, so the pass visits every entry at most once and
-        // a folder of nothing but unreadable files is a clean no-op rather
-        // than a spin. Retrying costs nothing either: the only reachable
-        // failure is `parsePresetFile` refusing a corrupt or foreign file,
-        // which returns BEFORE the undo bracket and the §2.8 duck — so one
-        // press still mints exactly one undo step, the one for the preset
-        // that landed.
+        // terminates. The last candidate that bound admits is the row the
+        // press STARTED from, and re-applying it would mint an undo step for
+        // a press that moved nothing — UNREACHABLE rather than tolerated,
+        // which is worth writing down because it reads like a live edge case.
+        // The walk only reaches it if every OTHER entry failed first, and it
+        // cannot: the factory rows are a CONTIGUOUS PREFIX of the ring and a
+        // factory apply cannot fail (`applyFactoryPreset` returns false only
+        // for an out-of-range index, and both its range checks pass for one
+        // this loop produces). So the longest run of failable candidates is
+        // the user block — `files.size()` of them, NOT `factoryCount`, which
+        // is the wrong way round and was written here once — and any walk
+        // meets a factory row by step `files.size()`, which is short of the
+        // `total - 1` step where the starting row sits whenever there are at
+        // least TWO factory rows. A folder of nothing but unreadable USER
+        // files therefore lands on a FACTORY preset: not a no-op, and not
+        // back where it started.
+        //
+        // Both halves of that are premises, not laws. A single-row factory
+        // bank would put the sole applyable row under the press itself and
+        // re-apply it; a factory source that can fail removes the argument
+        // outright. `testTheRingWalksPastAnUnreadablePreset` pins the first
+        // (`factoryCount >= 2`); if either changes, this bound needs the
+        // starting row excluded explicitly. Note the scope: the claim is that
+        // the WALK cannot wrap onto its own starting row, not that a press
+        // can never re-land the sound it started with — an identity the
+        // resolver cannot place (-1) starts from the list edge by ADR-0022
+        // §Decision 3, and that edge may hold the same preset under a name it
+        // no longer matches.
+        //
+        // Retrying costs nothing either. Both reachable failures — a file
+        // that vanished between the scan above and the press, and
+        // `parsePresetFile` refusing a corrupt or foreign one — return BEFORE
+        // the undo bracket and the §2.8 duck, and the post-bracket failure is
+        // unreachable (`applyPreset` re-tests the root tag `parsePresetFile`
+        // already enforced). So one press still mints exactly one undo step,
+        // the one for the preset that landed.
         int idx = (here < 0 ? (dir > 0 ? 0 : total - 1) : (here + dir + total) % total);
         for (int tried = 0; tried < total; ++tried)
         {

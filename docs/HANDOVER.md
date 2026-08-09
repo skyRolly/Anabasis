@@ -1276,10 +1276,20 @@ registry records the inactive-slot absence-survives-re-save exception; KI-007 it
 RESOLVED; KI-003's restore-writer enumerations gained `liveSelection`; and the four hint-era
 records in DOCUMENTATION_COVERAGE/HANDOVER carry supersession markers per the house convention.
 
-**Gate: suites 259 + 620 = 879 (the identity work added 98 checks), `check-docs.py` clean over
+**A second review round found the one behavioural regression the identity port introduced: the
+`‹ ›` ring could be TRAPPED by an unreadable preset file.** The identity moves only on a
+*successful* apply, so a step onto a corrupt `.anabasis` left the position where it was and the
+next press re-offered the same file for ever. The deleted editor hint was advanced
+*unconditionally* for exactly this reason (`DOCUMENTATION_COVERAGE.md`, round 63 item 2) — that
+rationale outlived its mechanism with no carrier, which is the gap. `stepPreset` now keeps
+stepping until an entry loads; identity resolution is untouched.
+
+**Gate: suites 259 + 634 = 893 (the identity work added 112 checks), `check-docs.py` clean over
 73 files, pluginval both modes ×3 at `build.yml`'s strictness with the editor under xvfb — re-run
-after the review fixes — and thirteen negative controls, each reverted independently and each
-killed by its own assertions, none by another's.**
+after the ring fix, the last change to reach the binary — and fourteen negative controls, each
+reverted independently and each killed by its own assertions, none by another's.** The final one
+is the ring: restoring the single-shot step fails exactly the two assertions that say the arrows
+moved and kept moving.
 
 ## P5 phase summary (`DEVELOPMENT_BRIEF.md` §13)
 

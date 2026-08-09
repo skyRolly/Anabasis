@@ -165,8 +165,14 @@ metadata and never reaches the sound.
   so a single-shot step would re-derive the same starting row on the next press and re-offer an
   unreadable file for ever — one corrupt `.anabasis` would wall the arrows off in that
   direction. `stepPreset` therefore keeps stepping in the pressed direction until an entry
-  loads, bounded by the list length (a folder of nothing but unreadable files is a clean
-  no-op). This carries forward the reason the deleted hint was advanced *unconditionally*
+  loads, bounded by the list length so the pass terminates having visited each entry at most
+  once. It cannot wrap back to the row the press started from and re-apply it: that needs every
+  other entry to fail, and the factory rows — a contiguous prefix of the ring, at least two of
+  them, each unable to fail (a factory apply fails only on an out-of-range index) — guarantee
+  the walk stops first. So a folder of nothing but unreadable *user* files lands on a factory
+  preset. Both premises are pinned by `testTheRingWalksPastAnUnreadablePreset`'s
+  `factoryCount >= 2`; a one-row bank, or a factory source that can fail, would need the
+  starting row excluded from the walk explicitly. This carries forward the reason the deleted hint was advanced *unconditionally*
   (`DOCUMENTATION_COVERAGE.md`, round 63 item 2) and improves on it: the press lands on the
   next preset that actually loads rather than merely stepping over the broken one. Retrying is
   free — the only reachable failure is `parsePresetFile` refusing the file, which returns
