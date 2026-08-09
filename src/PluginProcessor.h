@@ -22,7 +22,8 @@
 //
 //  State: schema v1 (ADR-0007) — root AnabasisRoot { schemaVersion=1,
 //  ANABASIS (+ additive exact `raw` attribute per PARAM), ANABASIS_INTERNAL,
-//  AB { active + per-slot params/presetName/BASELINE/FROZEN_TRIMS/
+//  AB { active + per-slot params/presetName/presetSource+presetFactoryId+
+//  presetUserFile (the ADR-0022 identity trio)/BASELINE/FROZEN_TRIMS/
 //  DETACH_MASK }, ADAPTIVE }. Read rules: unknown ignored, missing default,
 //  indices clamped.
 //
@@ -316,8 +317,10 @@ private:
     std::unique_ptr<PresetManager> presetManager;
 
     // A/B: the live APVTS is the active slot; the inactive one is stored here.
-    // Per-slot StateSet = {params, presetName, baseline, frozenTrims,
-    // detachMask} (ADR-0007) — all five fields or none on every copy path.
+    // Per-slot StateSet = {params, presetName, selection, baseline,
+    // frozenTrims, detachMask} — ADR-0007's five fields plus the ADR-0022
+    // preset identity, which rides the SLOT tree for exactly this reason:
+    // all six travel together or none do, on every copy path.
     int activeSlot = 0;
     // A §7 history entry is the StateSet PLUS the dirty datum that described
     // it. `presetBaseline` is deliberately NOT in the StateSet — it is not

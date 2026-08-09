@@ -126,8 +126,11 @@ Rules the shape encodes, each pinned by `testPresetIdentityAcrossRestore`:
   `juce::File::isAChildOf`) **and** its name is not something `juce::File::isAbsolutePath`
   accepts (a leading `~` on POSIX). Everything else — outside the folder, nested in a
   sub-folder, or a path-like name — stores the absolute path, so `decode(encode(s)) == s`
-  holds. Identity matching is a raw path-string compare with **no canonicalisation**; a
-  different spelling of the same file shows no tick, the safe direction.
+  holds. Identity matching is a path-string compare with **no canonicalisation** — but
+  `juce::File::operator==` is case-INSENSITIVE on Windows and macOS, so a differently-cased
+  spelling matches there (the same file, the answer wanted) while every other re-spelling
+  misses on all three platforms and shows no tick: the safe direction, a miss rather than a
+  wrong row.
 - **User preset FILES are untouched** — the trio lives in the session blob only; the
   `.anabasis` format is unchanged (§3).
 - **On the INACTIVE slot, absence survives a re-save** — a deliberate, narrow exception to

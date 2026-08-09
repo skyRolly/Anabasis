@@ -3885,6 +3885,15 @@ static void testPresetIdentitySharedName()
         const bool hadDefault = userDefault.existsAsFile();
         if (hadDefault)
             userDefault.copyFileTo (defBackup);
+        // RAII, like the outer harness's `Restore`: this writes into the
+        // developer's REAL preset folder, so the un-staging cannot sit on the
+        // success path — an early return from a failed premise would leave a
+        // stray "Default" user preset that the next run sees as an extra row.
+        struct RestoreDefault
+        {
+            juce::File f, b; bool had;
+            ~RestoreDefault() { f.deleteFile(); if (had) { b.copyFileTo (f); b.deleteFile(); } }
+        } restoreDefault { userDefault, defBackup, hadDefault };
         const bool staged = [&]
         {
             AnabasisAudioProcessor writer;
@@ -3902,8 +3911,6 @@ static void testPresetIdentitySharedName()
                                                      factory, factoryCount, files) == 0,
                    "identity: a fresh instance selects the factory Default even with a user Default on disk");
         }
-        userDefault.deleteFile();
-        if (hadDefault) { defBackup.copyFileTo (userDefault); defBackup.deleteFile(); }
     }
 
     check (proc.applyFactoryPreset (factoryIdx), "identity: (premise) the factory preset applies");
@@ -4234,6 +4241,15 @@ static void testPresetIdentityAcrossRestore()
         auto nestedDir = dir.getChildFile ("AnabasisHarnessNested");
         auto nested    = nestedDir.getChildFile (shared + ".anabasis");
         nested.deleteFile();
+        // RAII for the same reason the file harnesses use it: the sub-folder
+        // is created inside the developer's REAL preset folder, so removing it
+        // on the success path only would leave an empty directory behind after
+        // an early return or a failed staging.
+        struct RemoveNested
+        {
+            juce::File d;
+            ~RemoveNested() { d.deleteRecursively(); }
+        } removeNested { nestedDir };
         const bool staged = nestedDir.createDirectory() && file.copyFileTo (nested);
         check (staged, "restoreId: (premise) nested sub-folder copy staged");
         if (staged)
@@ -4248,7 +4264,6 @@ static void testPresetIdentityAcrossRestore()
             check (r.paramsMatch, "restoreId: nested case restores parameters bit-identically");
             nested.deleteFile();
         }
-        nestedDir.deleteRecursively();
     }
 
     // --- Case 2 fallback: the user preset file is gone ----------------------
@@ -4396,6 +4411,11 @@ static void testPresetIdentityAcrossRestore()
         auto tilde = juce::File (dir.getFullPathName() + juce::File::getSeparatorString()
                                      + "~AnabasisTildeHarness.anabasis");
         tilde.deleteFile();
+        struct RemoveTilde        // as above: real preset folder, so RAII
+        {
+            juce::File f;
+            ~RemoveTilde() { f.deleteFile(); }
+        } removeTilde { tilde };
         const bool staged = file.copyFileTo (tilde);
         check (staged, "restoreId: (premise) tilde-named preset staged");
         if (staged)
@@ -4417,7 +4437,6 @@ static void testPresetIdentityAcrossRestore()
             check (r.row == tildeIdx,
                    "restoreId: a tilde-named preset keeps its selection across a reload (encode round-trips)");
             check (r.paramsMatch, "restoreId: tilde case restores parameters bit-identically");
-            tilde.deleteFile();
         }
     }
 

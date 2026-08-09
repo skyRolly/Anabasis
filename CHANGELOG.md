@@ -46,12 +46,12 @@ read as data, so the sample heading immediately below is not mistaken for struct
   rather than a same-named substitute; sound restoration is unaffected in every such case. The
   identity is three additive per-slot strings in the **session** only — user `.anabasis` preset
   files are byte-for-byte unchanged, and sessions saved before this change load exactly as
-  before. Evidence Source: PR #11.
+  before. Evidence Source: PR #12.
 
 ### Fixed
 - A user preset sharing a factory preset's name no longer shows the selection mark on **both**
   menu rows, and saving over a factory preset's name no longer leaves the mark on the factory
-  row. Evidence Source: PR #11.
+  row. Evidence Source: PR #12.
 
 ---
 

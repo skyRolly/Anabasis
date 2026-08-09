@@ -122,8 +122,13 @@ namespaces (a fixed built-in table, an arbitrary user folder) are not disjoint.
    `juce::File::isAChildOf`), and a direct child whose name `juce::File::isAbsolutePath`
    accepts (a leading `~` on POSIX). All three conditions are ports of defects Anamorph's
    reviews found and fixed (its worklog §§7, 9); `decode(encode(s)) == s` is the invariant.
-   Identity matching is a raw path-string compare with no canonicalisation — a different
-   *spelling* of the same file fails to match and shows no tick, which is the safe direction.
+   Identity matching is a path-string compare with no canonicalisation — no symlink
+   resolution, no `/private/var`↔`/var` folding, no UNC↔mapped-drive folding. It is not
+   case-sensitive everywhere, though: `juce::File::operator==` compares through
+   `compareFilenames`, which folds case on Windows and macOS and does not on Linux. So a
+   differently-CASED spelling matches on those two platforms — the same file, which is the
+   answer wanted — while every other re-spelling of the same file misses on all three and
+   shows no tick, which is the safe direction: a miss, never a *wrong* row.
 
 ### Fallbacks (all verified by `testPresetIdentityAcrossRestore`)
 

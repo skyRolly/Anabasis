@@ -430,10 +430,19 @@ int PresetManager::selectedPresetRow (const Selection& sel,
 
     if (sel.kind == Selection::Kind::userFile)
     {
-        // A raw path-string compare, deliberately (juce::File::operator== does
-        // no canonicalisation): a different SPELLING of the same file fails to
-        // match and shows no tick, which is the safe direction — never a
-        // wrong one (ADR-0022 §Decision 8).
+        // A PATH-STRING compare, deliberately: `juce::File::operator==` goes
+        // through `compareFilenames`, which does NO canonicalisation — no
+        // symlink resolution, no `/private/var`↔`/var` folding, no UNC↔mapped
+        // drive folding, no relative-path normalisation — but IS
+        // case-insensitive on Windows and macOS, and case-sensitive on Linux.
+        // So the property is narrower than "any different spelling misses": a
+        // differently-CASED spelling matches on the two case-insensitive
+        // platforms (the same file, which is the answer wanted anyway), while
+        // every other re-spelling misses on all three and shows no tick. That
+        // is the safe direction — a miss, never a WRONG row — and it is the
+        // documented contract rather than an oversight: `getLinkedTarget()`
+        // would change what "the same preset" means and brings its own
+        // per-platform failure modes (ADR-0022 §Decision 8).
         for (int i = 0; i < userFiles.size(); ++i)
             if (userFiles.getReference (i) == sel.file)
                 return factoryCount + i;
