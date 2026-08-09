@@ -80,8 +80,9 @@ decisions are ADR-0023). This entry also releases the preset-identity work that 
   0 dBFS default), the limiter's detector is *unfiltered* (the shared SC HPF both under-read
   bass overs into the safety clamp and over-read low-frequency transients by up to ~6 dB of
   filter overshoot — reduction on material that never crossed the ceiling), and the
-  compressor's filtered detector magnitude is clamped to the raw one (a sidechain HPF may
-  only deafen a detector, never sharpen it). The all-defaults null now holds for **any**
+  compressor's filtered detector magnitude is clamped to a raw-magnitude ceiling — a peak
+  envelope of the input, so a sidechain HPF may only deafen the detector, never sharpen it,
+  and never re-couples it to the bass the control exists to ignore. The all-defaults null now holds for **any**
   sub-ceiling input, and Delta at the default preset on such material is exact digital
   silence. Peaks above the −0.1 dB Ceiling still draw their by-definition reduction. **SC
   HPF is therefore a compressor-side control now**; a bass-heavy over is limited rather than

@@ -112,7 +112,7 @@ snapshot re-frozen, `Changed` changelog entry): beside ADR-0019's "Comp Stereo L
 **comp's detector only**: the limiter's detector is unfiltered since 0.1.2 (its threshold is the
 Ceiling, so its detector must track the actual peak — the shared filter both under-read bass
 overs into the clamp and over-read LF transients into false reduction), and the comp's filtered
-magnitude is clamped to the raw one. The §5.4 scHpf trim follows the parameter's scope.
+magnitude is clamped to a raw-magnitude ceiling. The §5.4 scHpf trim follows the parameter's scope.
 
 ¹⁹ **Added by [ADR-0019](design-decisions/ADR-0019-comp-stereo-link.md)** (2026-08-06, owner
 0.1.1 directive item 12) — the 50th row, the first parameter ADDED since the surface froze at 49.

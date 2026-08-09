@@ -65,6 +65,7 @@ public:
         for (auto* s : smoothers())
             s->reset (sampleRate, 0.020);
         aRms     = onePole (10.0f);        // fixed RMS integration window
+        aCeilRel = onePole (kCeilingReleaseMs);
         aRelFast = onePole (kAutoFastMs);
         aRelSlow = onePole (kAutoSlowMs);
         reset();
@@ -76,6 +77,7 @@ public:
         {
             grFastDb[ch] = grSlowDb[ch] = 0.0f;
             meanSquare[ch] = 0.0f;
+            ceilEnv[ch] = 0.0f;
             hpfZ1[ch] = hpfZ2[ch] = 0.0f;
         }
         primed = false;
@@ -97,6 +99,12 @@ public:
                 grFastDb[ch] = grSlowDb[ch] = 0.0f;  // paired: the auto path averages them
             if (! std::isfinite (meanSquare[ch]))
                 meanSquare[ch] = 0.0f;
+            // The overshoot ceiling: a non-finite value here would clamp the
+            // detector to garbage rather than merely mis-level it, and it is
+            // fed the raw input the engine keeps finite, so this is the same
+            // defence-in-depth the states above get.
+            if (! std::isfinite (ceilEnv[ch]))
+                ceilEnv[ch] = 0.0f;
             if (! std::isfinite (hpfZ1[ch]) || ! std::isfinite (hpfZ2[ch]))
                 hpfZ1[ch] = hpfZ2[ch] = 0.0f;
         }
@@ -168,18 +176,54 @@ public:
                 hpfZ1[ch] = hb1 * x - ha1 * y + hpfZ2[ch];
                 hpfZ2[ch] = hb2 * x - ha2 * y;
             }
-            det[ch] = std::abs (y);
-            // The sidechain HPF may only DEAFEN the detector, never sharpen
-            // it (0.1.2, ADR-0023): a 2nd-order high-pass is unity-magnitude
-            // only in steady state — its transient response on an LF edge
-            // overshoots the input by up to ~6 dB (b0·2A on a −A→+A step), so
-            // an unclamped filtered magnitude drew gain reduction on material
-            // whose samples never crossed the curve's own engagement level.
-            // The filter's purpose is to remove bass from the detection, i.e.
-            // to LOWER it; any instant where the filtered magnitude exceeds
-            // the raw one is filter ringing, not programme information.
+            const float rawMag = std::abs (x);
+
+            // The raw-magnitude CEILING the overshoot guard below clamps
+            // against: instantaneous attack, slow release (kCeilingReleaseMs).
+            // Advanced unconditionally, not only while `hpfOn` — it is derived
+            // from the input alone, and an envelope that only ran with the
+            // filter would start from zero on the off→on edge and clamp the
+            // detector to silence for its first samples, which is the class of
+            // stale-state defect the detector states are otherwise swept for.
+            ceilEnv[ch] = rawMag > ceilEnv[ch]
+                              ? rawMag
+                              : ceilEnv[ch] + (rawMag - ceilEnv[ch]) * aCeilRel;
+
+            det[ch] = rawMag;
             if (hpfOn)
-                det[ch] = juce::jmin (det[ch], std::abs (x));
+            {
+                // The sidechain HPF may only DEAFEN the detector, never
+                // sharpen it (0.1.2, ADR-0023): a 2nd-order high-pass is
+                // unity-magnitude only in steady state — its transient
+                // response on an LF edge overshoots the input by up to ~6 dB
+                // (b0·2A on a −A→+A step), so an unclamped filtered magnitude
+                // drew gain reduction on material whose samples never crossed
+                // the curve's own engagement level.
+                //
+                // THE BOUND IS AN ENVELOPE, NOT THE INSTANTANEOUS SAMPLE, and
+                // that distinction is the whole of the 0.1.2 review fix. The
+                // first form of this guard was `min(|y|, |x|)`, which is a
+                // pointwise operation on two signals the filter has put out of
+                // phase: for bass-dominated programme `|x|` passes through
+                // zero twice per cycle, so the clamp dragged the detector to
+                // ~0 at the BASS rate — re-coupling the compressor to exactly
+                // the low-frequency envelope this control exists to make it
+                // deaf to, and gating whatever mid/high content the detector
+                // should have been seeing at those instants. It also bound on
+                // pure passband content, where filter phase (~43° at 2·fc)
+                // makes `max_t min(|y|,|x|)` read ~0.4 dB under the unity
+                // passband, and lowered the integrated RMS further still.
+                //
+                // The contract "may only deafen" is a statement about LEVELS,
+                // so it is enforced against a level: the recent peak of the
+                // raw magnitude. Overshoot is a transient excursion above the
+                // local raw envelope and is still caught (on an LF edge the
+                // raw peak is fresh and equals the edge's own amplitude),
+                // while steady passband content is untouched — an RBJ
+                // Butterworth at Q=0.707 has no magnitude peaking, so its
+                // only excess over the input is transient by construction.
+                det[ch] = juce::jmin (std::abs (y), ceilEnv[ch]);
+            }
             maxDet  = juce::jmax (maxDet, det[ch]);
         }
 
@@ -328,6 +372,20 @@ private:
 
     float meanSquare[kMaxChannels] = {};
     float aRms = 0.01f;
+
+    // The sidechain HPF's overshoot ceiling: a peak envelope of the RAW
+    // magnitude, instantaneous attack and a release long enough to bridge a
+    // full period of the lowest programme the control addresses. 500 ms
+    // against the 20 Hz bottom of the `scHpfFreq` range is a 50 ms period
+    // spanning e^(−0.1) ≈ 0.905, i.e. under 0.9 dB of ceiling droop per
+    // cycle — which is what keeps the CEILING from acquiring the bass-rate
+    // ripple the pointwise form had. Erring LONG is the safe direction: a
+    // stale-high ceiling merely stops the guard binding, which is the
+    // unclamped filtered detector (correct in steady state, since the
+    // Butterworth cannot peak), while a short one re-creates the defect.
+    static constexpr float kCeilingReleaseMs = 500.0f;
+    float ceilEnv[kMaxChannels] = {};
+    float aCeilRel = 0.0f;
 
     // Ballistics. The auto constants are deliberately named, not exposed.
     static constexpr float kAutoFastMs = 80.0f, kAutoSlowMs = 900.0f;

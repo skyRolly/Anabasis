@@ -527,7 +527,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // limited) AND the filter's transient overshoot over-reported them by
         // up to ~6 dB, drawing gain reduction on material whose samples never
         // crossed the ceiling. The comp's copy of the filter is magnitude-
-        // clamped against the raw sample for the same reason (MasteringComp's
+        // clamped to a raw-magnitude ceiling for the same reason (MasteringComp's
         // detector comment).
         pApplied.scHpfFreqHz  = juce::jlimit (20.0f, 300.0f, p.scHpfFreqHz + t.scHpfHz);
         pApplied.dynTiltDb    = juce::jlimit (0.0f, 2.0f, p.dynTiltDb + t.dynTiltDb);

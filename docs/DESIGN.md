@@ -217,7 +217,7 @@ belong to the P4 macro review.
 > threshold IS the ceiling, so its detector must track the actual peak, and the shared filter both
 > under-read bass overs into the safety clamp and over-read LF transients into reduction on
 > material that never crossed the ceiling. `scHpfFreq` survives as the COMPRESSOR's sidechain
-> control (§2.3), with its filtered magnitude clamped to the raw one. Everything else in this
+> control (§2.3), with its filtered magnitude clamped to a raw-magnitude ceiling. Everything else in this
 > section — the ceiling-is-the-threshold decision immediately below most of all — still stands.
 
 Lookahead 0.5–10 ms (default 2 ms), dual-stage release (fast transient stage + slow program

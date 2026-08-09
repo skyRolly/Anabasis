@@ -28,7 +28,7 @@ source with intact state), the shipped instrumentation, and what the field must 
 Coverage: **Full** for the round's contracts (ADR + registries + policy + manual + tests);
 confidence **Verified** — the tests in ADR-0023's evidence block, with eight negative controls
 across two mutant builds, each killed by its own assertions.
-**Two review rounds followed**, both folded into this entry rather than given their own: the
+**Three review rounds followed**, all folded into this entry rather than given their own: the
 first reconciled the release state (the CHANGELOG header now carries the no-tag fact, since
 `release.yml` publishes a version's section verbatim and a sentence about the tag not existing
 would ship inside the notes that disprove it) and asserted the null test's adaptation premise.
@@ -36,7 +36,7 @@ The second cleared the **detector-path drift ADR-0023 left behind** — four liv
 described the removed limiter high-pass: the detector-tap paragraph in `AnabasisEngine.cpp`
 (which argued about a recursive filter on a path that now holds no filter state at all),
 `AdaptiveEngine.h`'s null argument (the scHpf trim reaches the COMP's detector only, and its
-"can only lower a level" claim is now enforced by the raw-magnitude clamp rather than reasoned
+"can only lower a level" claim is now enforced by the raw-magnitude ceiling rather than reasoned
 from the RBJ passband the overshoot did not honour), `DSP_POLICY.md`'s invisible-failure class
 (three stages → **two**, the limiter's high-pass recorded as having left with the filter rather
 than deleted, since the failure mode still applies to any detector filter added later) and
@@ -46,7 +46,7 @@ round also seeded the editor's cached graph-well flag from the live tree instead
 hard-coded default (the `shownTpMode` lesson, recorded below, repeating itself once the default
 moved) and brought both per-stage GR lanes back under `publishSilentMeters`' one clear list,
 which the limiter lane had left when it moved onto the engine's per-channel atomics and the
-comp lane had never joined — mutation-verified. Suites 262 + 660.
+comp lane had never joined — mutation-verified. The third replaced the overshoot guard's POINTWISE form with a raw-magnitude peak ENVELOPE: `min(|filtered|, |raw|)` compared two samples the filter had put out of phase, so a bass-dominated `|raw|` crossing zero twice per cycle gated the detector at the bass rate — re-coupling the compressor to the very envelope `scHpfFreq` exists to make it deaf to. The CONTRACT did not move ("may only deafen" is about levels; the defect was enforcing it against an instantaneous sample), so ADR-0023's Decision item 3 is amended in place with a dated note and the measurements — 1.295 dB unfiltered · 0.291 dB pointwise · 0.0026 dB with the ceiling — while its supporting copies (`AdaptiveEngine.h`, `AnabasisEngine.cpp`, `DESIGN.md`'s §2.5 banner, `PARAMETER_REGISTRY.md` footnote ²³, `ADR_INDEX.md`, `CHANGELOG.md`, `HANDOVER.md`) were re-worded off "clamped to the raw one". That round also recorded the accepted mono→mono METERING consequence in ADR-0023 item 5 (BS.1770 sums channel energies, so a one-channel instance reads ~3 LU quieter — the standard's reading, deliberately un-normalised) and re-measured the compressor's budget row, which the extra per-sample envelope moved from 0.10 % to 0.24 % against its ≤0.3 % allocation. Suites 264 + 660.
 Previous: the **ADR-0022 preset-identity port and its three review rounds
 (2026-08-08)**. The port gave factory presets immutable internal ids and identified a user preset
 by its file, so a shared name is a shared *label*; the documentation set moved with it. **New:**

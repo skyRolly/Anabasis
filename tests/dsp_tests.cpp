@@ -1652,6 +1652,66 @@ static void testLimiterDetectorIsUnfiltered()
         check (filtered >= raw - 0.05f,
                "limDet/comp: the filtered detector never reduces deeper than the raw one");
     }
+
+    {   // …and the guard must not RE-COUPLE the detector to the bass it
+        // exists to ignore (0.1.2 review). The first form of the overshoot
+        // bound was pointwise — `min(|filtered|, |raw|)` — and `|raw|` passes
+        // through zero twice per bass cycle, so the clamp gated the detector
+        // at the BASS rate whatever the passband content was doing.
+        //
+        // Stimulus: a loud 30 Hz fundamental under quiet 3 kHz programme,
+        // with the SC HPF at 300 Hz — the configuration the control is sold
+        // for. The 3 kHz content is steady, the filter removes the 30 Hz
+        // (−40 dB, two octaves down at 12 dB/oct), so a detector that is
+        // genuinely deaf to bass produces STEADY reduction. Ripple in the
+        // settled gain reduction is precisely the modulation this fix
+        // removes, and RMS mode is where it shows: the 10 ms integrator
+        // smooths the 3 kHz carrier but not a 30 Hz envelope.
+        auto grRipple = [&] (float hpfHz)
+        {
+            anabasis::MasteringComp comp;
+            comp.prepare (sr);
+            anabasis::EngineParameters q;
+            q.compThresholdDb = -30.0f; q.compKneeDb = 0.0f; q.compRatio = 20.0f;
+            q.compAttackMs = 1.0f; q.compAutoRelease = false; q.compReleaseMs = 5.0f;
+            q.compDetector = 0;                 // RMS, the factory mode
+            q.compMix = 1.0f; q.scHpfFreqHz = hpfHz;
+            comp.setPerBlock (q);
+            float lo = 0.0f, hi = -200.0f;
+            for (int n = 0; n < 48000; ++n)
+            {
+                const float t    = (float) n / (float) sr;
+                const float bass = 0.90f * std::sin (2.0f * juce::MathConstants<float>::pi * 30.0f * t);
+                const float hf   = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi * 3000.0f * t);
+                float fr[2] = { bass + hf, bass + hf };
+                comp.processSample (fr, 2);
+                if (n >= 24000)                 // settled half only
+                {
+                    const float gr = comp.currentGainReductionDb();
+                    lo = juce::jmin (lo, gr);
+                    hi = juce::jmax (hi, gr);
+                }
+            }
+            return hi - lo;                     // peak-to-peak GR, dB
+        };
+        // The HPF-OFF run is the reference for what bass-coupled reduction
+        // looks like: there the detector is SUPPOSED to follow the 30 Hz
+        // envelope, so its ripple is large. Engaging the filter must collapse
+        // that ripple — the whole point of the control — and the pointwise
+        // clamp did not, because it reinstated the same envelope through the
+        // ceiling. Bounds an order of magnitude apart, not a tolerance.
+        const float rippleOff = grRipple (20.0f), rippleOn = grRipple (300.0f);
+        // MEASURED, 48 kHz: 1.295 dB unfiltered · 0.291 dB with the pointwise
+        // clamp this fix replaced · 0.0026 dB with the envelope ceiling. The
+        // pointwise form left 22 % of the unfiltered bass modulation standing;
+        // the ceiling leaves 0.2 %. The bounds sit an order of magnitude clear
+        // of BOTH the measurement and the superseded form, so the pointwise
+        // clamp is a mutant this test kills rather than a variant it tolerates.
+        check (rippleOff > 1.0f,
+               "limDet/comp: (premise) with the HPF off the detector tracks the bass envelope");
+        check (rippleOn < 0.05f,
+               "limDet/comp: with the HPF on the bass no longer modulates the detector");
+    }
 }
 
 // ---------------------------------------------------------------------------

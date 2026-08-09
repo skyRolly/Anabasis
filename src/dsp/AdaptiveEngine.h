@@ -34,8 +34,9 @@
 //  the limiter's, whose detector is now the tapped magnitude itself), and its
 //  inertness rests on that detector's output never crossing the threshold.
 //  The RBJ high-pass at Q=0.707 has unity passband, and since 0.1.2 the comp
-//  CLAMPS its filtered magnitude to the raw one — so the trim can only LOWER
-//  a detector level by construction rather than by a passband argument that
+//  clamps its filtered magnitude to a raw-magnitude CEILING (a peak envelope
+//  of the input) — so the trim can only LOWER a detector level over any
+//  envelope the gain computer can see, rather than by a passband argument that
 //  the filter's transient overshoot did not actually honour. That overshoot
 //  was one of the 0.1.2 field defects (ADR-0023), and it is why this claim is
 //  now enforced in the detector rather than reasoned about here. The argument

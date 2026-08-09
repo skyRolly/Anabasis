@@ -48,7 +48,7 @@ by construction rather than by stimulus luck.
   0 dBFS (a range change is a compatibility break), knee 0 forfeits the §2.3 glue knee at every
   loudness, ceiling 0.0 forfeits the safety margin. All rejected.
 - **C. Contract-level fixes**: knee above the threshold; the limiter detector unfiltered; the
-  comp's filtered detector magnitude clamped to the raw one. Chosen.
+  comp's filtered detector magnitude clamped to a raw-magnitude ceiling. Chosen.
 
 ## Decision
 
@@ -60,14 +60,42 @@ by construction rather than by stimulus luck.
    `LookaheadLimiter` loses `setDetectorHpf`, its biquad state and `sanitiseDetectorState`
    (nothing recursive remains to repair). The shared `scHpfFreq` becomes **comp-only**, and the
    §5.4 scHpf trim therefore reaches the comp's detector only.
-3. **Comp detector clamp:** with the HPF engaged, `det = min(|filtered|, |raw|)` — a sidechain
-   high-pass may only *deafen* the detector, never sharpen it; overshoot above the raw magnitude
-   is filter ringing, not programme.
+3. **Comp detector overshoot ceiling:** with the HPF engaged, the filtered magnitude is clamped
+   against a **peak envelope of the raw magnitude** (instantaneous attack, 500 ms release) —
+   `det = min(|filtered|, ceilEnv(|raw|))`. A sidechain high-pass may only *deafen* the detector,
+   never sharpen it; overshoot above the raw envelope is filter ringing, not programme.
+
+   > **Amended 2026-08-09, same round, before any tag.** This item first specified the pointwise
+   > form `det = min(|filtered|, |raw|)`, and the round's own review found it defective: the two
+   > operands are time-domain samples the filter has put out of phase, so a bass-dominated `|raw|`
+   > passing through zero twice per cycle dragged the detector to ~0 at the BASS rate — restoring
+   > the low-frequency coupling `scHpfFreq` exists to remove, and gating whatever passband content
+   > the detector should have seen at those instants. It also bound on pure passband content
+   > (~43° of filter phase at 2·fc reads ~0.4 dB under the unity passband, and lowers the
+   > integrated RMS further). **The contract is unchanged** — "may only deafen" is a statement
+   > about LEVELS, and the defect was enforcing it against an instantaneous sample instead of a
+   > level. Measured on a 30 Hz fundamental under 3 kHz programme with the HPF at 300 Hz: peak-to-
+   > peak reduction ripple 1.295 dB unfiltered · **0.291 dB pointwise** · **0.0026 dB** with the
+   > envelope ceiling. Pinned by `testLimiterDetectorIsUnfiltered`, whose overshoot half is
+   > unchanged and still passes against either form — the two properties are asserted separately.
+
 4. **Ceiling-definition GR stands:** peaks above the Ceiling draw reduction — that is the
    ADR-0002/0006 design, unchanged, now the *only* reduction reachable at defaults.
 5. **Bus layouts:** `stereo→stereo`, `mono→stereo` (KI-009, 0.1.1) and — new — `mono→mono`,
    the same binary at `nCh = 1` (dual-mono/multi-mono racks). `stereo→mono` stays refused (no
    downmix rule is defined). Latency, parameters and serialization are channel-count-free.
+
+   **METERING IS NOT, and that is intended** (reviewed and accepted 2026-08-09). `LoudnessMeter`
+   implements BS.1770 as specified — it SUMS the weighted channel energies rather than averaging
+   them — so a one-channel instance measures the same programme about **3 LU quieter** than the
+   dual-mono stereo layout. That is the standard's reading for a mono presentation, not a defect,
+   and it is why no channel-count normalisation is applied: adding one would make Anabasis
+   disagree with every other BS.1770 meter on the same material. Consequences, stated so a field
+   report is not mistaken for a bug — the LUFS rows (M/S/I) and LRA read ~3 LU lower in
+   mono→mono; PLR keeps its character (both terms move together); and the §2.7 measured
+   compensation is a dry-vs-wet DIFFERENCE, so the offset cancels there. `RmsMeter`, the §5.4
+   features and the true-peak estimate all normalise by `nCh` or are per-channel, so they are
+   layout-invariant.
 6. **GR history:** fixed right-anchored scale (pitch = width over one full window's bucket
    count), the unmeasured region drawn as zero data, and the ring cleared at `prepareToPlay`
    only when the (rate, block) pair actually changed — a transport-start re-prepare keeps the
