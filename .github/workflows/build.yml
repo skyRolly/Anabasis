@@ -130,6 +130,40 @@ jobs:
           python3 scripts/check-docs.py
 
   # -------------------------------------------------------------------------
+  # Source portability lint (scripts/check-portability.py).
+  #
+  # THIS JOB EXISTS BECAUSE A BUILD JOB CANNOT REPLACE IT. Between 2026-08-08
+  # and 2026-08-10 the macOS job failed to COMPILE on every push while Linux and
+  # Windows stayed green, on one line: `juce::jmax<size_t> (1, v.size())`. An
+  # explicit template argument is substituted into JUCE's dsp::SIMDRegister
+  # overload of the same name, and completing SIMDRegister<size_t> needs
+  # SIMDNativeOps<size_t> -- which exists only where size_t names one of JUCE's
+  # ten SIMD element typedefs. On Linux glibc uint64_t IS unsigned long IS
+  # size_t, so it completes; on macOS libc++ uint64_t is unsigned long long, so
+  # it does not.
+  #
+  # The divergence is in the TYPEDEF, not the front end, so NO Linux compiler
+  # can see it -- adding a Linux+Clang job (this workflow now has one, for other
+  # reasons) would NOT have caught this. A lint is the only Linux-runnable
+  # guard, which is why it is a separate, seconds-long job rather than a step
+  # inside a build.
+  #
+  # Runs on ubuntu-latest with no build, no dependencies beyond the standard
+  # library, and no `needs:` -- a source defect should fail the run on its own
+  # terms, not wait behind a toolchain.
+  # -------------------------------------------------------------------------
+  source-lint:
+    runs-on: ubuntu-latest
+    # Same same-repo-PR guard as `docs` above, for the same reasons.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint source portability (JUCE SIMD overload hazard)
+        run: python3 scripts/check-portability.py
+
+  # -------------------------------------------------------------------------
   # Pre-P1 guard. This repository is currently a scaffold: the governance docs,
   # scripts and workflows exist, but there is no CMakeLists.txt and no src/
   # (docs/DEVELOPMENT_BRIEF.md §11 -- the build lands at P1). Without this
@@ -363,6 +397,167 @@ jobs:
           name: Anabasis-Linux-debug
           path: dist/Anabasis-Linux-debug
           if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Linux + Clang, and the first-party warning gate.
+  #
+  # PURPOSE, stated narrowly so it is not oversold: AppleClang applies a warning
+  # set GCC does not (-Wshorten-64-to-32, -Wconditional-uninitialized,
+  # -Wsign-conversion, -Wcast-align, -Wshift-sign-overflow,
+  # -Wzero-as-null-pointer-constant, ... -- juce_recommended_warning_flags picks
+  # by compiler ID). Every one of those diagnostics used to reach us only from
+  # the macOS runner, several minutes into a universal build, or not at all when
+  # that job was red for an unrelated reason. Running Clang here surfaces them
+  # in the fast lane instead.
+  #
+  # It does NOT catch the typedef-divergence class -- see `source-lint`. Two
+  # different gaps, two different guards; conflating them is how the second one
+  # gets dropped.
+  #
+  # Builds ONLY the two test targets: they compile the entire first-party tree
+  # (ANABASIS_PLUGIN_SOURCES is shared with AnabasisStateTests by construction --
+  # ADR-0008), so coverage is complete while the LTO'd plugin link, the
+  # standalone and the packaging are skipped.
+  #
+  # The gate is FIRST-PARTY warnings only, matched by path. -Werror is not used
+  # and cannot be yet: JUCE's own module sources are compiled into our targets,
+  # so a blanket -Werror would gate on a dependency's warnings and get switched
+  # off at the first JUCE bump. Filtering by path gates exactly what we own.
+  # -------------------------------------------------------------------------
+  linux-clang:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/setup-linux.sh
+
+      - name: Configure (Clang)
+        run: >
+          cmake -B build-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DANABASIS_BUILD_STANDALONE=OFF
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      # The canary belongs HERE rather than in source-lint: it needs the pinned
+      # JUCE on disk, which this job has already fetched. It asserts that the
+      # hazard source-lint guards is still real for the pinned revision -- the
+      # deduced form must compile and the explicit form must not. A JUCE bump
+      # that changes the SIMDRegister overload set fails this step instead of
+      # silently turning the lint into a no-op.
+      - name: Portability compile canary (pinned JUCE still has the hazard)
+        run: python3 scripts/check-portability.py --compile-canary build-clang/_deps/juce-src/modules --cxx clang++
+
+      - name: Build tests (Clang) and gate on first-party warnings
+        run: |
+          set -o pipefail
+          cmake --build build-clang --target AnabasisTests AnabasisStateTests 2>&1 | tee clang-build.log
+          # Match warnings whose file path is ours. JUCE's own module sources
+          # live under _deps/ and are excluded by the same expression.
+          if grep -E '^/?[^:]*/(src|tests)/[^:]*:[0-9]+:[0-9]+: warning:' clang-build.log; then
+            echo "::error::Clang emitted warnings in first-party sources (src/ or tests/)."
+            exit 1
+          fi
+          echo "Clang: no warnings in first-party sources."
+
+      - name: Self-tests (DSP + state, Clang build)
+        run: |
+          ./build-clang/AnabasisTests_artefacts/Release/AnabasisTests
+          ./build-clang/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
+  # -------------------------------------------------------------------------
+  # Sanitizers (Linux). The point of this job is to catch, ON LINUX, defects
+  # that only MANIFEST on another platform.
+  #
+  # KI-009 (a single silent channel, reproducible on macOS and not on Linux) put
+  # the read-before-write hypothesis at the top of the list: memory that Linux
+  # hands back zero-filled is arbitrary on macOS, so an uninitialised read is
+  # benign here and poisonous there. That defect is platform-INDEPENDENT even
+  # though its symptom is not, and tooling sees it regardless of which bytes the
+  # allocator happened to supply.
+  #
+  # ASan+UBSan cover out-of-bounds, lifetime and undefined behaviour -- the last
+  # of which also matters because UB is what lets -O3 + LTO on a different
+  # target legally delete a guard. MemorySanitizer, the dedicated uninitialised
+  # -read tool, is deliberately NOT used: it requires every dependency including
+  # libc++ and all of JUCE to be instrumented, and an uninstrumented dependency
+  # produces false positives rather than silence. valgrind memcheck answers the
+  # same question with no rebuild of anything, so it carries that half.
+  #
+  # valgrind runs the DSP suite only. It is ~50x slower than native, and the DSP
+  # suite is the numeric core where an uninitialised read would sit; the state
+  # suite is covered by ASan+UBSan in the same job. Stated because a reader
+  # should not have to infer that the coverage is deliberately asymmetric.
+  #
+  # detect_leaks=0: JUCE's singletons are torn down at exit in ways LeakSanitizer
+  # reports and this job is not a leak gate. halt_on_error=1 on UBSan so the
+  # first violation fails the job rather than scrolling past.
+  # -------------------------------------------------------------------------
+  sanitizers:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/setup-linux.sh
+          # clang's sanitizer runtime ships SEPARATELY from clang on Debian/Ubuntu.
+          # Without it the link fails with "cannot find libclang_rt.asan-x86_64.a",
+          # which reads as a project problem and is not one. The version-suffixed
+          # package is the reliable name; the unsuffixed one is a convenience alias
+          # that does not exist on every image, so try both and fail loudly if
+          # neither lands (`set -e` is on -- the final `-y valgrind` is not a
+          # swallow, it is the minimum this job cannot run without).
+          sudo apt-get install -y valgrind clang
+          sudo apt-get install -y libclang-rt-dev \
+            || sudo apt-get install -y "libclang-rt-$(clang --version | sed -n 's/.*clang version \([0-9]*\).*/\1/p')-dev"
+
+      - name: Configure (Clang, ASan + UBSan)
+        run: >
+          cmake -B build-san -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DANABASIS_BUILD_STANDALONE=OFF
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build test targets (sanitized)
+        run: cmake --build build-san --target AnabasisTests AnabasisStateTests
+
+      - name: Self-tests under ASan + UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          ./build-san/AnabasisTests_artefacts/RelWithDebInfo/AnabasisTests
+          ./build-san/AnabasisStateTests_artefacts/RelWithDebInfo/AnabasisStateTests
+
+      # Uses the UNSANITIZED Release binary on purpose: memcheck and ASan
+      # instrument the same memory and running them together is neither faster
+      # nor more sensitive. This is the only uninitialised-read detector in the
+      # pipeline (see the MemorySanitizer note above), so its exit code is the
+      # gate: --error-exitcode makes a reported error fail the job, which is not
+      # valgrind's default.
+      - name: Configure + build the DSP suite (unsanitized, for valgrind)
+        run: |
+          cmake -B build-vg -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_STANDALONE=OFF
+          cmake --build build-vg --target AnabasisTests
+
+      - name: valgrind memcheck (DSP suite)
+        run: >
+          valgrind --tool=memcheck --track-origins=yes --leak-check=no
+          --error-exitcode=1 --error-limit=no --num-callers=25
+          ./build-vg/AnabasisTests_artefacts/Release/AnabasisTests
 
   windows:
     needs: preflight
@@ -750,7 +945,7 @@ jobs:
         # implicit self-skip made the two modes behave differently after an earlier
         # failure -- the opposite of "both modes report independently".
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
 
       - name: pluginval (randomise x3 -- release gate)
         # Same condition as the deterministic step above -- deliberately NOT
@@ -760,7 +955,26 @@ jobs:
         #   * an earlier PIPELINE failure must skip BOTH, because nothing worth
         #     validating exists.
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise vst3
+
+      # THE AU IS VALIDATED TOO, and only here -- it is the one format that
+      # exists on exactly one platform. Until 2026-08-10 the release gate ran
+      # against the VST3 alone on all three OSes, so the AU shipped to Logic
+      # users having passed no automated validation at all. KI-009 is reported
+      # in AU *and* VST3, which is what made the omission worth closing rather
+      # than noting: the format the report names was the ungated one.
+      #
+      # Same strictness (the env block above is still the only copy), same two
+      # modes, same 3 consecutive passes -- an AU that only passes sometimes is
+      # not a passing AU. Gated on the BUILD like every other validation step,
+      # never on the VST3 steps: a VST3 failure must not hide the AU's result.
+      - name: pluginval AU (deterministic x3 -- release gate)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
+
+      - name: pluginval AU (randomise x3 -- release gate)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise au
 
       # Order matters -- 1) dsymutil captures a universal dSYM per bundle (the
       # only crash-symbolication source once stripped), 2) strip -x removes local

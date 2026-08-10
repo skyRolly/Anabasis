@@ -488,8 +488,8 @@ public:
         // deliberately no signal back to the wrapper at P4.
         if (learnBlocks > 0)
         {
-            const float ons  = (float) (learnOnsSum  / learnBlocks);
-            const float tilt = (float) (learnTiltSum / learnBlocks);
+            const float ons  = (float) (learnOnsSum  / (double) learnBlocks);
+            const float tilt = (float) (learnTiltSum / (double) learnBlocks);
             // A pass that measured through an overflow is REFUSED here rather
             // than repaired later, and the check lives at the writer for a
             // reason: sanitiseState() cancels such a pass, but it runs later in

@@ -50,6 +50,28 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **windows** | `windows-latest` (MSVC, multi-config) | VST3 + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **macos** | `macos-14` (Apple Silicon) | universal VST3 + **AU** + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |
+| **source-lint** | `ubuntu-latest` | nothing — runs `scripts/check-portability.py` (seconds) | n/a |
+| **linux-clang** | `ubuntu-latest` (Clang) | the two test targets only; fails on any warning under `src/` or `tests/`; runs the portability compile canary | n/a |
+| **sanitizers** | `ubuntu-latest` (Clang) | the two test targets under ASan + UBSan, plus a plain build for valgrind memcheck over the DSP suite | n/a |
+
+**Why three Linux jobs and not one.** They answer three different questions and only one of them
+is "does it build here".
+
+* `source-lint` guards a class NO Linux build can see. INC-003 was a hard compile error on macOS
+  produced by a line that GCC *and* Clang both accept on Linux, because the divergence is in the
+  platform's `<cstdint>` typedefs (`size_t` is `uint64_t` here and is not there), not in the front
+  end. A lint is the only Linux-runnable guard for that, which is why it is a separate job with no
+  `needs:` — a source defect should fail the run on its own terms rather than queue behind a
+  toolchain.
+* `linux-clang` catches the AppleClang DIAGNOSTIC set (`-Wshorten-64-to-32`,
+  `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …) that `juce_recommended_warning_flags`
+  applies to Clang and not to GCC. Those reached us only from the macOS runner before, minutes
+  into a universal build — or not at all, while that job was red for an unrelated reason. It does
+  NOT catch the typedef class above; the two gaps are separate, and conflating them is how the
+  second one gets dropped.
+* `sanitizers` catches, on Linux, defects that only MANIFEST elsewhere: memory this OS hands back
+  zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous there
+  while the defect itself is platform-independent.
 
 The **docs** job is deliberately outside the `preflight` gate and outside every build job's `needs`:
 it must run while the repository is still a pre-P1 scaffold (the phase in which the documentation

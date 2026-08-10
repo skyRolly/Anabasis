@@ -77,6 +77,67 @@ Evidence [Verified]:
 - Test:   the two tests above
 - Commit: PR #5, P3 monitor-layer commit
 
+## INC-003 — macOS CI was red for three days on a line no Linux compiler can reject
+
+**Symptom:** From 2026-08-08 (commit `f50d6c2`) to 2026-08-10 the macOS "Build & Validate" job
+failed to COMPILE `tests/state_tests.cpp` on every push, while the Linux and Windows jobs stayed
+green on the same SHA. Every downstream macOS step — the self-tests, both pluginval modes,
+packaging — was skipped for the whole period, so nothing macOS-specific was validated at all.
+The failing line was
+`return std::sqrt (s / juce::jmax<size_t> (1, v.size()));`.
+
+**Root cause:** `juce::jmax` is an overload SET. `juce_dsp` declares a second overload taking
+`dsp::SIMDRegister<Type>` (`juce_SIMDRegister_Impl.h:185`). An EXPLICIT template argument is
+substituted into every candidate, so the compiler must form `SIMDRegister<size_t>`; a parameter
+of incomplete class type must be completed, and completing it needs `SIMDNativeOps<size_t>`,
+which exists only where `size_t` names one of the ten types JUCE specialises. The completion is
+outside the immediate context, so it is a hard error, not a SFINAE removal.
+
+    Linux (LP64, glibc):  uint64_t IS unsigned long IS size_t -> complete   -> compiles
+    macOS (LP64, libc++): uint64_t is unsigned long long,
+                          size_t is unsigned long             -> incomplete -> ERROR
+
+The divergence is in the platform's `<cstdint>` TYPEDEFS, not in the compiler. GCC 13 and
+Clang 18 on this Linux machine both accept the line and both reject the structurally identical
+`juce::jmax<long long>(...)` — `long long` being on Linux exactly what `unsigned long` is on
+Darwin. **A Linux+Clang job would not have caught this, and neither would `-Werror`: it is an
+error, not a warning.**
+
+**Fix:** the argument-deduced form, `juce::jmax ((size_t) 1, v.size())` — identical result;
+deducing `Type` from a scalar against parameter `SIMDRegister<Type>` fails, which removes the
+SIMD candidate before the class is ever completed. The ten other explicit-argument call sites in
+the tree spelled `int64_t` and were correct on macOS for a principled reason (JUCE spells the
+specialisation `SIMDNativeOps<int64_t>`, which tracks the platform typedef), but they were
+changed too: the FORM is what admits the mistake.
+
+**Prevention:** three gates, because one would not have been enough.
+1. `scripts/check-portability.py` + the `source-lint` CI job — rejects an explicit template
+   argument on the closed set `{jmin, jmax, snapToZero}`, the juce names `juce_dsp` also
+   overloads for `SIMDRegister`. It is a LINT rather than a build job precisely because no
+   Linux build can see this class. Mutation-verified: reinstating the exact line fails the lint
+   at that line and nowhere else.
+2. `--compile-canary`, run in the `linux-clang` job — compiles the deduced and explicit forms
+   against the pinned JUCE and requires the first to succeed and the second to fail, so a JUCE
+   bump that changes the overload set fails loudly instead of silently voiding the lint.
+3. The `linux-clang` job's first-party warning gate — it does not catch THIS defect, and saying
+   so is the point: it catches the AppleClang diagnostic set (`-Wshorten-64-to-32`,
+   `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …) that GCC does not apply, which is a
+   different gap that was also only visible from the macOS runner.
+
+**The second-order lesson, which is the expensive one.** The compile break was three days of a
+red job; what it COST was three rounds of KI-009 investigation reasoning from a validation
+surface that had silently lost a platform. `tests/state_tests.cpp:5694` sits inside
+`testClipMixCannotChangeTheDefaultPresetsSound` — so the round-5, round-6 and round-7 KI-009
+regressions, written specifically for a fault that reproduces ONLY on macOS, had never once
+executed on macOS. A red job on another platform is not someone else's problem; while it is red,
+every conclusion drawn from "the suites are green" is scoped to the platforms that still ran.
+
+Evidence [Verified]:
+- Source: `tests/state_tests.cpp:5694` (before the fix); `scripts/check-portability.py`;
+  `.github/workflows/build.yml` (`source-lint`, `linux-clang`)
+- Test:   `scripts/check-portability.py` (mutation-verified); `--compile-canary`
+- Commit: `6f63573`, PR #14
+
 ## Relationship to the other status files
 
 | File | Holds |

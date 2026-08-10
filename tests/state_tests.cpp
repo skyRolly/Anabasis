@@ -5741,7 +5741,12 @@ static void testClipMixCannotChangeTheDefaultPresetsSound()
 
 static void testBothChannelsCarryAudioThroughTheWrapper()
 {
-    auto run = [] (float loudness, const char* tag)
+    // `clipMixPercent < 0` leaves Clip Mix at its default; a value in [0, 100]
+    // sets it. The parameter is threaded through rather than set by the caller
+    // because it must be written BEFORE the processing loop and AFTER the macro
+    // engagement below, and because the premise assertion at the end of the
+    // engagement block has to see both.
+    auto run = [] (float loudness, const char* tag, float clipMixPercent = -1.0f)
     {
         AnabasisAudioProcessor proc;
         proc.prepareToPlay (48000.0, 512);
@@ -5778,6 +5783,27 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
             engage (pid::colourDepth, loudness);
             engage (pid::dynTilt,     loudness > 60.0f ? 2.0f : 0.8f);
             engage (pid::limGain,     loudness * 0.18f);
+
+            // THE PREMISE, ASSERTED RATHER THAN ASSUMED. Round 6 found every
+            // "loudness N" case in this battery had been vacuous for its whole
+            // life — the knob moved and `clipDrive` stayed 0, so the clipper was
+            // exact-skipped and the cases were re-running "defaults" under a
+            // different name. The repair was to engage the parameters directly;
+            // this check is what makes the repair self-guarding. Without it the
+            // same silence returns the moment an id, a range or a curve moves,
+            // and it returns GREEN.
+            juce::String premise;
+            premise << "stereoWrapper (" << tag << "): (premise) the clipper is actually engaged "
+                    << "(clipDrive=" << proc.apvts.getRawParameterValue (pid::clipDrive)->load()
+                    << " dB) — a vacuous case is what round 6 found here";
+            check (proc.apvts.getRawParameterValue (pid::clipDrive)->load() > 0.0f,
+                   premise.toRawUTF8());
+        }
+
+        if (clipMixPercent >= 0.0f)
+        {
+            auto* q = proc.apvts.getParameter (pid::clipMix);
+            q->setValueNotifyingHost (q->getNormalisableRange().convertTo0to1 (clipMixPercent));
         }
 
         juce::AudioBuffer<float> buf (2, 512);
@@ -5829,6 +5855,37 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
     };
     run (0.0f,  "defaults");
     run (50.0f, "loudness 50");
+
+    // ---- THE FIELD CROSS-PRODUCT: a PUSHED chain x every non-zero Clip Mix --
+    //
+    // This is the reported scenario, and until now nothing ran it. The two
+    // halves existed separately and neither one covers it:
+    //
+    //   * `testClipMixCannotChangeTheDefaultPresetsSound` sweeps Clip Mix, but
+    //     at the DEFAULT preset — where `clipDrive == 0` exact-skips the clip
+    //     sub-block, so every mix branch provably lands on the same float. It
+    //     proves the mix is INERT there, which is the opposite of exercising it.
+    //   * The `loudness N` cases push the chain, but leave Clip Mix at its
+    //     default, so they sweep exactly one point of it.
+    //
+    // The owner's report is gated on the mix being NON-ZERO with the chain
+    // working — the one configuration in which this stage's value reaches the
+    // wet ring at all, and therefore the only one in which the ring's
+    // per-channel zero substitution can be reached. Every value in the sweep is
+    // non-zero on purpose: 0 is covered above as the inert case, and a mix of 0
+    // is the setting the field report says makes the fault GO AWAY, so including
+    // it here would add a row that passes for the wrong reason.
+    //
+    // 1 % is in the list because a barely-open mix is the hardest case for a
+    // fault that scales with the mix, not the easiest: it is where a poisoned
+    // wet value contributes least and a level assertion is closest to passing
+    // anyway. Cheap: five renders of 60 blocks each.
+    for (const float mixPct : { 1.0f, 25.0f, 50.0f, 99.0f, 100.0f })
+    {
+        juce::String tag;
+        tag << "loudness 70, Clip Mix " << mixPct << " %";
+        run (70.0f, tag.toRawUTF8(), mixPct);
+    }
 
     // The configurations the plain run above does NOT cover, each a candidate
     // for a channel-asymmetric defect the DSP suite would miss: the editor

@@ -54,6 +54,18 @@ chain can reach. Stated this way deliberately — an earlier draft of this line 
 behaviour changes anywhere", which the entry's own `Fixed` section contradicts, and
 `release.yml` publishes this section verbatim as the release notes.
 
+### Added
+- **The AU is validated by pluginval, on every push.** Same strictness, both modes, three
+  consecutive passes each — the same gate the VST3 has always had. Until now the release gate ran
+  against the VST3 alone on all three platforms, so the AU shipped to Logic users having passed
+  no automated validation at all. Evidence Source: PR #14. [Verified]
+- **Three cross-platform CI gates**, because a green Linux build is not evidence about another
+  platform: a source portability lint for the JUCE SIMD-overload hazard (with a compile canary
+  that checks the pinned JUCE still has that hazard), a Clang build that fails on any warning in
+  first-party sources, and a sanitizer job running ASan + UBSan over both suites plus valgrind
+  memcheck over the DSP suite. `docs/policies/TESTING_POLICY.md` carries what each one does and,
+  as importantly, what it does not. Evidence Source: PR #14. [Verified]
+
 ### Changed
 - **The loudness-compensation toggle reads MATCH, not COMP** — beside a compressor panel
   captioned COMP, the old caption read as a compressor switch. The parameter and its
@@ -87,6 +99,14 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   Evidence Source: PR #13, reference immediacy PR #14 (item 1). [Verified]
 
 ### Fixed
+- **The macOS build works again.** The macOS CI job had failed to COMPILE
+  `tests/state_tests.cpp` on every push since 2026-08-08 while Linux and Windows stayed green,
+  so no macOS binary was built, validated or packaged for three days. One line did it:
+  `juce::jmax<size_t> (...)` instantiates JUCE's `dsp::SIMDRegister` overload of the same name,
+  and completing `SIMDRegister<size_t>` needs a `SIMDNativeOps<size_t>` that exists only where
+  `size_t` names one of JUCE's ten SIMD element typedefs — true on Linux (`uint64_t` IS
+  `unsigned long`), false on macOS (`uint64_t` is `unsigned long long`). Recorded in full as
+  `docs/POSTMORTEMS.md` INC-003. Evidence Source: PR #14. [Verified]
 - **A sustained, absurdly hot input can no longer silence one channel** (the KI-009
   investigation). The colour stage's harmonic polynomial raises to the fifth power, and with
   Clip Drive at 0 the clipper's own bound is skipped, so a finite-but-astronomical sample
@@ -115,6 +135,22 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   [Verified]
 
 ### Investigation (KI-009 and KI-012 — both open)
+- **Every KI-009 regression has now run on macOS, and passes.** Restoring the build revealed
+  that the broken line sat INSIDE `testClipMixCannotChangeTheDefaultPresetsSound`, so the
+  regressions written in the last three rounds — for a fault that reproduces only on macOS — had
+  never once executed there. The full macOS job is now green (build → both suites → pluginval ×3
+  in both modes → packaging, universal arm64 + x86_64), which makes "does not reproduce" a
+  measurement on the reproducing platform rather than an inference from the other one. It is
+  still a negative: the reproduction lives outside what the suites drive. Evidence Source:
+  PR #14. [Verified]
+- **A real defect class was found and pinned in the process.** At Clip Mix 0 the clip/saturation
+  stage's output is the untouched dry sample, so a poisoned internal state is invisible to the
+  engine's non-finite boundary — and invariant 9's repair is keyed on that boundary. The
+  0.1.3 colour-argument bound makes it unreachable in the shipped build;
+  `testClipSatCannotHideANonFiniteFromTheBoundary` proves that over 30 poisoning attempts up to
+  FLT_MAX, and fails with 32 000 non-finite samples **on ordinary audio** when the bound is
+  removed. No audible change — this pins a property the code already had. Evidence Source:
+  PR #14. [Verified]
 - **The left-channel silence is macOS-only so far.** The owner re-tested on **Linux** and
   cannot reproduce it there, so KI-009 is now explicitly scoped to the macOS build (Windows
   untested by either side). Six rounds of headless work all ran on Linux, so their

@@ -1107,6 +1107,65 @@ not reachable from this CI-less Linux tree. Until then no Linux-side experiment 
 entry, and none should be run in its name — that is the concrete conclusion of round 7, and it
 is why this round adds no test.
 
+**0.1.3 FOLLOW-UP ROUND 8 — macOS validation restored, and what it says (2026-08-10).**
+Round 7 concluded that only a macOS build could move this entry. It then turned out that no
+macOS build had run: the macOS CI job had failed to COMPILE `tests/state_tests.cpp` on every
+push since round 5's commit `f50d6c2` (`INC-003` — `juce::jmax<size_t>` instantiates JUCE's
+`SIMDRegister` overload, which is well-formed on Linux and ill-formed on macOS because
+`uint64_t` is `unsigned long` there and is not).
+
+**The consequence for this entry is exact and uncomfortable.** The broken line sits INSIDE
+`testClipMixCannotChangeTheDefaultPresetsSound`. So every KI-009 regression written in rounds 5,
+6 and 7 — written specifically for a fault that reproduces only on macOS — had never once
+executed on macOS. Three rounds of "the suites are green" meant "green on the platforms that
+still ran", and that is the platform this report is not about.
+
+**With the build restored, the whole macOS job is green** (run 31435190370, commit `6f63573`,
+`macos-14`, universal arm64 + x86_64): build → both suites → pluginval ×3 in BOTH modes at the
+`build.yml` strictness → packaging. So the first arm64 execution of every previously-dark test
+passes, and the answer it gives is a negative one: **the suites do not reproduce KI-009 on
+macOS either.** That is a materially stronger negative than round 7's, because it is measured on
+the platform that reproduces rather than inferred from the one that does not — but it is still a
+negative, and it means the reproduction lives outside what the suites drive.
+
+**What the round DID find, and it is a real defect class rather than a restatement.** A
+five-lens audit of the compressor→ClipSat→limiter span produced one finding that survived
+verification: **at Clip Mix 0 this stage can poison its own state invisibly.** The mix loop's
+exact endpoints leave the dry sample untouched at `M == 0` (the bit-exact identity path, which is
+correct and must stay), so the stage's OUTPUT is finite no matter what its internals did —
+while `tameLp[ch]` is updated on BOTH tame branches, deliberately, to keep the 6 kHz split warm.
+Warm state plus an invisible output is a latch: invariant 9's repair is keyed on
+`stageGeneratedNonFinite`, which is raised by the BOUNDARY, and at mix 0 the boundary has
+nothing to see. The state would then be paid for later, on ordinary audio, the moment the mix
+opened with the tame engaged.
+
+That shape is the reported fingerprint exactly — channel-local, gated on a non-zero mix, absent
+at mix 0, upstream of the limiter's detector tap (so the compressor still shows GR on both
+channels while the limiter shows it on one), cured by bypass. **It is NOT reachable in the
+shipped build**: 0.1.3's `kArithmeticLimit` bound on the colour argument holds the whole stage,
+and `testClipSatCannotHideANonFiniteFromTheBoundary` now proves it over 30 poisoning attempts up
+to FLT_MAX with the colour stage swept on and off. Remove that bound and the same test fails
+with 32 000 of 120 000 non-finite output samples **on ordinary audio, after the poisoning
+stopped** — which is what makes it worth pinning: it shows the 0.1.3 fix closed not just an
+immediate overflow but a deferred, state-latched form of the same fault that no existing test
+would have caught, because at mix 0 there is nothing at the boundary to catch.
+
+**Also newly excluded, from evidence rather than argument:**
+
+| Hypothesis | How it died |
+|---|---|
+| Uninitialised / stale per-channel state | Both suites are VALGRIND-CLEAN under memcheck with `--track-origins` (0 errors from 0 contexts) and clean under ASan+UBSan. An uninitialised read is platform-independent even when its symptom is not; the tools see it whatever bytes the allocator supplied |
+| Wrapper, bus layout, channel pointers | Global bypass feeds ONLY the engine's output selector (`AnabasisEngine.cpp:1046-1049`) — no DSP is skipped, no state reset. "Bypass restores the left channel" therefore PROVES the host delivers channel 0, that both channel-0 pointers are right, and that the dry ring is intact |
+| The two macOS `-Wshorten-64-to-32` warnings in the region access | `AudioBlock::getSample/setSample` take `int`; the casts were an int→size_t→int round trip on values confined to ch ∈ {0,1} and i < num<<osShift. Value-preserving, incapable of silencing a channel. Removed as noise |
+
+**Status: OPEN, macOS-scoped, and now with a working validation path.** The kill zone is
+narrowed to the oversampled region (`AnabasisEngine.cpp:726-846`) with the wrapper, the bus
+layer and the memory-safety classes excluded. What no headless suite has yet reproduced on
+either platform is the field configuration itself, so the next datum has to come from a real
+macOS host: the plugin under a DAW with the reported settings, not another sweep. The macOS
+gate now runs on every push — including, since this round, pluginval against the **AU** as well
+as the VST3, the format the report names and the one that had never been validated at all.
+
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 
 **Severity:** Low

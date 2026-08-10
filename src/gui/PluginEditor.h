@@ -206,7 +206,7 @@ private:
 
     // Both the constructor's seed and the 24 Hz tick, so the two cannot
     // disagree about what "no history yet" looks like. Out of line because this
-    // header only forward-declares the processor.
+    // header only forward-declares the proc.
     void refreshUndoRedoEnablement();
     void showPresetMenu();
     void showSavePreset (bool);
@@ -240,7 +240,7 @@ private:
                               const juce::String& name, const juce::String& tip, juce::Value);
     void passComboHoverThrough (juce::ComboBox&);
 
-    AnabasisAudioProcessor& processor;
+    AnabasisAudioProcessor& proc;
     abgui::AnabasisLookAndFeel lnf;
     // Null PARENT on purpose (a desktop tooltip is not clipped to the editor),
     // which is also why it needs `lnf` handed to it EXPLICITLY: a desktop
