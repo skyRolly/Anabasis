@@ -5172,6 +5172,24 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                "grBuckets: a just-reset ring yields exactly one bucket");
         check (std::abs (GrHistoryView::bucketX (one, one.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
                "grBuckets: …anchored on the right edge, zero region to its left");
+
+        // THE LEFT-EDGE RULE (0.1.3 item 4). The zero region is honest only
+        // while the ring is still FILLING; once a full window is scrolling,
+        // the sub-pitch strip left of the truncated oldest bucket holds
+        // EXPIRED history, and drawing the zero line across it — then dropping
+        // vertically into the trace at the same x — is the flashing accent bar
+        // the owner reported. The predicate is pinned here rather than left
+        // inline in `paintHistory`, which is what let the defect ship.
+        check (GrHistoryView::drawsZeroRegion (1, want),
+               "grZeroRegion: a just-reset ring draws the unmeasured region");
+        check (GrHistoryView::drawsZeroRegion (want - 1, want),
+               "grZeroRegion: …still, one entry short of a full window");
+        check (GrHistoryView::drawsZeroRegion (want, want),
+               "grZeroRegion: …and at the exact changeover, where the oldest bucket lands on the edge");
+        check (! GrHistoryView::drawsZeroRegion (want + 1, want),
+               "grZeroRegion: a scrolling window does NOT — that strip is expired history, not unmeasured");
+        check (! GrHistoryView::drawsZeroRegion (want * 97 + 3, want),
+               "grZeroRegion: …however long it has been scrolling, at any bucket-expiry phase");
     }
 }
 

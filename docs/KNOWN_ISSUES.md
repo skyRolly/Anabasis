@@ -849,13 +849,57 @@ the bound fails exactly those six assertions and no others, and only at non-zero
 this exact fingerprint with this exact gating. What is **not** established is that it is the
 owner's trigger: reaching it needs ≳ +154 dBFS at the stage input, and no legal chain state
 produces that (the EQ is RBJ-form with clamped Q and frequency and cannot go unstable; the
-compressor's gain is ≤ 1; input gain tops out at +24 dB). **The one field datum that would
-settle it** is the Statistics panel's **SP (sample peak)** row while the silence is audible: an
-absurd reading (far above the ceiling, tens or hundreds of dB) means the overflow path is live
-and this fix closes the report; a normal reading means the loss is not this mechanism and the
-remaining candidates are host-side channel handling or a stale/mismatched installed binary —
-for which the unchanged asks stand (host + version, OS, build provenance, format, the session
-file). Re-test with the 0.1.3 follow-up build before recording either.
+compressor's gain is ≤ 1; input gain tops out at +24 dB).
+
+**0.1.3 FOLLOW-UP ROUND 2 — the owner re-tested and the field issue PERSISTS.** With the colour
+bound in the build, the left channel still goes silent under the same workflow and the Clip Mix
+correlation is unchanged. **The overflow mechanism above is therefore NOT the field root cause.**
+It stays in the tree — it is a real defect with its own reproduction and its own regression, and
+removing it would restore a way to lose a channel — but this record must not be read as though
+it closed anything. **Two distinct failure classes, kept apart deliberately:**
+
+| | Class A — the overflow (FIXED) | Class B — the field report (OPEN) |
+|---|---|---|
+| Trigger | a sustained finite input ≳ +154 dBFS at the colour stage | unknown |
+| Reproducible headlessly | yes, exactly | **no** |
+| Clip Mix gated | yes | yes (owner-confirmed) |
+| Status | fixed and pinned (`testExtremeLevelDoesNotSilencePermanently`, sustained one-channel case) | unresolved |
+
+**What the code can no longer explain.** Every in-plugin path has now been either excluded or
+pinned by test:
+- `ClipSat` is **channel-symmetric and non-finite-free from bounded input**, swept
+  (`testClipSatCannotLoseAChannel`) — so no state inside the one stage `clipMix` gates can
+  single out a channel.
+- `clipMix` reaches **only** `ClipSat::setPerBlock`; it is not macro-managed and nothing else
+  reads it, so it cannot reach the compressor, the limiter, the EQ or the monitor legs.
+- The compressor is upstream of ClipSat and its gain is strictly positive; the limiter, the
+  push, the ring indices, the duck, the bypass/delta mixes and the monitor gain are all
+  channel-shared or strictly positive.
+- After the Class-A fix, **no expression on the span can produce a non-finite value from a
+  reachable input**, so the per-channel zero substitution is unreachable in normal use.
+- A **realistic soak** — 40 trials of ~12 s each: broadband, correlated, bass-heavy stereo near
+  full scale, the Loudness macro driven through its whole range while audio runs, factory
+  presets / Copy / undo landing mid-stream, editor alive, across 44.1/48 kHz, 128/512 blocks and
+  three oversampling factors — produced **no channel loss in any block**.
+
+**So the next step is field-side, and it is one button.** With the silence audible, press
+**BYPASS**. The bypass leg is a bit-exact, delay-aligned copy of the plugin's OWN INPUT
+(invariant 7) with no processing on it at all:
+- **Left returns on bypass** ⇒ the plugin is receiving programme on the left pin and losing it
+  in the processed leg — which, given everything above, would mean the tree being run is not
+  this tree (a stale or mismatched installed binary: check the About overlay's version AND
+  build number against the build under test) or a state the headless battery cannot construct.
+  Capture the session file at that point; it is the only artefact that can carry such a state.
+- **Left stays silent on bypass** ⇒ the loss is NOT in this plugin's DSP at all — either the
+  left input pin is dead (host routing, a mono/stereo negotiation, a channel-mapping
+  convention) or the host is dropping the left output. That would also make the whole
+  Clip Mix correlation a coincidence of testing order, which is worth knowing.
+
+Also worth one glance each, in the same session: the Statistics **SP** row (absurd ⇒ Class A is
+live after all) and the two GR lanes (L pinned deep ⇒ per-channel gain collapse; L at zero ⇒
+not the dynamics stages). **The unchanged asks stand and are now the blocking ones:** host +
+version, OS, build provenance (which zip/build, and the About overlay's build number), format
+(VST3/AU/Standalone), and the session file.
 
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 

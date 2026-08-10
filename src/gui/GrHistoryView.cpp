@@ -153,22 +153,26 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // anchoring, and this region is the rest), which the stretch draw needed
     // a special case for.
     //
-    // ONLY while the ring is still filling (`first == 0`), and that guard is
-    // the 0.1.3 left-edge fix. A FULL scrolling window reaches this branch
-    // too: `kFirst` alternates between the width bound and the window bound
-    // as buckets expire (stride-boundary phase), so `xFirst` oscillates
-    // between the left edge and one pitch inside it — and whenever it sat one
-    // pitch in, this branch drew the GR zero line along the top to `xFirst`
-    // and the bucket loop's first point then dropped VERTICALLY to the real
-    // trace value at the same x. With any reduction on screen that rendered
-    // as an accent-coloured vertical bar at the left edge, flashing at the
+    // ONLY while the ring is still filling, and that guard is the 0.1.3
+    // left-edge fix. A FULL scrolling window reaches this branch too:
+    // `kFirst` alternates between the width bound and the window bound as
+    // buckets expire (stride-boundary phase), so `xFirst` oscillates between
+    // the left edge and one pitch inside it — and whenever it sat one pitch
+    // in, this branch drew the GR zero line along the top to `xFirst` and the
+    // bucket loop's first point then dropped VERTICALLY to the real trace
+    // value at the same x. With any reduction on screen that rendered as an
+    // accent-coloured vertical bar at the left edge, flashing at the
     // bucket-expiry rate (the owner's 0.1.3 item 4 report). Left of the
     // oldest bucket of a full window is EXPIRED history, not unmeasured data,
     // so the zero-data presentation does not apply there — the bucket loop
     // below extends the oldest bucket's values to the edge instead.
-    const int64_t firstEntry = first;
+    //
+    // The predicate lives in the header (`drawsZeroRegion`) rather than here,
+    // for the reason `windowEntries` and `buckets` do: a rule reachable only
+    // from `paint` is a rule no test can pin, which is how this defect
+    // survived the round that introduced it.
     const float zeroWy = area.getBottom() - 0.5f;       // == the wh floor below
-    if (firstEntry <= 0)
+    if (drawsZeroRegion (head, want))
     {
         const float xFirst = bucketX (nb, nb.kFirst, area.getX(), area.getWidth());
         if (xFirst > area.getX() + 0.5f)

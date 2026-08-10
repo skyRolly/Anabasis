@@ -116,6 +116,30 @@ public:
         return { stride, kFirst, kHead, kHead - kFirst + 1, kFull };
     }
 
+    // Does this frame draw the UNMEASURED zero region at the left edge?
+    //
+    // Pure and public for exactly the reason `windowEntries` and `buckets`
+    // are, and the header comment there says it outright: "a version reachable
+    // only from `paint` is a version no test can pin, which is how this went
+    // unnoticed". The 0.1.3 left-edge defect was that same shape — the rule
+    // lived inline in `paintHistory` and no mutant could reach it.
+    //
+    // The rule: the region is honest ONLY while the ring is still filling. A
+    // FULL window reaches the same branch (as buckets expire, `kFirst`
+    // alternates between the width bound and the window bound, so the oldest
+    // bucket's x oscillates between the left edge and one pitch inside it) —
+    // and there the strip left of it holds EXPIRED history, not unmeasured
+    // data. Drawing the zero line across it and then dropping vertically into
+    // the trace is what produced the flashing accent bar at bucket-expiry
+    // rate. `head <= want` is exactly "still filling": `first` is
+    // `max(0, head - want)`, and `GrHistoryBuffer::reset()` rewinds the write
+    // index to 0, so a clear re-enters the filling case rather than being
+    // misread as a scrolling window.
+    static bool drawsZeroRegion (int64_t head, int64_t want) noexcept
+    {
+        return juce::jmax<int64_t> (0, head - want) == 0;
+    }
+
     // Where bucket `k` lands: anchored at the RIGHT edge (bucket `kHead` at
     // `x0 + width − 1`) on a FIXED pitch — the width divided by the bucket
     // count of one FULL window — so a filling ring renders at exactly the

@@ -47,8 +47,12 @@ read as data, so the sample heading immediately below is not mistaken for struct
 
 ## [0.1.3] — 2026-08-09
 
-**The polish round** (the owner's seven-item 0.1.3 directive): display and naming fixes only —
-no DSP behaviour changes anywhere in this entry.
+**The polish round** (the owner's seven-item 0.1.3 directive), plus two review follow-ups.
+Mostly display and naming, and **no audible DSP change**: the one audio-path edit is a
+numerical guard in the colour stage (below), argued and tested bit-exact for every signal the
+chain can reach. Stated this way deliberately — an earlier draft of this line said "no DSP
+behaviour changes anywhere", which the entry's own `Fixed` section contradicts, and
+`release.yml` publishes this section verbatim as the release notes.
 
 ### Changed
 - **The loudness-compensation toggle reads MATCH, not COMP** — beside a compressor panel
@@ -89,10 +93,10 @@ no DSP behaviour changes anywhere in this entry.
   emitted digital zero on **that channel alone**, for as long as the input persisted, while
   the other channel played normally. The polynomial's argument is now bounded at a level some
   120 dB above anything the chain can carry, so no audible sample changes (bit for bit) and
-  the stage can no longer produce an infinity from a finite input. Whether this is what the
-  field reports of a silent left channel are hitting is **not** established — see
-  `docs/KNOWN_ISSUES.md` KI-009, which stays open and names the one reading that would settle
-  it. Evidence Source: PR #14. [Verified]
+  the stage can no longer produce an infinity from a finite input. This is **not** the fix for
+  the field reports of a silent left channel: the owner re-tested with it in the build and
+  that issue persists unchanged, so `docs/KNOWN_ISSUES.md` KI-009 stays **open** and now keeps
+  the two failure classes apart. Evidence Source: PR #14. [Verified]
 - **The GR history no longer flashes a vertical accent line at its left edge** while the
   gain-reduction trace there is non-zero. The "unmeasured region" zero-line was also drawn
   for a *full, scrolling* window whenever bucket-expiry phase left a sub-pitch gap at the

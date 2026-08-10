@@ -22,22 +22,27 @@ the 50 ms ADR-0020 window is untouched), the GR-history left-edge fix in `GrHist
 (the unmeasured-region zero line was also drawn for a full scrolling window, dropping
 vertically into the trace at bucket-expiry phase), and the EQ band-per-row grid in
 `PluginEditor.cpp`. **A review follow-up the same day** then landed the round's one code fix
-and five corrections. The FIX is a KI-009 root cause, and it is the first mechanism in that
-report's lineage that reproduces the field fingerprint exactly: the colour sub-block's
+and five corrections. The FIX is the first mechanism in KI-009's lineage that reproduces the
+field fingerprint exactly — though a second follow-up round then established, from the owner's
+re-test, that it is NOT the field trigger: the colour sub-block's
 fifth-power polynomial can overflow to non-finite from a FINITE input once `clipDrive == 0`
 exact-skips the clipper's own bound, and the engine's wet-ring boundary then substitutes
 `0.0f` **per channel** — one channel permanently silent, the other normal, gated on Clip Mix
 because the mix is what lets the stage reach the ring. Bounded at the argument
 (`ClipSat::kColourArgLimit`, +120 dBFS — inert and bit-exact for every reachable signal);
 KI-009's 0.1.3 addendum is superseded by a FOLLOW-UP addendum carrying the whole analysis, the
-measurement, and the single field reading that would confirm or exclude it (the report stays
-**OPEN** — the mechanism is demonstrated, the owner's trigger is not). The corrections:
+measurement, and by a ROUND-2 addendum recording the owner's re-test: the field issue persists,
+so the record now separates Class A (the overflow, fixed and pinned) from Class B (the field
+report, unresolved) in a table, lists every in-plugin path now excluded or pinned — including a
+40-trial realistic soak that produced no channel loss — and hands back a one-button field
+discriminator (BYPASS, which carries the plugin's own input bit-exactly). The report stays
+**OPEN**. The corrections:
 the `scHpfFreq` tooltip (it said "both detectors" a round after ADR-0023 made the limiter's
 unfiltered), the RMS reference applied OUTSIDE the readout hold so a Settings flip is never
 delayed (the hold belongs to the measurement), the bell rows' Q | Freq | Gain column order, the
 `CLIP / COLOUR` heading the manual's own rename pass missed, macOS/Windows installer
 Plug-in / Application capitalisation, and an English gloss for a quoted non-English phrase in a
-source comment. Suites 291 + 677; pluginval ×3 both modes at the `build.yml` strictness.
+source comment. Round 2 added: the new test registered in `DSP_POLICY.md`'s invariant→test map (invariant 9, extended with the PER-CHANNEL half and a rule for future stages — a stage whose failure mode is input-magnitude-driven must bound its own arithmetic, being in the sanitise list is necessary and not sufficient); the GR zero-region rule extracted as a pure pinnable predicate (`GrHistoryView::drawsZeroRegion`, five assertions, mutation-verified); and four wording drifts corrected — the CHANGELOG preamble's "no DSP behaviour changes" (the entry ships one audio-path edit, so it now reads "no audible DSP change"), the manual's claim that the knob hints carry the corner-dot legend (removed from the UI this round), and the manual's "the well opens on the spectrum" recipe (it opens on the GR history since 0.1.2). Suites 291 + 682; pluginval ×3 both modes at the `build.yml` strictness.
 Previous: for the **0.1.2 field-fix round (2026-08-09, ADR-0023)**. The round's
 documentation moved with its contracts. **New:** `ADR-0023` (the round's decision record: the
 knee-above static curve, the unfiltered limiter detector with the comp-side clamp, the three

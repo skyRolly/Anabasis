@@ -312,8 +312,9 @@ the `*` after the preset name), and it never appears on knobs the macros don't m
 only the nine managed parameters can detach, because only they have a macro curve to
 detach *from*. Consequently, manually turning a detached knob back to its old value does
 **not** clear the dot: the knob is still off macro control, holding *your* value. Moving a
-macro, clicking Simple's edited dot, or loading a preset is what re-attaches it. Each
-managed knob's tooltip carries this legend.
+macro, clicking Simple's edited dot, or loading a preset is what re-attaches it. (The knob
+hover hints carried this legend until 0.1.3, when it was removed by owner directive — the
+explanation lives here, in the manual, and the dot itself is unchanged.)
 
 ---
 
@@ -399,7 +400,8 @@ travel with your DAW session.
    default suits most deliveries; lock it). If the spec is written in dBTP, engage **TP**
    as well — that is what makes the ceiling hold inter-sample peaks.
 2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work
-   (click the **GR** chip on the graph well first — it opens on the spectrum).
+   (the graph well opens on the GR history — if it is showing the spectrum, the GR|SPEC
+   pill in its bottom-left corner switches back).
 3. **MATCH on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.
 4. Compare candidates with **A/B** + **Copy**, judge PLR, and undo freely — history
