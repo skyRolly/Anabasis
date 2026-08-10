@@ -26,6 +26,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT/build"
 read -r -a TEST_RUNNER <<< "${ANABASIS_TEST_RUNNER:-}"
 
+# Expanding an EMPTY array under `set -u` is an unbound-variable error in bash
+# before 4.4 -- and macOS ships bash 3.2.57 as /bin/bash, which is what
+# `#!/usr/bin/env bash` resolves to there. So the plain `"${TEST_RUNNER[@]}"`
+# this script shipped with aborted BOTH macOS self-test steps before either
+# binary launched, on every push: the gate did not run the tests and did not say
+# so, which is the exact outage the prefix was added to close.
+#
+# `${arr[@]+"${arr[@]}"}` is the portable guard: the `+` alternate form is not
+# evaluated at all when the array is unset/empty, so nothing is expanded and
+# nothing is flagged; when it IS set the inner quoted expansion produces one
+# word per element, unchanged. Kept as a named helper so the two call sites
+# below cannot drift apart.
+#
+# scripts/run-pluginval.sh's `"${MODE_ARGS[@]}"` never hit this because that
+# array is populated on every path. Any future array here must use this form.
+run_suite() {
+    local binary="$1"
+    echo "Running ${TEST_RUNNER[*]:+${TEST_RUNNER[*]} }$binary"
+    "${TEST_RUNNER[@]+${TEST_RUNNER[@]}}" "$binary"
+}
+
 find_one() {
     local name="$1" matches
     matches="$(find "$BUILD_DIR" -maxdepth 8 -name "$name" -type f 2>/dev/null || true)"
@@ -53,9 +74,7 @@ find_one() {
 TESTS="$(find_one AnabasisTests)"
 STATE_TESTS="$(find_one AnabasisStateTests)"
 
-echo "Running ${TEST_RUNNER[*]:+${TEST_RUNNER[*]} }$TESTS"
-"${TEST_RUNNER[@]}" "$TESTS"
+run_suite "$TESTS"
 
 echo
-echo "Running ${TEST_RUNNER[*]:+${TEST_RUNNER[*]} }$STATE_TESTS"
-"${TEST_RUNNER[@]}" "$STATE_TESTS"
+run_suite "$STATE_TESTS"
