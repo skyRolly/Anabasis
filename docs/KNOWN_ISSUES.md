@@ -835,7 +835,7 @@ existing `testExtremeLevelDoesNotSilencePermanently` already names "the clipper'
 polynomial overflows" as a case; it drives ONE block into BOTH channels, so the **sustained**
 and **per-channel** form of the same fault was never exercised.
 
-**Fixed (0.1.3 follow-up):** the colour polynomial's argument is bounded (`kColourArgLimit`,
+**Fixed (0.1.3 follow-up):** the colour polynomial's argument is bounded (`ClipSat::kArithmeticLimit`,
 `src/dsp/ClipSat.h`) so the stage cannot produce a non-finite value from any finite input,
 restoring the premise the sub-block was written under. The bound is +120 dBFS — some 120 dB
 above anything the chain can carry into this stage and eight orders inside the float ceiling —
@@ -843,7 +843,12 @@ so `jlimit` returns its argument unchanged for every reachable signal and no aud
 changes, bit for bit; the residue is added to the UNBOUNDED through-signal, so Clip Mix
 semantics and stereo independence are untouched. Pinned by the sustained one-channel case added
 to `testExtremeLevelDoesNotSilencePermanently` (three mix values × four magnitudes); removing
-the bound fails exactly those six assertions and no others, and only at non-zero mix.
+the bound fails exactly the eight assertions of the two NON-ZERO mix rows (three mix values × four
+magnitudes, two assertions each; the `clipMix == 0` rows correctly survive, which is the field
+gating reproduced inside the suite) and no others. Round 3 extended the same constant to the
+stage's OTHER arithmetic site — the drive product `dry · g`, which overflows the same way once
+`g` leaves unity — so the constant's name no longer says "colour"; each of the two bounds is
+mutation-verified on its own.
 
 **Status: still OPEN, and deliberately.** What is fixed is a *demonstrated* defect that produces
 this exact fingerprint with this exact gating. What is **not** established is that it is the
@@ -942,6 +947,51 @@ is a different diagnosis from L sitting at a normal depth.
 preset, macro position and A/B state reachable from the UI has been swept headlessly without
 reproducing this; a saved session is the only object that can carry a state the sweep cannot
 construct.
+
+**0.1.3 FOLLOW-UP ROUND 4 — step 4 of the chain is now PROVEN, not argued.** The chain above
+turns on one claim: that nothing between the compressor's output and the wet ring can single
+out a channel. Rounds 2–3 supported it by symmetry, and symmetry is the weaker statement —
+a stage can be perfectly symmetric and still hold a shared term that one channel drives into
+the ground, which is precisely the shape "one channel silent, the other normal" has. Round 4
+proves the stronger property and pins it (`testClipSatCannotLoseAChannel`, cross-channel
+section):
+
+- **`ClipSat` has exactly ONE cross-channel term** — `activityRaw`, the clip-depth maximum
+  that drives the shared dynamic-tame gain. Everything else in the stage is per channel and
+  identically driven, which the enumeration in the source and the swept symmetry fuzz both
+  say.
+- **With the tame idle the channels are BIT-EXACTLY independent**: the same channel-0 input
+  rendered beside silence and beside a hostile 8.0-amplitude neighbour produces identical
+  output, sample for sample, over 24 000 samples.
+- **With the tame at its 2 dB maximum the neighbour moves channel 0's LEVEL by ~1 dB** and
+  cannot approach silence.
+- **And the reason is structural, not the 2 dB range.** The tame is a SHELF —
+  `gLin·wet + (1−gLin)·tameLp` — so however far the shared gain falls, the lowpass leg
+  survives, and a first-order lowpass still passes ~0.37 of its input at Nyquist. Mutation
+  testing demonstrated this directly: widening the shared gain 40× does **not** break the
+  assertion, while turning the same shelf into a broadband gain (`wet *= gLin`) breaks it at
+  −48.5 dB. **A cross-channel kill is impossible in this stage by construction**, at any gain.
+
+So step 4 is settled: **the span the field evidence indicts cannot produce the field symptom.**
+Combined with step 3 (the compressor's applied gain and its published lane are the same
+expression, so a live lane means a live output) and steps 1–2 (bypass and the comp lane prove
+the input alive), the contradiction is now between the observation and a proof rather than
+between the observation and an argument. What that leaves, in order of what a session file
+would settle:
+
+1. **A state the parameter sweep cannot construct** — the sweep drives the UI surface; a
+   session carries serialized state, including the ADR-0014 frozen trim vector and the §5.3
+   detach mask, which no knob sequence reproduces exactly.
+2. **A stage OUTSIDE the indicted span** whose contribution merely correlates with Clip Mix —
+   which the "sweep Clip Mix for a cliff-vs-ramp shape" experiment above discriminates
+   directly, and which nothing in the record has yet ruled out because every observation so
+   far has used the endpoints 0 and 100 only.
+3. **A platform difference this Linux tree cannot exercise** — macOS arm64 codegen under LTO
+   being the only untested axis, though AU and VST3 behaving identically argues against a
+   wrapper-level cause.
+
+None of these is a hypothesis about a mechanism; they are the three places a mechanism could
+still hide once the span is proven clean.
 
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 

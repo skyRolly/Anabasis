@@ -1292,6 +1292,104 @@ static void testClipSatCannotLoseAChannel()
            "per-channel zero substitution is never armed by this stage (" << nonFinite << ")";
     check (nonFinite == 0, msg.toRawUTF8());
 
+    // ---- CROSS-CHANNEL INDEPENDENCE, the property KI-009 would have to break -
+    // Symmetry (above) says the two channels are treated ALIKE. That is not
+    // the same statement as: what happens on channel 1 cannot destroy channel
+    // 0. A stage can be perfectly symmetric and still have a shared term that
+    // one channel drives into the ground — and "one channel silent while the
+    // other plays" is exactly that shape.
+    //
+    // So this asserts the structural claim directly, by DIFFERENCE: run the
+    // SAME channel-0 input twice, once beside a silent channel 1 and once
+    // beside a hostile one, and compare channel 0's output. The stage has
+    // exactly one cross-channel term — `activityRaw`, the clip-depth maximum
+    // that drives the shared dynamic-tame gain — and it is an ATTENUATION
+    // bounded by `dynTilt` (≤ 2 dB). So channel 0's two renders may differ by
+    // at most that, and by NOTHING else. Any future cross-channel coupling
+    // that could zero a channel — a shared divisor, a shared envelope used as
+    // a gain without a bound, a max/min that leaks one channel's magnitude
+    // into the other's gain — fails this immediately, whether or not it is
+    // symmetric.
+    //
+    // Run at dynTilt = 0 as well, where the bound collapses to BIT-EXACT
+    // independence: with the tame disengaged the channels share nothing at
+    // all, and that is the strongest form the architecture allows.
+    //
+    // WHAT MUTATION TESTING TAUGHT HERE, because it is a stronger structural
+    // result than the assertion states and it belongs with the assertion.
+    // Widening the shared gain alone does NOT break this — the tame is a
+    // SHELF (`wet += (gLin−1)·(wet − tameLp)`, i.e. `gLin·wet + (1−gLin)·tameLp`),
+    // so however far `gLin` falls the lowpass leg survives, and a first-order
+    // lowpass still passes ~0.37 of its input at Nyquist. **The shared term
+    // therefore cannot zero a channel even at an unbounded gain** — the
+    // structure, not the 2 dB range, is what makes a cross-channel kill
+    // impossible here. What DOES break the assertion is turning that shelf
+    // into a broadband gain (`wet *= gLin`), which is the actual failure class:
+    // a shared envelope used as a gain. That mutant reads −48.5 dB.
+    // (A third lesson, kept because it cost a cycle: the probe tone must sit
+    // ABOVE the shelf corner — a 220 Hz probe passes any mutant, because below
+    // the corner the shelf does nothing whatever the gain is.)
+    {
+        auto renderChannelZero = [] (float tiltDb, bool hostileNeighbour,
+                                     std::vector<float>& out)
+        {
+            anabasis::EngineParameters p;
+            p.clipDriveDb = 12.0f; p.clipShape = 0.4f; p.colourDepth = 1.0f;
+            p.colourModel = 3;     p.dynTiltDb = tiltDb; p.clipMix = 1.0f;
+            anabasis::ClipSat clip;
+            clip.prepare (48000.0);
+            clip.setPerBlock (p);
+            out.resize (24000);
+            for (int n = 0; n < 24000; ++n)
+            {
+                const float ph = 2.0f * juce::MathConstants<float>::pi * (float) n / 48000.0f;
+                // Channel 0's tone sits ABOVE the tame's ~6 kHz shelf corner
+                // on purpose: below it the shelf barely acts and the bound
+                // would pass however wide the shared gain became, which is a
+                // test that cannot fail rather than a test that holds. (Found
+                // by mutation: a 220 Hz probe survived a 40× widened tame.)
+                float frame[2] = { 0.42f * std::sin (ph * 9000.0f),
+                                   hostileNeighbour ? 8.0f * std::sin (ph * 3100.0f) : 0.0f };
+                clip.processSample (frame, 2);
+                out[(size_t) n] = frame[0];
+            }
+        };
+
+        std::vector<float> alone, beside;
+        renderChannelZero (0.0f, false, alone);
+        renderChannelZero (0.0f, true,  beside);
+        int differing = 0;
+        for (size_t n = 0; n < alone.size(); ++n)
+            if (! juce::exactlyEqual (alone[n], beside[n]))
+                ++differing;
+        juce::String msg;
+        msg << "clipSat: with the dynamic tame idle the channels are BIT-EXACTLY independent — "
+               "a hostile neighbour cannot move this channel by one ulp (" << differing << " differ)";
+        check (differing == 0, msg.toRawUTF8());
+
+        renderChannelZero (2.0f, false, alone);
+        renderChannelZero (2.0f, true,  beside);
+        // A LEVEL comparison, not a per-sample ratio: the tame is a high-shelf
+        // cut, so it shifts phase a little and a sample-by-sample dB ratio
+        // explodes harmlessly at every zero crossing (measured ~28 dB there
+        // while the level moves under 2). Level is also the claim that matters
+        // — "cannot push this channel toward silence" is a statement about how
+        // much energy survives, not about any one sample.
+        double sumAlone = 0.0, sumBeside = 0.0;
+        for (size_t n = alone.size() / 4; n < alone.size(); ++n)   // settled portion
+        {
+            sumAlone  += (double) alone[n]  * alone[n];
+            sumBeside += (double) beside[n] * beside[n];
+        }
+        const double levelDelta = 20.0 * std::log10 (std::sqrt (sumBeside)
+                                                     / juce::jmax (1.0e-30, std::sqrt (sumAlone)));
+        msg.clear();
+        msg << "clipSat: with the tame at its 2 dB maximum a hostile neighbour moves this channel's "
+               "LEVEL by at most that shared attenuation, never toward silence ("
+            << (float) levelDelta << " dB)";
+        check (std::abs (levelDelta) < 2.5, msg.toRawUTF8());
+    }
+
     // The other direction, and the one the wrapper battery cannot see at unit
     // level: an ASYMMETRIC input must leave both channels alive. A channel
     // carrying programme cannot be zeroed by anything this stage does to the

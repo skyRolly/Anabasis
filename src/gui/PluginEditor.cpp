@@ -1403,13 +1403,17 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
             // pitch, which is the misalignment the EQ redesign removed.
             //
             // BOTH halves null, or NEITHER: a spacer is a `{ nullptr, nullptr }`
-            // pair. The label is dereferenced unconditionally below, so a
-            // half-null pair would be a crash rather than a spacer — asserted
-            // rather than widened into a silent skip, because a knob placed
-            // with no caption is a layout bug worth failing on in a debug
-            // build, not a shape this helper should quietly accept.
+            // pair. The `jassert` is the one that says so — a half-null pair is
+            // a layout mistake and a debug build should stop on it rather than
+            // paper over it. The RELEASE behaviour is a separate question, and
+            // the answer here is "skip, do not dereference": the label is used
+            // unconditionally below, so `{ &knob, nullptr }` would otherwise be
+            // a null dereference in a shipping editor — a crash on a mistake
+            // whose worst honest outcome is one mislaid control. Skipping keeps
+            // the debug build loud and the shipping build alive, which is the
+            // trade every other layout guard in this file makes.
             jassert ((s == nullptr) == (l == nullptr));
-            if (s == nullptr)
+            if (s == nullptr || l == nullptr)
                 continue;
             l->setBounds (cell.removeFromBottom (13));
             s->setBounds (cell.reduced (2, 0));

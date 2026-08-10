@@ -114,7 +114,7 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   and Simple view's clickable reset dot are unchanged. Evidence Source: PR #13 (item 7).
   [Verified]
 
-### Investigation (KI-009, no code change to the audio path)
+### Investigation (KI-009 — still open)
 - **The left-channel silence is NOT fixed.** With the colour-stage guard in the build the
   owner re-tested on macOS in both AU and VST3: the behaviour is identical across formats,
   unaffected by oversampling or any other setting, removed only by Clip Mix = 0 — and
