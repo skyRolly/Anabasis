@@ -99,6 +99,18 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   Evidence Source: PR #13, reference immediacy PR #14 (item 1). [Verified]
 
 ### Fixed
+- **The clip/saturation stage can no longer poison itself invisibly.** Its dynamic-tame filter
+  ran on the unbounded through-signal, so an absurdly hot input (above ~2.2e38, about
+  +767 dBFS) could turn the filter's own state into a NaN — **without the plugin producing a
+  single bad sample at the time**, because with Clip Drive at 0 the tame is idle and its state
+  is written but never read. The corrupted state then survived every block, preset load and
+  A/B, and was paid for later: the moment Clip Drive was raised with a non-zero Clip Mix, that
+  one channel went digitally silent. The stage's arithmetic bound now covers this third site as
+  well as the two it already covered, on the state feed rather than the signal, so a huge
+  sample still passes through untouched and no audible sample changes. Not the cause of the
+  field reports of a silent left channel — the trigger level is far beyond anything a DAW
+  delivers — so `docs/KNOWN_ISSUES.md` KI-009 stays **open**. Evidence Source: PR #14.
+  [Verified]
 - **The macOS build works again.** The macOS CI job had failed to COMPILE
   `tests/state_tests.cpp` on every push since 2026-08-08 while Linux and Windows stayed green,
   so no macOS binary was built, validated or packaged for three days. One line did it:

@@ -1027,12 +1027,43 @@ jobs:
       # modes, same 3 consecutive passes -- an AU that only passes sometimes is
       # not a passing AU. Gated on the BUILD like every other validation step,
       # never on the VST3 steps: a VST3 failure must not hide the AU's result.
-      - name: pluginval AU (deterministic x3 -- release gate)
+      # INSTALL THE AU BEFORE VALIDATING IT, deliberately, and not as belt-and-braces.
+      # macOS resolves Audio Units through the AudioComponent registry
+      # (`AudioComponentFindNext`, which is what JUCE's AudioUnitPluginFormat calls),
+      # and the registry only knows about bundles under a Components directory. A
+      # freshly built .component sitting in the build tree can therefore report ZERO
+      # plugin types however correct it is — which would make this gate red for an
+      # environmental reason, or (worse, if pluginval ever treats "no types" as
+      # nothing to do) green without validating anything. Installing first removes
+      # the question instead of depending on the answer.
+      #
+      # `killall AudioComponentRegistrar` forces the registry to re-scan rather than
+      # serve a cached list; it is `|| true` because the daemon may simply not be
+      # running yet on a fresh runner, which is not a failure. The copy itself is
+      # NOT `|| true`.
+      - name: Install the AU so the AudioComponent registry can find it
+        id: au_install
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          DEST="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$DEST"
+          rm -rf "$DEST/Anabasis.component"
+          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
+          ls -d "$DEST/Anabasis.component"
+
+      - name: pluginval AU (deterministic x3 -- release gate)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
 
       - name: pluginval AU (randomise x3 -- release gate)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise au
 
       # Order matters -- 1) dsymutil captures a universal dSYM per bundle (the

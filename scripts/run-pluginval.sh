@@ -74,6 +74,22 @@ case "$FORMAT" in
     *) echo "Unknown format '$FORMAT' (expected vst3|au)"; exit 2 ;;
 esac
 
+# An explicit bundle path overrides discovery. This exists for ONE case and is
+# fail-closed for it: macOS Audio Units are resolved by the system through
+# `AudioComponentFindNext`, which only ever finds components the AudioComponent
+# registry knows about — i.e. bundles under a Components directory. A freshly
+# built, never-installed .component in the build tree may therefore report ZERO
+# plugin types no matter how correct it is, so the macOS job installs it first
+# and points here. Set-but-missing is an ERROR rather than a fall back to
+# discovery: silently validating a DIFFERENT bundle than the caller named is the
+# failure this script's ambiguity check exists to prevent.
+if [ -n "${ANABASIS_PLUGINVAL_BUNDLE:-}" ]; then
+    if [ ! -e "$ANABASIS_PLUGINVAL_BUNDLE" ]; then
+        echo "ANABASIS_PLUGINVAL_BUNDLE is set to '$ANABASIS_PLUGINVAL_BUNDLE' but nothing is there."
+        exit 1
+    fi
+    VST3_MATCHES="$ANABASIS_PLUGINVAL_BUNDLE"
+else
 VST3_MATCHES="$(find "$BUILD_DIR" -maxdepth 8 -name "$BUNDLE_NAME" 2>/dev/null || true)"
 VST3_COUNT="$(printf '%s' "$VST3_MATCHES" | grep -c . || true)"
 if [ "$VST3_COUNT" -eq 0 ]; then
@@ -88,6 +104,7 @@ if [ "$VST3_COUNT" -ne 1 ]; then
     while IFS= read -r m; do echo "  $m"; done <<< "$VST3_MATCHES"
     echo "Refusing to guess which bundle the release gate should validate. Remove the stale build tree."
     exit 1
+fi
 fi
 VST3_PATH="$VST3_MATCHES"
 

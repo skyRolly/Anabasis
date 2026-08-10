@@ -114,6 +114,20 @@ def blank_comments_and_literals(text: str) -> str:
                 i += 1
             out.append("  ")
             i += 2
+        elif c == "'" and (
+            (out and str(out[-1]).isalnum()) or (i + 1 < n and text[i + 1].isdigit())
+        ):
+            # A C++ DIGIT SEPARATOR, not a character literal: 1'000'000. Treating
+            # it as a quote would blank the source from here to the next `'`,
+            # which can only ever hide a hazard (a false NEGATIVE) -- the one
+            # failure mode a lint must not have, because it fails by going quiet.
+            # The test is local and deliberately conservative: a separator always
+            # has an alphanumeric on its left (the preceding digit, already
+            # emitted) or a digit on its right, and a real char literal never
+            # does -- `'a'` follows an operator or whitespace, and `x'` is not
+            # valid C++ otherwise.
+            out.append(c)
+            i += 1
         elif c in ('"', "'"):
             quote = c
             out.append(" ")

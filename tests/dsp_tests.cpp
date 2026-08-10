@@ -1292,11 +1292,12 @@ static void testClipSatCannotHideANonFiniteFromTheBoundary()
     // The colour stage is swept ON as well as off: it is the one sub-block that
     // can grow the through-signal (`c += dep * r`), so a tame overflow, if one
     // existed, would be reachable through it and not through the bare signal.
-    int poisonedTotal = 0, hiddenTotal = 0;
+    int poisonedTotal = 0, hiddenTotal = 0, tameEngaged = 0, configs = 0;
     for (const float mag : { 1.0e6f, 1.0e20f, 1.0e30f, 1.0e38f, 3.4e38f })
         for (const int model : { 0, 1, 3 })
             for (const float dep : { 0.0f, 1.0f })
             {
+                ++configs;
                 anabasis::ClipSat c2;
                 c2.prepare (48000.0);
                 anabasis::EngineParameters q = p;
@@ -1315,11 +1316,31 @@ static void testClipSatCannotHideANonFiniteFromTheBoundary()
                         ++hiddenTotal;          // the boundary WOULD have seen it
                 }
 
-                // Phase 2 -- the two ordinary control moves the field report
-                // describes: open the mix, raise Dynamic Tame. Ordinary audio.
-                q.clipMix   = 1.0f;
-                q.dynTiltDb = 2.0f;
-                poisonedTotal += drive (c2, q, 0.2f, 0.2f, 4000);
+                // Phase 2 -- the ordinary control moves the field report
+                // describes: open the mix, raise Dynamic Tame, and DRIVE THE
+                // CLIPPER.
+                //
+                // The drive is the load-bearing part and its absence made the
+                // first version of this test vacuous. `activityRaw` is written
+                // only inside the `clipOn` branch, so with `clipDriveDb == 0`
+                // the activity envelope stays bit-zero, `tameGainDb` stays 0,
+                // and the tame takes its IDLE branch — the branch that never
+                // reads `tameLp[ch]` into the signal. A phase 2 that leaves the
+                // drive at zero therefore claims to engage the tame and does
+                // not, which is the same "the knob moved and nothing
+                // downstream did" failure round 6 found across the whole
+                // channel battery. 12 dB with a 0.9 input saturates hard
+                // enough to push the envelope well past the -0.01 dB gate.
+                q.clipMix     = 1.0f;
+                q.dynTiltDb   = 2.0f;
+                q.clipDriveDb = 12.0f;
+                poisonedTotal += drive (c2, q, 0.9f, 0.9f, 4000);
+
+                // …and assert the premise rather than trusting it, for exactly
+                // the reason above: if a future change stops this configuration
+                // engaging the tame, this test must go RED rather than quietly
+                // stop testing anything.
+                tameEngaged += (c2.activityEnvelope() > 0.0f) ? 1 : 0;
             }
 
     juce::String msg;
@@ -1330,10 +1351,16 @@ static void testClipSatCannotHideANonFiniteFromTheBoundary()
     check (hiddenTotal == 0, msg.toRawUTF8());
 
     msg.clear();
-    msg << "clipSat: and nothing latches — after 30 poisoning attempts up to FLT_MAX with the "
-           "colour stage swept, opening the mix with the tame engaged leaves ordinary audio "
-           "finite on both channels ("
-        << poisonedTotal << " / 120000 non-finite output samples)";
+    msg << "clipSat: (premise) phase 2 really does engage the dynamic tame — the branch that "
+           "reads tameLp into the signal, and the only one a latched state could reach ("
+        << tameEngaged << " / " << configs << " configurations)";
+    check (tameEngaged == configs, msg.toRawUTF8());
+
+    msg.clear();
+    msg << "clipSat: and nothing latches — after " << configs << " poisoning attempts up to "
+           "FLT_MAX with the colour stage swept, opening the mix and driving the clipper with "
+           "the tame ENGAGED leaves ordinary audio finite on both channels ("
+        << poisonedTotal << " non-finite output samples)";
     check (poisonedTotal == 0, msg.toRawUTF8());
 }
 

@@ -1159,6 +1159,42 @@ would have caught, because at mix 0 there is nothing at the boundary to catch.
 | Uninitialised state, second and independent probe | Both suites run green under `MALLOC_PERTURB_` at 1, 85, 165, 170 and **255**. glibc then hands back fresh heap filled with that byte and freed heap with its complement, which is the closest available proxy for the macOS allocator — and 0xFF fills a float buffer with **NaN**, so a read-before-write of audio state would fail an assertion rather than pass on a plausible value. It is now set on every Linux self-test run |
 | The two macOS `-Wshorten-64-to-32` warnings in the region access | `AudioBlock::getSample/setSample` take `int`; the casts were an int→size_t→int round trip on values confined to ch ∈ {0,1} and i < num<<osShift. Value-preserving, incapable of silencing a channel. Removed as noise |
 
+**0.1.3 FOLLOW-UP ROUND 9 — the hidden latch was REAL, and round 8 was wrong about it
+(2026-08-11).** Round 8 found the invisible-state shape and then concluded it was "not reachable
+in the shipped build" because `kArithmeticLimit` bounds the stage. That conclusion was wrong, and
+the test written to support it was vacuous. Both are now fixed.
+
+**What was wrong.** The bound covered two of the stage's three arithmetic sites. The third —
+the dynamic tame's one-pole, `tameLp[ch] += (wet[ch] - tameLp[ch]) * aTameLp` — runs on the
+UNBOUNDED through-signal: with `clipDrive == 0` the clipper is exact-skipped so `wet == dry` (the
+colour bound clamps the residue's ARGUMENT, not `c`), and `aTameLp ≈ 0.544` leaves the state
+lagging the signal by up to ~0.55 of it, so on alternating-sign input the difference overflows.
+Measured threshold: **2.204e38**, 65 % of FLT_MAX.
+
+**Why the test did not catch it, which is the more important half.** Round 8's
+`testClipSatCannotHideANonFiniteFromTheBoundary` left `clipDriveDb` at 0 in BOTH phases.
+`activityRaw` is written only inside the `clipOn` branch, so the activity envelope stayed
+bit-zero, `tameGainDb` stayed 0, and the tame took its IDLE branch — the branch that updates the
+state and never reads it into the signal. The phase that claimed to open the mix "with the tame
+engaged" therefore engaged nothing. That is the same failure round 6 found across the whole
+channel battery, reintroduced by the round that was documenting it, and it is why the round-8
+addendum and a paragraph of `DSP_POLICY.md` both asserted a guarantee that was not true.
+
+**Fixed:** the bound now covers all three sites — on the state FEED, not the through-signal, so
+the stage can still pass a huge finite sample through untouched and merely cannot manufacture a
+non-finite one. Both tame branches take it; guarding only the branch that READS the state would
+have fixed the symptom and left the latch. The test now drives the clipper in phase 2 and
+**asserts that the tame actually engaged**, so it cannot go vacuous again. Mutation-verified:
+reverting the idle branch alone fails exactly that one assertion, with 23 340 non-finite output
+samples on ordinary audio.
+
+**What this does NOT do, stated plainly: it does not explain the field report.** The arming
+condition is a sample above 2.204e38 — about +767 dBFS — which no DAW delivers and no upstream
+stage in this chain can manufacture from ordinary programme. So a real latent defect that
+carries the KI-009 fingerprint exactly (channel-local, mix-gated, deferred, absent at mix 0,
+cured by bypass) has been removed, and the owner's reproduction is very unlikely to be it. This
+entry stays OPEN for that reason, and the fix is recorded as a fix rather than as a resolution.
+
 **Status: OPEN, macOS-scoped, and now with a working validation path.** The kill zone is
 narrowed to the oversampled region (`AnabasisEngine.cpp:726-846`) with the wrapper, the bus
 layer and the memory-safety classes excluded. What no headless suite has yet reproduced on

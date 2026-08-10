@@ -208,7 +208,13 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    structurally in this class** (`clipMix == 0` leaves `chans[ch]` untouched while `tameLp[ch]` is
    updated on both tame branches), and is held out of it only by BOUNDING ITS OWN ARITHMETIC —
    `kArithmeticLimit`, which is what makes the poisoned state unreachable rather than merely
-   unlikely. That is the same "bound at the source" rule the stage's own overflow put here in
+   unlikely. **That sentence was FALSE for one round after it was written** (2026-08-10 to
+   2026-08-11): the constant covered the drive product and the colour argument but not the tame's
+   own one-pole state feed, which runs on the unbounded through-signal and overflows above
+   ~2.2e38 on alternating-sign input. The policy asserted the guarantee, the stage did not
+   provide it, and the test written to prove it left the drive at zero so the tame never engaged
+   and the assertion was vacuous. All three are corrected; the lesson kept here is that a
+   guarantee stated in a policy and unexercised by a live test is the one nobody re-checks. That is the same "bound at the source" rule the stage's own overflow put here in
    0.1.3, now with its second reason. `testClipSatCannotHideANonFiniteFromTheBoundary` pins it:
    30 poisoning attempts up to FLT_MAX with the colour stage swept, and removing the bound fails it
    with tens of thousands of non-finite samples on ORDINARY audio, after the poisoning stopped.
