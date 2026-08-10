@@ -43,7 +43,12 @@ static juce::String tipFor (const char* id)
         { pid::loudnessComp,      "Listen at matched loudness, so louder can't pass for better" },
         { pid::deltaMonitor,      "Solo the difference - hear exactly what the processing removes" },
         { pid::inputGain,         "Level into the chain, before any processing" },
-        { pid::scHpfFreq,         "Sidechain high-pass for both detectors - keeps low end from pumping the compressor and limiter" },
+        // COMPRESSOR ONLY since 0.1.2 (ADR-0023 item 2): the limiter's detector
+        // is deliberately unfiltered — its threshold IS the Ceiling, so it must
+        // track the actual peak. This tip still said "both detectors" a round
+        // after the filter left the limiter, which is the drift the registry
+        // footnote and the manual had already been corrected for.
+        { pid::scHpfFreq,         "Sidechain high-pass for the compressor's detector - keeps low end from pumping the compressor. The limiter always hears the true peak" },
         { pid::compRatio,         "How strongly the glue compressor reduces past the threshold" },
         { pid::compThreshold,     "Where the glue compressor starts to work" },
         { pid::compAttack,        "How quickly the compressor responds to a level rise" },
@@ -1486,17 +1491,24 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         // item 5). The previous flow packed the eleven knobs in declaration
         // order, which split every band across rows (the high shelf shared a
         // row with Bell 1's frequency, both bells straddled two rows) — the
-        // owner's "杂乱无序" report. Now: row 1 is Tilt (the global control,
-        // macro Tone's landing site) beside the LOW shelf; rows 2–3 are the
-        // two bells on a strict Freq | Gain | Q column grid; row 4 is the
-        // HIGH shelf, spacer-led so its Freq/Gain land in the SAME columns as
-        // the low shelf's — the two shelves frame the bells symmetrically,
-        // and no knob re-centres at a private pitch. Same 78 px cells and
-        // row budget as before, so the response curve keeps its height and
-        // the panel stays visually level with its three neighbours.
+        // owner reported the panel as disordered and hard to read. Now: row 1
+        // is Tilt (the global control, macro Tone's landing site) beside the
+        // LOW shelf; rows 2–3 are the two bells; row 4 is the HIGH shelf,
+        // spacer-led so its Freq/Gain land in the SAME columns as the low
+        // shelf's — the two shelves frame the bells symmetrically, and no knob
+        // re-centres at a private pitch. Same 78 px cells and row budget as
+        // before, so the response curve keeps its height and the panel stays
+        // visually level with its three neighbours.
+        //
+        // THE BELL COLUMN ORDER IS Q | Freq | Gain, by the owner's 0.1.3
+        // follow-up directive: each bell's three controls were permuted one
+        // place right (Gain → the Q column, Freq → the Gain column, Q → the
+        // Freq column), and the same permutation is applied to BOTH bells so
+        // the two rows stay a grid rather than two orders. Visual only —
+        // parameter IDs, automation identity, ranges and DSP are untouched.
         placeRow (a, { { &eqTiltK, &eqTiltL }, { &lsFreqK, &lsFreqL }, { &lsGainK, &lsGainL } }, 78);
-        placeRow (a, { { &b1FreqK, &b1FreqL }, { &b1GainK, &b1GainL }, { &b1QK, &b1QL } }, 78);
-        placeRow (a, { { &b2FreqK, &b2FreqL }, { &b2GainK, &b2GainL }, { &b2QK, &b2QL } }, 78);
+        placeRow (a, { { &b1QK, &b1QL }, { &b1FreqK, &b1FreqL }, { &b1GainK, &b1GainL } }, 78);
+        placeRow (a, { { &b2QK, &b2QL }, { &b2FreqK, &b2FreqL }, { &b2GainK, &b2GainL } }, 78);
         placeRow (a, { { nullptr, nullptr }, { &hsFreqK, &hsFreqL }, { &hsGainK, &hsGainL } }, 78);
         a.removeFromTop (4);
         eqCurve->setBounds (a);                         // [response curve]

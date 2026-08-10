@@ -48,9 +48,9 @@ The **Loudness** knob does not map to a single gain — it drives the whole chai
 **adaptive engine** that listens to your programme material (short-term loudness, crest
 factor, spectral tilt, transient density) and continuously, *slowly* trims how the stages
 share the work: light compression and transparent limiting low on the dial, the clipper
-absorbing transients in the middle, saturation colour and a dynamic high-frequency tame at
+absorbing transients in the middle, saturation color and a dynamic high-frequency tame at
 the top. The **Ceiling** is a limit the output never exceeds — a sample-peak limit as shipped,
-and a *true-peak* one once you engage **TP** (§3.2). **Loudness Comp**
+and a *true-peak* one once you engage **TP** (§3.2). **MATCH**
 plays the processed signal back at matched loudness so the level increase cannot flatter
 you, and **Delta** lets you listen to exactly what the processing is removing.
 
@@ -193,7 +193,7 @@ the automation lane keeps the full name, so "Ratio" here is "Comp Ratio" to your
   how much both channels share one gain; full link keeps the image stable, lower lets each
   channel breathe on its own; since 0.1.1), and its gain-reduction meter — **two lanes
   since 0.1.2, L above R**, which read identically at full link and diverge below it.
-- **CLIP / COLOUR** — the transient-absorbing clipper and the colour stage: Shape
+- **CLIP / COLOR** — the transient-absorbing clipper and the color stage: Shape
   (hard ↔ soft, with a live transfer-curve display), Drive (level-compensated), Mix,
   **Color** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Color
   Tone, Color Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
@@ -333,7 +333,7 @@ Input Gain → EQ (Pre position) → Compressor → Clipper + Color
   delay compensation never re-syncs mid-session. Oversampling factor and phase mode *do*
   change it, and take effect at a click-free moment.
 - **Click-free by construction**: preset loads, A/B switches, undo/redo and engine
-  rewires (EQ position, colour model, oversampling changes) duck the output briefly
+  rewires (EQ position, color model, oversampling changes) duck the output briefly
   instead of clicking. The short dip *is* the mechanism working.
 - **Self-healing**: if a hostile upstream signal ever overflows a filter, the engine
   detects and repairs it within the block instead of going silent.
@@ -475,7 +475,7 @@ live. Closing the editor window removes the GUI's share.
 ### Automation and sessions
 
 **Can I automate the controls?**
-Every stage parameter (compressor, clipper/colour, limiter, EQ, gains) is a host parameter
+Every stage parameter (compressor, clipper/color, limiter, EQ, gains) is a host parameter
 and can be automated as usual. A few are host parameters that are deliberately **not
 offered as automation targets**: the three macro knobs (Loudness, Character, Tone —
 automating a macro that itself writes other parameters would fight the host), the

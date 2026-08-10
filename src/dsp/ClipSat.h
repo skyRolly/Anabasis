@@ -261,9 +261,48 @@ public:
             // skipped sample to feed filters whose output is multiplied by 0.
             if (dep > 0.0f && model != 0)
             {
-                const float oddPart  = model == 3 ? 0.6f * c * c * c + 0.4f * c * c * c * c * c
-                                                  : c * c * c;
-                const float evenPart = c * c;
+                // THE POLYNOMIAL'S ARGUMENT IS BOUNDED; the through-signal is
+                // NOT. This sub-block was written for a value the CLIPPER had
+                // already bounded — with drive engaged, `c = shaped · invG`
+                // and `shaped` saturates at ±1, so |c| ≤ 1/g ≤ 1 by
+                // construction. At `clipDrive == 0` the clipper is
+                // exact-skipped (the bit-identity contract above) and that
+                // bound disappears with it: the fifth power then runs on
+                // whatever magnitude reached the stage, and float overflows
+                // at |c| ≈ 5.1e7. The residue is a HARMONIC GENERATOR — its
+                // premise is a signal in the working range — so the fix
+                // restores the premise rather than the branch.
+                //
+                // WHY THIS IS NOT COSMETIC (2026-08-09, the KI-009 round). A
+                // non-finite here is not merely a bad sample: the engine's
+                // wet-ring boundary substitutes exactly 0.0f **for the
+                // offending channel alone** (`AnabasisEngine::processChunk`),
+                // so ONE channel goes digitally silent — and stays silent for
+                // as long as the oversized input persists, because invariant
+                // 9's repair for this stage is `sanitiseState()`, a STATE
+                // repair that is inert against an INPUT-magnitude fault.
+                // Measured before the bound: a sustained finite input at 1e20
+                // on one channel produced permanent exact-zero output on that
+                // channel while the other played normally, and the same input
+                // at `clipMix == 0` was merely limited to the ceiling and
+                // heard — i.e. the failure was gated on the mix, because the
+                // mix is what lets this stage's value reach the ring.
+                // `testExtremeLevelDoesNotSilencePermanently` already named
+                // "the clipper's colour polynomial overflows" as a case; it
+                // drove ONE block, so the sustained and per-channel form of
+                // the same fault was never exercised.
+                //
+                // BIT-EXACT for every reachable signal: `jlimit` returns its
+                // argument unchanged inside the range, and the bound is ~120 dB
+                // above anything the chain can carry into this stage, so the
+                // null path and every audible level are untouched. The residue
+                // is added to the UNBOUNDED `c` below, so the through-signal
+                // keeps its own magnitude either way.
+                const float cp = juce::jlimit (-kColourArgLimit, kColourArgLimit, c);
+                const float oddPart  = model == 3 ? 0.6f * cp * cp * cp
+                                                        + 0.4f * cp * cp * cp * cp * cp
+                                                  : cp * cp * cp;
+                const float evenPart = cp * cp;
                 float r = (1.0f + bal) * kModelOdd[model]  * oddPart
                         + (1.0f - bal) * kModelEven[model] * evenPart;
 
@@ -354,6 +393,16 @@ private:
     { return 1.0f - std::exp (-juce::MathConstants<float>::twoPi * hz / (float) sr); }
     float onePoleMs (float ms) const noexcept
     { return 1.0f - std::exp (-1.0f / (float) (ms * 0.001 * sr)); }
+
+    // The colour polynomial's argument bound (see the sub-block for the whole
+    // argument). 1e6 is chosen from BOTH ends: the fifth power of it is 1e30,
+    // eight orders inside the float ceiling, so no model can overflow and the
+    // residue stays finite for every finite input; and it is +120 dBFS, some
+    // 120 dB above anything the chain can put into this stage, so every
+    // reachable signal passes through `jlimit` unchanged and this constant
+    // changes no audible sample. It is NOT a listening-test ⊕ value — it is a
+    // numerical guard, and moving it changes nothing a listener can hear.
+    static constexpr float kColourArgLimit = 1.0e6f;
 
     // Model residue weights {Clean, Tape, Tube, Transistor} — Clean is {0,0}
     // BY DEFINITION (the null model); the other six numbers are P6

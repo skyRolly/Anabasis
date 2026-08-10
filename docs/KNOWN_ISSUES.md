@@ -749,6 +749,13 @@ surface (ADR-0023 item 5). **Still needed from the field, unchanged since round 
 version, OS, build provenance, format, the session file, and now the two GR lanes' readings
 while the silence is audible.
 
+> **Superseded by the 0.1.3 FOLLOW-UP addendum below (same day).** The oversampler hypothesis
+> this addendum ends on was tested by the owner and came back NEGATIVE — the behaviour is
+> independent of the oversampling factor. The localisation it establishes (the kill is between
+> the compressor's output and the wet ring) is unchanged and is what the follow-up builds on;
+> only its closing "decisive field experiment" is retired. Left as written, per the same rule
+> the DESIGN banners follow.
+
 **0.1.3 addendum — the owner used instrument (b), and the reading localises the kill.** With
 BOTH stereo links at 0 (per-channel detectors and envelopes), the comp threshold pulled low and
 the limiter gain pushed high, the owner observes: **comp GR on both lanes; limiter GR on the
@@ -785,6 +792,70 @@ Off, no in-plugin site remains on the localised span, and the standing suspects 
 stale/mismatched installed binary or host-side channel handling — record host + version, OS,
 build provenance and format (unchanged asks since round 2), which that outcome would make
 conclusive.
+
+**0.1.3 FOLLOW-UP addendum — the Clip Mix evidence, and the mechanism it exposes (FIXED).** The
+owner ran the experiment above and reported two things, both taken as confirmed and signed off:
+
+- **With `Clip Mix` at 0 the left-channel silence disappears immediately; at any non-zero value
+  it returns.**
+- **The behaviour is independent of the oversampling factor**, which retires the 0.1.3
+  addendum's hypothesis outright.
+
+`clipMix` reaches exactly one place in the tree (`ClipSat::setPerBlock`, via `toEngine`; it is
+not macro-managed and nothing else reads it), and its only effect is the stage's parallel blend:
+at 0 the exact-skip branch leaves the sample array **untouched**, so ClipSat's computed value
+never enters the signal at all. The gate is therefore not a mix VALUE — it is *whether this
+stage's output reaches the wet ring*.
+
+**What the code says about the stage itself.** `ClipSat` is **provably channel-symmetric**: the
+same sequence on both channels leaves bit-identical, for every parameter combination and every
+stimulus, and it never emits a non-finite value from bounded input. That is now pinned by
+`testClipSatCannotLoseAChannel` (`tests/dsp_tests.cpp`) over a swept fuzz, plus an asymmetric
+case in which a channel 30 dB below its neighbour survives the neighbour being clipped and
+coloured. So nothing *inside* the stage can single out a channel — the shared terms
+(`activityEnv`, the tame gain, the seven smoothers, `g`/`invG`, the push scalar) would silence
+BOTH, and the per-channel states are identically driven.
+
+**The one mechanism that fits, and it is real.** On the bracketed span there is exactly one
+expression that can drive ONE channel to exact 0.0f while leaving the other intact: the
+finiteness boundary at the wet-ring write (`AnabasisEngine::processChunk`), which substitutes
+`0.0f` **per channel**. Arming it needs ClipSat to emit a non-finite value — and it can, from a
+perfectly *finite* input: the colour sub-block raises to the **fifth power** (Transistor), and
+at `clipDrive == 0` the clipper's own bound (`|c| ≤ 1/g ≤ 1`) is exact-skipped away, so the
+polynomial runs on the raw magnitude and overflows at |c| ≈ 5.1e7. Invariant 9's repair for the
+stage is `clip.sanitiseState()` — a **state** repair, inert against an **input-magnitude**
+fault — so while such an input persists the boundary re-substitutes zero every sample:
+**permanent, single-channel, digital silence.**
+
+Measured end to end through the real wrapper, before the fix: a sustained finite input at 1e20
+on channel 0 (ordinary programme on channel 1) produced **exactly 0.000000000 RMS on channel 0
+and normal output on channel 1**, with `limGrDbCh(0)` reading 0 dB — the field fingerprint,
+complete. The same input at `clipMix == 0` was merely limited to the ceiling and audible. The
+existing `testExtremeLevelDoesNotSilencePermanently` already names "the clipper's colour
+polynomial overflows" as a case; it drives ONE block into BOTH channels, so the **sustained**
+and **per-channel** form of the same fault was never exercised.
+
+**Fixed (0.1.3 follow-up):** the colour polynomial's argument is bounded (`kColourArgLimit`,
+`src/dsp/ClipSat.h`) so the stage cannot produce a non-finite value from any finite input,
+restoring the premise the sub-block was written under. The bound is +120 dBFS — some 120 dB
+above anything the chain can carry into this stage and eight orders inside the float ceiling —
+so `jlimit` returns its argument unchanged for every reachable signal and no audible sample
+changes, bit for bit; the residue is added to the UNBOUNDED through-signal, so Clip Mix
+semantics and stereo independence are untouched. Pinned by the sustained one-channel case added
+to `testExtremeLevelDoesNotSilencePermanently` (three mix values × four magnitudes); removing
+the bound fails exactly those six assertions and no others, and only at non-zero mix.
+
+**Status: still OPEN, and deliberately.** What is fixed is a *demonstrated* defect that produces
+this exact fingerprint with this exact gating. What is **not** established is that it is the
+owner's trigger: reaching it needs ≳ +154 dBFS at the stage input, and no legal chain state
+produces that (the EQ is RBJ-form with clamped Q and frequency and cannot go unstable; the
+compressor's gain is ≤ 1; input gain tops out at +24 dB). **The one field datum that would
+settle it** is the Statistics panel's **SP (sample peak)** row while the silence is audible: an
+absurd reading (far above the ceiling, tens or hundreds of dB) means the overflow path is live
+and this fix closes the report; a normal reading means the loss is not this mechanism and the
+remaining candidates are host-side channel handling or a stale/mismatched installed binary —
+for which the unchanged asks stand (host + version, OS, build provenance, format, the session
+file). Re-test with the 0.1.3 follow-up build before recording either.
 
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 

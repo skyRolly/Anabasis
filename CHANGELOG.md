@@ -61,17 +61,38 @@ no DSP behaviour changes anywhere in this entry.
   IDs keep their historical spelling — they are compatibility keys, never shown. Evidence
   Source: PR #13 (item 6). [Verified]
 - **The EQ panel is reorganised into one band per row** — bands in ascending frequency order
-  (Tilt + low shelf · Bell 1 · Bell 2 · high shelf), bells on a strict Freq | Gain | Q column
-  grid and the two shelves framing them in matching columns. The previous layout packed the
-  eleven knobs in declaration order, splitting every band across rows. Same cell sizes and
-  panel budget, so nothing else moved. Evidence Source: PR #13 (item 5). [Verified]
+  (Tilt + low shelf · Bell 1 · Bell 2 · high shelf), each bell reading Q | Freq | Gain across
+  the same column grid, and the two shelves framing them in matching columns. The previous
+  layout packed the eleven knobs in declaration order, splitting every band across rows. Same
+  cell sizes and panel budget, so nothing else moved; parameter identity, ranges and
+  automation are untouched. Evidence Source: PR #13, bell column order PR #14 (item 5).
+  [Verified]
+- **The Sidechain High-Pass tooltip now says what the control does** — it filters the
+  **compressor's** detector only; the limiter's detector has been deliberately unfiltered
+  since 0.1.2 (ADR-0023), and the tip still described the pre-0.1.2 shared filter. Evidence
+  Source: PR #14. [Verified]
+- **The macOS and Windows installers capitalise "Plug-in" and "Application"** in their
+  component and folder-prompt wording. Evidence Source: PR #14. [Verified]
 - **The RMS statistics row updates at reading pace (~3 Hz)** — the 50 ms windowed measurement
   (ADR-0020) is unchanged and was never wrong; the readout was re-printed at the full ~24 Hz
   meter cadence, so the digits churned faster than they could be read. The row now adopts a
   fresh value roughly three times a second and holds it between adoptions; a meter reset
-  still clears it immediately. Evidence Source: PR #13 (item 1). [Verified]
+  still clears it immediately, and **switching the RMS reference in Settings still moves the
+  row on the next frame** — the hold applies to the measurement, not to the reference.
+  Evidence Source: PR #13, reference immediacy PR #14 (item 1). [Verified]
 
 ### Fixed
+- **A sustained, absurdly hot input can no longer silence one channel** (the KI-009
+  investigation). The colour stage's harmonic polynomial raises to the fifth power, and with
+  Clip Drive at 0 the clipper's own bound is skipped, so a finite-but-astronomical sample
+  could overflow it to infinity — after which the engine's per-channel safety substitution
+  emitted digital zero on **that channel alone**, for as long as the input persisted, while
+  the other channel played normally. The polynomial's argument is now bounded at a level some
+  120 dB above anything the chain can carry, so no audible sample changes (bit for bit) and
+  the stage can no longer produce an infinity from a finite input. Whether this is what the
+  field reports of a silent left channel are hitting is **not** established — see
+  `docs/KNOWN_ISSUES.md` KI-009, which stays open and names the one reading that would settle
+  it. Evidence Source: PR #14. [Verified]
 - **The GR history no longer flashes a vertical accent line at its left edge** while the
   gain-reduction trace there is non-zero. The "unmeasured region" zero-line was also drawn
   for a *full, scrolling* window whenever bucket-expiry phase left a sub-pitch gap at the

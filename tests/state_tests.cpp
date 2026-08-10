@@ -1256,6 +1256,45 @@ static void testTheWaveformStatisticsRowsReadTheirStandards()
     proc.processBlock (buf, midi);
     check (proc.meterPeakMaxDb() < -100.0f,
            "stats: the meter reset clears the sample-peak hold too");
+
+    // ---- The RMS numeric row's two display rules (0.1.3) -------------------
+    // Pinned through the statics for the reason the PLR rule is: they carry
+    // the argument, and pinning them needs no FrameClock tick.
+    //
+    // The CADENCE (item 1): the row must not chase the ~24 Hz meter tick.
+    const float aReading = -18.0f, another = -11.0f;
+    check (! LoudnessMeterView::shouldAdoptRms (another, /*holding*/ true, 0.04),
+           "rmsRow: a fresh measurement one meter frame after the last is NOT adopted");
+    check (LoudnessMeterView::shouldAdoptRms (another, true, 0.40),
+           "rmsRow: …and IS adopted once the readable hold has expired");
+    // The two sentinel bypasses, which is what keeps a meter reset honest:
+    // the sentinel itself blanks the row on the next frame, and the first real
+    // reading after one lands immediately instead of waiting out an interval
+    // it was never part of.
+    check (LoudnessMeterView::shouldAdoptRms (anabasis::RmsMeter::kSilentDb, true, 0.0),
+           "rmsRow: the meter-reset sentinel is adopted immediately, hold or not");
+    check (LoudnessMeterView::shouldAdoptRms (aReading, /*holding*/ false, 0.0),
+           "rmsRow: the first reading after a reset is adopted immediately");
+
+    // The REFERENCE (the 0.1.3 review fix): the §3.5 choice is applied to
+    // whatever measurement is on screen, so it can never be gated by the hold.
+    // Asserted as a property of the PAIR — for any held measurement the two
+    // references differ by exactly the AES-17 offset — rather than by
+    // re-deriving the constant here.
+    check (near (LoudnessMeterView::rmsWithReference (aReading, true)
+                 - LoudnessMeterView::rmsWithReference (aReading, false), 3.0103f, 1.0e-4f),
+           "rmsRow: the AES-17 reference is exactly the offset above the mathematical one");
+    check (juce::exactlyEqual (
+               LoudnessMeterView::rmsWithReference (anabasis::RmsMeter::kSilentDb, true),
+               anabasis::RmsMeter::kSilentDb),
+           "rmsRow: the sentinel passes the reference untouched, so \"-\" stays \"-\"");
+    // The mutant this pair kills is the shipped 0.1.3 form, which applied the
+    // reference INSIDE the hold: `rmsWithReference` is a pure function of the
+    // held raw value, so the row's response to a Settings flip is one frame by
+    // construction — there is no state between the choice and the print.
+    check (! juce::exactlyEqual (LoudnessMeterView::rmsWithReference (aReading, true),
+                                 LoudnessMeterView::rmsWithReference (aReading, false)),
+           "rmsRow: …and the two references are distinguishable, so the flip is visible");
 }
 
 // ---------------------------------------------------------------------------
