@@ -1245,6 +1245,18 @@ static void testLimiterPushDoesNotDriveTheClipper()
 //  compressor still shows gain reduction on both channels while the limiter
 //  shows it on one), and cured by bypass, which reads the dry ring.
 // ============================================================================
+// WHY THE COMPRESSOR DOES NOT PRE-EMPT THE SUSTAINED ONE-CHANNEL CASES BELOW,
+// recorded because it is not obvious and those tests' premise rests on it. With
+// the default RMS detector and a sustained 1e20+ input, `meanSquare[ch]`
+// (`MasteringComp.h`) overflows to infinity on the first sample and to NaN on the
+// second (inf − inf). From then on `grDbMin = juce::jmin (grDbMin, NaN)` keeps
+// returning the running minimum, so the "no reduction anywhere" early return
+// makes the compressor a pass-through and the huge sample reaches ClipSat intact
+// — which is exactly what the ClipSat cases need. That is an ACCIDENT of jmin's
+// NaN behaviour, not a designed property: a future change to how the compressor
+// handles a non-finite detector would silently change what those tests exercise,
+// rather than failing them. (It also means `meterCompGrDbCh` can publish NaN in
+// that state; harmless to the audio, visible only to the GR lane's display.)
 static void testClipSatCannotHideANonFiniteFromTheBoundary()
 {
     const juce::ScopedNoDenormals noDenormals;

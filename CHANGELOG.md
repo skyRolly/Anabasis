@@ -94,7 +94,9 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   frame rate (the meter clock paces on vblank, up to ~125 Hz), so the digits churned faster
   than they could be read. The row now adopts a
   fresh value roughly three times a second and holds it between adoptions; a meter reset
-  still clears it immediately, and **switching the RMS reference in Settings still moves the
+  clears it immediately when no audio is running (with audio flowing the same block re-publishes
+  a live 50 ms reading, so there is nothing to clear — the rolling windows are not reset, as the
+  manual says), and **switching the RMS reference in Settings still moves the
   row on the next frame** — the hold applies to the measurement, not to the reference.
   Evidence Source: PR #13, reference immediacy PR #14 (item 1). [Verified]
 
