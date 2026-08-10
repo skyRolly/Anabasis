@@ -739,7 +739,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         float frame[kMaxChannels] = {};
         for (int ch = 0; ch < nCh; ++ch)
         {
-            frame[ch] = region.getSample ((size_t) ch, (size_t) i);
+            frame[ch] = region.getSample (ch, i);
             if (! std::isfinite (frame[ch]))
             {
                 frame[ch] = 0.0f;              // the oversampler's own filters
@@ -834,7 +834,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float delayedWet = wetRing.getSample (ch, readPos);
-            region.setSample ((size_t) ch, (size_t) i,
+            region.setSample (ch, i,
                               juce::exactlyEqual (gains[ch], 1.0f) ? delayedWet
                                                                    : delayedWet * gains[ch]);
         }

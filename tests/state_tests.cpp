@@ -5133,7 +5133,7 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // edge, and does NOT reach back to the left edge: the old stretch
             // put kFirst at x = 0 in exactly this state, which is the
             // behaviour this assertion exists to keep out.
-            const auto q = GrHistoryView::buckets (juce::jmax<int64_t> (2, want / 4),
+            const auto q = GrHistoryView::buckets (juce::jmax ((int64_t) 2, want / 4),
                                                    want, c.cols);
             const auto m6 = say ("a quarter-full ring draws at the settled pitch, right-anchored");
             check (q.stride == b.stride && q.kFull == b.kFull
@@ -5691,7 +5691,7 @@ static void testClipMixCannotChangeTheDefaultPresetsSound()
     {
         double s = 0.0;
         for (auto x : v) s += (double) x * x;
-        return std::sqrt (s / juce::jmax<size_t> (1, v.size()));
+        return std::sqrt (s / (double) juce::jmax ((size_t) 1, v.size()));
     };
 
     // ---- (1) the Default preset: Clip Mix is provably inert ----------------

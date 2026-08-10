@@ -103,7 +103,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // Reachable at ordinary block sizes: 20 s at 48 kHz / 64 samples is 15000
     // entries, so `want` saturates for anything up to ~234 samples per block.
     const int64_t want  = windowEntries (processor.getSampleRate(), processor.getBlockSize());
-    const int64_t first = juce::jmax<int64_t> (0, head - want);
+    const int64_t first = juce::jmax ((int64_t) 0, head - want);
     const int64_t count = head - first;
     if (count <= 0)
         return;

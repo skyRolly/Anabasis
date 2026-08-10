@@ -303,7 +303,7 @@ private:
             for (int b = firstBin; b < kBins; ++b)
             {
                 cum += lraHist[(size_t) b];
-                if (cum >= juce::jmax<int64_t> (1, want))
+                if (cum >= juce::jmax ((int64_t) 1, want))
                     return kBinFloor + ((double) b + 0.5) * kBinWidth;
             }
             return kBinFloor + ((double) (kBins - 1) + 0.5) * kBinWidth;

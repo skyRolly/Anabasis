@@ -66,8 +66,8 @@ public:
     {
         const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
         const int    bs = juce::jmax (1, blockSize);
-        return juce::jmin<int64_t> (anabasis::GrHistoryBuffer::kSize - 1,
-                                    (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
+        return juce::jmin ((int64_t) (anabasis::GrHistoryBuffer::kSize - 1),
+                           (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
     }
 
     // The decimation geometry one frame draws. Public and pure for the reason
@@ -95,15 +95,15 @@ public:
     // `cols` = the panel's pixel width (≥ 1).
     static Buckets buckets (int64_t head, int64_t want, int cols) noexcept
     {
-        const int64_t c      = juce::jmax<int64_t> (1, (int64_t) cols);
-        const int64_t stride = juce::jmax<int64_t> (1, (want + c - 1) / c);
-        const int64_t first  = juce::jmax<int64_t> (0, head - want);
-        const int64_t kHead  = juce::jmax<int64_t> (0, head - 1) / stride;
+        const int64_t c      = juce::jmax ((int64_t) 1, (int64_t) cols);
+        const int64_t stride = juce::jmax ((int64_t) 1, (want + c - 1) / c);
+        const int64_t first  = juce::jmax ((int64_t) 0, head - want);
+        const int64_t kHead  = juce::jmax ((int64_t) 0, head - 1) / stride;
         // `kFull` ≥ 2 so the pitch below divides by at least 1 — reachable
         // only when the whole window fits in one bucket (want ≤ stride, i.e.
         // a panel around one pixel wide), where any pitch draws the same one
         // bucket at the right edge.
-        const int64_t kFull  = juce::jmax<int64_t> (2, (want + stride - 1) / stride);
+        const int64_t kFull  = juce::jmax ((int64_t) 2, (want + stride - 1) / stride);
         // Two lower bounds on the oldest bucket, and both are needed: the
         // window bound (a bucket must lie WHOLLY inside [first, head)) and the
         // width bound (at the fixed pitch only `kFull` buckets fit on the
@@ -137,7 +137,7 @@ public:
     // misread as a scrolling window.
     static bool drawsZeroRegion (int64_t head, int64_t want) noexcept
     {
-        return juce::jmax<int64_t> (0, head - want) == 0;
+        return juce::jmax ((int64_t) 0, head - want) == 0;
     }
 
     // Where bucket `k` lands: anchored at the RIGHT edge (bucket `kHead` at

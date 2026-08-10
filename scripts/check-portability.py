@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""
+Anabasis -- source portability lint (Linux-runnable, guards a macOS-only defect class).
+
+WHY THIS EXISTS
+===============
+Between 2026-08-08 and 2026-08-10 the macOS CI job failed to COMPILE on every
+push while Linux and Windows stayed green.  One line was responsible:
+
+    return std::sqrt (s / juce::jmax<size_t> (1, v.size()));     tests/state_tests.cpp
+
+`juce::jmax` is not one function.  juce_dsp declares an extra overload
+
+    template <typename Type>
+    dsp::SIMDRegister<Type> jmax (dsp::SIMDRegister<Type>, dsp::SIMDRegister<Type>);
+                                     -- juce_dsp/containers/juce_SIMDRegister_Impl.h:185
+
+Supplying an EXPLICIT template argument substitutes it into every candidate, so
+the compiler must form `SIMDRegister<size_t>` -- and completing that class needs
+`SIMDNativeOps<size_t>`, which exists only if `size_t` happens to name one of the
+ten types JUCE specialises (int8_t/uint8_t/int16_t/uint16_t/int32_t/uint32_t/
+int64_t/uint64_t/float/double).  Parameters of incomplete class type must be
+completed, and that completion is OUTSIDE the immediate context, so it is a hard
+error rather than a quiet SFINAE removal.
+
+    Linux (LP64, glibc):  uint64_t IS `unsigned long` IS size_t  -> complete   -> compiles
+    macOS (LP64, libc++): uint64_t is `unsigned long long`,
+                          size_t is `unsigned long`              -> incomplete -> ERROR
+
+The defect is therefore INVISIBLE to a Linux compiler no matter which compiler it
+is -- GCC and Clang agree, because the typedef, not the front end, is what
+differs.  That is precisely why it needs a lint rather than another build job.
+
+WHAT IT CHECKS
+==============
+1. lint (default)   Rejects an explicit template argument on any juce function
+                    template that juce_dsp also overloads for SIMDRegister.
+                    That set is CLOSED at {jmin, jmax, snapToZero} -- verified by
+                    sweeping every JUCE module header for free functions taking
+                    SIMDRegister<T>.  jlimit / jmap / findMinimum / findMaximum /
+                    approximatelyEqual / exactlyEqual / roundToInt have NO such
+                    overload and are deliberately not listed: a lint that flags
+                    safe code gets switched off.
+
+                    The deduced form is structurally immune and is what the fix
+                    looks like -- deducing `Type` from a scalar against parameter
+                    `SIMDRegister<Type>` FAILS, which removes the SIMD candidate
+                    before the class is ever completed:
+
+                        juce::jmax<size_t> (1, v.size())      # rejected
+                        juce::jmax ((size_t) 1, v.size())     # fine, identical result
+
+2. --compile-canary  Proves the premise above is still TRUE of the pinned JUCE,
+                     rather than trusting this docstring.  Compiles two tiny
+                     translation units against the JUCE modules directory given:
+                     the deduced form MUST compile and the explicit form MUST
+                     NOT.  `long long` is used as the probe type because on Linux
+                     it is the exact structural analogue of macOS's
+                     `unsigned long` -- a 64-bit integer type that is NOT what
+                     <cstdint> spells int64_t there, hence unspecialised.  A JUCE
+                     bump that adds or drops a SIMD overload changes this
+                     result and fails the canary instead of silently voiding
+                     the lint.
+
+Usage:
+    scripts/check-portability.py [--root DIR]
+    scripts/check-portability.py --compile-canary JUCE_MODULES_DIR [--cxx g++]
+
+Exit codes: 0 clean, 1 violations found, 2 usage/environment error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# The closed hazard set -- juce free function templates that juce_dsp ALSO
+# overloads for dsp::SIMDRegister<Type>.  Keep this list in sync with
+# juce_dsp/containers/juce_SIMDRegister_Impl.h; --compile-canary is what notices
+# if the pin moves under it.
+SIMD_OVERLOADED = ("jmin", "jmax", "snapToZero")
+
+HAZARD = re.compile(r"(?:juce\s*::\s*)?\b(" + "|".join(SIMD_OVERLOADED) + r")\s*<")
+
+SOURCE_SUFFIXES = (".h", ".hpp", ".cpp", ".cc", ".mm")
+SOURCE_DIRS = ("src", "tests")
+
+
+def blank_comments_and_literals(text: str) -> str:
+    """Return `text` with comments and string/char literals replaced by spaces.
+
+    Newlines are preserved so reported line numbers stay exact.  This is what
+    keeps the lint from firing on its own explanation: prose in a comment may
+    name `juce::jmax<size_t>` freely, and the repository's comments do.
+    """
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if c == "/" and nxt == "/":
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+        elif c == "/" and nxt == "*":
+            out.append("  ")
+            i += 2
+            while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
+            out.append("  ")
+            i += 2
+        elif c in ('"', "'"):
+            quote = c
+            out.append(" ")
+            i += 1
+            while i < n and text[i] != quote:
+                if text[i] == "\\" and i + 1 < n:
+                    out.append("  ")
+                    i += 2
+                    continue
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
+            out.append(" ")
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def lint(root: Path) -> int:
+    files = [
+        p
+        for d in SOURCE_DIRS
+        for p in sorted((root / d).rglob("*"))
+        if p.suffix in SOURCE_SUFFIXES and p.is_file()
+    ]
+    if not files:
+        print(f"check-portability: no source files under {root}/{{{','.join(SOURCE_DIRS)}}}", file=sys.stderr)
+        return 2
+
+    violations = []
+    for path in files:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for lineno, line in enumerate(blank_comments_and_literals(raw).splitlines(), 1):
+            m = HAZARD.search(line)
+            if m:
+                violations.append((path.relative_to(root), lineno, m.group(1), raw.splitlines()[lineno - 1].strip()))
+
+    for rel, lineno, name, src in violations:
+        print(f"{rel}:{lineno}: error: explicit template argument on juce::{name} -- "
+              f"instantiates JUCE's dsp::SIMDRegister overload, which fails to compile on "
+              f"macOS for any type that is not one of JUCE's ten SIMD element typedefs "
+              f"(size_t is such a type on macOS and is NOT on Linux).")
+        print(f"    {src}")
+        print(f"    fix: drop the <...> and cast the arguments instead, e.g. "
+              f"juce::{name} ((size_t) 1, v.size()) -- identical result, deduction removes "
+              f"the SIMD candidate before it can be instantiated.")
+
+    print(f"check-portability: {len(files)} file(s) scanned, {len(violations)} violation(s).")
+    return 1 if violations else 0
+
+
+CANARY_DEDUCED = """
+#include <juce_dsp/juce_dsp.h>
+int main() { long long a = 1, b = 7; return (int) juce::jmax (a, b); }
+"""
+
+CANARY_EXPLICIT = """
+#include <juce_dsp/juce_dsp.h>
+int main() { return (int) juce::jmax<long long> (1, 7); }
+"""
+
+
+def compile_canary(modules: Path, cxx: str) -> int:
+    if not (modules / "juce_dsp" / "juce_dsp.h").is_file():
+        print(f"check-portability: {modules} does not look like a JUCE modules directory", file=sys.stderr)
+        return 2
+
+    common = [
+        cxx, "-std=c++20", "-fsyntax-only", "-I", str(modules),
+        "-DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1",
+        "-DJUCE_MODULE_AVAILABLE_juce_dsp=1",
+        "-DJUCE_STANDALONE_APPLICATION=1",
+    ]
+    results = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, body in (("deduced", CANARY_DEDUCED), ("explicit", CANARY_EXPLICIT)):
+            src = Path(tmp) / f"{name}.cpp"
+            src.write_text(body)
+            proc = subprocess.run(common + [str(src)], capture_output=True, text=True)
+            results[name] = proc.returncode
+
+    ok = True
+    if results["deduced"] != 0:
+        print("check-portability: CANARY FAILED -- the DEDUCED form no longer compiles. "
+              "The recommended fix in this script's message is wrong for the pinned JUCE.")
+        ok = False
+    if results["explicit"] == 0:
+        print("check-portability: CANARY FAILED -- the EXPLICIT form now compiles on this "
+              "platform, so the lint is guarding a hazard this JUCE revision no longer has. "
+              "Re-derive SIMD_OVERLOADED from juce_SIMDRegister_Impl.h before relaxing the lint: "
+              "the macOS typedef divergence is what makes the hazard real, and it is not "
+              "observable from a Linux compile.")
+        ok = False
+
+    print(f"check-portability: compile canary -- deduced form {'compiles' if results['deduced'] == 0 else 'FAILS'}, "
+          f"explicit form {'compiles' if results['explicit'] == 0 else 'is rejected'} (both as expected)."
+          if ok else "check-portability: compile canary FAILED.")
+    return 0 if ok else 1
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Anabasis source portability lint.")
+    ap.add_argument("--root", default=str(Path(__file__).resolve().parent.parent),
+                    help="repository root (default: the parent of scripts/)")
+    ap.add_argument("--compile-canary", metavar="JUCE_MODULES_DIR",
+                    help="instead of linting, verify the pinned JUCE still has the hazard")
+    ap.add_argument("--cxx", default="g++", help="compiler for --compile-canary (default: g++)")
+    args = ap.parse_args()
+
+    if args.compile_canary:
+        return compile_canary(Path(args.compile_canary), args.cxx)
+    return lint(Path(args.root))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
