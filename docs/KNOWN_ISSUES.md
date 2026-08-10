@@ -662,7 +662,7 @@ Evidence [Verified]:
 
 **For the post-v0.1.0 fine review — the highest-severity open item in this family.**
 
-### KI-009 — Field report: left channel silent — NOT REPRODUCIBLE headlessly (2026-08-05)
+### KI-009 — Field report: left channel silent — macOS-only, NOT REPRODUCIBLE on Linux (2026-08-05)
 
 **The report.** The owner reports the LEFT channel carrying no audio at all, right channel
 normal, "in both Simple and Advanced modes" (i.e. always). Host, OS and build not yet recorded.
@@ -1078,6 +1078,35 @@ priority: a serialized/restored state the parameter surface cannot construct, an
 gesture-versus-value question round 5's experiments separate. What round 6 removes is the
 possibility that the headless "cannot reproduce" was itself the artefact.
 
+**0.1.3 FOLLOW-UP ROUND 7 — the owner's platform negative, and what it does to the scope
+(2026-08-10).** The owner re-tested on **Linux** and reports the fault does **not** occur there.
+The heading's "NOT REPRODUCIBLE headlessly" therefore understates what is now known: the report
+is **not reproducible on Linux at all**, headless or with the editor and a real host, by the
+person who filed it. macOS remains the only platform on which it has ever been observed;
+Windows is untested by either side.
+
+**What that changes.** Six rounds of headless work all ran on Linux, so "cannot reproduce" and
+"the owner cannot reproduce it here either" now agree — and agreement on a platform where the
+fault is absent carries no information about the platform where it is present. Every
+Linux-executed argument in the rounds above stays valid as a statement about the *source*
+(channel symmetry, the absence of a per-channel gain, ClipSat's inability to emit a non-finite
+from a finite input, Clip Mix's provable inertness at the Default preset). None of them is
+evidence about the shipped macOS binary, because none of them ran on it.
+
+**The hypothesis ranking is reordered accordingly.** Round 6 left two live directions plus a
+third listed as an also-ran — a macOS-only divergence, whether in the arm64 codegen of the
+clip/colour path or in the AU/VST3 glue as macOS drives it. The Linux negative promotes that
+third to the leading hypothesis, because it is the only one of the three that predicts a
+platform split. The state-restore and gesture-versus-value directions predict the fault on any
+platform and are demoted, not dropped: a *state* that only a macOS session ever contains would
+still fit.
+
+**Status: OPEN, and now explicitly macOS-scoped.** The next useful datum can only come from a
+macOS build: the same thirteen-tap trace of round 6 compiled and run on macOS arm64, which is
+not reachable from this CI-less Linux tree. Until then no Linux-side experiment can move this
+entry, and none should be run in its name — that is the concrete conclusion of round 7, and it
+is why this round adds no test.
+
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 
 **Severity:** Low
@@ -1159,6 +1188,88 @@ because the fix is a behaviour change rather than a repair:
    audible consequence is a brief wrong gain immediately after the switch; which of "clear" or
    "keep warm" is right is a listening-pass call, and the switch is duck-routed, so the artefact
    is partly masked already.
+
+### KI-012 — Field report: the Linux editor accepts no mouse input — NOT REPRODUCED on this tree (2026-08-10)
+
+**Severity:** High (if it holds, the plugin cannot be operated at all on the affected setup)
+**Status:** Reported — not reproduced; the runtime harness below says the opposite
+**Affects:** Linux, plugin format, host and desktop environment not yet recorded
+
+The owner reports that on Linux **no control responds to a click and hovering produces no
+visible reaction**, and asks whether the sibling does something here that this editor does not,
+since Anamorph shows no such behaviour on Linux.
+
+**Workaround:** none known — and none can be written until the setup is known.
+**Cause:** not established. What follows is what the runtime evidence excludes.
+
+This entry breaks constraint C7 (an unconfirmed report is not an entry) for the same reason
+KI-009 does, and under the same discipline: it carries the *experiments*, so the next round
+starts from what has already been ruled out rather than repeating it.
+
+**The harness.** A real X server (`Xvfb :91`, 1600×1200×24), the built `Anabasis.vst3` loaded
+into a purpose-built minimal JUCE 9.0.0 VST3 host (`AudioPluginFormatManager` +
+`VST3PluginFormat`, editor in a `DocumentWindow`), synthetic pointer input injected through the
+**XTEST** extension — real `ButtonPress`/`MotionNotify` from the server, not JUCE-internal
+`handleMouseEvent` calls — and screen state read back with `XGetImage`. Every run was repeated
+**without** a window manager and **under `twm`**, so the reparenting frame and the WM's focus
+handling are both covered. The oracles are host-side and independent of the plugin's own
+reporting: the X window's geometry, the host's view of the parameter values, and a pixel diff of
+the plugin window.
+
+**What the harness measured.**
+
+| Probe | Result |
+|---|---|
+| Standalone: click the ADV toggle at editor (809, 23) | window content height 720 → 822 — the click landed |
+| VST3 in the JUCE host, no WM: same click | same resize |
+| VST3 in the JUCE host, no WM: rotary drag at editor (300, 120), Δy = −60 | `Loudness` 0.000 → 0.228, with `Comp Ratio`, `Comp Threshold` and `Limiter Gain` following it through the macro map |
+| VST3 in the JUCE host **under `twm`**: same drag | identical |
+| Pointer parked in the corner, two grabs 1 s apart | **0** pixels changed (correct — no audio is flowing, so the meters are still) |
+| Pointer moved onto a knob, grab again | **26 861** pixels changed |
+
+So on this tree, on Linux, through XEmbed, with and without a window manager: clicks land,
+drags move parameters, and hover repaints. The reported symptom does not occur here.
+
+**The sibling comparison the owner asked for, in full.** Every interaction-relevant construct is
+the same in both editors:
+
+- **OpenGL.** Both exclude the attach on Linux — Anabasis `#if JUCE_MAC || JUCE_WINDOWS`
+  (`src/gui/PluginEditor.cpp`), the sibling `#if ! (JUCE_LINUX || JUCE_BSD)` with the
+  ADR-0011/INC-006/KI-003 `XEmbedComponent` rationale. Confirmed at *runtime*, not just in the
+  preprocessor: the X11 window tree under the host shows the plugin owning exactly **one**
+  window and no GL child, so no GL child window can be swallowing the pointer.
+- **`TooltipWindow`**, the `setOpaque (true)` on the editor, `applyUiScale()`
+  (`setSize` then `setTransform (scale (hostScale × uiScale))`) and the `setScaleFactor`
+  override: identical in both, line for line.
+- **Build surface.** `EDITOR_WANTS_KEYBOARD_FOCUS FALSE`, `JUCE_WEB_BROWSER=0`,
+  `juce_recommended_{config,lto,warning}_flags` and the same `--gc-sections`/`relro`/`now`
+  hardening link options — identical in both `CMakeLists.txt`.
+- **Overlays.** `dimOverlay` is `setInterceptsMouseClicks (false, false)`; the three `Backdrop`s
+  are `addChildComponent` (invisible) and become visible only from an explicit click on the
+  wordmark, the Settings button or the preset Save item. Nothing full-frame sits above the
+  controls.
+
+The **only** structural divergence found is that the sibling declares its `juce::OpenGLContext`
+member on every platform and gates only `attachTo`, while this editor compiles the member out on
+Linux entirely. That is not on the input path — and the runtime window tree above proves it is
+not, since neither build creates a GL window on Linux.
+
+**What is still open, and what would settle it.** The fault is real for the reporter and absent
+in every harness here, so the difference is in the environment, not (on this evidence) in the
+component tree, the hit-testing, the overlay z-order or the GL gate. To progress, record: the
+**host and version**, the **desktop environment / window manager and whether a compositor is
+running**, whether the build is a CI artifact or a local one, and — the single most
+discriminating datum — **whether the meters move while audio plays**. Moving meters with dead
+controls is an *input-routing* fault; frozen meters with dead controls is a *repaint/event-loop*
+fault (on Linux JUCE drives `dispatchDeferredRepaints` from the same vblank timer that feeds
+`VBlankAttachment`, so both symptoms share one carrier), and the two lead to opposite places.
+
+Evidence [Partially Verified]:
+- Source: `src/gui/PluginEditor.cpp` (GL gate, overlays, `applyUiScale`), `CMakeLists.txt`
+- Test:   none — the report does not reproduce; the runtime harness above is recorded in
+  `worklogs/`, not in the suites, because a passing probe of a fault that never appears would
+  pin nothing
+- Commit: this one
 
 ## Standing note for P1 onward
 

@@ -114,7 +114,23 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   and Simple view's clickable reset dot are unchanged. Evidence Source: PR #13 (item 7).
   [Verified]
 
-### Investigation (KI-009 — still open)
+### Investigation (KI-009 and KI-012 — both open)
+- **The left-channel silence is macOS-only so far.** The owner re-tested on **Linux** and
+  cannot reproduce it there, so KI-009 is now explicitly scoped to the macOS build (Windows
+  untested by either side). Six rounds of headless work all ran on Linux, so their
+  "cannot reproduce" agrees with the owner on a platform where the fault is absent — which
+  says nothing about the platform where it is present. The consequence is recorded rather
+  than implied: a macOS-only divergence is the only one of the three live hypotheses that
+  predicts a platform split, so it leads, and no further Linux-side experiment can move the
+  entry. `docs/KNOWN_ISSUES.md` KI-009, round 7. Evidence Source: PR #14. [Verified]
+- **New report — the Linux editor accepting no mouse input (KI-012) — does not reproduce.**
+  The built VST3 was loaded into a purpose-built minimal JUCE VST3 host on a real X server and
+  driven with **XTEST** pointer events, bare and under a window manager: clicks land (the ADV
+  toggle resizes the window), a rotary drag moves Loudness and the parameters its macro map
+  drives, and hover repaints against a zero-pixel idle control. `docs/KNOWN_ISSUES.md` KI-012
+  records what that excludes, the sibling comparison (every interaction-relevant construct
+  identical; the one divergence is off the input path), and the single field datum that would
+  settle it — whether the meters move while audio plays. Evidence Source: PR #14. [Verified]
 - **The left-channel silence is NOT fixed.** With the colour-stage guard in the build the
   owner re-tested on macOS in both AU and VST3: the behaviour is identical across formats,
   unaffected by oversampling or any other setting, removed only by Clip Mix = 0 — and
