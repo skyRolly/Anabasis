@@ -5749,6 +5749,35 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
         {
             auto* par = proc.apvts.getParameter (pid::loudness);
             par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (loudness));
+            // …AND the parameters that knob drives, set directly.
+            //
+            // WITHOUT THIS THE CASE IS VACUOUS, and it was for its whole life
+            // (found 2026-08-09 by instrumenting the chain and reading the
+            // engaged values back: at "loudness 85" the clipper reported
+            // `clipDrive == 0`). `MacroEngine` maps on a 30 ms `juce::Timer`,
+            // and a headless console app runs no message loop, so the tick
+            // never fires and the macro-managed parameters keep their
+            // defaults. The knob moved; nothing downstream of it did — so
+            // every "loudness N" case in this battery was re-running the
+            // DEFAULTS case, with the clipper exact-skipped and the colour
+            // stage contributing nothing.
+            //
+            // That matters well beyond a tidier test: the field report this
+            // battery exists for (KI-009) is observed with the chain PUSHED,
+            // and the pushed chain is exactly what was never being exercised.
+            // The values below are representative of the §5.5 curves at this
+            // knob position rather than derived from them — deriving them
+            // would couple this test to the curve tables, and what it needs is
+            // simply that the stages are WORKING.
+            auto engage = [&proc] (const char* id, float denorm)
+            {
+                auto* q = proc.apvts.getParameter (id);
+                q->setValueNotifyingHost (q->getNormalisableRange().convertTo0to1 (denorm));
+            };
+            engage (pid::clipDrive,   loudness * 0.22f);
+            engage (pid::colourDepth, loudness);
+            engage (pid::dynTilt,     loudness > 60.0f ? 2.0f : 0.8f);
+            engage (pid::limGain,     loudness * 0.18f);
         }
 
         juce::AudioBuffer<float> buf (2, 512);

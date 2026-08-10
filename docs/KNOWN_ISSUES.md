@@ -1038,7 +1038,45 @@ mechanism.
    one-shot state that a parameter write clears — which points at the serialized/restored
    state paths (the ADR-0014 frozen-trim vector, the §5.3 detach mask) rather than at DSP.
 
-**Status: OPEN.** Not fixed, and the record no longer treats the Clip Mix correlation as a lead.
+**0.1.3 FOLLOW-UP ROUND 6 — runtime instrumentation, and the coverage hole it exposed.** Static
+reasoning was taken as far as it goes, so the chain was instrumented instead: thirteen
+per-channel energy taps from the raw input to the final write (raw in · post input gain · post
+EQ-pre · comp out · ClipSat in · ClipSat out · wet-ring write · limiter detector tap · limiter
+gains · delayed wet · stage-E in · post clamp · final out), run under the owner's exact
+reproduction configuration at both Clip Mix endpoints.
+
+**The trace found no divergence** — every tap balanced at L/R ≈ 1.04, both GR lanes reducing on
+both channels, and the two endpoints bit-identical. But reading the engaged values back
+exposed something the five previous rounds had been standing on without knowing it:
+
+> **At "loudness 85" the clipper reported `clipDrive == 0`.**
+
+`MacroEngine` maps the macro knobs onto the nine managed parameters on a **30 ms
+`juce::Timer`**, and a headless console app runs no message loop, so that tick never fires.
+Setting the Loudness parameter in a test moves the knob and **nothing downstream of it**. Every
+"loudness N" configuration in `testBothChannelsCarryAudioThroughTheWrapper` — and every sweep
+run against this report since round 1 — was therefore re-running the DEFAULTS case, with the
+clipper exact-skipped and the colour stage contributing nothing.
+
+**Why that matters here specifically.** The field report is observed with the chain PUSHED, and
+a pushed chain is the one configuration in which `clipMix` is not inert — it is what makes the
+clip/colour/tame contribution real, and so what makes the mix blend do anything at all. The
+headless coverage of exactly that state was vacuous. This does not make the Clip Mix
+correlation causal (at the *Default preset* it still provably cannot be — round 5), but it does
+mean "swept headlessly without reproducing" was a weaker statement than it read as, for the
+configuration that matters most.
+
+**Fixed in the battery:** the loudness cases now engage `clipDrive`, `colourDepth`, `dynTilt`
+and `limGain` directly alongside the knob, with the timer reason recorded at the call site. Run
+that way, the owner's configuration with the clipper genuinely working still shows both
+channels alive and matched (L/R within 1 %) at every mix value — so the hole is closed and the
+report still does not reproduce, but the two facts are now independent rather than one being an
+artefact of the other.
+
+**Status: OPEN.** Not fixed. The two live directions are unchanged in substance and sharper in
+priority: a serialized/restored state the parameter surface cannot construct, and the
+gesture-versus-value question round 5's experiments separate. What round 6 removes is the
+possibility that the headless "cannot reproduce" was itself the artefact.
 
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 
