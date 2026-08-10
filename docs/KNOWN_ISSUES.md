@@ -993,6 +993,53 @@ would settle:
 None of these is a hypothesis about a mechanism; they are the three places a mechanism could
 still hide once the span is proven clean.
 
+**0.1.3 FOLLOW-UP ROUND 5 — "the Default preset reproduces it" retires Clip Mix as the cause.**
+The owner adds that the failure reproduces at the **Default preset, and at every preset**. That
+single datum settles the question the previous four rounds circled, because at the Default
+preset **Clip Mix cannot change one sample of audio**:
+
+- `clipDrive == 0` ⇒ the clip sub-block is exact-skipped (the bit-identity contract);
+- `colourDepth == 0` ⇒ the colour residue is not evaluated at all;
+- nothing clips ⇒ `activityEnv` is bit-zero ⇒ the dynamic tame takes its idle branch, and it
+  does so even with the §5.4 dynTilt trim at its +0.5 dB bound (the shelf engages only below
+  −0.01 dB, and `−0.5 × activityEnv` cannot reach it from a zero envelope).
+
+So ClipSat's wet value **is** its input, and every branch of the mix lands on the same float:
+`mix == 1` assigns the same number, `mix == 0` writes nothing, and any value between computes
+`chans + (wet − chans)·mix` where `wet − chans` is exactly `0`. `clipMix` reaches nothing else
+in the tree — it is not macro-managed, and `ClipSat::setPerBlock` is its only consumer.
+
+**Pinned, not argued:** `testClipMixCannotChangeTheDefaultPresetsSound` (`tests/state_tests.cpp`)
+runs the field scenario through the real wrapper — factory preset applied, correlated programme
+near full scale, ~1 s of settled audio — and asserts the render is **bit-identical** at Clip Mix
+0 / 1 / 25 / 50 / 99 / 100 %, with both channels alive at each. It then sweeps **every factory
+preset** at both endpoints and asserts both channels stay alive and within 6 dB of each other.
+Mutation-verified: giving the stage any mix-dependent contribution at the null settings
+(`chans[ch] = wet[ch] * 0.9995f`) fails it at 23 027 differing samples.
+
+**What this means for the investigation, stated plainly.** The Clip Mix correlation — the datum
+every round since the first has been steered by — **cannot be causal at the preset where the
+owner also observes the failure**. It is a correlate. Either the control being *moved* matters
+rather than its value (it is an Advanced-view knob, so reaching it requires the ADV toggle and
+a gesture — both of which touch state the audio path does not read), or the two observations
+come from different moments in the session. Continuing to search the Clip Mix path is now
+provably searching the wrong place, which is why this addendum exists rather than a sixth
+mechanism.
+
+**The field experiments that follow from this, in order:**
+
+1. **Does Clip Mix still remove it at the Default preset with the ADV view already open?** If
+   the fault clears only when the knob is *touched* rather than at any particular value, the
+   trigger is a gesture/state event, not the parameter — and the session file becomes the
+   whole investigation.
+2. **Does it clear when ANY Advanced knob is touched, not just Clip Mix?** Same question,
+   sharper: if yes, `clipMix` was never special.
+3. **Does it recur after Clip Mix is returned to 100 %?** If it does not, the fault is a
+   one-shot state that a parameter write clears — which points at the serialized/restored
+   state paths (the ADR-0014 frozen-trim vector, the §5.3 detach mask) rather than at DSP.
+
+**Status: OPEN.** Not fixed, and the record no longer treats the Clip Mix correlation as a lead.
+
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 
 **Severity:** Low

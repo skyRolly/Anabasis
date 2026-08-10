@@ -5623,6 +5623,122 @@ static void testCachedParamsMapping()
 //  path, but nothing before this drove the wrapper's processBlock and measured
 //  BOTH output channels.
 // ============================================================================
+// KI-009's field scenario, run as the user runs it — and the reason this is a
+// WRAPPER test rather than another stage-level property: the report is
+// "load a preset, play, the left channel goes silent, Clip Mix = 0 brings it
+// back", so the guard has to be the whole plugin under a real preset with real
+// programme, not an invariant about one stage.
+//
+// It also PINS THE PROOF that redirected the investigation. At the factory
+// Default the clipper is exact-skipped (`clipDrive == 0`), the colour stage
+// contributes nothing (`colourDepth == 0`) and the dynamic tame is idle
+// (`activityEnv` is bit-zero while nothing clips) — so ClipSat's wet value IS
+// its input, and the mix blend, at ANY mix, lands on the same float:
+//   mix == 1 → `chans = wet` (the same number);
+//   mix == 0 → nothing written;
+//   otherwise → `chans + (wet − chans)·mix`, and `wet − chans` is exactly 0.
+// **At the Default preset Clip Mix therefore cannot change one sample**, which
+// makes it impossible for Clip Mix to be the cause of anything there. The
+// assertion below is that statement made mechanical: sweep the control across
+// its range and the rendered output must be BIT-IDENTICAL every time.
+//
+// The mutant it kills is any future edit that gives the stage a mix-dependent
+// contribution at the null settings — which is exactly the class of change that
+// would make the field correlation real, and the class this test exists to stop
+// re-entering the tree unnoticed.
+static void testClipMixCannotChangeTheDefaultPresetsSound()
+{
+    auto render = [] (int factoryIndex, float clipMixPercent, std::vector<float>& outL,
+                      std::vector<float>& outR)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.applyFactoryPreset (factoryIndex);
+        auto* q = proc.apvts.getParameter (pid::clipMix);
+        q->setValueNotifyingHost (q->getNormalisableRange().convertTo0to1 (clipMixPercent));
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        const int blocks = 90;
+        outL.clear(); outR.clear();
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                // Programme, not a test tone: bass, body, air and a periodic
+                // transient, correlated across the pair the way a master is,
+                // and hot enough that every stage a preset engages is working.
+                const int   tt = b * 512 + n;
+                const float ph = 2.0f * juce::MathConstants<float>::pi * (float) tt / 48000.0f;
+                const float base = 0.50f * std::sin (ph * 55.0f)
+                                 + 0.22f * std::sin (ph * 440.0f)
+                                 + 0.12f * std::sin (ph * 5200.0f)
+                                 + ((tt % 12000) < 40 ? 0.30f : 0.0f);
+                buf.setSample (0, n, juce::jlimit (-0.99f, 0.99f, base));
+                buf.setSample (1, n, juce::jlimit (-0.99f, 0.99f, base * 0.97f));
+            }
+            proc.processBlock (buf, midi);
+            if (b >= blocks / 2)                     // the settled half
+                for (int n = 0; n < 512; ++n)
+                {
+                    outL.push_back (buf.getSample (0, n));
+                    outR.push_back (buf.getSample (1, n));
+                }
+        }
+    };
+
+    auto rms = [] (const std::vector<float>& v)
+    {
+        double s = 0.0;
+        for (auto x : v) s += (double) x * x;
+        return std::sqrt (s / juce::jmax<size_t> (1, v.size()));
+    };
+
+    // ---- (1) the Default preset: Clip Mix is provably inert ----------------
+    std::vector<float> refL, refR, curL, curR;
+    render (0, 100.0f, refL, refR);
+    check (rms (refL) > 0.02 && rms (refR) > 0.02,
+           "clipMixField: (premise) the Default preset passes programme on BOTH channels");
+
+    for (const float mixPct : { 0.0f, 1.0f, 25.0f, 50.0f, 99.0f, 100.0f })
+    {
+        render (0, mixPct, curL, curR);
+        size_t differing = 0;
+        for (size_t n = 0; n < refL.size(); ++n)
+            if (! juce::exactlyEqual (curL[n], refL[n]) || ! juce::exactlyEqual (curR[n], refR[n]))
+                ++differing;
+        juce::String msg;
+        msg << "clipMixField: at the Default preset Clip Mix " << mixPct
+            << " % renders BIT-IDENTICALLY to 100 % — the control cannot be causal here ("
+            << (int) differing << " samples differ)";
+        check (differing == 0, msg.toRawUTF8());
+        msg.clear();
+        msg << "clipMixField: …and both channels are alive at Clip Mix " << mixPct << " % (L="
+            << (float) rms (curL) << " R=" << (float) rms (curR) << ")";
+        check (rms (curL) > 0.02 && rms (curR) > 0.02, msg.toRawUTF8());
+    }
+
+    // ---- (2) EVERY factory preset, at both Clip Mix endpoints --------------
+    // The field report says "all presets". Where a preset DOES engage the
+    // clipper the two endpoints legitimately differ in sound — what may never
+    // differ is whether a channel is there at all, and the two channels may
+    // never diverge (the input pair is 0.26 dB apart by construction).
+    int factoryCount = 0;
+    PresetManager::factoryPresets (factoryCount);
+    check (factoryCount > 1, "clipMixField: (premise) the factory bank has presets to sweep");
+    for (int i = 0; i < factoryCount; ++i)
+        for (const float mixPct : { 0.0f, 100.0f })
+        {
+            render (i, mixPct, curL, curR);
+            const double l = rms (curL), r = rms (curR);
+            juce::String msg;
+            msg << "clipMixField: factory preset " << i << " at Clip Mix " << mixPct
+                << " % keeps BOTH channels alive and matched (L=" << (float) l
+                << " R=" << (float) r << ")";
+            check (l > 0.01 && r > 0.01 && l < r * 2.0 && r < l * 2.0, msg.toRawUTF8());
+        }
+}
+
 static void testBothChannelsCarryAudioThroughTheWrapper()
 {
     auto run = [] (float loudness, const char* tag)
@@ -6045,6 +6161,7 @@ int main (int argc, char** argv)
         testAFrozenLatchDoesNotFollowTheSlotSwitch();
         testHistoryOwnershipAcrossAStateLoad();
         testBothChannelsCarryAudioThroughTheWrapper();
+        testClipMixCannotChangeTheDefaultPresetsSound();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
