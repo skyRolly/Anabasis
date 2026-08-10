@@ -14,9 +14,17 @@
 #
 # P1 note: once CMakeLists.txt fixes the artefact layout, replace this search
 # with the explicit expected path.
+#
+# ANABASIS_TEST_RUNNER prefixes both invocations (default: none). It exists so a
+# caller can run the SAME fail-closed discovery under a different execution
+# environment instead of hardcoding artefact paths: the macOS job uses
+# `arch -x86_64` to execute the universal binary's OTHER slice, which no gate
+# ran at all until 2026-08-10. Word-split on purpose -- it is a command prefix
+# ("arch -x86_64"), not a single path.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT/build"
+read -r -a TEST_RUNNER <<< "${ANABASIS_TEST_RUNNER:-}"
 
 find_one() {
     local name="$1" matches
@@ -45,9 +53,9 @@ find_one() {
 TESTS="$(find_one AnabasisTests)"
 STATE_TESTS="$(find_one AnabasisStateTests)"
 
-echo "Running $TESTS"
-"$TESTS"
+echo "Running ${TEST_RUNNER[*]:+${TEST_RUNNER[*]} }$TESTS"
+"${TEST_RUNNER[@]}" "$TESTS"
 
 echo
-echo "Running $STATE_TESTS"
-"$STATE_TESTS"
+echo "Running ${TEST_RUNNER[*]:+${TEST_RUNNER[*]} }$STATE_TESTS"
+"${TEST_RUNNER[@]}" "$STATE_TESTS"

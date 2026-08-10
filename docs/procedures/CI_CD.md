@@ -73,6 +73,28 @@ is "does it build here".
   zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous there
   while the defect itself is platform-independent.
 
+**Known coverage boundaries, named rather than left to be rediscovered.** Each of these is a real
+limit of the matrix as it stands; none is a defect in it.
+
+* **No CI gate runs the suites' assertions against LTO'd code.** The plugin target links
+  `juce::juce_recommended_lto_flags`; both test targets deliberately do not (ADR-0008), so the
+  DSP and state assertions always run un-LTO'd. LTO'd code IS exercised — pluginval loads the
+  real LTO'd binary on all three platforms — but by conformance tests, not by our own numerical
+  assertions. For a defect hypothesis that turns on codegen this boundary is the one that matters,
+  so it is stated here rather than inferred from the CMake comments.
+* **The x86_64 macOS slice runs under Rosetta or not at all.** The runner is Apple Silicon; the
+  slice is executed by the "Self-tests, x86_64 slice under Rosetta" step, which warns rather than
+  fails if the image has no Rosetta. A dedicated `macos-13` Intel job is the only way to remove
+  that dependency, and it is a cost decision, not an oversight.
+* **A same-repo `pull_request` event reports a GREEN "Build & Validate" with ZERO build jobs.**
+  `docs`, `source-lint` and `preflight` all skip that event on purpose (the `push: ["**"]`
+  trigger already built the SHA), and `preflight` skipping means every build job's `needs` is
+  unsatisfied. That is correct for duplicate avoidance and dangerous for branch protection:
+  making this workflow a required check only works if the protection treats a skipped conclusion
+  as passing. See "Before enabling branch protection" below.
+* **On macOS and Windows pluginval validates PRE-strip, PRE-codesign bytes** (OQ-012). Only Linux
+  validates the exact shipped bytes.
+
 The **docs** job is deliberately outside the `preflight` gate and outside every build job's `needs`:
 it must run while the repository is still a pre-P1 scaffold (the phase in which the documentation
 *is* the deliverable), and a prose defect should fail the run without skipping a binary that is

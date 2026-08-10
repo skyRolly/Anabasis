@@ -548,16 +548,23 @@ jobs:
       # pipeline (see the MemorySanitizer note above), so its exit code is the
       # gate: --error-exitcode makes a reported error fail the job, which is not
       # valgrind's default.
-      - name: Configure + build the DSP suite (unsanitized, for valgrind)
+      - name: Configure + build both suites (unsanitized, for valgrind)
         run: |
           cmake -B build-vg -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_STANDALONE=OFF
-          cmake --build build-vg --target AnabasisTests
+          cmake --build build-vg --target AnabasisTests AnabasisStateTests
 
-      - name: valgrind memcheck (DSP suite)
-        run: >
-          valgrind --tool=memcheck --track-origins=yes --leak-check=no
-          --error-exitcode=1 --error-limit=no --num-callers=25
-          ./build-vg/AnabasisTests_artefacts/Release/AnabasisTests
+      # BOTH suites, and the state one is the point. memcheck is the only
+      # uninitialised-read detector in the pipeline, and the read that would
+      # matter runs through the real wrapper `processBlock` — which only
+      # AnabasisStateTests drives. Pointing the detector at the DSP suite alone
+      # would have aimed it away from the path KI-009 implicates. It is ~50x
+      # slower than native and worth every second of it for that reason.
+      - name: valgrind memcheck (both suites)
+        run: |
+          VG="valgrind --tool=memcheck --track-origins=yes --leak-check=no
+              --error-exitcode=1 --error-limit=no --num-callers=25"
+          $VG ./build-vg/AnabasisTests_artefacts/Release/AnabasisTests
+          $VG ./build-vg/AnabasisStateTests_artefacts/Release/AnabasisStateTests
 
   windows:
     needs: preflight
@@ -937,6 +944,29 @@ jobs:
         run: |
           chmod +x scripts/*.sh
           ./scripts/run-tests.sh
+
+      # ...AND THE OTHER SLICE. The runner is Apple Silicon and the product is a
+      # UNIVERSAL binary, so the step above executes arm64 only: until this step
+      # existed the x86_64 slice was compiled on every push and run by nothing,
+      # on any platform. Half the macOS user base was validated by compilation
+      # alone — and "does it behave the same on the other architecture" is
+      # exactly the question a platform-specific field report asks.
+      #
+      # Rosetta 2 runs it in place, so this costs one extra execution of two
+      # console apps rather than another runner. If Rosetta is absent the step
+      # does NOT quietly pass: it emits a ::warning:: naming the coverage that
+      # was lost, because a gate that silently does nothing is the failure this
+      # workflow keeps having to relearn. It is a warning rather than an error
+      # only because Rosetta's presence is the IMAGE's property, not the
+      # product's, and a green product should not go red for it.
+      - name: Self-tests, x86_64 slice under Rosetta
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "::warning::Rosetta 2 unavailable on this image -- the x86_64 slice was BUILT but NOT EXECUTED; Intel coverage for this run is compilation only"
+            exit 0
+          fi
+          ANABASIS_TEST_RUNNER="arch -x86_64" ./scripts/run-tests.sh
 
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
