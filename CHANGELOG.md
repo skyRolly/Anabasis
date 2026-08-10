@@ -78,8 +78,9 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
 - **The macOS and Windows installers capitalise "Plug-in" and "Application"** in their
   component and folder-prompt wording. Evidence Source: PR #14. [Verified]
 - **The RMS statistics row updates at reading pace (~3 Hz)** — the 50 ms windowed measurement
-  (ADR-0020) is unchanged and was never wrong; the readout was re-printed at the full ~24 Hz
-  meter cadence, so the digits churned faster than they could be read. The row now adopts a
+  (ADR-0020) is unchanged and was never wrong; the readout was re-printed at the panel's full
+  frame rate (the meter clock paces on vblank, up to ~125 Hz), so the digits churned faster
+  than they could be read. The row now adopts a
   fresh value roughly three times a second and holds it between adoptions; a meter reset
   still clears it immediately, and **switching the RMS reference in Settings still moves the
   row on the next frame** — the hold applies to the measurement, not to the reference.
@@ -91,9 +92,11 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   Clip Drive at 0 the clipper's own bound is skipped, so a finite-but-astronomical sample
   could overflow it to infinity — after which the engine's per-channel safety substitution
   emitted digital zero on **that channel alone**, for as long as the input persisted, while
-  the other channel played normally. The polynomial's argument is now bounded at a level some
-  120 dB above anything the chain can carry, so no audible sample changes (bit for bit) and
-  the stage can no longer produce an infinity from a finite input. This is **not** the fix for
+  the other channel played normally. The stage's two arithmetic sites — that polynomial's
+  argument, and the drive product, which overflows the same way four hundred dB higher up —
+  are now both bounded at a level some 120 dB above anything the chain can carry, so no
+  audible sample changes (bit for bit) and the stage can no longer produce an infinity from
+  any finite input. This is **not** the fix for
   the field reports of a silent left channel: the owner re-tested with it in the build and
   that issue persists unchanged, so `docs/KNOWN_ISSUES.md` KI-009 stays **open** and now keeps
   the two failure classes apart. Evidence Source: PR #14. [Verified]
@@ -112,6 +115,13 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   [Verified]
 
 ### Investigation (KI-009, no code change to the audio path)
+- **The left-channel silence is NOT fixed.** With the colour-stage guard in the build the
+  owner re-tested on macOS in both AU and VST3: the behaviour is identical across formats,
+  unaffected by oversampling or any other setting, removed only by Clip Mix = 0 — and
+  **global bypass restores the channel**, which places the loss inside the processed path
+  rather than in host routing. `docs/KNOWN_ISSUES.md` KI-009 carries the confirmed evidence,
+  the implication chain it contradicts, and the two field experiments that would break that
+  chain. Evidence Source: PR #14. [Verified]
 - The owner's new per-channel GR observation (comp GR on both lanes, limiter GR on the right
   lane only, both stereo links at 0) localises the left-channel kill to the span between the
   compressor's output and the limiter's detector tap. The exact field configuration is now a

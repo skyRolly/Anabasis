@@ -99,8 +99,12 @@ void LoudnessMeterView::tick (double dt)
     // window is ADR-0020's owner-directed spec, and a 50 ms RMS of programme
     // material genuinely swings several dB at syllable rate — it is a DISPLAY
     // property: this tick re-printed that correct, volatile measurement at
-    // the full ~24 Hz meter cadence, so the digits churned faster than they
-    // could be read. The fix therefore lives here and not in `RmsMeter`
+    // the FULL FRAME RATE, so the digits churned faster than they could be
+    // read. That rate is the display's, not a fixed one — `FrameClock` paces
+    // on vblank and divides to an even cadence of at most ~125 Hz, so the
+    // churn was worse on a fast panel than on a 60 Hz one, which is itself a
+    // reason the cadence belongs here rather than in the meter. The fix
+    // therefore lives here and not in `RmsMeter`
     // (whose reading the suite pins and the bars/holds do not consume): the
     // numeric row adopts a fresh value at a readable ~3 Hz and holds it
     // between adoptions — every printed number is still a real, current

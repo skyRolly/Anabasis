@@ -158,7 +158,7 @@ Universal gestures:
 | **↶ / ↷** | Undo / Redo — kept **per A/B slot**. Covers sound parameters, preset loads, Copy (on the destination slot) and the ADV view switch; bypass and the monitor toggles are never recorded. |
 | **Settings (gear)** | Opens the Settings overlay (§3.5). |
 | **ADV** | Switches Simple ↔ Advanced view (§5). |
-| **BYPASS** | Click-free bypass; with Loudness Comp on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
+| **BYPASS** | Click-free bypass; with **MATCH** on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
 
 ### 3.2 Simple view
 
@@ -371,7 +371,8 @@ changes, sorted alphabetically).
 ### 7.3 What a preset contains
 
 A preset changes **sound parameters only**. Deliberately left alone: Bypass, the
-monitoring toggles (Loudness Comp, Delta), the Simple/Advanced view state, **Freeze**, and
+monitoring toggles (**MATCH** — your host's automation lane still calls this parameter
+"Loudness Comp" — and **DELTA**), the Simple/Advanced view state, **Freeze**, and
 everything in Settings. A **locked Ceiling** is skipped entirely — browsing presets never
 moves it. The `*` edited marker compares exactly what a preset can carry, so toggling
 monitoring or resizing the window never marks a preset as edited.

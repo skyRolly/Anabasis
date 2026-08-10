@@ -1401,6 +1401,14 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
             // is placed in it — what lets a two-knob row sit ON the grid of
             // its three-knob neighbours instead of re-centring at its own
             // pitch, which is the misalignment the EQ redesign removed.
+            //
+            // BOTH halves null, or NEITHER: a spacer is a `{ nullptr, nullptr }`
+            // pair. The label is dereferenced unconditionally below, so a
+            // half-null pair would be a crash rather than a spacer — asserted
+            // rather than widened into a silent skip, because a knob placed
+            // with no caption is a layout bug worth failing on in a debug
+            // build, not a shape this helper should quietly accept.
+            jassert ((s == nullptr) == (l == nullptr));
             if (s == nullptr)
                 continue;
             l->setBounds (cell.removeFromBottom (13));

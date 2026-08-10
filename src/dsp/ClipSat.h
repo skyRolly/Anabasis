@@ -207,7 +207,27 @@ public:
             // -- 1. drive → ADAA clip → compensate ---------------------------
             if (clipOn)
             {
-                const float u  = dry * g;
+                // The DRIVE PRODUCT is bounded for the same reason the colour
+                // polynomial's argument is (see there): `g` is up to ×15.85 at
+                // +24 dB, so a finite `dry` above ~2e37 makes `u` infinite,
+                // `du` infinite, and `shaped = (A(u) − A(u1)) / du` a NaN — and
+                // the engine's per-channel substitution then emits digital zero
+                // on that channel alone. Same failure, same fingerprint, a
+                // different magnitude (~+750 dBFS rather than ~+154).
+                //
+                // Bounded here rather than argued unreachable, because the rule
+                // this stage's own defect put into DSP_POLICY invariant 9 says
+                // so: a stage whose failure mode is INPUT-MAGNITUDE-driven must
+                // bound its own arithmetic — being in the sanitise list is
+                // necessary and not sufficient. A guarantee with an exception
+                // is not the guarantee the comment claims.
+                //
+                // Inert by construction: the clip curve saturates at ±1 for
+                // |u| ≥ 1+w, so every value the bound touches was already deep
+                // in the saturated region and comes back as the same ±1. And
+                // `jlimit` returns its argument unchanged below the bound, so
+                // the exact-skip and bit-identity paths are untouched.
+                const float u  = juce::jlimit (-kArithmeticLimit, kArithmeticLimit, dry * g);
                 const float u1 = adaaPrev[ch];
                 adaaPrev[ch] = u;
                 const float du = u - u1;
@@ -298,7 +318,7 @@ public:
                 // null path and every audible level are untouched. The residue
                 // is added to the UNBOUNDED `c` below, so the through-signal
                 // keeps its own magnitude either way.
-                const float cp = juce::jlimit (-kColourArgLimit, kColourArgLimit, c);
+                const float cp = juce::jlimit (-kArithmeticLimit, kArithmeticLimit, c);
                 const float oddPart  = model == 3 ? 0.6f * cp * cp * cp
                                                         + 0.4f * cp * cp * cp * cp * cp
                                                   : cp * cp * cp;
@@ -394,15 +414,23 @@ private:
     float onePoleMs (float ms) const noexcept
     { return 1.0f - std::exp (-1.0f / (float) (ms * 0.001 * sr)); }
 
-    // The colour polynomial's argument bound (see the sub-block for the whole
-    // argument). 1e6 is chosen from BOTH ends: the fifth power of it is 1e30,
-    // eight orders inside the float ceiling, so no model can overflow and the
-    // residue stays finite for every finite input; and it is +120 dBFS, some
-    // 120 dB above anything the chain can put into this stage, so every
-    // reachable signal passes through `jlimit` unchanged and this constant
-    // changes no audible sample. It is NOT a listening-test ⊕ value — it is a
-    // numerical guard, and moving it changes nothing a listener can hear.
-    static constexpr float kColourArgLimit = 1.0e6f;
+    // THE STAGE'S ARITHMETIC BOUND, guarding BOTH sites that can turn a finite
+    // input into a non-finite one: the drive product `dry · g` (overflows above
+    // ~2e37 once `g` leaves unity) and the colour polynomial's argument (the
+    // fifth power overflows above ~5.1e7). One constant, because it answers one
+    // question — "how large may a value be before this stage's own arithmetic
+    // stops being representable" — and two constants would be two chances to
+    // move only one.
+    //
+    // 1e6 is chosen from BOTH ends. Upward: its fifth power is 1e30, eight
+    // orders inside the float ceiling, so no model can overflow and the residue
+    // stays finite for every finite input; and ×15.85 (the +24 dB maximum
+    // drive) is nowhere near it. Downward: it is +120 dBFS, some 120 dB above
+    // anything the chain can put into this stage, so every reachable signal
+    // passes through `jlimit` unchanged and this constant changes no audible
+    // sample. It is NOT a listening-test ⊕ value — it is a numerical guard, and
+    // moving it changes nothing a listener can hear.
+    static constexpr float kArithmeticLimit = 1.0e6f;
 
     // Model residue weights {Clean, Tape, Tube, Transistor} — Clean is {0,0}
     // BY DEFINITION (the null model); the other six numbers are P6

@@ -860,8 +860,8 @@ it closed anything. **Two distinct failure classes, kept apart deliberately:**
 
 | | Class A — the overflow (FIXED) | Class B — the field report (OPEN) |
 |---|---|---|
-| Trigger | a sustained finite input ≳ +154 dBFS at the colour stage | unknown |
-| Reproducible headlessly | yes, exactly | **no** |
+| Trigger | a sustained finite input ≳ +154 dBFS at the colour stage (or ≳ +750 dBFS at the drive product — both bounded since round 3) | unknown |
+| Reproducible headlessly | yes, exactly | **no** — every parameter/preset/macro combination swept |
 | Clip Mix gated | yes | yes (owner-confirmed) |
 | Status | fixed and pinned (`testExtremeLevelDoesNotSilencePermanently`, sustained one-channel case) | unresolved |
 
@@ -882,24 +882,66 @@ pinned by test:
   presets / Copy / undo landing mid-stream, editor alive, across 44.1/48 kHz, 128/512 blocks and
   three oversampling factors — produced **no channel loss in any block**.
 
-**So the next step is field-side, and it is one button.** With the silence audible, press
-**BYPASS**. The bypass leg is a bit-exact, delay-aligned copy of the plugin's OWN INPUT
-(invariant 7) with no processing on it at all:
-- **Left returns on bypass** ⇒ the plugin is receiving programme on the left pin and losing it
-  in the processed leg — which, given everything above, would mean the tree being run is not
-  this tree (a stale or mismatched installed binary: check the About overlay's version AND
-  build number against the build under test) or a state the headless battery cannot construct.
-  Capture the session file at that point; it is the only artefact that can carry such a state.
-- **Left stays silent on bypass** ⇒ the loss is NOT in this plugin's DSP at all — either the
-  left input pin is dead (host routing, a mono/stereo negotiation, a channel-mapping
-  convention) or the host is dropping the left output. That would also make the whole
-  Clip Mix correlation a coincidence of testing order, which is worth knowing.
+**0.1.3 FOLLOW-UP ROUND 3 — the bypass answer, and the contradiction it leaves.** The owner ran
+the bypass test and reported the environment. **All owner-confirmed, recorded as evidence:**
 
-Also worth one glance each, in the same session: the Statistics **SP** row (absurd ⇒ Class A is
-live after all) and the two GR lanes (L pinned deep ⇒ per-channel gain collapse; L at zero ⇒
-not the dynamics stages). **The unchanged asks stand and are now the blocking ones:** host +
-version, OS, build provenance (which zip/build, and the About overlay's build number), format
-(VST3/AU/Standalone), and the session file.
+| Datum | Value |
+|---|---|
+| Build | latest, freshly installed |
+| OS / formats | macOS; **AU and VST3 both, behaviour identical** |
+| Oversampling | no effect at any factor |
+| Every other parameter / preset / setting | no effect |
+| Clip Mix | **0 removes it immediately; any non-zero value reproduces it** |
+| **Global BYPASS** | **restores the left channel** |
+| Comp GR lanes (both links 0) | L non-zero, R non-zero |
+| Limiter GR lanes | R non-zero, **L zero** |
+
+**Bypass is the load-bearing new datum, and it points inward.** The bypass leg carries
+`delayedDry` — the plugin's own input, delay-aligned and bit-exact (invariant 7), with no stage
+on it. Left returning under bypass proves the left pin is live and the host takes the left
+output. **The loss is inside the processed leg.** Host routing and output handling are
+excluded; so is the format layer, since AU and VST3 behave identically.
+
+**And that leaves the evidence set jointly inconsistent with the code.** The implication chain,
+each step forced by a line in the tree:
+
+1. Left audible on bypass ⇒ `dryRing[0]` alive ⇒ the input is alive.
+2. Comp GR on lane 0 **with `compStereoLink = 0`** ⇒ `linked = det[0]` ⇒ `|chans[0]|` is over
+   the threshold at the compressor's input ⇒ alive INTO the compressor.
+3. The compressor's applied gain and its published lane are the **same expression**
+   (`grDb[ch]`, `MasteringComp.h`), and that gain is strictly positive ⇒ alive OUT of it, at
+   whatever depth the lane shows.
+4. `staging` → the region → `ClipSat` → the push → `wetRing` contains nothing channel-selective:
+   ClipSat is proven symmetric and (since round 2) cannot emit a non-finite value from ANY
+   finite input, the push is one shared scalar, the ring indices are channel-independent.
+5. ⇒ `wetRing[0]` is alive ⇒ the limiter's tap sees it ⇒ its lane should read like the right's,
+   and the output should be audible.
+
+Steps 1–5 contradict the observation. One of them is false in the field, and **the code says
+none of them can be** — so the next move is to break the chain empirically rather than to
+propose a sixth mechanism.
+
+**Two field experiments, both free, that split it:**
+
+1. **Sweep Clip Mix rather than toggling it.** Try 1 %, 10 %, 50 %. The blend is
+   `dry + (wet − dry)·mix`, so a stage that *kills* the channel produces a **cliff** (silent at
+   1 %, because `wet[0]` would have to be ~−99× the dry to cancel it — which a bounded stage
+   cannot produce), while a **ramp** (1 % barely audible change, 50 % half gone) says the left
+   channel is not being killed at all but *cancelled* — `wet[0] ≈ −dry[0]`, a polarity result,
+   which is a completely different search. Record the shape, not just the endpoints.
+2. **Read the Statistics panel with the silence audible.** `SP` and `RMS` there read the
+   **render tap** — the same signal the output carries, both channels summed. If SP tracks the
+   right channel alone at roughly −6 dB of the two-channel figure, the left really is absent
+   from the render; if SP is absurdly high, Class A is live after all despite the bound.
+
+Also worth one glance: the two GR lanes' **depths**, not just their presence — L pinned at the
+bottom of its 24 dB lane is per-channel gain collapse and reads as "has GR" at a glance, which
+is a different diagnosis from L sitting at a normal depth.
+
+**Still wanted, and now the blocking artefact: the session file.** Every parameter combination,
+preset, macro position and A/B state reachable from the UI has been swept headlessly without
+reproducing this; a saved session is the only object that can carry a state the sweep cannot
+construct.
 
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 

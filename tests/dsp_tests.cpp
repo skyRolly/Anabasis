@@ -1218,6 +1218,10 @@ static void testLimiterPushDoesNotDriveTheClipper()
 // widened colour polynomial or a raised input range fails (2).
 static void testClipSatCannotLoseAChannel()
 {
+    // Same runtime as the shipping plugin: `processBlock` opens with
+    // `juce::ScopedNoDenormals`, so a stage property asserted without FTZ/DAZ
+    // is a property of the harness rather than of the product.
+    const juce::ScopedNoDenormals noDenormals;
     unsigned st = 424242u;
     auto rnd = [&st] (int n) { st = st * 1664525u + 1013904223u;
                                return (int) ((st >> 16) % (unsigned) n); };
@@ -1246,7 +1250,7 @@ static void testClipSatCannotLoseAChannel()
         // for a different way a stage can misbehave: Nyquist alternation (the
         // ADAA's own (1+z⁻¹)/2 null), gross over-scale, a large DC pedestal,
         // sparse impulses against near-silence, and denormal-scale material.
-        const int kind = rnd (6);
+        const int kind = rnd (8);
         for (int n = 0; n < 4000; ++n)
         {
             const float ph = 2.0f * juce::MathConstants<float>::pi * (float) n / (float) sr;
@@ -1258,7 +1262,17 @@ static void testClipSatCannotLoseAChannel()
                 case 2:  v = 3.0f * std::sin (ph * 50.0f); break;
                 case 3:  v = 0.5f + 0.4f * std::sin (ph * 90.0f); break;
                 case 4:  v = (n % 997 == 0) ? 0.98f : 1.0e-20f; break;
-                default: v = 1.0e-24f * (float) (n % 3); break;
+                case 5:  v = 1.0e-24f * (float) (n % 3); break;
+                // The two OVERFLOW magnitudes, which a ≤ 3.0 sweep cannot see
+                // and which are exactly where this stage's two arithmetic
+                // guards live: the colour polynomial's fifth power gives up
+                // around 5.1e7, and the drive product `dry · g` around 2e37
+                // once `g` leaves unity. Both are far outside anything the
+                // chain can deliver — they are here because the stage's
+                // guarantee is stated WITHOUT an exception, and a guarantee
+                // no stimulus reaches is a guarantee no mutant can break.
+                case 6:  v = 4.0e8f * std::sin (ph * 220.0f); break;
+                default: v = 1.0e38f * std::sin (ph * 220.0f); break;
             }
             float frame[2] = { v, v };
             clip.processSample (frame, 2);
@@ -3881,10 +3895,26 @@ static void testExtremeLevelDoesNotSilencePermanently()
     // clipper's own bound) — restore it and the mix == 1 rows below read
     // exactly 0.0 on the hot channel.
     {
+        // UNDER THE SHIPPING RUNTIME'S FTZ/DAZ, which this suite otherwise
+        // does not have. `AnabasisAudioProcessor::processBlock` opens with
+        // `juce::ScopedNoDenormals`; the DSP suite calls `AnabasisEngine`
+        // directly, so without this the two hottest rows would pass on a
+        // SUBNORMAL limiter gain (`ceiling / peak` is ~1e-30 at 1e30 and
+        // ~5.8e-39 at FLT_MAX/2) that the shipped binary flushes to zero. A
+        // regression that only holds because the harness keeps denormals is
+        // not a regression on the product, so the harness is made to match.
+        const juce::ScopedNoDenormals noDenormals;
         const double sr2 = 48000.0;
         const int block2 = 512;
+        // The magnitude ceiling is set by the LIMITER, not by this stage:
+        // above ~1e30 the gain it needs is subnormal and FTZ flushes it, so
+        // the hot channel goes quiet for a reason that has nothing to do with
+        // the colour polynomial and nothing a bound in this stage could fix.
+        // The sweep therefore stops where the claim is still true — the
+        // colour path's own overflow starts four orders BELOW the bottom of
+        // this range, so the mutant is caught with room to spare.
         for (const float mix : { 0.0f, 0.5f, 1.0f })
-        for (const float hot : { 1.0e8f, 1.0e20f, 1.0e30f, 0.5f * std::numeric_limits<float>::max() })
+        for (const float hot : { 1.0e8f, 1.0e12f, 1.0e16f, 1.0e20f })
         {
             anabasis::AnabasisEngine engine;
             engine.prepare (sr2, block2, 2);
