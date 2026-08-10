@@ -94,6 +94,9 @@ limit of the matrix as it stands; none is a defect in it.
   as passing. See "Before enabling branch protection" below.
 * **On macOS and Windows pluginval validates PRE-strip, PRE-codesign bytes** (OQ-012). Only Linux
   validates the exact shipped bytes.
+* **`MALLOC_PERTURB_` is glibc-only**, so the hostile-allocator proxy on the Linux self-test steps
+  has no equivalent on the macOS or Windows jobs — libmalloc and the Windows CRT ignore it.
+  Setting it there would read as coverage that does not exist, so it is deliberately absent.
 
 The **docs** job is deliberately outside the `preflight` gate and outside every build job's `needs`:
 it must run while the repository is still a pre-P1 scaffold (the phase in which the documentation

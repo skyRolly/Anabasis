@@ -1156,6 +1156,7 @@ would have caught, because at mix 0 there is nothing at the boundary to catch.
 |---|---|
 | Uninitialised / stale per-channel state | Both suites are VALGRIND-CLEAN under memcheck with `--track-origins` (0 errors from 0 contexts) and clean under ASan+UBSan. An uninitialised read is platform-independent even when its symptom is not; the tools see it whatever bytes the allocator supplied |
 | Wrapper, bus layout, channel pointers | Global bypass feeds ONLY the engine's output selector (`AnabasisEngine.cpp:1046-1049`) — no DSP is skipped, no state reset. "Bypass restores the left channel" therefore PROVES the host delivers channel 0, that both channel-0 pointers are right, and that the dry ring is intact |
+| Uninitialised state, second and independent probe | Both suites run green under `MALLOC_PERTURB_` at 1, 85, 165, 170 and **255**. glibc then hands back fresh heap filled with that byte and freed heap with its complement, which is the closest available proxy for the macOS allocator — and 0xFF fills a float buffer with **NaN**, so a read-before-write of audio state would fail an assertion rather than pass on a plausible value. It is now set on every Linux self-test run |
 | The two macOS `-Wshorten-64-to-32` warnings in the region access | `AudioBlock::getSample/setSample` take `int`; the casts were an int→size_t→int round trip on values confined to ch ∈ {0,1} and i < num<<osShift. Value-preserving, incapable of silencing a channel. Removed as noise |
 
 **Status: OPEN, macOS-scoped, and now with a working validation path.** The kill zone is

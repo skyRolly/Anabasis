@@ -15,6 +15,17 @@ on:
 permissions:
   contents: read
 
+# One in-flight run per ref. Pushing three times in ten minutes previously left
+# three full 3-OS matrices racing, which is both wasteful and confusing to read.
+#
+# cancel-in-progress is GUARDED ON THE REF rather than set to a bare `true`:
+# this workflow is also reached through `workflow_call` from release.yml, and a
+# release build must never be cancelled by an unrelated push. Tag refs therefore
+# queue instead of cancelling.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 # ---------------------------------------------------------------------------
 # pluginval strictness escalates with the project phase, and lives in ONE place
 # so raising the bar is a one-line edit. THIS BLOCK IS THAT PLACE. The two
@@ -296,8 +307,24 @@ jobs:
           # upload fail a SECOND time on if-no-files-found, burying the real error.
           echo "debug_artifacts=true" >> "$GITHUB_OUTPUT"
 
+      # MALLOC_PERTURB_ FILLS FRESH HEAP WITH A NON-ZERO PATTERN and freed heap
+      # with its complement. It is here because of KI-009: Linux hands back
+      # zero-filled pages and macOS does not, so a read-before-write is benign
+      # here and poisonous there — the symptom is platform-specific while the
+      # DEFECT is not. This makes the Linux run behave like the hostile
+      # allocator for free: no rebuild, no instrumentation, no slowdown.
+      #
+      # 255 on purpose rather than an arbitrary byte: 0xFF fills a float buffer
+      # with NaN, so an uninitialised READ of audio state fails an assertion
+      # instead of passing on a plausible-looking value. glibc-only, which is
+      # why it is set here and on `linux-clang` and NOT on the macOS job, where
+      # libmalloc ignores it and the variable would only read as coverage that
+      # does not exist. valgrind in `sanitizers` answers the same question more
+      # thoroughly and far more slowly; this is the cheap one, on every push.
       - name: Self-tests (DSP + state)
         id: tests
+        env:
+          MALLOC_PERTURB_: 255
         run: ./scripts/run-tests.sh
 
       - name: pluginval (deterministic x3 -- release gate)
@@ -466,6 +493,8 @@ jobs:
           echo "Clang: no warnings in first-party sources."
 
       - name: Self-tests (DSP + state, Clang build)
+        env:
+          MALLOC_PERTURB_: 255      # see the `linux` job's self-test step
         run: |
           ./build-clang/AnabasisTests_artefacts/Release/AnabasisTests
           ./build-clang/AnabasisStateTests_artefacts/Release/AnabasisStateTests
