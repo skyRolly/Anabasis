@@ -502,31 +502,36 @@ jobs:
       - name: Portability compile canary (pinned JUCE still has the hazard)
         run: python3 scripts/check-portability.py --compile-canary build-clang/_deps/juce-src/modules --cxx clang++
 
+      # PROVE THE GATE IS LIVE BEFORE TRUSTING ITS SILENCE. This is the same
+      # move `check-docs.py --self-test` and `check-portability.py
+      # --compile-canary` make, and for the same reason: a checker that has
+      # stopped matching anything is indistinguishable from a clean tree. The
+      # self-test feeds the classifier every path spelling this build could
+      # produce — the absolute form CMake's Ninja generator emits today, the
+      # `../src/…` form a relative-path generator would, and the vendored shapes
+      # that must never count — and fails the job if any is misclassified.
+      - name: Warning-gate self-test (the classifier still classifies)
+        run: python3 scripts/check-clang-warnings.py --self-test
+
       - name: Build tests AND the plugin (Clang), gating on first-party warnings
         id: build
         run: |
           set -o pipefail
           cmake --build build-clang --target AnabasisTests AnabasisStateTests AnabasisChannelProbe Anabasis_VST3 AnabasisEngineRepro 2>&1 | tee clang-build.log
-          # FIRST-PARTY ONLY, matched by WORKSPACE-ANCHORED path rather than by
-          # directory-name shape. The earlier expression matched any path whose
-          # components happened to include `src` or `tests`, which is a property
-          # a vendored dependency can have too — `_deps/<anything>/src/…` would
-          # have been gated on, and gating on a dependency's warnings is how a
-          # warning gate gets switched off at the first bump.
-          #
-          # Two independent conditions, because either alone is a coincidence:
-          # the path must start at THIS checkout's root and continue into one of
-          # our three source directories, AND it must not pass through `_deps/`
-          # (CMake's FetchContent tree) at any depth. `|| true` on the grep so
-          # `set -o pipefail` does not turn "no warnings" into a failure.
-          FIRST_PARTY="$(grep -E "^${GITHUB_WORKSPACE}/(src|tests|tools)/[^:]*:[0-9]+:[0-9]+: warning:" clang-build.log \
-                         | grep -v '/_deps/' || true)"
-          if [ -n "$FIRST_PARTY" ]; then
-            echo "$FIRST_PARTY"
-            echo "::error::Clang emitted warnings in first-party sources (src/, tests/ or tools/)."
-            exit 1
-          fi
-          echo "Clang: no warnings in first-party sources."
+          # The classification is STRUCTURAL, not textual: every diagnostic's
+          # path is resolved (absolute as-is, relative against the build dir the
+          # compiler ran in) and then asked whether the real path lands under
+          # src/, tests/ or tools/ without passing through a `_deps` component.
+          # The previous form was an anchored `grep` on the absolute spelling —
+          # which does match here, and CI has the receipts (run 31449400277's
+          # linux-clang failed on tools/channel_probe.cpp) — but it could only
+          # ever match ONE spelling of a path the build system is free to
+          # change, with no signal if that ever stopped being the spelling.
+          # `scripts/check-clang-warnings.py` carries the reasoning in full.
+          python3 scripts/check-clang-warnings.py \
+            --log clang-build.log \
+            --root "${GITHUB_WORKSPACE}" \
+            --build-dir "${GITHUB_WORKSPACE}/build-clang"
 
       - name: Self-tests (DSP + state, Clang build)
         id: tests
@@ -1192,20 +1197,38 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
 
-      - name: Channel probe (hosts the built VST3 and AU, both slices)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+      # TWO STEPS, NOT ONE, and the split is the same principle the pluginval
+      # steps above already state: neither format may hide the other's result.
+      # Combined, this step had to be gated on `au_install`, so an AU copy that
+      # failed for its own reasons -- no AU built, an unwritable Components
+      # directory -- suppressed the VST3 probe as well, and the run reported
+      # nothing about a format that was sitting there ready to be tested. The
+      # VST3 half is gated on the BUILD; the AU half on the INSTALL it genuinely
+      # needs.
+      - name: Channel probe -- VST3, both slices
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -e
           PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
           VST3=build/Anabasis_artefacts/Release/VST3/Anabasis.vst3
-          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
           echo "== arm64 / VST3 =="; "$PROBE" "$VST3" --format vst3
-          echo "== arm64 / AU   =="; "$PROBE" "$AU"   --format au
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             echo "== x86_64 / VST3 =="; arch -x86_64 "$PROBE" "$VST3" --format vst3
-            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU"   --format au
           else
-            echo "::warning::Rosetta 2 unavailable -- the x86_64 slice was probed by nothing this run"
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 VST3 slice was probed by nothing this run"
+          fi
+
+      - name: Channel probe -- AU, both slices
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
+          echo "== arm64 / AU   =="; "$PROBE" "$AU" --format au
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU" --format au
+          else
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 AU slice was probed by nothing this run"
           fi
 
 
@@ -1478,15 +1501,21 @@ jobs:
       # Both formats, because the field report named both and because this is
       # the shipped code path -- host -> wrapper -> processBlock -> engine --
       # built by the Intel back end and run on an Intel CPU.
-      - name: Channel probe, native Intel (VST3 + AU)
+      # Split for the same reason as the universal job's pair above: an AU
+      # install failure must not suppress a VST3 result that was ready to run.
+      - name: Channel probe, native Intel -- VST3
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          ./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe \
+            build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+
+      - name: Channel probe, native Intel -- AU
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
         run: |
           set -e
-          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
-          echo "== x86_64 native / VST3 =="
-          "$PROBE" build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
-          echo "== x86_64 native / AU   =="
-          "$PROBE" "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component" --format au
+          ./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe \
+            "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component" --format au
 
       - name: pluginval VST3 (deterministic x3), native Intel
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

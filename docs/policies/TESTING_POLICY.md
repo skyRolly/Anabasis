@@ -83,7 +83,13 @@ Lowering strictness below the phase value is a deliberate act that must be justi
     the two gaps are separate and conflating them is how the second one gets dropped. The gate is
     path-filtered rather than `-Werror` because JUCE's own module sources compile into our
     targets, and a blanket `-Werror` would gate on a dependency's warnings and be switched off at
-    the first JUCE bump. The same job runs `check-portability.py --compile-canary`, which
+    the first JUCE bump. The filter is `scripts/check-clang-warnings.py`, which RESOLVES each
+    diagnostic's path and asks whether the real file lives under `src/`, `tests/` or `tools/`
+    without passing through a `_deps` component — a structural question, so it does not depend on
+    whether the build system spelled the path absolutely or relatively. It carries a
+    `--self-test` that the job runs FIRST, for the reason `check-docs.py --self-test` exists: a
+    matcher that has silently stopped matching is indistinguishable from a clean tree, and this
+    gate's whole value is its silence being meaningful. The same job runs `check-portability.py --compile-canary`, which
     verifies the pinned JUCE still HAS the hazard the lint guards.
 
     **The plugin half of this job is not optional, and INC-004 is why.** ADR-0008 puts

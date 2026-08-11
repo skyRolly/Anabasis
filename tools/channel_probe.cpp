@@ -83,9 +83,44 @@ static bool setParam (juce::AudioPluginInstance& p, const char* displayName, flo
         {
             if (hosted->getName (64).trim() == juce::String (displayName))
             {
+                // The linear map is correct for every name this probe writes —
+                // all eight are registered with plain ranges — but a HOSTED
+                // parameter exposes no `NormalisableRange`, so the probe cannot
+                // ask; it can only assume. That assumption is exactly the kind
+                // this file exists to distrust: point it at a `logRange` control
+                // (`lookahead`, `scHpfFreq`, every EQ frequency) and it would
+                // push a different value than the row name claims while still
+                // printing the row name, which is the "the case is not the case
+                // it says it is" failure the probe was written after.
+                //
+                // So it is VERIFIED rather than assumed, and verified through
+                // the one channel the wrapper does carry: the parameter's own
+                // display text. `getText` formats what the plugin actually
+                // holds, through the plugin's own range and formatter, so a
+                // taper mismatch shows up as a number that is not the number
+                // asked for. Fatal, not a warning — a configuration whose
+                // parameters landed somewhere else is a different test wearing
+                // this one's name.
                 const float norm = juce::jlimit (0.0f, 1.0f,
                                                  (denormalised - rangeLo) / (rangeHi - rangeLo));
                 hosted->setValueNotifyingHost (norm);
+
+                const auto shown = hosted->getText (hosted->getValue(), 32).trim();
+                const float readBack = shown.getFloatValue();
+                // The tolerance is a display tolerance, not a DSP one: the text
+                // is rounded for humans (percent to the integer, dB to one or
+                // two places), so 0.51 absolute covers the coarsest of those
+                // while still being far tighter than any taper error — a log
+                // range over these spans misplaces a mid-scale value by whole
+                // units, not by half of one.
+                if (std::abs (readBack - denormalised) > 0.51f)
+                {
+                    std::printf ("  PARAMETER '%s' DID NOT LAND: asked %.3f, plugin reads '%s'"
+                                 " -- the linear map in setParam does not match this"
+                                 " parameter's range\n",
+                                 displayName, denormalised, shown.toRawUTF8());
+                    return false;
+                }
                 return true;
             }
         }
