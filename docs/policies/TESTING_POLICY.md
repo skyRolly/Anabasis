@@ -10,6 +10,7 @@ Repository Governance Policy. Test acceptance levels and the release gate.
 | **2** | Unit / behaviour | Deterministic DSP assertions + state/parameter compatibility (schema shape, registry snapshot, raw-exact round-trip, legacy migrations, corrupt-state robustness, preset round-trip) | `tests/dsp_tests.cpp` (`AnabasisTests`) + `tests/state_tests.cpp` (`AnabasisStateTests`) |
 | **3** | DSP validation | No NaN/Inf/denormals across the feature × oversampling × sample-rate matrix; latency == actual; bypass null; click-free transitions; **ceiling never exceeded**; metering accuracy | `tests/dsp_tests.cpp` |
 | **4** | pluginval | VST3 conformance on all three platforms, **and AU conformance on macOS**; editor open/close under `xvfb` | `scripts/run-pluginval.sh [strictness] [mode] [format]` / `.ps1` |
+| **4b** | Shipped-artefact probe | `AnabasisChannelProbe` LOADS the built bundle through a host and asserts BOTH channels carry audio across the reported field configurations — the only check that exercises the LTO'd, wrapped binary a user installs. macOS runs it for VST3 and AU × arm64 and x86_64 | `tools/channel_probe.cpp`; a step in the `linux`, `windows` and `macos` jobs |
 | **1b** | Portability + memory | Source lint for the JUCE SIMD-overload hazard; a Clang build gating on first-party warnings; ASan + UBSan + valgrind over both suites | `scripts/check-portability.py`; `build.yml` jobs `source-lint`, `linux-clang`, `sanitizers` |
 | **5** | Manual validation | Audio quality + GUI appearance + the loudness-matched listening test (cannot be judged headlessly) | Load in a DAW |
 
@@ -76,13 +77,16 @@ Lowering strictness below the phase value is a deliberate act that must be justi
     targets, and a blanket `-Werror` would gate on a dependency's warnings and be switched off at
     the first JUCE bump. The same job runs `check-portability.py --compile-canary`, which
     verifies the pinned JUCE still HAS the hazard the lint guards.
-  - `sanitizers` — ASan + UBSan over both suites, plus valgrind memcheck over the DSP suite. The
+  - `sanitizers` — ASan + UBSan over both suites, plus valgrind memcheck over BOTH suites. The
     point is to catch, on Linux, defects that only MANIFEST elsewhere: memory Linux hands back
     zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous
     there, while the DEFECT is platform-independent and tooling sees it either way. MemorySanitizer
     is deliberately not used — it needs every dependency including libc++ and all of JUCE
     instrumented, and an uninstrumented dependency yields false positives rather than silence, so
-    valgrind carries that half with no rebuild of anything.
+    valgrind carries that half with no rebuild of anything. It runs over BOTH suites
+    deliberately: the read that would matter goes through the real wrapper `processBlock`, which
+    only `AnabasisStateTests` drives, so covering the DSP suite alone would aim the detector away
+    from the span KI-009 implicates.
 - **The §10 acceptance criteria must be met** (see below) — they are release criteria, not
   aspirations.
 - Level 5 is **required for final sign-off** but cannot gate CI; a green build + pluginval pass is

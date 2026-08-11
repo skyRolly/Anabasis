@@ -44,7 +44,7 @@ read -r -a TEST_RUNNER <<< "${ANABASIS_TEST_RUNNER:-}"
 run_suite() {
     local binary="$1"
     echo "Running ${TEST_RUNNER[*]:+${TEST_RUNNER[*]} }$binary"
-    "${TEST_RUNNER[@]+${TEST_RUNNER[@]}}" "$binary"
+    ${TEST_RUNNER[@]+"${TEST_RUNNER[@]}"} "$binary"
 }
 
 find_one() {

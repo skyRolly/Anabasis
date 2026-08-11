@@ -1195,6 +1195,33 @@ carries the KI-009 fingerprint exactly (channel-local, mix-gated, deferred, abse
 cured by bypass) has been removed, and the owner's reproduction is very unlikely to be it. This
 entry stays OPEN for that reason, and the fix is recorded as a fix rather than as a resolution.
 
+**0.1.3 FOLLOW-UP ROUND 10 — the shipped artefact is now probed, on macOS, in the
+configurations the report names (2026-08-11).** Every check up to here — the suites, the
+sanitizers, the allocator poison — runs a REBUILD of the plugin's sources: a console app with no
+LTO (ADR-0008 keeps the flags target on the plugin alone), no format wrapper, and on macOS one
+architecture. The artefact a user installs is none of those things. That gap, not any DSP
+hypothesis, is the largest thing that had never been tested.
+
+`AnabasisChannelProbe` (`tools/channel_probe.cpp`) closes it: it LOADS the built bundle through
+`juce_audio_processors` and measures per-channel output, so `host → wrapper → processBlock →
+engine → output` is the shipped code path including whatever the optimiser did to it. Its oracle
+is the field report's own question. It runs eight configurations — the reported one (Clip Mix
+100/50/25/1 with both stereo links at 0 and the chain pushed), the **Clip Mix 0 control** the
+owner reports as the cure, links at 100, and colour off — across two sample rates and two block
+sizes, each on a FRESH instance so no configuration can inherit the previous one's parameters.
+On macOS it runs **four times: VST3 and AU × arm64 and x86_64**, the last of which was shipped
+in every universal binary and executed by nothing before this round.
+
+**Two vacuity traps were found and closed while building it**, both worth recording because they
+are the same failure this investigation keeps hitting. Matching parameters by `getParameterID()`
+finds NOTHING through a format wrapper — JUCE's VST3 client hashes each id, so the hosted
+instance reports `id='773352680'` where the source says `"bypass"` — and the first run therefore
+executed all eight configurations at their DEFAULTS while labelling them by name. Matching is now
+by display name, a missing parameter is FATAL rather than a warning, and the probe exits 2
+(environment) rather than 0 if it cannot put the plugin into the configuration it claims to test.
+The second trap was a state leak: one shared instance let the "defaults" row inherit the previous
+row's pushed parameters, which is visible in the output only if you know the number.
+
 **Status: OPEN, macOS-scoped, and now with a working validation path.** The kill zone is
 narrowed to the oversampled region (`AnabasisEngine.cpp:726-846`) with the wrapper, the bus
 layer and the memory-safety classes excluded. What no headless suite has yet reproduced on

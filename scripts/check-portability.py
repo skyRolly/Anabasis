@@ -87,7 +87,7 @@ SIMD_OVERLOADED = ("jmin", "jmax", "snapToZero")
 HAZARD = re.compile(r"(?:juce\s*::\s*)?\b(" + "|".join(SIMD_OVERLOADED) + r")\s*<")
 
 SOURCE_SUFFIXES = (".h", ".hpp", ".cpp", ".cc", ".mm")
-SOURCE_DIRS = ("src", "tests")
+SOURCE_DIRS = ("src", "tests", "tools")
 
 
 def blank_comments_and_literals(text: str) -> str:
@@ -183,6 +183,11 @@ def lint(root: Path) -> int:
     return 1 if violations else 0
 
 
+CANARY_BASELINE = """
+#include <juce_dsp/juce_dsp.h>
+int main() { return 0; }
+"""
+
 CANARY_DEDUCED = """
 #include <juce_dsp/juce_dsp.h>
 int main() { long long a = 1, b = 7; return (int) juce::jmax (a, b); }
@@ -205,30 +210,65 @@ def compile_canary(modules: Path, cxx: str) -> int:
         "-DJUCE_MODULE_AVAILABLE_juce_dsp=1",
         "-DJUCE_STANDALONE_APPLICATION=1",
     ]
-    results = {}
-    with tempfile.TemporaryDirectory() as tmp:
-        for name, body in (("deduced", CANARY_DEDUCED), ("explicit", CANARY_EXPLICIT)):
+
+    def compile_tu(name: str, body: str):
+        with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / f"{name}.cpp"
             src.write_text(body)
             proc = subprocess.run(common + [str(src)], capture_output=True, text=True)
-            results[name] = proc.returncode
+            return proc.returncode, (proc.stdout + proc.stderr)
+
+    # STEP 0 -- prove the ENVIRONMENT works before drawing any conclusion from it.
+    # Without this, a missing header, a bad -I, a compiler that does not know
+    # -std=c++20, or any other setup problem makes the deduced form fail and gets
+    # reported as "the recommended fix is wrong for the pinned JUCE" -- a
+    # confident, specific and completely false diagnosis. A canary that cannot
+    # tell a broken bench from a broken part is worse than no canary.
+    baseline_rc, baseline_log = compile_tu("baseline", CANARY_BASELINE)
+    if baseline_rc != 0:
+        print("check-portability: CANARY INCONCLUSIVE -- the environment cannot compile a "
+              "trivial juce_dsp translation unit, so nothing can be concluded about the SIMD "
+              f"overload set. This is a SETUP failure, not a JUCE regression. Compiler: {cxx}; "
+              f"modules: {modules}")
+        print("  first lines of the compiler output:")
+        for line in baseline_log.splitlines()[:8]:
+            print(f"    {line}")
+        return 2      # environment, deliberately not the 1 that means "lint failed"
+
+    deduced_rc, deduced_log = compile_tu("deduced", CANARY_DEDUCED)
+    explicit_rc, explicit_log = compile_tu("explicit", CANARY_EXPLICIT)
 
     ok = True
-    if results["deduced"] != 0:
-        print("check-portability: CANARY FAILED -- the DEDUCED form no longer compiles. "
-              "The recommended fix in this script's message is wrong for the pinned JUCE.")
-        ok = False
-    if results["explicit"] == 0:
-        print("check-portability: CANARY FAILED -- the EXPLICIT form now compiles on this "
-              "platform, so the lint is guarding a hazard this JUCE revision no longer has. "
-              "Re-derive SIMD_OVERLOADED from juce_SIMDRegister_Impl.h before relaxing the lint: "
-              "the macOS typedef divergence is what makes the hazard real, and it is not "
-              "observable from a Linux compile.")
+    if deduced_rc != 0:
+        print("check-portability: CANARY FAILED -- a trivial juce_dsp TU compiles but the "
+              "DEDUCED form does not, so the fix this lint recommends is wrong for the pinned "
+              "JUCE. The baseline above rules out an environment problem.")
+        for line in deduced_log.splitlines()[:8]:
+            print(f"    {line}")
         ok = False
 
-    print(f"check-portability: compile canary -- deduced form {'compiles' if results['deduced'] == 0 else 'FAILS'}, "
-          f"explicit form {'compiles' if results['explicit'] == 0 else 'is rejected'} (both as expected)."
-          if ok else "check-portability: compile canary FAILED.")
+    # The explicit form must fail, AND it must fail for the RIGHT REASON. Any
+    # compile error would otherwise satisfy "is rejected" and the canary would
+    # keep reporting success long after the hazard changed shape.
+    expected = ("SIMDNativeOps" in explicit_log) or ("SIMDRegister" in explicit_log)
+    if explicit_rc == 0:
+        print("check-portability: CANARY FAILED -- the EXPLICIT form now compiles, so the lint "
+              "is guarding a hazard this JUCE revision no longer has. Re-derive SIMD_OVERLOADED "
+              "from juce_SIMDRegister_Impl.h before relaxing the lint: the macOS typedef "
+              "divergence is what makes the hazard real, and it is not observable from a Linux "
+              "compile.")
+        ok = False
+    elif not expected:
+        print("check-portability: CANARY INCONCLUSIVE -- the explicit form was rejected, but "
+              "NOT by the SIMDRegister/SIMDNativeOps instantiation this lint exists for. Some "
+              "other compile error is masking the check, so its success would be an accident.")
+        for line in explicit_log.splitlines()[:8]:
+            print(f"    {line}")
+        return 2
+
+    if ok:
+        print("check-portability: compile canary -- trivial TU compiles (environment sound), "
+              "deduced form compiles, explicit form rejected by SIMDNativeOps as expected.")
     return 0 if ok else 1
 
 

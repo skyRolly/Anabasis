@@ -249,7 +249,7 @@ jobs:
         #     re-measure, which PERFORMANCE_BUDGET.md already requires; it is
         #     deliberately not a CI job, because the numbers a shared runner
         #     produces are exactly the ones that must not be quoted.
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_PROBE=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests + bench)
         id: build
@@ -326,6 +326,21 @@ jobs:
         env:
           MALLOC_PERTURB_: 255
         run: ./scripts/run-tests.sh
+
+      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
+      # installs rather than a rebuild of its sources. `AnabasisStateTests`
+      # drives the real processBlock, but compiled into a console app: no LTO
+      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
+      # one architecture. The probe LOADS the built bundle through
+      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
+      # output is the shipped code path including whatever the optimiser did to
+      # it, and its oracle is the field report's own question: is there audio on
+      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
+      # a channel was actually lost. Different codes on purpose.
+      - name: Channel probe (hosts the built VST3)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+             build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
 
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
@@ -469,6 +484,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           -DANABASIS_BUILD_STANDALONE=OFF
+          -DANABASIS_BUILD_PROBE=ON
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       # The canary belongs HERE rather than in source-lint: it needs the pinned
@@ -483,11 +499,24 @@ jobs:
       - name: Build tests (Clang) and gate on first-party warnings
         run: |
           set -o pipefail
-          cmake --build build-clang --target AnabasisTests AnabasisStateTests 2>&1 | tee clang-build.log
-          # Match warnings whose file path is ours. JUCE's own module sources
-          # live under _deps/ and are excluded by the same expression.
-          if grep -E '^/?[^:]*/(src|tests)/[^:]*:[0-9]+:[0-9]+: warning:' clang-build.log; then
-            echo "::error::Clang emitted warnings in first-party sources (src/ or tests/)."
+          cmake --build build-clang --target AnabasisTests AnabasisStateTests AnabasisChannelProbe 2>&1 | tee clang-build.log
+          # FIRST-PARTY ONLY, matched by WORKSPACE-ANCHORED path rather than by
+          # directory-name shape. The earlier expression matched any path whose
+          # components happened to include `src` or `tests`, which is a property
+          # a vendored dependency can have too — `_deps/<anything>/src/…` would
+          # have been gated on, and gating on a dependency's warnings is how a
+          # warning gate gets switched off at the first bump.
+          #
+          # Two independent conditions, because either alone is a coincidence:
+          # the path must start at THIS checkout's root and continue into one of
+          # our three source directories, AND it must not pass through `_deps/`
+          # (CMake's FetchContent tree) at any depth. `|| true` on the grep so
+          # `set -o pipefail` does not turn "no warnings" into a failure.
+          FIRST_PARTY="$(grep -E "^${GITHUB_WORKSPACE}/(src|tests|tools)/[^:]*:[0-9]+:[0-9]+: warning:" clang-build.log \
+                         | grep -v '/_deps/' || true)"
+          if [ -n "$FIRST_PARTY" ]; then
+            echo "$FIRST_PARTY"
+            echo "::error::Clang emitted warnings in first-party sources (src/, tests/ or tools/)."
             exit 1
           fi
           echo "Clang: no warnings in first-party sources."
@@ -518,10 +547,12 @@ jobs:
   # produces false positives rather than silence. valgrind memcheck answers the
   # same question with no rebuild of anything, so it carries that half.
   #
-  # valgrind runs the DSP suite only. It is ~50x slower than native, and the DSP
-  # suite is the numeric core where an uninitialised read would sit; the state
-  # suite is covered by ASan+UBSan in the same job. Stated because a reader
-  # should not have to infer that the coverage is deliberately asymmetric.
+  # valgrind runs BOTH suites. It is ~50x slower than native, and that cost is
+  # accepted because memcheck is the only uninitialised-read detector in the
+  # pipeline and the read that would matter runs through the real wrapper
+  # `processBlock` -- which only AnabasisStateTests drives. An earlier revision
+  # pointed it at the DSP suite alone, which aimed the detector away from the
+  # span KI-009 implicates.
   #
   # detect_leaks=0: JUCE's singletons are torn down at exit in ways LeakSanitizer
   # reports and this job is not a leak gate. halt_on_error=1 on UBSan so the
@@ -647,6 +678,16 @@ jobs:
           & $exe.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $stateExe.FullName
+
+      - name: Channel probe (hosts the built VST3)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $probe = Get-ChildItem -Recurse -Filter AnabasisChannelProbe.exe build | Select-Object -First 1
+          $vst3  = Get-ChildItem -Recurse -Filter Anabasis.vst3 build | Select-Object -First 1
+          if (-not $probe -or -not $vst3) { throw "probe or bundle not found" }
+          & $probe.FullName $vst3.FullName --format vst3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
@@ -962,6 +1003,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DANABASIS_BUILD_PROBE=ON
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + AU + Standalone + tests)
@@ -996,6 +1038,37 @@ jobs:
             exit 0
           fi
           ANABASIS_TEST_RUNNER="arch -x86_64" ./scripts/run-tests.sh
+
+      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
+      # installs rather than a rebuild of its sources. `AnabasisStateTests`
+      # drives the real processBlock, but compiled into a console app: no LTO
+      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
+      # one architecture. The probe LOADS the built bundle through
+      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
+      # output is the shipped code path including whatever the optimiser did to
+      # it, and its oracle is the field report's own question: is there audio on
+      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
+      # a channel was actually lost. Different codes on purpose.
+      #
+      # FOUR RUNS on macOS: both formats x both slices. The report names AU and
+      # VST3 alike, and the x86_64 slice ships in the same universal binary while
+      # being executed by nothing until this workflow started running it -- so
+      # "macOS is green" previously meant one of the four.
+      - name: Channel probe (hosts the built VST3 and AU, both slices)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          VST3=build/Anabasis_artefacts/Release/VST3/Anabasis.vst3
+          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
+          echo "== arm64 / VST3 =="; "$PROBE" "$VST3" --format vst3
+          echo "== arm64 / AU   =="; "$PROBE" "$AU"   --format au
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "== x86_64 / VST3 =="; arch -x86_64 "$PROBE" "$VST3" --format vst3
+            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU"   --format au
+          else
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 slice was probed by nothing this run"
+          fi
 
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".

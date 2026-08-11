@@ -47,6 +47,7 @@ endif()
 # --- Options (all ANABASIS_*, ADR-0008 §Options) ----------------------------
 option(ANABASIS_BUILD_TESTS      "Build the AnabasisTests + AnabasisStateTests console apps" ON)
 option(ANABASIS_BUILD_BENCH      "Build the AnabasisBench performance target (DESIGN §9; OFF by default)" OFF)
+option(ANABASIS_BUILD_PROBE      "Build AnabasisChannelProbe, which HOSTS the built plugin bundle (KI-009; OFF by default)" OFF)
 option(ANABASIS_BUILD_STANDALONE "Build the Standalone format" ON)
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
@@ -252,6 +253,41 @@ if(ANABASIS_BUILD_BENCH)
     target_link_libraries(AnabasisBench
         PRIVATE
             AnabasisDSP
+        PUBLIC
+            AnabasisHardening
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif()
+
+# -- AnabasisChannelProbe: the KI-009 runtime probe. It is the only target that
+#    LOADS the built bundle instead of compiling the sources, which is the whole
+#    point of it: `AnabasisStateTests` drives the real `processBlock`, but as a
+#    console app built from the same sources — no LTO (the flags target is on the
+#    plugin alone, above), no format wrapper, and on macOS one slice rather than
+#    the universal artefact a user installs. The configuration the field report
+#    describes had therefore never been asserted on.
+#
+#    OFF by default and outside ANABASIS_BUILD_TESTS, for the reasons the bench
+#    block states: it needs a BUILT BUNDLE to point at, so it is meaningless in a
+#    tree that has not produced one, and a target that silently builds nothing
+#    is worse than an absent one.
+#
+#    It links the plugin HOSTING modules, which nothing else here does — hence
+#    JUCE_PLUGINHOST_VST3/AU rather than the plugin-client defines used above.
+if(ANABASIS_BUILD_PROBE)
+    juce_add_console_app(AnabasisChannelProbe PRODUCT_NAME "AnabasisChannelProbe")
+    target_sources(AnabasisChannelProbe PRIVATE tools/channel_probe.cpp)
+    target_compile_definitions(AnabasisChannelProbe PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_VST=0
+        JUCE_PLUGINHOST_AU=$<IF:$<BOOL:${APPLE}>,1,0>
+        JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(AnabasisChannelProbe
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_processors
         PUBLIC
             AnabasisHardening
             juce::juce_recommended_config_flags

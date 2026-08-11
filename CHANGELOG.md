@@ -59,6 +59,12 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   consecutive passes each — the same gate the VST3 has always had. Until now the release gate ran
   against the VST3 alone on all three platforms, so the AU shipped to Logic users having passed
   no automated validation at all. Evidence Source: PR #14. [Verified]
+- **A channel probe that tests the shipped artefact.** Every other check rebuilds the plugin's
+  sources into a console app; this one loads the built VST3/AU through a host and asserts both
+  channels carry audio across the reported field configurations — so the LTO'd, wrapped binary a
+  user actually installs is exercised, on macOS for both formats and both architectures. Opt-in
+  (`-DANABASIS_BUILD_PROBE=ON`) and run on all three platforms in CI. Evidence Source: PR #14.
+  [Verified]
 - **Three cross-platform CI gates**, because a green Linux build is not evidence about another
   platform: a source portability lint for the JUCE SIMD-overload hazard (with a compile canary
   that checks the pinned JUCE still has that hazard), a Clang build that fails on any warning in

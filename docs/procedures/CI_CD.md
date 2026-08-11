@@ -52,7 +52,8 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |
 | **source-lint** | `ubuntu-latest` | nothing — runs `scripts/check-portability.py` (seconds) | n/a |
 | **linux-clang** | `ubuntu-latest` (Clang) | the two test targets only; fails on any warning under `src/` or `tests/`; runs the portability compile canary | n/a |
-| **sanitizers** | `ubuntu-latest` (Clang) | the two test targets under ASan + UBSan, plus a plain build for valgrind memcheck over the DSP suite | n/a |
+| **AnabasisChannelProbe** (a step in `linux`, `windows`, `macos`) | — | the only check that HOSTS the built bundle instead of recompiling its sources: LTO'd, wrapped, and on macOS run for **both formats × both slices** | n/a |
+| **sanitizers** | `ubuntu-latest` (Clang) | the two test targets under ASan + UBSan, plus a plain build for valgrind memcheck over **both** suites | n/a |
 
 **Why three Linux jobs and not one.** They answer three different questions and only one of them
 is "does it build here".
@@ -76,7 +77,13 @@ is "does it build here".
 **Known coverage boundaries, named rather than left to be rediscovered.** Each of these is a real
 limit of the matrix as it stands; none is a defect in it.
 
-* **No CI gate runs the suites' assertions against LTO'd code.** The plugin target links
+* **macOS-hosted runners are not a DAW.** The probe and pluginval exercise the real wrapper and
+  the real binary, which is as close as automation gets, but neither is Logic, Ableton or Reaper:
+  host-specific buffer arrangements, parameter automation patterns, sample-rate/blocksize changes
+  mid-stream and plugin rescan behaviour remain outside CI. A green macOS matrix is evidence
+  about the plugin, not a substitute for the DAW audition `TESTING_POLICY.md` Level 5 requires.
+* **No CI gate runs the SUITES' assertions against LTO'd code** — but the channel probe does, and
+  that is why it exists: The plugin target links
   `juce::juce_recommended_lto_flags`; both test targets deliberately do not (ADR-0008), so the
   DSP and state assertions always run un-LTO'd. LTO'd code IS exercised — pluginval loads the
   real LTO'd binary on all three platforms — but by conformance tests, not by our own numerical
