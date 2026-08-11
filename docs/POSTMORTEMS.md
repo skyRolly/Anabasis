@@ -214,6 +214,13 @@ found it: the first separates "the compiler" from "the link-time optimiser", the
 per-channel energy at twelve taps of the chain and named the exact pair of taps between which the
 channels diverged.
 
+**Maintainer sign-off, 2026-08-11.** The owner has manually confirmed the behaviour on the
+reported host. That closes the one thing this entry was still conditional on: the fix was
+root-caused, reproduced and verified in CI, but a field report is not closed by CI — it is closed
+by the person who filed it no longer seeing it. KI-009 is therefore CLOSED unconditionally rather
+than "resolved pending confirmation", and `KNOWN_ISSUES.md` carries only the fixed-issue pointer
+its own convention prescribes.
+
 Evidence [Verified]:
 - Source: `src/dsp/AnabasisEngine.cpp` (the `nCh` bound), `CMakeLists.txt` (`ANABASIS_NO_LTO`,
   `ANABASIS_STAGE_TRACE`), `src/dsp/StageTrace.h`

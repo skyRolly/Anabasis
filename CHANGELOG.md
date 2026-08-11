@@ -73,7 +73,7 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   platform: a source portability lint for the JUCE SIMD-overload hazard (with a compile canary
   that checks the pinned JUCE still has that hazard), a Clang build that fails on any warning in
   first-party sources, and a sanitizer job running ASan + UBSan over both suites plus valgrind
-  memcheck over the DSP suite. `docs/policies/TESTING_POLICY.md` carries what each one does and,
+  memcheck over both suites too. `docs/policies/TESTING_POLICY.md` carries what each one does and,
   as importantly, what it does not. Evidence Source: PR #14. [Verified]
 
 ### Changed
@@ -157,14 +157,16 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   Clip Drive at 0 the clipper's own bound is skipped, so a finite-but-astronomical sample
   could overflow it to infinity — after which the engine's per-channel safety substitution
   emitted digital zero on **that channel alone**, for as long as the input persisted, while
-  the other channel played normally. The stage's two arithmetic sites — that polynomial's
-  argument, and the drive product, which overflows the same way four hundred dB higher up —
-  are now both bounded at a level some 120 dB above anything the chain can carry, so no
-  audible sample changes (bit for bit) and the stage can no longer produce an infinity from
-  any finite input. This is **not** the fix for
-  the field reports of a silent left channel: the owner re-tested with it in the build and
-  that issue persists unchanged, so `docs/KNOWN_ISSUES.md` KI-009 stays **open** and now keeps
-  the two failure classes apart. Evidence Source: PR #14. [Verified]
+  the other channel played normally. The stage's **three** arithmetic sites — that polynomial's
+  argument, the drive product, which overflows the same way four hundred dB higher up, and the
+  dynamic-tame filter's state feed (the entry above) — are now all bounded at a level some
+  120 dB above anything the chain can carry, so no audible sample changes (bit for bit) and the
+  stage can no longer produce an infinity from any finite input. This is **not** the mechanism
+  behind the field reports of a silent left channel — the owner re-tested with it in the build
+  and that issue persisted — and it is worth keeping the two apart: this one needs an input
+  around +120 dBFS, while the field fault was a miscompilation that needed no unusual input at
+  all and is fixed separately above (`docs/POSTMORTEMS.md` INC-004). Evidence Source: PR #14.
+  [Verified]
 - **The GR history no longer flashes a vertical accent line at its left edge** while the
   gain-reduction trace there is non-zero. The "unmeasured region" zero-line was also drawn
   for a *full, scrolling* window whenever bucket-expiry phase left a sub-pitch gap at the
@@ -180,6 +182,15 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   [Verified]
 
 ### Investigation (KI-009 — since CLOSED, see Fixed above; KI-012 — still open)
+
+*This section is the round-by-round record of how the silent left channel was hunted, kept
+because it is what the next such report starts from. It is written in the present tense of each
+round, and the last of those rounds is not the outcome: KI-009 was root-caused and fixed on
+2026-08-11 — undefined behaviour in the engine's channel bound that Clang acted on at `-flto` —
+and `docs/POSTMORTEMS.md` INC-004 carries the mechanism, the excluded hypotheses and the gates
+that now guard it. Where a bullet below says the fault is unfixed, platform-scoped or unreachable
+from Linux, INC-004 is what superseded it.*
+
 - **Every KI-009 regression has now run on macOS, and passes.** Restoring the build revealed
   that the broken line sat INSIDE `testClipMixCannotChangeTheDefaultPresetsSound`, so the
   regressions written in the last three rounds — for a fault that reproduces only on macOS — had
@@ -203,7 +214,10 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   says nothing about the platform where it is present. The consequence is recorded rather
   than implied: a macOS-only divergence is the only one of the three live hypotheses that
   predicts a platform split, so it leads, and no further Linux-side experiment can move the
-  entry. `docs/KNOWN_ISSUES.md` KI-009, round 7. Evidence Source: PR #14. [Verified]
+  entry. **Superseded** — the platform split was real but the scoping drawn from it was wrong:
+  the variable was the compiler, not the operating system, and building the *plugin* with Clang
+  on Linux reproduced the fault exactly, which is where it was fixed
+  (`docs/POSTMORTEMS.md` INC-004). Evidence Source: PR #14. [Verified]
 - **New report — the Linux editor accepting no mouse input (KI-012) — does not reproduce.**
   The built VST3 was loaded into a purpose-built minimal JUCE VST3 host on a real X server and
   driven with **XTEST** pointer events, bare and under a window manager: clicks land (the ADV
@@ -212,19 +226,21 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   records what that excludes, the sibling comparison (every interaction-relevant construct
   identical; the one divergence is off the input path), and the single field datum that would
   settle it — whether the meters move while audio plays. Evidence Source: PR #14. [Verified]
-- **The left-channel silence is NOT fixed.** With the colour-stage guard in the build the
-  owner re-tested on macOS in both AU and VST3: the behaviour is identical across formats,
-  unaffected by oversampling or any other setting, removed only by Clip Mix = 0 — and
-  **global bypass restores the channel**, which places the loss inside the processed path
-  rather than in host routing. `docs/KNOWN_ISSUES.md` KI-009 carries the confirmed evidence,
-  the implication chain it contradicts, and the two field experiments that would break that
-  chain. Evidence Source: PR #14. [Verified]
+- **The left-channel silence was not fixed by the colour-stage guard.** With that guard in the
+  build the owner re-tested on macOS in both AU and VST3: the behaviour was identical across
+  formats, unaffected by oversampling or any other setting, removed only by Clip Mix = 0 — and
+  **global bypass restored the channel**, which placed the loss inside the processed path rather
+  than in host routing. Every one of those observations held and every one of them is explained
+  by the real cause, found later in this round and fixed above; `docs/POSTMORTEMS.md` INC-004
+  carries the mechanism and why the two faults share a fingerprint. Evidence Source: PR #14.
+  [Verified]
 - The owner's new per-channel GR observation (comp GR on both lanes, limiter GR on the right
   lane only, both stereo links at 0) localises the left-channel kill to the span between the
   compressor's output and the limiter's detector tap. The exact field configuration is now a
-  permanent headless case at both oversampling extremes (both green), and the OS toggle is
-  the decisive field experiment — `docs/KNOWN_ISSUES.md` KI-009, 0.1.3 addendum, carries the
-  full argument. Evidence Source: PR #13 (item 3). [Verified]
+  permanent headless case at both oversampling extremes (both green), and the OS toggle was
+  named as the decisive field experiment. That localisation was right and the experiment was
+  never needed: the span it named is where the miscompiled channel loop sits
+  (`docs/POSTMORTEMS.md` INC-004). Evidence Source: PR #13 (item 3). [Verified]
 
 ## [0.1.2] — 2026-08-09
 

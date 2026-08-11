@@ -10,7 +10,8 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 naming only, no DSP change, no new ADR (nothing decided at contract level: the three
 Colour → Color NAME renames and the MATCH caption ride PARAMETER_COMPATIBILITY_POLICY rule 2
 with the snapshot re-frozen, the same lane as 0.1.2's "Limiter Stereo Link"). **Amended:**
-`CHANGELOG.md` `[0.1.3]` and its header (entry count); `KNOWN_ISSUES.md` KI-009 (the 0.1.3
+`CHANGELOG.md` `[0.1.3]` and its header (entry count); `KNOWN_ISSUES.md` KI-009 — since closed
+and moved to `POSTMORTEMS.md` INC-004, see below — (the 0.1.3
 addendum: the owner's per-channel GR-lane observation localises the left-channel kill to the
 comp-output → wet-ring span, the span's audit against the new constraint, the permanent
 field-configuration battery pair at OS Off/4×, and the OS-toggle field experiment it hands
@@ -31,13 +32,13 @@ exact-skips the clipper's own bound, and the engine's wet-ring boundary then sub
 `0.0f` **per channel** — one channel permanently silent, the other normal, gated on Clip Mix
 because the mix is what lets the stage reach the ring. Bounded at the argument
 (`ClipSat::kArithmeticLimit`, +120 dBFS — inert and bit-exact for every reachable signal);
-KI-009's 0.1.3 addendum is superseded by a FOLLOW-UP addendum carrying the whole analysis, the
-measurement, and by a ROUND-2 addendum recording the owner's re-test: the field issue persists,
-so the record now separates Class A (the overflow, fixed and pinned) from Class B (the field
-report, unresolved) in a table, lists every in-plugin path now excluded or pinned — including a
-40-trial realistic soak that produced no channel loss — and hands back a one-button field
-discriminator (BYPASS, which carries the plugin's own input bit-exactly). The report stays
-**OPEN**. The corrections:
+KI-009's 0.1.3 addendum ran to a FOLLOW-UP and a ROUND-2 addendum separating Class A (the
+overflow, fixed and pinned) from Class B (the field report), each listing what the rounds had
+excluded. **Both are superseded, and KI-009 is CLOSED (2026-08-11):** Class B was undefined
+behaviour in `AnabasisEngine::processChunk`'s channel bound that Clang acted on at `-flto`, and
+`POSTMORTEMS.md` **INC-004** now carries the mechanism, the excluded list and the guards, while
+`KNOWN_ISSUES.md` keeps only the fixed-issue pointer its own convention prescribes — so the
+KI-009 entry this ledger amended no longer exists to be amended. The corrections:
 the `scHpfFreq` tooltip (it said "both detectors" a round after ADR-0023 made the limiter's
 unfiltered), the RMS reference applied OUTSIDE the readout hold so a Settings flip is never
 delayed (the hold belongs to the measurement), the bell rows' Q | Freq | Gain column order, the
