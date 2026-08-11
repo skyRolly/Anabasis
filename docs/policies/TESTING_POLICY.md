@@ -55,6 +55,13 @@ Lowering strictness below the phase value is a deliberate act that must be justi
 
   **All are blocking** — no `continue-on-error`; a non-zero pluginval exit fails the job on every
   platform.
+- **The macOS x86_64 slice is EXECUTED on native Intel hardware** (`macos-intel`,
+  `runs-on: macos-15-intel`). The `macos` job ships a universal binary and runs its Intel slice
+  under **Rosetta 2**, which translates x86_64 to arm64 and executes on arm64 hardware — MXCSR
+  becomes FPCR, SSE becomes NEON. That is not Intel coverage, and until this job existed half the
+  macOS user base had compile-only validation. The job asserts `uname -m` and
+  `sysctl.proc_translated` and **fails** if either says otherwise: a green tick from the wrong
+  architecture reads as "Intel is fine", which is worse than no job.
 - **On macOS the AU is validated as well as the VST3**, both modes, same strictness, same 3
   consecutive passes (`run-pluginval.sh <strictness> <mode> au`). Until 2026-08-10 the gate ran
   against the VST3 alone on all three platforms, so the AU — the only format that exists on

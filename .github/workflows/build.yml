@@ -1356,3 +1356,116 @@ jobs:
           name: Anabasis-macOS-debug
           path: dist/Anabasis-macOS-debug
           if-no-files-found: error
+
+  # ==========================================================================
+  #  NATIVE INTEL macOS — the one execution environment nothing else covers.
+  #
+  #  RESTORED, and the reason it was briefly removed is worth recording. It was
+  #  added during the KI-009 hunt on the theory that the fault was
+  #  architecture-specific; the fault turned out to be compiler-specific
+  #  (INC-004), so the theory died and the job was dropped with it. That was the
+  #  wrong conclusion from a right observation: the job's VALUE was never the
+  #  hypothesis. It is that the `macos` job builds a UNIVERSAL binary and then
+  #  executes its x86_64 slice only under Rosetta 2 — which translates x86_64 to
+  #  arm64 and runs on arm64 hardware, with FPCR rather than MXCSR and NEON
+  #  rather than SSE. Half the macOS user base therefore had compile-only
+  #  coverage. That gap is real whatever KI-009 turned out to be, and this job is
+  #  the only thing that closes it.
+  #
+  #  It is deliberately SMALLER than the version that was removed: the
+  #  stage-trace diagnostic build is gone (13 of that job's 31 minutes, and it
+  #  existed to LOCATE a fault that is now located — ANABASIS_STAGE_TRACE
+  #  remains available for the next one). No packaging, signing or upload: the
+  #  shipping artefact still comes from the universal build above.
+  # ==========================================================================
+  macos-intel:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: macos-15-intel   # NATIVE x86_64 hardware -- not Apple Silicon, not Rosetta
+    steps:
+      - uses: actions/checkout@v7
+
+      # FAIL, do not warn. A job whose entire purpose is "run on Intel" is
+      # worthless if it quietly runs somewhere else, and a green tick from the
+      # wrong architecture is worse than no job at all: it would be read as
+      # "Intel is fine". `sysctl.proc_translated` is 1 inside Rosetta and 0 or
+      # absent on a real Intel machine, so both wrong answers are caught.
+      - name: Assert this really is native Intel
+        run: |
+          set -e
+          ARCH="$(uname -m)"
+          TRANSLATED="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+          echo "uname -m = $ARCH ; sysctl.proc_translated = $TRANSLATED"
+          sysctl -n machdep.cpu.brand_string || true
+          if [ "$ARCH" != "x86_64" ]; then
+            echo "::error::this job must run on native x86_64 (got $ARCH) -- the coverage it exists for cannot be produced here"
+            exit 1
+          fi
+          if [ "$TRANSLATED" != "0" ]; then
+            echo "::error::running under Rosetta translation -- that is the coverage this job exists to replace"
+            exit 1
+          fi
+
+      - name: Install build tools
+        run: brew install ninja || true
+
+      # THIN x86_64, not universal. The universal build is the shipping
+      # configuration and is already covered; here the point is that every
+      # object is produced by the Intel code generator and executed by an Intel
+      # CPU, with no arm64 slice present to be picked instead.
+      - name: Configure (native x86_64 only)
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=x86_64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DANABASIS_BUILD_PROBE=ON
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build (VST3 + AU + Standalone + tests + probe)
+        id: build
+        run: cmake --build build --config Release
+
+      - name: Self-tests (DSP + state), native Intel
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/run-tests.sh
+
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
+      - name: Install the AU so the AudioComponent registry can find it
+        id: au_install
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          DEST="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$DEST"
+          rm -rf "$DEST/Anabasis.component"
+          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
+
+      # Both formats, because the field report named both and because this is
+      # the shipped code path -- host -> wrapper -> processBlock -> engine --
+      # built by the Intel back end and run on an Intel CPU.
+      - name: Channel probe, native Intel (VST3 + AU)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          echo "== x86_64 native / VST3 =="
+          "$PROBE" build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+          echo "== x86_64 native / AU   =="
+          "$PROBE" "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component" --format au
+
+      - name: pluginval VST3 (deterministic x3), native Intel
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
+
+      - name: pluginval AU (deterministic x3), native Intel
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
