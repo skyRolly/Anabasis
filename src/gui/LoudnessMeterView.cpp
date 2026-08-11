@@ -16,6 +16,40 @@ float LoudnessMeterView::plrFromShown (float tpDb, float integratedLufs) noexcep
              : 0.0f;
 }
 
+bool LoudnessMeterView::shouldAdoptRms (float rawDb, bool holdingAReading,
+                                        double sinceAdoptSecs) noexcept
+{
+    // Three ways to adopt, and only the third is the cadence:
+    //   * the incoming value is the meter's "nothing measured yet" SENTINEL —
+    //     a meter reset must blank the row on the next frame, never after a
+    //     third of a second of a stale number that no longer describes
+    //     anything (`requestMeterReset` publishes `RmsMeter::kSilentDb`);
+    //   * we are not currently holding a reading — so the FIRST real value
+    //     after a reset (or after the editor opens) lands immediately rather
+    //     than waiting out an interval it was never part of;
+    //   * the hold has expired, which is the ordinary readable cadence.
+    // Everything the reference choice affects is applied downstream of this,
+    // so a Settings flip is never gated by the hold.
+    return rawDb < anabasis::RmsMeter::kFloorDb
+        || ! holdingAReading
+        || sinceAdoptSecs >= kRmsReadoutHoldSecs;
+}
+
+float LoudnessMeterView::rmsWithReference (float rawDb, bool aes17) noexcept
+{
+    // AES-17 references a full-scale SINE to 0 dBFS, which is +3.01 dB on the
+    // mathematical RMS the meter publishes (a sine's RMS is 1/√2 of its peak).
+    // The sentinel passes through UNTOUCHED — offsetting it would print a
+    // nonsense −140.99 where the row means "nothing measured yet".
+    //
+    // `>= kFloorDb` is that test EXACTLY, because the meter guarantees every
+    // reading it computes lands at or above the floor and the sentinel sits
+    // strictly below it. An earlier `> kSilentDb + 1.0f` was a tolerance
+    // around the sentinel, needed only while the two ranges could overlap; a
+    // genuine reading in that band was silently denied its offset.
+    return (aes17 && rawDb >= anabasis::RmsMeter::kFloorDb) ? rawDb + 3.0103f : rawDb;
+}
+
 LoudnessMeterView::LoudnessMeterView (AnabasisAudioProcessor& p) : processor (p)
 {
     setInterceptsMouseClicks (true, false);
@@ -35,7 +69,7 @@ void LoudnessMeterView::mouseDown (const juce::MouseEvent&)
     processor.requestMeterReset();   // §2.9 momentary-request row
 }
 
-void LoudnessMeterView::tick (double)
+void LoudnessMeterView::tick (double dt)
 {
     const auto& ist = processor.internalState.state();
     // The §4.4 read fallback is the SHIPPED DEFAULT for both, never `var()`'s
@@ -60,23 +94,42 @@ void LoudnessMeterView::tick (double)
     const float plr = plrFromShown (tp, i);
     const float pk  = processor.meterPeakMaxDb();
     const float lra = processor.meterLra();
-    // AES-17 references a full-scale SINE to 0 dBFS, which is +3.01 dB on the
-    // mathematical RMS the meter publishes (a sine's RMS is 1/√2 of its peak).
-    // The sentinel passes through UNTOUCHED — offsetting it would print a
-    // nonsense −140.99 where the row means "nothing measured yet" — and the
-    // test is on the RMS reading alone. It briefly also consulted the sample
-    // peak, which is incoherent whatever the values do: whether this row has
-    // a reading is a fact about this row.
+    // The RMS READOUT cadence (0.1.3 item 1). The judgement call, recorded:
+    // the fast-moving number is NOT a measurement defect — the 50 ms Hann
+    // window is ADR-0020's owner-directed spec, and a 50 ms RMS of programme
+    // material genuinely swings several dB at syllable rate — it is a DISPLAY
+    // property: this tick re-printed that correct, volatile measurement at
+    // the FULL FRAME RATE, so the digits churned faster than they could be
+    // read. That rate is the display's, not a fixed one — `FrameClock` paces
+    // on vblank and divides to an even cadence of at most ~125 Hz, so the
+    // churn was worse on a fast panel than on a 60 Hz one, which is itself a
+    // reason the cadence belongs here rather than in the meter. The fix
+    // therefore lives here and not in `RmsMeter`
+    // (whose reading the suite pins and the bars/holds do not consume): the
+    // numeric row adopts a fresh value at a readable ~3 Hz and holds it
+    // between adoptions — every printed number is still a real, current
+    // 50 ms measurement, just sampled at reading pace.
     //
-    // `>= kFloorDb` is that test EXACTLY, because the meter guarantees every
-    // reading it computes lands at or above the floor and the sentinel sits
-    // strictly below it. The earlier `> kSilentDb + 1.0f` was a tolerance
-    // around the sentinel, needed only while the two ranges could overlap; a
-    // genuine reading in that band was silently denied its offset.
+    // WHAT IS HELD IS THE RAW METER VALUE, NOT THE DISPLAYED ONE, and that
+    // distinction is the 0.1.3 review fix. Holding the offset value made the
+    // AES-17 / Mathematical reference choice wait out the hold too — up to a
+    // third of a second of dead Settings toggle — because the flip changed
+    // only the value the hold was suppressing. The hold belongs to the
+    // MEASUREMENT (which is what churns); the reference is a pure function of
+    // whatever measurement is currently shown, so it is applied AFTER the
+    // hold, on every tick. `shownRms` therefore still holds the value after
+    // the offset exactly as this class's header states, and a Settings flip
+    // moves the snapshot and repaints with no extra flag — the invariant is
+    // restored rather than re-worded.
     const float rawRms = processor.meterRmsDb();
-    const float rms = (aes17 && rawRms >= anabasis::RmsMeter::kFloorDb)
-                        ? rawRms + 3.0103f
-                        : rawRms;
+    rmsSinceAdopt += dt;
+    if (shouldAdoptRms (rawRms, shownRmsValid, rmsSinceAdopt))
+    {
+        heldRawRms    = rawRms;
+        rmsSinceAdopt = 0.0;
+        shownRmsValid = rawRms >= anabasis::RmsMeter::kFloorDb;
+    }
+    const float rms = rmsWithReference (heldRawRms, aes17);
     const float ceil = processor.apvts.getRawParameterValue (pid::ceiling)->load();
 
     // Bitwise compares, so even a NaN transition still repaints once.

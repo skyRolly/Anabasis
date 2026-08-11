@@ -36,8 +36,12 @@ it does not check heading nesting, so this convention is held by hand.
 
 ## Open issues
 
-*(KI-001 — unducked discrete transitions — and KI-002 — inert Loudness Comp/Delta — are FIXED
-and recorded as `POSTMORTEMS.md` INC-001/INC-002; their numbers are never reused.)*
+*(KI-001 — unducked discrete transitions — KI-002 — inert Loudness Comp/Delta — and KI-009 — the
+silent left channel — are FIXED and recorded as `POSTMORTEMS.md` INC-001/INC-002/INC-004; their
+numbers are never reused. KI-009's entry ran to five months of round-by-round investigation, and
+what was durable in it — the hypotheses the rounds excluded, and the two ways the probe that
+finally reproduced it was vacuous first — moved into INC-004 with the mechanism, because a fixed
+issue's record lives there.)*
 
 ### KI-003 — A host that restores state off the message thread is only partly defended against
 
@@ -662,93 +666,6 @@ Evidence [Verified]:
 
 **For the post-v0.1.0 fine review — the highest-severity open item in this family.**
 
-### KI-009 — Field report: left channel silent — NOT REPRODUCIBLE headlessly (2026-08-05)
-
-**The report.** The owner reports the LEFT channel carrying no audio at all, right channel
-normal, "in both Simple and Advanced modes" (i.e. always). Host, OS and build not yet recorded.
-
-**What was probed, and found healthy.** `testBothChannelsCarryAudioThroughTheWrapper`
-(`tests/state_tests.cpp`) drives the REAL `AnabasisAudioProcessor::processBlock` — not the bare
-engine — with per-channel-distinct sines (220/330 Hz, so a swap or a sum-into-one-channel cannot
-masquerade as health) and measures settled per-channel RMS in **six configurations**: defaults ·
-loudness 50 · the editor alive across the whole processing loop · 16× linear-phase oversampling ·
-a factory preset applied · after a session save/load round-trip. (This paragraph said "seven"
-against its own six-item list for three commits — the list is the count, and the list is what the
-suite runs.) Both channels carry audio within
-6 dB of each other in every one. The DSP suite separately covers the engine's stereo path, and
-pluginval (both modes ×3, editor open) passes on the built VST3.
-
-**What that excludes, and what it cannot.** Every channel loop in the engine and wrapper is
-symmetric (`processChunk`'s five stages all iterate `[0, nCh)`; the wrapper adds no per-channel
-path), and the parameter surface contains **no per-channel gain, pan or balance** — there is no
-parameter whose value could mute one side. What the headless battery cannot reach: JUCE's
-VST3/AU/Standalone format glue as driven by a *particular* host, the standalone's audio-device
-channel mapping, and the possibility that the observation was a host meter reading rather than
-the plugin's output. Those are exactly this file's standing-note categories.
-
-**Status: OPEN — needs the environment.** To act on this, record: host + version, OS, which
-build (CI zip? local?), whether the standalone or a plugin format, and whether the left silence
-is heard or read off a meter. The six-configuration battery stays in the suite either way — it
-is now the permanent guard on every headless-reachable stereo path, and whichever configuration
-eventually reproduces the report becomes its seventh case.
-
-**0.1.1 addendum — the input-side mechanism, closed.** The report persisted past the round-2
-probe, so 0.1.1 re-ran the investigation as a line-by-line wrapper/bus/CMake diff against the
-sibling plus a full re-audit of every channel-asymmetric expression in the engine and
-`LookaheadLimiter`. Finding: the audible path is provably channel-symmetric (every `ch == 0`
-asymmetry is an analysis tap), and no Anabasis source line can silence one channel — but the
-**bus contract** could. Anabasis refused the mono→stereo layout the sibling accepts
-(`isBusesLayoutSupported` demanded stereo→stereo exactly), so a host with a mono source — or a
-mono input device under the standalone — was forced to negotiate stereo→stereo and feed whatever
-its convention puts on the two input pins. Several conventions put the programme on ONE pin and
-silence on the other, and this chain is strictly dual-mono (the comp/limiter stereo "link"
-shares only the detector level; nothing cross-feeds), so a silent input pin propagated to a
-silent output channel in both modes — exactly the report, and unreachable by the battery, which
-always fed both channels. Fix: `isBusesLayoutSupported` now accepts mono→stereo (the sibling's
-contract), and `processBlock` duplicates the mono input into channel 1 before the engine runs.
-The battery gained its predicted seventh case (`mono in`, programme on channel 0 only, both
-outputs asserted live). If the field setup was instead a silent left channel *delivered by the
-routing upstream* (the other mechanism the audit ranks plausible), the plugin now also survives
-the mono half of that: the host can drop to the mono layout instead of feeding a dead pin.
-
-**0.1.2 addendum — the report persists, and the Delta observation narrows it decisively.** The
-owner reports the left channel still silent (stereo input, both editor modes), with a new datum:
-**engaging Delta makes the left channel audible while the right carries a GR-flavoured
-residue.** That observation is algebraically decisive, because the delta leg is computed
-per channel *inside the engine* — `wetLeg = dryForDelta − processed`
-(`src/dsp/AnabasisEngine.cpp`, stage E), with `dryForDelta` read from the dry ring the engine
-fills from its own input. Delta-L being audible therefore proves `dry_L ≠ 0` — **the host is
-delivering programme on the left input pin** — and normal-mode silence then requires
-`processed_L ≈ 0`: the kill is inside the processed leg, between the stage-A dry-ring write and
-the stage-E output. This *rules out* the 0.1.1 dead-pin mechanism for the current report (a dead
-pin gives Delta-L = 0 − 0 = 0, inaudible).
-
-Two independent 0.1.2 audits (the wrapper/engine trace and the monitor-path map) then failed to
-find any expression on that leg able to hold exactly one channel at zero while the other plays:
-every modulator is channel-shared (duck, bypass/delta mixes, monitor gain, smoothers, ring
-positions), every per-channel gain is strictly positive (comp `10^(grDb/20)`, limiter
-`ceiling/peak`), and every recursive state self-heals within the block (invariant 9; the one
-uncovered per-channel state — the dither error-feedback pair — is now swept too, though a fault
-there was unreachable). The fingerprint is **not expressible in the current source with intact
-state**, which narrows the field cause to: a session holding limiter link < 100 % with divergent
-per-channel envelope state, a stale or mismatched installed binary, host-side channel handling,
-or in-process memory corruption (the KI-003/KI-008 windows remain the recorded vectors).
-
-What 0.1.2 ships for it, mechanism by mechanism: **(a)** the GR-at-defaults confound is gone
-(ADR-0023 — knee above threshold, unfiltered limiter detector, comp detector clamp), so on
-sub-ceiling material Delta at defaults is now *exact digital silence* and the "GR-flavoured
-residue on the right" observation should disappear with it — if it does not, what remains in
-Delta **is** the anomaly, isolated; **(b)** the panel GR meters are per-channel
-(`meterLimGrDbCh`/`meterCompGrDbCh`), so one field glance now disambiguates "L silent with its
-GR lane pinned deep" (per-channel gain collapse — record the session's link values) from "L
-silent at zero GR" (not the dynamics stages); **(c)** the battery gained the six diagnostic
-configurations the report was observed under and never covered headlessly — Delta engaged
-(channels asserted within 6 dB), loudness-comp on, limiter link 0 %, dither 16-bit shaped,
-true peak on, 44.1 kHz — all green; **(d)** mono→mono closes the last layout-negotiation
-surface (ADR-0023 item 5). **Still needed from the field, unchanged since round 2:** host +
-version, OS, build provenance, format, the session file, and now the two GR lanes' readings
-while the silence is audible.
-
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 
 **Severity:** Low
@@ -830,6 +747,90 @@ because the fix is a behaviour change rather than a repair:
    audible consequence is a brief wrong gain immediately after the switch; which of "clear" or
    "keep warm" is right is a listening-pass call, and the switch is duck-routed, so the artefact
    is partly masked already.
+
+### KI-012 — Field report: the Linux editor accepts no mouse input — NOT REPRODUCED on this tree (2026-08-10)
+
+**Severity:** High (if it holds, the plugin cannot be operated at all on the affected setup)
+**Status:** Reported — not reproduced; the runtime harness below says the opposite
+**Affects:** Linux, plugin format, host and desktop environment not yet recorded
+
+The owner reports that on Linux **no control responds to a click and hovering produces no
+visible reaction**, and asks whether the sibling does something here that this editor does not,
+since Anamorph shows no such behaviour on Linux.
+
+**Workaround:** none known — and none can be written until the setup is known.
+**Cause:** not established. What follows is what the runtime evidence excludes.
+
+This entry breaks constraint C7 (an unconfirmed report is not an entry) for the same reason
+KI-009 did before it was closed, and under the same discipline: it carries the *experiments*, so
+the next round starts from what has already been ruled out rather than repeating it. KI-009's
+outcome is the argument for keeping this entry in that shape — the round that closed it began
+from the excluded list rather than re-deriving it (`POSTMORTEMS.md` INC-004).
+
+**The harness.** A real X server (`Xvfb :91`, 1600×1200×24), the built `Anabasis.vst3` loaded
+into a purpose-built minimal JUCE 9.0.0 VST3 host (`AudioPluginFormatManager` +
+`VST3PluginFormat`, editor in a `DocumentWindow`), synthetic pointer input injected through the
+**XTEST** extension — real `ButtonPress`/`MotionNotify` from the server, not JUCE-internal
+`handleMouseEvent` calls — and screen state read back with `XGetImage`. Every run was repeated
+**without** a window manager and **under `twm`**, so the reparenting frame and the WM's focus
+handling are both covered. The oracles are host-side and independent of the plugin's own
+reporting: the X window's geometry, the host's view of the parameter values, and a pixel diff of
+the plugin window.
+
+**What the harness measured.**
+
+| Probe | Result |
+|---|---|
+| Standalone: click the ADV toggle at editor (809, 23) | window content height 720 → 822 — the click landed |
+| VST3 in the JUCE host, no WM: same click | same resize |
+| VST3 in the JUCE host, no WM: rotary drag at editor (300, 120), Δy = −60 | `Loudness` 0.000 → 0.228, with `Comp Ratio`, `Comp Threshold` and `Limiter Gain` following it through the macro map |
+| VST3 in the JUCE host **under `twm`**: same drag | identical |
+| Pointer parked in the corner, two grabs 1 s apart | **0** pixels changed (correct — no audio is flowing, so the meters are still) |
+| Pointer moved onto a knob, grab again | **26 861** pixels changed |
+
+So on this tree, on Linux, through XEmbed, with and without a window manager: clicks land,
+drags move parameters, and hover repaints. The reported symptom does not occur here.
+
+**The sibling comparison the owner asked for, in full.** Every interaction-relevant construct is
+the same in both editors:
+
+- **OpenGL.** Both exclude the attach on Linux — Anabasis `#if JUCE_MAC || JUCE_WINDOWS`
+  (`src/gui/PluginEditor.cpp`), the sibling `#if ! (JUCE_LINUX || JUCE_BSD)` with the
+  ADR-0011/INC-006/KI-003 `XEmbedComponent` rationale. Confirmed at *runtime*, not just in the
+  preprocessor: the X11 window tree under the host shows the plugin owning exactly **one**
+  window and no GL child, so no GL child window can be swallowing the pointer.
+- **`TooltipWindow`**, the `setOpaque (true)` on the editor, `applyUiScale()`
+  (`setSize` then `setTransform (scale (hostScale × uiScale))`) and the `setScaleFactor`
+  override: identical in both, line for line.
+- **Build surface.** `EDITOR_WANTS_KEYBOARD_FOCUS FALSE`, `JUCE_WEB_BROWSER=0`,
+  `juce_recommended_{config,lto,warning}_flags` and the same `--gc-sections`/`relro`/`now`
+  hardening link options — identical in both `CMakeLists.txt`.
+- **Overlays.** `dimOverlay` is `setInterceptsMouseClicks (false, false)`; the three `Backdrop`s
+  are `addChildComponent` (invisible) and become visible only from an explicit click on the
+  wordmark, the Settings button or the preset Save item. Nothing full-frame sits above the
+  controls.
+
+The **only** structural divergence found is that the sibling declares its `juce::OpenGLContext`
+member on every platform and gates only `attachTo`, while this editor compiles the member out on
+Linux entirely. That is not on the input path — and the runtime window tree above proves it is
+not, since neither build creates a GL window on Linux.
+
+**What is still open, and what would settle it.** The fault is real for the reporter and absent
+in every harness here, so the difference is in the environment, not (on this evidence) in the
+component tree, the hit-testing, the overlay z-order or the GL gate. To progress, record: the
+**host and version**, the **desktop environment / window manager and whether a compositor is
+running**, whether the build is a CI artifact or a local one, and — the single most
+discriminating datum — **whether the meters move while audio plays**. Moving meters with dead
+controls is an *input-routing* fault; frozen meters with dead controls is a *repaint/event-loop*
+fault (on Linux JUCE drives `dispatchDeferredRepaints` from the same vblank timer that feeds
+`VBlankAttachment`, so both symptoms share one carrier), and the two lead to opposite places.
+
+Evidence [Partially Verified]:
+- Source: `src/gui/PluginEditor.cpp` (GL gate, overlays, `applyUiScale`), `CMakeLists.txt`
+- Test:   none — the report does not reproduce; the runtime harness above is recorded in
+  `worklogs/`, not in the suites, because a passing probe of a fault that never appears would
+  pin nothing
+- Commit: this one
 
 ## Standing note for P1 onward
 

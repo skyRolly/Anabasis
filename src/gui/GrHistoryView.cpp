@@ -103,7 +103,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // Reachable at ordinary block sizes: 20 s at 48 kHz / 64 samples is 15000
     // entries, so `want` saturates for anything up to ~234 samples per block.
     const int64_t want  = windowEntries (processor.getSampleRate(), processor.getBlockSize());
-    const int64_t first = juce::jmax<int64_t> (0, head - want);
+    const int64_t first = juce::jmax ((int64_t) 0, head - want);
     const int64_t count = head - first;
     if (count <= 0)
         return;
@@ -152,7 +152,27 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // frames after a reset (the newest bucket sits at the right edge by
     // anchoring, and this region is the rest), which the stretch draw needed
     // a special case for.
+    //
+    // ONLY while the ring is still filling, and that guard is the 0.1.3
+    // left-edge fix. A FULL scrolling window reaches this branch too:
+    // `kFirst` alternates between the width bound and the window bound as
+    // buckets expire (stride-boundary phase), so `xFirst` oscillates between
+    // the left edge and one pitch inside it — and whenever it sat one pitch
+    // in, this branch drew the GR zero line along the top to `xFirst` and the
+    // bucket loop's first point then dropped VERTICALLY to the real trace
+    // value at the same x. With any reduction on screen that rendered as an
+    // accent-coloured vertical bar at the left edge, flashing at the
+    // bucket-expiry rate (the owner's 0.1.3 item 4 report). Left of the
+    // oldest bucket of a full window is EXPIRED history, not unmeasured data,
+    // so the zero-data presentation does not apply there — the bucket loop
+    // below extends the oldest bucket's values to the edge instead.
+    //
+    // The predicate lives in the header (`drawsZeroRegion`) rather than here,
+    // for the reason `windowEntries` and `buckets` do: a rule reachable only
+    // from `paint` is a rule no test can pin, which is how this defect
+    // survived the round that introduced it.
     const float zeroWy = area.getBottom() - 0.5f;       // == the wh floor below
+    if (drawsZeroRegion (head, want))
     {
         const float xFirst = bucketX (nb, nb.kFirst, area.getX(), area.getWidth());
         if (xFirst > area.getX() + 0.5f)
@@ -187,8 +207,22 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
                        + area.getHeight() * juce::jlimit (0.0f, 1.0f, -grDb / grSpan) * 0.5f;
         if (! started)
         {
-            wave.startNewSubPath (x, wy);
-            gr.startNewSubPath (x, gy);
+            // A full scrolling window (the filling case starts its paths in
+            // the zero-region branch above): the sub-pitch strip left of the
+            // truncated oldest bucket holds expired history, so the oldest
+            // bucket's own values extend to the panel edge — a horizontal
+            // ≤ one-pitch lead-in that scrolls seamlessly, where the previous
+            // zero-line start drew the flashing vertical bar the banner above
+            // describes. The lie is bounded by the same one bucket of
+            // truncation ADR-0023 item 6 already accepts at this edge.
+            const float xEdge = area.getX();
+            wave.startNewSubPath (juce::jmin (x, xEdge), wy);
+            gr.startNewSubPath (juce::jmin (x, xEdge), gy);
+            if (x > xEdge + 0.01f)
+            {
+                wave.lineTo (x, wy);
+                gr.lineTo (x, gy);
+            }
             started = true;
         }
         else

@@ -240,7 +240,7 @@ private:
                               const juce::String& name, const juce::String& tip, juce::Value);
     void passComboHoverThrough (juce::ComboBox&);
 
-    AnabasisAudioProcessor& processor;
+    AnabasisAudioProcessor& proc;
     abgui::AnabasisLookAndFeel lnf;
     // Null PARENT on purpose (a desktop tooltip is not clipped to the editor),
     // which is also why it needs `lnf` handed to it EXPLICITLY: a desktop

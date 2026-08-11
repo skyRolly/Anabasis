@@ -36,14 +36,19 @@ static juce::String tipFor (const char* id)
         { pid::bypass,            "" },   // the red pill labels itself (sibling: no tip)
         { pid::advancedMode,      "Per-stage control over the same sound - switching views never changes it" },
         { pid::loudness,          "How hard the adaptive chain pushes - 0 adds no push, but the Ceiling still holds" },
-        { pid::character,         "Clean to Colour - how much of the push comes from saturation rather than clean limiting" },
+        { pid::character,         "Clean to Color - how much of the push comes from saturation rather than clean limiting" },
         { pid::tone,              "Dark to bright tilt of the overall result" },
         { pid::ceiling,           "The output limit - nothing leaves the plugin above it. Sample peak by default; engage TP to hold it in dBTP" },
         { pid::freeze,            "Hold the adaptive trims exactly where they are now" },
         { pid::loudnessComp,      "Listen at matched loudness, so louder can't pass for better" },
         { pid::deltaMonitor,      "Solo the difference - hear exactly what the processing removes" },
         { pid::inputGain,         "Level into the chain, before any processing" },
-        { pid::scHpfFreq,         "Sidechain high-pass for both detectors - keeps low end from pumping the compressor and limiter" },
+        // COMPRESSOR ONLY since 0.1.2 (ADR-0023 item 2): the limiter's detector
+        // is deliberately unfiltered — its threshold IS the Ceiling, so it must
+        // track the actual peak. This tip still said "both detectors" a round
+        // after the filter left the limiter, which is the drift the registry
+        // footnote and the manual had already been corrected for.
+        { pid::scHpfFreq,         "Sidechain high-pass for the compressor's detector - keeps low end from pumping the compressor. The limiter always hears the true peak" },
         { pid::compRatio,         "How strongly the glue compressor reduces past the threshold" },
         { pid::compThreshold,     "Where the glue compressor starts to work" },
         { pid::compAttack,        "How quickly the compressor responds to a level rise" },
@@ -57,9 +62,9 @@ static juce::String tipFor (const char* id)
         { pid::clipDrive,         "Push into the clipper, level-compensated - adds density, not volume" },
         { pid::clipMix,           "Blend clipped with dry" },
         { pid::colourModel,       "The saturation voicing - Clean, Tape, Tube or Transistor" },
-        { pid::colourBalance,     "Odd to even harmonic balance of the colour" },
+        { pid::colourBalance,     "Odd to even harmonic balance of the color" },
         { pid::colourTone,        "Dark to bright voicing of the added harmonics" },
-        { pid::colourDepth,       "How much colour the stage adds" },
+        { pid::colourDepth,       "How much color the stage adds" },
         { pid::dynTilt,           "Dynamic Tame - softens harsh highs only when the material turns aggressive" },
         { pid::limGain,           "The push into the limiter" },
         { pid::lookahead,         "How far ahead the limiter sees - longer catches transients more cleanly" },
@@ -84,28 +89,16 @@ static juce::String tipFor (const char* id)
         { pid::dither,            "Bit-depth dither for the final export - Off, 16-bit or 24-bit TPDF" },
         { pid::ditherShaping,     "Shape the dither noise away from where the ear is most sensitive" },
     };
+    // The table row is the WHOLE tip. The nine macro-managed knobs used to
+    // get a detach-badge legend appended here ("A corner dot means this knob
+    // is detached from the macros…" — 0.1.1's answer to the owner's "why only
+    // these knobs" question); the 0.1.3 owner directive removed every
+    // corner-dot explanation from the knob tooltips. The badge itself
+    // (paint()'s accent dot) and Simple's clickable reset dot are untouched —
+    // only the tooltip suffix is gone.
     for (const auto& r : rows)
         if (std::strcmp (r.id, id) == 0)
-        {
-            // §5.3/§6.3 detach-badge legend (0.1.1, owner item 9: the dot's
-            // semantics read as arbitrary — "why only these knobs, and why
-            // doesn't returning to the preset value clear it?"). The answer
-            // lives ON the only controls that can ever show it — the nine
-            // macro-managed knobs — appended here from the ONE managed list
-            // rather than written into nine strings, so the badge set and
-            // the legend set cannot drift apart. The dot marks detachment
-            // FROM THE MACROS, not difference from the preset: it appears
-            // when a manual edit takes the knob off its macro curve, and
-            // clears when a macro gesture (or Simple's reset dot, or a
-            // preset load's own mask) re-lands the curve — matching the
-            // value alone never re-attaches, so it never clears the dot.
-            for (int i = 0; i < managed_params::kCount; ++i)
-                if (std::strcmp (managed_params::ids[i], id) == 0)
-                    return juce::String (r.tip)
-                         + ". A corner dot means this knob is detached from the macros"
-                           " and holds your value - move a macro to re-land it";
             return r.tip;
-        }
     // Reaching here means a parameter was added without a tooltip — make the
     // gap visible in a debug build instead of silently hoverless.
     jassertfalse;
@@ -267,8 +260,8 @@ void AnabasisAudioProcessorEditor::ABControl::paint (juce::Graphics& g)
     auto inner = getLocalBounds();
     g.setFont (juce::Font (juce::FontOptions (14.0f)).withExtraKerningFactor (0.04f));
 
-    auto aRect = inner.removeFromLeft (juce::roundToInt (inner.getWidth() * 0.40f));
-    auto bRect = inner.removeFromRight (juce::roundToInt (getWidth() * 0.40f));
+    auto aRect = inner.removeFromLeft (juce::roundToInt ((float) inner.getWidth() * 0.40f));
+    auto bRect = inner.removeFromRight (juce::roundToInt ((float) getWidth() * 0.40f));
 
     g.setColour (colours::textDim.withAlpha (0.7f));
     g.drawText ("/", inner, juce::Justification::centred);
@@ -282,7 +275,7 @@ void AnabasisAudioProcessorEditor::ABControl::paint (juce::Graphics& g)
 //  Construction
 // ============================================================================
 AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcessor& p)
-    : juce::AudioProcessorEditor (p), processor (p)
+    : juce::AudioProcessorEditor (p), proc (p)
 {
     // `animVBlank` is deliberately NOT in the initialiser list — see the end of
     // this constructor.
@@ -305,7 +298,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
    #endif
     setOpaque (true);
 
-    auto& apvts = processor.apvts;
+    auto& apvts = proc.apvts;
     auto paramName = [&apvts] (const char* id) -> juce::String
     {
         if (auto* pr = apvts.getParameter (id))
@@ -320,10 +313,10 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addAndMakeVisible (titleButton);
 
     abControl.setTooltip ("A/B Compare");   // the sibling's exact wording (no period)
-    abControl.getActive = [this] { return processor.activeSlotIndex(); };
+    abControl.getActive = [this] { return proc.activeSlotIndex(); };
     abControl.onToggle  = [this]
     {
-        processor.switchToSlot (1 - processor.activeSlotIndex());
+        proc.switchToSlot (1 - proc.activeSlotIndex());
         abControl.repaint();
         refreshPresetDisplay (true);
     };
@@ -331,7 +324,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     registerAnimated (abControl);
 
     copyButton.setTooltip (tidyTip ("Copy the current settings into the other A/B slot."));
-    copyButton.onClick = [this] { processor.copySlotToOther(); };
+    copyButton.onClick = [this] { proc.copySlotToOther(); };
     addAndMakeVisible (copyButton);
     registerAnimated (copyButton);
 
@@ -362,8 +355,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     redoButton.setComponentID ("icon");
     undoButton.setTooltip ("Undo");
     redoButton.setTooltip ("Redo");
-    undoButton.onClick = [this] { processor.undo(); refreshPresetDisplay (true); };
-    redoButton.onClick = [this] { processor.redo(); refreshPresetDisplay (true); };
+    undoButton.onClick = [this] { proc.undo(); refreshPresetDisplay (true); };
+    redoButton.onClick = [this] { proc.redo(); refreshPresetDisplay (true); };
     addAndMakeVisible (undoButton);
     addAndMakeVisible (redoButton);
     registerAnimated (undoButton);
@@ -404,8 +397,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         // that carries no identity at all. This replaced the editor-local
         // "remembered source" hint, which died with the window and needed the
         // NAME — the very thing that fails on a clash — to confirm it.
-        const int here = PresetManager::selectedPresetRow (processor.currentPresetSelection(),
-                                                           processor.currentPresetName(),
+        const int here = PresetManager::selectedPresetRow (proc.currentPresetSelection(),
+                                                           proc.currentPresetName(),
                                                            factory, factoryCount, files);
         // ...and the ring KEEPS WALKING past an entry it cannot apply, which
         // is a requirement of resolving the position from the identity rather
@@ -460,8 +453,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         for (int tried = 0; tried < total; ++tried)
         {
             const bool applied = idx < factoryCount
-                                     ? processor.applyFactoryPreset (idx)
-                                     : processor.applyPresetFile (files.getReference (idx - factoryCount));
+                                     ? proc.applyFactoryPreset (idx)
+                                     : proc.applyPresetFile (files.getReference (idx - factoryCount));
             if (applied)
                 break;
             idx = (idx + dir + total) % total;
@@ -587,7 +580,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     ditherCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
     addAndMakeVisible (ditherCaption);
     setupToggle (shapingToggle, pid::ditherShaping, "SHAPE", tipFor (pid::ditherShaping));
-    setupToggle (compToggle, pid::loudnessComp, "COMP", tipFor (pid::loudnessComp));
+    // "MATCH", not "COMP" (0.1.3 item 2): beside a compressor whose panel is
+    // captioned COMP, a toggle reading COMP said "compressor on/off" — this is
+    // the §2.7 loudness-MATCHED monitoring, and the caption now says what it
+    // does. Display only; the parameter and its registry name are untouched.
+    setupToggle (compToggle, pid::loudnessComp, "MATCH", tipFor (pid::loudnessComp));
     setupToggle (deltaToggle, pid::deltaMonitor, "DELTA", tipFor (pid::deltaMonitor));
     setupToggle (freezeToggle, pid::freeze, "FREEZE", tipFor (pid::freeze));
     setupToggle (tpSimpleToggle, pid::truePeakMode, "TP", tipFor (pid::truePeakMode));
@@ -608,7 +605,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
 
     setupToggleInternal (ceilingLockToggle, "LOCK", "Ceiling lock",
                          "Keep the Ceiling where it is while you browse presets",
-                         processor.internalState.state()
+                         proc.internalState.state()
                              .getPropertyAsValue (iid::ceilingLock, nullptr));
 
     // §5.4 Learn — explicit start / explicit end, never background (MODE
@@ -621,11 +618,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     learnButton.setClickingTogglesState (false);
     learnButton.onClick = [this]
     {
-        const auto& a = processor.adaptiveReadout();
+        const auto& a = proc.adaptiveReadout();
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
         if (! a.isLearning())
         {
-            processor.startLearn();
+            proc.startLearn();
             learnStartedMs = nowMs;
             learnStopPending = false;
         }
@@ -634,7 +631,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
             hadLearnedAtStop = a.hasLearned();
             refOnsetAtStop   = a.publishedRefOnset();
             refTiltAtStop    = a.publishedRefTilt();
-            processor.stopLearn();
+            proc.stopLearn();
             learnStopPending = true;
         }
     };
@@ -655,14 +652,14 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
 
     editedDot.setTooltip (tidyTip (
         "Advanced edits took knobs off the macros - click to return to the macro sound"));
-    editedDot.onClick = [this] { processor.resetToMacro(); };
+    editedDot.onClick = [this] { proc.resetToMacro(); };
     addChildComponent (editedDot);
 
-    meterView    = std::make_unique<LoudnessMeterView> (processor);
-    grView       = std::make_unique<GrHistoryView> (processor);
-    spectrumView = std::make_unique<SpectrumView> (processor);
-    clipCurve = std::make_unique<CurveView> (processor, CurveView::Mode::clipTransfer);
-    eqCurve   = std::make_unique<CurveView> (processor, CurveView::Mode::eqResponse);
+    meterView    = std::make_unique<LoudnessMeterView> (proc);
+    grView       = std::make_unique<GrHistoryView> (proc);
+    spectrumView = std::make_unique<SpectrumView> (proc);
+    clipCurve = std::make_unique<CurveView> (proc, CurveView::Mode::clipTransfer);
+    eqCurve   = std::make_unique<CurveView> (proc, CurveView::Mode::eqResponse);
     addChildComponent (*clipCurve);
     addChildComponent (*eqCurve);
     addChildComponent (compGrMeter);
@@ -703,7 +700,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     savePresetBackdrop.setAlwaysOnTop (true);
 
     // -- Settings rows (§6.4, all InternalState-bound) -----------------------
-    auto& ist = processor.internalState.state();
+    auto& ist = proc.internalState.state();
     settingsTitle.setText ("SETTINGS", juce::dontSendNotification);
     settingsTitle.setFont (juce::Font (juce::FontOptions (13.0f)).withExtraKerningFactor (0.18f));
     settingsTitle.setColour (juce::Label::textColourId, colours::textDim);
@@ -784,7 +781,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // of them is benign.
     uiScaleBox.onChange = [this]
     {
-        processor.internalState.state().setProperty (iid::uiScale,
+        proc.internalState.state().setProperty (iid::uiScale,
                          kScaleSteps[juce::jlimit (0, kNumScaleSteps - 1,
                                                    uiScaleBox.getSelectedItemIndex())],
                          nullptr);
@@ -894,7 +891,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         auto dir = PresetManager::userPresetDirectory();
         dir.createDirectory();
         const auto file = dir.getChildFile (name + ".anabasis");
-        if (processor.savePresetFile (file))
+        if (proc.savePresetFile (file))
         {
             // A SAVE IS AN APPLY as far as "which preset is in use" is
             // concerned, and the wrapper says so itself now: `savePresetFile`
@@ -943,7 +940,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // message loop not running mid-constructor. It cannot — but that is the
     // "safe by ordering" argument this file declines elsewhere, and the fix
     // costs one line's placement.
-    shownTpMode = processor.ceilingUnit.truePeakEngaged();
+    shownTpMode = proc.ceilingUnit.truePeakEngaged();
 
     startTimerHz (24);
     seedAnimatedFromValues();          // after every attachment — see there
@@ -1014,8 +1011,8 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
 #if JUCE_MAC || JUCE_WINDOWS
     glContext.detach();
 #endif
-    processor.apvts.removeParameterListener (pid::advancedMode, this);
-    processor.apvts.removeParameterListener (pid::bypass, this);
+    proc.apvts.removeParameterListener (pid::advancedMode, this);
+    proc.apvts.removeParameterListener (pid::bypass, this);
     tooltips.setLookAndFeel (nullptr);   // before `lnf` dies — paired with the ctor
     setLookAndFeel (nullptr);
 }
@@ -1072,9 +1069,9 @@ void AnabasisAudioProcessorEditor::setupRotary (juce::Slider& s, juce::Label& l,
 
 void AnabasisAudioProcessorEditor::attachSlider (juce::Slider& s, const char* id)
 {
-    sliderAtts.add (new SliderAttachment (processor.apvts, id, s));
+    sliderAtts.add (new SliderAttachment (proc.apvts, id, s));
 
-    auto* p = processor.apvts.getParameter (id);
+    auto* p = proc.apvts.getParameter (id);
     if (auto* k = dynamic_cast<Knob*> (&s); k != nullptr && p != nullptr)
     {
         k->resetValue = p->getNormalisableRange().convertFrom0to1 (p->getDefaultValue());
@@ -1092,7 +1089,7 @@ void AnabasisAudioProcessorEditor::passComboHoverThrough (juce::ComboBox& box)
 void AnabasisAudioProcessorEditor::setupCombo (juce::ComboBox& box, const char* id,
                                                const juce::String& tip)
 {
-    auto* cp = processor.apvts.getParameter (id);
+    auto* cp = proc.apvts.getParameter (id);
     if (cp != nullptr)
         box.addItemList (cp->getAllValueStrings(), 1);
     box.setTooltip (tidyTip (tip));
@@ -1100,7 +1097,7 @@ void AnabasisAudioProcessorEditor::setupCombo (juce::ComboBox& box, const char* 
     passComboHoverThrough (box);
     allCombos.add (&box);
     addAndMakeVisible (box);
-    comboAtts.add (new ComboBoxAttachment (processor.apvts, id, box));
+    comboAtts.add (new ComboBoxAttachment (proc.apvts, id, box));
     registerAnimated (box);
     // Title = the REGISTRY name (brief §8), no longer the tooltip: since the
     // R2 tooltip set the two are different strings, and the title must keep
@@ -1120,10 +1117,10 @@ void AnabasisAudioProcessorEditor::setupToggle (juce::ToggleButton& t, const cha
     t.setButtonText (text);
     if (tip.isNotEmpty()) t.setTooltip (tidyTip (tip));
     addAndMakeVisible (t);
-    buttonAtts.add (new ButtonAttachment (processor.apvts, id, t));
+    buttonAtts.add (new ButtonAttachment (proc.apvts, id, t));
     registerAnimated (t);
     // Registry name as title (brief §8) — see setupCombo.
-    auto* p = processor.apvts.getParameter (id);
+    auto* p = proc.apvts.getParameter (id);
     t.setTitle (p != nullptr ? p->getName (24) : text);
     t.setWantsKeyboardFocus (true);   // redundant vs Button's default — see setupCombo
 }
@@ -1213,7 +1210,7 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
     if (advanced)
     {
         // §6.3 — four panel zones, utility + macro rows, bottom metering well.
-        const char* titles[] = { "COMP", "CLIP / COLOUR", "LIMITER", "EQ" };
+        const char* titles[] = { "COMP", "CLIP / COLOR", "LIMITER", "EQ" };
         const int panelW = (getWidth() - 5 * 8) / 4;
         for (int i = 0; i < 4; ++i)
         {
@@ -1259,7 +1256,7 @@ void AnabasisAudioProcessorEditor::paint (juce::Graphics& g)
         g.setColour (colours::accent);
         for (int i = 0; i < managed_params::kCount; ++i)
             if (const auto* k = badged[i];
-                processor.detachMask().contains (managed_params::ids[i]))
+                proc.detachMask().contains (managed_params::ids[i]))
                 g.fillEllipse ((float) k->getRight() - 10.0f, (float) k->getY() + 2.0f,
                                7.0f, 7.0f);
     }
@@ -1399,6 +1396,25 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         for (auto& [s, l] : cells)
         {
             auto cell = rowArea.removeFromLeft (w);
+            // A null pair is a GRID SPACER (0.1.3 item 5): the cell is
+            // consumed so the row keeps the shared column pitch, and nothing
+            // is placed in it — what lets a two-knob row sit ON the grid of
+            // its three-knob neighbours instead of re-centring at its own
+            // pitch, which is the misalignment the EQ redesign removed.
+            //
+            // BOTH halves null, or NEITHER: a spacer is a `{ nullptr, nullptr }`
+            // pair. The `jassert` is the one that says so — a half-null pair is
+            // a layout mistake and a debug build should stop on it rather than
+            // paper over it. The RELEASE behaviour is a separate question, and
+            // the answer here is "skip, do not dereference": the label is used
+            // unconditionally below, so `{ &knob, nullptr }` would otherwise be
+            // a null dereference in a shipping editor — a crash on a mistake
+            // whose worst honest outcome is one mislaid control. Skipping keeps
+            // the debug build loud and the shipping build alive, which is the
+            // trade every other layout guard in this file makes.
+            jassert ((s == nullptr) == (l == nullptr));
+            if (s == nullptr || l == nullptr)
+                continue;
             l->setBounds (cell.removeFromBottom (13));
             s->setBounds (cell.reduced (2, 0));
         }
@@ -1483,10 +1499,29 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         auto a = panel (3);
         auto boxRow = a.removeFromTop (24);
         eqPosBox.setBounds (boxRow.reduced (2, 1));
+        // ONE BAND PER ROW, bands in ascending frequency order (0.1.3
+        // item 5). The previous flow packed the eleven knobs in declaration
+        // order, which split every band across rows (the high shelf shared a
+        // row with Bell 1's frequency, both bells straddled two rows) — the
+        // owner reported the panel as disordered and hard to read. Now: row 1
+        // is Tilt (the global control, macro Tone's landing site) beside the
+        // LOW shelf; rows 2–3 are the two bells; row 4 is the HIGH shelf,
+        // spacer-led so its Freq/Gain land in the SAME columns as the low
+        // shelf's — the two shelves frame the bells symmetrically, and no knob
+        // re-centres at a private pitch. Same 78 px cells and row budget as
+        // before, so the response curve keeps its height and the panel stays
+        // visually level with its three neighbours.
+        //
+        // THE BELL COLUMN ORDER IS Q | Freq | Gain, by the owner's 0.1.3
+        // follow-up directive: each bell's three controls were permuted one
+        // place right (Gain → the Q column, Freq → the Gain column, Q → the
+        // Freq column), and the same permutation is applied to BOTH bells so
+        // the two rows stay a grid rather than two orders. Visual only —
+        // parameter IDs, automation identity, ranges and DSP are untouched.
         placeRow (a, { { &eqTiltK, &eqTiltL }, { &lsFreqK, &lsFreqL }, { &lsGainK, &lsGainL } }, 78);
-        placeRow (a, { { &hsFreqK, &hsFreqL }, { &hsGainK, &hsGainL }, { &b1FreqK, &b1FreqL } }, 78);
-        placeRow (a, { { &b1GainK, &b1GainL }, { &b1QK, &b1QL }, { &b2FreqK, &b2FreqL } }, 78);
-        placeRow (a, { { &b2GainK, &b2GainL }, { &b2QK, &b2QL } }, 78);
+        placeRow (a, { { &b1QK, &b1QL }, { &b1FreqK, &b1FreqL }, { &b1GainK, &b1GainL } }, 78);
+        placeRow (a, { { &b2QK, &b2QL }, { &b2FreqK, &b2FreqL }, { &b2GainK, &b2GainL } }, 78);
+        placeRow (a, { { nullptr, nullptr }, { &hsFreqK, &hsFreqL }, { &hsGainK, &hsGainL } }, 78);
         a.removeFromTop (4);
         eqCurve->setBounds (a);                         // [response curve]
     }
@@ -1542,7 +1577,7 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
     meterView->setBounds (strip.removeFromRight (300));
     spectrumView->setBounds (strip);
     grView->setBounds (strip);
-    const bool spectrumOn = (bool) processor.internalState.state()
+    const bool spectrumOn = (bool) proc.internalState.state()
                                 .getProperty (iid::spectrumOn, false);
     spectrumView->setVisible (spectrumOn);
     grView->setVisible (! spectrumOn);
@@ -1600,7 +1635,7 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     // "GR-only Simple strip" wireframe is superseded by the owner's combined-
     // view directive; DESIGN is superseded section by section as built).
     {
-        const bool spectrumOn = (bool) processor.internalState.state()
+        const bool spectrumOn = (bool) proc.internalState.state()
                                     .getProperty (iid::spectrumOn, false);
         spectrumView->setVisible (spectrumOn);
         grView->setVisible (! spectrumOn);
@@ -1618,7 +1653,7 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
 // ============================================================================
 void AnabasisAudioProcessorEditor::updateModeVisibility()
 {
-    advanced = processor.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f;
+    advanced = proc.apvts.getRawParameterValue (pid::advancedMode)->load() >= 0.5f;
 
     const bool adv = advanced;
     juce::Component* advOnly[] = {
@@ -1701,7 +1736,7 @@ void AnabasisAudioProcessorEditor::refreshCeilingUnit()
     // the lambda falls back to " dB" while a raw `true` would say the box shows
     // " dBTP". One decider, one truth; the constructor seeds `shownTpMode` from
     // this same call for the same reason.
-    const bool tp = processor.ceilingUnit.truePeakEngaged();
+    const bool tp = proc.ceilingUnit.truePeakEngaged();
     if (tp == shownTpMode)
         return;
     shownTpMode = tp;
@@ -1711,7 +1746,7 @@ void AnabasisAudioProcessorEditor::refreshCeilingUnit()
 
 void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
 {
-    const auto& ist = processor.internalState.state();
+    const auto& ist = proc.internalState.state();
     auto reseed = [] (juce::ComboBox& box, int wantIndex)
     {
         wantIndex = juce::jlimit (0, juce::jmax (0, box.getNumItems() - 1), wantIndex);
@@ -1769,7 +1804,7 @@ void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
 int AnabasisAudioProcessorEditor::normalisedUiScale() const
 {
     return kScaleSteps[nearestScaleIndex (
-        (int) processor.internalState.state().getProperty (iid::uiScale, 100))];
+        (int) proc.internalState.state().getProperty (iid::uiScale, 100))];
 }
 
 void AnabasisAudioProcessorEditor::applyUiScale()
@@ -1817,7 +1852,7 @@ void AnabasisAudioProcessorEditor::handleAsyncUpdate()
     uiRefreshPending.store (false, std::memory_order_relaxed);
     updateModeVisibility();
     applyUiScale();
-    dimOverlay.setVisible (processor.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f);
+    dimOverlay.setVisible (proc.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f);
     repaint();
 }
 
@@ -1838,14 +1873,14 @@ void AnabasisAudioProcessorEditor::timerCallback()
         c->getProperties().set ("hov", c->isMouseOver (true));
     refreshInternalSettingsBoxes();
     refreshPresetDisplay();
-    const bool bypassed = processor.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f;
+    const bool bypassed = proc.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f;
     if (bypassed != dimOverlay.isVisible())
         dimOverlay.setVisible (bypassed);
 
     // -- out-LUFS readout (render short-term, the §2.9 tap) ------------------
     if (! advanced)
     {
-        const float s = processor.meterLufsS();
+        const float s = proc.meterLufsS();
         outLufsValue.setText (s <= -99.0f ? juce::String ("-")
                                           : juce::String (s, 1),
                               juce::dontSendNotification);
@@ -1853,7 +1888,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
 
     // -- Learn button state (§5.4 grammar) -----------------------------------
     {
-        const auto& a = processor.adaptiveReadout();
+        const auto& a = proc.adaptiveReadout();
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
         juce::String text ("LEARN");
         if (a.isLearning())
@@ -1893,11 +1928,11 @@ void AnabasisAudioProcessorEditor::timerCallback()
         // wrapper-published deepest-channel value the GR history shares, and
         // the two lanes exist precisely to stop folding the channels. Mono
         // layouts draw one full-height lane.
-        const bool monoOut = processor.getTotalNumOutputChannels() < 2;
-        compGrMeter.setGrDb (processor.meterCompGrDbCh (0),
-                             processor.meterCompGrDbCh (1), monoOut);
-        limGrMeter.setGrDb (processor.meterLimGrDbCh (0),
-                            processor.meterLimGrDbCh (1), monoOut);
+        const bool monoOut = proc.getTotalNumOutputChannels() < 2;
+        compGrMeter.setGrDb (proc.meterCompGrDbCh (0),
+                             proc.meterCompGrDbCh (1), monoOut);
+        limGrMeter.setGrDb (proc.meterLimGrDbCh (0),
+                            proc.meterLimGrDbCh (1), monoOut);
         clipCurve->refresh();
         eqCurve->refresh();
     }
@@ -1907,7 +1942,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
 
     // -- graph-well mode follows int_spectrumOn (the corner chips) -----------
     {
-        const bool on = (bool) processor.internalState.state()
+        const bool on = (bool) proc.internalState.state()
                             .getProperty (iid::spectrumOn, false);
         if (on != shownSpectrumOn)
         {
@@ -1922,7 +1957,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
 
     // -- §5.3 badges: repaint when the mask changes, show the edited dot -----
     {
-        const auto fp = processor.detachMask().joinIntoString ("|");
+        const auto fp = proc.detachMask().joinIntoString ("|");
         if (fp != lastMaskFingerprint)
         {
             lastMaskFingerprint = fp;
@@ -1938,15 +1973,15 @@ void AnabasisAudioProcessorEditor::timerCallback()
 // second, so an unconditional write would repaint two buttons every frame.
 void AnabasisAudioProcessorEditor::refreshUndoRedoEnablement()
 {
-    if (undoButton.isEnabled() != processor.canUndo())
-        undoButton.setEnabled (processor.canUndo());
-    if (redoButton.isEnabled() != processor.canRedo())
-        redoButton.setEnabled (processor.canRedo());
+    if (undoButton.isEnabled() != proc.canUndo())
+        undoButton.setEnabled (proc.canUndo());
+    if (redoButton.isEnabled() != proc.canRedo())
+        redoButton.setEnabled (proc.canRedo());
 }
 
 void AnabasisAudioProcessorEditor::refreshPresetDisplay (bool recomputeNow)
 {
-    auto name = processor.currentPresetName();
+    auto name = proc.currentPresetName();
     if (name.isEmpty())
         name = "Preset";               // §6.2 wireframe placeholder (C8: owner wording TODO)
     // The dirty compare is a full slot-tree equivalence — throttle it to
@@ -1963,7 +1998,7 @@ void AnabasisAudioProcessorEditor::refreshPresetDisplay (bool recomputeNow)
     if (recomputeNow || ++dirtyPollDivider >= 8)
     {
         dirtyPollDivider = 0;
-        shownDirty = processor.presetDirty();
+        shownDirty = proc.presetDirty();
     }
     const auto shown = shownDirty ? name + " *" : name;
     if (shown != presetShownName)
@@ -2000,8 +2035,8 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     // identity-first (exactly one row, or none — an outside-folder file and a
     // deleted preset are on no row and must not tick a same-named substitute)
     // and falls back to the name only for identity-less state.
-    const int cur = PresetManager::selectedPresetRow (processor.currentPresetSelection(),
-                                                      processor.currentPresetName(),
+    const int cur = PresetManager::selectedPresetRow (proc.currentPresetSelection(),
+                                                      proc.currentPresetName(),
                                                       factory, factoryCount, files);
     m.addSectionHeader ("FACTORY");
     for (int i = 0; i < factoryCount; ++i)
@@ -2035,7 +2070,7 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             if (r == 10002) { safeThis->showLoadPreset(); return; }
             if (r >= 20001)
             {
-                safeThis->processor.applyFactoryPreset (r - 20001);
+                safeThis->proc.applyFactoryPreset (r - 20001);
                 safeThis->refreshPresetDisplay (true);
                 return;
             }
@@ -2046,7 +2081,7 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
                 // the wrapper records the identity only on a successful apply
                 // — so the indicator cannot claim a file is the active source
                 // while the processor never moved.
-                safeThis->processor.applyPresetFile (files.getReference (r - 1));
+                safeThis->proc.applyPresetFile (files.getReference (r - 1));
                 safeThis->refreshPresetDisplay (true);
             }
         });
@@ -2068,7 +2103,7 @@ void AnabasisAudioProcessorEditor::showLoadPreset()
                 // `existsAsFile()` is not the readability test;
                 // `parsePresetFile` is, and it refuses a foreign root — a
                 // failed apply moves nothing and records no identity.
-                safeThis->processor.applyPresetFile (f);
+                safeThis->proc.applyPresetFile (f);
                 safeThis->refreshPresetDisplay (true);
             }
         });
@@ -2079,7 +2114,7 @@ void AnabasisAudioProcessorEditor::showSavePreset (bool show)
     savePresetBackdrop.setVisible (show);
     if (show)
     {
-        saveNameEditor.setText (processor.currentPresetName(), juce::dontSendNotification);
+        saveNameEditor.setText (proc.currentPresetName(), juce::dontSendNotification);
         saveNameEditor.grabKeyboardFocus();
     }
 }

@@ -17,7 +17,7 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
 
-project(Anabasis VERSION 0.1.2 LANGUAGES C CXX)
+project(Anabasis VERSION 0.1.3 LANGUAGES C CXX)
 
 # The BASELINE is C++20 (ADR-0008 decision B5). The cache seam below exists for
 # exactly ONE caller — the OQ-006 C++23 canary (.github/workflows/cxx23-canary.yml),
@@ -47,7 +47,27 @@ endif()
 # --- Options (all ANABASIS_*, ADR-0008 §Options) ----------------------------
 option(ANABASIS_BUILD_TESTS      "Build the AnabasisTests + AnabasisStateTests console apps" ON)
 option(ANABASIS_BUILD_BENCH      "Build the AnabasisBench performance target (DESIGN §9; OFF by default)" OFF)
+option(ANABASIS_BUILD_PROBE      "Build AnabasisChannelProbe, which HOSTS the built plugin bundle (KI-009; OFF by default)" OFF)
 option(ANABASIS_BUILD_STANDALONE "Build the Standalone format" ON)
+# DIAGNOSTIC ONLY, and OFF everywhere except the KI-009 macOS x86_64 job. ON
+# compiles src/dsp/StageTrace.h's accumulators into the engine, so every stage
+# of the chain reports per-channel RMS at `releaseResources`. It changes the
+# engine's timing and is not realtime-safe; a binary built with it must never be
+# shipped or measured for performance. OFF expands every tap to `((void) 0)`.
+option(ANABASIS_STAGE_TRACE      "Compile the KI-009 per-stage per-channel trace into the engine (DIAGNOSTIC; never ship)" OFF)
+# BISECTION ONLY. ON drops `juce_recommended_lto_flags` from every target that
+# carries it, which changes what the optimiser is allowed to do ACROSS
+# translation units. It exists because KI-009 turned out to be visible only in
+# an LTO build under one compiler, and "does it survive without LTO" is the
+# first question any such report has to answer. The shipping configuration is
+# OFF; a binary built with this ON is not the product.
+option(ANABASIS_NO_LTO           "Build WITHOUT juce_recommended_lto_flags (bisection; the shipped binary always has them)" OFF)
+if(ANABASIS_NO_LTO)
+    set(ANABASIS_LTO_FLAGS "")
+    message(STATUS "Anabasis: LTO DISABLED -- bisection build, not the shipping configuration")
+else()
+    set(ANABASIS_LTO_FLAGS juce::juce_recommended_lto_flags)
+endif()
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
 
@@ -96,6 +116,47 @@ else()
     else()
         target_link_options(AnabasisHardening INTERFACE
             -Wl,--gc-sections -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
+
+        # CLANG ON LINUX LINKS WITH LLD, and this is a correctness requirement
+        # rather than a preference.
+        #
+        # GNU ld scans a static archive ONCE, in command-line order, selecting
+        # the members that resolve the symbols undefined at that moment. Under
+        # `-flto` the archive members are BITCODE: the plugin runs codegen only
+        # after that scan, and the merged object it emits needs symbols the scan
+        # already passed over — out-of-line copies, vtables and typeinfo that
+        # only became referenced once the optimiser had inlined and devirtualised
+        # across translation units. ld.bfd does not rescan, so those become
+        # undefined references. The failure is spectacular and misleading: the
+        # plugin link reports hundreds of missing JUCE symbols that are demonstrably
+        # present in `libAnabasis_SharedCode.a`.
+        #
+        # Whether it fires at all depends on the binutils/plugin pairing — the
+        # same source, same compiler and same flags link cleanly against one
+        # `/usr/lib/bfd-plugins` and fail against another. That is precisely why
+        # this is pinned here rather than worked around in one CI job: a build
+        # that happens to succeed on the maintainer's machine and fails on a
+        # runner is not a build configuration, it is a coincidence.
+        #
+        # lld ships with the compiler that produced the bitcode, so it is always
+        # version-matched, and it resolves LTO symbol requests against archives
+        # correctly. Probed rather than assumed: where it is absent the build
+        # falls back to the default linker with a warning that names the hazard,
+        # because refusing to configure would be a worse failure than a link that
+        # may well succeed.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            include(CheckLinkerFlag)
+            check_linker_flag(CXX "-fuse-ld=lld" ANABASIS_HAVE_LLD)
+            if(ANABASIS_HAVE_LLD)
+                target_link_options(AnabasisHardening INTERFACE -fuse-ld=lld)
+            else()
+                message(WARNING
+                    "Anabasis: Clang on Linux without lld. LTO links through GNU ld can fail with "
+                    "undefined references to symbols that ARE in libAnabasis_SharedCode.a (one-pass "
+                    "archive scan vs post-scan LTO codegen). Install lld, or configure with "
+                    "-DANABASIS_NO_LTO=ON if a link fails that way.")
+            endif()
+        endif()
     endif()
 endif()
 
@@ -110,6 +171,15 @@ target_include_directories(AnabasisDSP INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_sources(AnabasisDSP INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/AnabasisEngine.cpp)
 target_link_libraries(AnabasisDSP INTERFACE juce::juce_dsp juce::juce_audio_basics)
+
+# Carried on AnabasisDSP rather than on the plugin so that the trace reaches
+# EVERY consumer of the engine at once — plugin, both test apps, the bench. A
+# diagnostic that only the plugin could see would force a bundle rebuild to
+# answer a question the state tests can already ask.
+if(ANABASIS_STAGE_TRACE)
+    target_compile_definitions(AnabasisDSP INTERFACE ANABASIS_STAGE_TRACE=1)
+    message(STATUS "Anabasis: STAGE TRACE ENABLED -- diagnostic build, do not ship or benchmark this binary")
+endif()
 
 # ============================================================================
 #  3. The plugin target.
@@ -177,7 +247,7 @@ target_link_libraries(Anabasis
     PUBLIC
         AnabasisHardening
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
+        ${ANABASIS_LTO_FLAGS}
         juce::juce_recommended_warning_flags)
 
 # ============================================================================
@@ -255,5 +325,66 @@ if(ANABASIS_BUILD_BENCH)
         PUBLIC
             AnabasisHardening
             juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif()
+
+# -- AnabasisChannelProbe: the KI-009 runtime probe. It is the only target that
+#    LOADS the built bundle instead of compiling the sources, which is the whole
+#    point of it: `AnabasisStateTests` drives the real `processBlock`, but as a
+#    console app built from the same sources — no LTO (the flags target is on the
+#    plugin alone, above), no format wrapper, and on macOS one slice rather than
+#    the universal artefact a user installs. The configuration the field report
+#    describes had therefore never been asserted on.
+#
+#    OFF by default and outside ANABASIS_BUILD_TESTS, for the reasons the bench
+#    block states: it needs a BUILT BUNDLE to point at, so it is meaningless in a
+#    tree that has not produced one, and a target that silently builds nothing
+#    is worse than an absent one.
+#
+#    It links the plugin HOSTING modules, which nothing else here does — hence
+#    JUCE_PLUGINHOST_VST3/AU rather than the plugin-client defines used above.
+if(ANABASIS_BUILD_PROBE)
+    juce_add_console_app(AnabasisChannelProbe PRODUCT_NAME "AnabasisChannelProbe")
+    target_sources(AnabasisChannelProbe PRIVATE tools/channel_probe.cpp)
+    target_compile_definitions(AnabasisChannelProbe PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_VST=0
+        JUCE_PLUGINHOST_AU=$<IF:$<BOOL:${APPLE}>,1,0>
+        # The probe PUMPS the message loop between audio blocks so MacroEngine's
+        # 30 ms mapping timer actually fires — the macro path is otherwise dead
+        # in any headless process, which is how the channel battery stayed
+        # vacuous for six rounds. `runDispatchLoopUntil` is gated on this.
+        # Test-tool only; the plugin target does not define it.
+        JUCE_MODAL_LOOPS_PERMITTED=1
+        JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(AnabasisChannelProbe
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_processors
+        PUBLIC
+            AnabasisHardening
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+
+    # The same reproduction WITHOUT the wrapper: engine in, engine out. It links
+    # `juce_recommended_lto_flags`, which no other console target does, because
+    # the plugin does — a defect the optimiser only commits across translation
+    # units at link time is invisible to every target that omits them, which is
+    # how KI-009 stayed a "plugin-only" fault for nine rounds.
+    juce_add_console_app(AnabasisEngineRepro PRODUCT_NAME "AnabasisEngineRepro")
+    target_sources(AnabasisEngineRepro PRIVATE tools/engine_repro.cpp)
+    target_compile_definitions(AnabasisEngineRepro PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(AnabasisEngineRepro
+        PRIVATE
+            AnabasisDSP
+        PUBLIC
+            AnabasisHardening
+            juce::juce_recommended_config_flags
+            ${ANABASIS_LTO_FLAGS}
             juce::juce_recommended_warning_flags)
 endif()

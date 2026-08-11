@@ -14,9 +14,38 @@
 #
 # P1 note: once CMakeLists.txt fixes the artefact layout, replace this search
 # with the explicit expected path.
+#
+# ANABASIS_TEST_RUNNER prefixes both invocations (default: none). It exists so a
+# caller can run the SAME fail-closed discovery under a different execution
+# environment instead of hardcoding artefact paths: the macOS job uses
+# `arch -x86_64` to execute the universal binary's OTHER slice, which no gate
+# ran at all until 2026-08-10. Word-split on purpose -- it is a command prefix
+# ("arch -x86_64"), not a single path.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT/build"
+read -r -a TEST_RUNNER <<< "${ANABASIS_TEST_RUNNER:-}"
+
+# Expanding an EMPTY array under `set -u` is an unbound-variable error in bash
+# before 4.4 -- and macOS ships bash 3.2.57 as /bin/bash, which is what
+# `#!/usr/bin/env bash` resolves to there. So the plain `"${TEST_RUNNER[@]}"`
+# this script shipped with aborted BOTH macOS self-test steps before either
+# binary launched, on every push: the gate did not run the tests and did not say
+# so, which is the exact outage the prefix was added to close.
+#
+# `${arr[@]+"${arr[@]}"}` is the portable guard: the `+` alternate form is not
+# evaluated at all when the array is unset/empty, so nothing is expanded and
+# nothing is flagged; when it IS set the inner quoted expansion produces one
+# word per element, unchanged. Kept as a named helper so the two call sites
+# below cannot drift apart.
+#
+# scripts/run-pluginval.sh's `"${MODE_ARGS[@]}"` never hit this because that
+# array is populated on every path. Any future array here must use this form.
+run_suite() {
+    local binary="$1"
+    echo "Running ${TEST_RUNNER[*]:+${TEST_RUNNER[*]} }$binary"
+    ${TEST_RUNNER[@]+"${TEST_RUNNER[@]}"} "$binary"
+}
 
 find_one() {
     local name="$1" matches
@@ -45,9 +74,7 @@ find_one() {
 TESTS="$(find_one AnabasisTests)"
 STATE_TESTS="$(find_one AnabasisStateTests)"
 
-echo "Running $TESTS"
-"$TESTS"
+run_suite "$TESTS"
 
 echo
-echo "Running $STATE_TESTS"
-"$STATE_TESTS"
+run_suite "$STATE_TESTS"

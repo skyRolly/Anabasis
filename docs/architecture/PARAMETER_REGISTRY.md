@@ -44,7 +44,7 @@ view ∪ {freeze, advancedMode}.
 | `loudness` | Loudness | 0 … 100 | 0 | cont. | **no** | — |
 | `character` | Character | 0 … 1 | 0 | cont. | **no** | — |
 | `tone` | Tone | -1 … 1 | 0 | cont. | **no** | — |
-| `ceiling` | Ceiling | -20 … 0 | -0.1 ¹⁵ | cont. | yes | — |
+| `ceiling` | Ceiling | -20 … 0 | -0.1 ¹⁵ | 0.01 ¹⁶ | yes | — |
 | `freeze` | Freeze | 0 … 1 | 0 | 2 | **no** | preset-excl |
 | `loudnessComp` | Loudness Comp | 0 … 1 | 0 | 2 | yes | view |
 | `deltaMonitor` | Delta | 0 … 1 | 0 | 2 | yes | view |
@@ -62,11 +62,11 @@ view ∪ {freeze, advancedMode}.
 | `clipShape` | Clip Shape | 0 … 1 | 0.5 | cont. | yes | — |
 | `clipDrive` | Clip Drive | 0 … 24 | 0 | cont. | yes | — |
 | `clipMix` | Clip Mix | 0 … 100 | 100 | cont. | yes | — |
-| `colourModel` | Colour | 0 … 3 | 1 | 4 | yes | — |
+| `colourModel` | Color | 0 … 3 | 1 | 4 | yes | — |
 | `colourBalance` | Odd/Even | -1 … 1 | 0 | cont. | yes | — |
-| `colourTone` | Colour Tone | -1 … 1 | 0 | cont. | yes | — |
+| `colourTone` | Color Tone | -1 … 1 | 0 | cont. | yes | — |
 | `dynTilt` | Dynamic Tame | 0 … 2 | 0 | cont. | yes | — |
-| `colourDepth` | Colour Depth | 0 … 100 | 0 | cont. | yes | — |
+| `colourDepth` | Color Depth | 0 … 100 | 0 | cont. | yes | — |
 | `limGain` | Limiter Gain | 0 … 18 | 0 | cont. | yes | — |
 | `lookahead` | Lookahead | 0.5 … 10 | 2 | cont. | **no** | — |
 | `limRelease` | Lim Release | 1 … 1000 | 100 | cont. | yes | — |
@@ -102,6 +102,18 @@ prints `dB` and switches to `dBTP` only while the mode is engaged —
 `testTheCeilingAdvertisesTheUnitItEnforces`. The **text** is not part of the snapshot (ID · name ·
 range · default · steps · automatable), and both spellings parse back identically, so it is
 display-only.
+
+¹⁶ **Quantised to two decimals by [ADR-0024](design-decisions/ADR-0024-ceiling-two-decimal-precision.md)**
+(2026-08-11, owner directive): `ceiling` gains `interval = 0.01` and prints `String (v, 2)`, so the
+control reads `-0.10 dB` and no third-decimal value is reachable — by host automation, state
+restore, preset apply, typed text or the knob alike, because `AudioParameterFloat::setValue`
+resolves `convertFrom0to1` to `RangedAudioParameter`'s SNAPPING wrapper. The **steps** column above
+carries the interval rather than the host-visible step count, which is unchanged:
+`AudioParameterFloat::getNumSteps()` does not derive from the range, so the parameter stays
+continuous to a host and `tests/fixtures/parameter_registry.snapshot` — which pins the step count —
+did not need re-freezing. A range change is a rule 3 item and a Hard Stop; the owner's directive
+cleared that gate, and the default −0.1 was already on the grid, so nothing moved.
+`testCeilingIsQuantisedToTwoDecimals`.
 
 ²³ **Amended by [ADR-0023](design-decisions/ADR-0023-012-field-fix-contracts.md)** (2026-08-09,
 owner 0.1.2 directive; gate cleared in the ADR's Status banner) — two changes, neither touching

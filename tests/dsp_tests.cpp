@@ -551,7 +551,7 @@ static void testEqPositionsAreDistinct()
             for (int n = 0; n < 512; ++n)
             {
                 const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
-                                                 * 100.0f * (b * 512 + n) / (float) sr);
+                                                 * 100.0f * (float) (b * 512 + n) / (float) sr);
                 buf.setSample (0, n, v); buf.setSample (1, n, v);
             }
             engine.process (buf, p);
@@ -1189,6 +1189,397 @@ static void testLimiterPushDoesNotDriveTheClipper()
 // ---------------------------------------------------------------------------
 // §2.4 colour: Clean is the null model at EVERY depth; depth 0 is exact with
 // every model; balance swings the odd/even ratio; tone tilts the residue.
+// KI-009's structural guard: the §2.4 clipper/colour stage CANNOT lose a
+// channel. Both halves of that are asserted, over a wide parameter and
+// stimulus sweep, because the field report's kill zone (0.1.3 addendum) runs
+// through this stage and its gate is `clipMix` — the control that decides
+// whether this stage's output reaches the wet ring at all.
+//
+//  (1) CHANNEL SYMMETRY. Feeding the SAME sequence to both channels must
+//      produce BIT-IDENTICAL outputs, whatever the parameters. That is the
+//      invariant a one-channel kill would have to violate: with it holding,
+//      no state inside this stage can single out a channel, so a channel that
+//      arrives alive leaves alive. (`activityEnv` and the tame gain are shared
+//      across channels BY DESIGN — the image must not wander — and every other
+//      state here is per channel and identically driven.)
+//  (2) NO SELF-GENERATED NON-FINITE from bounded input. This is not a
+//      duplicate of the finiteness tests: the ENGINE's boundary downstream of
+//      this stage substitutes exactly 0.0f **for the offending channel alone**
+//      (`AnabasisEngine::processChunk`, the wet-ring write), so a stage that
+//      emits inf on one channel produces permanent one-channel DIGITAL
+//      SILENCE — the field fingerprint precisely. The colour sub-block raises
+//      to the FIFTH power (Transistor), and at `clipDrive == 0` the clipper is
+//      exact-skipped, so nothing bounds its input inside the stage: this
+//      assertion is what says the reachable input range never gets there.
+//
+// The mutant either half kills: any per-channel asymmetry introduced into this
+// stage (a state array indexed by something other than `ch`, a per-channel
+// branch, a shared accumulator made per-channel or vice versa) fails (1); a
+// widened colour polynomial or a raised input range fails (2).
+// ============================================================================
+//  ClipSat must not be able to HIDE a non-finite from the engine's boundary.
+//
+//  Invariant 9 is a two-part contract: a boundary substitutes 0.0f for a
+//  non-finite sample AND records `stageGeneratedNonFinite`, so the stage that
+//  poisoned itself is repaired (`AnabasisEngine::processChunk` ->
+//  `clip.sanitiseState()`). The whole mechanism is keyed on the fault being
+//  VISIBLE at the boundary — on the stage's OUTPUT going non-finite.
+//
+//  Clip Mix at 0 breaks that key. The mix loop's exact endpoints leave the dry
+//  sample untouched at M == 0 (the bit-exact identity path, which is correct and
+//  must stay), so the stage emits a finite value NO MATTER what its internals
+//  did. `tameLp[ch]` is nevertheless updated on BOTH tame branches — deliberately,
+//  "keep state warm", so the 6 kHz split does not splice against stale audio when
+//  the tame next engages. Warm state plus an invisible output is a latch: one
+//  non-finite in `tameLp[ch]` survives every block, every preset load and every
+//  A/B, because the flag that would repair it never rises.
+//
+//  It is then paid for later, on ORDINARY audio, the moment the user opens the
+//  mix with the tame engaged — `wet[ch] += (gLin - 1) * (wet[ch] - tameLp[ch])`
+//  is non-finite for that channel alone, the engine's ring substitutes exact
+//  0.0f, and one channel goes digitally silent.
+//
+//  The fingerprint that shape produces is the reported one, which is why this
+//  test exists rather than a comment: channel-local, gated on Clip Mix being
+//  non-zero, absent at mix 0, upstream of the limiter's detector tap (so the
+//  compressor still shows gain reduction on both channels while the limiter
+//  shows it on one), and cured by bypass, which reads the dry ring.
+// ============================================================================
+// WHY THE COMPRESSOR DOES NOT PRE-EMPT THE SUSTAINED ONE-CHANNEL CASES BELOW,
+// recorded because it is not obvious and those tests' premise rests on it. With
+// the default RMS detector and a sustained 1e20+ input, `meanSquare[ch]`
+// (`MasteringComp.h`) overflows to infinity on the first sample and to NaN on the
+// second (inf − inf). From then on `grDbMin = juce::jmin (grDbMin, NaN)` keeps
+// returning the running minimum, so the "no reduction anywhere" early return
+// makes the compressor a pass-through and the huge sample reaches ClipSat intact
+// — which is exactly what the ClipSat cases need. That is an ACCIDENT of jmin's
+// NaN behaviour, not a designed property: a future change to how the compressor
+// handles a non-finite detector would silently change what those tests exercise,
+// rather than failing them. (It also means `meterCompGrDbCh` can publish NaN in
+// that state; harmless to the audio, visible only to the GR lane's display.)
+static void testClipSatCannotHideANonFiniteFromTheBoundary()
+{
+    const juce::ScopedNoDenormals noDenormals;
+
+    auto drive = [] (anabasis::ClipSat& clip, const anabasis::EngineParameters& p,
+                     float inL, float inR, int n)
+    {
+        anabasis::ClipSat& c = clip;
+        c.setPerBlock (p);
+        int bad = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            float f[2] = { inL, inR };
+            c.processSample (f, 2);
+            if (! std::isfinite (f[0]) || ! std::isfinite (f[1]))
+                ++bad;
+        }
+        return bad;
+    };
+
+    anabasis::ClipSat clip;
+    clip.prepare (48000.0);
+
+    anabasis::EngineParameters p;
+    p.clipDriveDb   = 0.0f;      // exact-skipped: the clipper's own bound is NOT in play
+    p.clipShape     = 0.5f;
+    p.colourDepth   = 0.0f;      // colour off, so this isolates the tame state
+    p.colourModel   = 1;
+    p.colourBalance = 0.0f;
+    p.colourTone    = 0.0f;
+    p.dynTiltDb     = 0.0f;      // tame IDLE — the branch that keeps state warm
+    p.clipMix       = 0.0f;      // the setting the field report says CURES the fault
+
+    // SWEEP the poisoning phase rather than assert one magnitude. The bound that
+    // makes this safe is `kArithmeticLimit` on the colour argument, and a bound
+    // is only demonstrated by driving up to and past it: the interesting inputs
+    // are the ones near FLT_MAX (3.4e38), where a difference or a product inside
+    // the tame is closest to overflowing, and ALTERNATING SIGN, which is what
+    // keeps the 6 kHz split's state far from the sample it is subtracted from —
+    // the arrangement that maximises |wet - tameLp|. Nothing here is hostile
+    // input in the invariant-9 sense: the engine zeroes non-finite INPUT before
+    // the EQ, so every value this stage can see is finite, and that is exactly
+    // the premise the argument rests on.
+    //
+    // The colour stage is swept ON as well as off: it is the one sub-block that
+    // can grow the through-signal (`c += dep * r`), so a tame overflow, if one
+    // existed, would be reachable through it and not through the bare signal.
+    int poisonedTotal = 0, hiddenTotal = 0, tameEngaged = 0, configs = 0;
+    for (const float mag : { 1.0e6f, 1.0e20f, 1.0e30f, 1.0e38f, 3.4e38f })
+        for (const int model : { 0, 1, 3 })
+            for (const float dep : { 0.0f, 1.0f })
+            {
+                ++configs;
+                anabasis::ClipSat c2;
+                c2.prepare (48000.0);
+                anabasis::EngineParameters q = p;
+                q.colourModel = model;
+                q.colourDepth = dep;
+
+                // Phase 1 -- poison at Clip Mix 0, alternating sign, one channel.
+                q.clipMix   = 0.0f;
+                q.dynTiltDb = 0.0f;
+                c2.setPerBlock (q);
+                for (int i = 0; i < 4000; ++i)
+                {
+                    float f[2] = { (i & 1) ? mag : -mag, 0.25f };
+                    c2.processSample (f, 2);
+                    if (! std::isfinite (f[0]) || ! std::isfinite (f[1]))
+                        ++hiddenTotal;          // the boundary WOULD have seen it
+                }
+
+                // Phase 2 -- the ordinary control moves the field report
+                // describes: open the mix, raise Dynamic Tame, and DRIVE THE
+                // CLIPPER.
+                //
+                // The drive is the load-bearing part and its absence made the
+                // first version of this test vacuous. `activityRaw` is written
+                // only inside the `clipOn` branch, so with `clipDriveDb == 0`
+                // the activity envelope stays bit-zero, `tameGainDb` stays 0,
+                // and the tame takes its IDLE branch — the branch that never
+                // reads `tameLp[ch]` into the signal. A phase 2 that leaves the
+                // drive at zero therefore claims to engage the tame and does
+                // not, which is the same "the knob moved and nothing
+                // downstream did" failure round 6 found across the whole
+                // channel battery. 12 dB with a 0.9 input saturates hard
+                // enough to push the envelope well past the -0.01 dB gate.
+                q.clipMix     = 1.0f;
+                q.dynTiltDb   = 2.0f;
+                q.clipDriveDb = 12.0f;
+                poisonedTotal += drive (c2, q, 0.9f, 0.9f, 4000);
+
+                // …and assert the premise rather than trusting it, for exactly
+                // the reason above: if a future change stops this configuration
+                // engaging the tame, this test must go RED rather than quietly
+                // stop testing anything.
+                tameEngaged += (c2.activityEnvelope() > 0.0f) ? 1 : 0;
+            }
+
+    juce::String msg;
+    msg << "clipSat: at Clip Mix 0 the stage's OUTPUT is the untouched dry sample, so a "
+           "poisoned internal state would be INVISIBLE to the engine's boundary ("
+        << hiddenTotal << " non-finite outputs during the poisoning phase — the count is the "
+           "point: the boundary has nothing to catch)";
+    check (hiddenTotal == 0, msg.toRawUTF8());
+
+    msg.clear();
+    msg << "clipSat: (premise) phase 2 really does engage the dynamic tame — the branch that "
+           "reads tameLp into the signal, and the only one a latched state could reach ("
+        << tameEngaged << " / " << configs << " configurations)";
+    check (tameEngaged == configs, msg.toRawUTF8());
+
+    msg.clear();
+    msg << "clipSat: and nothing latches — after " << configs << " poisoning attempts up to "
+           "FLT_MAX with the colour stage swept, opening the mix and driving the clipper with "
+           "the tame ENGAGED leaves ordinary audio finite on both channels ("
+        << poisonedTotal << " non-finite output samples)";
+    check (poisonedTotal == 0, msg.toRawUTF8());
+}
+
+static void testClipSatCannotLoseAChannel()
+{
+    // Same runtime as the shipping plugin: `processBlock` opens with
+    // `juce::ScopedNoDenormals`, so a stage property asserted without FTZ/DAZ
+    // is a property of the harness rather than of the product.
+    const juce::ScopedNoDenormals noDenormals;
+    unsigned st = 424242u;
+    auto rnd = [&st] (int n) { st = st * 1664525u + 1013904223u;
+                               return (int) ((st >> 16) % (unsigned) n); };
+    auto rf  = [&st] () { st = st * 1664525u + 1013904223u;
+                          return (float) ((st >> 8) & 0xffff) / 65535.0f; };
+
+    int asymmetric = 0, nonFinite = 0, cases = 0;
+    for (int trial = 0; trial < 600; ++trial)
+    {
+        anabasis::EngineParameters p;
+        p.clipDriveDb   = (float) rnd (5) * 6.0f;
+        p.clipShape     = rf();
+        p.colourDepth   = (float) rnd (3) * 0.5f;
+        p.colourBalance = rf() * 2.0f - 1.0f;
+        p.colourTone    = rf() * 2.0f - 1.0f;
+        p.dynTiltDb     = (float) rnd (3);
+        p.clipMix       = (float) rnd (5) * 0.25f;
+        p.colourModel   = rnd (4);
+        const double sr = rnd (2) ? 48000.0 : 192000.0;   // base and a 4x region rate
+
+        anabasis::ClipSat clip;
+        clip.prepare (sr);
+        clip.setPerBlock (p);
+
+        // The stimuli the ordinary sine battery never produces, each chosen
+        // for a different way a stage can misbehave: Nyquist alternation (the
+        // ADAA's own (1+z⁻¹)/2 null), gross over-scale, a large DC pedestal,
+        // sparse impulses against near-silence, and denormal-scale material.
+        const int kind = rnd (8);
+        for (int n = 0; n < 4000; ++n)
+        {
+            const float ph = 2.0f * juce::MathConstants<float>::pi * (float) n / (float) sr;
+            float v;
+            switch (kind)
+            {
+                case 0:  v = 0.9f * std::sin (ph * 220.0f); break;
+                case 1:  v = (n & 1) ? 0.99f : -0.99f; break;
+                case 2:  v = 3.0f * std::sin (ph * 50.0f); break;
+                case 3:  v = 0.5f + 0.4f * std::sin (ph * 90.0f); break;
+                case 4:  v = (n % 997 == 0) ? 0.98f : 1.0e-20f; break;
+                case 5:  v = 1.0e-24f * (float) (n % 3); break;
+                // The two OVERFLOW magnitudes, which a ≤ 3.0 sweep cannot see
+                // and which are exactly where this stage's two arithmetic
+                // guards live: the colour polynomial's fifth power gives up
+                // around 5.1e7, and the drive product `dry · g` around 2e37
+                // once `g` leaves unity. Both are far outside anything the
+                // chain can deliver — they are here because the stage's
+                // guarantee is stated WITHOUT an exception, and a guarantee
+                // no stimulus reaches is a guarantee no mutant can break.
+                case 6:  v = 4.0e8f * std::sin (ph * 220.0f); break;
+                default: v = 1.0e38f * std::sin (ph * 220.0f); break;
+            }
+            float frame[2] = { v, v };
+            clip.processSample (frame, 2);
+            ++cases;
+            if (! juce::exactlyEqual (frame[0], frame[1]))
+                ++asymmetric;
+            if (! std::isfinite (frame[0]) || ! std::isfinite (frame[1]))
+                ++nonFinite;
+        }
+    }
+    juce::String msg;
+    msg << "clipSat: the stage is channel-symmetric — identical input sequences leave "
+           "bit-identical (" << cases << " samples swept, " << asymmetric << " divergent)";
+    check (asymmetric == 0, msg.toRawUTF8());
+    msg.clear();
+    msg << "clipSat: …and never emits a non-finite value from bounded input, so the engine's "
+           "per-channel zero substitution is never armed by this stage (" << nonFinite << ")";
+    check (nonFinite == 0, msg.toRawUTF8());
+
+    // ---- CROSS-CHANNEL INDEPENDENCE, the property KI-009 would have to break -
+    // Symmetry (above) says the two channels are treated ALIKE. That is not
+    // the same statement as: what happens on channel 1 cannot destroy channel
+    // 0. A stage can be perfectly symmetric and still have a shared term that
+    // one channel drives into the ground — and "one channel silent while the
+    // other plays" is exactly that shape.
+    //
+    // So this asserts the structural claim directly, by DIFFERENCE: run the
+    // SAME channel-0 input twice, once beside a silent channel 1 and once
+    // beside a hostile one, and compare channel 0's output. The stage has
+    // exactly one cross-channel term — `activityRaw`, the clip-depth maximum
+    // that drives the shared dynamic-tame gain — and it is an ATTENUATION
+    // bounded by `dynTilt` (≤ 2 dB). So channel 0's two renders may differ by
+    // at most that, and by NOTHING else. Any future cross-channel coupling
+    // that could zero a channel — a shared divisor, a shared envelope used as
+    // a gain without a bound, a max/min that leaks one channel's magnitude
+    // into the other's gain — fails this immediately, whether or not it is
+    // symmetric.
+    //
+    // Run at dynTilt = 0 as well, where the bound collapses to BIT-EXACT
+    // independence: with the tame disengaged the channels share nothing at
+    // all, and that is the strongest form the architecture allows.
+    //
+    // WHAT MUTATION TESTING TAUGHT HERE, because it is a stronger structural
+    // result than the assertion states and it belongs with the assertion.
+    // Widening the shared gain alone does NOT break this — the tame is a
+    // SHELF (`wet += (gLin−1)·(wet − tameLp)`, i.e. `gLin·wet + (1−gLin)·tameLp`),
+    // so however far `gLin` falls the lowpass leg survives, and a first-order
+    // lowpass still passes ~0.37 of its input at Nyquist. **The shared term
+    // therefore cannot zero a channel even at an unbounded gain** — the
+    // structure, not the 2 dB range, is what makes a cross-channel kill
+    // impossible here. What DOES break the assertion is turning that shelf
+    // into a broadband gain (`wet *= gLin`), which is the actual failure class:
+    // a shared envelope used as a gain. That mutant reads −48.5 dB.
+    // (A third lesson, kept because it cost a cycle: the probe tone must sit
+    // ABOVE the shelf corner — a 220 Hz probe passes any mutant, because below
+    // the corner the shelf does nothing whatever the gain is.)
+    {
+        auto renderChannelZero = [] (float tiltDb, bool hostileNeighbour,
+                                     std::vector<float>& out)
+        {
+            anabasis::EngineParameters p;
+            p.clipDriveDb = 12.0f; p.clipShape = 0.4f; p.colourDepth = 1.0f;
+            p.colourModel = 3;     p.dynTiltDb = tiltDb; p.clipMix = 1.0f;
+            anabasis::ClipSat clip;
+            clip.prepare (48000.0);
+            clip.setPerBlock (p);
+            out.resize (24000);
+            for (int n = 0; n < 24000; ++n)
+            {
+                const float ph = 2.0f * juce::MathConstants<float>::pi * (float) n / 48000.0f;
+                // Channel 0's tone sits ABOVE the tame's ~6 kHz shelf corner
+                // on purpose: below it the shelf barely acts and the bound
+                // would pass however wide the shared gain became, which is a
+                // test that cannot fail rather than a test that holds. (Found
+                // by mutation: a 220 Hz probe survived a 40× widened tame.)
+                float frame[2] = { 0.42f * std::sin (ph * 9000.0f),
+                                   hostileNeighbour ? 8.0f * std::sin (ph * 3100.0f) : 0.0f };
+                clip.processSample (frame, 2);
+                out[(size_t) n] = frame[0];
+            }
+        };
+
+        std::vector<float> alone, beside;
+        renderChannelZero (0.0f, false, alone);
+        renderChannelZero (0.0f, true,  beside);
+        int differing = 0;
+        for (size_t n = 0; n < alone.size(); ++n)
+            if (! juce::exactlyEqual (alone[n], beside[n]))
+                ++differing;
+        juce::String crossMsg;
+        crossMsg << "clipSat: with the dynamic tame idle the channels are BIT-EXACTLY independent — "
+               "a hostile neighbour cannot move this channel by one ulp (" << differing << " differ)";
+        check (differing == 0, crossMsg.toRawUTF8());
+
+        renderChannelZero (2.0f, false, alone);
+        renderChannelZero (2.0f, true,  beside);
+        // A LEVEL comparison, not a per-sample ratio: the tame is a high-shelf
+        // cut, so it shifts phase a little and a sample-by-sample dB ratio
+        // explodes harmlessly at every zero crossing (measured ~28 dB there
+        // while the level moves under 2). Level is also the claim that matters
+        // — "cannot push this channel toward silence" is a statement about how
+        // much energy survives, not about any one sample.
+        double sumAlone = 0.0, sumBeside = 0.0;
+        for (size_t n = alone.size() / 4; n < alone.size(); ++n)   // settled portion
+        {
+            sumAlone  += (double) alone[n]  * alone[n];
+            sumBeside += (double) beside[n] * beside[n];
+        }
+        const double levelDelta = 20.0 * std::log10 (std::sqrt (sumBeside)
+                                                     / juce::jmax (1.0e-30, std::sqrt (sumAlone)));
+        crossMsg.clear();
+        crossMsg << "clipSat: with the tame at its 2 dB maximum a hostile neighbour moves this channel's "
+               "LEVEL by at most that shared attenuation, never toward silence ("
+            << (float) levelDelta << " dB)";
+        check (std::abs (levelDelta) < 2.5, crossMsg.toRawUTF8());
+    }
+
+    // The other direction, and the one the wrapper battery cannot see at unit
+    // level: an ASYMMETRIC input must leave both channels alive. A channel
+    // carrying programme cannot be zeroed by anything this stage does to the
+    // other one — the shared tame gain is the only cross-channel term, and it
+    // is an attenuation bounded by `dynTilt` (≤ 2 dB).
+    {
+        anabasis::EngineParameters p;
+        p.clipDriveDb = 18.0f; p.clipShape = 0.3f; p.colourDepth = 1.0f;
+        p.colourModel = 3; p.dynTiltDb = 2.0f; p.clipMix = 1.0f;
+        anabasis::ClipSat clip;
+        clip.prepare (48000.0);
+        clip.setPerBlock (p);
+        double sumSq[2] = { 0.0, 0.0 };
+        for (int n = 0; n < 48000; ++n)
+        {
+            const float ph = 2.0f * juce::MathConstants<float>::pi * (float) n / 48000.0f;
+            // L thirty dB below R, and at a different frequency: the quiet
+            // channel is the one a cross-channel defect would swallow.
+            float frame[2] = { 0.03f * std::sin (ph * 220.0f), 0.95f * std::sin (ph * 3000.0f) };
+            clip.processSample (frame, 2);
+            if (n >= 24000)
+                for (int ch = 0; ch < 2; ++ch)
+                    sumSq[ch] += (double) frame[ch] * frame[ch];
+        }
+        const double rmsL = std::sqrt (sumSq[0] / 24000.0);
+        check (rmsL > 0.005,
+               "clipSat: a quiet channel survives a loud one being clipped and coloured beside it");
+    }
+}
+
 static void testColourModelsBalanceAndTone()
 {
     const double sr = 48000.0;
@@ -3736,6 +4127,92 @@ static void testExtremeLevelDoesNotSilencePermanently()
              p.colourModel  = 3;
              p.colourDepth  = 1.0f;
          });
+
+    // ---- SUSTAINED, and on ONE CHANNEL ------------------------------------
+    // The runs above all drive a SINGLE block of the extreme value into BOTH
+    // channels, and that is what let the KI-009 failure hide behind them for
+    // three rounds: the fault this covers is neither transient nor symmetric.
+    //
+    // The mechanism, and why it is the invariant rather than a knob value.
+    // Every non-finite boundary in `processChunk` substitutes exactly 0.0f
+    // **for the offending channel alone** — that is deliberate and correct as
+    // a propagation bound. What is NOT correct is a stage that keeps
+    // regenerating a non-finite value from a perfectly finite input: the
+    // boundary then emits digital zero on that channel for as long as the
+    // input persists, and invariant 9's repair for the stage
+    // (`clip.sanitiseState()`) cannot help, because nothing about the stage's
+    // STATE is wrong. The result is ONE channel permanently silent while the
+    // other plays — and, because a stage only reaches the ring when its own
+    // mix lets it, gated on that stage's Mix control. That is the whole of
+    // KI-009's field fingerprint.
+    //
+    // So the assertion is the general one: a sustained finite input, however
+    // absurd its magnitude, must leave BOTH channels alive at EVERY Clip Mix.
+    // The mutant it kills is the unbounded colour polynomial (ClipSat's `c⁵`
+    // evaluated on the raw sample once `clipDrive == 0` exact-skips the
+    // clipper's own bound) — restore it and the mix == 1 rows below read
+    // exactly 0.0 on the hot channel.
+    {
+        // UNDER THE SHIPPING RUNTIME'S FTZ/DAZ, which this suite otherwise
+        // does not have. `AnabasisAudioProcessor::processBlock` opens with
+        // `juce::ScopedNoDenormals`; the DSP suite calls `AnabasisEngine`
+        // directly, so without this the two hottest rows would pass on a
+        // SUBNORMAL limiter gain (`ceiling / peak` is ~1e-30 at 1e30 and
+        // ~5.8e-39 at FLT_MAX/2) that the shipped binary flushes to zero. A
+        // regression that only holds because the harness keeps denormals is
+        // not a regression on the product, so the harness is made to match.
+        const juce::ScopedNoDenormals noDenormals;
+        const double sr2 = 48000.0;
+        const int block2 = 512;
+        // The magnitude ceiling is set by the LIMITER, not by this stage:
+        // above ~1e30 the gain it needs is subnormal and FTZ flushes it, so
+        // the hot channel goes quiet for a reason that has nothing to do with
+        // the colour polynomial and nothing a bound in this stage could fix.
+        // The sweep therefore stops where the claim is still true — the
+        // colour path's own overflow starts four orders BELOW the bottom of
+        // this range, so the mutant is caught with room to spare.
+        for (const float mix : { 0.0f, 0.5f, 1.0f })
+        for (const float hot : { 1.0e8f, 1.0e12f, 1.0e16f, 1.0e20f })
+        {
+            anabasis::AnabasisEngine engine;
+            engine.prepare (sr2, block2, 2);
+            anabasis::EngineParameters p;
+            p.colourModel   = 3;          // Transistor — the fifth-power model
+            p.colourDepth   = 1.0f;
+            p.clipMix       = mix;
+            p.clipDriveDb   = 0.0f;       // the clipper exact-skips: nothing bounds the residue
+            p.compStereoLink = 0.0f;      // per channel, so the quiet side is not dragged along
+            p.stereoLink     = 0.0f;
+
+            juce::AudioBuffer<float> buf (2, block2);
+            double sumSq[2] = { 0.0, 0.0 };
+            for (int b = 0; b < 80; ++b)
+            {
+                for (int n = 0; n < block2; ++n)
+                {
+                    const float ph = 2.0f * juce::MathConstants<float>::pi
+                                   * (float) (b * block2 + n) / (float) sr2;
+                    buf.setSample (0, n, hot * std::sin (ph * 220.0f));   // hostile, SUSTAINED
+                    buf.setSample (1, n, 0.30f * std::sin (ph * 330.0f)); // ordinary programme
+                }
+                engine.process (buf, p);
+                if (b >= 60)
+                    for (int n = 0; n < block2; ++n)
+                        for (int ch = 0; ch < 2; ++ch)
+                            sumSq[ch] += (double) buf.getSample (ch, n) * buf.getSample (ch, n);
+            }
+            const double den = 20.0 * (double) block2;
+            const double rmsHot = std::sqrt (sumSq[0] / den);
+            const double rmsOk  = std::sqrt (sumSq[1] / den);
+            juce::String msg;
+            msg << "extremeLevel: sustained " << hot << " on ONE channel at clipMix " << mix
+                << " does not silence it (hot=" << (float) rmsHot << " other=" << (float) rmsOk << ")";
+            check (rmsHot > 1.0e-4, msg.toRawUTF8());
+            msg.clear();
+            msg << "extremeLevel: …and the untouched channel still plays at clipMix " << mix;
+            check (rmsOk > 1.0e-4, msg.toRawUTF8());
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4231,6 +4708,8 @@ int main()
     testOfflineFlipDoesNotDuckTheRender();
     testReturnFromOfflineIsDucked();
     testOfflineEntryClearsEqStateOnAPositionChange();
+    testClipSatCannotLoseAChannel();
+    testClipSatCannotHideANonFiniteFromTheBoundary();
     testColourModelsBalanceAndTone();
     testDynamicTame();
     testClipMixZeroIsDry();

@@ -1,4 +1,5 @@
 #include "AnabasisEngine.h"
+#include "StageTrace.h"
 
 namespace anabasis
 {
@@ -619,7 +620,35 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                                    const int num, const EngineParameters& p,
                                    const bool eqPre, const bool eqPost) noexcept
 {
-    const int nCh = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());
+    // `kMaxChannels` IS THE LOAD-BEARING TERM, and its absence was KI-009.
+    //
+    // Everything below indexes fixed-size stack frames — `staged`, `frame`,
+    // `tapped`, `gains`, `monFrameDry/Wet`, `renderFrame`, `tp`, all
+    // `float[kMaxChannels]` — with this bound. The first two terms are enough
+    // at RUNTIME (`prepare` clamps `numChans` to kMaxChannels before sizing
+    // `wetRing`, and `isBusesLayoutSupported` admits at most stereo), which is
+    // why this read correctly for two years. It is NOT enough at COMPILE time:
+    // `AudioBuffer::getNumChannels()` returns a plain member the optimiser
+    // cannot bound, so every one of those loops was, to the compiler, a
+    // possible out-of-bounds write to a two-element alloca — undefined
+    // behaviour it is entitled to build on.
+    //
+    // Clang did, at -flto: the miscompiled build dropped channel 0 entirely
+    // (exact 0.0f out, both formats, every rate and block size) or applied the
+    // limiter push to channel 1 alone. GCC did not, at any level, with or
+    // without LTO — and neither did Clang WITHOUT LTO, which is why nine
+    // rounds of Linux gates, sanitizers and valgrind were green while the
+    // shipped bundle was broken: the two console test targets deliberately do
+    // not link `juce_recommended_lto_flags` (ADR-0008), so the only artefact
+    // ever built with the fault was the plugin itself.
+    //
+    // Every LEAF stage already re-clamped its own copy — ClipSat,
+    // MasteringComp, LookaheadLimiter, LoudnessMeter, TruePeak, RmsMeter and
+    // AdaptiveEngine all open with `jmin (numChannels, kMaxChannels)`. This
+    // was the one loop that did not, so it was also the only one the optimiser
+    // could reason about unsafely. Do not remove the third term as redundant:
+    // it is the term that makes the access provably in bounds.
+    const int nCh = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels(), kMaxChannels);
     bool sawNonFinite = false;
 
     // Set only where a value that ENTERED a stage finite comes out non-finite,
@@ -658,6 +687,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float in = buffer.getSample (ch, start + n);
+            ANABASIS_TRACE (anabasis::StageTrace::rawIn, ch, in);
             if (! std::isfinite (in))
                 sawNonFinite = true;
 
@@ -682,6 +712,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 stageGeneratedNonFinite = true;
             }
             staged[ch] = s;
+            ANABASIS_TRACE (anabasis::StageTrace::postEqPre, ch, s);
 
             dryRing.setSample (ch, dryWritePos, std::isfinite (in) ? in : 0.0f);
         }
@@ -704,6 +735,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 staged[ch] = 0.0f;             // the compressor's own arithmetic
                 stageGeneratedNonFinite = true;
             }
+            ANABASIS_TRACE (anabasis::StageTrace::compOut, ch, staged[ch]);
             staging.setSample (ch, n, staged[ch]);
         }
         if (++dryWritePos >= dryRingSize)
@@ -739,7 +771,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         float frame[kMaxChannels] = {};
         for (int ch = 0; ch < nCh; ++ch)
         {
-            frame[ch] = region.getSample ((size_t) ch, (size_t) i);
+            frame[ch] = region.getSample (ch, i);
+            ANABASIS_TRACE (anabasis::StageTrace::regionIn, ch, frame[ch]);
             if (! std::isfinite (frame[ch]))
             {
                 frame[ch] = 0.0f;              // the oversampler's own filters
@@ -749,6 +782,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         }
 
         clip.processSample (frame, nCh);       // Clipper/Sat, inside the region
+        for (int ch = 0; ch < nCh; ++ch)
+            ANABASIS_TRACE (anabasis::StageTrace::clipOut, ch, frame[ch]);
 
         // Limiter push, at its documented place in the chain: after Clip/Sat,
         // before the lookahead line, so the detector and the delayed signal
@@ -782,6 +817,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 frame[ch] = 0.0f;              // ClipSat's own polynomial/ADAA
                 stageGeneratedNonFinite = true;
             }
+            ANABASIS_TRACE (anabasis::StageTrace::wetRingWrite, ch, frame[ch]);
             wetRing.setSample (ch, writePosOs, frame[ch]);
         }
 
@@ -811,7 +847,10 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             detPos += ringSizeOs;
         float tapped[kMaxChannels] = {};
         for (int ch = 0; ch < nCh; ++ch)
+        {
             tapped[ch] = wetRing.getSample (ch, detPos);
+            ANABASIS_TRACE (anabasis::StageTrace::detectorTap, ch, tapped[ch]);
+        }
 
         float gains[kMaxChannels] = { 1.0f, 1.0f };
         limiter.processSample (tapped, nCh, wOs, ceilingNow, gains);
@@ -834,9 +873,12 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float delayedWet = wetRing.getSample (ch, readPos);
-            region.setSample ((size_t) ch, (size_t) i,
-                              juce::exactlyEqual (gains[ch], 1.0f) ? delayedWet
-                                                                   : delayedWet * gains[ch]);
+            ANABASIS_TRACE (anabasis::StageTrace::delayedWet, ch, delayedWet);
+            ANABASIS_TRACE (anabasis::StageTrace::limiterGain, ch, gains[ch]);
+            const float limited = juce::exactlyEqual (gains[ch], 1.0f) ? delayedWet
+                                                                       : delayedWet * gains[ch];
+            ANABASIS_TRACE (anabasis::StageTrace::postLimiter, ch, limited);
+            region.setSample (ch, i, limited);
         }
 
         if (++writePosOs >= ringSizeOs)
@@ -911,6 +953,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         for (int ch = 0; ch < nCh; ++ch)
         {
             float processed = staging.getSample (ch, n);
+            ANABASIS_TRACE (anabasis::StageTrace::stageEIn, ch, processed);
             if (! std::isfinite (processed))
             {
                 // Only reachable with oversampling ON: stage A's write to
@@ -1058,6 +1101,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 sawNonFinite = true;
                 out = 0.0f;
             }
+            ANABASIS_TRACE (anabasis::StageTrace::finalOut, ch, out);
             buffer.setSample (ch, start + n, out);
         }
         dryMeter.processFrame (monFrameDry, nCh);

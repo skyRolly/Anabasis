@@ -50,6 +50,71 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **windows** | `windows-latest` (MSVC, multi-config) | VST3 + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **macos** | `macos-14` (Apple Silicon) | universal VST3 + **AU** + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |
+| **source-lint** | `ubuntu-latest` | nothing — runs `scripts/check-portability.py` (seconds) | n/a |
+| **macos-intel** | `macos-15-intel` (**native x86_64**) | thin x86_64 VST3 + AU + Standalone (+ tests + probe) | deterministic ×3, VST3 **and** AU — **blocking** |
+| **linux-clang** | `ubuntu-latest` (Clang) | the two test targets **and the plugin, with the product's own LTO flags**; fails on any warning whose RESOLVED path is under `src/`, `tests/` or `tools/` (`scripts/check-clang-warnings.py`, whose `--self-test` runs first so the gate's silence is evidence rather than an assumption); runs the portability compile canary, then both reproductions against the Clang-built bundle | n/a |
+| **AnabasisChannelProbe** (a step in `linux`, `linux-clang`, `windows`, `macos`, `macos-intel`) | — | the only check that HOSTS the built bundle instead of recompiling its sources: LTO'd, wrapped, and on macOS run for **both formats × both slices** | n/a |
+| **AnabasisEngineRepro** (a step in `linux-clang`, `macos`, `macos-intel`) | — | the same stimulus with NO wrapper, format or host, so a failure names the DSP core directly instead of leaving "engine or wrapper?" to be inferred | n/a |
+| **sanitizers** | `ubuntu-latest` (Clang) | the two test targets under ASan + UBSan, plus a plain build for valgrind memcheck over **both** suites | n/a |
+
+**Why three Linux jobs and not one.** They answer three different questions and only one of them
+is "does it build here".
+
+* `source-lint` guards a class NO Linux build can see. INC-003 was a hard compile error on macOS
+  produced by a line that GCC *and* Clang both accept on Linux, because the divergence is in the
+  platform's `<cstdint>` typedefs (`size_t` is `uint64_t` here and is not there), not in the front
+  end. A lint is the only Linux-runnable guard for that, which is why it is a separate job with no
+  `needs:` — a source defect should fail the run on its own terms rather than queue behind a
+  toolchain.
+* `linux-clang` catches the AppleClang DIAGNOSTIC set (`-Wshorten-64-to-32`,
+  `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …) that `juce_recommended_warning_flags`
+  applies to Clang and not to GCC. Those reached us only from the macOS runner before, minutes
+  into a universal build — or not at all, while that job was red for an unrelated reason. It does
+  NOT catch the typedef class above; the two gaps are separate, and conflating them is how the
+  second one gets dropped. Since INC-004 it also builds the **plugin** — the only artefact that
+  carries `juce_recommended_lto_flags` (ADR-0008) — and runs both reproductions against it.
+  `TESTING_POLICY.md` states that half as non-optional: a gate that compiles the sources in a
+  configuration the customer never receives is not a gate on the product, which is how a
+  channel-dropping miscompilation shipped for five months behind 1039 green checks.
+* `sanitizers` catches, on Linux, defects that only MANIFEST elsewhere: memory this OS hands back
+  zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous there
+  while the defect itself is platform-independent.
+
+**Known coverage boundaries, named rather than left to be rediscovered.** Each of these is a real
+limit of the matrix as it stands; none is a defect in it.
+
+* **macOS-hosted runners are not a DAW.** The probe and pluginval exercise the real wrapper and
+  the real binary, which is as close as automation gets, but neither is Logic, Ableton or Reaper:
+  host-specific buffer arrangements, parameter automation patterns, sample-rate/blocksize changes
+  mid-stream and plugin rescan behaviour remain outside CI. A green macOS matrix is evidence
+  about the plugin, not a substitute for the DAW audition `TESTING_POLICY.md` Level 5 requires.
+* **No CI gate runs the SUITES' assertions against LTO'd code** — but the channel probe and the
+  engine reproduction do, and that is why they exist. The plugin target links
+  `juce::juce_recommended_lto_flags`; both test targets deliberately do not (ADR-0008), so the
+  DSP and state assertions always run un-LTO'd. This boundary is not theoretical: INC-004 was
+  undefined behaviour that only Clang at `-flto` acted on, so it was invisible to every suite,
+  every sanitizer and valgrind while the shipped bundle dropped a channel. What closes it is
+  running an ORACLE against the LTO'd binary — pluginval's conformance checks on all platforms,
+  plus `AnabasisChannelProbe` and `AnabasisEngineRepro`, whose oracle is the product's own
+  behaviour rather than a conformance rule.
+* ~~**The x86_64 macOS slice runs under Rosetta or not at all.**~~ **CLOSED** — the `macos-intel`
+  job (`runs-on: macos-15-intel`) builds a thin x86_64 product on native Intel hardware and runs
+  the suites, both reproductions, the probe against VST3 **and** AU, and pluginval there. It
+  asserts `uname -m` and `sysctl.proc_translated` and FAILS if either says otherwise, because a
+  green tick from the wrong architecture would read as "Intel is fine". The `macos` job's Rosetta
+  step is retained as a second, cheaper signal on the universal binary; it still warns rather than
+  fails when the image has no Rosetta, and that is now a redundancy rather than the only coverage.
+* **A same-repo `pull_request` event reports a GREEN "Build & Validate" with ZERO build jobs.**
+  `docs`, `source-lint` and `preflight` all skip that event on purpose (the `push: ["**"]`
+  trigger already built the SHA), and `preflight` skipping means every build job's `needs` is
+  unsatisfied. That is correct for duplicate avoidance and dangerous for branch protection:
+  making this workflow a required check only works if the protection treats a skipped conclusion
+  as passing. See "Before enabling branch protection" below.
+* **On macOS and Windows pluginval validates PRE-strip, PRE-codesign bytes** (OQ-012). Only Linux
+  validates the exact shipped bytes.
+* **`MALLOC_PERTURB_` is glibc-only**, so the hostile-allocator proxy on the Linux self-test steps
+  has no equivalent on the macOS or Windows jobs — libmalloc and the Windows CRT ignore it.
+  Setting it there would read as coverage that does not exist, so it is deliberately absent.
 
 The **docs** job is deliberately outside the `preflight` gate and outside every build job's `needs`:
 it must run while the repository is still a pre-P1 scaffold (the phase in which the documentation

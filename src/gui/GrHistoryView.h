@@ -66,8 +66,8 @@ public:
     {
         const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
         const int    bs = juce::jmax (1, blockSize);
-        return juce::jmin<int64_t> (anabasis::GrHistoryBuffer::kSize - 1,
-                                    (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
+        return juce::jmin ((int64_t) (anabasis::GrHistoryBuffer::kSize - 1),
+                           (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
     }
 
     // The decimation geometry one frame draws. Public and pure for the reason
@@ -95,15 +95,15 @@ public:
     // `cols` = the panel's pixel width (≥ 1).
     static Buckets buckets (int64_t head, int64_t want, int cols) noexcept
     {
-        const int64_t c      = juce::jmax<int64_t> (1, (int64_t) cols);
-        const int64_t stride = juce::jmax<int64_t> (1, (want + c - 1) / c);
-        const int64_t first  = juce::jmax<int64_t> (0, head - want);
-        const int64_t kHead  = juce::jmax<int64_t> (0, head - 1) / stride;
+        const int64_t c      = juce::jmax ((int64_t) 1, (int64_t) cols);
+        const int64_t stride = juce::jmax ((int64_t) 1, (want + c - 1) / c);
+        const int64_t first  = juce::jmax ((int64_t) 0, head - want);
+        const int64_t kHead  = juce::jmax ((int64_t) 0, head - 1) / stride;
         // `kFull` ≥ 2 so the pitch below divides by at least 1 — reachable
         // only when the whole window fits in one bucket (want ≤ stride, i.e.
         // a panel around one pixel wide), where any pitch draws the same one
         // bucket at the right edge.
-        const int64_t kFull  = juce::jmax<int64_t> (2, (want + stride - 1) / stride);
+        const int64_t kFull  = juce::jmax ((int64_t) 2, (want + stride - 1) / stride);
         // Two lower bounds on the oldest bucket, and both are needed: the
         // window bound (a bucket must lie WHOLLY inside [first, head)) and the
         // width bound (at the fixed pitch only `kFull` buckets fit on the
@@ -114,6 +114,30 @@ public:
         const int64_t kFirst = juce::jmax (juce::jmin (kHead, (first + stride - 1) / stride),
                                            kHead - kFull + 1);
         return { stride, kFirst, kHead, kHead - kFirst + 1, kFull };
+    }
+
+    // Does this frame draw the UNMEASURED zero region at the left edge?
+    //
+    // Pure and public for exactly the reason `windowEntries` and `buckets`
+    // are, and the header comment there says it outright: "a version reachable
+    // only from `paint` is a version no test can pin, which is how this went
+    // unnoticed". The 0.1.3 left-edge defect was that same shape — the rule
+    // lived inline in `paintHistory` and no mutant could reach it.
+    //
+    // The rule: the region is honest ONLY while the ring is still filling. A
+    // FULL window reaches the same branch (as buckets expire, `kFirst`
+    // alternates between the width bound and the window bound, so the oldest
+    // bucket's x oscillates between the left edge and one pitch inside it) —
+    // and there the strip left of it holds EXPIRED history, not unmeasured
+    // data. Drawing the zero line across it and then dropping vertically into
+    // the trace is what produced the flashing accent bar at bucket-expiry
+    // rate. `head <= want` is exactly "still filling": `first` is
+    // `max(0, head - want)`, and `GrHistoryBuffer::reset()` rewinds the write
+    // index to 0, so a clear re-enters the filling case rather than being
+    // misread as a scrolling window.
+    static bool drawsZeroRegion (int64_t head, int64_t want) noexcept
+    {
+        return juce::jmax ((int64_t) 0, head - want) == 0;
     }
 
     // Where bucket `k` lands: anchored at the RIGHT edge (bucket `kHead` at

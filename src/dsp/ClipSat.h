@@ -207,7 +207,27 @@ public:
             // -- 1. drive → ADAA clip → compensate ---------------------------
             if (clipOn)
             {
-                const float u  = dry * g;
+                // The DRIVE PRODUCT is bounded for the same reason the colour
+                // polynomial's argument is (see there): `g` is up to ×15.85 at
+                // +24 dB, so a finite `dry` above ~2e37 makes `u` infinite,
+                // `du` infinite, and `shaped = (A(u) − A(u1)) / du` a NaN — and
+                // the engine's per-channel substitution then emits digital zero
+                // on that channel alone. Same failure, same fingerprint, a
+                // different magnitude (~+750 dBFS rather than ~+154).
+                //
+                // Bounded here rather than argued unreachable, because the rule
+                // this stage's own defect put into DSP_POLICY invariant 9 says
+                // so: a stage whose failure mode is INPUT-MAGNITUDE-driven must
+                // bound its own arithmetic — being in the sanitise list is
+                // necessary and not sufficient. A guarantee with an exception
+                // is not the guarantee the comment claims.
+                //
+                // Inert by construction: the clip curve saturates at ±1 for
+                // |u| ≥ 1+w, so every value the bound touches was already deep
+                // in the saturated region and comes back as the same ±1. And
+                // `jlimit` returns its argument unchanged below the bound, so
+                // the exact-skip and bit-identity paths are untouched.
+                const float u  = juce::jlimit (-kArithmeticLimit, kArithmeticLimit, dry * g);
                 const float u1 = adaaPrev[ch];
                 adaaPrev[ch] = u;
                 const float du = u - u1;
@@ -261,9 +281,48 @@ public:
             // skipped sample to feed filters whose output is multiplied by 0.
             if (dep > 0.0f && model != 0)
             {
-                const float oddPart  = model == 3 ? 0.6f * c * c * c + 0.4f * c * c * c * c * c
-                                                  : c * c * c;
-                const float evenPart = c * c;
+                // THE POLYNOMIAL'S ARGUMENT IS BOUNDED; the through-signal is
+                // NOT. This sub-block was written for a value the CLIPPER had
+                // already bounded — with drive engaged, `c = shaped · invG`
+                // and `shaped` saturates at ±1, so |c| ≤ 1/g ≤ 1 by
+                // construction. At `clipDrive == 0` the clipper is
+                // exact-skipped (the bit-identity contract above) and that
+                // bound disappears with it: the fifth power then runs on
+                // whatever magnitude reached the stage, and float overflows
+                // at |c| ≈ 5.1e7. The residue is a HARMONIC GENERATOR — its
+                // premise is a signal in the working range — so the fix
+                // restores the premise rather than the branch.
+                //
+                // WHY THIS IS NOT COSMETIC (2026-08-09, the KI-009 round). A
+                // non-finite here is not merely a bad sample: the engine's
+                // wet-ring boundary substitutes exactly 0.0f **for the
+                // offending channel alone** (`AnabasisEngine::processChunk`),
+                // so ONE channel goes digitally silent — and stays silent for
+                // as long as the oversized input persists, because invariant
+                // 9's repair for this stage is `sanitiseState()`, a STATE
+                // repair that is inert against an INPUT-magnitude fault.
+                // Measured before the bound: a sustained finite input at 1e20
+                // on one channel produced permanent exact-zero output on that
+                // channel while the other played normally, and the same input
+                // at `clipMix == 0` was merely limited to the ceiling and
+                // heard — i.e. the failure was gated on the mix, because the
+                // mix is what lets this stage's value reach the ring.
+                // `testExtremeLevelDoesNotSilencePermanently` already named
+                // "the clipper's colour polynomial overflows" as a case; it
+                // drove ONE block, so the sustained and per-channel form of
+                // the same fault was never exercised.
+                //
+                // BIT-EXACT for every reachable signal: `jlimit` returns its
+                // argument unchanged inside the range, and the bound is ~120 dB
+                // above anything the chain can carry into this stage, so the
+                // null path and every audible level are untouched. The residue
+                // is added to the UNBOUNDED `c` below, so the through-signal
+                // keeps its own magnitude either way.
+                const float cp = juce::jlimit (-kArithmeticLimit, kArithmeticLimit, c);
+                const float oddPart  = model == 3 ? 0.6f * cp * cp * cp
+                                                        + 0.4f * cp * cp * cp * cp * cp
+                                                  : cp * cp * cp;
+                const float evenPart = cp * cp;
                 float r = (1.0f + bal) * kModelOdd[model]  * oddPart
                         + (1.0f - bal) * kModelEven[model] * evenPart;
 
@@ -283,12 +342,50 @@ public:
         activityEnv += (activityRaw - activityEnv)
                      * (activityRaw > activityEnv ? aActFast : aActSlow);
         const float tameGainDb = -tam * juce::jlimit (0.0f, 1.0f, activityEnv);
+        // THE THIRD ARITHMETIC SITE, and the one that could actually be reached
+        // in a shipped build. `tameLp` is a one-pole fed the UNBOUNDED
+        // through-signal: with `clipDrive == 0` the clipper is exact-skipped so
+        // `wet[ch] == dry` (the colour bound clamps the residue's ARGUMENT, not
+        // `c`), and `aTameLp ≈ 0.544` at 48 kHz leaves the state lagging by up
+        // to ~0.55·|wet|. On alternating-sign input above ~2.2e38 the
+        // difference `wet − tameLp` exceeds FLT_MAX, so the state goes ±inf and
+        // then NaN on the next sample.
+        //
+        // WHY THAT WAS INVISIBLE, which is what made it dangerous rather than
+        // merely wrong. `activityRaw` is written ONLY inside the `clipOn`
+        // branch, so while the drive is at zero the envelope stays bit-zero and
+        // the tame takes its IDLE branch — which updates the state and never
+        // reads it into the signal. The output therefore stays finite, the
+        // engine's boundary has nothing to substitute, `stageGeneratedNonFinite`
+        // never rises, and `sanitiseState()` is never called. The NaN then
+        // survives every block, preset load and A/B, and is paid for the moment
+        // the user raises Clip Drive with a non-zero mix: the engaged branch
+        // reads `tameLp[ch]`, that channel's output goes non-finite, and the
+        // engine substitutes exact 0.0f for it alone. One channel, deferred,
+        // gated on the mix, cured by bypass — the KI-009 fingerprint.
+        //
+        // THE BOUND GOES ON THE STATE FEED, NOT THE THROUGH-SIGNAL, which is
+        // the same shape as the colour fix and for the same reason: the stage
+        // must still be able to PASS a huge finite sample through untouched
+        // (Clip Mix semantics), it must merely stop being able to MANUFACTURE a
+        // non-finite one. `tameLp` is a 6 kHz split of the signal, so clamping
+        // what enters it costs nothing any real programme can notice, and
+        // `jlimit` returns its argument unchanged below the bound — so every
+        // reachable level, the bit-exact null and the exact-skip paths are
+        // untouched. With the state bounded to ±1e6, the engaged branch's own
+        // `wet − tameLp` can no longer overflow either: adding 1e6 to a value
+        // near FLT_MAX is a no-op in float.
+        //
+        // Both branches take it. The idle branch is where the poisoning
+        // actually happened, and a guard on only the branch that READS the
+        // state would have fixed the symptom while leaving the latch.
         if (tameGainDb < -0.01f)
         {
             const float gLin = std::pow (10.0f, tameGainDb * (1.0f / 20.0f));
             for (int ch = 0; ch < nCh; ++ch)
             {
-                tameLp[ch] += (wet[ch] - tameLp[ch]) * aTameLp;       // 6 kHz split
+                const float tIn = juce::jlimit (-kArithmeticLimit, kArithmeticLimit, wet[ch]);
+                tameLp[ch] += (tIn - tameLp[ch]) * aTameLp;           // 6 kHz split
                 wet[ch] += (gLin - 1.0f) * (wet[ch] - tameLp[ch]);
             }
         }
@@ -301,7 +398,10 @@ public:
             // is bit-zero. Seeding this detector non-zero, or flooring it,
             // breaks that null from a file that never mentions it.
             for (int ch = 0; ch < nCh; ++ch)
-                tameLp[ch] += (wet[ch] - tameLp[ch]) * aTameLp;       // keep state warm
+            {
+                const float tIn = juce::jlimit (-kArithmeticLimit, kArithmeticLimit, wet[ch]);
+                tameLp[ch] += (tIn - tameLp[ch]) * aTameLp;           // keep state warm
+            }
         }
 
         // -- 4. mix, exact endpoints. At full wet the assignment is the wet
@@ -354,6 +454,38 @@ private:
     { return 1.0f - std::exp (-juce::MathConstants<float>::twoPi * hz / (float) sr); }
     float onePoleMs (float ms) const noexcept
     { return 1.0f - std::exp (-1.0f / (float) (ms * 0.001 * sr)); }
+
+    // THE STAGE'S ARITHMETIC BOUND, guarding ALL THREE sites that can turn a
+    // finite input into a non-finite one: the drive product `dry · g`
+    // (overflows above ~2e37 once `g` leaves unity), the colour polynomial's
+    // argument (the fifth power overflows above ~5.1e7), and the dynamic tame's
+    // one-pole state feed (the difference `wet − tameLp` overflows above
+    // ~2.2e38 on alternating-sign input, because the state lags the signal by
+    // up to ~0.55 of it). One constant, because it answers one question — "how
+    // large may a value be before this stage's own arithmetic stops being
+    // representable" — and three constants would be three chances to move only
+    // one.
+    //
+    // THIS COMMENT SAID "BOTH" AND NAMED TWO SITES until 2026-08-11, while the
+    // tame ran unguarded a few lines above. That was not a documentation slip:
+    // `docs/policies/DSP_POLICY.md` had been given a paragraph asserting that
+    // this constant is what holds the stage out of the invisible-failure class,
+    // and a test had been written whose second phase was supposed to prove it
+    // and did not (it left `clipDriveDb` at 0, so the tame never engaged and
+    // the phase asserted nothing). A guarantee counted in prose, believed by a
+    // policy and unexercised by its own test is worse than no guarantee — it
+    // is the one nobody re-checks. The count is now the LIST, and the test
+    // asserts the premise that makes its own assertion meaningful.
+    //
+    // 1e6 is chosen from BOTH ends. Upward: its fifth power is 1e30, eight
+    // orders inside the float ceiling, so no model can overflow and the residue
+    // stays finite for every finite input; and ×15.85 (the +24 dB maximum
+    // drive) is nowhere near it. Downward: it is +120 dBFS, some 120 dB above
+    // anything the chain can put into this stage, so every reachable signal
+    // passes through `jlimit` unchanged and this constant changes no audible
+    // sample. It is NOT a listening-test ⊕ value — it is a numerical guard, and
+    // moving it changes nothing a listener can hear.
+    static constexpr float kArithmeticLimit = 1.0e6f;
 
     // Model residue weights {Clean, Tape, Tube, Transistor} — Clean is {0,0}
     // BY DEFINITION (the null model); the other six numbers are P6

@@ -15,6 +15,17 @@ on:
 permissions:
   contents: read
 
+# One in-flight run per ref. Pushing three times in ten minutes previously left
+# three full 3-OS matrices racing, which is both wasteful and confusing to read.
+#
+# cancel-in-progress is GUARDED ON THE REF rather than set to a bare `true`:
+# this workflow is also reached through `workflow_call` from release.yml, and a
+# release build must never be cancelled by an unrelated push. Tag refs therefore
+# queue instead of cancelling.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 # ---------------------------------------------------------------------------
 # pluginval strictness escalates with the project phase, and lives in ONE place
 # so raising the bar is a one-line edit. THIS BLOCK IS THAT PLACE. The two
@@ -130,6 +141,40 @@ jobs:
           python3 scripts/check-docs.py
 
   # -------------------------------------------------------------------------
+  # Source portability lint (scripts/check-portability.py).
+  #
+  # THIS JOB EXISTS BECAUSE A BUILD JOB CANNOT REPLACE IT. Between 2026-08-08
+  # and 2026-08-10 the macOS job failed to COMPILE on every push while Linux and
+  # Windows stayed green, on one line: `juce::jmax<size_t> (1, v.size())`. An
+  # explicit template argument is substituted into JUCE's dsp::SIMDRegister
+  # overload of the same name, and completing SIMDRegister<size_t> needs
+  # SIMDNativeOps<size_t> -- which exists only where size_t names one of JUCE's
+  # ten SIMD element typedefs. On Linux glibc uint64_t IS unsigned long IS
+  # size_t, so it completes; on macOS libc++ uint64_t is unsigned long long, so
+  # it does not.
+  #
+  # The divergence is in the TYPEDEF, not the front end, so NO Linux compiler
+  # can see it -- adding a Linux+Clang job (this workflow now has one, for other
+  # reasons) would NOT have caught this. A lint is the only Linux-runnable
+  # guard, which is why it is a separate, seconds-long job rather than a step
+  # inside a build.
+  #
+  # Runs on ubuntu-latest with no build, no dependencies beyond the standard
+  # library, and no `needs:` -- a source defect should fail the run on its own
+  # terms, not wait behind a toolchain.
+  # -------------------------------------------------------------------------
+  source-lint:
+    runs-on: ubuntu-latest
+    # Same same-repo-PR guard as `docs` above, for the same reasons.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint source portability (JUCE SIMD overload hazard)
+        run: python3 scripts/check-portability.py
+
+  # -------------------------------------------------------------------------
   # Pre-P1 guard. This repository is currently a scaffold: the governance docs,
   # scripts and workflows exist, but there is no CMakeLists.txt and no src/
   # (docs/DEVELOPMENT_BRIEF.md §11 -- the build lands at P1). Without this
@@ -204,7 +249,7 @@ jobs:
         #     re-measure, which PERFORMANCE_BUDGET.md already requires; it is
         #     deliberately not a CI job, because the numbers a shared runner
         #     produces are exactly the ones that must not be quoted.
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_PROBE=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests + bench)
         id: build
@@ -262,9 +307,46 @@ jobs:
           # upload fail a SECOND time on if-no-files-found, burying the real error.
           echo "debug_artifacts=true" >> "$GITHUB_OUTPUT"
 
+      # MALLOC_PERTURB_ FILLS FRESH HEAP WITH A NON-ZERO PATTERN and freed heap
+      # with its complement. It is here because of KI-009: Linux hands back
+      # zero-filled pages and macOS does not, so a read-before-write is benign
+      # here and poisonous there — the symptom is platform-specific while the
+      # DEFECT is not. This makes the Linux run behave like the hostile
+      # allocator for free: no rebuild, no instrumentation, no slowdown.
+      #
+      # 255 on purpose rather than an arbitrary byte: 0xFF fills a float buffer
+      # with NaN, so an uninitialised READ of audio state fails an assertion
+      # instead of passing on a plausible-looking value. glibc-only, which is
+      # why it is set here and on `linux-clang` and NOT on the macOS job, where
+      # libmalloc ignores it and the variable would only read as coverage that
+      # does not exist. valgrind in `sanitizers` answers the same question more
+      # thoroughly and far more slowly; this is the cheap one, on every push.
       - name: Self-tests (DSP + state)
         id: tests
+        env:
+          MALLOC_PERTURB_: 255
         run: ./scripts/run-tests.sh
+
+      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
+      # installs rather than a rebuild of its sources. `AnabasisStateTests`
+      # drives the real processBlock, but compiled into a console app: no LTO
+      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
+      # one architecture. The probe LOADS the built bundle through
+      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
+      # output is the shipped code path including whatever the optimiser did to
+      # it, and its oracle is the field report's own question: is there audio on
+      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
+      # a channel was actually lost. Different codes on purpose.
+      - name: Channel probe (hosts the built VST3)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        # xvfb because the macro scenario opens the editor, exactly as
+        # run-pluginval.sh does for the same reason. Absent a display the
+        # scenario still runs (the mapping timer is the processor's), but the
+        # reported configuration includes the UI, so give it one where we can.
+        run: |
+          if command -v xvfb-run >/dev/null 2>&1; then RUN="xvfb-run -a"; else RUN=""; fi
+          $RUN ./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe \
+               build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
 
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
@@ -364,6 +446,225 @@ jobs:
           path: dist/Anabasis-Linux-debug
           if-no-files-found: error
 
+  # -------------------------------------------------------------------------
+  # Linux + Clang, and the first-party warning gate.
+  #
+  # PURPOSE, stated narrowly so it is not oversold: AppleClang applies a warning
+  # set GCC does not (-Wshorten-64-to-32, -Wconditional-uninitialized,
+  # -Wsign-conversion, -Wcast-align, -Wshift-sign-overflow,
+  # -Wzero-as-null-pointer-constant, ... -- juce_recommended_warning_flags picks
+  # by compiler ID). Every one of those diagnostics used to reach us only from
+  # the macOS runner, several minutes into a universal build, or not at all when
+  # that job was red for an unrelated reason. Running Clang here surfaces them
+  # in the fast lane instead.
+  #
+  # It does NOT catch the typedef-divergence class -- see `source-lint`. Two
+  # different gaps, two different guards; conflating them is how the second one
+  # gets dropped.
+  #
+  # Builds ONLY the two test targets: they compile the entire first-party tree
+  # (ANABASIS_PLUGIN_SOURCES is shared with AnabasisStateTests by construction --
+  # ADR-0008), so coverage is complete while the LTO'd plugin link, the
+  # standalone and the packaging are skipped.
+  #
+  # The gate is FIRST-PARTY warnings only, matched by path. -Werror is not used
+  # and cannot be yet: JUCE's own module sources are compiled into our targets,
+  # so a blanket -Werror would gate on a dependency's warnings and get switched
+  # off at the first JUCE bump. Filtering by path gates exactly what we own.
+  # -------------------------------------------------------------------------
+  linux-clang:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/setup-linux.sh
+
+      - name: Configure (Clang)
+        run: >
+          cmake -B build-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DANABASIS_BUILD_STANDALONE=OFF
+          -DANABASIS_BUILD_PROBE=ON
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      # The canary belongs HERE rather than in source-lint: it needs the pinned
+      # JUCE on disk, which this job has already fetched. It asserts that the
+      # hazard source-lint guards is still real for the pinned revision -- the
+      # deduced form must compile and the explicit form must not. A JUCE bump
+      # that changes the SIMDRegister overload set fails this step instead of
+      # silently turning the lint into a no-op.
+      - name: Portability compile canary (pinned JUCE still has the hazard)
+        run: python3 scripts/check-portability.py --compile-canary build-clang/_deps/juce-src/modules --cxx clang++
+
+      # PROVE THE GATE IS LIVE BEFORE TRUSTING ITS SILENCE. This is the same
+      # move `check-docs.py --self-test` and `check-portability.py
+      # --compile-canary` make, and for the same reason: a checker that has
+      # stopped matching anything is indistinguishable from a clean tree. The
+      # self-test feeds the classifier every path spelling this build could
+      # produce — the absolute form CMake's Ninja generator emits today, the
+      # `../src/…` form a relative-path generator would, and the vendored shapes
+      # that must never count — and fails the job if any is misclassified.
+      - name: Warning-gate self-test (the classifier still classifies)
+        run: python3 scripts/check-clang-warnings.py --self-test
+
+      - name: Build tests AND the plugin (Clang), gating on first-party warnings
+        id: build
+        run: |
+          set -o pipefail
+          cmake --build build-clang --target AnabasisTests AnabasisStateTests AnabasisChannelProbe Anabasis_VST3 AnabasisEngineRepro 2>&1 | tee clang-build.log
+          # The classification is STRUCTURAL, not textual: every diagnostic's
+          # path is resolved (absolute as-is, relative against the build dir the
+          # compiler ran in) and then asked whether the real path lands under
+          # src/, tests/ or tools/ without passing through a `_deps` component.
+          # The previous form was an anchored `grep` on the absolute spelling —
+          # which does match here, and CI has the receipts (run 31449400277's
+          # linux-clang failed on tools/channel_probe.cpp) — but it could only
+          # ever match ONE spelling of a path the build system is free to
+          # change, with no signal if that ever stopped being the spelling.
+          # `scripts/check-clang-warnings.py` carries the reasoning in full.
+          python3 scripts/check-clang-warnings.py \
+            --log clang-build.log \
+            --root "${GITHUB_WORKSPACE}" \
+            --build-dir "${GITHUB_WORKSPACE}/build-clang"
+
+      - name: Self-tests (DSP + state, Clang build)
+        id: tests
+        env:
+          MALLOC_PERTURB_: 255      # see the `linux` job's self-test step
+        run: |
+          ./build-clang/AnabasisTests_artefacts/Release/AnabasisTests
+          ./build-clang/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
+      # ---- THE GATE KI-009 NEEDED, and the reason it is on the CLANG job. ---
+      #
+      # The build step above includes `Anabasis_VST3` deliberately, and that one
+      # word is the whole lesson of INC-004. By ADR-0008 the two console targets
+      # do NOT link `juce_recommended_lto_flags`; the plugin does. KI-009 was
+      # undefined behaviour in the engine's channel loop that only Clang, and
+      # only at -flto, acted on — so every non-LTO artefact (both suites, the
+      # sanitizer builds, valgrind, the GCC plugin) was green for five months
+      # while the bundle a user installs dropped a channel. "Clang compiles the
+      # tests" was never the question; "Clang compiles the PRODUCT, with the
+      # product's flags" is, and it costs a few minutes on the cheapest runner.
+      #
+      # Engine first, bundle second, and the order is the diagnosis: the repro
+      # drives `AnabasisEngine` with no wrapper, no format and no host, so a
+      # failure there says the defect is in the DSP core; a repro that passes
+      # while the probe fails says it is not.
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build-clang/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
+      - name: Channel probe against the Clang-built bundle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: >
+          ./build-clang/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          build-clang/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+
+  # -------------------------------------------------------------------------
+  # Sanitizers (Linux). The point of this job is to catch, ON LINUX, defects
+  # that only MANIFEST on another platform.
+  #
+  # KI-009 (a single silent channel, reproducible on macOS and not on Linux) put
+  # the read-before-write hypothesis at the top of the list: memory that Linux
+  # hands back zero-filled is arbitrary on macOS, so an uninitialised read is
+  # benign here and poisonous there. That defect is platform-INDEPENDENT even
+  # though its symptom is not, and tooling sees it regardless of which bytes the
+  # allocator happened to supply.
+  #
+  # ASan+UBSan cover out-of-bounds, lifetime and undefined behaviour -- the last
+  # of which also matters because UB is what lets -O3 + LTO on a different
+  # target legally delete a guard. MemorySanitizer, the dedicated uninitialised
+  # -read tool, is deliberately NOT used: it requires every dependency including
+  # libc++ and all of JUCE to be instrumented, and an uninstrumented dependency
+  # produces false positives rather than silence. valgrind memcheck answers the
+  # same question with no rebuild of anything, so it carries that half.
+  #
+  # valgrind runs BOTH suites. It is ~50x slower than native, and that cost is
+  # accepted because memcheck is the only uninitialised-read detector in the
+  # pipeline and the read that would matter runs through the real wrapper
+  # `processBlock` -- which only AnabasisStateTests drives. An earlier revision
+  # pointed it at the DSP suite alone, which aimed the detector away from the
+  # span KI-009 implicates.
+  #
+  # detect_leaks=0: JUCE's singletons are torn down at exit in ways LeakSanitizer
+  # reports and this job is not a leak gate. halt_on_error=1 on UBSan so the
+  # first violation fails the job rather than scrolling past.
+  # -------------------------------------------------------------------------
+  sanitizers:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/setup-linux.sh
+          # clang's sanitizer runtime ships SEPARATELY from clang on Debian/Ubuntu.
+          # Without it the link fails with "cannot find libclang_rt.asan-x86_64.a",
+          # which reads as a project problem and is not one. The version-suffixed
+          # package is the reliable name; the unsuffixed one is a convenience alias
+          # that does not exist on every image, so try both and fail loudly if
+          # neither lands (`set -e` is on -- the final `-y valgrind` is not a
+          # swallow, it is the minimum this job cannot run without).
+          sudo apt-get install -y valgrind clang
+          sudo apt-get install -y libclang-rt-dev \
+            || sudo apt-get install -y "libclang-rt-$(clang --version | sed -n 's/.*clang version \([0-9]*\).*/\1/p')-dev"
+
+      - name: Configure (Clang, ASan + UBSan)
+        run: >
+          cmake -B build-san -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DANABASIS_BUILD_STANDALONE=OFF
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build test targets (sanitized)
+        run: cmake --build build-san --target AnabasisTests AnabasisStateTests
+
+      - name: Self-tests under ASan + UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          ./build-san/AnabasisTests_artefacts/RelWithDebInfo/AnabasisTests
+          ./build-san/AnabasisStateTests_artefacts/RelWithDebInfo/AnabasisStateTests
+
+      # Uses the UNSANITIZED Release binary on purpose: memcheck and ASan
+      # instrument the same memory and running them together is neither faster
+      # nor more sensitive. This is the only uninitialised-read detector in the
+      # pipeline (see the MemorySanitizer note above), so its exit code is the
+      # gate: --error-exitcode makes a reported error fail the job, which is not
+      # valgrind's default.
+      - name: Configure + build both suites (unsanitized, for valgrind)
+        run: |
+          cmake -B build-vg -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_STANDALONE=OFF
+          cmake --build build-vg --target AnabasisTests AnabasisStateTests
+
+      # BOTH suites, and the state one is the point. memcheck is the only
+      # uninitialised-read detector in the pipeline, and the read that would
+      # matter runs through the real wrapper `processBlock` — which only
+      # AnabasisStateTests drives. Pointing the detector at the DSP suite alone
+      # would have aimed it away from the path KI-009 implicates. It is ~50x
+      # slower than native and worth every second of it for that reason.
+      - name: valgrind memcheck (both suites)
+        run: |
+          VG="valgrind --tool=memcheck --track-origins=yes --leak-check=no
+              --error-exitcode=1 --error-limit=no --num-callers=25"
+          $VG ./build-vg/AnabasisTests_artefacts/Release/AnabasisTests
+          $VG ./build-vg/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
   windows:
     needs: preflight
     if: needs.preflight.outputs.ready == 'true'
@@ -373,7 +674,7 @@ jobs:
 
       # Default Visual Studio generator (multi-config); MSVC is auto-detected.
       - name: Configure
-        run: cmake -B build -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+        run: cmake -B build -DANABASIS_BUILD_PROBE=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests)
         id: build
@@ -416,6 +717,44 @@ jobs:
           & $exe.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $stateExe.FullName
+
+      - name: Channel probe (hosts the built VST3)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # FAIL CLOSED, exactly as `scripts/run-pluginval.ps1` does, and for the
+          # same two reasons it spells out. windows-latest uses the multi-config
+          # Visual Studio generator, so several configurations of Anabasis.vst3
+          # genuinely coexist in one build tree — `Select-Object -First 1` would
+          # let this gate report green about a Debug or leftover bundle while the
+          # uploaded artifacts come from Release.
+          #
+          # `-Directory` is the second half and is specific to Windows: the VST3
+          # BUNDLE directory is named Anabasis.vst3 and the module inside it is
+          # ALSO named Anabasis.vst3
+          # (…/Anabasis.vst3/Contents/x86_64-win/Anabasis.vst3), so an unfiltered
+          # -Filter matches a directory and a file and only enumeration order
+          # decides which one the probe is handed.
+          #
+          # -ErrorAction SilentlyContinue with $ErrorActionPreference = 'Stop':
+          # without it a missing build/ makes Get-ChildItem THROW, and the
+          # operator gets a stack trace where the count check below would have
+          # printed the one-line cause.
+          function Find-One {
+            param([string]$Filter, [switch]$Directory, [string]$What)
+            $found = @(Get-ChildItem -Recurse -Path build -Filter $Filter -Directory:$Directory -ErrorAction SilentlyContinue)
+            if ($found.Count -eq 0) { throw "$What not found under build/ -- nothing to probe" }
+            if ($found.Count -ne 1) {
+              $found | ForEach-Object { Write-Host "  $($_.FullName)" }
+              throw "$What is ambiguous -- found $($found.Count) under build/. Refusing to guess which one the probe should exercise."
+            }
+            return $found[0]
+          }
+          $probe = Find-One -Filter AnabasisChannelProbe.exe -What 'AnabasisChannelProbe.exe'
+          $vst3  = Find-One -Filter Anabasis.vst3 -Directory -What 'the Anabasis.vst3 bundle'
+          & $probe.FullName $vst3.FullName --format vst3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
@@ -731,6 +1070,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DANABASIS_BUILD_PROBE=ON
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + AU + Standalone + tests)
@@ -743,6 +1083,29 @@ jobs:
           chmod +x scripts/*.sh
           ./scripts/run-tests.sh
 
+      # ...AND THE OTHER SLICE. The runner is Apple Silicon and the product is a
+      # UNIVERSAL binary, so the step above executes arm64 only: until this step
+      # existed the x86_64 slice was compiled on every push and run by nothing,
+      # on any platform. Half the macOS user base was validated by compilation
+      # alone — and "does it behave the same on the other architecture" is
+      # exactly the question a platform-specific field report asks.
+      #
+      # Rosetta 2 runs it in place, so this costs one extra execution of two
+      # console apps rather than another runner. If Rosetta is absent the step
+      # does NOT quietly pass: it emits a ::warning:: naming the coverage that
+      # was lost, because a gate that silently does nothing is the failure this
+      # workflow keeps having to relearn. It is a warning rather than an error
+      # only because Rosetta's presence is the IMAGE's property, not the
+      # product's, and a green product should not go red for it.
+      - name: Self-tests, x86_64 slice under Rosetta
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "::warning::Rosetta 2 unavailable on this image -- the x86_64 slice was BUILT but NOT EXECUTED; Intel coverage for this run is compilation only"
+            exit 0
+          fi
+          ANABASIS_TEST_RUNNER="arch -x86_64" ./scripts/run-tests.sh
+
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
         # Both pluginval steps carry the SAME condition, naming exactly what must have
@@ -750,7 +1113,7 @@ jobs:
         # implicit self-skip made the two modes behave differently after an earlier
         # failure -- the opposite of "both modes report independently".
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
 
       - name: pluginval (randomise x3 -- release gate)
         # Same condition as the deterministic step above -- deliberately NOT
@@ -760,7 +1123,114 @@ jobs:
         #   * an earlier PIPELINE failure must skip BOTH, because nothing worth
         #     validating exists.
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise vst3
+
+      # THE AU IS VALIDATED TOO, and only here -- it is the one format that
+      # exists on exactly one platform. Until 2026-08-10 the release gate ran
+      # against the VST3 alone on all three OSes, so the AU shipped to Logic
+      # users having passed no automated validation at all. KI-009 is reported
+      # in AU *and* VST3, which is what made the omission worth closing rather
+      # than noting: the format the report names was the ungated one.
+      #
+      # Same strictness (the env block above is still the only copy), same two
+      # modes, same 3 consecutive passes -- an AU that only passes sometimes is
+      # not a passing AU. Gated on the BUILD like every other validation step,
+      # never on the VST3 steps: a VST3 failure must not hide the AU's result.
+      # INSTALL THE AU BEFORE VALIDATING IT, deliberately, and not as belt-and-braces.
+      # macOS resolves Audio Units through the AudioComponent registry
+      # (`AudioComponentFindNext`, which is what JUCE's AudioUnitPluginFormat calls),
+      # and the registry only knows about bundles under a Components directory. A
+      # freshly built .component sitting in the build tree can therefore report ZERO
+      # plugin types however correct it is — which would make this gate red for an
+      # environmental reason, or (worse, if pluginval ever treats "no types" as
+      # nothing to do) green without validating anything. Installing first removes
+      # the question instead of depending on the answer.
+      #
+      # `killall AudioComponentRegistrar` forces the registry to re-scan rather than
+      # serve a cached list; it is `|| true` because the daemon may simply not be
+      # running yet on a fresh runner, which is not a failure. The copy itself is
+      # NOT `|| true`.
+      - name: Install the AU so the AudioComponent registry can find it
+        id: au_install
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          DEST="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$DEST"
+          rm -rf "$DEST/Anabasis.component"
+          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
+          ls -d "$DEST/Anabasis.component"
+
+      - name: pluginval AU (deterministic x3 -- release gate)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
+
+      - name: pluginval AU (randomise x3 -- release gate)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise au
+
+      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
+      # installs rather than a rebuild of its sources. `AnabasisStateTests`
+      # drives the real processBlock, but compiled into a console app: no LTO
+      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
+      # one architecture. The probe LOADS the built bundle through
+      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
+      # output is the shipped code path including whatever the optimiser did to
+      # it, and its oracle is the field report's own question: is there audio on
+      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
+      # a channel was actually lost. Different codes on purpose.
+      #
+      # FOUR RUNS on macOS: both formats x both slices. The report names AU and
+      # VST3 alike, and the x86_64 slice ships in the same universal binary while
+      # being executed by nothing until this workflow started running it -- so
+      # "macOS is green" previously meant one of the four.
+      # One second, and it separates "the DSP core is wrong" from "the wrapper
+      # is wrong" before the probe below reports at all — the distinction that
+      # took KI-009 nine rounds to establish by inference.
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
+      # TWO STEPS, NOT ONE, and the split is the same principle the pluginval
+      # steps above already state: neither format may hide the other's result.
+      # Combined, this step had to be gated on `au_install`, so an AU copy that
+      # failed for its own reasons -- no AU built, an unwritable Components
+      # directory -- suppressed the VST3 probe as well, and the run reported
+      # nothing about a format that was sitting there ready to be tested. The
+      # VST3 half is gated on the BUILD; the AU half on the INSTALL it genuinely
+      # needs.
+      - name: Channel probe -- VST3, both slices
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          VST3=build/Anabasis_artefacts/Release/VST3/Anabasis.vst3
+          echo "== arm64 / VST3 =="; "$PROBE" "$VST3" --format vst3
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "== x86_64 / VST3 =="; arch -x86_64 "$PROBE" "$VST3" --format vst3
+          else
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 VST3 slice was probed by nothing this run"
+          fi
+
+      - name: Channel probe -- AU, both slices
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
+          echo "== arm64 / AU   =="; "$PROBE" "$AU" --format au
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU" --format au
+          else
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 AU slice was probed by nothing this run"
+          fi
+
 
       # Order matters -- 1) dsymutil captures a universal dSYM per bundle (the
       # only crash-symbolication source once stripped), 2) strip -x removes local
@@ -937,3 +1407,122 @@ jobs:
           name: Anabasis-macOS-debug
           path: dist/Anabasis-macOS-debug
           if-no-files-found: error
+
+  # ==========================================================================
+  #  NATIVE INTEL macOS — the one execution environment nothing else covers.
+  #
+  #  RESTORED, and the reason it was briefly removed is worth recording. It was
+  #  added during the KI-009 hunt on the theory that the fault was
+  #  architecture-specific; the fault turned out to be compiler-specific
+  #  (INC-004), so the theory died and the job was dropped with it. That was the
+  #  wrong conclusion from a right observation: the job's VALUE was never the
+  #  hypothesis. It is that the `macos` job builds a UNIVERSAL binary and then
+  #  executes its x86_64 slice only under Rosetta 2 — which translates x86_64 to
+  #  arm64 and runs on arm64 hardware, with FPCR rather than MXCSR and NEON
+  #  rather than SSE. Half the macOS user base therefore had compile-only
+  #  coverage. That gap is real whatever KI-009 turned out to be, and this job is
+  #  the only thing that closes it.
+  #
+  #  It is deliberately SMALLER than the version that was removed: the
+  #  stage-trace diagnostic build is gone (13 of that job's 31 minutes, and it
+  #  existed to LOCATE a fault that is now located — ANABASIS_STAGE_TRACE
+  #  remains available for the next one). No packaging, signing or upload: the
+  #  shipping artefact still comes from the universal build above.
+  # ==========================================================================
+  macos-intel:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: macos-15-intel   # NATIVE x86_64 hardware -- not Apple Silicon, not Rosetta
+    steps:
+      - uses: actions/checkout@v7
+
+      # FAIL, do not warn. A job whose entire purpose is "run on Intel" is
+      # worthless if it quietly runs somewhere else, and a green tick from the
+      # wrong architecture is worse than no job at all: it would be read as
+      # "Intel is fine". `sysctl.proc_translated` is 1 inside Rosetta and 0 or
+      # absent on a real Intel machine, so both wrong answers are caught.
+      - name: Assert this really is native Intel
+        run: |
+          set -e
+          ARCH="$(uname -m)"
+          TRANSLATED="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+          echo "uname -m = $ARCH ; sysctl.proc_translated = $TRANSLATED"
+          sysctl -n machdep.cpu.brand_string || true
+          if [ "$ARCH" != "x86_64" ]; then
+            echo "::error::this job must run on native x86_64 (got $ARCH) -- the coverage it exists for cannot be produced here"
+            exit 1
+          fi
+          if [ "$TRANSLATED" != "0" ]; then
+            echo "::error::running under Rosetta translation -- that is the coverage this job exists to replace"
+            exit 1
+          fi
+
+      - name: Install build tools
+        run: brew install ninja || true
+
+      # THIN x86_64, not universal. The universal build is the shipping
+      # configuration and is already covered; here the point is that every
+      # object is produced by the Intel code generator and executed by an Intel
+      # CPU, with no arm64 slice present to be picked instead.
+      - name: Configure (native x86_64 only)
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=x86_64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DANABASIS_BUILD_PROBE=ON
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build (VST3 + AU + Standalone + tests + probe)
+        id: build
+        run: cmake --build build --config Release
+
+      - name: Self-tests (DSP + state), native Intel
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/run-tests.sh
+
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
+      - name: Install the AU so the AudioComponent registry can find it
+        id: au_install
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          DEST="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$DEST"
+          rm -rf "$DEST/Anabasis.component"
+          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
+
+      # Both formats, because the field report named both and because this is
+      # the shipped code path -- host -> wrapper -> processBlock -> engine --
+      # built by the Intel back end and run on an Intel CPU.
+      # Split for the same reason as the universal job's pair above: an AU
+      # install failure must not suppress a VST3 result that was ready to run.
+      - name: Channel probe, native Intel -- VST3
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          ./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe \
+            build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+
+      - name: Channel probe, native Intel -- AU
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          ./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe \
+            "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component" --format au
+
+      - name: pluginval VST3 (deterministic x3), native Intel
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
+
+      - name: pluginval AU (deterministic x3), native Intel
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au

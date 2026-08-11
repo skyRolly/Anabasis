@@ -1256,6 +1256,45 @@ static void testTheWaveformStatisticsRowsReadTheirStandards()
     proc.processBlock (buf, midi);
     check (proc.meterPeakMaxDb() < -100.0f,
            "stats: the meter reset clears the sample-peak hold too");
+
+    // ---- The RMS numeric row's two display rules (0.1.3) -------------------
+    // Pinned through the statics for the reason the PLR rule is: they carry
+    // the argument, and pinning them needs no FrameClock tick.
+    //
+    // The CADENCE (item 1): the row must not chase the ~24 Hz meter tick.
+    const float aReading = -18.0f, another = -11.0f;
+    check (! LoudnessMeterView::shouldAdoptRms (another, /*holding*/ true, 0.04),
+           "rmsRow: a fresh measurement one meter frame after the last is NOT adopted");
+    check (LoudnessMeterView::shouldAdoptRms (another, true, 0.40),
+           "rmsRow: …and IS adopted once the readable hold has expired");
+    // The two sentinel bypasses, which is what keeps a meter reset honest:
+    // the sentinel itself blanks the row on the next frame, and the first real
+    // reading after one lands immediately instead of waiting out an interval
+    // it was never part of.
+    check (LoudnessMeterView::shouldAdoptRms (anabasis::RmsMeter::kSilentDb, true, 0.0),
+           "rmsRow: the meter-reset sentinel is adopted immediately, hold or not");
+    check (LoudnessMeterView::shouldAdoptRms (aReading, /*holding*/ false, 0.0),
+           "rmsRow: the first reading after a reset is adopted immediately");
+
+    // The REFERENCE (the 0.1.3 review fix): the §3.5 choice is applied to
+    // whatever measurement is on screen, so it can never be gated by the hold.
+    // Asserted as a property of the PAIR — for any held measurement the two
+    // references differ by exactly the AES-17 offset — rather than by
+    // re-deriving the constant here.
+    check (near (LoudnessMeterView::rmsWithReference (aReading, true)
+                 - LoudnessMeterView::rmsWithReference (aReading, false), 3.0103f, 1.0e-4f),
+           "rmsRow: the AES-17 reference is exactly the offset above the mathematical one");
+    check (juce::exactlyEqual (
+               LoudnessMeterView::rmsWithReference (anabasis::RmsMeter::kSilentDb, true),
+               anabasis::RmsMeter::kSilentDb),
+           "rmsRow: the sentinel passes the reference untouched, so \"-\" stays \"-\"");
+    // The mutant this pair kills is the shipped 0.1.3 form, which applied the
+    // reference INSIDE the hold: `rmsWithReference` is a pure function of the
+    // held raw value, so the row's response to a Settings flip is one frame by
+    // construction — there is no state between the choice and the print.
+    check (! juce::exactlyEqual (LoudnessMeterView::rmsWithReference (aReading, true),
+                                 LoudnessMeterView::rmsWithReference (aReading, false)),
+           "rmsRow: …and the two references are distinguishable, so the flip is visible");
 }
 
 // ---------------------------------------------------------------------------
@@ -4793,7 +4832,9 @@ static void testEveryKnobAndComboCarriesATooltip()
     // "True-Peak Meter" left this list in 0.1.1 with the toggle and the field
     // behind it (ADR-0020) — the statistics panel shows the true peak
     // unconditionally, so there is no longer a toggle to carry a hint.
-    for (auto* text : { "FREEZE", "COMP", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
+    // "COMP" became "MATCH" at 0.1.3 (item 2): the loudness-compensation
+    // toggle's caption, renamed so it stops reading as a compressor switch.
+    for (auto* text : { "FREEZE", "MATCH", "DELTA", "LOCK", "AUTO", "TP", "SHAPE", "ADV",
                         "UI Animations", "Tooltips" })
     {
         auto* b = findButtonByText (*ed, text);
@@ -5092,7 +5133,7 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // edge, and does NOT reach back to the left edge: the old stretch
             // put kFirst at x = 0 in exactly this state, which is the
             // behaviour this assertion exists to keep out.
-            const auto q = GrHistoryView::buckets (juce::jmax<int64_t> (2, want / 4),
+            const auto q = GrHistoryView::buckets (juce::jmax ((int64_t) 2, want / 4),
                                                    want, c.cols);
             const auto m6 = say ("a quarter-full ring draws at the settled pitch, right-anchored");
             check (q.stride == b.stride && q.kFull == b.kFull
@@ -5131,6 +5172,24 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                "grBuckets: a just-reset ring yields exactly one bucket");
         check (std::abs (GrHistoryView::bucketX (one, one.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
                "grBuckets: …anchored on the right edge, zero region to its left");
+
+        // THE LEFT-EDGE RULE (0.1.3 item 4). The zero region is honest only
+        // while the ring is still FILLING; once a full window is scrolling,
+        // the sub-pitch strip left of the truncated oldest bucket holds
+        // EXPIRED history, and drawing the zero line across it — then dropping
+        // vertically into the trace at the same x — is the flashing accent bar
+        // the owner reported. The predicate is pinned here rather than left
+        // inline in `paintHistory`, which is what let the defect ship.
+        check (GrHistoryView::drawsZeroRegion (1, want),
+               "grZeroRegion: a just-reset ring draws the unmeasured region");
+        check (GrHistoryView::drawsZeroRegion (want - 1, want),
+               "grZeroRegion: …still, one entry short of a full window");
+        check (GrHistoryView::drawsZeroRegion (want, want),
+               "grZeroRegion: …and at the exact changeover, where the oldest bucket lands on the edge");
+        check (! GrHistoryView::drawsZeroRegion (want + 1, want),
+               "grZeroRegion: a scrolling window does NOT — that strip is expired history, not unmeasured");
+        check (! GrHistoryView::drawsZeroRegion (want * 97 + 3, want),
+               "grZeroRegion: …however long it has been scrolling, at any bucket-expiry phase");
     }
 }
 
@@ -5509,6 +5568,104 @@ static void testTheCeilingAdvertisesTheUnitItEnforces()
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
 // values per parameter, checked field by field, catch a shift of any size.
+// TWO DECIMAL PLACES ON THE CEILING, checked where it has to be true: the
+// VALUE, not the label. The display was already the easy half — the hard half
+// is that a host writing a raw normalised number, a state restore, and a
+// preset override all reach `AudioParameterFloat::setValue`, which does NOT
+// snap, so an `interval` alone would leave the automation lane writing
+// -0.123456 into a knob that reads -0.12. The quantisation therefore lives in
+// the range's `convertFrom0to1` (see `twoDecimalRange`), and these assertions
+// exercise each entry point separately rather than trusting one of them to
+// stand for the rest.
+static void testCeilingIsQuantisedToTwoDecimals()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    check (ceil != nullptr, "ceiling2dp: (premise) the ceiling parameter exists");
+    if (ceil == nullptr)
+        return;
+
+    // "Two decimal places" in binary floating point means the nearest float to
+    // a two-decimal decimal, so the predicate is on the SCALED value: v·100
+    // must be a whole number to well inside a float ULP at this magnitude.
+    auto isTwoDecimal = [] (float v)
+    {
+        const double scaled = (double) v * 100.0;
+        return std::abs (scaled - std::round (scaled)) < 1.0e-3;
+    };
+
+    // 1. HOST AUTOMATION. A sweep of raw normalised values, deliberately on
+    //    irrational-ish steps so the sweep cannot accidentally land on the grid
+    //    by construction — 997 is coprime with everything the range divides by.
+    bool everyStepOnGrid = true;
+    float worst = 0.0f;
+    for (int i = 0; i <= 997; ++i)
+    {
+        const float norm = (float) i / 997.0f;
+        ceil->setValueNotifyingHost (norm);
+        const float v = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+        if (! isTwoDecimal (v))
+        {
+            everyStepOnGrid = false;
+            worst = v;
+        }
+    }
+    const auto sweepMsg = juce::String ("ceiling2dp: every raw normalised host write lands on a two-decimal value")
+                        + (everyStepOnGrid ? juce::String() : " (worst: " + juce::String (worst, 6) + ")");
+    check (everyStepOnGrid, sweepMsg.toRawUTF8());
+
+    // 2. THE VALUE THE DSP READS. `AudioProcessorValueTreeState` publishes
+    //    `convertFrom0to1 (normalised)` into the atomic that `CachedParams`
+    //    resolves and `EngineParameters::ceilingDbTp` carries, so this is the
+    //    same number `CeilingClamp` compares against — not a rounded display of
+    //    an unrounded one.
+    ceil->setValueNotifyingHost (ceil->getNormalisableRange().convertTo0to1 (-0.123456f));
+    const float dspValue = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+    check (isTwoDecimal (dspValue) && std::abs (dspValue - (-0.12f)) < 1.0e-4f,
+           "ceiling2dp: -0.123456 reaches the DSP as -0.12");
+
+    // 3. TEXT ENTRY, both rounding directions and the trailing zero the owner
+    //    asked for. `getText` formats `convertFrom0to1 (v)`, so a text that
+    //    round-trips proves the label and the value agree by construction.
+    struct TextCase { const char* typed; const char* shown; float value; };
+    const TextCase cases[] = {
+        { "-0.1",      "-0.10", -0.10f },
+        { "-0.123",    "-0.12", -0.12f },
+        { "-0.129",    "-0.13", -0.13f },
+        { "-0.123456", "-0.12", -0.12f },
+        { "-3",        "-3.00", -3.00f },
+    };
+    for (const auto& c : cases)
+    {
+        ceil->setValueNotifyingHost (ceil->getValueForText (c.typed));
+        const float v = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+        const auto storeMsg = juce::String ("ceiling2dp: typing ") + c.typed + " stores " + juce::String (c.value, 2);
+        check (std::abs (v - c.value) < 1.0e-4f, storeMsg.toRawUTF8());
+        const auto showMsg = juce::String ("ceiling2dp: ...and displays ") + c.shown;
+        check (ceil->getCurrentValueAsText().startsWith (c.shown), showMsg.toRawUTF8());
+    }
+
+    // 4. STATE RESTORE. The stored value must come back identical rather than
+    //    drifting by a rounding step each save/load — the round trip
+    //    normalise→denormalise has to be a fixed point on the grid.
+    ceil->setValueNotifyingHost (ceil->getValueForText ("-0.13"));
+    const float before = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    ceil->setValueNotifyingHost (ceil->getValueForText ("-6.00"));
+    proc.setStateInformation (blob.getData(), (int) blob.getSize());
+    const float after = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+    check (juce::exactlyEqual (before, after) && isTwoDecimal (after),
+           "ceiling2dp: a save/load round trip returns the same two-decimal value");
+
+    // 5. THE DEFAULT IS ON THE GRID. If it were not, every fresh instance would
+    //    start off-grid and the first knob touch would jump — and
+    //    `testRegistrySnapshot` pins the default, so this is also the assertion
+    //    that says the fixture and the range still agree.
+    check (isTwoDecimal (ceil->getNormalisableRange().convertFrom0to1 (ceil->getDefaultValue())),
+           "ceiling2dp: the shipped default is itself a two-decimal value");
+}
+
 static void testCachedParamsMapping()
 {
     AnabasisAudioProcessor proc;
@@ -5564,9 +5721,130 @@ static void testCachedParamsMapping()
 //  path, but nothing before this drove the wrapper's processBlock and measured
 //  BOTH output channels.
 // ============================================================================
+// KI-009's field scenario, run as the user runs it — and the reason this is a
+// WRAPPER test rather than another stage-level property: the report is
+// "load a preset, play, the left channel goes silent, Clip Mix = 0 brings it
+// back", so the guard has to be the whole plugin under a real preset with real
+// programme, not an invariant about one stage.
+//
+// It also PINS THE PROOF that redirected the investigation. At the factory
+// Default the clipper is exact-skipped (`clipDrive == 0`), the colour stage
+// contributes nothing (`colourDepth == 0`) and the dynamic tame is idle
+// (`activityEnv` is bit-zero while nothing clips) — so ClipSat's wet value IS
+// its input, and the mix blend, at ANY mix, lands on the same float:
+//   mix == 1 → `chans = wet` (the same number);
+//   mix == 0 → nothing written;
+//   otherwise → `chans + (wet − chans)·mix`, and `wet − chans` is exactly 0.
+// **At the Default preset Clip Mix therefore cannot change one sample**, which
+// makes it impossible for Clip Mix to be the cause of anything there. The
+// assertion below is that statement made mechanical: sweep the control across
+// its range and the rendered output must be BIT-IDENTICAL every time.
+//
+// The mutant it kills is any future edit that gives the stage a mix-dependent
+// contribution at the null settings — which is exactly the class of change that
+// would make the field correlation real, and the class this test exists to stop
+// re-entering the tree unnoticed.
+static void testClipMixCannotChangeTheDefaultPresetsSound()
+{
+    auto render = [] (int factoryIndex, float clipMixPercent, std::vector<float>& outL,
+                      std::vector<float>& outR)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.applyFactoryPreset (factoryIndex);
+        auto* q = proc.apvts.getParameter (pid::clipMix);
+        q->setValueNotifyingHost (q->getNormalisableRange().convertTo0to1 (clipMixPercent));
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        const int blocks = 90;
+        outL.clear(); outR.clear();
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                // Programme, not a test tone: bass, body, air and a periodic
+                // transient, correlated across the pair the way a master is,
+                // and hot enough that every stage a preset engages is working.
+                const int   tt = b * 512 + n;
+                const float ph = 2.0f * juce::MathConstants<float>::pi * (float) tt / 48000.0f;
+                const float base = 0.50f * std::sin (ph * 55.0f)
+                                 + 0.22f * std::sin (ph * 440.0f)
+                                 + 0.12f * std::sin (ph * 5200.0f)
+                                 + ((tt % 12000) < 40 ? 0.30f : 0.0f);
+                buf.setSample (0, n, juce::jlimit (-0.99f, 0.99f, base));
+                buf.setSample (1, n, juce::jlimit (-0.99f, 0.99f, base * 0.97f));
+            }
+            proc.processBlock (buf, midi);
+            if (b >= blocks / 2)                     // the settled half
+                for (int n = 0; n < 512; ++n)
+                {
+                    outL.push_back (buf.getSample (0, n));
+                    outR.push_back (buf.getSample (1, n));
+                }
+        }
+    };
+
+    auto rms = [] (const std::vector<float>& v)
+    {
+        double s = 0.0;
+        for (auto x : v) s += (double) x * x;
+        return std::sqrt (s / (double) juce::jmax ((size_t) 1, v.size()));
+    };
+
+    // ---- (1) the Default preset: Clip Mix is provably inert ----------------
+    std::vector<float> refL, refR, curL, curR;
+    render (0, 100.0f, refL, refR);
+    check (rms (refL) > 0.02 && rms (refR) > 0.02,
+           "clipMixField: (premise) the Default preset passes programme on BOTH channels");
+
+    for (const float mixPct : { 0.0f, 1.0f, 25.0f, 50.0f, 99.0f, 100.0f })
+    {
+        render (0, mixPct, curL, curR);
+        size_t differing = 0;
+        for (size_t n = 0; n < refL.size(); ++n)
+            if (! juce::exactlyEqual (curL[n], refL[n]) || ! juce::exactlyEqual (curR[n], refR[n]))
+                ++differing;
+        juce::String msg;
+        msg << "clipMixField: at the Default preset Clip Mix " << mixPct
+            << " % renders BIT-IDENTICALLY to 100 % — the control cannot be causal here ("
+            << (int) differing << " samples differ)";
+        check (differing == 0, msg.toRawUTF8());
+        msg.clear();
+        msg << "clipMixField: …and both channels are alive at Clip Mix " << mixPct << " % (L="
+            << (float) rms (curL) << " R=" << (float) rms (curR) << ")";
+        check (rms (curL) > 0.02 && rms (curR) > 0.02, msg.toRawUTF8());
+    }
+
+    // ---- (2) EVERY factory preset, at both Clip Mix endpoints --------------
+    // The field report says "all presets". Where a preset DOES engage the
+    // clipper the two endpoints legitimately differ in sound — what may never
+    // differ is whether a channel is there at all, and the two channels may
+    // never diverge (the input pair is 0.26 dB apart by construction).
+    int factoryCount = 0;
+    PresetManager::factoryPresets (factoryCount);
+    check (factoryCount > 1, "clipMixField: (premise) the factory bank has presets to sweep");
+    for (int i = 0; i < factoryCount; ++i)
+        for (const float mixPct : { 0.0f, 100.0f })
+        {
+            render (i, mixPct, curL, curR);
+            const double l = rms (curL), r = rms (curR);
+            juce::String msg;
+            msg << "clipMixField: factory preset " << i << " at Clip Mix " << mixPct
+                << " % keeps BOTH channels alive and matched (L=" << (float) l
+                << " R=" << (float) r << ")";
+            check (l > 0.01 && r > 0.01 && l < r * 2.0 && r < l * 2.0, msg.toRawUTF8());
+        }
+}
+
 static void testBothChannelsCarryAudioThroughTheWrapper()
 {
-    auto run = [] (float loudness, const char* tag)
+    // `clipMixPercent < 0` leaves Clip Mix at its default; a value in [0, 100]
+    // sets it. The parameter is threaded through rather than set by the caller
+    // because it must be written BEFORE the processing loop and AFTER the macro
+    // engagement below, and because the premise assertion at the end of the
+    // engagement block has to see both.
+    auto run = [] (float loudness, const char* tag, float clipMixPercent = -1.0f)
     {
         AnabasisAudioProcessor proc;
         proc.prepareToPlay (48000.0, 512);
@@ -5574,6 +5852,56 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
         {
             auto* par = proc.apvts.getParameter (pid::loudness);
             par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (loudness));
+            // …AND the parameters that knob drives, set directly.
+            //
+            // WITHOUT THIS THE CASE IS VACUOUS, and it was for its whole life
+            // (found 2026-08-09 by instrumenting the chain and reading the
+            // engaged values back: at "loudness 85" the clipper reported
+            // `clipDrive == 0`). `MacroEngine` maps on a 30 ms `juce::Timer`,
+            // and a headless console app runs no message loop, so the tick
+            // never fires and the macro-managed parameters keep their
+            // defaults. The knob moved; nothing downstream of it did — so
+            // every "loudness N" case in this battery was re-running the
+            // DEFAULTS case, with the clipper exact-skipped and the colour
+            // stage contributing nothing.
+            //
+            // That matters well beyond a tidier test: the field report this
+            // battery exists for (KI-009) is observed with the chain PUSHED,
+            // and the pushed chain is exactly what was never being exercised.
+            // The values below are representative of the §5.5 curves at this
+            // knob position rather than derived from them — deriving them
+            // would couple this test to the curve tables, and what it needs is
+            // simply that the stages are WORKING.
+            auto engage = [&proc] (const char* id, float denorm)
+            {
+                auto* q = proc.apvts.getParameter (id);
+                q->setValueNotifyingHost (q->getNormalisableRange().convertTo0to1 (denorm));
+            };
+            engage (pid::clipDrive,   loudness * 0.22f);
+            engage (pid::colourDepth, loudness);
+            engage (pid::dynTilt,     loudness > 60.0f ? 2.0f : 0.8f);
+            engage (pid::limGain,     loudness * 0.18f);
+
+            // THE PREMISE, ASSERTED RATHER THAN ASSUMED. Round 6 found every
+            // "loudness N" case in this battery had been vacuous for its whole
+            // life — the knob moved and `clipDrive` stayed 0, so the clipper was
+            // exact-skipped and the cases were re-running "defaults" under a
+            // different name. The repair was to engage the parameters directly;
+            // this check is what makes the repair self-guarding. Without it the
+            // same silence returns the moment an id, a range or a curve moves,
+            // and it returns GREEN.
+            juce::String premise;
+            premise << "stereoWrapper (" << tag << "): (premise) the clipper is actually engaged "
+                    << "(clipDrive=" << proc.apvts.getRawParameterValue (pid::clipDrive)->load()
+                    << " dB) — a vacuous case is what round 6 found here";
+            check (proc.apvts.getRawParameterValue (pid::clipDrive)->load() > 0.0f,
+                   premise.toRawUTF8());
+        }
+
+        if (clipMixPercent >= 0.0f)
+        {
+            auto* q = proc.apvts.getParameter (pid::clipMix);
+            q->setValueNotifyingHost (q->getNormalisableRange().convertTo0to1 (clipMixPercent));
         }
 
         juce::AudioBuffer<float> buf (2, 512);
@@ -5625,6 +5953,37 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
     };
     run (0.0f,  "defaults");
     run (50.0f, "loudness 50");
+
+    // ---- THE FIELD CROSS-PRODUCT: a PUSHED chain x every non-zero Clip Mix --
+    //
+    // This is the reported scenario, and until now nothing ran it. The two
+    // halves existed separately and neither one covers it:
+    //
+    //   * `testClipMixCannotChangeTheDefaultPresetsSound` sweeps Clip Mix, but
+    //     at the DEFAULT preset — where `clipDrive == 0` exact-skips the clip
+    //     sub-block, so every mix branch provably lands on the same float. It
+    //     proves the mix is INERT there, which is the opposite of exercising it.
+    //   * The `loudness N` cases push the chain, but leave Clip Mix at its
+    //     default, so they sweep exactly one point of it.
+    //
+    // The owner's report is gated on the mix being NON-ZERO with the chain
+    // working — the one configuration in which this stage's value reaches the
+    // wet ring at all, and therefore the only one in which the ring's
+    // per-channel zero substitution can be reached. Every value in the sweep is
+    // non-zero on purpose: 0 is covered above as the inert case, and a mix of 0
+    // is the setting the field report says makes the fault GO AWAY, so including
+    // it here would add a row that passes for the wrong reason.
+    //
+    // 1 % is in the list because a barely-open mix is the hardest case for a
+    // fault that scales with the mix, not the easiest: it is where a poisoned
+    // wet value contributes least and a level assertion is closest to passing
+    // anyway. Cheap: five renders of 60 blocks each.
+    for (const float mixPct : { 1.0f, 25.0f, 50.0f, 99.0f, 100.0f })
+    {
+        juce::String tag;
+        tag << "loudness 70, Clip Mix " << mixPct << " %";
+        run (70.0f, tag.toRawUTF8(), mixPct);
+    }
 
     // The configurations the plain run above does NOT cover, each a candidate
     // for a channel-asymmetric defect the DSP suite would miss: the editor
@@ -5871,6 +6230,89 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
         p.prepareToPlay (44100.0, 512);      // the sines shift ~8 %; still programme
         return nullptr;
     });
+
+    // The KI-009 0.1.3 field configuration, pinned EXACTLY as the owner ran
+    // it: both stereo links at 0 (per-channel detectors and envelopes), the
+    // comp threshold pulled low and the limiter gain pushed high so BOTH
+    // stages draw reduction on BOTH channels. The field observation was comp
+    // GR on both lanes but limiter GR on the RIGHT lane only, with the left
+    // output silent — which localises the field kill to the span between the
+    // comp's output and the limiter's detector tap (the wet ring): comp GR on
+    // L proves the left channel alive INTO the comp, zero limiter GR on L
+    // proves it dead AT the tap. This case asserts the whole fingerprint
+    // headlessly — per-channel comp GR, per-channel limiter GR, both outputs
+    // alive — at BOTH oversampling extremes of that span: OS Off (the
+    // shipped default), where the span holds NO per-channel recursive state
+    // at all (ClipSat at any setting is channel-symmetric and self-healing,
+    // the push is one shared scalar, the ring indices are shared), and 4×,
+    // where JUCE's per-channel polyphase oversampler is the one stateful
+    // occupant. The pair is the decisive field experiment in headless form:
+    // a field bug that follows the OS toggle names the oversampler; one that
+    // survives OS Off has no in-plugin site left. See KNOWN_ISSUES KI-009,
+    // 0.1.3 addendum.
+    {
+        auto runFieldConfig = [] (int osIdx, const char* tag)
+        {
+            AnabasisAudioProcessor proc;
+            proc.internalState.state().setProperty (iid::oversample, osIdx, nullptr);
+            proc.prepareToPlay (48000.0, 512);
+            auto set = [&proc] (const char* id, float denorm)
+            {
+                auto* par = proc.apvts.getParameter (id);
+                par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+            };
+            set (pid::compStereoLink, 0.0f);
+            set (pid::stereoLink,     0.0f);
+            set (pid::compThreshold,  -30.0f);
+            // The FULL +18 dB push, not a midway value: the comp above takes
+            // ~4 dB first (−15 dBFS RMS against the −30 threshold at 1.5:1),
+            // so the −12 dBFS sines reach the limiter near −16 dBFS + push —
+            // +12 left them ~4 dB UNDER the ceiling and the limiter idle,
+            // which failed this case's own premise on first run.
+            set (pid::limGain,        18.0f);
+
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer midi;
+            double sumSq[2] = { 0.0, 0.0 };
+            for (int b = 0; b < 60; ++b)
+            {
+                for (int n = 0; n < 512; ++n)
+                {
+                    const int t = b * 512 + n;
+                    buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                           * 220.0f * (float) t / 48000.0f));
+                    buf.setSample (1, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                           * 330.0f * (float) t / 48000.0f));
+                }
+                proc.processBlock (buf, midi);
+                if (b >= 30)
+                    for (int n = 0; n < 512; ++n)
+                    {
+                        sumSq[0] += (double) buf.getSample (0, n) * buf.getSample (0, n);
+                        sumSq[1] += (double) buf.getSample (1, n) * buf.getSample (1, n);
+                    }
+            }
+            const double rmsL = std::sqrt (sumSq[0] / (30.0 * 512.0));
+            const double rmsR = std::sqrt (sumSq[1] / (30.0 * 512.0));
+            juce::String msg;
+            msg << "stereoWrapper (" << tag << "): both channels carry audio (L="
+                << (float) rmsL << " R=" << (float) rmsR << ")";
+            check (rmsL > 0.02 && rmsR > 0.02, msg.toRawUTF8());
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                msg.clear();
+                msg << "stereoWrapper (" << tag << "): comp GR engaged on channel " << ch
+                    << " (" << proc.meterCompGrDbCh (ch) << " dB)";
+                check (proc.meterCompGrDbCh (ch) < -0.5f, msg.toRawUTF8());
+                msg.clear();
+                msg << "stereoWrapper (" << tag << "): limiter GR engaged on channel " << ch
+                    << " (" << proc.meterLimGrDbCh (ch) << " dB)";
+                check (proc.meterLimGrDbCh (ch) < -0.5f, msg.toRawUTF8());
+            }
+        };
+        runFieldConfig (0, "field config, links 0, OS off");
+        runFieldConfig (2, "field config, links 0, OS 4x");
+    }
 }
 
 int main (int argc, char** argv)
@@ -5903,6 +6345,7 @@ int main (int argc, char** argv)
         testAFrozenLatchDoesNotFollowTheSlotSwitch();
         testHistoryOwnershipAcrossAStateLoad();
         testBothChannelsCarryAudioThroughTheWrapper();
+        testClipMixCannotChangeTheDefaultPresetsSound();
         testARestoreDropsStagedDetachBits();
         testTheDrainTickReEngagesBeforeItMaps();
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
@@ -5948,6 +6391,7 @@ int main (int argc, char** argv)
         testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();
         testTheCeilingAdvertisesTheUnitItEnforces();
+        testCeilingIsQuantisedToTwoDecimals();
         testCachedParamsMapping();
     }
 

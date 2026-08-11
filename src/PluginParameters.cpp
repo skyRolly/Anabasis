@@ -11,6 +11,7 @@
 
 #include "PluginParameters.h"
 #include <atomic>
+#include <cmath>
 
 using juce::AudioParameterFloat;
 using juce::NormalisableRange;
@@ -131,6 +132,52 @@ auto hzKhzFrom = [] (const juce::String& t)
     return (v < 20.0f) ? v * 1000.0f : v;
 };
 
+// TWO-DECIMAL RANGE — the quantisation lives in the RANGE, which is what makes
+// it true of the VALUE rather than of the label.
+//
+// `interval` is the whole mechanism, and it is enough because of a detail worth
+// naming: the snap is applied by `RangedAudioParameter`, not by the caller.
+// `AudioParameterFloat::setValue` — the entry point a host uses for every
+// automation write, and the one `AudioProcessorValueTreeState` drives on state
+// restore — is `value = convertFrom0to1 (newValue)`, and that
+// `convertFrom0to1` is the PARAMETER's, which is
+// `range.snapToLegalValue (range.convertFrom0to1 (…))`
+// (`juce_RangedAudioParameter.cpp:54-58`; its header says so — "Denormalises and
+// snaps"). The same wrapper is what `AudioProcessorValueTreeState`'s adapter
+// calls to publish the atomic the DSP reads, so `EngineParameters::ceilingDbTp`
+// carries the snapped value and not a rounded display of an unsnapped one.
+// `getText` formats `convertFrom0to1 (v)` through the same wrapper, so the label
+// cannot disagree with the value it names; `SliderParameterAttachment` copies the
+// range's functions AND its interval into the knob; `getValueForText` snaps on
+// the way in; and `PresetManager` already routes overrides through
+// `snapToLegalValue`. Every path is covered by the one property.
+//
+// (An earlier draft of this helper supplied custom convertFrom0to1 /
+// convertTo0to1 / snapToLegalValue lambdas, on the belief that `setValue` reached
+// the RANGE's raw `convertFrom0to1` and so bypassed the interval. It does not.
+// The lambdas were redundant, and a mutation run proved it: the parameter cannot
+// tell the two implementations apart. Recorded because the wrong belief is the
+// natural reading of `juce_AudioParameterFloat.cpp:98` on its own.)
+//
+// The tie rule is JUCE's: `start + interval * floor ((v - start) / interval + 0.5)`
+// rounds a halfway value toward +infinity, so -0.125 lands on -0.12. The owner's
+// directive leaves the tie open ("-0.12 or -0.13 depending on the chosen rounding
+// rule"); every non-tie case rounds to nearest, so -0.123 is -0.12 and -0.129 is
+// -0.13. In float the result is the nearest representable neighbour of the
+// two-decimal value, which is what "two decimal places" means in binary floating
+// point — no THIRD-decimal step is reachable, and that is the requirement.
+//
+// It does NOT make the parameter discrete to a host:
+// `AudioParameterFloat::getNumSteps()` returns the base default rather than
+// deriving from the range (`juce_AudioParameterFloat.cpp:100`), so the automation
+// surface stays continuous while every value it can land on is on the grid — and
+// `tests/fixtures/parameter_registry.snapshot`, which pins the step count, is
+// unchanged.
+NormalisableRange<float> twoDecimalRange (float lo, float hi)
+{
+    return { lo, hi, 0.01f };
+}
+
 // True logarithmic (octave-even) range for every ⊕(log) row in §4.2
 // (Anamorph:src/PluginParameters.cpp:107-113).
 NormalisableRange<float> logRange (float lo, float hi)
@@ -191,11 +238,19 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
     // unconditional dBTP suffix advertised an inter-sample guarantee the
     // default configuration does not make. `dbFrom` parses the leading float,
     // so both spellings round-trip through `getValueForText` identically.
-    floatParam (pid::ceiling, "Ceiling", { -20.0f, 0.0f }, -0.1f,
+    //
+    // TWO DECIMAL PLACES, and the range is what enforces it (see
+    // `twoDecimalRange`): the ceiling is the one control a user dials to a
+    // precise number against a delivery spec, and a knob that reads "-0.1 dB"
+    // while holding -0.14 is a knob that lies about the thing it exists to
+    // guarantee. The display width follows the value's precision rather than
+    // leading it — `String (v, 2)` prints a value that IS two-decimal, so the
+    // two can never disagree.
+    floatParam (pid::ceiling, "Ceiling", twoDecimalRange (-20.0f, 0.0f), -0.1f,
                 [ceilingUnit] (float v, int)
                 {
                     const bool tp = ceilingUnit != nullptr && ceilingUnit->truePeakEngaged();
-                    return juce::String (v, 1) + (tp ? " dBTP" : " dB");
+                    return juce::String (v, 2) + (tp ? " dBTP" : " dB");
                 }, dbFrom);
     boolParam  (pid::freeze,       "Freeze",        false, false);
     boolParam  (pid::loudnessComp, "Loudness Comp", false);
@@ -231,15 +286,21 @@ createAnabasisLayout (const CeilingUnitSource* ceilingUnit)
                 [] (const juce::String& t) { return t.getFloatValue(); });
     floatParam (pid::clipDrive, "Clip Drive", { 0.0f, 24.0f }, 0.0f, dbText, dbFrom);
     floatParam (pid::clipMix, "Clip Mix", { 0.0f, 100.0f }, 100.0f, pctText, pctFrom);
-    choiceParam (pid::colourModel, "Colour", { "Clean", "Tape", "Tube", "Transistor" }, 1);
+    // "Color", US spelling, in every user-facing NAME since 0.1.3 (owner
+    // directive, item 6) — the IDs keep their historical `colour*` spelling:
+    // an ID is a compatibility key, never shown to anyone, and renaming one
+    // is the hard-stop PARAMETER_COMPATIBILITY_POLICY rule 1 forbids. A NAME
+    // is rule 2's legal move: snapshot re-frozen, same as 0.1.2's "Limiter
+    // Stereo Link".
+    choiceParam (pid::colourModel, "Color", { "Clean", "Tape", "Tube", "Transistor" }, 1);
     floatParam (pid::colourBalance, "Odd/Even", { -1.0f, 1.0f }, 0.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); });
-    floatParam (pid::colourTone, "Colour Tone", { -1.0f, 1.0f }, 0.0f,
+    floatParam (pid::colourTone, "Color Tone", { -1.0f, 1.0f }, 0.0f,
                 [] (float v, int) { return juce::String (v, 2); },
                 [] (const juce::String& t) { return t.getFloatValue(); });
     floatParam (pid::dynTilt, "Dynamic Tame", { 0.0f, 2.0f }, 0.0f, dbText, dbFrom);
-    floatParam (pid::colourDepth, "Colour Depth", { 0.0f, 100.0f }, 0.0f, pctText, pctFrom);
+    floatParam (pid::colourDepth, "Color Depth", { 0.0f, 100.0f }, 0.0f, pctText, pctFrom);
 
     // Rows 26-33 (limiter). lookahead: log taper, NO zero/off position
     // (§3.4 / OQ-010 — a 0 ms limiter degenerates into a clipper); it is

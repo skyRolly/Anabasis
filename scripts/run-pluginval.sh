@@ -7,10 +7,17 @@
 #  the SAME structure). Editor open/close tests need a display, so we run under
 #  xvfb-run on Linux when available.
 #
-#  Usage: scripts/run-pluginval.sh [strictness] [mode]
+#  Usage: scripts/run-pluginval.sh [strictness] [mode] [format]
 #           strictness : 5 dev (P1-P2) / 8 standard (P3-P5) / 10 pre-release gold
 #                        (P6 + every release) -- default 8
 #           mode       : deterministic (default) | randomise
+#           format     : vst3 (default) | au   -- `au` is macOS-only (Logic loads
+#                        only AU, and KI-009 was reported in AU as well as VST3, so
+#                        validating only the VST3 left the format the report names
+#                        ungated). On a non-Darwin host `au` is an ERROR rather than
+#                        a silent skip: a gate that quietly does nothing is the
+#                        failure mode this script's fail-closed `find` exists to
+#                        prevent.
 #
 #  Both modes run 3 CONSECUTIVE passes; ALL must pass:
 #    deterministic -- fixed `--random-seed $PLUGINVAL_SEED` (NONZERO -- see below),
@@ -42,6 +49,7 @@ set -euo pipefail
 
 STRICTNESS="${1:-8}"
 MODE="${2:-deterministic}"
+FORMAT="${3:-vst3}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT/build"
 TOOLS_DIR="$ROOT/.tools"
@@ -54,20 +62,49 @@ mkdir -p "$TOOLS_DIR"
 # fresh tree, so this only bites locally -- which is exactly where it would go
 # unnoticed. P1 note: replace with the explicit expected path once CMakeLists.txt
 # fixes the artefact layout.
-VST3_MATCHES="$(find "$BUILD_DIR" -maxdepth 8 -name 'Anabasis.vst3' 2>/dev/null || true)"
+case "$FORMAT" in
+    vst3) BUNDLE_NAME="Anabasis.vst3" ;;
+    au)
+        if [ "$(uname -s)" != "Darwin" ]; then
+            echo "format 'au' is macOS-only (this host is $(uname -s)) -- refusing to pass silently."
+            exit 2
+        fi
+        BUNDLE_NAME="Anabasis.component"
+        ;;
+    *) echo "Unknown format '$FORMAT' (expected vst3|au)"; exit 2 ;;
+esac
+
+# An explicit bundle path overrides discovery. This exists for ONE case and is
+# fail-closed for it: macOS Audio Units are resolved by the system through
+# `AudioComponentFindNext`, which only ever finds components the AudioComponent
+# registry knows about — i.e. bundles under a Components directory. A freshly
+# built, never-installed .component in the build tree may therefore report ZERO
+# plugin types no matter how correct it is, so the macOS job installs it first
+# and points here. Set-but-missing is an ERROR rather than a fall back to
+# discovery: silently validating a DIFFERENT bundle than the caller named is the
+# failure this script's ambiguity check exists to prevent.
+if [ -n "${ANABASIS_PLUGINVAL_BUNDLE:-}" ]; then
+    if [ ! -e "$ANABASIS_PLUGINVAL_BUNDLE" ]; then
+        echo "ANABASIS_PLUGINVAL_BUNDLE is set to '$ANABASIS_PLUGINVAL_BUNDLE' but nothing is there."
+        exit 1
+    fi
+    VST3_MATCHES="$ANABASIS_PLUGINVAL_BUNDLE"
+else
+VST3_MATCHES="$(find "$BUILD_DIR" -maxdepth 8 -name "$BUNDLE_NAME" 2>/dev/null || true)"
 VST3_COUNT="$(printf '%s' "$VST3_MATCHES" | grep -c . || true)"
 if [ "$VST3_COUNT" -eq 0 ]; then
-    echo "Anabasis.vst3 not found under $BUILD_DIR -- build first (scripts/build.sh)."
+    echo "$BUNDLE_NAME not found under $BUILD_DIR -- build first (scripts/build.sh)."
     exit 1
 fi
 if [ "$VST3_COUNT" -ne 1 ]; then
-    echo "Anabasis.vst3 is ambiguous -- found $VST3_COUNT under $BUILD_DIR:"
+    echo "$BUNDLE_NAME is ambiguous -- found $VST3_COUNT under $BUILD_DIR:"
     # Read line by line -- see the same guard in scripts/run-tests.sh: unquoted,
     # printf relied on word splitting (which also splits on spaces inside a path);
     # quoted, printf applies the format once so only the first line gets indented.
     while IFS= read -r m; do echo "  $m"; done <<< "$VST3_MATCHES"
     echo "Refusing to guess which bundle the release gate should validate. Remove the stale build tree."
     exit 1
+fi
 fi
 VST3_PATH="$VST3_MATCHES"
 
@@ -136,8 +173,8 @@ run_one_pass() {
     return 139
 }
 
-echo "Validating $VST3_PATH at strictness $STRICTNESS -- mode=$MODE (${PASSES} consecutive pass(es) required)"
+echo "Validating $VST3_PATH at strictness $STRICTNESS -- format=$FORMAT mode=$MODE (${PASSES} consecutive pass(es) required)"
 for pass in $(seq 1 "$PASSES"); do
-    run_one_pass "$MODE pass $pass/$PASSES"
+    run_one_pass "$FORMAT $MODE pass $pass/$PASSES"
 done
-echo "pluginval: ALL ${PASSES} ${MODE} pass(es) succeeded at strictness $STRICTNESS"
+echo "pluginval: ALL ${PASSES} ${MODE} pass(es) succeeded for ${FORMAT} at strictness $STRICTNESS"

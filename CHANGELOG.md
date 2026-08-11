@@ -15,9 +15,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Two such entries now exist
-(`[0.1.1]`, `[0.1.2]`) and neither has been tagged; WHICH version the first annotated `vX.Y.Z`
-tag cuts is a decision nobody has taken yet, and this file does not presume it.
+notes are written, dated and complete — not that the build shipped. Three such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`) and none has been tagged; WHICH version the first annotated
+`vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
 version entry because the workflow extracts a version's section VERBATIM as the published release
@@ -44,6 +44,203 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.1.3] — 2026-08-09
+
+**The polish round** (the owner's seven-item 0.1.3 directive), plus two review follow-ups.
+Mostly display and naming, and **no audible DSP change**: the one audio-path edit is a
+numerical guard in the colour stage (below), argued and tested bit-exact for every signal the
+chain can reach. Stated this way deliberately — an earlier draft of this line said "no DSP
+behaviour changes anywhere", which the entry's own `Fixed` section contradicts, and
+`release.yml` publishes this section verbatim as the release notes.
+
+### Added
+- **The AU is validated by pluginval, on every push.** Same strictness, both modes, three
+  consecutive passes each — the same gate the VST3 has always had. Until now the release gate ran
+  against the VST3 alone on all three platforms, so the AU shipped to Logic users having passed
+  no automated validation at all. Evidence Source: PR #14. [Verified]
+- **A channel probe that tests the shipped artefact.** Every other check rebuilds the plugin's
+  sources into a console app; this one loads the built VST3/AU through a host and asserts both
+  channels carry audio across the reported field configurations — so the LTO'd, wrapped binary a
+  user actually installs is exercised, on macOS for both formats and both architectures. It is
+  what finally reproduced the silent left channel. Opt-in (`-DANABASIS_BUILD_PROBE=ON`) and run
+  on all three platforms in CI, alongside a second reproduction that drives the DSP core with no
+  wrapper, format or host at all — so a failure says immediately which half of the product is at
+  fault. The Clang job now builds the **plugin** with the product's own link-time-optimisation
+  flags, the configuration in which the silent-channel defect was the only thing ever built.
+  Evidence Source: PR #14. [Verified]
+- **Three cross-platform CI gates**, because a green Linux build is not evidence about another
+  platform: a source portability lint for the JUCE SIMD-overload hazard (with a compile canary
+  that checks the pinned JUCE still has that hazard), a Clang build that fails on any warning in
+  first-party sources, and a sanitizer job running ASan + UBSan over both suites plus valgrind
+  memcheck over both suites too. `docs/policies/TESTING_POLICY.md` carries what each one does and,
+  as importantly, what it does not. Evidence Source: PR #14. [Verified]
+
+### Changed
+- **The loudness-compensation toggle reads MATCH, not COMP** — beside a compressor panel
+  captioned COMP, the old caption read as a compressor switch. The parameter and its
+  automation name ("Loudness Comp") are unchanged. Evidence Source: PR #13 (item 2). [Verified]
+- **"Colour" is now "Color" in every user-facing string** — the CLIP / COLOR panel caption,
+  the knob tooltips, and the automation names of the three colour-stage parameters ("Color",
+  "Color Tone", "Color Depth"; registry snapshot re-frozen per
+  PARAMETER_COMPATIBILITY_POLICY rule 2, exactly as 0.1.2's "Limiter Stereo Link"). Parameter
+  IDs keep their historical spelling — they are compatibility keys, never shown. Evidence
+  Source: PR #13 (item 6). [Verified]
+- **The EQ panel is reorganised into one band per row** — bands in ascending frequency order
+  (Tilt + low shelf · Bell 1 · Bell 2 · high shelf), each bell reading Q | Freq | Gain across
+  the same column grid, and the two shelves framing them in matching columns. The previous
+  layout packed the eleven knobs in declaration order, splitting every band across rows. Same
+  cell sizes and panel budget, so nothing else moved; parameter identity, ranges and
+  automation are untouched. Evidence Source: PR #13, bell column order PR #14 (item 5).
+  [Verified]
+- **The Sidechain High-Pass tooltip now says what the control does** — it filters the
+  **compressor's** detector only; the limiter's detector has been deliberately unfiltered
+  since 0.1.2 (ADR-0023), and the tip still described the pre-0.1.2 shared filter. Evidence
+  Source: PR #14. [Verified]
+- **The Ceiling reads and holds two decimal places** — `-0.10 dB`, not `-0.1 dB`, and the value
+  behind the label is quantised to the same 0.01 dB grid rather than merely displayed on it. It is
+  the one control set to a number from a delivery spec, so a knob reading `-0.1` while holding
+  −0.14 misstated the guarantee at the only place that guarantee is written down. The quantisation
+  is in the parameter's range, so it holds for the knob, host automation, typed text, preset and
+  session recall and the value the limiter actually compares against — not for the display alone.
+  The −0.1 default is unchanged and already on the grid; a stored off-grid value snaps on load
+  (ADR-0024, `PARAMETER_COMPATIBILITY_POLICY.md` rule 3 — nothing has shipped, so nothing needs
+  migrating). Evidence Source: PR #14. [Verified]
+- **The macOS and Windows installers capitalise "Plug-in" and "Application"** in their
+  component and folder-prompt wording. Evidence Source: PR #14. [Verified]
+- **The RMS statistics row updates at reading pace (~3 Hz)** — the 50 ms windowed measurement
+  (ADR-0020) is unchanged and was never wrong; the readout was re-printed at the panel's full
+  frame rate (the meter clock paces on vblank, up to ~125 Hz), so the digits churned faster
+  than they could be read. The row now adopts a
+  fresh value roughly three times a second and holds it between adoptions; a meter reset
+  clears it immediately when no audio is running (with audio flowing the same block re-publishes
+  a live 50 ms reading, so there is nothing to clear — the rolling windows are not reset, as the
+  manual says), and **switching the RMS reference in Settings still moves the
+  row on the next frame** — the hold applies to the measurement, not to the reference.
+  Evidence Source: PR #13, reference immediacy PR #14 (item 1). [Verified]
+
+### Fixed
+- **The left channel is no longer silent.** On macOS — in both AU and VST3, at every sample rate
+  and block size, and at the plugin's own defaults as much as at any particular setting — the
+  plugin emitted exact digital silence on the left channel while the right played normally.
+  Setting Clip Mix to 0, or engaging Bypass, restored it. The cause was in the engine's channel
+  bound: it was correct at runtime but not provably in range to the compiler, which made the
+  per-sample stereo frames look like possible out-of-bounds writes, and one compiler
+  configuration (Clang with link-time optimisation — the one that builds the macOS product)
+  acted on that. The bound now states the limit it always had. The corrected build produces
+  bit-for-bit the same output as the builds that were never affected, so nothing that sounded
+  right has changed. `docs/POSTMORTEMS.md` INC-004 carries the mechanism and why five months of
+  green test runs could not see it. Evidence Source: PR #14. [Verified]
+- **The clip/saturation stage can no longer poison itself invisibly.** Its dynamic-tame filter
+  ran on the unbounded through-signal, so an absurdly hot input (above ~2.2e38, about
+  +767 dBFS) could turn the filter's own state into a NaN — **without the plugin producing a
+  single bad sample at the time**, because with Clip Drive at 0 the tame is idle and its state
+  is written but never read. The corrupted state then survived every block, preset load and
+  A/B, and was paid for later: the moment Clip Drive was raised with a non-zero Clip Mix, that
+  one channel went digitally silent. The stage's arithmetic bound now covers this third site as
+  well as the two it already covered, on the state feed rather than the signal, so a huge
+  sample still passes through untouched and no audible sample changes. Not the cause of the
+  field reports of a silent left channel — the trigger level is far beyond anything a DAW
+  delivers, and that cause is the separate entry above — but a real latch either way.
+  Evidence Source: PR #14.
+  [Verified]
+- **The macOS build works again.** The macOS CI job had failed to COMPILE
+  `tests/state_tests.cpp` on every push since 2026-08-08 while Linux and Windows stayed green,
+  so no macOS binary was built, validated or packaged for three days. One line did it:
+  `juce::jmax<size_t> (...)` instantiates JUCE's `dsp::SIMDRegister` overload of the same name,
+  and completing `SIMDRegister<size_t>` needs a `SIMDNativeOps<size_t>` that exists only where
+  `size_t` names one of JUCE's ten SIMD element typedefs — true on Linux (`uint64_t` IS
+  `unsigned long`), false on macOS (`uint64_t` is `unsigned long long`). Recorded in full as
+  `docs/POSTMORTEMS.md` INC-003. Evidence Source: PR #14. [Verified]
+- **A sustained, absurdly hot input can no longer silence one channel** (the KI-009
+  investigation). The colour stage's harmonic polynomial raises to the fifth power, and with
+  Clip Drive at 0 the clipper's own bound is skipped, so a finite-but-astronomical sample
+  could overflow it to infinity — after which the engine's per-channel safety substitution
+  emitted digital zero on **that channel alone**, for as long as the input persisted, while
+  the other channel played normally. The stage's **three** arithmetic sites — that polynomial's
+  argument, the drive product, which overflows the same way four hundred dB higher up, and the
+  dynamic-tame filter's state feed (the entry above) — are now all bounded at a level some
+  120 dB above anything the chain can carry, so no audible sample changes (bit for bit) and the
+  stage can no longer produce an infinity from any finite input. This is **not** the mechanism
+  behind the field reports of a silent left channel — the owner re-tested with it in the build
+  and that issue persisted — and it is worth keeping the two apart: this one needs an input
+  around +120 dBFS, while the field fault was a miscompilation that needed no unusual input at
+  all and is fixed separately above (`docs/POSTMORTEMS.md` INC-004). Evidence Source: PR #14.
+  [Verified]
+- **The GR history no longer flashes a vertical accent line at its left edge** while the
+  gain-reduction trace there is non-zero. The "unmeasured region" zero-line was also drawn
+  for a *full, scrolling* window whenever bucket-expiry phase left a sub-pitch gap at the
+  edge, and the trace then dropped vertically from the zero line to its real value at the
+  same x — flashing at the bucket-expiry rate. The zero region now draws only while the ring
+  is genuinely still filling; a full window extends its oldest bucket to the edge. Evidence
+  Source: PR #13 (item 4). [Verified]
+
+### Removed
+- **The corner-dot legend appended to the nine macro-managed knob tooltips** ("A corner dot
+  means this knob is detached from the macros…"), by owner directive. The detach badge itself
+  and Simple view's clickable reset dot are unchanged. Evidence Source: PR #13 (item 7).
+  [Verified]
+
+### Investigation (KI-009 — since CLOSED, see Fixed above; KI-012 — still open)
+
+*This section is the round-by-round record of how the silent left channel was hunted, kept
+because it is what the next such report starts from. It is written in the present tense of each
+round, and the last of those rounds is not the outcome: KI-009 was root-caused and fixed on
+2026-08-11 — undefined behaviour in the engine's channel bound that Clang acted on at `-flto` —
+and `docs/POSTMORTEMS.md` INC-004 carries the mechanism, the excluded hypotheses and the gates
+that now guard it. Where a bullet below says the fault is unfixed, platform-scoped or unreachable
+from Linux, INC-004 is what superseded it.*
+
+- **Every KI-009 regression has now run on macOS, and passes.** Restoring the build revealed
+  that the broken line sat INSIDE `testClipMixCannotChangeTheDefaultPresetsSound`, so the
+  regressions written in the last three rounds — for a fault that reproduces only on macOS — had
+  never once executed there. The full macOS job is now green (build → both suites → pluginval ×3
+  in both modes → packaging, universal arm64 + x86_64), which makes "does not reproduce" a
+  measurement on the reproducing platform rather than an inference from the other one. It is
+  still a negative: the reproduction lives outside what the suites drive. Evidence Source:
+  PR #14. [Verified]
+- **A real defect class was found and pinned in the process.** At Clip Mix 0 the clip/saturation
+  stage's output is the untouched dry sample, so a poisoned internal state is invisible to the
+  engine's non-finite boundary — and invariant 9's repair is keyed on that boundary. The
+  0.1.3 colour-argument bound makes it unreachable in the shipped build;
+  `testClipSatCannotHideANonFiniteFromTheBoundary` proves that over 30 poisoning attempts up to
+  FLT_MAX, and fails with 32 000 non-finite samples **on ordinary audio** when the bound is
+  removed. No audible change — this pins a property the code already had. Evidence Source:
+  PR #14. [Verified]
+- **The left-channel silence is macOS-only so far.** The owner re-tested on **Linux** and
+  cannot reproduce it there, so KI-009 is now explicitly scoped to the macOS build (Windows
+  untested by either side). Six rounds of headless work all ran on Linux, so their
+  "cannot reproduce" agrees with the owner on a platform where the fault is absent — which
+  says nothing about the platform where it is present. The consequence is recorded rather
+  than implied: a macOS-only divergence is the only one of the three live hypotheses that
+  predicts a platform split, so it leads, and no further Linux-side experiment can move the
+  entry. **Superseded** — the platform split was real but the scoping drawn from it was wrong:
+  the variable was the compiler, not the operating system, and building the *plugin* with Clang
+  on Linux reproduced the fault exactly, which is where it was fixed
+  (`docs/POSTMORTEMS.md` INC-004). Evidence Source: PR #14. [Verified]
+- **New report — the Linux editor accepting no mouse input (KI-012) — does not reproduce.**
+  The built VST3 was loaded into a purpose-built minimal JUCE VST3 host on a real X server and
+  driven with **XTEST** pointer events, bare and under a window manager: clicks land (the ADV
+  toggle resizes the window), a rotary drag moves Loudness and the parameters its macro map
+  drives, and hover repaints against a zero-pixel idle control. `docs/KNOWN_ISSUES.md` KI-012
+  records what that excludes, the sibling comparison (every interaction-relevant construct
+  identical; the one divergence is off the input path), and the single field datum that would
+  settle it — whether the meters move while audio plays. Evidence Source: PR #14. [Verified]
+- **The left-channel silence was not fixed by the colour-stage guard.** With that guard in the
+  build the owner re-tested on macOS in both AU and VST3: the behaviour was identical across
+  formats, unaffected by oversampling or any other setting, removed only by Clip Mix = 0 — and
+  **global bypass restored the channel**, which placed the loss inside the processed path rather
+  than in host routing. Every one of those observations held and every one of them is explained
+  by the real cause, found later in this round and fixed above; `docs/POSTMORTEMS.md` INC-004
+  carries the mechanism and why the two faults share a fingerprint. Evidence Source: PR #14.
+  [Verified]
+- The owner's new per-channel GR observation (comp GR on both lanes, limiter GR on the right
+  lane only, both stereo links at 0) localises the left-channel kill to the span between the
+  compressor's output and the limiter's detector tap. The exact field configuration is now a
+  permanent headless case at both oversampling extremes (both green), and the OS toggle was
+  named as the decisive field experiment. That localisation was right and the experiment was
+  never needed: the span it named is where the miscompiled channel loop sits
+  (`docs/POSTMORTEMS.md` INC-004). Evidence Source: PR #13 (item 3). [Verified]
 
 ## [0.1.2] — 2026-08-09
 

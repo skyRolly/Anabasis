@@ -48,9 +48,9 @@ The **Loudness** knob does not map to a single gain — it drives the whole chai
 **adaptive engine** that listens to your programme material (short-term loudness, crest
 factor, spectral tilt, transient density) and continuously, *slowly* trims how the stages
 share the work: light compression and transparent limiting low on the dial, the clipper
-absorbing transients in the middle, saturation colour and a dynamic high-frequency tame at
+absorbing transients in the middle, saturation color and a dynamic high-frequency tame at
 the top. The **Ceiling** is a limit the output never exceeds — a sample-peak limit as shipped,
-and a *true-peak* one once you engage **TP** (§3.2). **Loudness Comp**
+and a *true-peak* one once you engage **TP** (§3.2). **MATCH**
 plays the processed signal back at matched loudness so the level increase cannot flatter
 you, and **Delta** lets you listen to exactly what the processing is removing.
 
@@ -101,7 +101,7 @@ toggle row, and the metering strip.
 2. Raise **Loudness** until the gain-reduction history shows steady, musical work — watch
    the **out LUFS** readout climb. (The graph well opens on the **GR history** — the
    GR|SPEC pill in its bottom-left corner toggles to the spectrum and back — §3.4.)
-3. Switch **COMP** (loudness-compensated monitoring) on. The level jump disappears; what
+3. Switch **MATCH** (loudness-compensated monitoring) on. The level jump disappears; what
    you hear now is the *sound* of the processing at matched loudness. If it still sounds
    better, keep going; if it only sounded better because it was louder, you just found out.
 4. Press **DELTA** to hear exactly what is being removed — transient tops, mostly. Short,
@@ -109,7 +109,7 @@ toggle row, and the metering strip.
 5. Check the **Ceiling** (default −0.1 dB) against your delivery spec — and if that spec is
    written in **dBTP**, engage **TP** beside it, which is what makes the number mean dBTP
    (§3.2). The readout's unit follows the switch, so it always says which one you have.
-6. **Bypass** in the top bar A/Bs against the untouched signal — with COMP on, that
+6. **Bypass** in the top bar A/Bs against the untouched signal — with MATCH on, that
    comparison is loudness-matched too.
 
 ### 2.5 The Standalone application
@@ -158,7 +158,7 @@ Universal gestures:
 | **↶ / ↷** | Undo / Redo — kept **per A/B slot**. Covers sound parameters, preset loads, Copy (on the destination slot) and the ADV view switch; bypass and the monitor toggles are never recorded. |
 | **Settings (gear)** | Opens the Settings overlay (§3.5). |
 | **ADV** | Switches Simple ↔ Advanced view (§5). |
-| **BYPASS** | Click-free bypass; with Loudness Comp on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
+| **BYPASS** | Click-free bypass; with **MATCH** on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
 
 ### 3.2 Simple view
 
@@ -166,10 +166,10 @@ Universal gestures:
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
 | **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, detection moves to the oversampled rate, inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling fixed while you browse presets. |
-| **Character** | 0 … 1 | Clean ↔ Colour: how much of the push is done with saturation character rather than clean limiting. |
+| **Character** | 0 … 1 | Clean ↔ Color: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
-The toggle row underneath: **COMP** (loudness-compensated monitoring), **DELTA**
+The toggle row underneath: **MATCH** (loudness-compensated monitoring), **DELTA**
 (difference monitoring — solo what the processing removes), **FREEZE** and **LEARN** (§4),
 plus the live **out LUFS** readout. A small **edited dot** appears when Advanced edits have
 detached parameters from the macros — clicking it returns everything to the macro sound
@@ -177,7 +177,7 @@ detached parameters from the macros — clicking it returns everything to the ma
 
 ### 3.3 Advanced view
 
-Four zones over the same parameter model — **COMP**, **CLIP / COLOUR**, **LIMITER**,
+Four zones over the same parameter model — **COMP**, **CLIP / COLOR**, **LIMITER**,
 **EQ** — plus the utility row and the metering well. (Until 0.1.2 a read-only mirror of the
 three macro knobs sat between them; it was display-only and has been removed — the macros
 live in the Simple view, and the accent detach dots on the zone knobs still show which
@@ -193,10 +193,10 @@ the automation lane keeps the full name, so "Ratio" here is "Comp Ratio" to your
   how much both channels share one gain; full link keeps the image stable, lower lets each
   channel breathe on its own; since 0.1.1), and its gain-reduction meter — **two lanes
   since 0.1.2, L above R**, which read identically at full link and diverge below it.
-- **CLIP / COLOUR** — the transient-absorbing clipper and the colour stage: Shape
+- **CLIP / COLOR** — the transient-absorbing clipper and the color stage: Shape
   (hard ↔ soft, with a live transfer-curve display), Drive (level-compensated), Mix,
-  **Colour** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Colour
-  Tone, Colour Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
+  **Color** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Color
+  Tone, Color Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
 - **LIMITER** — the true-peak lookahead limiter: Gain ("Limiter Gain" in automation — the
   push into it), Lookahead (0.5–10 ms), Release ("Lim Release") with **AUTO**, **Style**
   (Transparent / Punchy / Loud), Stereo Link ("Limiter Stereo Link"), Transients (transient
@@ -312,15 +312,16 @@ the `*` after the preset name), and it never appears on knobs the macros don't m
 only the nine managed parameters can detach, because only they have a macro curve to
 detach *from*. Consequently, manually turning a detached knob back to its old value does
 **not** clear the dot: the knob is still off macro control, holding *your* value. Moving a
-macro, clicking Simple's edited dot, or loading a preset is what re-attaches it. Each
-managed knob's tooltip carries this legend.
+macro, clicking Simple's edited dot, or loading a preset is what re-attaches it. (The knob
+hover hints carried this legend until 0.1.3, when it was removed by owner directive — the
+explanation lives here, in the manual, and the dot itself is unchanged.)
 
 ---
 
 ## 6. Signal flow and latency
 
 ```
-Input Gain → EQ (Pre position) → Compressor → Clipper + Colour
+Input Gain → EQ (Pre position) → Compressor → Clipper + Color
            → Limiter (lookahead, true peak) → EQ (Post position) → Ceiling
            → Dither → Output
 ```
@@ -333,7 +334,7 @@ Input Gain → EQ (Pre position) → Compressor → Clipper + Colour
   delay compensation never re-syncs mid-session. Oversampling factor and phase mode *do*
   change it, and take effect at a click-free moment.
 - **Click-free by construction**: preset loads, A/B switches, undo/redo and engine
-  rewires (EQ position, colour model, oversampling changes) duck the output briefly
+  rewires (EQ position, color model, oversampling changes) duck the output briefly
   instead of clicking. The short dip *is* the mechanism working.
 - **Self-healing**: if a hostile upstream signal ever overflows a filter, the engine
   detects and repairs it within the block instead of going silent.
@@ -370,7 +371,8 @@ changes, sorted alphabetically).
 ### 7.3 What a preset contains
 
 A preset changes **sound parameters only**. Deliberately left alone: Bypass, the
-monitoring toggles (Loudness Comp, Delta), the Simple/Advanced view state, **Freeze**, and
+monitoring toggles (**MATCH** — your host's automation lane still calls this parameter
+"Loudness Comp" — and **DELTA**), the Simple/Advanced view state, **Freeze**, and
 everything in Settings. A **locked Ceiling** is skipped entirely — browsing presets never
 moves it. The `*` edited marker compares exactly what a preset can carry, so toggling
 monitoring or resizing the window never marks a preset as edited.
@@ -399,8 +401,9 @@ travel with your DAW session.
    default suits most deliveries; lock it). If the spec is written in dBTP, engage **TP**
    as well — that is what makes the ceiling hold inter-sample peaks.
 2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work
-   (click the **GR** chip on the graph well first — it opens on the spectrum).
-3. **COMP on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
+   (the graph well opens on the GR history — if it is showing the spectrum, the GR|SPEC
+   pill in its bottom-left corner switches back).
+3. **MATCH on.** Judge at matched loudness. Use **DELTA** to check what is being lost —
    dry transient ticks only.
 4. Compare candidates with **A/B** + **Copy**, judge PLR, and undo freely — history
    is per slot.
@@ -463,7 +466,7 @@ The short dip is deliberate — parameter jumps and engine rewires execute in a 
 moment instead of clicking.
 
 **It gets louder but not better.**
-That is exactly what **COMP** exists to reveal. Judge with it on; use **DELTA** to hear
+That is exactly what **MATCH** exists to reveal. Judge with it on; use **DELTA** to hear
 the cost; back off Loudness or shift work to Character. If the top end hardens, raise
 **Dynamic Tame** (Advanced) or darken **Tone** slightly.
 
@@ -475,7 +478,7 @@ live. Closing the editor window removes the GUI's share.
 ### Automation and sessions
 
 **Can I automate the controls?**
-Every stage parameter (compressor, clipper/colour, limiter, EQ, gains) is a host parameter
+Every stage parameter (compressor, clipper/color, limiter, EQ, gains) is a host parameter
 and can be automated as usual. A few are host parameters that are deliberately **not
 offered as automation targets**: the three macro knobs (Loudness, Character, Tone —
 automating a macro that itself writes other parameters would fight the host), the

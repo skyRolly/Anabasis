@@ -63,8 +63,8 @@ Name: "full"; Description: "Full installation"
 Name: "custom"; Description: "Custom installation"; Flags: iscustom
 
 [Components]
-Name: "vst3"; Description: "Install VST3"; Types: full custom
-Name: "standalone"; Description: "Install Standalone"; Types: full custom
+Name: "vst3"; Description: "VST3 Plug-in"; Types: full custom
+Name: "standalone"; Description: "Standalone Application"; Types: full custom
 
 [Files]
 Source: "{#StagingDir}\Anabasis.vst3\*"; DestDir: "{code:GetVst3Dir}\Anabasis.vst3"; Components: vst3; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -107,8 +107,8 @@ begin
     'Setup will install each selected component into its folder below.' + #13#10 +
     'To continue, click Next. To pick different folders, click Browse.',
     False, 'Anabasis');
-  DestPage.Add('VST3 plug-in folder (the plug-in installs as Anabasis.vst3 inside it):');
-  DestPage.Add('Standalone application folder:');
+  DestPage.Add('VST3 Plug-in folder (the Plug-in installs as Anabasis.vst3 inside it):');
+  DestPage.Add('Standalone Application folder:');
   DestPage.Values[0] := ExpandConstant('{commoncf64}\VST3');
   DestPage.Values[1] := WizardDirValue;   // previous install dir, else the DefaultDirName default
 end;
@@ -143,13 +143,13 @@ begin
   begin
     if WizardIsComponentSelected('vst3') and (Trim(DestPage.Values[0]) = '') then
     begin
-      MsgBox('Enter a folder for the VST3 plug-in.', mbError, MB_OK);
+      MsgBox('Enter a folder for the VST3 Plug-in.', mbError, MB_OK);
       Result := False;
       exit;
     end;
     if WizardIsComponentSelected('standalone') and (Trim(DestPage.Values[1]) = '') then
     begin
-      MsgBox('Enter a folder for the Standalone application.', mbError, MB_OK);
+      MsgBox('Enter a folder for the Standalone Application.', mbError, MB_OK);
       Result := False;
       exit;
     end;

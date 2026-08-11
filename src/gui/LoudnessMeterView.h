@@ -4,6 +4,10 @@
 #include <iterator>
 #include "LookAndFeel.h"
 #include "FrameClock.h"
+// The RMS sentinel seeds `heldRawRms` below — this header names the constant,
+// so it includes the class that owns it rather than leaning on the .cpp's
+// transitive include of the processor.
+#include "../dsp/RmsMeter.h"
 
 class AnabasisAudioProcessor;
 
@@ -55,6 +59,25 @@ public:
     // constructing and ticking an editor.
     static float plrFromShown (float tpDb, float integratedLufs) noexcept;
 
+    // The RMS numeric row's two display rules, static for the reason
+    // `plrFromShown` is: they carry the correctness argument, and the suite can
+    // then pin them without constructing and ticking an editor.
+    //
+    // `shouldAdoptRms` is the 0.1.3 readout cadence (see tick()): the row takes
+    // a fresh measurement at a readable pace instead of chasing the ~24 Hz
+    // meter tick. `holdingAReading` is the view's "the value I am currently
+    // showing is a measurement, not the sentinel" bit — passed in rather than
+    // decoded from the shown float, because the shown float has the reference
+    // offset on it and would re-create exactly the sentinel-overlap ambiguity
+    // `RmsMeter`'s two constants exist to prevent.
+    //
+    // `rmsWithReference` applies the §3.5 Settings choice. It is deliberately
+    // NOT inside the hold: the reference is a pure function of the measurement
+    // on screen, so flipping it must move the row on the next frame — the
+    // invariant the `shownRms` member below states.
+    static bool  shouldAdoptRms (float rawDb, bool holdingAReading, double sinceAdoptSecs) noexcept;
+    static float rmsWithReference (float rawDb, bool aes17) noexcept;
+
     explicit LoudnessMeterView (AnabasisAudioProcessor&);
     // Detached FIRST — the tick reads the whole `shown*` snapshot, declared
     // after `clock`, so `= default` freed it under an armed attachment. Same
@@ -88,6 +111,17 @@ private:
           // shape `shownTpOn` needed a flag for, and the reason it is gone
           // along with the field it mirrored.
           shownPeak = 1.0f, shownRms = 1.0f, shownLra = -1.0f;
+
+    // The RMS readout hold (0.1.3 item 1 — see tick() for the analysis-vs-
+    // display judgement, and the two static rules above for the arithmetic).
+    // `heldRawRms` is the RAW meter value the row is currently showing, held
+    // between adoptions; the reference offset is applied to it every tick, so
+    // `shownRms` above keeps carrying the post-offset value and a Settings
+    // flip still moves the snapshot immediately.
+    static constexpr double kRmsReadoutHoldSecs = 1.0 / 3.0;
+    float  heldRawRms    = anabasis::RmsMeter::kSilentDb;
+    double rmsSinceAdopt = 0.0;
+    bool   shownRmsValid = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoudnessMeterView)
 };

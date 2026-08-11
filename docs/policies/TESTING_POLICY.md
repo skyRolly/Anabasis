@@ -9,7 +9,9 @@ Repository Governance Policy. Test acceptance levels and the release gate.
 | **1** | Static analysis | Compiler warnings (`juce::juce_recommended_warning_flags`), CodeQL, MSVC `/analyze` | CMake warning flags; `.github/workflows/codeql.yml`, `msvc.yml` |
 | **2** | Unit / behaviour | Deterministic DSP assertions + state/parameter compatibility (schema shape, registry snapshot, raw-exact round-trip, legacy migrations, corrupt-state robustness, preset round-trip) | `tests/dsp_tests.cpp` (`AnabasisTests`) + `tests/state_tests.cpp` (`AnabasisStateTests`) |
 | **3** | DSP validation | No NaN/Inf/denormals across the feature × oversampling × sample-rate matrix; latency == actual; bypass null; click-free transitions; **ceiling never exceeded**; metering accuracy | `tests/dsp_tests.cpp` |
-| **4** | pluginval | VST3 conformance; editor open/close under `xvfb` | `scripts/run-pluginval.sh` / `.ps1` |
+| **4** | pluginval | VST3 conformance on all three platforms, **and AU conformance on macOS**; editor open/close under `xvfb` | `scripts/run-pluginval.sh [strictness] [mode] [format]` / `.ps1` |
+| **4b** | Shipped-artefact probe | `AnabasisChannelProbe` LOADS the built bundle through a host and asserts BOTH channels carry audio across the reported field configurations — the only check that exercises the LTO'd, wrapped binary a user installs. macOS runs it for VST3 and AU × arm64 and x86_64 | `tools/channel_probe.cpp`; a step in the `linux`, `windows` and `macos` jobs |
+| **1b** | Portability + memory | Source lint for the JUCE SIMD-overload hazard; a Clang build gating on first-party warnings; ASan + UBSan + valgrind over both suites | `scripts/check-portability.py`; `build.yml` jobs `source-lint`, `linux-clang`, `sanitizers` |
 | **5** | Manual validation | Audio quality + GUI appearance + the loudness-matched listening test (cannot be judged headlessly) | Load in a DAW |
 
 ## Phase-escalating strictness (`DEVELOPMENT_BRIEF.md` §2, §11)
@@ -53,6 +55,66 @@ Lowering strictness below the phase value is a deliberate act that must be justi
 
   **All are blocking** — no `continue-on-error`; a non-zero pluginval exit fails the job on every
   platform.
+- **The macOS x86_64 slice is EXECUTED on native Intel hardware** (`macos-intel`,
+  `runs-on: macos-15-intel`). The `macos` job ships a universal binary and runs its Intel slice
+  under **Rosetta 2**, which translates x86_64 to arm64 and executes on arm64 hardware — MXCSR
+  becomes FPCR, SSE becomes NEON. That is not Intel coverage, and until this job existed half the
+  macOS user base had compile-only validation. The job asserts `uname -m` and
+  `sysctl.proc_translated` and **fails** if either says otherwise: a green tick from the wrong
+  architecture reads as "Intel is fine", which is worse than no job.
+- **On macOS the AU is validated as well as the VST3**, both modes, same strictness, same 3
+  consecutive passes (`run-pluginval.sh <strictness> <mode> au`). Until 2026-08-10 the gate ran
+  against the VST3 alone on all three platforms, so the AU — the only format that exists on
+  exactly one platform, and the format KI-009 is reported in alongside VST3 — shipped to Logic
+  users having passed no automated validation at all. `au` on a non-Darwin host is an ERROR, not
+  a silent skip: a gate that quietly does nothing is worse than no gate, because it reports green.
+- **The cross-platform gates below are blocking too**, and they exist because a green Linux build
+  is not evidence about another platform:
+  - `source-lint` — `scripts/check-portability.py`. Rejects an explicit template argument on
+    `{jmin, jmax, snapToZero}`, the juce names `juce_dsp` also overloads for `dsp::SIMDRegister`.
+    **This is a lint and not a build job on purpose.** The defect it guards (INC-003) is a
+    typedef divergence — `size_t` is `uint64_t` on Linux and is not on macOS — so it is invisible
+    to every Linux COMPILER, GCC and Clang alike. No build job on a Linux runner can replace it.
+  - `linux-clang` — builds both test targets **and the plugin** with Clang, runs both
+    reproductions against the plugin build, and fails on any warning whose path is
+    under `src/` or `tests/`. It catches the AppleClang diagnostic set JUCE does not apply to GCC
+    (`-Wshorten-64-to-32`, `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …), which
+    previously reached us only from the macOS runner. It does **not** catch the typedef class;
+    the two gaps are separate and conflating them is how the second one gets dropped. The gate is
+    path-filtered rather than `-Werror` because JUCE's own module sources compile into our
+    targets, and a blanket `-Werror` would gate on a dependency's warnings and be switched off at
+    the first JUCE bump. The filter is `scripts/check-clang-warnings.py`, which RESOLVES each
+    diagnostic's path and asks whether the real file lives under `src/`, `tests/` or `tools/`
+    without passing through a `_deps` component — a structural question, so it does not depend on
+    whether the build system spelled the path absolutely or relatively. It carries a
+    `--self-test` that the job runs FIRST, for the reason `check-docs.py --self-test` exists: a
+    matcher that has silently stopped matching is indistinguishable from a clean tree, and this
+    gate's whole value is its silence being meaningful. The same job runs `check-portability.py --compile-canary`, which
+    verifies the pinned JUCE still HAS the hazard the lint guards.
+
+    **The plugin half of this job is not optional, and INC-004 is why.** ADR-0008 puts
+    `juce_recommended_lto_flags` on the plugin target ALONE — deliberately, so the suites measure
+    the DSP rather than the optimiser. The consequence is that the product is the only artefact
+    ever built with cross-translation-unit optimisation, so any defect that needs it is invisible
+    to every other gate in this file: KI-009 was undefined behaviour that Clang acted on only at
+    `-flto`, and it shipped for five months behind 1039 green checks, clean sanitizers and clean
+    valgrind. **A gate that builds the sources in a configuration the customer never receives is
+    not a gate on the product.** Whatever else changes here, CI must keep building the PLUGIN with
+    the product's own flags, under a compiler other than the one the release runner uses, and must
+    keep RUNNING something against it — `AnabasisEngineRepro` (bare engine, no wrapper) and
+    `AnabasisChannelProbe` (the built bundle, hosted) are that something. The two bisection knobs
+    that isolated it, `ANABASIS_NO_LTO` and `ANABASIS_STAGE_TRACE`, are kept for the next one; both
+    are OFF in every shipping configuration and a binary built with either is not the product.
+  - `sanitizers` — ASan + UBSan over both suites, plus valgrind memcheck over BOTH suites. The
+    point is to catch, on Linux, defects that only MANIFEST elsewhere: memory Linux hands back
+    zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous
+    there, while the DEFECT is platform-independent and tooling sees it either way. MemorySanitizer
+    is deliberately not used — it needs every dependency including libc++ and all of JUCE
+    instrumented, and an uninstrumented dependency yields false positives rather than silence, so
+    valgrind carries that half with no rebuild of anything. It runs over BOTH suites
+    deliberately: the read that would matter goes through the real wrapper `processBlock`, which
+    only `AnabasisStateTests` drives, so covering the DSP suite alone would aim the detector away
+    from the span KI-009 implicates.
 - **The §10 acceptance criteria must be met** (see below) — they are release criteria, not
   aspirations.
 - Level 5 is **required for final sign-off** but cannot gate CI; a green build + pluginval pass is
