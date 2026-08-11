@@ -1045,37 +1045,6 @@ jobs:
           fi
           ANABASIS_TEST_RUNNER="arch -x86_64" ./scripts/run-tests.sh
 
-      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
-      # installs rather than a rebuild of its sources. `AnabasisStateTests`
-      # drives the real processBlock, but compiled into a console app: no LTO
-      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
-      # one architecture. The probe LOADS the built bundle through
-      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
-      # output is the shipped code path including whatever the optimiser did to
-      # it, and its oracle is the field report's own question: is there audio on
-      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
-      # a channel was actually lost. Different codes on purpose.
-      #
-      # FOUR RUNS on macOS: both formats x both slices. The report names AU and
-      # VST3 alike, and the x86_64 slice ships in the same universal binary while
-      # being executed by nothing until this workflow started running it -- so
-      # "macOS is green" previously meant one of the four.
-      - name: Channel probe (hosts the built VST3 and AU, both slices)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
-        run: |
-          set -e
-          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
-          VST3=build/Anabasis_artefacts/Release/VST3/Anabasis.vst3
-          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
-          echo "== arm64 / VST3 =="; "$PROBE" "$VST3" --format vst3
-          echo "== arm64 / AU   =="; "$PROBE" "$AU"   --format au
-          if arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "== x86_64 / VST3 =="; arch -x86_64 "$PROBE" "$VST3" --format vst3
-            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU"   --format au
-          else
-            echo "::warning::Rosetta 2 unavailable -- the x86_64 slice was probed by nothing this run"
-          fi
-
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
         # Both pluginval steps carry the SAME condition, naming exactly what must have
@@ -1144,6 +1113,38 @@ jobs:
         env:
           ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise au
+
+      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
+      # installs rather than a rebuild of its sources. `AnabasisStateTests`
+      # drives the real processBlock, but compiled into a console app: no LTO
+      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
+      # one architecture. The probe LOADS the built bundle through
+      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
+      # output is the shipped code path including whatever the optimiser did to
+      # it, and its oracle is the field report's own question: is there audio on
+      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
+      # a channel was actually lost. Different codes on purpose.
+      #
+      # FOUR RUNS on macOS: both formats x both slices. The report names AU and
+      # VST3 alike, and the x86_64 slice ships in the same universal binary while
+      # being executed by nothing until this workflow started running it -- so
+      # "macOS is green" previously meant one of the four.
+      - name: Channel probe (hosts the built VST3 and AU, both slices)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          VST3=build/Anabasis_artefacts/Release/VST3/Anabasis.vst3
+          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
+          echo "== arm64 / VST3 =="; "$PROBE" "$VST3" --format vst3
+          echo "== arm64 / AU   =="; "$PROBE" "$AU"   --format au
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "== x86_64 / VST3 =="; arch -x86_64 "$PROBE" "$VST3" --format vst3
+            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU"   --format au
+          else
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 slice was probed by nothing this run"
+          fi
+
 
       # Order matters -- 1) dsymutil captures a universal dSYM per bundle (the
       # only crash-symbolication source once stripped), 2) strip -x removes local
