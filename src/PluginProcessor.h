@@ -51,7 +51,14 @@ public:
 
     // -- AudioProcessor -----------------------------------------------------
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
+    // Empty in every shipping configuration. It has a body in the .cpp only so
+    // that the ANABASIS_STAGE_TRACE diagnostic build has somewhere to print
+    // from — a call the host makes AFTER processing stops, which is the one
+    // moment the audio-thread accumulators can be read without racing.
+    void releaseResources() override;
+    // No-op unless ANABASIS_STAGE_TRACE. Public only because it is a diagnostic
+    // seam, not part of the processor's contract.
+    void dumpStageTrace();
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     using juce::AudioProcessor::processBlock;   // keep the double overload visible
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;

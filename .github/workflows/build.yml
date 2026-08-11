@@ -1321,3 +1321,163 @@ jobs:
           name: Anabasis-macOS-debug
           path: dist/Anabasis-macOS-debug
           if-no-files-found: error
+
+  # ==========================================================================
+  #  NATIVE INTEL macOS — the KI-009 reproduction environment.
+  #
+  #  The `macos` job above is Apple Silicon. Its "x86_64 coverage" executes the
+  #  Intel slice through ROSETTA 2, which translates x86_64 instructions to
+  #  arm64 and runs them on arm64 hardware: the FP control word is FPCR, the
+  #  vector unit is NEON, and denormal/rounding behaviour is the host's. Every
+  #  divergence class this bug is being hunted through — SSE vs NEON codegen,
+  #  MXCSR FTZ/DAZ vs FPCR FZ, x87/SSE intermediate precision, alignment of
+  #  vectorised loads — is precisely what Rosetta does NOT reproduce. So the
+  #  project has never once executed its own Intel code on an Intel CPU.
+  #
+  #  This job does, and only that. It deliberately does NOT package, sign or
+  #  upload: the shipping artefact still comes from the universal build above.
+  #  What it adds is execution on the reported architecture.
+  # ==========================================================================
+  macos-intel:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: macos-15-intel   # NATIVE x86_64 hardware -- not Apple Silicon, not Rosetta
+    steps:
+      - uses: actions/checkout@v7
+
+      # FAIL, do not warn. A job whose entire purpose is "run on Intel" is
+      # worthless if it quietly runs somewhere else, and a green tick from the
+      # wrong architecture is worse than no job at all: it would be read as
+      # "Intel is fine". `sysctl.proc_translated` is 1 inside Rosetta and
+      # absent on a real Intel machine, so both wrong answers are caught.
+      - name: Assert this really is native Intel
+        run: |
+          set -e
+          ARCH="$(uname -m)"
+          TRANSLATED="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+          echo "uname -m = $ARCH ; sysctl.proc_translated = $TRANSLATED"
+          sysctl -n machdep.cpu.brand_string || true
+          if [ "$ARCH" != "x86_64" ]; then
+            echo "::error::this job must run on native x86_64 (got $ARCH) -- the KI-009 report is architecture-specific and this runner cannot answer it"
+            exit 1
+          fi
+          if [ "$TRANSLATED" != "0" ]; then
+            echo "::error::running under Rosetta translation -- that is the coverage this job exists to replace"
+            exit 1
+          fi
+
+      - name: Install build tools
+        run: brew install ninja || true
+
+      # THIN x86_64, not universal. The universal build is the shipping
+      # configuration and is already covered; here the point is that every
+      # object in the tree is compiled by the Intel code generator and executed
+      # by an Intel CPU, with no arm64 slice present to be picked instead.
+      - name: Configure (native x86_64 only)
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=x86_64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DANABASIS_BUILD_PROBE=ON
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build (VST3 + AU + Standalone + tests + probe)
+        id: build
+        run: cmake --build build --config Release
+
+      - name: Self-tests (DSP + state), native Intel
+        id: tests
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/run-tests.sh
+
+      - name: Install the AU so the AudioComponent registry can find it
+        id: au_install
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          DEST="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$DEST"
+          rm -rf "$DEST/Anabasis.component"
+          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
+
+      # The field report names BOTH formats, so both are hosted. This is the
+      # shipped code path -- host -> wrapper -> processBlock -> engine -- built
+      # by the Intel back end and run on an Intel CPU, which is the exact
+      # combination the report describes and the only one never yet executed.
+      - name: Channel probe, native Intel (VST3 + AU)
+        id: probe
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          echo "== x86_64 native / VST3 =="
+          "$PROBE" build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+          echo "== x86_64 native / AU   =="
+          "$PROBE" "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component" --format au
+
+      - name: pluginval VST3 (deterministic x3), native Intel
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
+
+      - name: pluginval AU (deterministic x3), native Intel
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
+
+      # ---- The diagnostic half. ------------------------------------------------
+      # A SECOND, SEPARATE build tree with ANABASIS_STAGE_TRACE=ON. It is kept
+      # apart from the tree above on purpose: the trace changes the engine's
+      # timing and is not realtime-safe, so nothing validated, packaged or
+      # measured may ever come from it. Its only product is the per-stage
+      # per-channel table, which names the first point in the chain at which the
+      # two channels stop agreeing -- the question every previous round could
+      # only answer by inference from the plugin's output.
+      #
+      # It runs LAST and is gated on nothing succeeding, because the case worth
+      # instrumenting is the one where the steps above went red.
+      - name: Stage-trace diagnostic build (native Intel, never shipped)
+        id: trace_build
+        if: ${{ !cancelled() }}
+        run: >
+          cmake -B build-trace -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=x86_64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DANABASIS_BUILD_PROBE=ON
+          -DANABASIS_STAGE_TRACE=ON
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+          && cmake --build build-trace --config Release
+
+      - name: Stage trace through the hosted VST3 and AU
+        if: ${{ !cancelled() && steps.trace_build.outcome == 'success' }}
+        run: |
+          set +e
+          DEST="$HOME/Library/Audio/Plug-Ins/Components"
+          rm -rf "$DEST/Anabasis.component"
+          cp -R build-trace/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          PROBE=./build-trace/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          {
+            echo "== stage trace / VST3 =="
+            "$PROBE" build-trace/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+            echo "probe exit: $?"
+            echo "== stage trace / AU =="
+            "$PROBE" "$DEST/Anabasis.component" --format au
+            echo "probe exit: $?"
+          } > stage-trace.log 2>&1
+          cat stage-trace.log
+          # NEVER fails the job. This step reports; the gates above decide.
+          exit 0
+
+      - name: Upload the stage trace
+        if: ${{ !cancelled() && steps.trace_build.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: Anabasis-macos-intel-stage-trace
+          path: stage-trace.log
+          if-no-files-found: warn

@@ -49,6 +49,12 @@ option(ANABASIS_BUILD_TESTS      "Build the AnabasisTests + AnabasisStateTests c
 option(ANABASIS_BUILD_BENCH      "Build the AnabasisBench performance target (DESIGN §9; OFF by default)" OFF)
 option(ANABASIS_BUILD_PROBE      "Build AnabasisChannelProbe, which HOSTS the built plugin bundle (KI-009; OFF by default)" OFF)
 option(ANABASIS_BUILD_STANDALONE "Build the Standalone format" ON)
+# DIAGNOSTIC ONLY, and OFF everywhere except the KI-009 macOS x86_64 job. ON
+# compiles src/dsp/StageTrace.h's accumulators into the engine, so every stage
+# of the chain reports per-channel RMS at `releaseResources`. It changes the
+# engine's timing and is not realtime-safe; a binary built with it must never be
+# shipped or measured for performance. OFF expands every tap to `((void) 0)`.
+option(ANABASIS_STAGE_TRACE      "Compile the KI-009 per-stage per-channel trace into the engine (DIAGNOSTIC; never ship)" OFF)
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
 
@@ -111,6 +117,15 @@ target_include_directories(AnabasisDSP INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_sources(AnabasisDSP INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/AnabasisEngine.cpp)
 target_link_libraries(AnabasisDSP INTERFACE juce::juce_dsp juce::juce_audio_basics)
+
+# Carried on AnabasisDSP rather than on the plugin so that the trace reaches
+# EVERY consumer of the engine at once — plugin, both test apps, the bench. A
+# diagnostic that only the plugin could see would force a bundle rebuild to
+# answer a question the state tests can already ask.
+if(ANABASIS_STAGE_TRACE)
+    target_compile_definitions(AnabasisDSP INTERFACE ANABASIS_STAGE_TRACE=1)
+    message(STATUS "Anabasis: STAGE TRACE ENABLED -- diagnostic build, do not ship or benchmark this binary")
+endif()
 
 # ============================================================================
 #  3. The plugin target.

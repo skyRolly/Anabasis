@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "gui/PluginEditor.h"
 #include "dsp/Latency.h"
+#include "dsp/StageTrace.h"
 
 namespace
 {
@@ -121,6 +122,10 @@ AnabasisAudioProcessor::~AnabasisAudioProcessor()
     removeListener (this);
     for (const char* id : managed_params::ids)
         apvts.removeParameterListener (id, this);
+
+    // Last chance to report: the state tests destroy the processor without ever
+    // calling `releaseResources`, which is the host's job and not theirs.
+    dumpStageTrace();
 }
 
 // The three §5.3 conditions meet here. Gesture callbacks arrive with a raw
@@ -595,6 +600,43 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // processing (a rate change while stopped, a plugin rescan).
     publishSilentMeters();
     updateLatency();
+
+    // Each prepare starts a fresh trace window, so a dump is attributable to
+    // exactly one (rate, block size, parameter set) configuration rather than
+    // to everything the process has done so far. No-op unless the diagnostic
+    // build defined ANABASIS_STAGE_TRACE.
+    ANABASIS_TRACE_RESET();
+    ANABASIS_TRACE_CONFIGURE (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+}
+
+void AnabasisAudioProcessor::releaseResources()
+{
+    dumpStageTrace();
+}
+
+// Called from BOTH `releaseResources` and the destructor, and neither is
+// redundant: a plugin host calls the former between configurations, while the
+// state tests never call it at all and would otherwise produce no trace. The
+// dump resets afterwards and prints nothing when there is nothing to print, so
+// whichever call comes second is silent.
+void AnabasisAudioProcessor::dumpStageTrace()
+{
+   #if ANABASIS_STAGE_TRACE
+    // The label carries the CLIP STAGE's settings, because the probe runs eight
+    // configurations back to back and KI-009's reproduction condition is stated
+    // in exactly those terms ("Clip Mix triggers it"). The rate/block/channel
+    // triple is printed by the dump itself, from what `prepareToPlay` recorded.
+    const auto raw = [this] (const char* id)
+    {
+        const auto* p = apvts.getRawParameterValue (id);
+        return p != nullptr ? p->load (std::memory_order_relaxed) : 0.0f;
+    };
+    char label[128] = {};
+    std::snprintf (label, sizeof (label), "clipMix=%.3f clipDrive=%.2f bypass=%.0f",
+                   raw (pid::clipMix), raw (pid::clipDrive), raw (pid::bypass));
+    ANABASIS_TRACE_DUMP (label);
+    ANABASIS_TRACE_RESET();
+   #endif
 }
 
 // The published meter atomics, cleared — ONE list, because three sites need
