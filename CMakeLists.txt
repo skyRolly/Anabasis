@@ -116,6 +116,47 @@ else()
     else()
         target_link_options(AnabasisHardening INTERFACE
             -Wl,--gc-sections -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
+
+        # CLANG ON LINUX LINKS WITH LLD, and this is a correctness requirement
+        # rather than a preference.
+        #
+        # GNU ld scans a static archive ONCE, in command-line order, selecting
+        # the members that resolve the symbols undefined at that moment. Under
+        # `-flto` the archive members are BITCODE: the plugin runs codegen only
+        # after that scan, and the merged object it emits needs symbols the scan
+        # already passed over — out-of-line copies, vtables and typeinfo that
+        # only became referenced once the optimiser had inlined and devirtualised
+        # across translation units. ld.bfd does not rescan, so those become
+        # undefined references. The failure is spectacular and misleading: the
+        # plugin link reports hundreds of missing JUCE symbols that are demonstrably
+        # present in `libAnabasis_SharedCode.a`.
+        #
+        # Whether it fires at all depends on the binutils/plugin pairing — the
+        # same source, same compiler and same flags link cleanly against one
+        # `/usr/lib/bfd-plugins` and fail against another. That is precisely why
+        # this is pinned here rather than worked around in one CI job: a build
+        # that happens to succeed on the maintainer's machine and fails on a
+        # runner is not a build configuration, it is a coincidence.
+        #
+        # lld ships with the compiler that produced the bitcode, so it is always
+        # version-matched, and it resolves LTO symbol requests against archives
+        # correctly. Probed rather than assumed: where it is absent the build
+        # falls back to the default linker with a warning that names the hazard,
+        # because refusing to configure would be a worse failure than a link that
+        # may well succeed.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            include(CheckLinkerFlag)
+            check_linker_flag(CXX "-fuse-ld=lld" ANABASIS_HAVE_LLD)
+            if(ANABASIS_HAVE_LLD)
+                target_link_options(AnabasisHardening INTERFACE -fuse-ld=lld)
+            else()
+                message(WARNING
+                    "Anabasis: Clang on Linux without lld. LTO links through GNU ld can fail with "
+                    "undefined references to symbols that ARE in libAnabasis_SharedCode.a (one-pass "
+                    "archive scan vs post-scan LTO codegen). Install lld, or configure with "
+                    "-DANABASIS_NO_LTO=ON if a link fails that way.")
+            endif()
+        endif()
     endif()
 endif()
 

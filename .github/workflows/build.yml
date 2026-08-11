@@ -717,9 +717,37 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: |
-          $probe = Get-ChildItem -Recurse -Filter AnabasisChannelProbe.exe build | Select-Object -First 1
-          $vst3  = Get-ChildItem -Recurse -Filter Anabasis.vst3 build | Select-Object -First 1
-          if (-not $probe -or -not $vst3) { throw "probe or bundle not found" }
+          $ErrorActionPreference = 'Stop'
+          # FAIL CLOSED, exactly as `scripts/run-pluginval.ps1` does, and for the
+          # same two reasons it spells out. windows-latest uses the multi-config
+          # Visual Studio generator, so several configurations of Anabasis.vst3
+          # genuinely coexist in one build tree — `Select-Object -First 1` would
+          # let this gate report green about a Debug or leftover bundle while the
+          # uploaded artifacts come from Release.
+          #
+          # `-Directory` is the second half and is specific to Windows: the VST3
+          # BUNDLE directory is named Anabasis.vst3 and the module inside it is
+          # ALSO named Anabasis.vst3
+          # (…/Anabasis.vst3/Contents/x86_64-win/Anabasis.vst3), so an unfiltered
+          # -Filter matches a directory and a file and only enumeration order
+          # decides which one the probe is handed.
+          #
+          # -ErrorAction SilentlyContinue with $ErrorActionPreference = 'Stop':
+          # without it a missing build/ makes Get-ChildItem THROW, and the
+          # operator gets a stack trace where the count check below would have
+          # printed the one-line cause.
+          function Find-One {
+            param([string]$Filter, [switch]$Directory, [string]$What)
+            $found = @(Get-ChildItem -Recurse -Path build -Filter $Filter -Directory:$Directory -ErrorAction SilentlyContinue)
+            if ($found.Count -eq 0) { throw "$What not found under build/ -- nothing to probe" }
+            if ($found.Count -ne 1) {
+              $found | ForEach-Object { Write-Host "  $($_.FullName)" }
+              throw "$What is ambiguous -- found $($found.Count) under build/. Refusing to guess which one the probe should exercise."
+            }
+            return $found[0]
+          }
+          $probe = Find-One -Filter AnabasisChannelProbe.exe -What 'AnabasisChannelProbe.exe'
+          $vst3  = Find-One -Filter Anabasis.vst3 -Directory -What 'the Anabasis.vst3 bundle'
           & $probe.FullName $vst3.FullName --format vst3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

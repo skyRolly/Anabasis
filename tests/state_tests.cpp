@@ -5568,6 +5568,104 @@ static void testTheCeilingAdvertisesTheUnitItEnforces()
 // row in one without the matching line in the other silently shifts every
 // later field, and the static_assert only catches a length change. Distinct
 // values per parameter, checked field by field, catch a shift of any size.
+// TWO DECIMAL PLACES ON THE CEILING, checked where it has to be true: the
+// VALUE, not the label. The display was already the easy half — the hard half
+// is that a host writing a raw normalised number, a state restore, and a
+// preset override all reach `AudioParameterFloat::setValue`, which does NOT
+// snap, so an `interval` alone would leave the automation lane writing
+// -0.123456 into a knob that reads -0.12. The quantisation therefore lives in
+// the range's `convertFrom0to1` (see `twoDecimalRange`), and these assertions
+// exercise each entry point separately rather than trusting one of them to
+// stand for the rest.
+static void testCeilingIsQuantisedToTwoDecimals()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    check (ceil != nullptr, "ceiling2dp: (premise) the ceiling parameter exists");
+    if (ceil == nullptr)
+        return;
+
+    // "Two decimal places" in binary floating point means the nearest float to
+    // a two-decimal decimal, so the predicate is on the SCALED value: v·100
+    // must be a whole number to well inside a float ULP at this magnitude.
+    auto isTwoDecimal = [] (float v)
+    {
+        const double scaled = (double) v * 100.0;
+        return std::abs (scaled - std::round (scaled)) < 1.0e-3;
+    };
+
+    // 1. HOST AUTOMATION. A sweep of raw normalised values, deliberately on
+    //    irrational-ish steps so the sweep cannot accidentally land on the grid
+    //    by construction — 997 is coprime with everything the range divides by.
+    bool everyStepOnGrid = true;
+    float worst = 0.0f;
+    for (int i = 0; i <= 997; ++i)
+    {
+        const float norm = (float) i / 997.0f;
+        ceil->setValueNotifyingHost (norm);
+        const float v = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+        if (! isTwoDecimal (v))
+        {
+            everyStepOnGrid = false;
+            worst = v;
+        }
+    }
+    const auto sweepMsg = juce::String ("ceiling2dp: every raw normalised host write lands on a two-decimal value")
+                        + (everyStepOnGrid ? juce::String() : " (worst: " + juce::String (worst, 6) + ")");
+    check (everyStepOnGrid, sweepMsg.toRawUTF8());
+
+    // 2. THE VALUE THE DSP READS. `AudioProcessorValueTreeState` publishes
+    //    `convertFrom0to1 (normalised)` into the atomic that `CachedParams`
+    //    resolves and `EngineParameters::ceilingDbTp` carries, so this is the
+    //    same number `CeilingClamp` compares against — not a rounded display of
+    //    an unrounded one.
+    ceil->setValueNotifyingHost (ceil->getNormalisableRange().convertTo0to1 (-0.123456f));
+    const float dspValue = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+    check (isTwoDecimal (dspValue) && std::abs (dspValue - (-0.12f)) < 1.0e-4f,
+           "ceiling2dp: -0.123456 reaches the DSP as -0.12");
+
+    // 3. TEXT ENTRY, both rounding directions and the trailing zero the owner
+    //    asked for. `getText` formats `convertFrom0to1 (v)`, so a text that
+    //    round-trips proves the label and the value agree by construction.
+    struct TextCase { const char* typed; const char* shown; float value; };
+    const TextCase cases[] = {
+        { "-0.1",      "-0.10", -0.10f },
+        { "-0.123",    "-0.12", -0.12f },
+        { "-0.129",    "-0.13", -0.13f },
+        { "-0.123456", "-0.12", -0.12f },
+        { "-3",        "-3.00", -3.00f },
+    };
+    for (const auto& c : cases)
+    {
+        ceil->setValueNotifyingHost (ceil->getValueForText (c.typed));
+        const float v = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+        const auto storeMsg = juce::String ("ceiling2dp: typing ") + c.typed + " stores " + juce::String (c.value, 2);
+        check (std::abs (v - c.value) < 1.0e-4f, storeMsg.toRawUTF8());
+        const auto showMsg = juce::String ("ceiling2dp: ...and displays ") + c.shown;
+        check (ceil->getCurrentValueAsText().startsWith (c.shown), showMsg.toRawUTF8());
+    }
+
+    // 4. STATE RESTORE. The stored value must come back identical rather than
+    //    drifting by a rounding step each save/load — the round trip
+    //    normalise→denormalise has to be a fixed point on the grid.
+    ceil->setValueNotifyingHost (ceil->getValueForText ("-0.13"));
+    const float before = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    ceil->setValueNotifyingHost (ceil->getValueForText ("-6.00"));
+    proc.setStateInformation (blob.getData(), (int) blob.getSize());
+    const float after = proc.apvts.getRawParameterValue (pid::ceiling)->load();
+    check (juce::exactlyEqual (before, after) && isTwoDecimal (after),
+           "ceiling2dp: a save/load round trip returns the same two-decimal value");
+
+    // 5. THE DEFAULT IS ON THE GRID. If it were not, every fresh instance would
+    //    start off-grid and the first knob touch would jump — and
+    //    `testRegistrySnapshot` pins the default, so this is also the assertion
+    //    that says the fixture and the range still agree.
+    check (isTwoDecimal (ceil->getNormalisableRange().convertFrom0to1 (ceil->getDefaultValue())),
+           "ceiling2dp: the shipped default is itself a two-decimal value");
+}
+
 static void testCachedParamsMapping()
 {
     AnabasisAudioProcessor proc;
@@ -6293,6 +6391,7 @@ int main (int argc, char** argv)
         testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();
         testTheCeilingAdvertisesTheUnitItEnforces();
+        testCeilingIsQuantisedToTwoDecimals();
         testCachedParamsMapping();
     }
 

@@ -15,6 +15,13 @@
 #  (juce_opengl linuxPackages "egl gl"), so EGL headers are a build dependency
 #  even if Anabasis never attaches a GL context on Linux.
 #
+#  lld is LLVM's linker, and it is a REQUIREMENT for the Clang builds rather
+#  than a preference: GNU ld scans a static archive once, while Clang's LTO
+#  codegen runs after that scan and then needs members the scan passed over, so
+#  linking the plugin can fail with hundreds of undefined references to symbols
+#  that are demonstrably inside libAnabasis_SharedCode.a. CMakeLists.txt probes
+#  for it and falls back with a warning; installing it here is what makes the
+#  probe succeed. GCC builds ignore it.
 #  xvfb, curl and unzip are for pluginval (editor tests need a display; the
 #  release download needs the other two), not for the build itself.
 # ============================================================================
@@ -44,7 +51,8 @@ $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libxinerama-dev libxrandr-dev libxrender-dev \
     libglu1-mesa-dev mesa-common-dev libegl-dev \
     libwebkit2gtk-4.1-dev libgtk-3-dev \
-    xvfb
+    xvfb \
+    lld
 
 echo
 echo "Anabasis: Linux build dependencies installed."

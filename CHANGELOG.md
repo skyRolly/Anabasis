@@ -97,6 +97,15 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   **compressor's** detector only; the limiter's detector has been deliberately unfiltered
   since 0.1.2 (ADR-0023), and the tip still described the pre-0.1.2 shared filter. Evidence
   Source: PR #14. [Verified]
+- **The Ceiling reads and holds two decimal places** — `-0.10 dB`, not `-0.1 dB`, and the value
+  behind the label is quantised to the same 0.01 dB grid rather than merely displayed on it. It is
+  the one control set to a number from a delivery spec, so a knob reading `-0.1` while holding
+  −0.14 misstated the guarantee at the only place that guarantee is written down. The quantisation
+  is in the parameter's range, so it holds for the knob, host automation, typed text, preset and
+  session recall and the value the limiter actually compares against — not for the display alone.
+  The −0.1 default is unchanged and already on the grid; a stored off-grid value snaps on load
+  (ADR-0024, `PARAMETER_COMPATIBILITY_POLICY.md` rule 3 — nothing has shipped, so nothing needs
+  migrating). Evidence Source: PR #14. [Verified]
 - **The macOS and Windows installers capitalise "Plug-in" and "Application"** in their
   component and folder-prompt wording. Evidence Source: PR #14. [Verified]
 - **The RMS statistics row updates at reading pace (~3 Hz)** — the 50 ms windowed measurement
@@ -170,7 +179,7 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   and Simple view's clickable reset dot are unchanged. Evidence Source: PR #13 (item 7).
   [Verified]
 
-### Investigation (KI-009 and KI-012 — both open)
+### Investigation (KI-009 — since CLOSED, see Fixed above; KI-012 — still open)
 - **Every KI-009 regression has now run on macOS, and passes.** Restoring the build revealed
   that the broken line sat INSIDE `testClipMixCannotChangeTheDefaultPresetsSound`, so the
   regressions written in the last three rounds — for a fault that reproduces only on macOS — had

@@ -182,6 +182,30 @@ only because AppleClang is the only compiler that had ever built the product the
 plugin with Clang on **Linux** reproduces it identically, on a runner an order of magnitude
 cheaper than the one the investigation had been reasoning about.
 
+**What the five months of investigation excluded, kept because the round that finally closed this
+one started from the list rather than re-deriving it.** Uninitialised memory (valgrind memcheck
+clean, 0 errors from 0 contexts, on both suites; ASan + UBSan clean; `MALLOC_PERTURB_` at 1, 85,
+165, 170 and 255 — including 0xFF, which fills with a NaN bit pattern). The wrapper, the bus layer
+and the channel pointers (Bypass restores audio, and bypass feeds only the engine's output
+selector, so the host was demonstrably delivering channel 0 and the dry ring was intact). The two
+macOS narrowing warnings (value-preserving `int` → `size_t` → `int`). Every channel-asymmetric
+expression in the engine and `LookaheadLimiter` (each one is an analysis tap, never the audible
+path). And one FIX that carries the fingerprint exactly but is not this bug: `ClipSat`'s dynamic-
+tame filter could latch a NaN into its own state from a sustained input above ~2.2e38 (+767 dBFS),
+one channel, deferred, gated on the mix, cured by bypass — real, fixed, and unreachable by any
+programme material, which is how a correct fix can still leave a field report open.
+
+**Two vacuity traps were closed while building the probe that reproduced it**, and both are the
+same failure this investigation kept hitting. Matching parameters by `getParameterID()` finds
+NOTHING through a format wrapper — JUCE's VST3 client hashes each id, so the hosted instance
+reports `id='773352680'` where the source says `"bypass"` — and the first probe therefore ran all
+eight configurations at their DEFAULTS while labelling them by name. Matching is now by display
+name, a missing parameter is FATAL rather than a warning, and the probe exits 2 (environment)
+rather than 0 if it cannot reach the configuration it claims to test. The second was a state leak:
+one shared instance let the "defaults" row inherit the previous row's pushed parameters, visible
+in the output only to someone who already knew the number. A test that cannot fail is worse than
+an absent one, because it is counted.
+
 **Prevention:** `tools/engine_repro.cpp` drives the bare engine — no wrapper, no format, no host
 — so a failure names the DSP core directly; `tools/channel_probe.cpp` hosts the built bundle; and
 `linux-clang` now builds the **plugin** with the product's own LTO flags and runs both on every
