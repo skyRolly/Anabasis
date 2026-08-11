@@ -138,6 +138,65 @@ Evidence [Verified]:
 - Test:   `scripts/check-portability.py` (mutation-verified); `--compile-canary`
 - Commit: `6f63573`, PR #14
 
+## INC-004 — KI-009 closed: the engine's channel bound was undefined behaviour, and one compiler acted on it
+
+**Symptom:** From the first shipped build until 2026-08-11 the plugin emitted **exact digital
+silence on channel 0** — left channel dead, right channel normal — on macOS, in both AU and
+VST3, at the plugin's own defaults as well as at the reported settings, and at every sample rate
+and block size. Setting Clip Mix to 0 restored it; Bypass restored it. Nine investigation rounds
+across five months could not reproduce it: every self-test, sanitizer run, valgrind pass and
+pluginval gate was green on all three platforms while the artefact users installed was broken.
+
+**Root cause:** `AnabasisEngine::processChunk` computed its channel bound as
+
+    const int nCh = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());
+
+and indexed eight `float[kMaxChannels]` stack frames with it — `staged`, `frame`, `tapped`,
+`gains`, `monFrameDry`, `monFrameWet`, `renderFrame`, `tp`. At runtime the value is always ≤ 2:
+`prepare()` clamps `numChans` with `jlimit (1, kMaxChannels, …)` before sizing `wetRing`, and
+`isBusesLayoutSupported` admits at most stereo. At **compile** time it is unbounded —
+`AudioBuffer::getNumChannels()` returns a plain member — so each of those loops was, to the
+optimiser, a possible out-of-bounds write to a two-element `alloca`: undefined behaviour it may
+build on. Clang at `-flto` did. GCC did not, at any optimisation level, with or without LTO; nor
+did Clang **without** LTO. Every leaf stage — `ClipSat`, `MasteringComp`, `LookaheadLimiter`,
+`LoudnessMeter`, `TruePeak`, `RmsMeter`, `AdaptiveEngine` — already opened with
+`jmin (numChannels, kMaxChannels)`. The engine's own loop was the single site that did not.
+
+**Fix:** add the missing term — `juce::jmin (buffer.getNumChannels(),
+wetRing.getNumChannels(), kMaxChannels)`. The Clang+LTO build then agrees with the GCC build
+bit for bit across every probe configuration, which is what makes this a removed miscompilation
+rather than a behaviour change.
+
+**Why the whole validation surface missed it, which is the lesson.** ADR-0008 puts
+`juce_recommended_lto_flags` on the **plugin target alone**; the two console suites, the
+sanitizer builds, valgrind and the bench all omit them deliberately. The UB is inert without
+cross-TU optimisation, so the only binary ever built with the fault was the product — and until
+2026-08-10 nothing in CI ever loaded the product. "The suites are green" was true and irrelevant:
+they were green in a configuration the customer never receives. Sanitizers could not have covered
+the gap either — ASan and UBSan do not model this transformation, and instrumenting the build
+suppresses it outright (a `-fsanitize=address,undefined` build of the reproduction passes clean).
+
+The second lesson is about SCOPE claims. The report was recorded as "macOS-only", then narrowed
+to "macOS x86_64", and both were wrong: the variable was the compiler, and macOS was implicated
+only because AppleClang is the only compiler that had ever built the product there. Building the
+plugin with Clang on **Linux** reproduces it identically, on a runner an order of magnitude
+cheaper than the one the investigation had been reasoning about.
+
+**Prevention:** `tools/engine_repro.cpp` drives the bare engine — no wrapper, no format, no host
+— so a failure names the DSP core directly; `tools/channel_probe.cpp` hosts the built bundle; and
+`linux-clang` now builds the **plugin** with the product's own LTO flags and runs both on every
+push. `ANABASIS_NO_LTO` and `ANABASIS_STAGE_TRACE` are retained as the two bisection tools that
+found it: the first separates "the compiler" from "the link-time optimiser", the second reports
+per-channel energy at twelve taps of the chain and named the exact pair of taps between which the
+channels diverged.
+
+Evidence [Verified]:
+- Source: `src/dsp/AnabasisEngine.cpp` (the `nCh` bound), `CMakeLists.txt` (`ANABASIS_NO_LTO`,
+  `ANABASIS_STAGE_TRACE`), `src/dsp/StageTrace.h`
+- Test:   `tools/engine_repro.cpp`, `tools/channel_probe.cpp`, `.github/workflows/build.yml`
+  (`linux-clang` plugin build + both reproductions)
+- Commit: this one, PR #14
+
 ## Relationship to the other status files
 
 | File | Holds |

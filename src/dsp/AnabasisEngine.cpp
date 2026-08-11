@@ -620,7 +620,35 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                                    const int num, const EngineParameters& p,
                                    const bool eqPre, const bool eqPost) noexcept
 {
-    const int nCh = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());
+    // `kMaxChannels` IS THE LOAD-BEARING TERM, and its absence was KI-009.
+    //
+    // Everything below indexes fixed-size stack frames — `staged`, `frame`,
+    // `tapped`, `gains`, `monFrameDry/Wet`, `renderFrame`, `tp`, all
+    // `float[kMaxChannels]` — with this bound. The first two terms are enough
+    // at RUNTIME (`prepare` clamps `numChans` to kMaxChannels before sizing
+    // `wetRing`, and `isBusesLayoutSupported` admits at most stereo), which is
+    // why this read correctly for two years. It is NOT enough at COMPILE time:
+    // `AudioBuffer::getNumChannels()` returns a plain member the optimiser
+    // cannot bound, so every one of those loops was, to the compiler, a
+    // possible out-of-bounds write to a two-element alloca — undefined
+    // behaviour it is entitled to build on.
+    //
+    // Clang did, at -flto: the miscompiled build dropped channel 0 entirely
+    // (exact 0.0f out, both formats, every rate and block size) or applied the
+    // limiter push to channel 1 alone. GCC did not, at any level, with or
+    // without LTO — and neither did Clang WITHOUT LTO, which is why nine
+    // rounds of Linux gates, sanitizers and valgrind were green while the
+    // shipped bundle was broken: the two console test targets deliberately do
+    // not link `juce_recommended_lto_flags` (ADR-0008), so the only artefact
+    // ever built with the fault was the plugin itself.
+    //
+    // Every LEAF stage already re-clamped its own copy — ClipSat,
+    // MasteringComp, LookaheadLimiter, LoudnessMeter, TruePeak, RmsMeter and
+    // AdaptiveEngine all open with `jmin (numChannels, kMaxChannels)`. This
+    // was the one loop that did not, so it was also the only one the optimiser
+    // could reason about unsafely. Do not remove the third term as redundant:
+    // it is the term that makes the access provably in bounds.
+    const int nCh = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels(), kMaxChannels);
     bool sawNonFinite = false;
 
     // Set only where a value that ENTERED a stage finite comes out non-finite,

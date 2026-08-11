@@ -62,9 +62,13 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
 - **A channel probe that tests the shipped artefact.** Every other check rebuilds the plugin's
   sources into a console app; this one loads the built VST3/AU through a host and asserts both
   channels carry audio across the reported field configurations — so the LTO'd, wrapped binary a
-  user actually installs is exercised, on macOS for both formats and both architectures. Opt-in
-  (`-DANABASIS_BUILD_PROBE=ON`) and run on all three platforms in CI. Evidence Source: PR #14.
-  [Verified]
+  user actually installs is exercised, on macOS for both formats and both architectures. It is
+  what finally reproduced the silent left channel. Opt-in (`-DANABASIS_BUILD_PROBE=ON`) and run
+  on all three platforms in CI, alongside a second reproduction that drives the DSP core with no
+  wrapper, format or host at all — so a failure says immediately which half of the product is at
+  fault. The Clang job now builds the **plugin** with the product's own link-time-optimisation
+  flags, the configuration in which the silent-channel defect was the only thing ever built.
+  Evidence Source: PR #14. [Verified]
 - **Three cross-platform CI gates**, because a green Linux build is not evidence about another
   platform: a source portability lint for the JUCE SIMD-overload hazard (with a compile canary
   that checks the pinned JUCE still has that hazard), a Clang build that fails on any warning in
@@ -107,6 +111,17 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   Evidence Source: PR #13, reference immediacy PR #14 (item 1). [Verified]
 
 ### Fixed
+- **The left channel is no longer silent.** On macOS — in both AU and VST3, at every sample rate
+  and block size, and at the plugin's own defaults as much as at any particular setting — the
+  plugin emitted exact digital silence on the left channel while the right played normally.
+  Setting Clip Mix to 0, or engaging Bypass, restored it. The cause was in the engine's channel
+  bound: it was correct at runtime but not provably in range to the compiler, which made the
+  per-sample stereo frames look like possible out-of-bounds writes, and one compiler
+  configuration (Clang with link-time optimisation — the one that builds the macOS product)
+  acted on that. The bound now states the limit it always had. The corrected build produces
+  bit-for-bit the same output as the builds that were never affected, so nothing that sounded
+  right has changed. `docs/POSTMORTEMS.md` INC-004 carries the mechanism and why five months of
+  green test runs could not see it. Evidence Source: PR #14. [Verified]
 - **The clip/saturation stage can no longer poison itself invisibly.** Its dynamic-tame filter
   ran on the unbounded through-signal, so an absurdly hot input (above ~2.2e38, about
   +767 dBFS) could turn the filter's own state into a NaN — **without the plugin producing a
@@ -117,7 +132,8 @@ behaviour changes anywhere", which the entry's own `Fixed` section contradicts, 
   well as the two it already covered, on the state feed rather than the signal, so a huge
   sample still passes through untouched and no audible sample changes. Not the cause of the
   field reports of a silent left channel — the trigger level is far beyond anything a DAW
-  delivers — so `docs/KNOWN_ISSUES.md` KI-009 stays **open**. Evidence Source: PR #14.
+  delivers, and that cause is the separate entry above — but a real latch either way.
+  Evidence Source: PR #14.
   [Verified]
 - **The macOS build works again.** The macOS CI job had failed to COMPILE
   `tests/state_tests.cpp` on every push since 2026-08-08 while Linux and Windows stayed green,

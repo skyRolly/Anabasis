@@ -74,7 +74,7 @@ const Config kConfigs[] = {
 // them by name — the same vacuity this repository has now found three times.
 // The display name is what survives the wrapper, and it is also what the owner
 // reads off the UI when describing a reproduction.
-bool setParam (juce::AudioPluginInstance& p, const char* displayName, float denormalised,
+static bool setParam (juce::AudioPluginInstance& p, const char* displayName, float denormalised,
                float rangeLo, float rangeHi)
 {
     for (int i = 0; i < p.getParameters().size(); ++i)
@@ -98,7 +98,7 @@ bool setParam (juce::AudioPluginInstance& p, const char* displayName, float deno
 // DIFFERENT test wearing the same name — it silently re-runs the defaults. That
 // exact vacuity has now been found twice in this repository's own suites, so
 // here it is fatal rather than a warning.
-void dumpParameterIds (juce::AudioPluginInstance& p)
+static void dumpParameterIds (juce::AudioPluginInstance& p)
 {
     std::printf ("  hosted parameters (%d):\n", p.getParameters().size());
     for (int i = 0; i < p.getParameters().size(); ++i)
@@ -110,7 +110,7 @@ void dumpParameterIds (juce::AudioPluginInstance& p)
 
 struct Result { double rmsL = 0.0, rmsR = 0.0; bool nonFinite = false; int paramsApplied = 7; };
 
-Result run (juce::AudioPluginFormatManager& fm, const juce::PluginDescription& desc,
+static Result run (juce::AudioPluginFormatManager& fm, const juce::PluginDescription& desc,
             const Config& c, double sr, int blockSize)
 {
     // A FRESH INSTANCE PER CONFIGURATION. The first version reused one instance
@@ -199,7 +199,7 @@ Result run (juce::AudioPluginFormatManager& fm, const juce::PluginDescription& d
 // because that is the state the report describes (the owner is reading GR
 // lanes). It asserts the premise — that the macro really did move a managed
 // parameter — so it cannot quietly become another defaults run.
-int runMacroScenario (juce::AudioPluginFormatManager& fm, const juce::PluginDescription& desc,
+static int runMacroScenario (juce::AudioPluginFormatManager& fm, const juce::PluginDescription& desc,
                       double sr, int blockSize)
 {
     juce::String err;

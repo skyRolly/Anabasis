@@ -68,7 +68,8 @@ Lowering strictness below the phase value is a deliberate act that must be justi
     **This is a lint and not a build job on purpose.** The defect it guards (INC-003) is a
     typedef divergence — `size_t` is `uint64_t` on Linux and is not on macOS — so it is invisible
     to every Linux COMPILER, GCC and Clang alike. No build job on a Linux runner can replace it.
-  - `linux-clang` — builds both test targets with Clang and fails on any warning whose path is
+  - `linux-clang` — builds both test targets **and the plugin** with Clang, runs both
+    reproductions against the plugin build, and fails on any warning whose path is
     under `src/` or `tests/`. It catches the AppleClang diagnostic set JUCE does not apply to GCC
     (`-Wshorten-64-to-32`, `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …), which
     previously reached us only from the macOS runner. It does **not** catch the typedef class;
@@ -77,6 +78,20 @@ Lowering strictness below the phase value is a deliberate act that must be justi
     targets, and a blanket `-Werror` would gate on a dependency's warnings and be switched off at
     the first JUCE bump. The same job runs `check-portability.py --compile-canary`, which
     verifies the pinned JUCE still HAS the hazard the lint guards.
+
+    **The plugin half of this job is not optional, and INC-004 is why.** ADR-0008 puts
+    `juce_recommended_lto_flags` on the plugin target ALONE — deliberately, so the suites measure
+    the DSP rather than the optimiser. The consequence is that the product is the only artefact
+    ever built with cross-translation-unit optimisation, so any defect that needs it is invisible
+    to every other gate in this file: KI-009 was undefined behaviour that Clang acted on only at
+    `-flto`, and it shipped for five months behind 1039 green checks, clean sanitizers and clean
+    valgrind. **A gate that builds the sources in a configuration the customer never receives is
+    not a gate on the product.** Whatever else changes here, CI must keep building the PLUGIN with
+    the product's own flags, under a compiler other than the one the release runner uses, and must
+    keep RUNNING something against it — `AnabasisEngineRepro` (bare engine, no wrapper) and
+    `AnabasisChannelProbe` (the built bundle, hosted) are that something. The two bisection knobs
+    that isolated it, `ANABASIS_NO_LTO` and `ANABASIS_STAGE_TRACE`, are kept for the next one; both
+    are OFF in every shipping configuration and a binary built with either is not the product.
   - `sanitizers` — ASan + UBSan over both suites, plus valgrind memcheck over BOTH suites. The
     point is to catch, on Linux, defects that only MANIFEST elsewhere: memory Linux hands back
     zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous

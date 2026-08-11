@@ -662,7 +662,7 @@ Evidence [Verified]:
 
 **For the post-v0.1.0 fine review — the highest-severity open item in this family.**
 
-### KI-009 — Field report: left channel silent — macOS-only, NOT REPRODUCIBLE on Linux (2026-08-05)
+### KI-009 — Left channel silent — RESOLVED 2026-08-11: UB in the engine's channel bound, acted on by Clang at -flto (reported 2026-08-05)
 
 **The report.** The owner reports the LEFT channel carrying no audio at all, right channel
 normal, "in both Simple and Advanced modes" (i.e. always). Host, OS and build not yet recorded.
@@ -1222,13 +1222,73 @@ by display name, a missing parameter is FATAL rather than a warning, and the pro
 The second trap was a state leak: one shared instance let the "defaults" row inherit the previous
 row's pushed parameters, which is visible in the output only if you know the number.
 
-**Status: OPEN, macOS-scoped, and now with a working validation path.** The kill zone is
-narrowed to the oversampled region (`AnabasisEngine.cpp:726-846`) with the wrapper, the bus
-layer and the memory-safety classes excluded. What no headless suite has yet reproduced on
-either platform is the field configuration itself, so the next datum has to come from a real
-macOS host: the plugin under a DAW with the reported settings, not another sweep. The macOS
-gate now runs on every push — including, since this round, pluginval against the **AU** as well
-as the VST3, the format the report names and the one that had never been validated at all.
+**0.1.3 FOLLOW-UP ROUND 11 — ROOT CAUSE FOUND AND FIXED (2026-08-11).**
+
+The probe above reproduced it on the first macOS run: **29 of 33 configurations returned
+`L = 0.000000000` with the right channel healthy**, at the plugin's own defaults as well as at
+the reported settings, in both formats, at both rates and both block sizes. The single passing
+configuration was the Clip Mix 0 control the owner named as the cure. The same probe, same
+commit, passed on Linux — so the report was exactly right and every headless gate had been
+looking in the wrong place.
+
+**It is not macOS, and it is not x86_64.** Building the plugin on **Linux with Clang** and
+running the same probe reproduces it identically, down to the digit
+(`R = 0.589079467` on both). Building it with **GCC** — LTO or not — does not. Building it with
+**Clang and `-DANABASIS_NO_LTO=ON`** does not. The variable is the compiler *and* link-time
+optimisation, and macOS was implicated only because AppleClang is the only compiler that had
+ever built the product there.
+
+**Root cause: undefined behaviour in the engine's channel bound, which Clang at `-flto` acted
+on.** `AnabasisEngine::processChunk` derived
+
+```cpp
+const int nCh = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());
+```
+
+and then used `nCh` to index eight fixed `float[kMaxChannels]` stack frames — `staged`,
+`frame`, `tapped`, `gains`, `monFrameDry`, `monFrameWet`, `renderFrame`, `tp`. At RUNTIME the
+value is always ≤ 2: `prepare()` clamps `numChans` with `jlimit (1, kMaxChannels, …)` before
+sizing `wetRing`, and `isBusesLayoutSupported` admits at most stereo. At COMPILE time it is not
+bounded at all — `AudioBuffer::getNumChannels()` returns a plain member — so to the optimiser
+every one of those loops could write past a two-element `alloca`. That is UB, and with the whole
+chain visible at link time Clang built on it: the miscompiled build dropped channel 0 outright,
+or (with the stage trace perturbing codegen) applied the limiter push to channel 1 alone, which
+is the 12.6 dB skew the instrumentation caught between the `clip out` and `wet ring write` taps.
+
+Every **leaf** stage already re-clamped its own copy — `ClipSat`, `MasteringComp`,
+`LookaheadLimiter`, `LoudnessMeter`, `TruePeak`, `RmsMeter` and `AdaptiveEngine` all open with
+`jmin (numChannels, kMaxChannels)`. `processChunk`'s own loop was the one place that did not, so
+it was the only one the optimiser could reason about unsafely.
+
+**The fix is the missing term:** `juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels(),
+kMaxChannels)`. With it, the Clang+LTO build agrees with the GCC build **bit for bit** in every
+probe configuration (`0.176871664`, `0.589603058`, `0.588312255`, …), which is the evidence that
+this removes a miscompilation rather than changing behaviour: nothing a correct build did has
+moved.
+
+**Why nine rounds of green gates missed it.** ADR-0008 puts `juce_recommended_lto_flags` on the
+plugin target alone, so the two console suites, the sanitizer builds, valgrind and the bench were
+all compiled in a configuration where the UB is inert. The only artefact ever built with the
+fault was the plugin itself — and until round 10 nothing hosted the plugin. The sanitizers could
+not have caught it either: ASan and UBSan do not model this, and instrumenting the build
+suppresses the transformation (a `-fsanitize=address,undefined` build of the reproduction passes
+clean).
+
+**What now guards it.** Three things, in the order they report:
+`AnabasisEngineRepro` (`tools/engine_repro.cpp`) drives the bare engine with no wrapper, no
+format and no host, so a failure names the DSP core directly; `AnabasisChannelProbe` hosts the
+built bundle; and `linux-clang` now builds the **plugin** with the product's own LTO flags and
+runs both — the cheap runner that would have caught this on the day it landed. `ANABASIS_NO_LTO`
+and `ANABASIS_STAGE_TRACE` are kept as the bisection tools that found it.
+
+**Status: RESOLVED (2026-08-11), pending the owner's confirmation on the reported host.**
+
+Evidence [Verified]:
+- Source: `src/dsp/AnabasisEngine.cpp` (the `nCh` bound and the block that explains it)
+- Test:   `tools/engine_repro.cpp` + `tools/channel_probe.cpp`, both run by `linux-clang`,
+  `linux` and `macos`; before the fix the Clang+LTO repro reported `L=0.000000000`, after it
+  reports the GCC values exactly
+- Commit: this one
 
 ### KI-010 — The forced duck never dry-fills, so ADR-0004's "best masking mode" consequence is unimplemented (2026-08-07)
 

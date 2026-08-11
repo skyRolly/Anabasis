@@ -55,6 +55,19 @@ option(ANABASIS_BUILD_STANDALONE "Build the Standalone format" ON)
 # engine's timing and is not realtime-safe; a binary built with it must never be
 # shipped or measured for performance. OFF expands every tap to `((void) 0)`.
 option(ANABASIS_STAGE_TRACE      "Compile the KI-009 per-stage per-channel trace into the engine (DIAGNOSTIC; never ship)" OFF)
+# BISECTION ONLY. ON drops `juce_recommended_lto_flags` from every target that
+# carries it, which changes what the optimiser is allowed to do ACROSS
+# translation units. It exists because KI-009 turned out to be visible only in
+# an LTO build under one compiler, and "does it survive without LTO" is the
+# first question any such report has to answer. The shipping configuration is
+# OFF; a binary built with this ON is not the product.
+option(ANABASIS_NO_LTO           "Build WITHOUT juce_recommended_lto_flags (bisection; the shipped binary always has them)" OFF)
+if(ANABASIS_NO_LTO)
+    set(ANABASIS_LTO_FLAGS "")
+    message(STATUS "Anabasis: LTO DISABLED -- bisection build, not the shipping configuration")
+else()
+    set(ANABASIS_LTO_FLAGS juce::juce_recommended_lto_flags)
+endif()
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
 
@@ -193,7 +206,7 @@ target_link_libraries(Anabasis
     PUBLIC
         AnabasisHardening
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
+        ${ANABASIS_LTO_FLAGS}
         juce::juce_recommended_warning_flags)
 
 # ============================================================================
@@ -312,5 +325,25 @@ if(ANABASIS_BUILD_PROBE)
         PUBLIC
             AnabasisHardening
             juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+
+    # The same reproduction WITHOUT the wrapper: engine in, engine out. It links
+    # `juce_recommended_lto_flags`, which no other console target does, because
+    # the plugin does — a defect the optimiser only commits across translation
+    # units at link time is invisible to every target that omits them, which is
+    # how KI-009 stayed a "plugin-only" fault for nine rounds.
+    juce_add_console_app(AnabasisEngineRepro PRODUCT_NAME "AnabasisEngineRepro")
+    target_sources(AnabasisEngineRepro PRIVATE tools/engine_repro.cpp)
+    target_compile_definitions(AnabasisEngineRepro PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(AnabasisEngineRepro
+        PRIVATE
+            AnabasisDSP
+        PUBLIC
+            AnabasisHardening
+            juce::juce_recommended_config_flags
+            ${ANABASIS_LTO_FLAGS}
             juce::juce_recommended_warning_flags)
 endif()

@@ -502,10 +502,11 @@ jobs:
       - name: Portability compile canary (pinned JUCE still has the hazard)
         run: python3 scripts/check-portability.py --compile-canary build-clang/_deps/juce-src/modules --cxx clang++
 
-      - name: Build tests (Clang) and gate on first-party warnings
+      - name: Build tests AND the plugin (Clang), gating on first-party warnings
+        id: build
         run: |
           set -o pipefail
-          cmake --build build-clang --target AnabasisTests AnabasisStateTests AnabasisChannelProbe 2>&1 | tee clang-build.log
+          cmake --build build-clang --target AnabasisTests AnabasisStateTests AnabasisChannelProbe Anabasis_VST3 AnabasisEngineRepro 2>&1 | tee clang-build.log
           # FIRST-PARTY ONLY, matched by WORKSPACE-ANCHORED path rather than by
           # directory-name shape. The earlier expression matched any path whose
           # components happened to include `src` or `tests`, which is a property
@@ -528,11 +529,38 @@ jobs:
           echo "Clang: no warnings in first-party sources."
 
       - name: Self-tests (DSP + state, Clang build)
+        id: tests
         env:
           MALLOC_PERTURB_: 255      # see the `linux` job's self-test step
         run: |
           ./build-clang/AnabasisTests_artefacts/Release/AnabasisTests
           ./build-clang/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
+      # ---- THE GATE KI-009 NEEDED, and the reason it is on the CLANG job. ---
+      #
+      # The build step above includes `Anabasis_VST3` deliberately, and that one
+      # word is the whole lesson of INC-004. By ADR-0008 the two console targets
+      # do NOT link `juce_recommended_lto_flags`; the plugin does. KI-009 was
+      # undefined behaviour in the engine's channel loop that only Clang, and
+      # only at -flto, acted on — so every non-LTO artefact (both suites, the
+      # sanitizer builds, valgrind, the GCC plugin) was green for five months
+      # while the bundle a user installs dropped a channel. "Clang compiles the
+      # tests" was never the question; "Clang compiles the PRODUCT, with the
+      # product's flags" is, and it costs a few minutes on the cheapest runner.
+      #
+      # Engine first, bundle second, and the order is the diagnosis: the repro
+      # drives `AnabasisEngine` with no wrapper, no format and no host, so a
+      # failure there says the defect is in the DSP core; a repro that passes
+      # while the probe fails says it is not.
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build-clang/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
+      - name: Channel probe against the Clang-built bundle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: >
+          ./build-clang/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          build-clang/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
 
   # -------------------------------------------------------------------------
   # Sanitizers (Linux). The point of this job is to catch, ON LINUX, defects
@@ -641,7 +669,7 @@ jobs:
 
       # Default Visual Studio generator (multi-config); MSVC is auto-detected.
       - name: Configure
-        run: cmake -B build -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+        run: cmake -B build -DANABASIS_BUILD_PROBE=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests)
         id: build
@@ -1129,6 +1157,13 @@ jobs:
       # VST3 alike, and the x86_64 slice ships in the same universal binary while
       # being executed by nothing until this workflow started running it -- so
       # "macOS is green" previously meant one of the four.
+      # One second, and it separates "the DSP core is wrong" from "the wrapper
+      # is wrong" before the probe below reports at all — the distinction that
+      # took KI-009 nine rounds to establish by inference.
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
       - name: Channel probe (hosts the built VST3 and AU, both slices)
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
         run: |
@@ -1321,163 +1356,3 @@ jobs:
           name: Anabasis-macOS-debug
           path: dist/Anabasis-macOS-debug
           if-no-files-found: error
-
-  # ==========================================================================
-  #  NATIVE INTEL macOS — the KI-009 reproduction environment.
-  #
-  #  The `macos` job above is Apple Silicon. Its "x86_64 coverage" executes the
-  #  Intel slice through ROSETTA 2, which translates x86_64 instructions to
-  #  arm64 and runs them on arm64 hardware: the FP control word is FPCR, the
-  #  vector unit is NEON, and denormal/rounding behaviour is the host's. Every
-  #  divergence class this bug is being hunted through — SSE vs NEON codegen,
-  #  MXCSR FTZ/DAZ vs FPCR FZ, x87/SSE intermediate precision, alignment of
-  #  vectorised loads — is precisely what Rosetta does NOT reproduce. So the
-  #  project has never once executed its own Intel code on an Intel CPU.
-  #
-  #  This job does, and only that. It deliberately does NOT package, sign or
-  #  upload: the shipping artefact still comes from the universal build above.
-  #  What it adds is execution on the reported architecture.
-  # ==========================================================================
-  macos-intel:
-    needs: preflight
-    if: needs.preflight.outputs.ready == 'true'
-    runs-on: macos-15-intel   # NATIVE x86_64 hardware -- not Apple Silicon, not Rosetta
-    steps:
-      - uses: actions/checkout@v7
-
-      # FAIL, do not warn. A job whose entire purpose is "run on Intel" is
-      # worthless if it quietly runs somewhere else, and a green tick from the
-      # wrong architecture is worse than no job at all: it would be read as
-      # "Intel is fine". `sysctl.proc_translated` is 1 inside Rosetta and
-      # absent on a real Intel machine, so both wrong answers are caught.
-      - name: Assert this really is native Intel
-        run: |
-          set -e
-          ARCH="$(uname -m)"
-          TRANSLATED="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
-          echo "uname -m = $ARCH ; sysctl.proc_translated = $TRANSLATED"
-          sysctl -n machdep.cpu.brand_string || true
-          if [ "$ARCH" != "x86_64" ]; then
-            echo "::error::this job must run on native x86_64 (got $ARCH) -- the KI-009 report is architecture-specific and this runner cannot answer it"
-            exit 1
-          fi
-          if [ "$TRANSLATED" != "0" ]; then
-            echo "::error::running under Rosetta translation -- that is the coverage this job exists to replace"
-            exit 1
-          fi
-
-      - name: Install build tools
-        run: brew install ninja || true
-
-      # THIN x86_64, not universal. The universal build is the shipping
-      # configuration and is already covered; here the point is that every
-      # object in the tree is compiled by the Intel code generator and executed
-      # by an Intel CPU, with no arm64 slice present to be picked instead.
-      - name: Configure (native x86_64 only)
-        run: >
-          cmake -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_OSX_ARCHITECTURES=x86_64
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
-          -DANABASIS_BUILD_PROBE=ON
-          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
-
-      - name: Build (VST3 + AU + Standalone + tests + probe)
-        id: build
-        run: cmake --build build --config Release
-
-      - name: Self-tests (DSP + state), native Intel
-        id: tests
-        run: |
-          chmod +x scripts/*.sh
-          ./scripts/run-tests.sh
-
-      - name: Install the AU so the AudioComponent registry can find it
-        id: au_install
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: |
-          set -e
-          DEST="$HOME/Library/Audio/Plug-Ins/Components"
-          mkdir -p "$DEST"
-          rm -rf "$DEST/Anabasis.component"
-          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
-
-      # The field report names BOTH formats, so both are hosted. This is the
-      # shipped code path -- host -> wrapper -> processBlock -> engine -- built
-      # by the Intel back end and run on an Intel CPU, which is the exact
-      # combination the report describes and the only one never yet executed.
-      - name: Channel probe, native Intel (VST3 + AU)
-        id: probe
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
-        run: |
-          set -e
-          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
-          echo "== x86_64 native / VST3 =="
-          "$PROBE" build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
-          echo "== x86_64 native / AU   =="
-          "$PROBE" "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component" --format au
-
-      - name: pluginval VST3 (deterministic x3), native Intel
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
-
-      - name: pluginval AU (deterministic x3), native Intel
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
-        env:
-          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
-
-      # ---- The diagnostic half. ------------------------------------------------
-      # A SECOND, SEPARATE build tree with ANABASIS_STAGE_TRACE=ON. It is kept
-      # apart from the tree above on purpose: the trace changes the engine's
-      # timing and is not realtime-safe, so nothing validated, packaged or
-      # measured may ever come from it. Its only product is the per-stage
-      # per-channel table, which names the first point in the chain at which the
-      # two channels stop agreeing -- the question every previous round could
-      # only answer by inference from the plugin's output.
-      #
-      # It runs LAST and is gated on nothing succeeding, because the case worth
-      # instrumenting is the one where the steps above went red.
-      - name: Stage-trace diagnostic build (native Intel, never shipped)
-        id: trace_build
-        if: ${{ !cancelled() }}
-        run: >
-          cmake -B build-trace -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_OSX_ARCHITECTURES=x86_64
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
-          -DANABASIS_BUILD_PROBE=ON
-          -DANABASIS_STAGE_TRACE=ON
-          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
-          && cmake --build build-trace --config Release
-
-      - name: Stage trace through the hosted VST3 and AU
-        if: ${{ !cancelled() && steps.trace_build.outcome == 'success' }}
-        run: |
-          set +e
-          DEST="$HOME/Library/Audio/Plug-Ins/Components"
-          rm -rf "$DEST/Anabasis.component"
-          cp -R build-trace/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-          PROBE=./build-trace/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
-          {
-            echo "== stage trace / VST3 =="
-            "$PROBE" build-trace/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
-            echo "probe exit: $?"
-            echo "== stage trace / AU =="
-            "$PROBE" "$DEST/Anabasis.component" --format au
-            echo "probe exit: $?"
-          } > stage-trace.log 2>&1
-          cat stage-trace.log
-          # NEVER fails the job. This step reports; the gates above decide.
-          exit 0
-
-      - name: Upload the stage trace
-        if: ${{ !cancelled() && steps.trace_build.outcome == 'success' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: Anabasis-macos-intel-stage-trace
-          path: stage-trace.log
-          if-no-files-found: warn
