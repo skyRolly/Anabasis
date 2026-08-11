@@ -283,6 +283,12 @@ if(ANABASIS_BUILD_PROBE)
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_VST=0
         JUCE_PLUGINHOST_AU=$<IF:$<BOOL:${APPLE}>,1,0>
+        # The probe PUMPS the message loop between audio blocks so MacroEngine's
+        # 30 ms mapping timer actually fires — the macro path is otherwise dead
+        # in any headless process, which is how the channel battery stayed
+        # vacuous for six rounds. `runDispatchLoopUntil` is gated on this.
+        # Test-tool only; the plugin target does not define it.
+        JUCE_MODAL_LOOPS_PERMITTED=1
         JUCE_STANDALONE_APPLICATION=1)
     target_link_libraries(AnabasisChannelProbe
         PRIVATE
