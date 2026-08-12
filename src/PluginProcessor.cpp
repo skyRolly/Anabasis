@@ -398,8 +398,19 @@ AnabasisAudioProcessor::PresetUndoBracket AnabasisAudioProcessor::openPresetUndo
     // clear happening between the capture and the push would make `redoBefore`
     // describe a session that is no longer loaded.
     syncHistory();
-    PresetUndoBracket b { saveSlotFromLive(), presetBaseline.createCopy(),
-                          redoStacks[activeSlot], activeSlot };
+    PresetUndoBracket b;
+    b.preSlot     = saveSlotFromLive();
+    b.preBaseline = presetBaseline.createCopy();
+    b.redoBefore  = redoStacks[activeSlot];
+    b.slot        = activeSlot;
+    // A push onto a FULL stack costs the oldest entry (`pushCapped` trims index
+    // 0). Capture it before that happens, so a retraction can restore the depth
+    // as well as the top.
+    if (undoStacks[activeSlot].size() >= kUndoCap)
+    {
+        b.evictedOldest = true;
+        b.oldest        = undoStacks[activeSlot].getFirst();
+    }
     pushUndoStep (b.preSlot);
     return b;
 }
@@ -432,6 +443,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
         return;                                  // a real restore: the step stands
 
     undoStacks[activeSlot].removeLast();         // exactly what this bracket pushed
+    if (b.evictedOldest)
+        undoStacks[activeSlot].insert (0, b.oldest);   // …and the end the cap trimmed
     redoStacks[activeSlot] = b.redoBefore;       // …and the line it cleared
 }
 
@@ -1577,8 +1590,9 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
 
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".
-    if (const auto params = root.getChildWithName ("ANABASIS"); params.isValid())
-        adoptParamsTree (params);
+    const bool liveSurfaceRestored = root.getChildWithName ("ANABASIS").isValid();
+    if (liveSurfaceRestored)
+        adoptParamsTree (root.getChildWithName ("ANABASIS"));
     else
         adoptParamsTree (defaultSlot.getChildWithName ("ANABASIS"));
     internalState.replaceFrom (root.getChildWithName ("ANABASIS_INTERNAL"));
@@ -1616,7 +1630,24 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         // fix, and the slot stays coherent: sound and metadata from one place.
         if (stored.isValid() && stored.getChildWithName ("ANABASIS").isValid())
             storedSlot = stored.createCopy();
-        if (live.isValid())
+        // THE ASYMMETRY WITH THE STORED SLOT ABOVE IS DELIBERATE, and worth
+        // stating because it looks like an oversight. The active slot's SOUND
+        // does not come from its own SLOT node at all — it comes from the
+        // root-level ANABASIS child, adopted a few lines up; the copy inside the
+        // active SLOT is redundant on this path and is never read. So an active
+        // SLOT missing its payload is not the cross-session hazard the stored
+        // slot has: the sound and the labels still come from the SAME blob.
+        // `storedSlot`, by contrast, is a processor MEMBER that survives across
+        // restores, which is what lets a rejected tree there leave the PREVIOUS
+        // project's sound standing under this project's name.
+        //
+        // The one case where the active slot CAN split is the root child being
+        // absent, because then the surface came from defaults while the metadata
+        // would still come from the blob — a name describing a sound that was
+        // never installed. `liveSurfaceRestored` is that test, and it keeps the
+        // rule identical on both slots: metadata is adopted only alongside the
+        // parameters it describes.
+        if (live.isValid() && liveSurfaceRestored)
         {
             // The ANABASIS child above is already the live surface; take the
             // slot's non-parameter fields (name/identity/baseline/trims/mask)

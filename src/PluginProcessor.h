@@ -364,6 +364,13 @@ private:
         juce::ValueTree        preBaseline;  // the dirty datum pushed beside it
         juce::Array<UndoEntry> redoBefore;   // the redo line `pushUndoStep` cleared
         int                    slot = 0;     // the stack it was pushed onto
+        // …and the entry the push DISCARDED, if the stack was already full.
+        // `pushCapped` trims from the FRONT once the cap is exceeded, so undoing
+        // the bookkeeping with `removeLast()` alone would drop the oldest step for
+        // good: re-selecting the loaded preset would quietly shorten how far back
+        // a long session can undo. Retraction therefore has to put both ends back.
+        bool                   evictedOldest = false;
+        UndoEntry              oldest;
     };
     PresetUndoBracket openPresetUndoBracket();
     // Reverses the bracket if — and only if — the completed apply left the

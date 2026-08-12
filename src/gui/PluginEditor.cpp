@@ -708,6 +708,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // `setVisible` would fire a synthetic mouse move on every raise and lower.
     addAndMakeVisible (popupShield);
     popupShield.setAlwaysOnTop (true);
+    // Findable by the suite. The shield paints nothing and intercepts nothing
+    // until a pop-up opens, so its ONE observable property before that is its
+    // geometry — and empty geometry silently makes the whole mechanism inert.
+    // `testThePopupShieldActuallyCoversTheEditor` reads it through this id.
+    popupShield.setComponentID ("popupShield");
     // Both feeders into `openMenus`. Every drop-down and context menu we do not
     // build ourselves arrives through the look-and-feel hook.
     lnf.onPopupMenuWindowCreated = [this] (juce::Component& w) { notePopupMenuOpened (w); };
@@ -1356,6 +1361,17 @@ void AnabasisAudioProcessorEditor::resized()
     presetName.setBounds (r.reduced (2, 0));
 
     dimOverlay.setBounds (getLocalBounds().withTrimmedTop (kBarH));
+
+    // The WHOLE editor, top bar included — unlike `dimOverlay`, which trims it.
+    // The bar carries the A/B switch, the preset name button and the ‹ › ring,
+    // and the A/B switch is one of the controls that acts on the press itself,
+    // so a shield stopping at `kBarH` would leave the worst case uncovered.
+    //
+    // Sizing it here is not incidental: a component with empty bounds fails the
+    // containment test in `getComponentAt`, so `setInterceptsMouseClicks (true, …)`
+    // would have nothing to intercept and the shield would be inert while looking
+    // wired up.
+    popupShield.setBounds (getLocalBounds());
 
     for (auto* b : { &aboutBackdrop, &settingsBackdrop, &savePresetBackdrop })
         b->setBounds (getLocalBounds());
@@ -2286,12 +2302,28 @@ void AnabasisAudioProcessorEditor::dismissTrackedPopupMenus()
     // Desktop windows first (combo drop-downs, the Save Preset context menu),
     // then any menu that is an editor child. `exitModalState` is what actually
     // ends a PopupMenu; hiding the window would leave the modal state standing.
-    for (int i = openMenus.size(); --i >= 0;)
-        if (auto* w = openMenus.getReference (i).getComponent())
+    //
+    // SNAPSHOT before iterating. Ending a modal state runs synchronously on this
+    // thread and can destroy the window, which re-enters `componentBeingDeleted`
+    // and edits `openMenus` underneath the loop. With one window per entry the
+    // descending walk happens to survive that, but a menu with sub-menus could
+    // take several tracked windows down in one step and leave the index past the
+    // end — and `juce::Array::getReference` out of range is undefined. Iterating
+    // a copy makes the loop independent of whatever the deletion cascade does.
+    const auto tracked = openMenus;
+    for (int i = tracked.size(); --i >= 0;)
+        if (auto* w = tracked.getReference (i).getComponent())
             w->exitModalState (0);
 
-    if (presetMenusOpen > 0)
-        juce::PopupMenu::dismissAllActiveMenus();
+    // The preset menu is OUR CHILD (`withParentComponent (this)`), so it is
+    // reachable directly and `juce::PopupMenu::dismissAllActiveMenus()` is not
+    // needed to close it. That call is process-global: it would also close a menu
+    // the user has open in a DIFFERENT instance of this plug-in — which is
+    // precisely the alternative `showPresetMenu`'s own comment records as worse
+    // than parenting, so reinstating it here would have undone that decision.
+    for (auto* child : getChildren())
+        if (child->isCurrentlyModal (false))
+            child->exitModalState (0);
 }
 
 void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()

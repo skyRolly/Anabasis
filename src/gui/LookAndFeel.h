@@ -129,6 +129,15 @@ public:
     // rounded and outlined, so the parented preset menu wore a doubled, squared
     // edge that no unparented combo list showed. The frame is ours to draw and we
     // draw it in the background; this override says so by drawing nothing.
+    //
+    // SCOPE, because this entry point is not menu-specific:
+    // `juce::ResizableBorderComponent::paint` resolves the same method, so any
+    // resizable component under this look-and-feel would also draw no border.
+    // Nothing in this editor is resizable today — host resize is off and the
+    // Standalone window resolves the DEFAULT look-and-feel, not this one — so no
+    // surface loses a frame. Add a resizable child under this family and this
+    // override has to learn the difference between the two callers rather than
+    // answering "nothing" to both.
     void drawResizableFrame (juce::Graphics&, int, int, const juce::BorderSize<int>&) override {}
     // Fixed, uniform row height so a taller combo doesn't get taller rows (#3).
     void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,

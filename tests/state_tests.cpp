@@ -1376,6 +1376,74 @@ static void testANoOpPresetApplyIsNotAUserAction()
            "noOpApply: re-applying over an EDITED surface is a real, undoable step");
 }
 
+// Retracting a no-op preset apply must restore the undo history's DEPTH, not
+// just its top. `pushCapped` trims from the FRONT once the 128-step cap is
+// exceeded, so on a full stack the bracket's push costs the oldest entry —
+// and popping the entry it pushed does not bring that back. Left unfixed,
+// re-clicking the loaded preset quietly shortens how far back a long session
+// can undo, one step per click.
+static void testANoOpPresetApplyDoesNotEatTheOldestUndoStep()
+{
+    // Drains the history to count it — destructive, so it is the last thing done
+    // to an instance.
+    auto depthOf = [] (AnabasisAudioProcessor& p)
+    {
+        int n = 0;
+        while (p.canUndo() && n < 1000) { p.undo(); ++n; }
+        return n;
+    };
+    auto fill = [] (AnabasisAudioProcessor& p, int pushes)
+    {
+        auto* k = p.apvts.getParameter (pid::compKnee);
+        const auto& r = k->getNormalisableRange();
+        for (int i = 0; i < pushes; ++i)
+        {
+            k->beginChangeGesture();
+            k->setValueNotifyingHost (r.convertTo0to1 (1.0f + 0.05f * (float) (i % 20)));
+            k->endChangeGesture();
+            p.flushPendingDetach();
+        }
+    };
+
+    // The cap is private; measure it rather than quote a number this test would
+    // then have to be kept in step with.
+    int cap = 0;
+    {
+        AnabasisAudioProcessor probe;
+        fill (probe, 400);
+        cap = depthOf (probe);
+        check (cap > 0, "undoCap: (premise) gestured edits push undo steps");
+        check (cap < 400, "undoCap: (premise) the stack is capped, so a push can evict");
+    }
+
+    // CONTROL: fill past the cap, then ONE real preset restore. The surface has
+    // moved, so this apply legitimately keeps its step.
+    int control = 0;
+    {
+        AnabasisAudioProcessor a;
+        fill (a, cap + 20);
+        check (a.applyFactoryPreset (3), "undoCap: (premise) the control applies the preset");
+        control = depthOf (a);
+        check (control == cap, "undoCap: (premise) the control history sits at the cap");
+    }
+
+    // SUBJECT: identical, plus a second apply of the SAME preset. By then the
+    // surface is exactly that preset and unedited, so the second apply restores
+    // nothing and must be retracted — including the entry its push evicted from
+    // the FRONT of a full stack, which `removeLast()` alone cannot give back.
+    AnabasisAudioProcessor b;
+    fill (b, cap + 20);
+    check (b.applyFactoryPreset (3), "undoCap: (premise) the subject applies the preset");
+    check (! b.presetDirty(), "undoCap: (premise) the surface now IS the preset, unedited");
+    check (b.applyFactoryPreset (3), "undoCap: (premise) and the same preset re-applies");
+
+    const int subject = depthOf (b);
+    const auto msg = juce::String ("undoCap: a no-op re-apply costs no history depth (subject "
+                                   + juce::String (subject) + " vs control "
+                                   + juce::String (control) + ")");
+    check (subject == control, msg.toRawUTF8());
+}
+
 // A stored A/B slot that is structurally present but carries no usable
 // parameter payload must not lend its NAME and IDENTITY to a sound that came
 // from somewhere else. The read rule is the one the live surface already
@@ -3454,6 +3522,46 @@ static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::Stri
 // border was unreachable — a styling branch guarded by a flag no owner armed,
 // the same shape as `allCombos`/`hov` and `resetSweep`. Pinning the ARMING side
 // is what a test can do here; the pixels are a brand-pass question.
+// The pop-up shield's geometry, which is the one thing about it a headless test
+// CAN reach — and the one thing whose absence makes the whole mechanism inert
+// while every other part of it looks correct. A component with empty bounds
+// fails the containment test in `getComponentAt`, so `setInterceptsMouseClicks`
+// has nothing to intercept: the dismissing click still lands on the control
+// underneath, and the z-order work and the open-menu bookkeeping become
+// unobservable. Sizing is done in `resized()` like every other overlay.
+static void testThePopupShieldActuallyCoversTheEditor()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "shieldBounds: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    auto* shield = ed->findChildWithID ("popupShield");
+    check (shield != nullptr, "shieldBounds: (premise) the shield is a child of the editor");
+    if (shield == nullptr)
+        return;
+
+    check (! shield->getBounds().isEmpty(),
+           "shieldBounds: the shield has a non-empty area (an empty one intercepts nothing)");
+    check (shield->getBounds() == ed->getLocalBounds(),
+           "shieldBounds: the shield covers the WHOLE editor");
+    // The top bar specifically: it carries the A/B switch, which acts on the
+    // press, so a shield that stopped below the bar would leave the worst case
+    // of this defect uncovered.
+    check (shield->getBounds().getY() == 0,
+           "shieldBounds: the shield covers the top bar, not just the body");
+    check (shield->isAlwaysOnTop(),
+           "shieldBounds: the shield is always-on-top, so it can cover the backdrops");
+
+    // …and it survives a resize, the way the other overlays do.
+    const auto grown = ed->getLocalBounds().expanded (0, 40);
+    ed->setSize (grown.getWidth(), grown.getHeight());
+    check (shield->getBounds() == ed->getLocalBounds(),
+           "shieldBounds: the shield tracks the editor's frame across a resize");
+}
+
 static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
 {
     AnabasisAudioProcessor proc;
@@ -6487,6 +6595,8 @@ int main (int argc, char** argv)
         testDetachAndReengageGrammar();
         testUndoIsPerSlotGestureCoalescedAndMaskWide();
         testANoOpPresetApplyIsNotAUserAction();
+        testANoOpPresetApplyDoesNotEatTheOldestUndoStep();
+        testThePopupShieldActuallyCoversTheEditor();
         testAMalformedStoredSlotCannotSplitSoundFromMetadata();
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();

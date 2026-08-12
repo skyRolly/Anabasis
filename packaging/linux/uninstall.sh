@@ -59,7 +59,17 @@ remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
                     "$2/.Anabasis.new"
     do
         if [ -e "$_scratch" ]; then
-            $SUDO rm -rf "$_scratch" && echo "removed leftover installer file $_scratch"
+            # Never fatal. Under `set -e` an `rm && echo` list is one command whose
+            # status is tested, so a scratch file this user cannot remove (owned by
+            # a root-mode install, an immutable parent) would abort the script —
+            # after the plug-in itself had already been removed, and with nothing
+            # printed to say why. Leftover scratch is cosmetic; a half-finished
+            # uninstall is not.
+            if $SUDO rm -rf "$_scratch" 2>/dev/null; then
+                echo "removed leftover installer file $_scratch"
+            else
+                echo "note: could not remove $_scratch (left in place)" >&2
+            fi
         fi
     done
 }

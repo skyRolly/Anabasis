@@ -37,10 +37,22 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 782 = 1078 checks green**, up 24 on 0.1.3's
-1039 — the two new state tests (`testANoOpPresetApplyIsNotAUserAction`,
-`testAMalformedStoredSlotCannotSplitSoundFromMetadata`), each mutation-verified against its own
-deliberately reverted fix and against no other.
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 797 = 1093 checks green**, up 54 on 0.1.3's
+1039 — four new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+`testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
+`testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
+`testThePopupShieldActuallyCoversTheEditor`), each mutation-verified against its own deliberately
+reverted fix and against no other.
+
+Two of those four exist because a review round found defects the first cut shipped, and both are
+worth recording as coverage lessons rather than quietly fixed. The shield was **added, sized
+nowhere, and therefore inert**: every part of the mechanism — z-order, interception toggle, menu
+bookkeeping — was correct while the component had empty bounds, so no click could ever reach it.
+Geometry is the one property of that component a headless test CAN read, and there was no test
+reading it. The second was a **vacuous first attempt**: the undo-depth test originally re-applied
+the preset after editing, which is a real restore, so it never entered the retraction path it
+claimed to cover and passed against the reverted fix. It is now a control/subject pair, and the
+mutant separates them by exactly one step (127 vs 128).
 
 **Superseded header (0.1.3, kept rather than deleted):** the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
 naming only, no DSP change, no new ADR (nothing decided at contract level: the three

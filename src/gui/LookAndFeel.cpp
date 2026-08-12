@@ -405,6 +405,16 @@ namespace menuMetrics
     constexpr float inactive   = 0.4f;   // the disabled alpha `drawButtonText` already uses
     constexpr float dim        = 0.88f;  // an enabled, unhighlighted row
 }
+// WHAT THIS BUDGET DOES NOT COVER, stated because the clipping it removes would
+// come straight back in that form. Two things `drawPopupMenuItem` can draw land
+// INSIDE the text rectangle rather than beside it: the sub-menu chevron (drawn at
+// `r.getRight() - padX`) and the right-aligned `shortcutKeyText`. Neither is
+// reachable in the menus this editor builds — nothing calls `addSubMenu` and no
+// item carries a shortcut — so the allowance is exact for everything shipped. Add
+// either and the text needs its own reservation here: an arrow column for the
+// first, and the shortcut's measured width for the second (JUCE already appends
+// the shortcut to the string it hands this function, so the total width is
+// measured — what is missing is the GAP that would keep the two apart).
 
 void AnabasisLookAndFeel::getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
                                                      int, int& idealWidth, int& idealHeight)
