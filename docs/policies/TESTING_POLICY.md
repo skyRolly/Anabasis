@@ -161,6 +161,15 @@ its methodology is not permitted (constraint C2).
 ## Rules
 
 1. **Every bug fix ships a regression test** that fails on the old code and passes on the fix.
+   The one exception is **ADR-0025**, and it is bounded and disclosure-bound: a fix may ship
+   without a suite test only where the suites structurally cannot produce the defect (real pointer
+   or keyboard interaction inside a modal loop, an artifact a platform packaging tool writes,
+   behaviour owned by the OS), and only if its record states the mechanism that makes a test
+   impossible, what was verified instead, what is consequently unprotected, and the condition under
+   which the exception lapses. It does **not** cover DSP, state, serialization or the parameter
+   surface — nothing there is out of the suites' reach. Writing a test that passes on both the old
+   and the new code to satisfy this rule is never the answer: that is the INC-004 failure mode
+   (green checks over a configuration nothing exercised) restated as compliance.
 2. **DSP-policy invariants must have a guarding test** where feasible — see the invariant → test
    map in `DSP_POLICY.md`. An untested invariant is listed as a gap, never left implicit.
 3. A pluginval **crash retry** is permitted only for an abnormal termination of the host-side

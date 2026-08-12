@@ -348,6 +348,28 @@ private:
                            redoStacks[anabasis::kNumAbSlots];
     juce::ValueTree gesturePreState;     // armed at first gesture-begin
 
+    // §7 preset bracket, remembered across the apply so a preset application
+    // that restores NOTHING can be un-recorded.
+    //
+    // The step still has to be pushed BEFORE the apply and must survive a failed
+    // or partial one — a half-written surface is exactly what undo should be
+    // able to take back, which is why the two apply paths validate what they can
+    // before opening the bracket and then keep the step whatever happens. Only a
+    // COMPLETED apply that moved nothing is retractable, and that is not
+    // knowable until afterwards, so the state needed to reverse the bookkeeping
+    // is captured on the way in.
+    struct PresetUndoBracket
+    {
+        juce::ValueTree        preSlot;      // what was pushed
+        juce::ValueTree        preBaseline;  // the dirty datum pushed beside it
+        juce::Array<UndoEntry> redoBefore;   // the redo line `pushUndoStep` cleared
+        int                    slot = 0;     // the stack it was pushed onto
+    };
+    PresetUndoBracket openPresetUndoBracket();
+    // Reverses the bracket if — and only if — the completed apply left the
+    // parameter surface and the dirty datum exactly as it found them.
+    void closePresetUndoBracket (const PresetUndoBracket&);
+
     // §7 history ownership, settled at round 42. The four stacks and the
     // gesture snapshot are plain `juce::Array<ValueTree>` / `ValueTree`, so they
     // have exactly one legal thread — and `setStateInformation` used to CLEAR

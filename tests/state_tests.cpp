@@ -1302,6 +1302,141 @@ static void testTheWaveformStatisticsRowsReadTheirStandards()
 // intents — through the SAME lock/exclusion semantics as file presets, with
 // an empty detach mask (nothing loads pre-detached), one undo step, and the
 // dirty marker clean right after an apply and set by the next edit.
+// ---------------------------------------------------------------------------
+// A preset application that RESTORES NOTHING is not a new user action: it must
+// mint no undo step and must leave the redo line alone. Re-applying the same
+// preset over an EDITED surface is a real restore and stays undoable.
+//
+// The distinction is a test of the STATE, not of which row was clicked, which
+// is why both halves click the SAME preset and differ only in whether the
+// surface moved in between.
+static void testANoOpPresetApplyIsNotAUserAction()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+
+    int count = 0;
+    const auto* table = PresetManager::factoryPresets (count);
+    const juce::String applied = table[3].name;
+
+    // 1) apply a preset  2) edit it  3) undo  4) a redo line exists
+    check (proc.applyFactoryPreset (3), "noOpApply: (premise) the preset applies");
+    auto* knee = apvts.getParameter (pid::compKnee);
+    knee->beginChangeGesture();
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (1.0f));
+    knee->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.canUndo(), "noOpApply: (premise) the edit pushed a step");
+    check (proc.presetDirty(), "noOpApply: (premise) the edit dirties the preset");
+    proc.undo();
+    check (proc.canRedo(), "noOpApply: (premise) the undo leaves a redo line");
+    check (! proc.presetDirty(), "noOpApply: (premise) the undo lands back on the preset");
+
+    // 5) re-apply the ALREADY-CURRENT, unchanged preset.
+    check (proc.applyFactoryPreset (3), "noOpApply: (premise) the same preset re-applies");
+
+    // 6) the redo line survives. This is the whole point: `pushUndoStep` clears
+    //    redo unconditionally, so a step pushed here would have destroyed it.
+    check (proc.canRedo(), "noOpApply: re-applying the current preset KEEPS the redo line");
+
+    // 7) …and no dead step was minted. Read behaviourally rather than through a
+    //    depth accessor: one Undo must now reach past the re-apply to the
+    //    ORIGINAL apply and leave the preset. A dead step would have been
+    //    consumed by this press instead, leaving the preset still applied.
+    check (proc.canUndo(), "noOpApply: (premise) the original apply is still undoable");
+    proc.undo();
+    const juce::String afterUndo = proc.currentPresetName();
+    check (afterUndo != applied,
+           juce::String ("noOpApply: no dead step -- one Undo reaches the original apply, got '"
+                         + afterUndo + "'").toRawUTF8());
+
+    // The other half: the same preset over a MOVED surface IS a restore.
+    AnabasisAudioProcessor p2;
+    check (p2.applyFactoryPreset (3), "noOpApply: (premise) second instance applies it");
+    auto* drive = p2.apvts.getParameter (pid::clipDrive);
+    const float driveBefore = p2.apvts.getRawParameterValue (pid::clipDrive)->load();
+    // Move it RELATIVE to whatever the preset holds — a fixed target would be a
+    // no-op the day a preset happens to name that value, and the premise check
+    // below would then be the only thing failing.
+    const float driveNorm = drive->getValue();
+    drive->beginChangeGesture();
+    drive->setValueNotifyingHost (driveNorm > 0.5f ? driveNorm - 0.4f : driveNorm + 0.4f);
+    drive->endChangeGesture();
+    p2.flushPendingDetach();
+    const float driveEdited = p2.apvts.getRawParameterValue (pid::clipDrive)->load();
+    check (std::abs (driveEdited - driveBefore) > 0.5f, "noOpApply: (premise) the edit moved Clip Drive");
+    check (p2.presetDirty(), "noOpApply: (premise) it dirties the preset");
+
+    check (p2.applyFactoryPreset (3), "noOpApply: (premise) re-apply over the edit");
+    check (! p2.presetDirty(), "noOpApply: re-applying over an edit restores the preset");
+    // A REAL restore, so it is undoable and the edit comes back.
+    check (p2.canUndo(), "noOpApply: (premise) the restore is undoable");
+    p2.undo();
+    check (std::abs (p2.apvts.getRawParameterValue (pid::clipDrive)->load() - driveEdited) < 0.01f,
+           "noOpApply: re-applying over an EDITED surface is a real, undoable step");
+}
+
+// A stored A/B slot that is structurally present but carries no usable
+// parameter payload must not lend its NAME and IDENTITY to a sound that came
+// from somewhere else. The read rule is the one the live surface already
+// follows: a missing payload means DEFAULTS, never "keep whatever is live".
+static void testAMalformedStoredSlotCannotSplitSoundFromMetadata()
+{
+    AnabasisAudioProcessor proc;
+
+    // A real session first: a named preset with a moved surface.
+    check (proc.applyFactoryPreset (4), "malformedSlot: (premise) a preset is applied");
+    auto* gain = proc.apvts.getParameter (pid::limGain);
+    gain->setValueNotifyingHost (0.80f);
+
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    check (xml != nullptr, "malformedSlot: (premise) the session blob parses");
+    if (xml == nullptr) return;
+    auto root = juce::ValueTree::fromXml (*xml);
+    auto ab = root.getChildWithName ("AB");
+    check (ab.isValid(), "malformedSlot: (premise) the blob carries an AB child");
+    if (! ab.isValid()) return;
+
+    const int active = (int) ab.getProperty ("active", 0);
+    juce::Array<juce::ValueTree> slots;
+    for (int i = 0; i < ab.getNumChildren(); ++i)
+        if (ab.getChild (i).hasType ("SLOT"))
+            slots.add (ab.getChild (i));
+    check (slots.size() == 2, "malformedSlot: (premise) both slots are present");
+    if (slots.size() != 2) return;
+
+    // The truncation: a SLOT that is a valid node, carries metadata, and has no
+    // parameter payload at all.
+    auto stored = slots[1 - active];
+    stored.removeChild (stored.getChildWithName ("ANABASIS"), nullptr);
+    stored.setProperty ("presetName", "Ghost Session", nullptr);
+    check (! stored.getChildWithName ("ANABASIS").isValid(),
+           "malformedSlot: (premise) the stored slot now has no parameter payload");
+
+    // Restore into the SAME instance, then switch into the broken slot.
+    const auto doc = root.createXml();
+    juce::MemoryBlock hacked;
+    juce::AudioProcessor::copyXmlToBinary (*doc, hacked);
+    proc.setStateInformation (hacked.getData(), (int) hacked.getSize());
+    proc.switchToSlot (1 - proc.activeSlotIndex());
+
+    // Both halves of the slot resolved to pristine defaults. The failure this
+    // pins is the metadata arriving WITHOUT its sound.
+    const juce::String nameAfter = proc.currentPresetName();
+    check (nameAfter != "Ghost Session",
+           juce::String ("malformedSlot: a payload-less slot lent its preset name to another state ('"
+                         + nameAfter + "')").toRawUTF8());
+    check (nameAfter == "Default",
+           juce::String ("malformedSlot: the slot resolves to the default name, got '"
+                         + nameAfter + "'").toRawUTF8());
+    auto* gp = proc.apvts.getParameter (pid::limGain);
+    const float gainDefault = gp->getNormalisableRange().convertFrom0to1 (gp->getDefaultValue());
+    check (std::abs (proc.apvts.getRawParameterValue (pid::limGain)->load() - gainDefault) < 0.01f,
+           "malformedSlot: the slot's SOUND is the default, not the previous state's");
+}
+
 static void testFactoryPresets()
 {
     AnabasisAudioProcessor proc;
@@ -6351,6 +6486,8 @@ int main (int argc, char** argv)
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
         testDetachAndReengageGrammar();
         testUndoIsPerSlotGestureCoalescedAndMaskWide();
+        testANoOpPresetApplyIsNotAUserAction();
+        testAMalformedStoredSlotCannotSplitSoundFromMetadata();
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();
         testMeterResetClearsSessionHolds();

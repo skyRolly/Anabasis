@@ -832,6 +832,61 @@ Evidence [Partially Verified]:
   pin nothing
 - Commit: this one
 
+### KI-013 — The click absorbed by the pop-up shield still counts toward the multi-click run (2026-08-13)
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** All platforms and formats; any control with a double-click action — in practice the
+knobs, whose double-click resets to default.
+
+Dismissing a pop-up by clicking outside it no longer operates the control underneath (the shield
+absorbs that press). What the shield cannot do is *un-count* it. JUCE tracks the multi-click run on
+the mouse source rather than on the component that received the press, so the absorbed click still
+advances the run: click a knob to open something, click away to dismiss, then click that knob again
+within the double-click interval and the second press can arrive as a double-click and reset the
+knob to its default.
+
+Two things keep this narrow. The absorbed press and the following one must land inside the system
+double-click interval, and the reset is a normal undoable step, so the value comes straight back
+with Undo.
+
+**Workaround:** press Undo; or leave a moment between dismissing a pop-up and clicking a knob.
+**Cause:** the multi-click counter lives on `juce::MouseInputSource` and is advanced when the event
+is delivered, before any component decides what to do with it. A component that consumes an event
+does not decrement it, and JUCE exposes no way to reset the run.
+
+Evidence [Partially Verified]:
+- Source: `src/gui/PluginEditor.h` (`PopupShield`), `src/gui/PluginEditor.cpp`
+  (`refreshPopupShield`)
+- Test:   none — not reproducible headlessly; it needs real double-click timing from a pointer
+  device, which the suites do not synthesise
+- Commit: this one
+
+### KI-014 — macOS: a held letter or digit does not repeat in the Save Preset name field (2026-08-13)
+
+**Severity:** Low
+**Status:** Confirmed (platform behaviour, not a defect in this plug-in)
+**Affects:** macOS only, all formats; the Save Preset name field. Punctuation and symbol keys
+repeat normally, letters and digits do not.
+
+Holding a letter or a digit in the Save Preset name field types one character and then stops.
+Holding a punctuation key repeats as expected. Typing normally is unaffected, so the field is fully
+usable — only auto-repeat is missing for those keys.
+
+**Workaround:** none needed; type the character repeatedly rather than holding it.
+**Cause:** macOS press-and-hold. For letter and digit keys the system suppresses key repeat in
+favour of the accent/character picker, and delivers no repeat events for the framework to forward.
+The plug-in never sees the repeats, so there is nothing here to fix. Fixes were considered and
+rejected: suppressing the system behaviour requires a global preference this plug-in has no
+business writing, and synthesising repeats from a timer would fire where the system deliberately
+does not and would diverge from every other text field on the machine. Recorded so the next
+investigation does not re-derive it.
+
+Evidence [Partially Verified]:
+- Source: `src/gui/PluginEditor.h` (`saveNameEditor`)
+- Test:   none — platform input behaviour, not reachable from the suites
+- Commit: this one
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

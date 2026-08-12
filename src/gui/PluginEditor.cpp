@@ -281,6 +281,9 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // this constructor.
     setLookAndFeel (&lnf);
     tooltips.setLookAndFeel (&lnf);   // desktop window: nothing to inherit from — see the member
+    // The Settings switch, read at the source. `tooltipsOn` is the editor's own
+    // mirror of the stored setting and is refreshed by `applyTooltipsEnabled`.
+    tooltips.tooltipsAllowed = [this] { return tooltipsOn; };
    #if JUCE_MAC
     // ADAPTED from Anamorph `src/PluginEditor.cpp` (ADR-0009), and owed the
     // moment the line above made `drawTooltip` reachable at all: JUCE's
@@ -699,6 +702,16 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addChildComponent (savePresetBackdrop);
     savePresetBackdrop.setAlwaysOnTop (true);
 
+    // The pop-up shield, added AFTER every overlay so it starts in front of them,
+    // and always-on-top for the same reason they are. It is visible from here on
+    // and paints nothing; only its click-interception is toggled, because
+    // `setVisible` would fire a synthetic mouse move on every raise and lower.
+    addAndMakeVisible (popupShield);
+    popupShield.setAlwaysOnTop (true);
+    // Both feeders into `openMenus`. Every drop-down and context menu we do not
+    // build ourselves arrives through the look-and-feel hook.
+    lnf.onPopupMenuWindowCreated = [this] (juce::Component& w) { notePopupMenuOpened (w); };
+
     // -- Settings rows (§6.4, all InternalState-bound) -----------------------
     auto& ist = proc.internalState.state();
     settingsTitle.setText ("SETTINGS", juce::dontSendNotification);
@@ -796,7 +809,12 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // every other combo has, and without a title it had no accessibility name.
     registerAnimated (uiScaleBox);
     uiScaleBox.setTitle ("UI Scale");
-    uiScaleBox.setTooltip (tidyTip ("Window size - M is the original"));
+    // "UI scale", matching the row label and the accessibility title above it.
+    // The control scales the WHOLE interface by a factor, not just the window,
+    // and on a host where a DPI scale composes with it the window is not even
+    // the thing the number describes — so the old "Window size" wording named
+    // the wrong quantity in the one place a user goes to find out what it does.
+    uiScaleBox.setTooltip (tidyTip ("UI scale - M is the original; everything scales in proportion"));
     for (auto* b : { &oversampleBox, &phaseBox, &offlineBox, &integratedBox, &rmsRefBox })
     {
         removeChildComponent (b);
@@ -998,6 +1016,21 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
     // say it instead.
     stopTimer();
     cancelPendingUpdate();
+
+    // Cancel the pop-ups BEFORE detaching from them. A drop-down is a desktop
+    // window that outlives this editor unless something ends it: the host can
+    // destroy a visible editor with a menu open, and detaching the listener
+    // would only mean we stop hearing about a window that is still on screen —
+    // now over the host's UI, with the component it belongs to gone. Cancelling
+    // first is the only order in which "the editor closed" also closes them.
+    dismissTrackedPopupMenus();
+    for (int i = openMenus.size(); --i >= 0;)
+        if (auto* w = openMenus.getReference (i).getComponent())
+            w->removeComponentListener (this);
+    openMenus.clear();
+    // The look-and-feel outlives this callback only as a member; clear the hook
+    // so nothing can call back into a half-destroyed editor.
+    lnf.onPopupMenuWindowCreated = nullptr;
     // The THIRD source, and leaving it out made the guarantee above two thirds
     // true: `animVBlank`'s callback (`stepMicroAnims`) touches `animated`,
     // `uiAnimOn` and `lastFrameTime`. It is declared BEFORE `lastFrameTime` and
@@ -1871,6 +1904,12 @@ void AnabasisAudioProcessorEditor::timerCallback()
     // this changes what is drawn, not how often.
     for (auto* c : allCombos)
         c->getProperties().set ("hov", c->isMouseOver (true));
+
+    // Pop-up housekeeping. `refreshPopupShield` is the backstop that recovers a
+    // shield left raised by a window that died without notice; the orphan check
+    // is the one that acts on the two ways a pop-up can be stranded.
+    refreshPopupShield();
+    dismissOrphanedPopupMenus();
     refreshInternalSettingsBoxes();
     refreshPresetDisplay();
     const bool bypassed = proc.apvts.getRawParameterValue (pid::bypass)->load() >= 0.5f;
@@ -2023,7 +2062,24 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     // CONSTRUCTION instead: JUCE's MenuWindow is then a CHILD of this
     // component, so it cannot outlive it, and `Component::getLookAndFeel()`
     // walks up to the editor's `lnf` on its own — the family styling arrives
-    // with no pointer to dangle. Both available alternatives were worse:
+    // with no pointer to dangle. Being precise about the hazard, because the
+    // obvious reading is wrong: `PopupMenu` holds its look-and-feel as a
+    // WeakReference, so the danger was never a dangling RAW pointer — it is that
+    // the reference NULLS when the editor dies, and the menu then silently falls
+    // back to the default look-and-feel mid-life. Losing the styling, not
+    // crashing, is what that shape actually costs.
+    //
+    // The calls that consequently resolve the process-global DEFAULT
+    // look-and-feel for THIS menu, enumerated rather than left to be
+    // rediscovered: `preparePopupMenuWindow` (so this window never reaches our
+    // hook — which is why `showPresetMenu` counts it directly, below), plus the
+    // measuring and drawing calls the family overrides. The parenting makes the
+    // second group resolve to `lnf` by hierarchy walk instead, so only the first
+    // is genuinely served by the default — and it does nothing there. A future
+    // override added to the family must be checked against this list, because a
+    // parented menu reaches it by a different route than a combo's.
+    //
+    // Both available alternatives were worse:
     // `dismissAllActiveMenus()` in the destructor also closes another
     // instance's menu, and a shared static LookAndFeel trades this for
     // static-destruction order at DLL unload.
@@ -2053,9 +2109,25 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     m.addItem (10001, "Save Preset" + ellip);
     m.addItem (10002, "Load Preset" + ellip);
 
+    // Counted here rather than through the look-and-feel hook: parenting the
+    // menu (above) means it never gets our look-and-feel handed to it — it
+    // inherits one by walking up the hierarchy — so `preparePopupMenuWindow`
+    // fires on the DEFAULT look-and-feel and the hook never sees this window.
+    // Raise the shield BEFORE the menu is created, so the menu is appended in
+    // front of it (see the z-order argument on PopupShield).
+    ++presetMenusOpen;
+    refreshPopupShield();
+
     m.showMenuAsync (juce::PopupMenu::Options()
                          .withTargetComponent (presetName)
                          .withParentComponent (this)   // lifetime + look-and-feel; see above
+                         // A PARENTED menu budgets its height against the PARENT
+                         // rather than the display, and JUCE's response to not
+                         // fitting is to add COLUMNS before it scrolls. With
+                         // enough saved presets the list silently became two
+                         // columns; the combo lists already pin this in
+                         // `getOptionsForComboBoxPopupMenu` and this one did not.
+                         .withMaximumNumColumns (1)
                          .withMinimumWidth (228),
         // SafePointer, not a raw `this`: the menu outlives the editor if the
         // host tears the window down while it is open. JUCE dismisses with
@@ -2065,6 +2137,15 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
         [safeThis = juce::Component::SafePointer<AnabasisAudioProcessorEditor> (this),
          files] (int r)
         {
+            // The count comes down on EVERY path out of the menu, including
+            // dismissal (r == 0), or the shield would stay raised for ever and
+            // the editor would stop taking clicks. Done before anything else so
+            // no early return can skip it.
+            if (safeThis != nullptr)
+            {
+                safeThis->presetMenusOpen = juce::jmax (0, safeThis->presetMenusOpen - 1);
+                safeThis->refreshPopupShield();
+            }
             if (r == 0 || safeThis == nullptr) return;
             if (r == 10001) { safeThis->showSavePreset (true); return; }
             if (r == 10002) { safeThis->showLoadPreset(); return; }
@@ -2114,7 +2195,19 @@ void AnabasisAudioProcessorEditor::showSavePreset (bool show)
     savePresetBackdrop.setVisible (show);
     if (show)
     {
+        // The RAW stored name, deliberately — not `refreshPresetDisplay`'s
+        // placeholder. A state carrying no preset should pre-fill an EMPTY field
+        // the user types into, never a placeholder offered as a file name.
         saveNameEditor.setText (proc.currentPresetName(), juce::dontSendNotification);
+        // One grab, and it is enough BECAUSE of the ordering, which is the
+        // opposite of the intuitive one: when this panel is opened from the
+        // preset menu, `PopupMenu`'s completion callback runs AFTER the menu's
+        // modal state has already ended and its focus restoration has already
+        // happened — so by the time we get here there is no menu window left to
+        // lose the focus to. A bounded retry would be defending against an
+        // ordering that does not occur. If a future caller opens this panel from
+        // INSIDE a still-modal callback, that assumption changes and this line
+        // is the one to revisit.
         saveNameEditor.grabKeyboardFocus();
     }
 }
@@ -2130,10 +2223,167 @@ void AnabasisAudioProcessorEditor::showSettings (bool show)
     settingsBackdrop.setVisible (show);
 }
 
+// ============================================================================
+//  Pop-up shield and pop-up lifetime
+// ============================================================================
+
+void AnabasisAudioProcessorEditor::notePopupMenuOpened (juce::Component& menuWindow)
+{
+    openMenus.add (&menuWindow);
+    menuWindow.addComponentListener (this);
+    refreshPopupShield();
+}
+
+void AnabasisAudioProcessorEditor::componentBeingDeleted (juce::Component& c)
+{
+    c.removeComponentListener (this);
+    for (int i = openMenus.size(); --i >= 0;)
+        if (openMenus.getReference (i).getComponent() == &c)
+            openMenus.remove (i);
+    refreshPopupShield();
+}
+
+void AnabasisAudioProcessorEditor::refreshPopupShield()
+{
+    // A SafePointer nulls itself if a window died without us hearing about it,
+    // so pruning here means the tick alone is enough to recover the shield even
+    // if a listener were ever missed. A stuck shield would make the editor
+    // unclickable, which is the one failure this must not have.
+    for (int i = openMenus.size(); --i >= 0;)
+        if (openMenus.getReference (i).getComponent() == nullptr)
+            openMenus.remove (i);
+
+    const bool wanted = ! openMenus.isEmpty() || presetMenusOpen > 0;
+    if (wanted == shieldRaised)
+        return;
+    shieldRaised = wanted;
+
+    if (wanted)
+    {
+        // Calibrate the foreground test at the one instant we KNOW the user is
+        // working in this editor: a pop-up has just opened, and only a click on
+        // one of our own controls can do that. If the process is the foreground
+        // application now, it is a process that CAN be foreground, so a later
+        // `false` really does mean the user switched away. If it is not
+        // foreground even now, the test carries no information for this host and
+        // `dismissOrphanedPopupMenus` must not act on it.
+        popupOpenedWhileForeground = juce::Process::isForegroundProcess();
+
+        // Re-order only on the way UP, and only ever here — see the z-order
+        // argument on PopupShield for why the direction matters. The synthetic
+        // mouse move this fires is asynchronous, so it is dispatched after the
+        // menu is already modal, and `Component::internalMouseEnter/Exit` return
+        // early for a blocked component without clearing its cached
+        // inside-component flag. Hover, which this editor reads geometrically
+        // through `isMouseOver`, therefore survives the raise.
+        popupShield.toFront (false);
+    }
+    popupShield.setInterceptsMouseClicks (wanted, false);
+}
+
+void AnabasisAudioProcessorEditor::dismissTrackedPopupMenus()
+{
+    // Desktop windows first (combo drop-downs, the Save Preset context menu),
+    // then any menu that is an editor child. `exitModalState` is what actually
+    // ends a PopupMenu; hiding the window would leave the modal state standing.
+    for (int i = openMenus.size(); --i >= 0;)
+        if (auto* w = openMenus.getReference (i).getComponent())
+            w->exitModalState (0);
+
+    if (presetMenusOpen > 0)
+        juce::PopupMenu::dismissAllActiveMenus();
+}
+
+void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
+{
+    if (! shieldRaised)
+        return;
+
+    // 1) The editor stopped showing. A drop-down is a free-standing desktop
+    //    window, so hiding the editor does not take it with it: JUCE only
+    //    auto-cancels a modal component when its own hierarchy changes, and a
+    //    desktop window's does not. The menu would sit on screen with nothing
+    //    behind it, over the host's own UI.
+    const bool editorGone = ! isShowing();
+
+    // 2) The user switched to another application while the pointer was resting
+    //    ON the menu. JUCE does dismiss menus on an app change, but that branch
+    //    is gated on the pointer NOT being over the menu, so a menu under the
+    //    cursor survives the switch and floats above the next application.
+    //
+    //    The foreground test is only trusted where it was shown to carry
+    //    information (see refreshPopupShield). In a bridged or out-of-process
+    //    host the plug-in UI can live in a process that is never the foreground
+    //    application; there `isForegroundProcess()` is false the whole time, and
+    //    acting on it would cancel every menu the instant it opened — the plug-in
+    //    would appear to have no working drop-downs at all.
+    const bool switchedAway = popupOpenedWhileForeground
+                              && ! juce::Process::isForegroundProcess();
+
+    if (! editorGone && ! switchedAway)
+        return;
+
+    if (switchedAway)
+    {
+        // Order matters, and both halves are about not destroying the user's
+        // work while tidying up after them.
+        //
+        // First: an inline edit in progress is abandoned rather than applied.
+        // A juce::Label editor treats focus loss as "the user clicked away" and
+        // COMMITS what is in the box — right for a real click, wrong for a
+        // release we initiate ourselves, which would write a half-typed number
+        // into a parameter the user never confirmed.
+        cancelInlineEdits();
+
+        // Second: drop keyboard focus BEFORE cancelling. When a modal state
+        // ends, JUCE restores the pre-menu focus and calls `toFront (true)` on
+        // whatever holds it — which drags the host's window back to the
+        // foreground, in front of the application the user just switched to.
+        if (auto* focused = juce::Component::getCurrentlyFocusedComponent())
+            focused->giveAwayKeyboardFocus();
+    }
+    // The hidden-editor branch deliberately does NOT release focus: the editor
+    // is coming back, and taking focus off the Save Preset field would empty it
+    // of the caret the user left there.
+
+    dismissTrackedPopupMenus();
+}
+
+void AnabasisAudioProcessorEditor::cancelInlineEdits()
+{
+    // The knob value boxes are `juce::Label` editors the look-and-feel creates
+    // (`createSliderTextBox`), so they live inside their Slider rather than in
+    // any list this editor keeps. Walking the tree finds every one of them —
+    // including the Simple-view knobs and anything inside a backdrop — without
+    // adding a second registry that a future control could be forgotten from.
+    //
+    // `hideEditor (true)` is the ESCAPE outcome: discard the text, leave the
+    // parameter alone. `Label` treats a plain focus loss as "the user clicked
+    // away" and COMMITS instead, which is right for a real click and wrong for a
+    // focus release this editor initiates on the user's behalf.
+    const std::function<void (juce::Component&)> walk = [&walk] (juce::Component& c)
+    {
+        if (auto* l = dynamic_cast<juce::Label*> (&c))
+            if (l->isBeingEdited())
+                l->hideEditor (true);
+
+        for (auto* child : c.getChildren())
+            walk (*child);
+    };
+    walk (*this);
+
+    // The Save Preset name field is a TextEditor, not a Label: losing focus
+    // neither commits nor clears it, so what the user typed simply stays there.
+}
+
 void AnabasisAudioProcessorEditor::applyTooltipsEnabled()
 {
     tooltipsOn = tooltipsToggle.getToggleState();
-    tooltips.setMillisecondsBeforeTipAppears (tooltipsOn ? 600 : 1000000000);
+    // The delay is the APPEARANCE delay and stays at its normal value; the switch
+    // is the gate on the member (see `GatedTooltipWindow`). Setting the delay to
+    // an enormous number was the whole implementation before, and it left a
+    // visible tip up and let a moving pointer chain new ones past it.
+    tooltips.setMillisecondsBeforeTipAppears (600);
 }
 
 // ============================================================================

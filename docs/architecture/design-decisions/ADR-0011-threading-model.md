@@ -142,7 +142,7 @@ no atomics and no possibility of interleaving with a user gesture.
 top of the audio-thread consumer: the forced-duck request (set *before* the parameter swap,
 §2.8), Learn start/stop, meter hold reset, and the sentinel-valued per-slot inject atomics that
 deliver a frozen trim vector at the silent duck bottom (§4.4, §5.4 — the `abMatchGain` idiom,
-`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). **The trim-vector case is under-specified
+`Anamorph:src/PluginProcessor.cpp:528-534` [Verified]). **The trim-vector case is under-specified
 here and is deliberately left so:** the precedent carries one scalar, the vector is four, and the
 transport is `OPEN_QUESTIONS.md` **OQ-013** — a Hard Stop until an ADR settles it. The other three
 commands are single scalars and are fully covered. Host-hidden engine config
@@ -283,7 +283,7 @@ discharge is carried as a prescribed block, matching the enacted text verbatim.
   The table's nearest row — "GUI → Audio (momentary / transient requests) | a single
   `std::atomic<int>` per request" — describes a payload-free integer request where the arrival *is*
   the message; the Anamorph precedent this copies is an `atomic<float>` carrying a gain
-  (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). Since the policy states "Any path not in
+  (`Anamorph:src/PluginProcessor.cpp:528-534` [Verified]). Since the policy states "Any path not in
   this table is a new cross-thread path → Architecture Review Gate", the Consequences claim of full
   compliance was asserting conformance to a row that did not describe the edge. This ADR enacts the
   missing row for the case the `abMatchGain` precedent actually establishes — a **single scalar** —
@@ -307,7 +307,7 @@ discharge is carried as a prescribed block, matching the enacted text verbatim.
   > atomics with no ordering and consume them half-updated — a permanently half-restored slot, which
   > defeats the Freeze bit-repeatability `MODE_AND_ADAPTATION_POLICY.md` invariant 3 requires. The
   > row is therefore narrowed to **one scalar**, which is exactly what the `abMatchGain` precedent
-  > establishes (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified] carries a single gain), and
+  > establishes (`Anamorph:src/PluginProcessor.cpp:528-534` [Verified] carries a single gain), and
   > the trim-vector transport is **not decided here**. ADR-0007's phrase "a sentinel-valued atomic"
   > is singular and does not settle it either. Choosing between *N* parallel sentinel scalars with a
   > stated ordering guarantee and a single release/acquire-gated per-slot POD is a thread-model
@@ -388,8 +388,8 @@ Evidence [Unverified]:
   (per-block POD snapshot instead of a parameter FIFO),
   `Anamorph:src/dsp/ScopeBuffer.h:21-91` (SPSC ring, one release-store per block, stateless
   acquiring peeks), `Anamorph:src/dsp/AnamorphEngine.cpp:290-307` (dry-fill gated on
-  predicted == latched latency), `Anamorph:src/PluginProcessor.cpp:485-491` (sentinel-atomic
-  per-slot inject consumed at the duck bottom), `Anamorph:src/PluginProcessor.cpp:338-421`
+  predicted == latched latency), `Anamorph:src/PluginProcessor.cpp:528-534` (sentinel-atomic
+  per-slot inject consumed at the duck bottom), `Anamorph:src/PluginProcessor.cpp:338-464`
   (gesture-bracketed edits vs automation folded into the baseline — the message-thread signal
   §5.2's discriminator reuses), `Anamorph:src/gui/FrameClock.h:10-167` and
   `Anamorph:src/gui/LevelMeter.cpp:12-73` (vblank pacing, atomic meter sources, repaint gates).

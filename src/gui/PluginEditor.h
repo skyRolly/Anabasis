@@ -43,7 +43,8 @@ class AnabasisAudioProcessor;
 class AnabasisAudioProcessorEditor : public juce::AudioProcessorEditor,
                                      private juce::Timer,
                                      private juce::AudioProcessorValueTreeState::Listener,
-                                     private juce::AsyncUpdater
+                                     private juce::AsyncUpdater,
+                                     private juce::ComponentListener // pop-up windows; see PopupShield
 {
 public:
     explicit AnabasisAudioProcessorEditor (AnabasisAudioProcessor&);
@@ -99,6 +100,80 @@ private:
     struct DimLayer : public juce::Component
     {
         void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0x66090b0e)); }
+    };
+
+    // Consumes the click that dismissed a pop-up, so it cannot ALSO act on
+    // whatever happens to sit under the pointer.
+    //
+    // JUCE re-delivers that click on purpose. `Component::internalMouseDown`
+    // sees the modal menu, calls `internalModalInputAttempt()` — which dismisses
+    // it synchronously — and then, because the modal loop has now exited, hands
+    // the SAME mouse-down to the component underneath; the comment there says so
+    // outright ("If processing the input attempt has exited the modal loop, we'll
+    // allow the event to be delivered", juce_Component.cpp). Underneath is
+    // whatever the cursor is over, and several of ours act on the press itself:
+    // `ABControl::mouseDown` toggles A/B, `Knob::mouseDown` resets on Alt-click,
+    // the graph-well pills switch the well, and a `Backdrop` closes its panel —
+    // which for the Save Preset panel throws away the name being typed.
+    //
+    // One shield is the whole enforcement layer: while any pop-up is up it is the
+    // component that click lands on, and it does nothing with it. That is one
+    // rule in one place, and it covers controls added later for free — where a
+    // predicate bolted onto each control has to be remembered every time.
+    //
+    // Two z-order facts it has to satisfy at once, and they pull opposite ways.
+    //
+    // It must cover the BACKDROPS. `dimOverlay`, `aboutBackdrop`, `aboutLink`,
+    // `settingsBackdrop` and `savePresetBackdrop` all set `setAlwaysOnTop (true)`,
+    // and a `Backdrop` is precisely a control that acts on the press — the
+    // Settings panel closing under the click that dismissed one of its own combo
+    // lists is the plainest form of this defect. A non-always-on-top shield could
+    // never be raised over them, so this one sets the flag too.
+    //
+    // It must NOT cover the pop-up. For a combo drop-down or the Save Preset
+    // field's context menu that is free: each is its own desktop window, not in
+    // this hierarchy at all. The preset menu IS an editor child and is also
+    // always-on-top (`PopupMenu::MenuWindow` sets the flag in its constructor), so
+    // with the flag on both, ORDER is the only thing left to decide it, and the
+    // order is arranged rather than assumed: `showPresetMenu` counts the menu and
+    // raises the shield BEFORE calling `showMenuAsync`, so the menu window is
+    // appended after — in front of — the shield.
+    //
+    // That sequencing is load-bearing and worth stating plainly, because
+    // `Component::toFront` would otherwise break it: its walk back past
+    // always-on-top siblings is guarded by `if (! flags.alwaysOnTopFlag)`, so for
+    // an always-on-top component the insert index is -1 and it goes to the very
+    // front — over an open menu included. `refreshPopupShield` therefore re-orders
+    // ONLY on the transition into the raised state, never while a pop-up is
+    // already up, and the only pop-up that is an editor child is the one whose
+    // call site does the raising first.
+    //
+    // Keyboard focus is left alone deliberately — `toFront (false)` does not grab
+    // it and `setMouseClickGrabsKeyboardFocus (false)` covers the click — which is
+    // what keeps the Save Preset field focused while its context menu is open.
+    struct PopupShield : public juce::Component
+    {
+        PopupShield()
+        {
+            setInterceptsMouseClicks (false, false);   // inert until raised; see refreshPopupShield
+            setMouseClickGrabsKeyboardFocus (false);
+            setWantsKeyboardFocus (false);
+        }
+        // Deliberately empty: consuming the event IS the behaviour. The first four
+        // only state that intent — juce::Component's versions are already empty.
+        //
+        // The last two are the ones that do something. `Component::mouseWheelMove`
+        // and `::mouseMagnify` are NOT empty in the base class: each forwards the
+        // event to the nearest enabled ancestor, which for this shield is the
+        // editor. Without them a scroll or a pinch over a raised shield would keep
+        // travelling, and "the shield consumes the gesture" would be true only by
+        // luck about what the ancestor happens to do with it.
+        void mouseDown        (const juce::MouseEvent&) override {}
+        void mouseUp          (const juce::MouseEvent&) override {}
+        void mouseDrag        (const juce::MouseEvent&) override {}
+        void mouseDoubleClick (const juce::MouseEvent&) override {}
+        void mouseWheelMove   (const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}
+        void mouseMagnify     (const juce::MouseEvent&, float) override {}
     };
 
     // A/B control: "A / B", active letter bright, one click toggles.
@@ -213,6 +288,34 @@ private:
     void showAbout (bool);
     void showSettings (bool);
     void applyTooltipsEnabled();
+
+    // -- pop-up shield and pop-up lifetime ------------------------------------
+    // `openMenus` holds every pop-up window currently on screen that reported
+    // itself through `AnabasisLookAndFeel::onPopupMenuWindowCreated` (combo
+    // drop-downs and the Save Preset field's context menu). `presetMenusOpen`
+    // counts the menu this editor builds itself, which resolves the DEFAULT
+    // look-and-feel and so never reaches the hook.
+    void notePopupMenuOpened (juce::Component& menuWindow);
+    // A tracked pop-up window has gone: drop it and let the shield settle.
+    void componentBeingDeleted (juce::Component&) override;
+    void refreshPopupShield();
+    // Cancels every pop-up we know about. Unconditional — used when the editor is
+    // going away, where there is nothing to decide.
+    void dismissTrackedPopupMenus();
+    // The tick-driven half: cancels pop-ups that have been STRANDED, i.e. left on
+    // screen with no way for the user to reach them.
+    void dismissOrphanedPopupMenus();
+    // Abandons any in-progress inline text edit with the Escape outcome, so an
+    // editor-initiated focus release cannot commit a half-typed value.
+    void cancelInlineEdits();
+
+    juce::Array<juce::Component::SafePointer<juce::Component>> openMenus;
+    int  presetMenusOpen = 0;
+    bool shieldRaised    = false;
+    // Whether this process was the foreground application at the instant a pop-up
+    // opened — see `dismissOrphanedPopupMenus` for why the test is calibrated
+    // rather than trusted.
+    bool popupOpenedWhileForeground = false;
     void stepMicroAnims (double dt);
     void registerAnimated (juce::Component&);
     // Seeds the VALUE-derived animation properties (`vpos`, `onA`) for every
@@ -251,7 +354,35 @@ private:
     // the destructor, both beside the editor's own `setLookAndFeel`, because
     // `lnf` is a member and must outlive every user of it. Declared AFTER
     // `lnf` so reverse-order destruction would be right even without that.
-    juce::TooltipWindow tooltips { nullptr, 600 };
+    // The Settings "Tooltips" switch, closed at the SOURCE rather than by delay.
+    //
+    // Setting `millisecondsBeforeTipAppears` to something enormous looks like an
+    // off switch and is not one. `TooltipWindow::timerCallback` consults that
+    // delay only on the branch where no tip is on screen: once one IS visible —
+    // or within 500 ms of one hiding — a changed tip is shown IMMEDIATELY. So a
+    // pointer travelling across the panel keeps the chain alive indefinitely, and
+    // the tip already up when the switch is thrown never goes away at all.
+    // Returning an empty tip instead answers both: nothing new appears, and the
+    // visible one hides on the very next tick (an empty `newTip` takes the
+    // `hideTip()` branch).
+    //
+    // The predicate is NOT called `isEnabled`: `TooltipWindow` derives from
+    // `juce::Component`, which already has a non-virtual `isEnabled()`, and a
+    // member of that name would silently hide it for every caller holding this
+    // type — the shadowing compiles and does the wrong thing quietly.
+    struct GatedTooltipWindow : juce::TooltipWindow
+    {
+        using juce::TooltipWindow::TooltipWindow;
+        std::function<bool()> tooltipsAllowed;      // unset ⇒ allowed, as JUCE behaves by default
+        juce::String getTipFor (juce::Component& c) override
+        {
+            if (tooltipsAllowed != nullptr && ! tooltipsAllowed())
+                return {};
+            return juce::TooltipWindow::getTipFor (c);
+        }
+    };
+
+    GatedTooltipWindow tooltips { nullptr, 600 };
 
     // -- top bar -------------------------------------------------------------
     juce::TextButton   titleButton;            // ghost hit-area over the wordmark → About
@@ -371,6 +502,9 @@ private:
     // -- overlays ------------------------------------------------------------
     DimLayer dimOverlay;
     Backdrop aboutBackdrop, settingsBackdrop, savePresetBackdrop;
+    // Added LAST of all the editor's children and never re-ordered except by
+    // `refreshPopupShield`, so it starts in front of everything it has to cover.
+    PopupShield popupShield;
     juce::HyperlinkButton aboutLink { "www.rolly.tech", juce::URL ("https://www.rolly.tech") };
 
     // -- Settings controls (all InternalState-bound, §6.4) -------------------

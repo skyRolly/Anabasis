@@ -392,6 +392,49 @@ void AnabasisAudioProcessor::copySlotToOther()
     storedPresetBaseline = presetBaseline.createCopy();
 }
 
+AnabasisAudioProcessor::PresetUndoBracket AnabasisAudioProcessor::openPresetUndoBracket()
+{
+    // Reconcile FIRST: `pushUndoStep` would do it anyway, and a load-driven
+    // clear happening between the capture and the push would make `redoBefore`
+    // describe a session that is no longer loaded.
+    syncHistory();
+    PresetUndoBracket b { saveSlotFromLive(), presetBaseline.createCopy(),
+                          redoStacks[activeSlot], activeSlot };
+    pushUndoStep (b.preSlot);
+    return b;
+}
+
+void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
+{
+    syncHistory();
+    // A load between open and close cleared the stacks; there is nothing left to
+    // retract, and re-seating a redo line from the previous session would be
+    // worse than leaving it empty.
+    if (b.slot != activeSlot || undoStacks[activeSlot].isEmpty())
+        return;
+
+    // The same test `copySlotToOther` applies to the Copy path, for the same
+    // reason and with the same two halves: the parameter surface through
+    // `strippedForUndoCompare` (which normalises the view-tier entries an undo
+    // could not restore anyway), and the dirty datum beside it, because a
+    // baseline that moved is a real difference even when no parameter did.
+    //
+    // Re-selecting the preset that is already applied, over an UNEDITED surface,
+    // restores nothing: it is not a new user action, so it must neither leave a
+    // dead undo step (one press of Undo appearing to do nothing) nor destroy a
+    // redo line the user can still reach. Re-applying the same preset over an
+    // EDITED surface is a real restore — the surface moves back to the preset —
+    // and stays a normal undoable step, which is what makes this a test of the
+    // STATE rather than of which preset row was clicked.
+    if (! strippedForUndoCompare (b.preSlot)
+             .isEquivalentTo (strippedForUndoCompare (saveSlotFromLive()))
+        || ! b.preBaseline.isEquivalentTo (presetBaseline))
+        return;                                  // a real restore: the step stands
+
+    undoStacks[activeSlot].removeLast();         // exactly what this bracket pushed
+    redoStacks[activeSlot] = b.redoBefore;       // …and the line it cleared
+}
+
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
 {
     syncHistory();
@@ -1282,7 +1325,7 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
     const auto* table = PresetManager::factoryPresets (count);
     if (index < 0 || index >= count)
         return false;                          // validated BEFORE the undo bracket
-    pushUndoStep (saveSlotFromLive());
+    const auto bracket = openPresetUndoBracket();
 
     juce::StringArray mask;
     {
@@ -1328,6 +1371,9 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
     relandMacroCurve();                        // the mask-replaced invariant lives there
 
     presetBaseline = presetShapeFromLive();    // dirty marker datum
+    // Last, once the surface and the datum have both settled: if this apply
+    // restored nothing, un-record it.
+    closePresetUndoBracket (bracket);
     return true;
 }
 
@@ -1349,7 +1395,7 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     const auto parsed = file.existsAsFile() ? PresetManager::parsePresetFile (file) : nullptr;
     if (parsed == nullptr)
         return false;
-    pushUndoStep (saveSlotFromLive());
+    const auto bracket = openPresetUndoBracket();
 
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
     // DELIBERATELY before the apply, and NOT undone on failure: a failed
@@ -1381,6 +1427,9 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     // and leaves the menu unticked, which is what it should show.
     liveSelection  = { PresetManager::Selection::Kind::userFile, {}, file };
     presetBaseline = presetShapeFromLive();    // dirty marker datum
+    // As the factory path: a completed apply that restored nothing is not a new
+    // user action, so it leaves no step and keeps the redo line.
+    closePresetUndoBracket (bracket);
     return true;
 }
 
@@ -1550,7 +1599,22 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         activeSlot = anabasis::clampAbSlotIndex ((int) ab.getProperty ("active", 0));
         const auto live   = activeSlot     < slots.size() ? slots[activeSlot]     : juce::ValueTree();
         const auto stored = 1 - activeSlot < slots.size() ? slots[1 - activeSlot] : juce::ValueTree();
-        if (stored.isValid())
+        // A SLOT node can be a perfectly valid ValueTree and still carry no
+        // usable parameter payload — hand-edited, truncated, or a foreign tree
+        // that happens to use the type name. Taking it would split the slot in
+        // two, because `applySlotToLive` adopts the parameters only when the
+        // ANABASIS child is valid but adopts the name, identity, baseline,
+        // frozen trims and detach mask unconditionally. Switching into that slot
+        // would then keep the sound THIS restore just installed and relabel it
+        // with the broken slot's preset name and identity: the sound from one
+        // session wearing the metadata of another.
+        //
+        // The answer is the read rule this function already applies to the live
+        // surface a few lines above — a missing parameter payload means
+        // DEFAULTS, never "keep whatever is live". `resetSlotFieldsToDefaults`
+        // has already planted `defaultSlot` here, so declining the tree IS the
+        // fix, and the slot stays coherent: sound and metadata from one place.
+        if (stored.isValid() && stored.getChildWithName ("ANABASIS").isValid())
             storedSlot = stored.createCopy();
         if (live.isValid())
         {

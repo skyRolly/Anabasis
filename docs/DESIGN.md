@@ -617,7 +617,7 @@ renders reproduce) but never participate in A/B, undo, or presets.
 ### 4.4 Serialization schema v1
 Root `AnabasisRoot` with an **explicit `schemaVersion` integer property = 1** — a deliberate
 deviation from Anamorph, which has no version field and detects format generations structurally
-(`Anamorph:src/PluginProcessor.cpp:535-613` [Verified]); greenfield Anabasis writes the version
+(`Anamorph:src/PluginProcessor.cpp:578-656` [Verified]); greenfield Anabasis writes the version
 from day one *and* keeps the structural-tolerance read rules (unknown fields ignored, missing
 fields default, indices clamped at the boundary). Children: APVTS tree `ANABASIS` (with the
 additive exact-`raw` attribute per PARAM — Anamorph ADR-0013), `ANABASIS_INTERNAL`, `AB` and `ADAPTIVE`.
@@ -681,7 +681,7 @@ parameters by writing them through the normal parameter interface
      pair — i.e. a real UI drag or a host-side automation *write* gesture. Ungesture-d writes
      (automation playback, preset apply, A/B, undo) never detach, matching Anamorph's rule that
      host automation folds into the baseline rather than becoming an edit
-     (`Anamorph:src/PluginProcessor.cpp:338-421` [Verified]).
+     (`Anamorph:src/PluginProcessor.cpp:338-464` [Verified]).
 
   Comparing the incoming value against the expected curve value was **rejected** as the
   discriminator: it is a float comparison against a value the engine is mid-glide toward, so it
@@ -798,7 +798,7 @@ alternative above. ADR-0005 records this before P4 (OQ-004's deadline).
   the preset-load undo hook pattern, `Anamorph:src/PluginProcessor.cpp:33-38,402-421`).
   Learned targets serialize in the **global** `ADAPTIVE` child (they are a property of the user's
   material, not of a slot); the **per-slot** frozen trims use the `abMatchGain` sentinel-atomic
-  inject pattern (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]) — **adapted, not copied:
+  inject pattern (`Anamorph:src/PluginProcessor.cpp:528-534` [Verified]) — **adapted, not copied:
   that precedent moves one float and the trim vector is four, so the transport is `OQ-013` and a
   Hard Stop until an ADR settles it**. Unlike Anamorph's Level
   Match, Learn's output feeds the *adaptive reference targets*, never the output stage — a
@@ -843,8 +843,8 @@ ADR-0005's acceptance evidence.
 ### 6.1 Family-consistent frame (inherited structurally from Anamorph [Verified])
 Top bar (46 px logical): wordmark + sub-brand left (ghost button → About); preset browser
 `‹ name ›`; right-anchored cluster A/B · Copy · Undo · Redo · Settings · ADV · **Bypass
-rightmost** (`Anamorph:src/PluginEditor.cpp:1657-1680` layout; red pill `LookAndFeel.cpp:332-334`; dim
-overlay sync `PluginEditor.cpp:1039-1043` — Bypass is the first
+rightmost** (`Anamorph:src/PluginEditor.cpp:1690-1713` layout; red pill `LookAndFeel.cpp:332-334`; dim
+overlay sync `PluginEditor.cpp:1072-1076` — Bypass is the first
 `removeFromRight(84)`, red pill when engaged, dim overlay below the top bar). About and
 Settings are Backdrop overlays with the same structure (About: wordmark, version+build,
 company, one-line description, hyperlink; Settings: labelled rows bound to `ANABASIS_INTERNAL`).
@@ -864,7 +864,7 @@ licence-clean font is approved by P5. This is a deliberate delta, recorded in br
 the brand checklist.
 
 Resizing: brief §7 requires 80–200% UI scaling — implemented as the Anamorph whole-window
-transform compose (`setScaleFactor` override, `Anamorph:src/PluginEditor.cpp:1312-1342`
+transform compose (`setScaleFactor` override, `Anamorph:src/PluginEditor.cpp:1345-1375`
 [Verified]) with the ⊕ step list in §4.3, plus **free host resize is still off** (discrete
 steps, size persists via `int_uiScale`).
 
@@ -880,7 +880,7 @@ use-after-free), CPU path visually identical [Verified].
 ### 6.2 Simple view wireframe (940×720 logical ⊕)
 
 **⊕ The two frame sizes are Anamorph's, unexamined.** 940×720 / 940×900 are the sibling
-product's hard-coded constants (`Anamorph:src/PluginEditor.h:295-302` [Verified]), reused here so
+product's hard-coded constants (`Anamorph:src/PluginEditor.h:426-433` [Verified]), reused here so
 the wireframes have a concrete grid — but a maximizer's content is not a widener's, and the P0
 research pass concluded Anabasis must pick its own base geometry. Ratifying them at sign-off
 ratifies the sibling's exact frame; the honest expectation is that P5 re-derives them from the

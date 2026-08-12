@@ -5,12 +5,12 @@ This package is for x86_64 Linux. Extracting the zip gives you:
 
   Anabasis.vst3/   the VST3 plug-in bundle
   Anabasis         the Standalone application
-  install.sh       installer script (system-wide, needs root)
+  install.sh       installer script (per-user by default, system-wide on request)
   uninstall.sh     removes what install.sh installed
   INSTALL.txt      this file
 
 本包适用于 x86_64 Linux,解压后即可看到 VST3 插件、独立版程序,
-以及 install.sh(系统级安装,需要 root)和 uninstall.sh(卸载)。
+以及 install.sh(默认安装到当前用户,可选系统级安装)和 uninstall.sh(卸载)。
 
 Third-party attribution is NOT inside this package. NOTICE and
 THIRD_PARTY_LICENSES.md are published on the release page beside the downloads,
@@ -21,33 +21,58 @@ them, and pass them on with the build if you forward it.
 (Anabasis-<版本>-NOTICE.txt、Anabasis-<版本>-THIRD_PARTY_LICENSES.md)发布在
 Release 页面上,与安装包并列;需要时请从那里下载,转发构建时请一并附上。
 
-Both installation methods below install SYSTEM-WIDE (for all users), into
-the standard locations every DAW scans by default.
-下面两种安装方式都是系统级安装(对所有用户生效),装到 DAW 默认扫描的标准位置。
+The installer offers TWO locations. Installing for the current user is the
+default and needs no root; ~/.vst3 is the standard per-user VST3 folder and most
+DAWs scan it. A system-wide install puts the same files where every user on the
+machine can load them, and needs root for those steps only.
+安装脚本提供两种位置:默认安装到当前用户(无需 root,装到 ~/.vst3,多数 DAW 都会
+扫描该目录);也可以选择系统级安装(对所有用户生效,仅在实际写入时需要 root)。
+
+An existing installation is replaced safely: the previous version is kept until
+the new one is fully in place, so an interrupted install still leaves a working
+Anabasis behind, and the next run tidies up on its own.
+覆盖安装是安全的:新版本完全就位之前会保留旧版本,即使安装中途被打断也仍有可用的
+Anabasis,下次运行会自动清理。
 
 --------------------------------------------------------------------
 A) Installer installation (recommended) / 脚本安装(推荐)
 --------------------------------------------------------------------
-      sudo sh ./install.sh
+      ./install.sh
 
-  This copies:
-    Anabasis.vst3  ->  /usr/lib/vst3/Anabasis.vst3     (standard system VST3 path)
-    Anabasis       ->  /usr/local/bin/Anabasis         (Standalone)
+  You will be asked where to install:
 
-  install.sh 会把 VST3 复制到 /usr/lib/vst3/,独立版复制到 /usr/local/bin/。
+    1) Current user (default)
+         Anabasis.vst3  ->  ~/.vst3/Anabasis.vst3
+         Anabasis       ->  ~/.local/bin/Anabasis
+
+    2) System-wide (asks for your password when it needs it)
+         Anabasis.vst3  ->  /usr/lib/vst3/Anabasis.vst3
+         Anabasis       ->  /usr/local/bin/Anabasis
+
+  安装脚本会询问安装位置:1)当前用户(默认,装到 ~/.vst3 与 ~/.local/bin);
+  2)系统级(装到 /usr/lib/vst3 与 /usr/local/bin,需要时会提示输入密码)。
+
+  To install system-wide without being asked / 直接进行系统级安装:
+      sudo ./install.sh
 
   To remove later / 以后卸载:
-      sudo sh ./uninstall.sh
+      ./uninstall.sh            (current user / 当前用户)
+      sudo ./uninstall.sh       (system-wide / 系统级)
 
 --------------------------------------------------------------------
 B) Manual installation / 手动安装
 --------------------------------------------------------------------
-  * VST3 (REAPER, Bitwig, Ardour, Qtractor, ...):
+  * VST3, current user (REAPER, Bitwig, Ardour, Qtractor, ...):
+        mkdir -p ~/.vst3
+        cp -R Anabasis.vst3 ~/.vst3/
+
+  * VST3, system-wide / 系统级:
         sudo mkdir -p /usr/lib/vst3
         sudo cp -R Anabasis.vst3 /usr/lib/vst3/
 
   * Standalone / 独立版:
-        sudo cp Anabasis /usr/local/bin/
+        mkdir -p ~/.local/bin && cp Anabasis ~/.local/bin/
+        # or system-wide / 或系统级:  sudo cp Anabasis /usr/local/bin/
 
   Copying into /usr needs root (sudo). / 复制到 /usr 需要 root 权限(sudo)。
 
@@ -55,19 +80,28 @@ B) Manual installation / 手动安装
 Rescan in your DAW / 在 DAW 里重新扫描插件
 --------------------------------------------------------------------
   * REAPER:  Options > Preferences > Plug-ins > VST > Re-scan.
-             /usr/lib/vst3 is in the default VST3 path list.
+             Both ~/.vst3 and /usr/lib/vst3 are in the default VST3 path list.
   * Bitwig:  Settings > Locations > Plug-in Locations.
   * Ardour:  Preferences > Plugins > Scan for Plugins.
 
 --------------------------------------------------------------------
 Troubleshooting / 常见问题
 --------------------------------------------------------------------
-- "Permission denied" when launching the Standalone: the executable bit
-  was lost in transit (some archive tools drop it). Fix / 如果提示没有执行权限:
-      sudo chmod +x /usr/local/bin/Anabasis
-      sudo chmod +x /usr/lib/vst3/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so
+- "Permission denied" when running install.sh: the executable bit was lost in
+  transit (per-push CI artifact downloads do not preserve file modes). Run the
+  script through the shell instead / 如果 install.sh 没有执行权限,用 shell 运行:
+      sh ./install.sh
+      sudo sh ./install.sh      (system-wide / 系统级)
+- "Permission denied" when launching the Standalone: same cause. Fix / 同样原因:
+      chmod +x ~/.local/bin/Anabasis
+      chmod +x ~/.vst3/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so
+  (prefix with sudo and use the /usr paths for a system-wide install)
+- Anabasis appears twice in your DAW: you have both a per-user and a
+  system-wide install. Remove the one you do not want with ./uninstall.sh or
+  sudo ./uninstall.sh. / 插件出现两次:同时存在用户级与系统级安装,用对应的
+  卸载命令删除其中一个。
 - DAW doesn't find the plug-in: make sure the WHOLE Anabasis.vst3 folder
-  (not a file from inside it) is in /usr/lib/vst3, then rescan.
+  (not a file from inside it) is in the VST3 directory, then rescan.
   找不到插件:确认复制的是整个 Anabasis.vst3 文件夹,再重新扫描。
 - The Standalone needs a working ALSA/JACK/PipeWire audio setup; inside a
   DAW no extra setup is needed.

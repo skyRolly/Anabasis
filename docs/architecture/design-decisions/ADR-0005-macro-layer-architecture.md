@@ -112,7 +112,7 @@ Four questions, none of them obvious, and each one able to break a different inv
      pair — a real UI drag or a host-side automation *write* gesture. Ungesture-d writes
      (automation playback, preset apply, A/B, undo) never detach, matching Anamorph's rule that host
      automation folds into the baseline rather than becoming an edit
-     (`Anamorph:src/PluginProcessor.cpp:338-421` [Verified]).
+     (`Anamorph:src/PluginProcessor.cpp:338-464` [Verified]).
 
    This also settles the "host writes the macro anyway" case: such a write is macro-originated, the
    flag suppresses detaching, and the managed parameters simply follow — the mapping stays a
@@ -297,9 +297,9 @@ Evidence [Unverified]:
 - Anamorph precedent [Verified] — read during the P0 research pass against commit `b6a3db8`:
   - `Anamorph:src/PluginParameters.cpp:326-389` — Advanced-mode gating at snapshot time; the
     anti-precedent that makes this ADR necessary.
-  - `Anamorph:src/PluginProcessor.cpp:338-421` — host automation folds into the baseline instead of
+  - `Anamorph:src/PluginProcessor.cpp:338-464` — host automation folds into the baseline instead of
     counting as a user edit.
-  - `Anamorph:src/PluginProcessor.cpp:485-491` — `abMatchGain` sentinel-atomic inject pattern, the
+  - `Anamorph:src/PluginProcessor.cpp:528-534` — `abMatchGain` sentinel-atomic inject pattern, the
     **starting point** for the per-slot frozen trim vector: it carries one float where the vector is
     four scalars, so the transport is OQ-013, not a settled reuse.
   - `Anamorph:src/PluginProcessor.cpp:178-202` and `:33-38,402-421` — single-step gesture/undo

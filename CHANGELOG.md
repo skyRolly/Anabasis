@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Three such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Four such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,103 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.1.4] — 2026-08-13
+
+**The installer and interaction round.** Everything here is packaging, pop-up/menu interaction or
+state bookkeeping: **no audible DSP change**, no parameter added, renamed or removed, and no change
+to the serialization schema. Two entries change stored-state *behaviour* within the existing schema
+and say so.
+
+### Added
+- **The Linux installer offers a per-user install, and it is now the default.** `install.sh` asks
+  where to install: the current user (`~/.vst3` and `~/.local/bin`, no root at all — `~/.vst3` is
+  the standard per-user VST3 folder that most DAWs scan) or system-wide (`/usr/lib/vst3` and
+  `/usr/local/bin`). Running it as root still installs system-wide without asking, and a
+  system-wide install elevates only the individual copy/move steps rather than the whole script,
+  so a machine without `sudo` gets a clear instruction instead of a failure. A per-user install
+  that finds an older system-wide copy still present now says so, names both files and gives the
+  command to remove them — otherwise the DAW shows Anabasis twice and may load the older one.
+  `uninstall.sh` mirrors the same two modes. Evidence: this release. [Verified]
+- **The macOS package verifies itself at build time.** The build now fails rather than shipping a
+  package whose components are relocatable, version-checked, missing the overwrite action or
+  missing their installed-state check — and it first proves those assertions can actually fire, by
+  packaging one payload twice and confirming each state appears with the installer defaults and
+  disappears when its key is switched off. A count check precedes the per-component loop so an
+  empty search cannot pass every assertion by running none of them. Evidence: this release. [Verified]
+
+### Fixed
+- **Re-installing on macOS after moving or deleting the app could leave the destination empty.**
+  Components were built relocatable and version-checked, so the installer looked the bundle up in
+  the system's receipt database and, finding a copy anywhere — including one dragged to the Desktop
+  or sitting in the Trash — wrote the payload over *that* copy and reported success while
+  `/Applications` stayed empty. Version checking failed the same way from the other side, skipping
+  a destination already at or above the package version. Both are now off: every component writes
+  its payload to its declared location from the payload alone. Each component also carries a
+  fail-closed check, so an install that did not land reports failure instead of success.
+  Recorded as **INC-005**. Evidence: this release. [Verified]
+- **An interrupted Linux install could leave no working plug-in behind.** The installer deleted the
+  installed VST3 and only then copied its replacement, so an interruption between the two left
+  nothing. The replacement is now a transaction: the new version is staged, the previous one is
+  moved aside rather than deleted, and the old copy is discarded only once the new one is in place.
+  Interrupting at any point leaves a working plug-in, and the next run reconciles whatever was left
+  behind. Staging happens outside the folder your DAW scans wherever the filesystem allows it, so a
+  rescan mid-install cannot see a half-written bundle. Evidence: this release. [Verified]
+- **The uninstaller now removes the installer's own leftovers**, by exact name only, so an install
+  killed by a signal no handler catches does not survive a deliberate uninstall. Evidence: this
+  release. [Verified]
+- **A click that dismissed a menu could also operate the control underneath it.** The framework
+  re-delivers that click by design, and several controls act on the press itself — the A/B switch,
+  the graph-well toggles, a knob's Alt-click reset, and the panel backdrops, where the Save Preset
+  panel closing threw away the name being typed. One transparent shield now covers the editor
+  whenever any pop-up is on screen and absorbs the dismissing click, including scroll and pinch.
+  The residual limitation is registered as **KI-013**: the absorbed click still counts toward the
+  system's multi-click run. Evidence: this release. [Verified]
+- **Menus and drop-downs no longer outlive the editor.** Closing the editor with a drop-down open
+  left the drop-down on screen over the host; so did switching to another application while the
+  pointer rested on the menu. Both are now cancelled. The application-switch check calibrates
+  itself when a pop-up opens, so a plug-in hosted in a process that is never the foreground
+  application keeps working menus instead of losing every one of them the moment it opens.
+  Evidence: this release. [Verified]
+- **Leaving the application no longer commits a half-typed value.** A value box being edited is
+  abandoned rather than applied when the editor releases keyboard focus on the user's behalf, and
+  the focus release itself no longer drags the host window back in front of the application the
+  user just switched to. Evidence: this release. [Verified]
+- **Turning tooltips off now switches them off.** The setting only lengthened the appear delay,
+  which a tooltip already on screen ignores — so a visible tip stayed, and a moving pointer chained
+  new ones past the setting indefinitely. Tooltips are now refused at the source. Evidence: this
+  release. [Verified]
+- **Long menu entries are no longer clipped**, and **disabled menu entries now look disabled.** The
+  width the menu asked for was smaller than the width its own row drawing spends, so the longest
+  item was measured narrower than it draws; both now read the same constants. A row the menu
+  reports as unavailable is dimmed instead of drawing identically to a selectable one.
+  Evidence: this release. [Verified]
+- **The preset menu no longer splits into two columns** once enough user presets are saved, and no
+  longer draws a doubled border. Evidence: this release. [Verified]
+- **Re-selecting the preset that is already loaded, with nothing edited, no longer discards your
+  redo history** and no longer leaves an undo step that does nothing when pressed. Re-applying a
+  preset over an *edited* sound is still a real restore and remains undoable. This changes stored
+  behaviour, not the stored format. Evidence: this release. [Verified]
+- **A damaged A/B slot can no longer put one session's preset name on another session's sound.**
+  A stored slot that survives with its labels but without its parameter payload — hand-edited or
+  truncated session data — now resolves to defaults as a whole, the same rule the live surface
+  already followed, instead of lending its name and preset identity to whatever was loaded.
+  This changes stored behaviour, not the stored format. Evidence: this release. [Verified]
+
+### Changed
+- **The Settings tooltip for UI Scale** now names UI scale rather than window size, matching the
+  label and the accessibility title beside it; the control scales the whole interface, and on a
+  host applying its own DPI scale the window is not the quantity it describes. Display text only —
+  no stored setting changed. Evidence: this release. [Verified]
+
+### Known issues
+- **KI-013** — the click absorbed by the pop-up shield still counts toward the system's multi-click
+  run, so a dismissal immediately followed by a click on the same knob can register as a
+  double-click. See `docs/KNOWN_ISSUES.md`.
+- **KI-014** — on macOS, holding a letter or digit in the Save Preset name field types one
+  character and stops, while punctuation repeats normally. Traced to platform key-repeat handling
+  outside this plug-in's control; the fixes considered were rejected as worse than the symptom.
+  See `docs/KNOWN_ISSUES.md`.
 
 ## [0.1.3] — 2026-08-09
 

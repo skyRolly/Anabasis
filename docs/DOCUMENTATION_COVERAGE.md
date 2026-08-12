@@ -6,7 +6,43 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
+**Last updated:** for the **0.1.4 installer and interaction round (2026-08-13)**.
+
+Scope, stated precisely because the previous round's header made a branch-snapshot claim in the
+present tense with no expiry ("display/naming fixes only") that its own CHANGELOG then retracted:
+this round changes **packaging, pop-up/menu interaction, and two stored-state behaviours inside the
+unchanged schema**. It contains **no audible DSP change** and **no parameter-surface change**, so
+the registry snapshot is untouched and PARAMETER_COMPATIBILITY_POLICY is not engaged. It **does**
+change layout-adjacent code — pop-up menu measurement (`getIdealPopupMenuItemSize` now derives its
+allowance from the constants `drawPopupMenuItem` spends, so long rows stop being clipped) and the
+preset menu's column cap — which widens some menus by up to 8 px; the closed-state geometry of
+every control is unchanged. That distinction is the point: "no layout change" would have been the
+convenient sentence and it would have been false.
+
+**New records:** `POSTMORTEMS.md` **INC-005** (the macOS package could report success with nothing
+at the destination); `KNOWN_ISSUES.md` **KI-013** (the shield-absorbed click still counts toward
+the multi-click run) and **KI-014** (macOS press-and-hold suppresses key repeat in the Save Preset
+field — platform behaviour, filed rather than fixed); **ADR-0025** (the bounded,
+disclosure-bound exception to `TESTING_POLICY.md` rule 1) and its rule-1 amendment.
+
+**Untested surface of this round, in one place — the ADR-0025 disclosure.** The pop-up shield, the
+pop-up lifetime cancellations, the keyboard-focus release, the inline-edit abandonment and the
+tooltip gate ship with **no suite regression test**: the suites construct the editor but synthesise
+no pointer device and run no modal loop, so the event sequence that constitutes each defect cannot
+be produced at all. What is verified instead is the reasoning — each carries the framework
+mechanism it depends on, read out of the pinned source, at the site that depends on it. What is
+consequently unprotected: a future edit to the shield's z-order, its interception toggle, the
+menu-tracking hooks or the focus ordering can regress silently. INC-005 is defended by the build's
+own fail-closed assertions plus the A/B probe that proves those assertions can fire. The exception
+lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
+the X11/XTEST probe recorded under `worklogs/` for KI-012).
+
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 782 = 1078 checks green**, up 24 on 0.1.3's
+1039 — the two new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+`testAMalformedStoredSlotCannotSplitSoundFromMetadata`), each mutation-verified against its own
+deliberately reverted fix and against no other.
+
+**Superseded header (0.1.3, kept rather than deleted):** the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
 naming only, no DSP change, no new ADR (nothing decided at contract level: the three
 Colour → Color NAME renames and the MATCH caption ride PARAMETER_COMPATIBILITY_POLICY rule 2
 with the snapshot re-frozen, the same lane as 0.1.2's "Limiter Stereo Link"). **Amended:**

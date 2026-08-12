@@ -126,14 +126,14 @@ changed too: the FORM is what admits the mistake.
 
 **The second-order lesson, which is the expensive one.** The compile break was three days of a
 red job; what it COST was three rounds of KI-009 investigation reasoning from a validation
-surface that had silently lost a platform. `tests/state_tests.cpp:5694` sits inside
+surface that had silently lost a platform. `tests/state_tests.cpp:5829` sits inside
 `testClipMixCannotChangeTheDefaultPresetsSound` — so the round-5, round-6 and round-7 KI-009
 regressions, written specifically for a fault that reproduces ONLY on macOS, had never once
 executed on macOS. A red job on another platform is not someone else's problem; while it is red,
 every conclusion drawn from "the suites are green" is scoped to the platforms that still ran.
 
 Evidence [Verified]:
-- Source: `tests/state_tests.cpp:5694` (before the fix); `scripts/check-portability.py`;
+- Source: `tests/state_tests.cpp:5829` (before the fix); `scripts/check-portability.py`;
   `.github/workflows/build.yml` (`source-lint`, `linux-clang`)
 - Test:   `scripts/check-portability.py` (mutation-verified); `--compile-canary`
 - Commit: `6f63573`, PR #14
@@ -227,6 +227,48 @@ Evidence [Verified]:
 - Test:   `tools/engine_repro.cpp`, `tools/channel_probe.cpp`, `.github/workflows/build.yml`
   (`linux-clang` plugin build + both reproductions)
 - Commit: this one, PR #14
+
+## INC-005 — The macOS package could report a successful install with nothing at the destination
+
+**Symptom:** Re-running the macOS installer after moving `Anabasis.app` out of `/Applications` —
+to the Desktop, or to the Trash, which is still on disk and still indexed — completes with a
+success sheet while `/Applications` stays empty. The same shape applies to the VST3 and AU
+components. Found by audit rather than by a user report, before any package had been published.
+
+**Root cause:** `pkgbuild` invoked without `--component-plist` synthesises one, and its analysis
+marks every bundle it finds **relocatable** and **version-checked**. At install time the Installer
+resolves a relocatable bundle by looking its identifier up in the system's receipt/Spotlight
+database and writing the payload over whatever copy it finds, *instead of* the declared
+`--install-location`. So the install did land — somewhere else. Version checking fails from the
+opposite end: a bundle already at or above the package's version is skipped rather than
+overwritten. Both defaults make the result depend on previous installation state rather than on
+the payload, which is exactly what an installer must not do.
+
+**Fix:** `packaging/macos/build-pkg.sh` now builds each component through `build_component()`,
+which patches the plist `pkgbuild --analyze` produced — `BundleIsRelocatable=false`,
+`BundleIsVersionChecked=false`, `BundleOverwriteAction=upgrade` — and attaches a `postinstall`
+script that fails the component if the payload is not at the destination when it finishes. The
+component is therefore written from the payload alone, and an install that did not land reports
+failure instead of success.
+
+**Prevention:** the build asserts the shipped package, and — the part that matters — first proves
+the assertions can fire. Matching an element name that `pkgbuild` never writes is an assertion that
+always passes, which is the silent-success shape this incident is made of. So the mapping from
+component-plist key to `PackageInfo` element is established by a controlled A/B on the same
+payload: the app bundle is packaged twice, differing only in the keys `build_component()` sets, and
+each membership list must appear with the defaults and disappear when its key is switched off. The
+per-component loop is preceded by a cardinality check (`3`), because a loop over an empty `find`
+passes every assertion inside it without executing one.
+
+Evidence [Partially Verified — the assertions and their liveness proof are verified by
+construction and by pattern tests; the install behaviour itself needs macOS to observe]:
+- Source: `packaging/macos/build-pkg.sh` (`build_component`, `probe_info`/`probe_fail`, the
+  `PackageInfo` assertion loop)
+- Test:   the build-time self-check in that script — it is the regression test, and it runs on
+  every macOS package build in CI. `TESTING_POLICY.md` rule 1's normal form (a suite test that
+  fails on the old code) is not available here: the defect lives in a package format produced by
+  a platform tool, so the gate is the build's own fail-closed assertion set.
+- Commit: this one
 
 ## Relationship to the other status files
 

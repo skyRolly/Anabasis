@@ -389,14 +389,35 @@ juce::PopupMenu::Options AnabasisLookAndFeel::getOptionsForComboBoxPopupMenu (ju
              .withStandardItemHeight (label.getHeight());
 }
 
+// Pop-up row geometry, in ONE place because two overrides have to agree about it:
+// `getIdealPopupMenuItemSize` decides how wide JUCE makes the menu, and
+// `drawPopupMenuItem` decides how much of that width the text actually gets. When
+// the measurement allowed less than the drawing spends, JUCE sized the menu to the
+// smaller number and then clipped the longest row with an ellipsis. Both read these
+// constants now, so the two cannot drift apart again.
+namespace menuMetrics
+{
+    constexpr float padX       = 12.0f;  // left AND right inset of the row's text area
+    constexpr float tickGutter = 14.0f;  // reserved at the left whether or not the row is ticked
+    constexpr float chrome     = padX * 2.0f + tickGutter;
+    constexpr int   minimumRow = 64;     // floor; sits just above the chrome so it cannot
+                                         // widen a pop-up past the control that opened it
+    constexpr float inactive   = 0.4f;   // the disabled alpha `drawButtonText` already uses
+    constexpr float dim        = 0.88f;  // an enabled, unhighlighted row
+}
+
 void AnabasisLookAndFeel::getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
                                                      int, int& idealWidth, int& idealHeight)
 {
     if (isSeparator) { idealWidth = 60; idealHeight = 8; return; }
     auto f = getPopupMenuFont();
     juce::GlyphArrangement ga;
+    // JUCE hands us the shortcut already appended to the text for measurement
+    // (`ItemComponent::getTextForMeasurement`), so measuring the argument covers
+    // both halves of what the row draws.
     ga.addLineOfText (f, text, 0.0f, 0.0f);
-    idealWidth  = (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth()) + 30;
+    const auto textW = (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth());
+    idealWidth  = juce::jmax (menuMetrics::minimumRow, textW + (int) menuMetrics::chrome);
     idealHeight = 23; // uniform across every combo regardless of its on-screen height (#3)
 }
 
@@ -441,7 +462,7 @@ void AnabasisLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b
 // solid accent tint with no gradient, sheen or bevel (the previous glassy version
 // read as dated "Vista aero", #3).
 void AnabasisLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area,
-                                             bool isSeparator, bool /*isActive*/, bool isHighlighted,
+                                             bool isSeparator, bool isActive, bool isHighlighted,
                                              bool isTicked, bool hasSubMenu, const juce::String& text,
                                              const juce::String& shortcutKeyText,
                                              const juce::Drawable* /*icon*/, const juce::Colour* /*textColour*/)
@@ -455,34 +476,43 @@ void AnabasisLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rect
     }
 
     auto r = area.toFloat();
-    if (isHighlighted)
+    // A row JUCE reports as inactive cannot be chosen, and until now it drew
+    // exactly like one that can: same text, same tick, same arrow. The whole row
+    // is dimmed instead, so "unavailable" reads before the click rather than after
+    // it does nothing.
+    const float itemAlpha = ! isActive     ? menuMetrics::inactive
+                          : isHighlighted  ? 1.0f
+                                           : menuMetrics::dim;
+    const auto  labelCol  = colours::text.withMultipliedAlpha (itemAlpha);
+
+    if (isHighlighted && isActive)
     {
         // One flat accent tint, lightly rounded -- clean and modern (#3).
         g.setColour (colours::accent.withAlpha (0.18f));
         g.fillRoundedRectangle (r.reduced (3.0f, 1.0f), 4.0f);
     }
 
-    g.setColour (isHighlighted ? colours::text : colours::text.withMultipliedAlpha (0.88f));
+    g.setColour (labelCol);
     g.setFont (getPopupMenuFont());
 
-    auto textArea = r.reduced (12.0f, 0.0f);
+    auto textArea = r.reduced (menuMetrics::padX, 0.0f);
     if (isTicked)
     {
-        auto tick = textArea.removeFromLeft (14.0f);
-        g.setColour (colours::accent);
+        auto tick = textArea.removeFromLeft (menuMetrics::tickGutter);
+        g.setColour (colours::accent.withMultipliedAlpha (itemAlpha));
         g.fillEllipse (tick.getCentreX() - 2.0f, tick.getCentreY() - 2.0f, 4.0f, 4.0f);
-        g.setColour (isHighlighted ? colours::text : colours::text.withMultipliedAlpha (0.88f));
+        g.setColour (labelCol);
     }
     else
     {
-        textArea.removeFromLeft (14.0f);
+        textArea.removeFromLeft (menuMetrics::tickGutter);
     }
 
     g.drawText (text, textArea, juce::Justification::centredLeft);
 
     if (shortcutKeyText.isNotEmpty())
     {
-        g.setColour (colours::textDim);
+        g.setColour (colours::textDim.withMultipliedAlpha (itemAlpha));
         g.setFont (getPopupMenuFont().withHeight (11.0f));
         g.drawText (shortcutKeyText, textArea, juce::Justification::centredRight);
     }
@@ -491,11 +521,11 @@ void AnabasisLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rect
     {
         const float h = (float) area.getHeight();
         juce::Path p;
-        const float x = r.getRight() - 12.0f, cy = r.getCentreY();
+        const float x = r.getRight() - menuMetrics::padX, cy = r.getCentreY();
         p.startNewSubPath (x, cy - h * 0.12f);
         p.lineTo (x + h * 0.12f, cy);
         p.lineTo (x, cy + h * 0.12f);
-        g.setColour (colours::textDim);
+        g.setColour (colours::textDim.withMultipliedAlpha (itemAlpha));
         g.strokePath (p, juce::PathStrokeType (1.4f));
     }
 }

@@ -121,9 +121,36 @@ public:
     void drawPopupMenuSectionHeader (juce::Graphics&, const juce::Rectangle<int>& area,
                                      const juce::String& sectionName) override;
     int  getPopupMenuBorderSize() override { return 3; } // narrower top/bottom dead-zone (#9)
+    // A menu given a PARENT COMPONENT gets a second frame drawn on top of it:
+    // `PopupMenu::MenuWindow::paintOverChildren` calls `drawResizableFrame` over
+    // the border ring, but only when `options.getParentComponent()` is set
+    // (juce_PopupMenu.cpp). The base implementation paints translucent black
+    // rectangles into exactly the ring `drawPopupMenuBackground` has already
+    // rounded and outlined, so the parented preset menu wore a doubled, squared
+    // edge that no unparented combo list showed. The frame is ours to draw and we
+    // draw it in the background; this override says so by drawing nothing.
+    void drawResizableFrame (juce::Graphics&, int, int, const juce::BorderSize<int>&) override {}
     // Fixed, uniform row height so a taller combo doesn't get taller rows (#3).
     void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
                                     int standardHeight, int& idealWidth, int& idealHeight) override;
+
+    // Reports every pop-up menu window the moment JUCE builds it, so the editor
+    // can know one is on screen without owning it.
+    //
+    // `PopupMenu::MenuWindow`'s constructor calls `preparePopupMenuWindow` on the
+    // MENU's own look-and-feel (juce_PopupMenu.cpp:500), and both of the widgets
+    // that open menus we did not write hand the menu OUR look-and-feel first:
+    // `ComboBox::showPopup` (juce_ComboBox.cpp:561) and `TextEditor`'s context
+    // menu (juce_TextEditor.cpp:1578). One hook therefore catches every drop-down
+    // and every right-click context menu in the editor. A menu we build ourselves
+    // resolves the DEFAULT look-and-feel (we deliberately hand it no pointer), so
+    // it never arrives here and is counted at its own call site instead.
+    std::function<void (juce::Component& menuWindow)> onPopupMenuWindowCreated;
+    void preparePopupMenuWindow (juce::Component& newMenuWindow) override
+    {
+        juce::LookAndFeel_V4::preparePopupMenuWindow (newMenuWindow);
+        if (onPopupMenuWindowCreated) onPopupMenuWindowCreated (newMenuWindow);
+    }
 
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;

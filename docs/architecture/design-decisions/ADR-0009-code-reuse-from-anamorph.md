@@ -284,16 +284,16 @@ contract the code must satisfy, not an observation (constraint C2: no number her
   recommendation
 - Precedent [Verified]: `Anamorph:src/gui/LookAndFeel.h:8-26` (neutral palette roles),
   `Anamorph:src/gui/LookAndFeel.h:37-52` (`glass::` surface namespace),
-  `Anamorph:src/gui/LookAndFeel.cpp:251-414` (componentID-keyed drawing variants),
+  `Anamorph:src/gui/LookAndFeel.cpp:251-435` (componentID-keyed drawing variants),
   `Anamorph:src/gui/LookAndFeel.cpp:332-334` (Bypass red pill)
 - Precedent [Verified]: `Anamorph:src/gui/FrameClock.h:10-167`, `Anamorph:src/gui/LevelMeter.cpp:12-73`
-  (vblank pacing, static-layer caching), `Anamorph:src/PluginEditor.cpp:1657-1680` (top-bar layout,
+  (vblank pacing, static-layer caching), `Anamorph:src/PluginEditor.cpp:1690-1713` (top-bar layout,
   Bypass rightmost), `:1039-1043` (dim-overlay sync), `:1312-1342` (whole-window scale transform),
-  `Anamorph:src/PluginEditor.h:295-302` (frame constants kept in one place — the pattern, not the
+  `Anamorph:src/PluginEditor.h:426-433` (frame constants kept in one place — the pattern, not the
   numbers)
 - Precedent [Verified]: `Anamorph:src/InternalState.h:10-29` (host-hidden state rationale),
   `Anamorph:src/AbSlotIndex.h:15-25` (dependency-free `constexpr clampAbSlotIndex`),
-  `Anamorph:src/PluginProcessor.cpp:535-613` (raw-then-value restore, tolerant read rules),
+  `Anamorph:src/PluginProcessor.cpp:578-656` (raw-then-value restore, tolerant read rules),
   `:485-491` (sentinel-atomic inject at the duck's silent bottom), `:338-421` (automation folded into
   the baseline, not treated as an edit), `:178-202` and `:33-38,402-421` (gesture/undo bracketing of a
   multi-target commit), `:88-105` (single `setLatencySamples` call site), `:109`
