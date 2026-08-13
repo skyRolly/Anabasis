@@ -424,6 +424,18 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     if (b.slot != activeSlot || undoStacks[activeSlot].isEmpty())
         return;
 
+    // `removeLast()` is only the right retraction while THIS bracket's push is
+    // still the top of the stack. Nothing between open and close pushes today —
+    // steps are minted only from gesture-bracketed edits, and the writes an apply
+    // performs (including `relandMacroCurve`, which runs outside the restore
+    // guard) are ungestured — but that is an invariant of code elsewhere, not of
+    // anything visible here. Check it rather than assume it: if something did
+    // push, the top is not ours and popping it would discard a real user step.
+    // Leaving the no-op's step in place is the harmless failure; eating someone
+    // else's is not.
+    if (! undoStacks[activeSlot].getLast().slot.isEquivalentTo (b.preSlot))
+        return;
+
     // The same test `copySlotToOther` applies to the Copy path, for the same
     // reason and with the same two halves: the parameter surface through
     // `strippedForUndoCompare` (which normalises the view-tier entries an undo

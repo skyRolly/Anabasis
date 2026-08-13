@@ -192,6 +192,17 @@ probe_info() {                  # $1 = tag; remaining args go to pkgbuild
   tr -d ' \n\t' < "$WORK/probe-$_tag-x/PackageInfo"
 }
 probe_fail() {                  # $1 = tag, $2 = message
+  # READ THIS BEFORE BLAMING build_component(). A failure here does NOT mean the
+  # package is wrong — it means the probe could no longer establish that the
+  # assertions below can fire. The likeliest cause by far is TOOLCHAIN DRIFT: a
+  # macOS or Xcode update changing what `pkgbuild --analyze` emits by default, or
+  # renaming a PackageInfo element. That fails the BUILD rather than shipping a
+  # package whose guarantees are unverified, which is the intended direction, but
+  # it means this job is deliberately sensitive to the platform tools.
+  #
+  # If that happens: compare the PackageInfo dumped below against the element
+  # names the loop matches, update both together, and record the change in
+  # POSTMORTEMS.md INC-005 — the incident this whole block exists for.
   echo "error: $2" >&2
   echo "---- PackageInfo of probe '$1' ----" >&2
   cat "$WORK/probe-$1-x/PackageInfo" >&2

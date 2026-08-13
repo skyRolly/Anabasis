@@ -2125,10 +2125,29 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     m.addItem (10001, "Save Preset" + ellip);
     m.addItem (10002, "Load Preset" + ellip);
 
-    // Counted here rather than through the look-and-feel hook: parenting the
-    // menu (above) means it never gets our look-and-feel handed to it — it
-    // inherits one by walking up the hierarchy — so `preparePopupMenuWindow`
-    // fires on the DEFAULT look-and-feel and the hook never sees this window.
+    // Counted here rather than through the look-and-feel hook, and the reason is
+    // an ORDERING inside JUCE rather than an assumption — spelled out because the
+    // intuitive reading is the opposite, that a parented window inherits our
+    // look-and-feel and so reaches the hook.
+    //
+    // In `PopupMenu::MenuWindow`'s constructor:
+    //   :366  setLookAndFeel (findLookAndFeel (menu, parentWindow));
+    //   :368  auto& lf = getLookAndFeel();            <-- BOUND HERE
+    //   :372  pc->addChildComponent (this);           <-- parent attached AFTER
+    //   :500  lf.preparePopupMenuWindow (*this);      <-- uses the reference from :368
+    // `findLookAndFeel` returns `menu.lookAndFeel` for a top-level menu, and we
+    // deliberately never call `m.setLookAndFeel(...)`, so that is null. At :368
+    // the window therefore has no explicit look-and-feel AND no parent, and
+    // `Component::getLookAndFeel()` walks `parentComponent` upwards and falls
+    // back to `LookAndFeel::getDefaultLookAndFeel()`. The reference handed to
+    // `preparePopupMenuWindow` is that default one, fixed before :372 makes us
+    // its parent — so our hook is not called for this window and counting it
+    // here is not double-counting.
+    //
+    // (If it ever did fire for this window the outcome would be harmless — the
+    // shield is already raised, so `refreshPopupShield` returns early — but the
+    // count would drift, which is why this rests on the ordering rather than on
+    // that safety net.)
     // Raise the shield BEFORE the menu is created, so the menu is appended in
     // front of it (see the z-order argument on PopupShield).
     ++presetMenusOpen;
@@ -2294,6 +2313,19 @@ void AnabasisAudioProcessorEditor::refreshPopupShield()
         // through `isMouseOver`, therefore survives the raise.
         popupShield.toFront (false);
     }
+    // WHY LOWERING IT EARLY DOES NOT LOSE THE CLICK, which is not obvious: this
+    // runs from `componentBeingDeleted`, so the shield can stop hit-testing
+    // INSIDE `internalModalInputAttempt()` — i.e. between the dismissal and the
+    // re-delivery of the same mouse-down. The re-delivery still reaches the
+    // shield anyway, because `Component::internalMouseDown` acts on the target
+    // the mouse source resolved BEFORE the dismissal; it does not re-run
+    // hit-testing. So absorption does not depend on the timing of the deletion
+    // callback.
+    //
+    // That property is specific to interception. It would be LOST if this were
+    // ever changed to `setEnabled (false)`: `internalMouseDown` does bail on a
+    // disabled component, so the event would fall through to whatever is
+    // underneath — the defect this whole mechanism removes.
     popupShield.setInterceptsMouseClicks (wanted, false);
 }
 
@@ -2310,10 +2342,29 @@ void AnabasisAudioProcessorEditor::dismissTrackedPopupMenus()
     // take several tracked windows down in one step and leave the index past the
     // end — and `juce::Array::getReference` out of range is undefined. Iterating
     // a copy makes the loop independent of whatever the deletion cascade does.
+    // …and HIDE each one as well as ending its modal state. `exitModalState`
+    // does not take the window off screen: it marks the modal item inactive and
+    // triggers an async update, and the visibility change and deletion happen on
+    // the next message-loop dispatch. JUCE's own dismissal does both —
+    // `PopupMenu::MenuWindow::hide` calls `exitModalState (resultID)` and then
+    // `setVisible (false)`. Ending the modal state alone would leave the
+    // drop-down painted for one dispatch, and on the destructor path the editor
+    // is torn down before that dispatch runs — which is the orphaned-window
+    // symptom this function exists to remove, merely shortened rather than gone.
+    //
+    // The pointer is re-checked after the exit: ending a modal state runs
+    // listener callbacks synchronously and can take the window with it.
     const auto tracked = openMenus;
     for (int i = tracked.size(); --i >= 0;)
-        if (auto* w = tracked.getReference (i).getComponent())
+    {
+        auto safe = tracked.getReference (i);
+        if (auto* w = safe.getComponent())
+        {
             w->exitModalState (0);
+            if (auto* stillThere = safe.getComponent())
+                stillThere->setVisible (false);
+        }
+    }
 
     // The preset menu is OUR CHILD (`withParentComponent (this)`), so it is
     // reachable directly and `juce::PopupMenu::dismissAllActiveMenus()` is not
@@ -2322,8 +2373,14 @@ void AnabasisAudioProcessorEditor::dismissTrackedPopupMenus()
     // precisely the alternative `showPresetMenu`'s own comment records as worse
     // than parenting, so reinstating it here would have undone that decision.
     for (auto* child : getChildren())
-        if (child->isCurrentlyModal (false))
-            child->exitModalState (0);
+    {
+        if (! child->isCurrentlyModal (false))
+            continue;
+        juce::Component::SafePointer<juce::Component> safe (child);
+        child->exitModalState (0);
+        if (auto* stillThere = safe.getComponent())
+            stillThere->setVisible (false);   // same reason as above
+    }
 }
 
 void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()

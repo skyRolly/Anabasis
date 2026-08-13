@@ -546,7 +546,23 @@ void AnabasisLookAndFeel::drawPopupMenuSectionHeader (juce::Graphics& g, const j
 {
     g.setColour (colours::textDim.withAlpha (0.85f));
     g.setFont (juce::Font (juce::FontOptions (10.5f)).withExtraKerningFactor (0.18f));
-    g.drawText (sectionName, area.reduced (12, 0), juce::Justification::centredLeft);
+    // The SAME inset AND tick gutter the item rows spend, so "FACTORY" / "USER"
+    // sit on the text column they head instead of 14 px to the left of it. This
+    // path was left out when the item metrics were unified: it hard-coded its own
+    // 12 and reserved no gutter.
+    //
+    // ALIGNMENT ONLY — the width side needs nothing and is deliberately not
+    // overridden. `LookAndFeel_V2::getIdealPopupMenuSectionHeaderSizeWithOptions`
+    // forwards to `getIdealPopupMenuItemSizeWithOptions`, which reaches the
+    // override above, and then adds a quarter to the result. So a header is
+    // measured with THIS family's item budget in the larger item font and then
+    // widened again, while it draws in a 10.5 pt font — over-measured on both
+    // counts, which is the safe direction. Overriding it to be exact would only
+    // narrow menus, and could do so for a reason no reader would connect to a
+    // header.
+    auto textArea = area.toFloat().reduced (menuMetrics::padX, 0.0f);
+    textArea.removeFromLeft (menuMetrics::tickGutter);
+    g.drawText (sectionName, textArea, juce::Justification::centredLeft);
 }
 
 void AnabasisLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)

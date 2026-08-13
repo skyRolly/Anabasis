@@ -30,9 +30,13 @@ machine can load them, and needs root for those steps only.
 
 An existing installation is replaced safely: the previous version is kept until
 the new one is fully in place, so an interrupted install still leaves a working
-Anabasis behind, and the next run tidies up on its own.
-覆盖安装是安全的:新版本完全就位之前会保留旧版本,即使安装中途被打断也仍有可用的
-Anabasis,下次运行会自动清理。
+plug-in behind, and the next run tidies up on its own. The VST3 plug-in and the
+Standalone application are replaced one after the other rather than together, so
+an interruption between the two can leave the new plug-in beside the old
+Standalone — both work; simply run the installer again to finish the pair.
+覆盖安装是安全的:新版本完全就位之前会保留旧版本,即使安装中途被打断,插件仍然可用,
+下次运行会自动清理。VST3 插件与独立版是先后替换而非同时替换,若恰好在两者之间被打断,
+可能出现新版插件与旧版独立版并存的情况(两者都能正常使用);重新运行安装脚本即可。
 
 --------------------------------------------------------------------
 A) Installer installation (recommended) / 脚本安装(推荐)
