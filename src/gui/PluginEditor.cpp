@@ -733,7 +733,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // (`withParentComponent (this)` in `showPresetMenu`), and `presetMenusOpen`
     // counts exactly it — so this now says what the comment always claimed:
     // a menu PARENTED to this editor is on screen.
-    lnf.isPopupMenuOnScreen = [this] { return presetMenusOpen > 0; };
+    lnf.isPopupMenuOnScreen = [this] { return presetMenusOpen.load (std::memory_order_relaxed) > 0; };
 
     // -- Settings rows (§6.4, all InternalState-bound) -----------------------
     auto& ist = proc.internalState.state();
@@ -1066,6 +1066,19 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
             w->removeComponentListener (this);
     openMenus.clear();
     trackedGhosts.clear();   // its only readers are gone with `openMenus`
+
+    // THE GL CONTEXT COMES DOWN FIRST, and the order is the point rather than
+    // tidiness. `isPopupMenuOnScreen` is called from PAINT, which on macOS and
+    // Windows is the GL render thread (`THREAD_MODEL.md` §"Which context
+    // paints"). Assigning `nullptr` to a `std::function` a live render thread may
+    // be invoking is a race on the function object itself — not on the counter it
+    // reads, which is atomic, but on the callable. `detach()` joins the render
+    // thread, so after it returns there is no other thread left to call either
+    // hook and both assignments below are unobserved by anyone.
+#if JUCE_MAC || JUCE_WINDOWS
+    glContext.detach();
+#endif
+
     // The look-and-feel outlives this callback only as a member; clear the hook
     // so nothing can call back into a half-destroyed editor.
     lnf.onPopupMenuWindowCreated = nullptr;
@@ -1080,9 +1093,6 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
     // that came to mind.
     animVBlank = {};
 
-#if JUCE_MAC || JUCE_WINDOWS
-    glContext.detach();
-#endif
     proc.apvts.removeParameterListener (pid::advancedMode, this);
     proc.apvts.removeParameterListener (pid::bypass, this);
     tooltips.setLookAndFeel (nullptr);   // before `lnf` dies — paired with the ctor
@@ -1959,7 +1969,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
     // what it wants. Nothing here can fix a lost decrement retroactively, so the
     // test is on the world rather than on the bookkeeping: if this editor has no
     // modal child, no preset menu is on screen, whatever the counter says.
-    if (presetMenusOpen > 0)
+    if (presetMenusOpen.load (std::memory_order_relaxed) > 0)
     {
         bool anyModal = false;
         for (auto* child : getChildren())
@@ -1974,7 +1984,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
         }
         else if (++presetMenuGhostTicks >= 2)
         {
-            presetMenusOpen      = 0;
+            presetMenusOpen.store (0, std::memory_order_relaxed);
             presetMenuGhostTicks = 0;
         }
     }
@@ -2232,7 +2242,7 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     // every pin move.
     // Raise the shield BEFORE the menu is created, so the menu is appended in
     // front of it (see the z-order argument on PopupShield).
-    ++presetMenusOpen;
+    presetMenusOpen.fetch_add (1, std::memory_order_relaxed);
     refreshPopupShield();
 
     m.showMenuAsync (juce::PopupMenu::Options()
@@ -2260,7 +2270,9 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             // no early return can skip it.
             if (safeThis != nullptr)
             {
-                safeThis->presetMenusOpen = juce::jmax (0, safeThis->presetMenusOpen - 1);
+                safeThis->presetMenusOpen.store (
+                    juce::jmax (0, safeThis->presetMenusOpen.load (std::memory_order_relaxed) - 1),
+                    std::memory_order_relaxed);
                 safeThis->refreshPopupShield();
             }
             if (r == 0 || safeThis == nullptr) return;
@@ -2442,7 +2454,8 @@ void AnabasisAudioProcessorEditor::refreshPopupShield()
         if (openMenus.getReference (i).getComponent() == nullptr)
             openMenus.remove (i);
 
-    const bool wanted = ! openMenus.isEmpty() || presetMenusOpen > 0;
+    const bool wanted = ! openMenus.isEmpty()
+                     || presetMenusOpen.load (std::memory_order_relaxed) > 0;
     if (wanted == shieldRaised)
         return;
     shieldRaised = wanted;

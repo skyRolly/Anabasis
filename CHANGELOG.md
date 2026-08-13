@@ -91,6 +91,16 @@ and say so.
   between them can leave the new plug-in beside the old Standalone. Staging happens outside the
   folder your DAW scans wherever the filesystem allows it, so a rescan mid-install cannot see a
   half-written bundle. Evidence: this release. [Verified]
+- **An interrupted system-wide install now really does put the previous version back.** The
+  transaction parks the old plug-in in a staging folder only the administrator can open, and the
+  automatic rollback then checked for it *without* administrator rights — so on the normal
+  system-wide path (running the installer and choosing "system-wide" rather than launching it with
+  `sudo`) the check said "nothing parked" even with the old plug-in sitting right there, and
+  interrupting the upgrade at the wrong moment left **no plug-in installed at all** while the only
+  good copy stayed unreachable. Reproduced end to end before the fix, on the two-rename window the
+  transaction exists to protect. Every check inside that folder is now made with the same rights as
+  the writes. The same blindness also stopped a later run from finding the parked copy and from
+  printing the warning that says it is there. Evidence: this release. [Verified]
 - **A Linux install that refuses to start now names every folder that could be blocking it.** The
   installer declines to stage into a folder it cannot trust — a symlink, one owned by another
   account, one others can write to — and the per-user message named only the first of the two
@@ -111,6 +121,13 @@ and say so.
   whenever any pop-up is on screen and absorbs the dismissing click, including scroll and pinch.
   The residual limitation is registered as **KI-013**: the absorbed click still counts toward the
   system's multi-click run. Evidence: this release. [Verified]
+- **A pop-up menu's border could be drawn from unsynchronised state.** The look-and-feel asks the
+  editor whether one of its own menus is open, and that question is answered during PAINTING —
+  which, where hardware-accelerated drawing is enabled (macOS and Windows), happens on a different
+  thread from the one that opens and closes menus. The counter behind the answer is now atomic, and
+  the editor tears the hook down after the drawing thread has stopped rather than before. No
+  behaviour change; it removes undefined behaviour that a sanitizer would report.
+  Evidence: this release. [Verified]
 - **Menus and drop-downs no longer outlive the editor.** Closing the editor with a drop-down open
   left the drop-down on screen over the host; so did switching to another application while the
   pointer rested on the menu. Both are now cancelled. The application-switch check calibrates

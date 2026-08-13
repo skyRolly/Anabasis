@@ -138,13 +138,13 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/COMPATIBILITY_MATRIX.md",
      "src/PluginProcessor.cpp:12-14"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:837-855"),
+     "src/PluginProcessor.cpp:840-858"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:754"),
+     "src/PluginProcessor.cpp:757"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:827-835"),
+     "src/PluginProcessor.cpp:830-838"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:1856"),
+     "src/PluginProcessor.cpp:1859"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "tests/state_tests.cpp:2141"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
@@ -152,7 +152,7 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.h:431-439"),
     ("docs/architecture/THREAD_MODEL.md",
-     "src/gui/PluginEditor.h:591"),
+     "src/gui/PluginEditor.h:604"),
     ("docs/architecture/design-decisions/ADR-0013-release-trim-reaches-auto-poles.md",
      "src/dsp/AnabasisEngine.cpp:518-520"),
     ("docs/architecture/design-decisions/ADR-0014-frozen-trim-restore.md",
@@ -255,13 +255,42 @@ def line_of(lines, n):
     return lines[n - 1] if lines is not None and 1 <= n <= len(lines) else None
 
 
+# A cross-product ATTRIBUTION line, which `ADR-0009` mandates in exactly this
+# spelling at the head of every adapted file. It carries an anchor into the
+# SIBLING product spelled with a path this repository also owns:
+#
+#     // Provenance (ADR-0009): adapted from Anamorph src/gui/LookAndFeel.cpp:1-912 @ b6a3db8.
+#
+# The ownership test cannot see the difference. `<prefix>` catches a `rev:`
+# qualifier and the lookbehind catches a path glued to another token, but here
+# the product name is a separate word followed by a space, so the citation
+# classifies as OURS and a re-anchor would rewrite the sibling's line range using
+# THIS tree's code movement — the exact corruption this file's header says is the
+# one it must never commit. Harmless while only `docs/` was scanned, and live the
+# moment source files joined the scan, which is why the two changes are one
+# change.
+PROVENANCE_MARKER = "Provenance (ADR-0009)"
+
+
 def citations(text):
     """(whole matched string, tracked path, span, [(start, end|None), ...])"""
     out = []
+    # Byte offsets of every provenance line, so a match can be tested against
+    # the line it sits on without re-splitting the text per match.
+    provenance_spans = []
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        if PROVENANCE_MARKER in line:
+            provenance_spans.append((pos, pos + len(line)))
+        pos += len(line)
+
     for m in CITATION.finditer(text):
         tracked = classify(m.group("prefix"), m.group("path"))
         if tracked is None:
             continue
+        s, _e = m.span()
+        if any(a <= s < b for a, b in provenance_spans):
+            continue        # the sibling product's anchor — never ours to move
         anchors = [(int(a.group(1)), int(a.group(2)) if a.group(2) else None)
                    for a in ANCHOR.finditer(m.group("anchors"))]
         out.append((m.group(0), tracked, m.span(), anchors))
@@ -308,13 +337,33 @@ EXCLUDED_PREFIXES = ("worklogs/",)
 
 
 def doc_files():
+    """Every file whose citations are checked — Markdown AND the tracked SOURCE.
+
+    THE SOURCE HALF WAS ADDED AFTER A COMMENT DRIFTED 24 LINES INSIDE THE ROUND
+    THAT BUILT THIS TOOL. `closePresetUndoBracket`'s argument named `:1482` and
+    `:1538` as the two sites that seed `presetBaseline`; a comment block inserted
+    above them moved both by 24, and because this scan covered only `docs/` and
+    the root Markdown, the gate could not see it. A tool that keeps documents
+    honest about the code while the code lies about itself is checking the
+    smaller half: these anchors are read by whoever is editing the function, at
+    the moment they are deciding whether the argument still holds.
+
+    The files in `TRACKED` are exactly the ones already treated as citable
+    targets, so this makes the set self-checking rather than widening it. A
+    source file citing ITSELF is fine: a re-anchor rewrites digits inside one
+    line and never changes a line COUNT, so the numbering the citation is
+    measured against survives its own repair.
+    """
     tracked = subprocess.run(["git", "ls-files"],
                              capture_output=True, text=True).stdout.split()
     out = []
     for p in tracked:
-        if not p.endswith(".md"):
-            continue
         if p.startswith(EXCLUDED_PREFIXES):
+            continue
+        if p in TRACKED:
+            out.append(p)          # the source half — see the docstring
+            continue
+        if not p.endswith(".md"):
             continue
         if p.startswith("docs/") or "/" not in p:
             out.append(p)

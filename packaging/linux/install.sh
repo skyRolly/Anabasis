@@ -187,7 +187,13 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
     # restored nor removed by this run, and only `uninstall.sh` clears it. Silent
     # would make that indistinguishable from a clean run.
     for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
-        [ -d "$_c/Anabasis.vst3.prev" ] || continue
+        # Elevated for the same reason as `reconcile`'s test: on the system-wide
+        # path this candidate is root-owned at 0700 and the script is running as
+        # the invoking user, so a plain `[ -d ]` reads FALSE on a parked bundle
+        # that exists. Unelevated, this loop never adopts the candidate holding
+        # the previous version AND never prints the warning below — the recovery
+        # and its diagnostic went blind together.
+        $SUDO test -d "$_c/Anabasis.vst3.prev" || continue
         if stage_dir_is_adoptable "$_c" "$_owner" \
            && stage_dir_is_same_filesystem "$_c" "$_probe"; then
             printf '%s\n' "$_c"
@@ -241,7 +247,33 @@ stage_dir_advice() {            # $1 = plug-in directory
 # Puts back the previous version if an install was interrupted, then clears the
 # temporary files. Runs once before installing and again if the script is stopped.
 reconcile() {
-    if [ ! -e "$VST3_DEST" ] && [ -d "$PREV_VST3" ]; then
+    # `$SUDO test -d`, NOT `[ -d ]`, and this is the difference between the
+    # transaction working and losing the user's plug-in.
+    #
+    # THE STAGING DIRECTORY IS ROOT-OWNED AT MODE 0700 on the system-wide path,
+    # because `make_stage_dir` creates it that way on purpose (INC-006's lesson).
+    # The WRITES into it are all elevated. The TESTS were not — and there are two
+    # ways to reach a system install: `sudo ./install.sh`, where the whole script
+    # is root and every test succeeds, and the mode prompt answered `2`, where the
+    # script runs as the INVOKING USER and elevates one operation at a time. On
+    # that second path — the documented normal one — `[ -d "$PREV_VST3" ]` stats a
+    # path inside a directory the tester cannot open, gets EACCES, and reads
+    # FALSE even though the parked bundle is right there.
+    #
+    # What that cost, reproduced end to end before this fix: SIGINT inside the
+    # two-rename window, the trap fires, this test declines to restore, the line
+    # below removes the staged replacement, and `/usr/lib/vst3/Anabasis.vst3` is
+    # GONE while the only good copy sits unreachable in
+    # `/usr/lib/.anabasis-install-stage/`. The CHANGELOG says only a signal no
+    # handler can catch can leave the plug-in absent in that window; a catchable
+    # Ctrl-C did too. Silent, because the directory itself still stats fine (only
+    # `/usr/lib` needs to be readable for that), so `stage_dir_is_adoptable`
+    # passed and nothing anywhere reported a problem.
+    #
+    # Every test on a path INSIDE `$STAGE_DIR` is elevated for this reason. `$SUDO`
+    # is empty on the per-user path, where it degrades to plain `test` and the
+    # directory is the user's own.
+    if [ ! -e "$VST3_DEST" ] && $SUDO test -d "$PREV_VST3"; then
         $SUDO mv "$PREV_VST3" "$VST3_DEST" 2>/dev/null || true
     fi
     $SUDO rm -rf "$STAGE_VST3" "$STAGE_APP" 2>/dev/null || true

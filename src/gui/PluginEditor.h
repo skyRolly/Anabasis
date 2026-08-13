@@ -314,7 +314,20 @@ private:
     void cancelInlineEdits();
 
     juce::Array<juce::Component::SafePointer<juce::Component>> openMenus;
-    int  presetMenusOpen = 0;
+    // ATOMIC because it is read OFF THE MESSAGE THREAD. Every write is on the
+    // message thread (`showPresetMenu`, the menu's completion callback, the tick's
+    // ghost heal), but `AnabasisLookAndFeel::drawResizableFrame` reads it through
+    // `isPopupMenuOnScreen` — and that runs from `MenuWindow::paintOverChildren`,
+    // i.e. from PAINT. `THREAD_MODEL.md` §"Which context paints" states the rule
+    // for this tree: with the OpenGL context attached (macOS/Windows) JUCE paints
+    // components on the GL render thread, and the safety argument there is that
+    // GUI-side reads of published state are stateless `const` peeks. A plain `int`
+    // read from paint is not one of those — it is a data race, and a
+    // sanitizer-reportable one on exactly the two platforms where the context
+    // attaches. Relaxed ordering is sufficient: the value guards nothing but
+    // itself, and a frame that reads a one-tick-stale count draws the same border
+    // it would have drawn a frame earlier.
+    std::atomic<int> presetMenusOpen { 0 };
     bool shieldRaised    = false;
     // Whether this process was the foreground application, and whether this
     // editor reported itself showing, at the instant a pop-up opened. Both are
