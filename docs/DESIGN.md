@@ -795,7 +795,7 @@ alternative above. ADR-0005 records this before P4 (OQ-004's deadline).
   Interaction grammar copies Anamorph's Match/Apply: engage is duck-routed, running feedback is
   an atomic-published readout, the commit is gesture/undo-bracketed as **one** step
   (`Anamorph:src/PluginProcessor.cpp:178-202` [Verified]; multi-target commit bracketing via
-  the preset-load undo hook pattern, `Anamorph:src/PluginProcessor.cpp:33-38,402-421`).
+  the preset-load undo hook pattern, `Anamorph:src/PluginProcessor.cpp:33-38, 470-489`).
   Learned targets serialize in the **global** `ADAPTIVE` child (they are a property of the user's
   material, not of a slot); the **per-slot** frozen trims use the `abMatchGain` sentinel-atomic
   inject pattern (`Anamorph:src/PluginProcessor.cpp:553-559` [Verified]) — **adapted, not copied:

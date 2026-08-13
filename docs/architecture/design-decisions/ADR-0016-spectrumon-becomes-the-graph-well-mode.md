@@ -41,7 +41,7 @@ takes the new meaning, or a new field is added and the old one is retired.
 
 ## What the field used to mean, precisely
 
-Read from the pre-change tree (`7686204:src/gui/PluginEditor.cpp:1209-1212, 1214-1217`):
+Read from the pre-change tree (`7686204:src/gui/PluginEditor.cpp:1209-1212, 1252-1255`):
 
 | | `int_spectrumOn = true` | `int_spectrumOn = false` |
 |---|---|---|

@@ -485,6 +485,16 @@ void AnabasisLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rect
         return;
     }
 
+    // The measurement budget's precondition, ENFORCED rather than described.
+    // `getIdealPopupMenuItemSize` reserves the insets and the tick gutter; the
+    // sub-menu chevron and the right-aligned shortcut are drawn INSIDE the text
+    // rectangle, so either one re-introduces the clipping that budget removes —
+    // silently, as an ellipsised longest row, with nothing failing. Neither is
+    // reachable in the menus this editor builds today, and this is what says so
+    // out loud the moment one is added.
+    jassert (! hasSubMenu);
+    jassert (shortcutKeyText.isEmpty());
+
     auto r = area.toFloat();
     // A row JUCE reports as inactive cannot be chosen, and until now it drew
     // exactly like one that can: same text, same tick, same arrow. The whole row

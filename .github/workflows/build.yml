@@ -171,8 +171,32 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v7
+        with:
+          # `check-citations.py` compares against a BASE REVISION, so the run
+          # needs history rather than the default single-commit checkout.
+          fetch-depth: 0
       - name: Lint source portability (JUCE SIMD overload hazard)
         run: python3 scripts/check-portability.py
+      # Evidence anchors (`src/PluginProcessor.cpp:695-752`) are exact and
+      # therefore fragile: an edit ABOVE one silently re-aims it at unrelated
+      # code while the document keeps reading as though it were still correct.
+      # The repository's rule is that anchors are re-anchored in the SAME change
+      # set that moves them, and 0.1.4 demonstrated that the rule does not
+      # survive being remembered — the anchors were re-anchored once, two later
+      # commits in the same round moved code again, and 42 of 71 were stale
+      # before anyone noticed. This is that rule as a gate.
+      #
+      # It compares against the merge base rather than a fixed ref, so a branch
+      # is judged on the drift IT introduces, not on drift it inherited.
+      - name: Check documentation evidence anchors
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "Comparing evidence anchors against $BASE"
+          python3 scripts/check-citations.py --base "$BASE"
 
   # -------------------------------------------------------------------------
   # Pre-P1 guard. This repository is currently a scaffold: the governance docs,

@@ -29,6 +29,18 @@ that all are correct. `worklogs/` is out of scope: those records cite the siblin
 by bare file name, and an early version of the script rewrote those upstream anchors against this
 tree's line numbers before the scoping was added.
 
+The tool went through three corrections of its own before it was trustworthy, and they are worth
+recording because each was a way of being confidently wrong. It matched bare file names, so it
+rewrote the P0 worklog's UPSTREAM anchors against this tree (caught in the diff, reverted,
+`worklogs/` now excluded). It read only the first anchor of a compound citation
+(`…cpp:708-709, 851, 1208`), so it moved the head and left the tail — producing `:1040, 1039, 1053`,
+out of order, in the very file it was meant to keep true. And it paired citations by their base
+SPELLING, so once one had been re-anchored the tool could no longer see it drift again — the exact
+failure it exists to prevent. It now pairs the Nth reference to a path with the Nth in the base,
+and is verified by injecting a one-line shift and confirming every anchor of a compound citation
+moves. It runs in the `source-lint` CI job against the pull request's base, so the rule is enforced
+rather than remembered.
+
 **New records:** `POSTMORTEMS.md` **INC-005** (the macOS package could report success with nothing
 at the destination); `KNOWN_ISSUES.md` **KI-013** (the shield-absorbed click still counts toward
 the multi-click run) and **KI-014** (macOS press-and-hold suppresses key repeat in the Save Preset

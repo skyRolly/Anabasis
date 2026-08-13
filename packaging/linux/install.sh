@@ -215,4 +215,34 @@ trap - EXIT INT TERM HUP
 echo "Installed (system-wide, all users):"
 echo "  VST3       -> $VST3_DEST"
 echo "  Standalone -> $BIN_DIR/Anabasis"
+# The mirror of the per-user branch's warning, and the more important direction
+# of the two: a per-user copy is scanned as well as the system one, so leaving
+# one behind means Anabasis appears twice and the per-user (older) copy is the
+# one many DAWs load.
+#
+# Finding it needs the INVOKING user's home, not `$HOME` — under `sudo` that is
+# root's. `$SUDO_USER` names the real user, and their home comes from the passwd
+# database rather than from `~$SUDO_USER`, which POSIX sh does not expand.
+user_home=''
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    if command -v getent >/dev/null 2>&1; then
+        user_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+    fi
+    [ -n "$user_home" ] || user_home="/home/$SUDO_USER"
+elif [ "$(id -u)" -ne 0 ]; then
+    user_home="${HOME:-}"          # elevated per-operation; $HOME is still ours
+fi
+
+if [ -n "$user_home" ]; then
+    _uv="$user_home/.vst3/Anabasis.vst3"
+    _ua="$user_home/.local/bin/Anabasis"
+    if [ -e "$_uv" ] || [ -e "$_ua" ]; then
+        echo "Note: a per-user install is also present, so Anabasis may appear twice in"
+        echo "      your DAW and the per-user copy may load instead of this one:"
+        if [ -e "$_uv" ]; then echo "        $_uv"; fi
+        if [ -e "$_ua" ]; then echo "        $_ua"; fi
+        echo "      Remove it as $SUDO_USER with:  ./uninstall.sh"
+    fi
+fi
+
 echo "Rescan plug-ins in your DAW to pick it up. Uninstall later with:  sudo ./uninstall.sh"

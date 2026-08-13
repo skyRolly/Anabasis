@@ -138,7 +138,22 @@ public:
     // surface loses a frame. Add a resizable child under this family and this
     // override has to learn the difference between the two callers rather than
     // answering "nothing" to both.
-    void drawResizableFrame (juce::Graphics&, int, int, const juce::BorderSize<int>&) override {}
+    //
+    // So it distinguishes them NOW, cheaply, instead of leaving that for the
+    // change that would silently lose a frame: the menu path always passes a
+    // border of `getPopupMenuBorderSize()` on all four edges, which is the
+    // shape suppressed here. Anything else — a `ResizableBorderComponent`,
+    // whose border is its own drag-zone thickness — falls through to the base
+    // implementation and keeps its frame.
+    void drawResizableFrame (juce::Graphics& g, int w, int h,
+                             const juce::BorderSize<int>& border) override
+    {
+        const auto b = getPopupMenuBorderSize();
+        if (border.getTop()  == b && border.getBottom() == b
+            && border.getLeft() == b && border.getRight()  == b)
+            return;                      // the parented pop-up's doubled edge
+        juce::LookAndFeel_V4::drawResizableFrame (g, w, h, border);
+    }
     // Fixed, uniform row height so a taller combo doesn't get taller rows (#3).
     void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
                                     int standardHeight, int& idealWidth, int& idealHeight) override;

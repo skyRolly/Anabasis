@@ -52,7 +52,16 @@ TRACKED = {
 # the file name alone re-anchored those UPSTREAM anchors against THIS tree's line
 # numbers — corrupting a historical record to fix a problem it does not have.
 # `classify()` below is what decides a citation is ours.
-CITATION = re.compile(r"(?P<path>[\w./\\-]*\b\w+\.\w+):(?P<start>\d+)(?:-(?P<end>\d+))?")
+# A citation is `<path>:<line>`, `<path>:<start>-<end>`, or a COMPOUND list that
+# names the path once and then several anchors: `<path>:708-709, 851, 1208`. The
+# trailing group is what an earlier version of this file missed — it re-anchored
+# the first anchor and left the bare numbers behind it untouched, which produced
+# `:1040, 1039, 1053` in this repository: out of order and internally
+# contradictory, from a tool whose whole job is keeping anchors true.
+CITATION = re.compile(
+    r"(?P<path>[\w./\\-]*\b\w+\.\w+):"
+    r"(?P<anchors>\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)*)")
+ANCHOR = re.compile(r"(\d+)(?:-(\d+))?")
 
 # A citation belongs to this repository only if its path is repo-relative (or
 # bare) — never if it is rooted somewhere else.
@@ -83,13 +92,16 @@ def line_of(lines, n):
 
 
 def citations(text):
+    """(whole matched string, path, file name, [(start, end|None), ...])"""
     out = []
     for m in CITATION.finditer(text):
         path = m.group("path")
         name = os.path.basename(path.replace("\\", "/"))
-        if name in TRACKED and owned_by_this_repo(path):
-            out.append((path, name, int(m.group("start")),
-                        int(m.group("end")) if m.group("end") else None))
+        if name not in TRACKED or not owned_by_this_repo(path):
+            continue
+        anchors = [(int(a.group(1)), int(a.group(2)) if a.group(2) else None)
+                   for a in ANCHOR.finditer(m.group("anchors"))]
+        out.append((m.group(0), path, name, anchors))
     return out
 
 
@@ -104,6 +116,14 @@ def build_line_map(base, path):
     def m(n):
         off = 0
         for start, old_count, new_count in edits:
+            if old_count == 0:
+                # A PURE INSERTION (`@@ -9,0 +10,2 @@`) sits AFTER old line
+                # `start`; that line does not move. `start + old_count - 1` is
+                # `start - 1` here, so the general test below would treat line
+                # `start` as shifted — one line too far.
+                if start < n:
+                    off += new_count
+                continue
             if start + old_count - 1 < n:
                 off += new_count - old_count
             elif start <= n:
@@ -173,42 +193,98 @@ def main():
             continue                       # new document: nothing to drift from
         old_cites = citations(base_text.stdout)
         text = read(doc)
+        cur_cites = citations(text)
 
-        # Matched by CITATION STRING, not by position. A change set is allowed to
-        # ADD or REMOVE citations — this round adds a read-rule row — and a
-        # positional walk would mis-pair every citation after the insertion and
-        # report the whole file as drifted. For each citation the base had: if the
-        # identical string is still present, its content is checked; if it is not,
-        # the mapped string must be, and that is the re-anchored form. A citation
-        # the base did not have is new and has nothing to drift from.
+        # Paired PER PATH, in order of appearance. Neither global position nor
+        # the citation string works on its own: a change set may add or remove
+        # citations (position breaks), and once a citation has been re-anchored
+        # its base spelling is gone from the file, so looking for that string
+        # makes every LATER shift invisible — which is precisely how this round's
+        # anchors went stale twice. Pairing the Nth `PluginProcessor.cpp`
+        # reference in the base with the Nth in the current file survives both.
+        by_path_old, by_path_cur = {}, {}
+        for c in old_cites:
+            by_path_old.setdefault(c[2], []).append(c)
+        for c in cur_cites:
+            by_path_cur.setdefault(c[2], []).append(c)
+
         replacements = []
-        for (p1, f, a, b) in old_cites:
-            if f not in base_src:
+        for fname, olds in by_path_old.items():
+            if fname not in base_src:
                 continue
-            total += 1
-            cur = f"{p1}:{a}" + (f"-{b}" if b else "")
-            na, nb = maps[f](a), (maps[f](b) if b else None)
-            moved = (f"{p1}:{na}" + (f"-{nb}" if b else "")) if na is not None else None
-
-            if moved is not None and moved != cur and moved in text:
-                continue                      # already re-anchored in this change set
-
-            if cur not in text:
-                continue                      # citation removed or rewritten by hand
-
-            same = (line_of(base_src[f], a) == line_of(now_src[f], a)
-                    and (b is None or line_of(base_src[f], b) == line_of(now_src[f], b)))
-            if same:
+            curs = by_path_cur.get(fname, [])
+            if len(curs) != len(olds):
+                # A change set is allowed to ADD or REMOVE citations — this round
+                # adds a read-rule row — so a count change is not itself a
+                # failure. Ordinal pairing is no longer meaningful, though, so
+                # fall back to the conservative check: every base citation whose
+                # spelling is still present must still be correct. A citation
+                # that was re-spelled or removed is beyond what this can judge,
+                # and a NEW one has nothing to drift from.
+                for (whole_o, _po, _fo, anchors_o) in olds:
+                    if whole_o not in text:
+                        continue
+                    total += len(anchors_o)
+                    if all(line_of(base_src[fname], a) == line_of(now_src[fname], a)
+                           and (b is None or line_of(base_src[fname], b) == line_of(now_src[fname], b))
+                           for (a, b) in anchors_o):
+                        continue
+                    mapped, movable = [], True
+                    for (a, b) in anchors_o:
+                        na, nb = maps[fname](a), (maps[fname](b) if b else None)
+                        if na is None or (b is not None and nb is None):
+                            movable = False
+                            break
+                        mapped.append((na, nb))
+                    drifted += 1
+                    if not movable:
+                        unmappable += 1
+                        print(f"  UNMAPPABLE {doc}: {whole_o} "
+                              f"(the cited lines were themselves edited — re-aim by hand)")
+                        continue
+                    rebuilt = f"{_po}:" + ", ".join(
+                        f"{na}-{nb}" if nb else f"{na}" for na, nb in mapped)
+                    print(f"  DRIFTED {doc}: {whole_o} -> {rebuilt}")
+                    replacements.append((whole_o, rebuilt))
+                print(f"check-citations: note — {doc} now has {len(curs)} `{fname}` "
+                      f"citation(s) where {args.base} had {len(olds)}; the added ones are "
+                      f"not checkable against that base.")
                 continue
 
-            drifted += 1
-            if moved is None:
-                unmappable += 1
-                print(f"  UNMAPPABLE {doc}: {cur} "
-                      f"(the cited lines were themselves edited — re-aim by hand)")
-                continue
-            print(f"  DRIFTED {doc}: {cur} -> {moved}")
-            replacements.append((cur, moved))
+            for (whole_o, _po, _fo, anchors_o), (whole_c, path_c, _fc, anchors_c) in zip(olds, curs):
+                total += len(anchors_o)
+                if len(anchors_o) != len(anchors_c):
+                    print(f"  ANCHOR COUNT {doc}: {whole_o} -> {whole_c}; review by hand")
+                    drifted += 1
+                    continue
+
+                # Correct means: the text at the CURRENT anchors is the text the
+                # BASE anchors named.
+                same = all(line_of(base_src[fname], a) == line_of(now_src[fname], a2)
+                           and (b is None) == (b2 is None)
+                           and (b is None or line_of(base_src[fname], b) == line_of(now_src[fname], b2))
+                           for (a, b), (a2, b2) in zip(anchors_o, anchors_c))
+                if same:
+                    continue
+
+                mapped, movable = [], True
+                for (a, b) in anchors_o:
+                    na, nb = maps[fname](a), (maps[fname](b) if b else None)
+                    if na is None or (b is not None and nb is None):
+                        movable = False
+                        break
+                    mapped.append((na, nb))
+
+                drifted += 1
+                if not movable:
+                    unmappable += 1
+                    print(f"  UNMAPPABLE {doc}: {whole_c} "
+                          f"(the cited lines were themselves edited — re-aim by hand)")
+                    continue
+                rebuilt = f"{path_c}:" + ", ".join(
+                    f"{na}-{nb}" if nb else f"{na}" for na, nb in mapped)
+                print(f"  DRIFTED {doc}: {whole_c} -> {rebuilt}")
+                replacements.append((whole_c, rebuilt))
 
         if args.fix and replacements:
             for cur, new in sorted(set(replacements), key=lambda x: -len(x[0])):

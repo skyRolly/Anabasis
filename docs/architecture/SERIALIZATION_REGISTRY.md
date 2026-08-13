@@ -186,9 +186,9 @@ The §5.3 macro-baseline child ADR-0007 gave a per-slot home. **No code path in 
 originates one**: the only constructor of a `BASELINE` tree in the whole repository is the
 test that seeds one (`tests/state_tests.cpp:1657`). The wrapper *adopts* the child from an
 incoming slot or session, *carries* it through A/B, undo and saves
-(`src/PluginProcessor.cpp:776-777, 851, 1208`), and *drops* it where the state it describes
+(`src/PluginProcessor.cpp:776-777, 919, 1276`), and *drops* it where the state it describes
 is replaced — both preset-apply paths and the defaults-based restores
-(`src/PluginProcessor.cpp:1040, 1039, 1053`). So the child is live schema with defined
+(`src/PluginProcessor.cpp:1040, 1107, 1121`). So the child is live schema with defined
 carriage semantics and no producer — a reader must tolerate it, a writer must not invent
 one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
 
