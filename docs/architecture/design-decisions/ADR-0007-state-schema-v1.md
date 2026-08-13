@@ -17,7 +17,7 @@ Three questions, none of them obvious:
 
 1. **Versioning.** Anamorph carries no version number and detects format generations *structurally*
    in `setStateInformation` (root tag, missing child, legacy slot keys, `raw`-vs-`value` fallback)
-   — `Anamorph:src/PluginProcessor.cpp:578-656` [Verified]. It works, and it is a shipped product's
+   — `Anamorph:src/PluginProcessor.cpp:603-681` [Verified]. It works, and it is a shipped product's
    accumulated evidence. Does a greenfield repository copy that, or write a version field it does
    not yet need?
 2. **Placement of the new adaptive/macro state.** The trim vector and the detach mask look global —
@@ -71,7 +71,7 @@ Read rules are structural and tolerant: unknown properties/children ignored, mis
 their default, indices clamped at the read boundary, a foreign root tag or an undecodable blob leaves
 state untouched. A `schemaVersion` greater than 1 is **not** a rejection reason — the reader falls
 back to shape. Remaining root properties follow the copied machinery (live preset name + dirty-star
-baseline, `Anamorph:src/PluginProcessor.cpp:578-656`).
+baseline, `Anamorph:src/PluginProcessor.cpp:603-681`).
 
 Children:
 
@@ -93,7 +93,7 @@ Restore routing differs by consumer, and this is part of the decision:
 - `params` restore through `replaceState` + a synchronous re-assert that prefers `raw`.
 - `frozenTrims` is **audio state**: it restores through the engine-side inject-at-the-duck-bottom
   path — consumed at the forced duck's silent bottom, **by a transport this ADR does not fix**. The
-  `abMatchGain` pattern (`Anamorph:src/PluginProcessor.cpp:528-534` [Verified]) is the starting
+  `abMatchGain` pattern (`Anamorph:src/PluginProcessor.cpp:553-559` [Verified]) is the starting
   point but not the answer: it moves **one** float and the trim vector is **four** scalars
   (`DESIGN.md` §5.4), so the mechanism — *N* parallel sentinel scalars with a stated ordering
   guarantee, or one release/acquire-gated per-slot POD — is `OPEN_QUESTIONS.md` **OQ-013**, a
@@ -154,8 +154,8 @@ must satisfy, not an observation (C2: no number here is a measurement):
   (StateSet widening, A/B + undo unit), §4.3 (`ANABASIS_INTERNAL` inventory), §5.4 (frozen trims per
   slot, learned targets global), §1.3 (planned module inventory), §10 row 0007.
 - Research: `worklogs/2026-07-30-p0-anamorph-research.md`
-- Anamorph precedent [Verified]: `Anamorph:src/PluginProcessor.cpp:578-656` (structural generation
-  detection, no version field, `raw`-then-`value` fallback); `Anamorph:src/PluginProcessor.cpp:528-534`
+- Anamorph precedent [Verified]: `Anamorph:src/PluginProcessor.cpp:603-681` (structural generation
+  detection, no version field, `raw`-then-`value` fallback); `Anamorph:src/PluginProcessor.cpp:553-559`
   (sentinel-atomic inject consumed at the duck's silent bottom); `Anamorph:src/InternalState.h:10-29`
   (host-hidden state rationale); Anamorph ADR-0013 (additive exact `raw` attribute); Anamorph ADR-0010
   (host-hidden `InternalState`); Anamorph ADR-0008 (custom per-A/B-slot undo).

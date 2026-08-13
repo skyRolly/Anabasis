@@ -19,6 +19,16 @@ preset menu's column cap — which widens some menus by up to 8 px; the closed-s
 every control is unchanged. That distinction is the point: "no layout change" would have been the
 convenient sentence and it would have been false.
 
+**New tooling:** `scripts/check-citations.py`, which verifies every `file:line` evidence anchor in
+`docs/` and the root Markdown still points at the text it pointed at in a base revision, and
+re-anchors the ones an edit above them moved. It exists because this round proved the rule cannot be
+held by hand: the anchors were re-anchored once, then TWO later review commits moved code again and
+the docs were not re-run, leaving 42 of 71 stale. Its header states what it cannot do — a citation
+aimed at the wrong code from the start is preserved faithfully, so a clean run means none MOVED, not
+that all are correct. `worklogs/` is out of scope: those records cite the sibling product, including
+by bare file name, and an early version of the script rewrote those upstream anchors against this
+tree's line numbers before the scoping was added.
+
 **New records:** `POSTMORTEMS.md` **INC-005** (the macOS package could report success with nothing
 at the destination); `KNOWN_ISSUES.md` **KI-013** (the shield-absorbed click still counts toward
 the multi-click run) and **KI-014** (macOS press-and-hold suppresses key repeat in the Save Preset

@@ -83,9 +83,14 @@ and say so.
   installed VST3 and only then copied its replacement, so an interruption between the two left
   nothing. The replacement is now a transaction: the new version is staged, the previous one is
   moved aside rather than deleted, and the old copy is discarded only once the new one is in place.
-  Interrupting at any point leaves a working plug-in, and the next run reconciles whatever was left
-  behind. Staging happens outside the folder your DAW scans wherever the filesystem allows it, so a
-  rescan mid-install cannot see a half-written bundle. Evidence: this release. [Verified]
+  Interrupting the run — Ctrl-C, a closed terminal, a logout — leaves a working plug-in, and the
+  next run reconciles whatever was left behind. Two limits, stated rather than implied: a signal
+  no handler can catch (a kill, a power loss) landing in the two-rename window between moving the
+  old bundle aside and moving the new one in leaves the plug-in absent until the installer is run
+  again; and the VST3 and the Standalone are replaced one after the other, so an interruption
+  between them can leave the new plug-in beside the old Standalone. Staging happens outside the
+  folder your DAW scans wherever the filesystem allows it, so a rescan mid-install cannot see a
+  half-written bundle. Evidence: this release. [Verified]
 - **The uninstaller now removes the installer's own leftovers**, by exact name only, so an install
   killed by a signal no handler catches does not survive a deliberate uninstall. Evidence: this
   release. [Verified]

@@ -70,6 +70,14 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
     _in="$1/.anabasis-install-stage"
     _probe="$1/.anabasis-probe"
     $SUDO rm -rf "$_probe" 2>/dev/null || true
+    # NOTE for anyone editing this function: the `rm -rf "$_out"` on the failure
+    # path below is the highest-consequence line in the script, and it is safe
+    # only because of what is above it. `$1` is always one of the two plug-in
+    # directories set in the mode branches, never user input, so `${1%/*}` cannot
+    # expand to something unexpected; the two early returns mean a parked
+    # `Anabasis.vst3.prev` is never the thing being deleted; and the name is
+    # installer-owned. What it DOES remove is any other leftover an aborted run
+    # put there — intended, since the fallback is about to stage somewhere else.
     # An earlier install may have left the previous version parked here; keep
     # using whichever directory holds it so it stays recoverable.
     if [ -d "$_out/Anabasis.vst3.prev" ]; then printf '%s\n' "$_out"; return 0; fi
