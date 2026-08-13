@@ -465,9 +465,43 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // EDITED surface is a real restore — the surface moves back to the preset —
     // and stays a normal undoable step, which is what makes this a test of the
     // STATE rather than of which preset row was clicked.
+    // THE DIRTY DATUM IS COMPARED BY WHAT IT MEANS, NOT BY TREE IDENTITY, and
+    // the reason is that a plain `isEquivalentTo` made this whole feature dead
+    // code in every project opened from a host.
+    //
+    // `resetSlotFieldsToDefaults` INVALIDATES `presetBaseline` on every
+    // `setStateInformation` — deliberately, and the comment there says why: the
+    // datum is not serialized, so a load cannot honestly restore it, and
+    // `presetDirty()` answers false while it is absent. Nothing rebuilds it for
+    // the rest of the session except an apply or a save. So in a restored
+    // session this bracket captures an INVALID `preBaseline`, the apply installs
+    // a VALID one, and invalid-vs-valid is never equivalent: the retraction was
+    // refused exactly in the case the feature exists for — open a project, click
+    // the preset name already showing — leaving the dead step and destroying the
+    // redo line anyway. Both new tests built a FRESH processor, whose
+    // constructor seeds a valid baseline, so neither could see it;
+    // `testANoOpPresetApplyIsNotAUserActionAfterASessionRestore` is the leg that
+    // does, and it fails on the old expression.
+    //
+    // What must match is the DIRTINESS either side, since that is the only thing
+    // this datum is read for. An absent baseline reads clean (`presetDirty()`'s
+    // first line), and the baseline this apply installed is
+    // `presetShapeFromLive()` over a surface the first half has just proved
+    // unmoved — also clean. Same observable state before and after, so nothing
+    // happened that a user could see or undo.
+    //
+    // The datum itself is NOT rolled back, for the same reason the §2.8 forced
+    // duck is not: retraction un-records the bookkeeping, it does not reverse the
+    // apply. The session is left holding a working dirty marker where it had
+    // none, which is strictly better and observably identical.
+    const bool dirtyStateUnchanged
+        = b.preBaseline.isEquivalentTo (presetBaseline)
+       || (! b.preBaseline.isValid()                       // it read CLEAN before…
+           && presetBaseline.isEquivalentTo (presetShapeFromLive()));   // …and clean now
+
     if (! strippedForUndoCompare (b.preSlot)
              .isEquivalentTo (strippedForUndoCompare (saveSlotFromLive()))
-        || ! b.preBaseline.isEquivalentTo (presetBaseline))
+        || ! dirtyStateUnchanged)
         return;                                  // a real restore: the step stands
 
     undoStacks[activeSlot].removeLast();         // exactly what this bracket pushed
@@ -1675,6 +1709,12 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         activeSlot = anabasis::clampAbSlotIndex ((int) ab.getProperty ("active", 0));
         const auto live   = activeSlot     < slots.size() ? slots[activeSlot]     : juce::ValueTree();
         const auto stored = 1 - activeSlot < slots.size() ? slots[1 - activeSlot] : juce::ValueTree();
+        // ADR-0026 (⊕ NOT RATIFIED — the ARCHITECTURE REVIEW GATE IS OPEN on this
+        // rule and the active-slot one below). Both change how a stored session
+        // is INTERPRETED, which `ARCHITECTURE_REVIEW_GATE.md` and
+        // `SESSION_COMPATIBILITY_POLICY.md` rule 1 both class as gated; 0.1.4
+        // implemented them without flagging that, and review caught it.
+        //
         // A SLOT node can be a perfectly valid ValueTree and still carry no
         // usable parameter payload — hand-edited, truncated, or a foreign tree
         // that happens to use the type name. Taking it would split the slot in

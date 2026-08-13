@@ -1,0 +1,114 @@
+# ADR-0026 — A `SLOT` without its parameter payload resolves to defaults, and metadata travels only with the parameters it describes
+
+> **⊕ NOT RATIFIED — THE ARCHITECTURE REVIEW GATE IS OPEN.** This ADR records a decision the owner
+> has **not** taken. It exists because the change it describes was implemented and merged into the
+> 0.1.4 branch **without being flagged as gated**, which is the miss, not the change. Under
+> `ARCHITECTURE_REVIEW_GATE.md` a "Serialization Registry change — any field add/remove/**semantic
+> change**" must not merge on a green build, and `SESSION_COMPATIBILITY_POLICY.md` rule 1 says a
+> field may not "have its meaning changed without an ADR + migration". Both apply here. The 0.1.4
+> round flagged only the ADR-0021 installer amendment and added ADR-0025 for the testing-policy
+> exception; **neither covers this**, and `SESSION_COMPATIBILITY_POLICY.md` was untouched. Found by
+> review, 2026-08-13.
+>
+> **What the owner is being asked to decide** is the read rule below, not whether to keep the code:
+> the "Alternatives" section states exactly what reverting costs and which two lines carry it.
+
+**Status:** Proposed — 2026-08-13. **Not** covered by the standing blanket approval for the
+post-v0.1.0 rounds: that approval is what let implementation proceed, and a gated change is
+precisely the class a green build does not clear.
+
+## Context
+
+Two `SLOT`-reading rules changed in 0.1.4, at `src/PluginProcessor.cpp:1733` (the stored slot) and
+`src/PluginProcessor.cpp:1752` (the active slot). Both were made to close a real defect, pinned by
+`testAMalformedStoredSlotCannotSplitSoundFromMetadata` and
+`testARootlessSurfaceDropsTheActiveSlotsMetadataToo`, and both alter how a stored session is
+INTERPRETED — which is the definition of a semantic change to the registry.
+
+The defect. `applySlotToLive` adopts parameters only when the slot's payload is valid, but adopts
+`presetName`, the ADR-0022 identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK`
+**unconditionally**. A `SLOT` node can be a perfectly valid `ValueTree` and still carry no
+`ANABASIS` child — hand-edited, truncated, or a foreign tree that happens to use the type name.
+Taken as it stood, such a slot put one session's preset NAME and identity on another session's
+SOUND: the A/B switch would show "Ghost Session" over whatever the previous project left in
+`storedSlot`, which is a processor member that survives across restores.
+
+## Decision
+
+1. **A stored `SLOT` carrying no `ANABASIS` child is declined outright**, keeping the `defaultSlot`
+   that `resetSlotFieldsToDefaults()` planted. The whole slot resolves to defaults; no half of it
+   is adopted.
+2. **The ACTIVE slot's metadata is adopted only when the ROOT surface was restored.** The active
+   slot needs no payload test for its SOUND — that comes from the root `ANABASIS`, not from the
+   slot's redundant copy — so the gate is placed on the thing that actually decides whether the
+   labels describe the installed surface.
+
+One rule, stated per slot: **metadata is adopted only alongside the parameters it describes.**
+
+## Consequences
+
+- **A blob with a valid `AB` block under a root with no `ANABASIS` now loads with the DEFAULT
+  name, identity, baseline, frozen trims and an EMPTY detach mask**, where it previously adopted
+  all five.
+- **The §5.3 detach mask is the case that must be looked at rather than waved through.**
+  Detachment is not otherwise recoverable, so dropping it loses user intent, and it is dropped
+  **silently** — there is no load-diagnostics channel to report it on. It is dropped anyway
+  because the alternative loses more: a mask names parameters detached from the MACRO SURFACE, and
+  the surface this restore installed came from defaults, so a kept mask would describe detachments
+  from a mapping the session never had.
+- **The exposure is bounded by there being no producer.** `getStateInformation` always emits the
+  root `ANABASIS` child and always writes a payload into both slots, so no blob this plug-in has
+  ever written takes either path. Reaching them needs a hand-edited, truncated or foreign blob.
+  That bounds the compatibility risk to approximately nothing — **and does not clear the gate**,
+  because the gate is about the class of change, not the size of its blast radius.
+- **The two slots are governed by two different tests, on purpose.** A valid root whose ACTIVE slot
+  has lost its payload still adopts that slot's metadata, since the sound came from the root and
+  both halves came out of the same blob. `SERIALIZATION_REGISTRY.md` §2 states this asymmetry
+  explicitly so it is not read as an oversight.
+
+## Migration
+
+None is owed, and the reason is the pre-ship window rather than a read path: no build carrying
+either behaviour has left this repository (`COMPATIBILITY_POLICY.md` §"When the contract starts"),
+and no blob this plug-in writes reaches either rule. The §4.4 defaults-first read rules ARE the
+migration for anything that does, which is the same mechanism ADR-0015 used.
+
+`SESSION_COMPATIBILITY_POLICY.md` rule 4 (a save → load round-trip reproduces the sound, name,
+identity, dirty marker, both slots, the active slot and any locks) is untouched for every blob the
+plug-in produces, which is what that rule is about.
+
+## Alternatives, and exactly what reverting costs
+
+- **Revert both gates.** Two expressions carry the decision:
+  `stored.getChildWithName ("ANABASIS").isValid()` at `src/PluginProcessor.cpp:1733`, and
+  `live.isValid() && liveSurfaceRestored` at `src/PluginProcessor.cpp:1752`. Removing them restores
+  the pre-0.1.4 reading and re-opens the split-sound-from-metadata defect;
+  `testAMalformedStoredSlotCannotSplitSoundFromMetadata` and
+  `testARootlessSurfaceDropsTheActiveSlotsMetadataToo` are the two tests that would then fail, and
+  the mutant for the first reproduces the defect verbatim (`'Ghost Session'` on another state's
+  sound).
+- **Keep decision 1, revert decision 2.** Coherent: decision 1 closes the reported defect, and
+  decision 2 is the generalisation of the same principle to the other slot. The cost is that the
+  rule stops being one rule — the stored slot would gate on payload and the active slot would gate
+  on nothing — and `SERIALIZATION_REGISTRY.md` would have to describe two unrelated behaviours
+  instead of one principle.
+- **Adopt metadata but mark the session damaged.** Rejected for now only because there is no
+  load-diagnostics channel to mark it ON; if one is ever added, this is the first case that
+  deserves it, and this ADR should be revisited then.
+
+## Verification
+
+- `testAMalformedStoredSlotCannotSplitSoundFromMetadata` — the malformed-slot mutant reproduces the
+  defect verbatim.
+- `testARootlessSurfaceDropsTheActiveSlotsMetadataToo` — the detach mask, name and surface together;
+  the test states why it stops at those three.
+
+## Related code
+- `src/PluginProcessor.cpp:1733` (the stored-slot guard)
+- `src/PluginProcessor.cpp:1752` (the active-slot metadata gate)
+- `src/PluginProcessor.cpp:1689` (the `liveSurfaceRestored` flag both read)
+
+Evidence [Verified]:
+- Source: `src/PluginProcessor.cpp:1733`, `src/PluginProcessor.cpp:1752`
+- Test:   `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
+  `testARootlessSurfaceDropsTheActiveSlotsMetadataToo`

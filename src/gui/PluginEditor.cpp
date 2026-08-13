@@ -716,11 +716,24 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // Both feeders into `openMenus`. Every drop-down and context menu we do not
     // build ourselves arrives through the look-and-feel hook.
     lnf.onPopupMenuWindowCreated = [this] (juce::Component& w) { notePopupMenuOpened (w); };
-    // …and the state half of `drawResizableFrame`'s two-part caller test. The
-    // shield's own condition IS "one of our menus is on screen" — both sources,
-    // the hook above and the preset menu's own counter — so it is reused rather
-    // than tracked a second time and left to disagree with itself.
-    lnf.isPopupMenuOnScreen = [this] { return shieldRaised; };
+    // …and the state half of `drawResizableFrame`'s two-part caller test.
+    //
+    // `presetMenusOpen`, NOT `shieldRaised`, and the difference is the whole
+    // value of the second test. `drawResizableFrame` is only ever reached by a
+    // pop-up PARENTED to this editor: a combo drop-down and a text-editor context
+    // menu are DESKTOP windows, they paint their own frame and never call this
+    // override at all. `shieldRaised` is true for any tracked pop-up, so wiring
+    // it here left the state half satisfied in the many situations where no
+    // parented menu existed — every drop-down in the editor — and the uniform-3px
+    // shape test was then the only thing standing between a
+    // `ResizableBorderComponent` and a silently missing frame. Two tests that are
+    // both true whenever one of them is are not two tests.
+    //
+    // The preset menu is the only parented pop-up this editor builds
+    // (`withParentComponent (this)` in `showPresetMenu`), and `presetMenusOpen`
+    // counts exactly it — so this now says what the comment always claimed:
+    // a menu PARENTED to this editor is on screen.
+    lnf.isPopupMenuOnScreen = [this] { return presetMenusOpen > 0; };
 
     // -- Settings rows (§6.4, all InternalState-bound) -----------------------
     auto& ist = proc.internalState.state();

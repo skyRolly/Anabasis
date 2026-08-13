@@ -1382,6 +1382,101 @@ static void testANoOpPresetApplyIsNotAUserAction()
 // and popping the entry it pushed does not bring that back. Left unfixed,
 // re-clicking the loaded preset quietly shortens how far back a long session
 // can undo, one step per click.
+// ---------------------------------------------------------------------------
+// The restored-session leg of the no-op re-apply, which the two tests above do
+// NOT reach: both build a fresh `AnabasisAudioProcessor`, whose constructor
+// seeds a VALID `presetBaseline`. `setStateInformation` runs
+// `resetSlotFieldsToDefaults`, which deliberately invalidates that datum (the
+// dirty marker is not serialized, so a load cannot honestly restore it), and
+// nothing rebuilds it until the next apply or save. So in every project opened
+// from a host, the bracket captures an INVALID `preBaseline`, the apply installs
+// a VALID one, and the equivalence test in `closePresetUndoBracket` compares
+// invalid against valid — never equivalent — so the retraction is refused and
+// the redo line the push cleared is never re-seated.
+//
+// Open a project, click the preset name that is already showing: redo gone, and
+// an undo step that does nothing. Which is the behaviour 0.1.4 says it fixed.
+static void testANoOpPresetApplyIsNotAUserActionAfterASessionRestore()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+
+    int count = 0;
+    const auto* table = PresetManager::factoryPresets (count);
+    const juce::String applied = table[3].name;
+
+    check (proc.applyFactoryPreset (3), "restoredNoOp: (premise) the preset applies");
+
+    // Round-trip through the HOST path, which is what makes this different from
+    // the fresh-processor legs above.
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    AnabasisAudioProcessor q;
+    q.setStateInformation (blob.getData(), (int) blob.getSize());
+    check (q.currentPresetName() == applied,
+           "restoredNoOp: (premise) the restored session carries the preset's name");
+
+    // Edit → undo, so there IS a redo line to lose.
+    auto* knee = q.apvts.getParameter (pid::compKnee);
+    knee->beginChangeGesture();
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (1.0f));
+    knee->endChangeGesture();
+    q.flushPendingDetach();
+    check (q.canUndo(), "restoredNoOp: (premise) the edit pushed a step");
+    q.undo();
+    check (q.canRedo(), "restoredNoOp: (premise) the undo leaves a redo line");
+
+    // Re-apply the preset that is already loaded, over an unedited surface.
+    check (q.applyFactoryPreset (3), "restoredNoOp: (premise) the same preset re-applies");
+
+    check (q.canRedo(),
+           "restoredNoOp: re-applying the current preset KEEPS the redo line in a RESTORED session");
+
+    // …and minted no step. Read as a DEPTH here rather than behaviourally: a
+    // restore clears the per-slot history, so after edit-then-undo the stack is
+    // legitimately EMPTY and there is nothing beneath a dead step to reach past.
+    // That makes the depth the sharper instrument in this leg — `canUndo()` is
+    // true if and ONLY if the bracket's push survived, which is the defect.
+    check (! q.canUndo(),
+           "restoredNoOp: …and mints no dead step -- the bracket's own push is retracted");
+
+    // The redo line is not merely present, it still carries the edit.
+    const float kneeBefore = q.apvts.getRawParameterValue (pid::compKnee)->load();
+    q.redo();
+    check (! juce::exactlyEqual (q.apvts.getRawParameterValue (pid::compKnee)->load(), kneeBefore),
+           "restoredNoOp: the surviving redo line still restores the edit it was holding");
+
+    // THE OTHER DIRECTION, and it is the one that stops this fix from being a
+    // loosening: in a restored session the baseline half is now satisfied by
+    // construction, so the SURFACE half is the only thing left deciding. A real
+    // restore must still mint its step.
+    AnabasisAudioProcessor r;
+    check (r.applyFactoryPreset (3), "restoredNoOp: (premise) third instance applies it");
+    juce::MemoryBlock blob2;
+    r.getStateInformation (blob2);
+    AnabasisAudioProcessor s;
+    s.setStateInformation (blob2.getData(), (int) blob2.getSize());
+
+    auto* drive = s.apvts.getParameter (pid::clipDrive);
+    const float driveNorm   = drive->getValue();
+    const float driveBefore = s.apvts.getRawParameterValue (pid::clipDrive)->load();
+    drive->beginChangeGesture();
+    drive->setValueNotifyingHost (driveNorm > 0.5f ? driveNorm - 0.4f : driveNorm + 0.4f);
+    drive->endChangeGesture();
+    s.flushPendingDetach();
+    check (std::abs (s.apvts.getRawParameterValue (pid::clipDrive)->load() - driveBefore) > 0.5f,
+           "restoredNoOp: (premise) the edit moved Clip Drive in the restored session");
+
+    check (s.applyFactoryPreset (3), "restoredNoOp: (premise) the preset re-applies over the edit");
+    check (s.canUndo(),
+           "restoredNoOp: re-applying over an EDITED surface is still a real restore, and keeps "
+           "its undo step even though the restored session has no baseline");
+    s.undo();
+    check (std::abs (s.apvts.getRawParameterValue (pid::clipDrive)->load() - driveBefore) > 0.5f,
+           "restoredNoOp: …and that step undoes back to the edit, not past it");
+    juce::ignoreUnused (apvts, count);
+}
+
 static void testANoOpPresetApplyDoesNotEatTheOldestUndoStep()
 {
     // Drains the history to count it — destructive, so it is the last thing done
@@ -7020,6 +7115,7 @@ int main (int argc, char** argv)
         testDetachAndReengageGrammar();
         testUndoIsPerSlotGestureCoalescedAndMaskWide();
         testANoOpPresetApplyIsNotAUserAction();
+        testANoOpPresetApplyIsNotAUserActionAfterASessionRestore();
         testANoOpPresetApplyDoesNotEatTheOldestUndoStep();
         testThePopupShieldActuallyCoversTheEditor();
         testAPopupRowKeepsItsLabelOutOfTheShortcutStrip();

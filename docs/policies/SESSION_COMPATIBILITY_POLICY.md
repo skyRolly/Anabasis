@@ -10,6 +10,16 @@ Subset of `COMPATIBILITY_POLICY.md`. Governs state serialization
    APVTS subtree, the host-hidden session subtree, or the A/B subtree — may be removed or have its
    meaning changed without an ADR + migration.
 
+   *A MEANING change is pending, and the rule caught it late rather than early:* **ADR-0026**
+   records 0.1.4's two `SLOT` read rules — a slot carrying no `ANABASIS` child resolves to defaults
+   as a whole, and the active slot's metadata is adopted only when the ROOT surface was restored.
+   That is a semantic change to how a stored session is interpreted, so this rule and
+   `ARCHITECTURE_REVIEW_GATE.md` both apply; it was implemented **without being flagged as gated**
+   and is marked ⊕ NOT RATIFIED with the gate OPEN until the owner decides. No blob this plug-in
+   writes reaches either rule, which bounds the exposure and does not clear the gate. The lesson
+   for the next reader is the one this line exists to carry: the change looked like a bug fix, and
+   a bug fix that alters what a stored session MEANS is exactly what rule 1 is about.
+
    *Exercised once, pre-ship:* **ADR-0015** removes `int_meterTargets` from `ANABASIS_INTERNAL`,
    with the §4.4 defaults-first read rules as the migration. That ADR also records the condition
    that closes the pre-ship window — the first build that leaves this repository — after which

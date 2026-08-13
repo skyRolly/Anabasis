@@ -289,16 +289,33 @@ for pid in $COMPONENT_IDS; do
     esac
   done
 
-  # `<upgrade-bundle>` is pkgbuild's default AND what we pin explicitly, so it
-  # must be present on both arms; its absence anywhere is a real regression.
-  for arm in ON OFF; do
-    eval "probe=\$PROBE_$arm"
-    case "$probe" in
-      *'<upgrade-bundle><bundle'*) ;;
-      *) probe_fail "$pid" "$( [ "$arm" = ON ] && echo defaults || echo patched )" \
-             "no '<upgrade-bundle><bundle' — BundleOverwriteAction=upgrade is not reaching PackageInfo" ;;
-    esac
-  done
+  # `<upgrade-bundle>` gets the SAME per-component classification as the two
+  # above, and the reason is the finding that produced that classification in the
+  # first place: `pkgbuild --analyze` does not treat every bundle type alike, and
+  # this block once assumed it did for `<relocate>`.
+  #
+  # The two arms are not the same kind of claim, so they are not asserted the
+  # same way:
+  #
+  #   * OFF / patched is OUR component plist. `BundleOverwriteAction=upgrade` is
+  #     written there explicitly, so its absence is a real regression in the thing
+  #     this script exists to guarantee — HARD FAIL, on every component.
+  #   * ON / defaults is PKGBUILD'S default for this bundle type. Demanding it
+  #     asserts something about Apple's tool, not about us. If a future macOS
+  #     stops defaulting it for a `.vst3` or a `.component` — exactly what turned
+  #     out to be true of `<relocate>` for those two types — the build would fail
+  #     outright on a toolchain change rather than on a defect here. Logged, not
+  #     failed.
+  case "$PROBE_OFF" in
+    *'<upgrade-bundle><bundle'*) ;;
+    *) probe_fail "$pid" patched \
+           "no '<upgrade-bundle><bundle' — BundleOverwriteAction=upgrade is not reaching PackageInfo from OUR component plist" ;;
+  esac
+  case "$PROBE_ON" in
+    *'<upgrade-bundle><bundle'*) ;;
+    *) echo "note: [$pid] pkgbuild's defaults emit no '<upgrade-bundle><bundle' for this bundle" \
+            "type; our component plist supplies it, which the patched arm above proves" >&2 ;;
+  esac
 
   [ "$live" -gt 0 ] \
     || probe_fail "$pid" defaults "no membership list is falsifiable for this bundle type — the A/B establishes nothing about this component"

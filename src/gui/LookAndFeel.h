@@ -190,9 +190,16 @@ public:
     // to avoid, arriving through the override itself.
     //
     // What survives both tests: a resizable component with a 3 px uniform
-    // border repainting WHILE a menu is on screen. Narrow enough to name rather
-    // than defend against, and it is named in `DEPENDENCY_POLICY.md`'s
-    // JUCE-internals register so the next pin move re-reads it.
+    // border repainting WHILE A MENU PARENTED TO THE EDITOR IS OPEN. That is the
+    // predicate the editor now supplies (`presetMenusOpen > 0`), and it is worth
+    // stating what it used to be: `shieldRaised`, which is true for ANY tracked
+    // pop-up — including every combo drop-down, none of which can reach this
+    // override, since a desktop pop-up paints its own frame. Under that wiring
+    // the state half was satisfied through most of the editor's pop-up life and
+    // the shape test was carrying the discrimination alone. Narrow enough now to
+    // name rather than defend against, and it is named in
+    // `DEPENDENCY_POLICY.md`'s JUCE-internals register so the next pin move
+    // re-reads it.
     std::function<bool()> isPopupMenuOnScreen;
     void drawResizableFrame (juce::Graphics& g, int w, int h,
                              const juce::BorderSize<int>& border) override

@@ -99,8 +99,8 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 827 = 1123 checks green**, up 84 on 0.1.3's
-1039 — nine new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 840 = 1136 checks green**, up 97 on 0.1.3's
+1039 — ten new state tests (`testANoOpPresetApplyIsNotAUserAction`,
 `testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
 `testThePopupShieldActuallyCoversTheEditor`,
@@ -108,22 +108,23 @@ the X11/XTEST probe recorded under `worklogs/` for KI-012).
 `testTheResizableFrameOverrideDiscriminatesItsCallers`,
 `testEveryComboMenuFitsItsControl`,
 `testARootlessSurfaceDropsTheActiveSlotsMetadataToo`,
-`testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel`), each mutation-verified against its own
+`testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel`,
+`testANoOpPresetApplyIsNotAUserActionAfterASessionRestore`), each mutation-verified against its own
 deliberately reverted fix and against no other. `testPresetIdentitySharedName` also gained the leg
 that closes the last uncovered corner of the undo compare: with no ADR-0022 trio on either slot —
 a pre-ADR-0022 session — `presetName` is the SOLE discriminator, and nothing asserted that
 direction, so the name could have been stripped from `strippedForUndoCompare` with every test
 still green.
 
-**Four** of those eight exist because a review round found defects the first cut shipped, and all
-four are worth recording as coverage lessons rather than quietly fixed. The shield was **added,
+**Five** of those ten exist because a review round found defects the first cut shipped, and all
+five are worth recording as coverage lessons rather than quietly fixed. The shield was **added,
 sized nowhere, and therefore inert**: every part of the mechanism — z-order, interception toggle,
 menu bookkeeping — was correct while the component had empty bounds, so no click could ever reach
 it. Geometry is the one property of that component a headless test CAN read, and there was no test
 reading it. The second was a **vacuous first attempt**: the undo-depth test originally re-applied
 the preset after editing, which is a real restore, so it never entered the retraction path it
 claimed to cover and passed against the reverted fix. It is now a control/subject pair, and the
-mutant separates them by exactly one step (127 vs 128). The third is the sharpest of the four:
+mutant separates them by exactly one step (127 vs 128). The third is the sharpest of the five:
 a pop-up row's two right-hand furniture cases were covered by **`jassert`s declaring them
 unreachable**, which is not coverage at all — `jassert` compiles out of every shipped build, so the
 declaration bound only the developer, and the look-and-feel also serves menus this editor does not
@@ -133,8 +134,27 @@ the old drawing. An assertion that a case cannot happen is a claim about callers
 in the neighbouring override: `drawResizableFrame` is reached by two unrelated JUCE callers and
 told them apart by a MAGIC NUMBER — a border of `getPopupMenuBorderSize()` on all four sides — so
 a future `ResizableBorderComponent` with a 3 px drag zone would have silently lost the frame the
-override exists to protect. It now also asks the editor whether a menu is on screen at all, and
-the test pins both halves: each is killed by its own mutant, on different assertions.
+override exists to protect. It now also asks the editor whether a menu PARENTED TO THIS EDITOR is
+on screen, and the test pins both halves: each is killed by its own mutant, on different
+assertions. (A later round narrowed that second half again: it was first wired to `shieldRaised`,
+which is true for any tracked pop-up including every combo drop-down — and a drop-down is a desktop
+window that never reaches this override. Two tests that are both true whenever one of them is are
+not two tests; it now reads `presetMenusOpen > 0`.)
+
+**The fifth is the one that cost the most and is the most worth reading**, because the test and the
+fix were both correct and the feature was still dead in the field. The no-op preset re-apply shipped
+with two tests, both mutation-verified, both building a FRESH `AnabasisAudioProcessor` — whose
+constructor seeds a valid `presetBaseline`. `setStateInformation` deliberately INVALIDATES that
+datum (it is not serialized, so a load cannot honestly restore it) and nothing rebuilds it until the
+next apply or save, so in every project opened from a host the retraction's dirty-datum comparison
+was invalid-against-valid: never equivalent, always refused. The feature worked in exactly the
+session shape the tests constructed and in no other. The lesson is not "add a restore case" but the
+sharper one: **a fixture that a processor can only be in for the first few seconds of its life is
+not the state the code runs in.** `setStateInformation` is the entry point for nearly every real
+session, and a test suite that never passes through it is testing a constructor. The comparison now
+tests what the datum MEANS (did the slot read clean either side?) rather than tree identity, and
+`testANoOpPresetApplyIsNotAUserActionAfterASessionRestore` fails on the old expression while the
+fresh-processor legs still pass — which is what shows the fix is a widening and not a loosening.
 
 **The round-7 finding is the one that reframes this whole file's citations.** An audit of every
 tracked `file:line` anchor in the governed documents found that MOST had been aimed at the wrong

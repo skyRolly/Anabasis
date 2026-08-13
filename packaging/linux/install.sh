@@ -403,18 +403,6 @@ echo "  Standalone -> $BIN_DIR/Anabasis"
 #     set" and a non-zero exit — reporting failure for a run that had succeeded.
 #     `user_as` carries the answer instead, empty on this path because the
 #     account is the one already reading the message.
-user_home=''
-user_as=''
-if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
-    if command -v getent >/dev/null 2>&1; then
-        user_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-    fi
-    [ -n "$user_home" ] || user_home="/home/$SUDO_USER"
-    user_as=" as $SUDO_USER"
-elif [ "$(id -u)" -ne 0 ]; then
-    user_home="${HOME:-}"          # elevated per-operation; $HOME is still ours
-fi
-
 # The subshell is the structural half of that fix, and it is worth more than the
 # variable was. Everything above this line has already happened: the payload is
 # installed and `trap -` has released the rollback. Nothing after that point is
@@ -422,7 +410,29 @@ fi
 # `|| true` on a plain command or a function — the shell exits regardless. It is
 # containable inside a subshell, which is what this is. An advisory that cannot
 # run correctly should print nothing and cost nothing, not fail the install.
+#
+# EVERYTHING THE ADVISORY NEEDS IS COMPUTED INSIDE IT, and that placement is the
+# point rather than a tidiness. The `user_home` lookup used to sit outside, past
+# the point of no return, and was safe only by accident: `getent … | cut -d: -f6`
+# takes the PIPELINE's status from `cut`, which exits 0 even when `getent` fails
+# or matches nothing. Remove `cut` from the image and that assignment returns 127,
+# `set -e` fires, and a completed install exits non-zero — the exact failure this
+# subshell was introduced to prevent, reintroduced two lines above it. Inside, the
+# invariant is structural: nothing here can decide the exit status, whatever any
+# of these tools does.
 (
+    user_home=''
+    user_as=''
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        if command -v getent >/dev/null 2>&1; then
+            user_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        fi
+        [ -n "$user_home" ] || user_home="/home/$SUDO_USER"
+        user_as=" as $SUDO_USER"
+    elif [ "$(id -u)" -ne 0 ]; then
+        user_home="${HOME:-}"      # elevated per-operation; $HOME is still ours
+    fi
+
     if [ -n "$user_home" ]; then
         _uv="$user_home/.vst3/Anabasis.vst3"
         _ua="$user_home/.local/bin/Anabasis"
