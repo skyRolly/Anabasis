@@ -186,3 +186,40 @@ Evidence [Verified]:
   heading into the release notes; the new form extracts exactly the intended section in both
   directions.
 - `.github/workflows/release.yml` parses (`yaml.safe_load`).
+
+## Amendment ⊕ — the Linux installer is two-mode, and item 1's "root-checked" no longer describes it (2026-08-13)
+
+**⊕ NOT RATIFIED. This amendment records a contradiction that already exists in the tree; it does
+not clear a gate.** `CLAUDE.md` lists "conflict with an Accepted ADR" as a hard stop, and
+§Decision item 1 is an Accepted decision. The amendment is written because the alternative is
+worse — an ADR outranks descriptive documentation (`SOURCE_OF_TRUTH.md`), so leaving it silent
+means the highest-authority record in the repository states a contract the shipped script does not
+have. The owner's ratification is what turns this from a reported drift into a decision.
+
+**What item 1 says.** `linux/{INSTALL.txt,install.sh,uninstall.sh}` install "VST3 →
+`/usr/lib/vst3`, standalone → `/usr/local/bin`, **root-checked**".
+
+**What the installer does since 0.1.4.** It is two-mode and chooses interactively. The DEFAULT is a
+**per-user** install needing no root at all — VST3 → `~/.vst3`, standalone → `~/.local/bin` — and
+the system-wide destinations above are the second option, reached by answering `2` or by running
+the script as root. There is no root check to fail: a non-root run is the normal path, and the
+system branch elevates individual operations with `sudo` rather than demanding the whole script be
+privileged. `uninstall.sh` mirrors both modes.
+
+**Why the behaviour changed.** `~/.vst3` is the standard per-user VST3 folder and is scanned by
+most DAWs, so the common case never needed root; requiring it was the sibling's shape inherited
+unexamined. The 0.1.4 migration replaced the delete-then-copy installer with a transaction, and
+making the default unprivileged is the larger part of what removes risk from it — an installer that
+does not need root cannot misuse it. That reasoning is the owner's to accept or reject; it is
+recorded here rather than argued in a script comment.
+
+**What else in this record the change touches.** The "Still unverified" note above says the Linux
+scripts "have not been EXECUTED as root anywhere". That is now partly out of date in the useful
+direction: the 0.1.4 rounds exercised fresh, upgrade, interrupted-recovery, uninstall, duplicate-
+warning and staging-refusal paths against a redirected destination, in both modes. What remains
+unexercised is a real root run against the real `/usr/lib/vst3` on a distribution system.
+
+**If the owner rejects this**, the change to revert is the mode prompt and the per-user branch, not
+the transaction — the staging/park-aside/reconcile machinery is orthogonal to which destination is
+the default. See `POSTMORTEMS.md` INC-006 for why the staging location in that machinery is a trust
+boundary rather than a matter of taste.

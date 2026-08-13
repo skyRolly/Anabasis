@@ -99,11 +99,8 @@ fi
 
 # An EXISTING staging directory is adopted only if this run could have created
 # it: owned by the identity whose writes land in the destination, not a symlink,
-# and writable by nobody else. Both candidates are inside trees only that
-# identity can write today, so this check is defence in depth rather than the
-# primary defence — but it is what makes the safety structural instead of a
-# property of two paths someone might later add a third beside. Fails CLOSED:
-# anything it cannot determine is refused.
+# and writable by nobody else. Fails CLOSED — anything it cannot determine is
+# refused, including `stat` being unavailable.
 stage_dir_is_adoptable() {      # $1 = candidate, $2 = uid that must own it
     [ -e "$1" ] || return 0     # absent — we are about to create it ourselves
     [ -L "$1" ] && return 1     # a symlink could aim the whole transaction elsewhere
@@ -117,6 +114,46 @@ stage_dir_is_adoptable() {      # $1 = candidate, $2 = uid that must own it
     return 0
 }
 
+# Creates a staging directory with a mode `stage_dir_is_adoptable` will accept.
+# The explicit `chmod` is the whole point: `mkdir` inherits the umask, so on a
+# user-private-group system (`umask 002`) the directory lands at 775 —
+# group-writable — and the NEXT run refuses the very directory THIS run created,
+# then falls through to whatever comes after. A test its own creator fails is not
+# a test, it is a trap; this makes the creator's output satisfy it.
+make_stage_dir() {              # $1 = directory
+    $SUDO mkdir -p "$1" 2>/dev/null || return 1
+    $SUDO chmod 700 "$1" 2>/dev/null || return 1
+    return 0
+}
+
+# The same-filesystem test, factored out because BOTH the recovery scan and the
+# creation loop need it. The final step of the install is `mv`, and `mv` is
+# atomic only WITHIN a filesystem; across one it degrades to copy-then-delete,
+# which is the partially-written-bundle window this whole script exists to close.
+# A hard link from the candidate INTO the destination directory is the cheapest
+# true test of "same filesystem" there is.
+stage_dir_is_same_filesystem() {    # $1 = candidate, $2 = probe path in the destination
+    $SUDO rm -f "$1/.probe" "$2" 2>/dev/null || true
+    if $SUDO touch "$1/.probe" 2>/dev/null && $SUDO ln "$1/.probe" "$2" 2>/dev/null; then
+        $SUDO rm -f "$1/.probe" "$2" 2>/dev/null || true
+        return 0
+    fi
+    $SUDO rm -f "$1/.probe" "$2" 2>/dev/null || true
+    return 1
+}
+
+# Prints the staging directory and returns 0, or returns NON-ZERO having printed
+# nothing. The caller must check, and both callers do.
+#
+# IT USED TO END IN AN UNGATED `printf`, which is worth spelling out because the
+# comment above it claimed the opposite. When both candidates were refused it
+# returned the second one anyway — so a directory just judged untrustworthy was
+# used as the staging area, `reconcile` then `mv`-ed whatever `Anabasis.vst3.prev`
+# it contained into place AS ROOT, and root copied the payload into a directory
+# the script had already decided it did not own. That is INC-006's adoption path
+# reached through the fallback instead of through `/var/tmp`, in a function
+# documenting itself as failing closed. It now fails closed for real: no
+# trustworthy candidate means no install.
 choose_stage_dir() {            # $1 = plug-in directory; prints the stage directory
     _probe="$1/.anabasis-probe"
     $SUDO rm -rf "$_probe" 2>/dev/null || true
@@ -125,43 +162,39 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
     # invoking user otherwise.
     if [ "$mode" = system ]; then _owner=0; else _owner=$(id -u); fi
 
-    # NOTE for anyone editing this function: the `rm -rf` on the reject path
-    # below is the highest-consequence line in the script. It is safe because
-    # BOTH conditions hold — the basename is installer-owned so the path can only
-    # ever name a directory this script makes, AND `stage_dir_is_adoptable` has
-    # just established that anything already there belongs to the installing
-    # identity. The name alone was never enough: it says what a path is called,
-    # not who controls it.
+    # Adding a candidate here means adding it to `remove_install_scratch` in
+    # `uninstall.sh` too, or an interrupted install survives an uninstall.
     #
     # RECOVERY FIRST: an earlier install may have parked the previous version in
     # either candidate, and whichever holds it must be the one used, or
-    # `reconcile` cannot put it back. A candidate that fails the adoption test is
-    # skipped here too — a `.prev` in a directory we do not trust is bait, not a
-    # backup.
-    for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
-        if stage_dir_is_adoptable "$_c" "$_owner" && [ -d "$_c/Anabasis.vst3.prev" ]; then
-            printf '%s\n' "$_c"; return 0
-        fi
-    done
-    # Adding a candidate here means adding it to `remove_install_scratch` in
-    # `uninstall.sh` too, or an interrupted install survives an uninstall.
+    # `reconcile` cannot put it back. Gated on the SAME two tests as creation —
+    # trust, then same-filesystem. The probe used to be skipped here on the
+    # reasoning that a `.prev` can only have been parked by a run that already
+    # passed it; true today, and an induction that a third candidate or an
+    # externally-created `.prev` would break silently. Running it is cheaper than
+    # relying on that.
     for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
         stage_dir_is_adoptable "$_c" "$_owner" || continue
-        if $SUDO mkdir -p "$_c" 2>/dev/null \
-           && $SUDO touch "$_c/.probe" 2>/dev/null \
-           && $SUDO ln "$_c/.probe" "$_probe" 2>/dev/null
-        then
-            $SUDO rm -f "$_c/.probe" "$_probe" 2>/dev/null || true
+        [ -d "$_c/Anabasis.vst3.prev" ] || continue
+        stage_dir_is_same_filesystem "$_c" "$_probe" || continue
+        printf '%s\n' "$_c"
+        return 0
+    done
+
+    for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
+        stage_dir_is_adoptable "$_c" "$_owner" || continue
+        make_stage_dir "$_c" || continue
+        if stage_dir_is_same_filesystem "$_c" "$_probe"; then
             printf '%s\n' "$_c"
             return 0
         fi
-        $SUDO rm -f "$_c/.probe" "$_probe" 2>/dev/null || true
-        $SUDO rm -rf "$_c" 2>/dev/null || true
+        # `rmdir`, never `rm -rf`. This only ever names a directory we just
+        # created or already trusted, and rmdir declines a non-empty one — so a
+        # rejected candidate holding someone's staged files keeps them instead of
+        # having root delete them. Tidiness lost this argument in INC-006.
+        $SUDO rmdir "$_c" 2>/dev/null || true
     done
-    # The last candidate is inside the destination directory itself, so reaching
-    # here means even that could not be created or could not be trusted. The
-    # install fails at the next step with a message about the real problem.
-    printf '%s\n' "$1/.anabasis-install-stage"
+    return 1
 }
 
 # Puts back the previous version if an install was interrupted, then clears the
@@ -215,14 +248,20 @@ if [ "$mode" = user ]; then
     VST3_DEST="$VST3_DIR/Anabasis.vst3"
 
     mkdir -p "$VST3_DIR" "$BIN_DIR"
-    STAGE_DIR="$(choose_stage_dir "$VST3_DIR")"
+    STAGE_DIR="$(choose_stage_dir "$VST3_DIR")" || {
+        echo "error: no usable staging directory beside $VST3_DIR." >&2
+        echo "       One is present but is a symlink, owned by another account, or writable" >&2
+        echo "       by others — this installer will not stage a privileged copy there." >&2
+        echo "       Inspect and remove ~/.anabasis-install-stage, then re-run." >&2
+        exit 1
+    }
     STAGE_VST3="$STAGE_DIR/Anabasis.vst3"
     PREV_VST3="$STAGE_DIR/Anabasis.vst3.prev"
     STAGE_APP="$BIN_DIR/.Anabasis.new"
 
     reconcile
     arm_traps
-    mkdir -p "$STAGE_DIR"
+    make_stage_dir "$STAGE_DIR"
 
     cp -R "$VST3_SRC" "$STAGE_VST3"
     cp "$APP_SRC" "$STAGE_APP"
@@ -280,14 +319,21 @@ BIN_DIR="$SYS_BIN_DIR"
 VST3_DEST="$VST3_DIR/Anabasis.vst3"
 
 priv mkdir -p "$VST3_DIR" "$BIN_DIR"
-STAGE_DIR="$(choose_stage_dir "$VST3_DIR")"
+STAGE_DIR="$(choose_stage_dir "$VST3_DIR")" || {
+    echo "error: no usable staging directory beside $VST3_DIR." >&2
+    echo "       One is present but is a symlink, owned by another account, or writable" >&2
+    echo "       by others — this installer will not stage a privileged copy there." >&2
+    echo "       Inspect and remove ${VST3_DIR%/*}/.anabasis-install-stage and" >&2
+    echo "       $VST3_DIR/.anabasis-install-stage, then re-run." >&2
+    exit 1
+}
 STAGE_VST3="$STAGE_DIR/Anabasis.vst3"
 PREV_VST3="$STAGE_DIR/Anabasis.vst3.prev"
 STAGE_APP="$BIN_DIR/.Anabasis.new"
 
 reconcile
 arm_traps
-priv mkdir -p "$STAGE_DIR"
+make_stage_dir "$STAGE_DIR" || { echo "System installation failed: cannot create $STAGE_DIR" >&2; exit 1; }
 
 priv cp -R "$VST3_SRC" "$STAGE_VST3"
 priv cp "$APP_SRC" "$STAGE_APP"

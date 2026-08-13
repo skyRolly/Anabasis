@@ -328,6 +328,16 @@ private:
     // background, and forever if a window is never deleted. Each repetition is
     // individually harmless; doing it once is the point.
     bool orphanDismissDone = false;
+    // Consecutive 24 Hz ticks on which `presetMenusOpen` claimed an open menu
+    // while no child of this editor was modal. `openMenus` self-heals — its
+    // entries are SafePointers the tick prunes — and this counter had no
+    // equivalent: it moves only in `showPresetMenu` and in the completion
+    // callback, so a callback that never arrived would strand `shieldRaised`
+    // true and leave the whole editor unclickable, which is the ONE failure the
+    // shield's own comment says it must not have. Two ticks of grace, because a
+    // single tick can legitimately land in the window between `exitModalState`
+    // and the callback, and the healthy path must keep its exact timing.
+    int  presetMenuGhostTicks = 0;
     void stepMicroAnims (double dt);
     void registerAnimated (juce::Component&);
     // Seeds the VALUE-derived animation properties (`vpos`, `onA`) for every

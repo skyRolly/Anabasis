@@ -60,8 +60,13 @@ locally on `origin/main` and failed CI on nine anchors for exactly that reason.
 
 ```bash
 python3 scripts/check-citations.py --check                 # origin/main
-python3 scripts/check-citations.py --check --base HEAD     # what CI will use on the next push
+python3 scripts/check-citations.py --check --base @{u}     # what CI will use on the next push
 ```
+
+`@{u}` is the upstream tip — the commit you are pushing ON TOP OF, which is exactly what
+`github.event.before` will be. `--base HEAD` is only the same thing while the drifting edits are
+still uncommitted; once they are committed it means "compare the tree against itself", which is
+clean by construction and tells you nothing.
 
 Three limits are worth knowing before trusting a clean run, all of them stated in the script's
 header:

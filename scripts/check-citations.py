@@ -152,7 +152,7 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.h:431-439"),
     ("docs/architecture/THREAD_MODEL.md",
-     "src/gui/PluginEditor.h:566"),
+     "src/gui/PluginEditor.h:576"),
     ("docs/architecture/design-decisions/ADR-0013-release-trim-reaches-auto-poles.md",
      "src/dsp/AnabasisEngine.cpp:518-520"),
     ("docs/architecture/design-decisions/ADR-0014-frozen-trim-restore.md",

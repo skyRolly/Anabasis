@@ -1927,6 +1927,34 @@ void AnabasisAudioProcessorEditor::timerCallback()
     for (auto* c : allCombos)
         c->getProperties().set ("hov", c->isMouseOver (true));
 
+    // Self-heal for the preset menu's MANUAL count, before the shield is asked
+    // what it wants. Nothing here can fix a lost decrement retroactively, so the
+    // test is on the world rather than on the bookkeeping: if this editor has no
+    // modal child, no preset menu is on screen, whatever the counter says.
+    if (presetMenusOpen > 0)
+    {
+        bool anyModal = false;
+        for (auto* child : getChildren())
+            if (child->isCurrentlyModal (false))
+            {
+                anyModal = true;
+                break;
+            }
+        if (anyModal)
+        {
+            presetMenuGhostTicks = 0;
+        }
+        else if (++presetMenuGhostTicks >= 2)
+        {
+            presetMenusOpen      = 0;
+            presetMenuGhostTicks = 0;
+        }
+    }
+    else
+    {
+        presetMenuGhostTicks = 0;
+    }
+
     // Pop-up housekeeping. `refreshPopupShield` is the backstop that recovers a
     // shield left raised by a window that died without notice; the orphan check
     // is the one that acts on the two ways a pop-up can be stranded.
