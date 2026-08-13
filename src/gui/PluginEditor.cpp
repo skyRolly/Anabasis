@@ -2543,14 +2543,34 @@ void AnabasisAudioProcessorEditor::dismissTrackedPopupMenus()
     // the user has open in a DIFFERENT instance of this plug-in — which is
     // precisely the alternative `showPresetMenu`'s own comment records as worse
     // than parenting, so reinstating it here would have undone that decision.
+    // SNAPSHOT THE CHILD LIST, for the same reason the loop above snapshots
+    // `openMenus`, and it is a different mechanism rather than the same one
+    // twice. `Component::exitModalState` calls
+    // `ModalComponentManager::bringModalComponentsToFront()`, which calls
+    // `toFront` on every still-registered modal component — and `toFront`
+    // REORDERS the parent's child array in place. Iterating `getChildren()` live
+    // therefore walks an array that the body of the loop can permute, which
+    // classically skips an element or visits one twice.
+    //
+    // Safe today by arithmetic rather than by design: the preset menu is the only
+    // `withParentComponent (this)` pop-up this editor builds, so at most one
+    // child is ever modal, and a single-element reorder is not a reorder. A
+    // second parented modal child — a confirmation sheet, a second menu — makes
+    // it reachable. Copying costs one small array and removes the dependency
+    // entirely, which is the same trade the first loop already took.
+    juce::Array<juce::Component::SafePointer<juce::Component>> modalChildren;
     for (auto* child : getChildren())
+        if (child->isCurrentlyModal (false))
+            modalChildren.add (child);
+
+    for (auto& safe : modalChildren)
     {
-        if (! child->isCurrentlyModal (false))
-            continue;
-        juce::Component::SafePointer<juce::Component> safe (child);
-        child->exitModalState (0);
-        if (auto* stillThere = safe.getComponent())
-            stillThere->setVisible (false);   // same reason as above
+        if (auto* w = safe.getComponent())
+        {
+            w->exitModalState (0);
+            if (auto* stillThere = safe.getComponent())
+                stillThere->setVisible (false);   // same reason as above
+        }
     }
 }
 

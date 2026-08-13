@@ -196,7 +196,10 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
         echo "warning: a previous version of the plug-in is parked in" >&2
         echo "         $_c/Anabasis.vst3.prev," >&2
         echo "         but that directory is no longer usable for staging, so this run cannot" >&2
-        echo "         put it back. It is left untouched; './uninstall.sh' removes it." >&2
+        echo "         put it back. It is left untouched. To recover it, make that directory" >&2
+        echo "         usable again (it must be a real directory you own, not writable by" >&2
+        echo "         others) and re-run this installer. './uninstall.sh' DELETES it rather" >&2
+        echo "         than restoring it, so run it second, not first." >&2
     done
 
     for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
@@ -294,6 +297,13 @@ if [ "$mode" = user ]; then
     PREV_VST3="$STAGE_DIR/Anabasis.vst3.prev"
     STAGE_APP="$BIN_DIR/.Anabasis.new"
 
+    # ORDER IS LOAD-BEARING, and neither line says so on its own. `reconcile`
+    # ends in an UNCONDITIONAL `rmdir "$STAGE_DIR"`, so this pre-install call
+    # DELETES the directory `choose_stage_dir` just created and validated — and
+    # `make_stage_dir` below is what puts it back. Moving `make_stage_dir` above
+    # `reconcile`, or dropping it on the reasonable-looking assumption that
+    # `choose_stage_dir` already created the directory, leaves `cp -R` writing
+    # into a path that does not exist.
     reconcile
     arm_traps
     make_stage_dir "$STAGE_DIR" || {
@@ -365,6 +375,10 @@ STAGE_VST3="$STAGE_DIR/Anabasis.vst3"
 PREV_VST3="$STAGE_DIR/Anabasis.vst3.prev"
 STAGE_APP="$BIN_DIR/.Anabasis.new"
 
+# Same load-bearing order as the per-user branch above: `reconcile` ends in an
+# unconditional `rmdir "$STAGE_DIR"`, so it removes the directory
+# `choose_stage_dir` created and `make_stage_dir` below recreates it. Do not
+# reorder these two, and do not drop the `make_stage_dir` call.
 reconcile
 arm_traps
 make_stage_dir "$STAGE_DIR" || { echo "System installation failed: cannot create $STAGE_DIR" >&2; exit 1; }

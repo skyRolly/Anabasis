@@ -413,6 +413,16 @@ AnabasisAudioProcessor::PresetUndoBracket AnabasisAudioProcessor::openPresetUndo
     // Reconcile FIRST: `pushUndoStep` would do it anyway, and a load-driven
     // clear happening between the capture and the push would make `redoBefore`
     // describe a session that is no longer loaded.
+    // COST, stated because it is not free and the preset ring can drive it: a
+    // bracketed apply now takes TWO `saveSlotFromLive()` calls — this one for the
+    // pre-state, and one in `closePresetUndoBracket` for the compare — where the
+    // pre-0.1.4 path took one. Each reaches `copyStateWithRaw()` →
+    // `apvts.copyState()`, which takes the APVTS `CriticalSection` (M1 in
+    // `KNOWN_ISSUES.md` KI-011). No new lock-order edge: both run on the message
+    // thread from the editor's own click handlers, never from inside a parameter
+    // listener holding M0, so KI-011's inversion is unchanged. The second copy is
+    // inherent to the feature — deciding whether an apply changed anything means
+    // reading the surface after it, and the pre-state cannot answer that.
     syncHistory();
     PresetUndoBracket b;
     b.preSlot     = saveSlotFromLive();
@@ -494,6 +504,20 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // duck is not: retraction un-records the bookkeeping, it does not reverse the
     // apply. The session is left holding a working dirty marker where it had
     // none, which is strictly better and observably identical.
+    // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
+    // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
+    // before calling this (`:1482` in `applyFactoryPreset`, `:1538` in
+    // `applyPresetFile`), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
+    // cannot currently be false and the whole arm collapses to
+    // `! b.preBaseline.isValid()`. It is written out anyway, and not as decoration:
+    // it is a GUARD ON THAT SEEDING. The arm's claim is "the slot read clean
+    // before AND reads clean now"; the first half is what an invalid baseline
+    // means, and the second half is the part that would silently stop being true
+    // if a future path closed the bracket without settling the datum first — at
+    // which point this would start retracting steps over a surface whose marker
+    // disagreed with it. Written as a tautology it costs one tree compare on a
+    // message-thread path; written as `! b.preBaseline.isValid()` it would cost
+    // the next reader the whole argument.
     const bool dirtyStateUnchanged
         = b.preBaseline.isEquivalentTo (presetBaseline)
        || (! b.preBaseline.isValid()                       // it read CLEAN before…
