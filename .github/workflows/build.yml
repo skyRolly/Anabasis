@@ -186,17 +186,39 @@ jobs:
       # commits in the same round moved code again, and 42 of 71 were stale
       # before anyone noticed. This is that rule as a gate.
       #
-      # It compares against the merge base rather than a fixed ref, so a branch
-      # is judged on the drift IT introduces, not on drift it inherited.
+      # WHAT IT COMPARES AGAINST, precisely — the comment here used to say
+      # "the merge base" and neither branch of the shell below computed one.
+      #
+      #   * pull_request: `base.sha` is the BASE BRANCH TIP at the time the event
+      #     fired, not the point the branch left it. Judging against the tip
+      #     charges this branch for every anchor the base moved since it forked,
+      #     so the tip is fed to `git merge-base` and the fork point is the base.
+      #     `fetch-depth: 0` above is what makes that resolvable.
+      #   * push: `event.before` is the branch's PREVIOUS TIP. On the first push
+      #     of a branch it is all-zeros; after a FORCE-PUSH it names a commit
+      #     that may no longer exist in the repository at all, and `git show`
+      #     against a missing object fails every file — which the script reports
+      #     as "nothing to check against" and exits 2, a red gate that says
+      #     nothing about the documents. Both cases are tested for and fall back
+      #     to `HEAD~1`, which under-checks (one commit of drift) rather than
+      #     failing on a question it cannot answer.
       - name: Check documentation evidence anchors
         run: |
           set -euo pipefail
           BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
-          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            # A merge base exists only when the two share history; a force-push
+            # that rewrote the fork point can leave them disjoint.
+            BASE="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+          else
+            BASE=''
+          fi
+          if [ -z "$BASE" ]; then
             BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+            echo "::notice::No usable base revision for this event; falling back to $BASE"
           fi
           echo "Comparing evidence anchors against $BASE"
-          python3 scripts/check-citations.py --base "$BASE"
+          python3 scripts/check-citations.py --check --base "$BASE"
 
   # -------------------------------------------------------------------------
   # Pre-P1 guard. This repository is currently a scaffold: the governance docs,

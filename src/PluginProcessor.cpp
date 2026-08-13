@@ -1209,9 +1209,33 @@ juce::ValueTree AnabasisAudioProcessor::slotWithLiveAdvancedMode (const juce::Va
     return copy;
 }
 
+// PRECONDITION, stated here because the code below does not enforce it and the
+// consequence of breaking it is silent: `slot` must carry a valid `ANABASIS`
+// child. The parameters are adopted only when that child is valid, but the
+// name, preset identity, macro baseline, frozen trims and detach mask are
+// adopted UNCONDITIONALLY — so a payload-less tree relabels whatever sound is
+// currently live with this slot's metadata. Sound from one session wearing the
+// name of another is not a state this plug-in may reach.
+//
+// The invariant is established at the two places a slot tree can enter the
+// processor from outside, and nowhere else is needed because there is no other
+// producer:
+//
+//   * `setStateInformation` declines a stored SLOT whose `ANABASIS` child is
+//     missing, leaving `resetSlotFieldsToDefaults`'s copy of `defaultSlot` — a
+//     complete tree — in `storedSlot`. That is the guard `switchToSlot`'s
+//     `applySlotToLive (storedSlot)` relies on.
+//   * The undo/redo stacks are written only by `saveSlotFromLive`, which always
+//     emits the full shape.
+//
+// The assertion is kept, unlike the ones removed from `drawPopupMenuItem`,
+// because the argument here comes from three call sites inside this file rather
+// than from a framework that is entitled to pass anything: a failure is a bug
+// in this class, which is exactly what `jassert` is for.
 void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced)
 {
     const auto params = slot.getChildWithName ("ANABASIS");
+    jassert (params.isValid());
     if (params.isValid())
     {
         // View-tier parameters never travel with a slot (the shared

@@ -54,7 +54,7 @@ There are **two formats**, deliberately different in fidelity (ADR-0007 option H
 `copyXmlToBinary` (`src/PluginProcessor.cpp:1136-1192`). Structure, in write order:
 
 ```
-AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, PluginProcessor.cpp:7)
+AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, src/PluginProcessor.cpp:7)
 ├── ANABASIS                      the APVTS tree — the LIVE parameter surface
 │   └── PARAM ×50                 id · value (denormalised) · raw (normalised double, additive)
 │                                 (×49 until 0.1.1 — ADR-0019 ADDED compStereoLink, an
@@ -186,9 +186,11 @@ The §5.3 macro-baseline child ADR-0007 gave a per-slot home. **No code path in 
 originates one**: the only constructor of a `BASELINE` tree in the whole repository is the
 test that seeds one (`tests/state_tests.cpp:1657`). The wrapper *adopts* the child from an
 incoming slot or session, *carries* it through A/B, undo and saves
-(`src/PluginProcessor.cpp:776-777, 919, 1276`), and *drops* it where the state it describes
-is replaced — both preset-apply paths and the defaults-based restores
-(`src/PluginProcessor.cpp:1040, 1107, 1121`). So the child is live schema with defined
+(`src/PluginProcessor.cpp:1054-1055, 1276, 1699` — `saveSlotFromLive`, `applySlotToLive`,
+`setStateInformation`), and *drops* it where the state it describes
+is replaced — both preset-apply paths and the defaults-based restore
+(`src/PluginProcessor.cpp:1397, 1472, 1503` — `applyFactoryPreset`, `applyPresetFile`,
+`resetSlotFieldsToDefaults`). So the child is live schema with defined
 carriage semantics and no producer — a reader must tolerate it, a writer must not invent
 one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
 
@@ -274,8 +276,8 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 | `schemaVersion` > 1 | **Not a rejection** — the reader falls back to shape. A future contributor adding a version gate to the read path is reversing ADR-0007 (its §Consequences says exactly this) |
 | Missing `ANABASIS` child | **Defaults**, not "keep live" — a valid root that omits the surface means the default surface |
 | Missing `ANABASIS_INTERNAL` / missing fields | Defaults first, overlay what exists (§1.6) |
-| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1614-1625`) |
-| `SLOT` present but carrying **no `ANABASIS` child** | **The whole slot resolves to defaults**, and the two slots reach that by different routes because they are not symmetric. The STORED slot is declined outright and keeps the `defaultSlot` planted by `resetSlotFieldsToDefaults()`, because `storedSlot` is a processor member that survives across restores — accepting a payload-less tree there would leave the PREVIOUS project's sound under this project's name, since `applySlotToLive` adopts parameters only when the payload is valid but adopts `presetName`, the identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally. The ACTIVE slot needs no such test for its sound (that comes from the ROOT `ANABASIS`, not from the slot's redundant copy), so instead its METADATA is adopted only when the root surface was actually restored — otherwise the surface came from defaults and the labels would describe a sound that was never installed. One rule, stated per slot: **metadata is adopted only alongside the parameters it describes** (`src/PluginProcessor.cpp:1605` the flag, `:1643-1644` the stored-slot guard, `:1662` the active-slot gate; pinned by `testAMalformedStoredSlotCannotSplitSoundFromMetadata`) |
+| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1638-1649`) |
+| `SLOT` present but carrying **no `ANABASIS` child** | **The whole slot resolves to defaults**, and the two slots reach that by different routes because they are not symmetric. The STORED slot is declined outright and keeps the `defaultSlot` planted by `resetSlotFieldsToDefaults()`, because `storedSlot` is a processor member that survives across restores — accepting a payload-less tree there would leave the PREVIOUS project's sound under this project's name, since `applySlotToLive` adopts parameters only when the payload is valid but adopts `presetName`, the identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally. The ACTIVE slot needs no such test for its sound (that comes from the ROOT `ANABASIS`, not from the slot's redundant copy), so instead its METADATA is adopted only when the root surface was actually restored — otherwise the surface came from defaults and the labels would describe a sound that was never installed. One rule, stated per slot: **metadata is adopted only alongside the parameters it describes** (`src/PluginProcessor.cpp:1629` the flag, `:1643-1644` the stored-slot guard, `:1662` the active-slot gate; pinned by `testAMalformedStoredSlotCannotSplitSoundFromMetadata`) |
 | Unknown properties/children anywhere | Ignored, and **not** preserved on re-save (the writer emits the schema, not the input) |
 | Out-of-range values | Clamped at the read boundary (`raw` to [0,1]; indices through their clamps; trims per-field finite-checked in `injectTrims`; `int_uiScale` to the ladder) |
 

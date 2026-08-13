@@ -82,7 +82,7 @@ A **session load is one latency event, not six**: `InternalState::replaceFrom` b
 whole read behind `ScopedLatencyBatch`, so the reported figure never walks through the
 default (Off) value mid-load (`src/InternalState.h` — the batch's own comment; pinned by
 `testLatencyNotifyIsBatchedAcrossARead`). `setStateInformation` ends with one further,
-deliberately redundant `updateLatency()` (`src/PluginProcessor.cpp:1343`) — belt-and-braces
+deliberately redundant `updateLatency()` (`src/PluginProcessor.cpp:1766`) — belt-and-braces
 for the rest of the restore body, a no-op because `setLatencySamples` skips an unchanged
 figure, and documented at the site as exactly that: the host still sees at most one PDC
 change per load.

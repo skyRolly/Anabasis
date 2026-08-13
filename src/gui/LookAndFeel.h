@@ -13,6 +13,26 @@ namespace abgui
 //  background, a restrained cool accent gradient, modern thin-arc knobs, no
 //  skeuomorphism (no wood, brushed metal or vintage VU meters).
 // ============================================================================
+// Pop-up row geometry, in ONE place because THREE readers have to agree about
+// it: `getIdealPopupMenuItemSize` decides how wide JUCE makes the menu,
+// `drawPopupMenuItem` decides how much of that width the label actually gets,
+// and `state_tests.cpp` reconstructs both to check they do not overlap. When the
+// measurement allowed less than the drawing spent, JUCE sized the menu to the
+// smaller number and clipped the longest row with an ellipsis; sharing the
+// constants is what stops the two drifting apart again.
+namespace menuMetrics
+{
+    constexpr float padX       = 12.0f;  // left AND right inset of the row's text area
+    constexpr float tickGutter = 14.0f;  // reserved at the left whether or not the row is ticked
+    constexpr float chrome     = padX * 2.0f + tickGutter;
+    constexpr int   minimumRow = 64;     // floor; sits just above the chrome so it cannot
+                                         // widen a pop-up past the control that opened it
+    constexpr float inactive   = 0.4f;   // the disabled alpha `drawButtonText` already uses
+    constexpr float dim        = 0.88f;  // an enabled, unhighlighted row
+    constexpr float shortcutPt = 11.0f;  // the shortcut's own, smaller type size
+    constexpr float shortcutGap = 8.0f;  // breathing room between label and shortcut
+}
+
 namespace colours
 {
     const juce::Colour bg        { 0xff0e1014 };

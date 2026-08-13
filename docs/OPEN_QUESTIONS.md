@@ -164,7 +164,7 @@ The original entry follows as the record of why this needed deciding.
 a sentinel-valued atomic consumed at the forced duck's silent bottom" (the `abMatchGain` pattern).
 That phrase is **singular**, but the vector is **four** scalars — release, stereo-link,
 sidechain-HPF and dynamic-tilt trims (`DESIGN.md` §5.4, ADR-0005 decision item 10). The precedent it
-names carries one float (`Anamorph:src/PluginProcessor.cpp:553-559` [Verified]). So the mechanism is
+names carries one float (`Anamorph:src/PluginProcessor.cpp:485-491` [Verified]). So the mechanism is
 under-specified exactly where it stops being a copy.
 
 **Why it needs deciding rather than inferring.** The two readings differ in correctness, not style:

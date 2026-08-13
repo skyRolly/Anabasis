@@ -3562,6 +3562,92 @@ static void testThePopupShieldActuallyCoversTheEditor()
            "shieldBounds: the shield tracks the editor's frame across a resize");
 }
 
+// A pop-up row that carries a shortcut must not draw its LABEL underneath the
+// shortcut. Before this, `drawPopupMenuItem` drew the label across the full text
+// rectangle and then the shortcut right-aligned over the same rectangle, so a
+// label long enough to fill the row put glyphs under the shortcut's; the case was
+// declared unreachable by a pair of `jassert`s, which compile out of every
+// shipped build and made a supported JUCE feature a debug-only hard stop instead
+// of something the row could render.
+//
+// The check is pixel-level and needs no eye: render the row twice with the SAME
+// shortcut, once with a long label and once with none, and compare only the strip
+// the shortcut occupies. If the label stays out of that strip the two are
+// identical; if it intrudes they cannot be. The strip's geometry comes from
+// `menuMetrics`, the same constants the drawing spends, so the test cannot agree
+// with a number the code has stopped using.
+static void testAPopupRowKeepsItsLabelOutOfTheShortcutStrip()
+{
+    using namespace abgui;
+    AnabasisLookAndFeel lf;
+
+    constexpr int   w = 220, h = 23;
+    const juce::String shortcut ("CTRL+SHIFT+ALT+K");
+    const juce::String longLabel ("Compressor Release Time Constant Override");
+
+    auto renderRow = [&] (const juce::String& text)
+    {
+        juce::Image img (juce::Image::ARGB, w, h, true);
+        juce::Graphics g (img);
+        lf.drawPopupMenuItem (g, { 0, 0, w, h },
+                              /*isSeparator*/ false, /*isActive*/ true,
+                              /*isHighlighted*/ false, /*isTicked*/ false,
+                              /*hasSubMenu*/ false, text, shortcut, nullptr, nullptr);
+        return img;
+    };
+
+    // The rectangle `drawPopupMenuItem` hands the shortcut, reconstructed from
+    // the shared constants: the row less its insets, less the tick gutter, then
+    // the right-hand strip the shortcut's own smaller type needs.
+    auto textArea = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h)
+                        .reduced (menuMetrics::padX, 0.0f);
+    textArea.removeFromLeft (menuMetrics::tickGutter);
+    juce::GlyphArrangement ga;
+    ga.addLineOfText (lf.getPopupMenuFont().withHeight (menuMetrics::shortcutPt),
+                      shortcut, 0.0f, 0.0f);
+    const auto strip = textArea.removeFromRight (
+                           juce::jmin (ga.getBoundingBox (0, -1, true).getWidth()
+                                           + menuMetrics::shortcutGap,
+                                       textArea.getWidth() * 0.5f));
+    check (strip.getWidth() > 4.0f,
+           "menuShortcut: (premise) the shortcut strip is a real region to compare");
+
+    const auto withLabel = renderRow (longLabel);
+    const auto bare      = renderRow ({});
+
+    const auto probe = strip.getSmallestIntegerContainer()
+                           .getIntersection (juce::Rectangle<int> (0, 0, w, h));
+    check (! probe.isEmpty(), "menuShortcut: (premise) the strip lies inside the row");
+
+    int differing = 0;
+    for (int y = probe.getY(); y < probe.getBottom(); ++y)
+        for (int x = probe.getX(); x < probe.getRight(); ++x)
+            if (withLabel.getPixelAt (x, y) != bare.getPixelAt (x, y))
+                ++differing;
+
+    check (differing == 0,
+           "menuShortcut: a long label leaves the shortcut's strip untouched "
+           "(it is reserved before the label is drawn, not painted over)");
+
+    // The premise the comparison rests on: this label really is long enough to
+    // have reached the strip. Without it, a row whose label fit anyway would pass
+    // while proving nothing.
+    juce::GlyphArrangement label;
+    label.addLineOfText (lf.getPopupMenuFont(), longLabel, 0.0f, 0.0f);
+    check (label.getBoundingBox (0, -1, true).getWidth() > textArea.getWidth(),
+           "menuShortcut: (premise) the label overflows the space left beside the shortcut");
+
+    // And the sub-menu chevron renders rather than aborting — the other case the
+    // removed assertions forbade.
+    juce::Image sub (juce::Image::ARGB, w, h, true);
+    {
+        juce::Graphics g (sub);
+        lf.drawPopupMenuItem (g, { 0, 0, w, h }, false, true, true, true,
+                              /*hasSubMenu*/ true, longLabel, {}, nullptr, nullptr);
+    }
+    check (sub.getWidth() == w, "menuShortcut: a sub-menu row renders");
+}
+
 static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
 {
     AnabasisAudioProcessor proc;
@@ -6597,6 +6683,7 @@ int main (int argc, char** argv)
         testANoOpPresetApplyIsNotAUserAction();
         testANoOpPresetApplyDoesNotEatTheOldestUndoStep();
         testThePopupShieldActuallyCoversTheEditor();
+        testAPopupRowKeepsItsLabelOutOfTheShortcutStrip();
         testAMalformedStoredSlotCannotSplitSoundFromMetadata();
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();

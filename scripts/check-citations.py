@@ -16,13 +16,31 @@
 #      pointed at in a base revision, and move it back onto that text. That
 #      catches the whole class of "an edit above shifted it".
 #    * It CANNOT tell you a citation was aimed at the wrong code to begin with.
-#      Preserving content identity faithfully preserves a pre-existing mistake,
-#      and one such case is why this file's header says so out loud rather than
-#      leaving the next reader to assume `--check` clean means every citation is
-#      correct. It means none of them MOVED.
+#      Preserving content identity faithfully preserves a pre-existing mistake —
+#      and it does so INVISIBLY, in a DRIFTED line that reads like a repair. Two
+#      anchors in this repository were wrong before this file existed
+#      (`SERIALIZATION_REGISTRY.md` §1.4's `BASELINE` carriage sites, and
+#      `LATENCY_MODEL.md`'s redundant `updateLatency()` call); this tool moved
+#      both, correctly, onto the same unrelated code they had always named. Both
+#      are now spelled with the FUNCTION beside the line number, which is the
+#      only part of a citation a reader can check without the tool. A clean run
+#      does not mean every citation is correct. It means none of them MOVED.
 #
-#  Exit codes follow the sibling scripts: 0 clean · 1 drift found (`--check`)
-#  · 2 the check itself could not run.
+#  WHAT IT WILL NOT TOUCH, and why that list is the important part. This tool
+#  rewrites line numbers, so every citation it misclassifies as ours is a
+#  citation it CORRUPTS — it replaces a correct anchor with a wrong one and
+#  reports success. It has done exactly that once already (see `classify()`), so
+#  the ownership test is now deliberately narrow: a citation is ours only when
+#  it names its path from THIS repository's root, with no revision or checkout
+#  qualifier in front of it, and that path is one of `TRACKED` verbatim.
+#  Everything else — a bare file name, a sibling-product path, a `<rev>:`-pinned
+#  anchor — is left alone. Under-checking costs coverage; misclassifying costs
+#  the truth of the document, which is the thing being protected.
+#
+#  Usage:  --check (the default) reports drift · --fix re-anchors it.
+#  Exit codes follow the sibling scripts: 0 clean · 1 drift found (--check only)
+#  · 2 the run could not reach a trustworthy answer (nothing to check against,
+#  or --fix left anchors that need a human).
 # ============================================================================
 
 import argparse
@@ -31,49 +49,104 @@ import re
 import subprocess
 import sys
 
-# The sources whose line anchors are worth tracking: the ones the architecture
-# documents actually cite. A file absent here is simply not checked.
-TRACKED = {
-    "PluginProcessor.cpp": "src/PluginProcessor.cpp",
-    "PluginProcessor.h":   "src/PluginProcessor.h",
-    "PluginEditor.cpp":    "src/gui/PluginEditor.cpp",
-    "PluginEditor.h":      "src/gui/PluginEditor.h",
-    "LookAndFeel.cpp":     "src/gui/LookAndFeel.cpp",
-    "LookAndFeel.h":       "src/gui/LookAndFeel.h",
-    "state_tests.cpp":     "tests/state_tests.cpp",
-    "dsp_tests.cpp":       "tests/dsp_tests.cpp",
-    "AnabasisEngine.cpp":  "src/dsp/AnabasisEngine.cpp",
-}
+# The sources whose line anchors are worth tracking, spelled EXACTLY as a
+# citation must spell them to be checked. A file absent here is not checked; a
+# path that differs from the spelling here — including the sibling product's
+# `src/PluginEditor.cpp` against our `src/gui/PluginEditor.cpp` — is not ours.
+TRACKED = (
+    "src/PluginProcessor.cpp",
+    "src/PluginProcessor.h",
+    "src/gui/PluginEditor.cpp",
+    "src/gui/PluginEditor.h",
+    "src/gui/LookAndFeel.cpp",
+    "src/gui/LookAndFeel.h",
+    "src/dsp/AnabasisEngine.cpp",
+    "tests/state_tests.cpp",
+    "tests/dsp_tests.cpp",
+)
 
-# A citation is `<path>:<line>` or `<path>:<start>-<end>`. The path is captured
-# WITH whatever directory prefix precedes it, because a bare file name is
-# ambiguous across repositories: the P0 research worklog cites the sibling
-# product as `/home/user/Anamorph/src/PluginEditor.cpp:286-295`, and matching on
-# the file name alone re-anchored those UPSTREAM anchors against THIS tree's line
-# numbers — corrupting a historical record to fix a problem it does not have.
-# `classify()` below is what decides a citation is ours.
 # A citation is `<path>:<line>`, `<path>:<start>-<end>`, or a COMPOUND list that
 # names the path once and then several anchors: `<path>:708-709, 851, 1208`. The
-# trailing group is what an earlier version of this file missed — it re-anchored
+# trailing group is what an early version of this file missed — it re-anchored
 # the first anchor and left the bare numbers behind it untouched, which produced
 # `:1040, 1039, 1053` in this repository: out of order and internally
 # contradictory, from a tool whose whole job is keeping anchors true.
+#
+# Two parts of this pattern exist ONLY to stop the tool rewriting somebody
+# else's line numbers, and both are load-bearing:
+#
+#   * The leading lookbehind refuses to start a match in the middle of a token.
+#     Without it, `<checkout>:src/PluginProcessor.cpp:485-491` simply matched
+#     from `src/…` — the qualifier never reached the ownership test — and the
+#     anchor was rewritten by THIS tree's code movement onto lines of another
+#     product that contain something else entirely. Rejecting the match is not
+#     enough on its own either: the scan would just retry one character later
+#     and match `rc/PluginProcessor.cpp`. The lookbehind blocks every one of
+#     those restarts, because each is preceded by a path or word character.
+#   * `<prefix>` therefore CAPTURES the qualifier — a checkout name, or a pinned
+#     revision such as `7686204:` — so `classify()` can see it and decline.
+#
+# The path must contain a directory separator. A bare `PluginProcessor.cpp:7` is
+# ambiguous across checkouts by construction — the architecture documents use a
+# bare name as shorthand for "the file I have been quoting", which inside a
+# paragraph about another product means that product's file — and no amount of
+# context-reading fixes that here. Citations in this repository's own documents
+# are spelled from the root, which is what makes them checkable.
 CITATION = re.compile(
-    r"(?P<path>[\w./\\-]*\b\w+\.\w+):"
+    r"(?<![\w./\\:-])"
+    r"(?:(?P<prefix>[\w.@-]+):)?"
+    r"(?P<path>[\w.-]+(?:[/\\][\w.-]+)+):"
     r"(?P<anchors>\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)*)")
 ANCHOR = re.compile(r"(\d+)(?:-(\d+))?")
 
-# A citation belongs to this repository only if its path is repo-relative (or
-# bare) — never if it is rooted somewhere else.
-FOREIGN_ROOT = re.compile(r"(^|[/\\])(Anamorph|home|Users|usr|opt|tmp)([/\\]|$)", re.I)
+# Citations this repository RE-AIMED on purpose: the anchor was pointing at the
+# wrong code and was moved onto the right code, which is indistinguishable from
+# drift by the base-text test and would otherwise fail the gate forever.
+# Declaring one here is a reviewable act — it appears in the diff, beside the
+# document it exempts, and it is the only way to make this tool accept a
+# re-aim. An entry whose citation no longer differs from the base has done its
+# job (the base has caught up) and is reported as removable on the next run.
+#
+# Spelled `set([...])` rather than `{...}` on purpose: emptying a brace literal
+# leaves a DICT, and the set difference below then raises `TypeError` instead of
+# reporting a clean run. The list going empty is the expected end state of every
+# entry here, so it must be the boring case.
+DELIBERATE_REAIMS = set([
+    # 0.1.4 review round 5: `updateLatency()` at the end of `setStateInformation`.
+    # The anchor was mis-aimed before this tool existed, and the tool dutifully
+    # moved it onto the same unrelated line it had always named.
+    #
+    # The other re-aim of that round — `SERIALIZATION_REGISTRY.md` §1.4's
+    # `BASELINE` carriage and drop sites — needs no entry, and the reason is
+    # worth knowing before adding one here: it was re-SPELLED as well as
+    # re-aimed, so no base citation matches it and there is nothing to compare
+    # against. Only a re-aim that keeps its shape reaches this list.
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:1766"),
+])
 
 
-def owned_by_this_repo(path: str) -> bool:
-    if path.startswith(("/", "\\")) or FOREIGN_ROOT.search(path):
-        return False
-    # `src/gui/PluginEditor.cpp`, `PluginEditor.cpp` and `../src/x.cpp` are ours;
-    # anything naming another checkout is not.
-    return True
+def classify(prefix, path):
+    """The tracked path this citation names, or None if it is not ours.
+
+    A citation qualified by anything — another checkout, or a pinned revision
+    such as `7686204:` — is NOT about this working tree's current line numbers,
+    and rewriting it is destroying evidence rather than maintaining it. That is
+    not a hypothetical: it happened, to 27 anchors across `DESIGN.md`, five ADRs
+    and `OPEN_QUESTIONS.md`, including the ADR-0016 table whose heading says in
+    as many words that it was read from the pre-change tree.
+
+    Requiring the path to be `TRACKED` verbatim is what makes an explicit
+    foreign-root test unnecessary: a path from another checkout does not match
+    this repository's own layout, so it is declined for the same reason a typo
+    would be — this tool only ever rewrites the nine files it knows.
+    """
+    if prefix:
+        return None
+    if path.startswith(("/", "\\")):
+        return None
+    norm = path.replace("\\", "/")
+    return norm if norm in TRACKED else None
 
 
 def git_show(ref, path):
@@ -92,16 +165,15 @@ def line_of(lines, n):
 
 
 def citations(text):
-    """(whole matched string, path, file name, [(start, end|None), ...])"""
+    """(whole matched string, tracked path, span, [(start, end|None), ...])"""
     out = []
     for m in CITATION.finditer(text):
-        path = m.group("path")
-        name = os.path.basename(path.replace("\\", "/"))
-        if name not in TRACKED or not owned_by_this_repo(path):
+        tracked = classify(m.group("prefix"), m.group("path"))
+        if tracked is None:
             continue
         anchors = [(int(a.group(1)), int(a.group(2)) if a.group(2) else None)
                    for a in ANCHOR.finditer(m.group("anchors"))]
-        out.append((m.group(0), path, name, anchors))
+        out.append((m.group(0), tracked, m.span(), anchors))
     return out
 
 
@@ -135,13 +207,12 @@ def build_line_map(base, path):
 
 
 # `worklogs/` is deliberately OUT of scope. Those files are research records
-# about the SIBLING product, and they cite it both fully qualified
-# (`/home/user/Anamorph/src/PluginEditor.cpp:797-800`) and, in the same bullet,
-# by bare file name as shorthand for the same upstream file. A bare name there
-# means "the file I have been quoting", not a file in this tree, so re-anchoring
-# them against these line numbers would rewrite a historical record to match code
-# it was never about. The governed documents — `docs/` and the root Markdown —
-# are the ones whose citations point here.
+# about the SIBLING product, and they cite it both fully qualified (an absolute
+# path into that checkout, `…/src/PluginEditor.cpp:797-800`) and, in the same
+# bullet, by bare file name as shorthand for the same file. The ownership test
+# above now declines both shapes anyway; the exclusion stays as the cheap,
+# explicit statement of intent, so a future loosening of that test cannot reach
+# these files by accident.
 EXCLUDED_PREFIXES = ("worklogs/",)
 
 
@@ -159,16 +230,33 @@ def doc_files():
     return out
 
 
+def apply_edits(text, edits):
+    """Substitute by SPAN, right to left.
+
+    Never by string. `str.replace` matches a prefix: with `src/PluginProcessor.cpp:107`
+    drifted to `:130` and `src/PluginProcessor.cpp:1076` still correct, replacing
+    the first by text turns the second into `src/PluginProcessor.cpp:1306` —
+    corrupting a citation that had nothing wrong with it. Spans come from the
+    match that produced them, so each rewrite lands on exactly its own citation.
+    """
+    for start, end, new in sorted(edits, key=lambda e: -e[0]):
+        text = text[:start] + new + text[end:]
+    return text
+
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description="Verify documentation evidence anchors.")
     ap.add_argument("--base", default="origin/main",
                     help="revision the citations were last verified against")
-    ap.add_argument("--fix", action="store_true",
-                    help="re-anchor drifted citations instead of only reporting")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true",
+                      help="report drifted citations (the default)")
+    mode.add_argument("--fix", action="store_true",
+                      help="re-anchor drifted citations instead of only reporting")
     args = ap.parse_args()
 
     base_src, now_src = {}, {}
-    for name, path in TRACKED.items():
+    for path in TRACKED:
         if not os.path.exists(path):
             continue
         b = git_show(args.base, path)
@@ -176,16 +264,17 @@ def main():
             print(f"check-citations: {path} does not exist at {args.base}; skipping",
                   file=sys.stderr)
             continue
-        base_src[name] = b
-        now_src[name] = read(path).split("\n")
+        base_src[path] = b
+        now_src[path] = read(path).split("\n")
 
     if not base_src:
         print(f"check-citations: nothing to check against {args.base}", file=sys.stderr)
         return 2
 
-    maps = {n: build_line_map(args.base, TRACKED[n]) for n in base_src}
+    maps = {p: build_line_map(args.base, p) for p in base_src}
 
     total = drifted = fixed = unmappable = 0
+    used_reaims = set()
     for doc in doc_files():
         base_text = subprocess.run(["git", "show", f"{args.base}:{doc}"],
                                    capture_output=True, text=True)
@@ -204,34 +293,40 @@ def main():
         # reference in the base with the Nth in the current file survives both.
         by_path_old, by_path_cur = {}, {}
         for c in old_cites:
-            by_path_old.setdefault(c[2], []).append(c)
+            by_path_old.setdefault(c[1], []).append(c)
         for c in cur_cites:
-            by_path_cur.setdefault(c[2], []).append(c)
+            by_path_cur.setdefault(c[1], []).append(c)
 
-        replacements = []
-        for fname, olds in by_path_old.items():
-            if fname not in base_src:
+        edits = []
+        for tracked, olds in by_path_old.items():
+            if tracked not in base_src:
                 continue
-            curs = by_path_cur.get(fname, [])
+            curs = by_path_cur.get(tracked, [])
             if len(curs) != len(olds):
-                # A change set is allowed to ADD or REMOVE citations — this round
-                # adds a read-rule row — so a count change is not itself a
-                # failure. Ordinal pairing is no longer meaningful, though, so
-                # fall back to the conservative check: every base citation whose
-                # spelling is still present must still be correct. A citation
-                # that was re-spelled or removed is beyond what this can judge,
-                # and a NEW one has nothing to drift from.
-                for (whole_o, _po, _fo, anchors_o) in olds:
-                    if whole_o not in text:
+                # A change set is allowed to ADD or REMOVE citations, so a count
+                # change is not itself a failure. Ordinal pairing is no longer
+                # meaningful, though, so fall back to the conservative check:
+                # every base citation whose spelling is still present must still
+                # be correct. A citation that was re-spelled or removed is beyond
+                # what this can judge, and a NEW one has nothing to drift from.
+                still = {}
+                for (whole_c, _t, span_c, _a) in curs:
+                    still.setdefault(whole_c, []).append(span_c)
+                for (whole_o, _t, _span_o, anchors_o) in olds:
+                    spans = still.get(whole_o)
+                    if not spans:
                         continue
                     total += len(anchors_o)
-                    if all(line_of(base_src[fname], a) == line_of(now_src[fname], a)
-                           and (b is None or line_of(base_src[fname], b) == line_of(now_src[fname], b))
+                    if all(line_of(base_src[tracked], a) == line_of(now_src[tracked], a)
+                           and (b is None or line_of(base_src[tracked], b) == line_of(now_src[tracked], b))
                            for (a, b) in anchors_o):
+                        continue
+                    if (doc, whole_o) in DELIBERATE_REAIMS:
+                        used_reaims.add((doc, whole_o))
                         continue
                     mapped, movable = [], True
                     for (a, b) in anchors_o:
-                        na, nb = maps[fname](a), (maps[fname](b) if b else None)
+                        na, nb = maps[tracked](a), (maps[tracked](b) if b else None)
                         if na is None or (b is not None and nb is None):
                             movable = False
                             break
@@ -242,16 +337,16 @@ def main():
                         print(f"  UNMAPPABLE {doc}: {whole_o} "
                               f"(the cited lines were themselves edited — re-aim by hand)")
                         continue
-                    rebuilt = f"{_po}:" + ", ".join(
+                    rebuilt = f"{tracked}:" + ", ".join(
                         f"{na}-{nb}" if nb else f"{na}" for na, nb in mapped)
                     print(f"  DRIFTED {doc}: {whole_o} -> {rebuilt}")
-                    replacements.append((whole_o, rebuilt))
-                print(f"check-citations: note — {doc} now has {len(curs)} `{fname}` "
+                    edits += [(s, e, rebuilt) for (s, e) in spans]
+                print(f"check-citations: note — {doc} now has {len(curs)} `{tracked}` "
                       f"citation(s) where {args.base} had {len(olds)}; the added ones are "
                       f"not checkable against that base.")
                 continue
 
-            for (whole_o, _po, _fo, anchors_o), (whole_c, path_c, _fc, anchors_c) in zip(olds, curs):
+            for (whole_o, _to, _so, anchors_o), (whole_c, _tc, span_c, anchors_c) in zip(olds, curs):
                 total += len(anchors_o)
                 if len(anchors_o) != len(anchors_c):
                     print(f"  ANCHOR COUNT {doc}: {whole_o} -> {whole_c}; review by hand")
@@ -260,16 +355,20 @@ def main():
 
                 # Correct means: the text at the CURRENT anchors is the text the
                 # BASE anchors named.
-                same = all(line_of(base_src[fname], a) == line_of(now_src[fname], a2)
+                same = all(line_of(base_src[tracked], a) == line_of(now_src[tracked], a2)
                            and (b is None) == (b2 is None)
-                           and (b is None or line_of(base_src[fname], b) == line_of(now_src[fname], b2))
+                           and (b is None or line_of(base_src[tracked], b) == line_of(now_src[tracked], b2))
                            for (a, b), (a2, b2) in zip(anchors_o, anchors_c))
                 if same:
                     continue
 
+                if (doc, whole_c) in DELIBERATE_REAIMS:
+                    used_reaims.add((doc, whole_c))
+                    continue
+
                 mapped, movable = [], True
                 for (a, b) in anchors_o:
-                    na, nb = maps[fname](a), (maps[fname](b) if b else None)
+                    na, nb = maps[tracked](a), (maps[tracked](b) if b else None)
                     if na is None or (b is not None and nb is None):
                         movable = False
                         break
@@ -281,17 +380,25 @@ def main():
                     print(f"  UNMAPPABLE {doc}: {whole_c} "
                           f"(the cited lines were themselves edited — re-aim by hand)")
                     continue
-                rebuilt = f"{path_c}:" + ", ".join(
+                rebuilt = f"{tracked}:" + ", ".join(
                     f"{na}-{nb}" if nb else f"{na}" for na, nb in mapped)
                 print(f"  DRIFTED {doc}: {whole_c} -> {rebuilt}")
-                replacements.append((whole_c, rebuilt))
+                edits.append((span_c[0], span_c[1], rebuilt))
 
-        if args.fix and replacements:
-            for cur, new in sorted(set(replacements), key=lambda x: -len(x[0])):
-                text = text.replace(cur, new)
+        if args.fix and edits:
             with open(doc, "w", encoding="utf-8") as fh:
-                fh.write(text)
-            fixed += len(replacements)
+                fh.write(apply_edits(text, edits))
+            fixed += len(edits)
+
+    # A declared re-aim is never silent: it is announced when it is honoured, and
+    # announced again when it has stopped being needed, so the list cannot quietly
+    # become a set of permanent exemptions.
+    for (doc, whole) in sorted(used_reaims):
+        print(f"check-citations: ACCEPTED re-aim {doc}: {whole} "
+              f"(declared in DELIBERATE_REAIMS — verify the aim by hand, not by this tool)")
+    for (doc, whole) in sorted(DELIBERATE_REAIMS - used_reaims):
+        print(f"check-citations: note — DELIBERATE_REAIMS entry {doc}: {whole} was not "
+              f"needed against {args.base}; delete it once the base carries the re-aim.")
 
     if args.fix:
         print(f"\ncheck-citations: re-anchored {fixed} of {total} citation(s); "

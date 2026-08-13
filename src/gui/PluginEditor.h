@@ -312,10 +312,13 @@ private:
     juce::Array<juce::Component::SafePointer<juce::Component>> openMenus;
     int  presetMenusOpen = 0;
     bool shieldRaised    = false;
-    // Whether this process was the foreground application at the instant a pop-up
-    // opened — see `dismissOrphanedPopupMenus` for why the test is calibrated
-    // rather than trusted.
+    // Whether this process was the foreground application, and whether this
+    // editor reported itself showing, at the instant a pop-up opened. Both are
+    // environment probes that a host may answer uninformatively for the whole
+    // life of the plug-in, so both are calibrated at the same known-good moment
+    // rather than trusted — see `dismissOrphanedPopupMenus`.
     bool popupOpenedWhileForeground = false;
+    bool popupOpenedWhileShowing    = false;
     void stepMicroAnims (double dt);
     void registerAnimated (juce::Component&);
     // Seeds the VALUE-derived animation properties (`vpos`, `onA`) for every

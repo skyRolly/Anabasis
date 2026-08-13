@@ -126,14 +126,18 @@ changed too: the FORM is what admits the mistake.
 
 **The second-order lesson, which is the expensive one.** The compile break was three days of a
 red job; what it COST was three rounds of KI-009 investigation reasoning from a validation
-surface that had silently lost a platform. `tests/state_tests.cpp:5937` sits inside
+surface that had silently lost a platform. `bcebfaf:tests/state_tests.cpp:5694` sits inside
 `testClipMixCannotChangeTheDefaultPresetsSound` — so the round-5, round-6 and round-7 KI-009
 regressions, written specifically for a fault that reproduces ONLY on macOS, had never once
 executed on macOS. A red job on another platform is not someone else's problem; while it is red,
 every conclusion drawn from "the suites are green" is scoped to the platforms that still ran.
 
 Evidence [Verified]:
-- Source: `tests/state_tests.cpp:5937` (before the fix); `scripts/check-portability.py`;
+- Source: `bcebfaf:tests/state_tests.cpp:5694` — the PRE-FIX tree, pinned to the revision
+  rather than left as a bare anchor. A bare one names a line in whatever `main` holds today,
+  and this claim is about a line that no longer exists: `check-citations.py` chased it through
+  three rounds of code movement, correctly preserving text that was never the evidence.
+  The offending expression is `juce::jmax<size_t> (1, v.size())`; `scripts/check-portability.py`;
   `.github/workflows/build.yml` (`source-lint`, `linux-clang`)
 - Test:   `scripts/check-portability.py` (mutation-verified); `--compile-canary`
 - Commit: `6f63573`, PR #14

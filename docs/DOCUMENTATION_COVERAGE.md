@@ -25,21 +25,53 @@ re-anchors the ones an edit above them moved. It exists because this round prove
 held by hand: the anchors were re-anchored once, then TWO later review commits moved code again and
 the docs were not re-run, leaving 42 of 71 stale. Its header states what it cannot do — a citation
 aimed at the wrong code from the start is preserved faithfully, so a clean run means none MOVED, not
-that all are correct. `worklogs/` is out of scope: those records cite the sibling product, including
-by bare file name, and an early version of the script rewrote those upstream anchors against this
-tree's line numbers before the scoping was added.
+that all are correct. That limit is not theoretical: THREE anchors here were already wrong before the
+tool existed, and it dutifully carried each one along. Two were mis-aimed — `SERIALIZATION_REGISTRY.md`
+§1.4's `BASELINE` carriage and drop sites, and `LATENCY_MODEL.md`'s redundant `updateLatency()` — and
+are corrected, both now carrying the FUNCTION beside the line number, which is the half of a citation
+a reader can check without running anything. The third was a category error rather than an aim error:
+`POSTMORTEMS.md` INC-003 cites the line that BROKE the macOS build, a line the fix deleted, and its
+own Evidence row says "(before the fix)" — but it was spelled as a bare anchor, so it named whatever
+`main` holds today and the tool re-aimed it through three rounds of code movement. It is now pinned to
+the pre-fix revision (`bcebfaf:tests/state_tests.cpp:5694`), which is the same spelling ADR-0016 uses
+and which the ownership test declines by construction. A historical claim needs a historical anchor;
+a bare one is a claim about the present. `worklogs/` is out
+of scope: those records cite the sibling product, including by bare file name, and an early version
+of the script rewrote those upstream anchors against this tree's line numbers before the scoping was
+added.
 
-The tool went through three corrections of its own before it was trustworthy, and they are worth
-recording because each was a way of being confidently wrong. It matched bare file names, so it
-rewrote the P0 worklog's UPSTREAM anchors against this tree (caught in the diff, reverted,
-`worklogs/` now excluded). It read only the first anchor of a compound citation
-(`…cpp:708-709, 851, 1208`), so it moved the head and left the tail — producing `:1040, 1039, 1053`,
-out of order, in the very file it was meant to keep true. And it paired citations by their base
-SPELLING, so once one had been re-anchored the tool could no longer see it drift again — the exact
-failure it exists to prevent. It now pairs the Nth reference to a path with the Nth in the base,
-and is verified by injecting a one-line shift and confirming every anchor of a compound citation
-moves. It runs in the `source-lint` CI job against the pull request's base, so the rule is enforced
-rather than remembered.
+The tool went through five corrections of its own before it was trustworthy, and they are worth
+recording because each was a way of being confidently wrong — a tool that rewrites line numbers
+turns every misjudgement into a corrupted document that reads as maintained.
+
+It matched bare file names, so it rewrote the P0 worklog's UPSTREAM anchors against this tree
+(caught in the diff, reverted, `worklogs/` now excluded). It read only the first anchor of a
+compound citation (`…cpp:708-709, 851, 1208`), so it moved the head and left the tail — producing
+`:1040, 1039, 1053`, out of order, in the very file it was meant to keep true. It paired citations
+by their base SPELLING, so once one had been re-anchored the tool could no longer see it drift
+again — the exact failure it exists to prevent; it now pairs the Nth reference to a path with the
+Nth in the base.
+
+The fourth was the worst, because it was silent and it shipped. A citation qualified by another
+checkout or a pinned revision — `<checkout>:src/PluginProcessor.cpp:485-491`,
+`7686204:src/gui/PluginEditor.cpp:1171-1174` — was matched from the path onwards, so the qualifier
+never reached the ownership test and **27 anchors across `DESIGN.md`, `OPEN_QUESTIONS.md` and five
+ADRs were shifted by THIS tree's code movement onto unrelated lines of the sibling product**,
+including the ADR-0016 table whose own heading says it was read from the pre-change tree. Those
+anchors are ADR-0009's mandated attribution; re-aiming them defeats the thing they are for. All 27
+are restored, and the ownership test is now narrow by construction: a citation is checked only when
+it names its path from this repository's root, unqualified, and that path is `TRACKED` verbatim —
+so a bare file name, a sibling path and a `<rev>:` anchor are all left alone. Under-checking costs
+coverage; misclassifying costs the truth of the document.
+
+The fifth was in the rewrite itself: substitution was by string, so re-anchoring
+`src/PluginProcessor.cpp:107` to `:130` also turned an untouched `src/PluginProcessor.cpp:1076`
+into `:1306`. It now substitutes by the match's own span, right to left.
+
+Both remaining fixes are mutation-verified against the exact reported shapes, and the tool runs in
+the `source-lint` CI job — against the fork point with the base branch, computed rather than
+assumed, with a force-push or a first push falling back to `HEAD~1` instead of failing on a base
+revision that no longer exists.
 
 **New records:** `POSTMORTEMS.md` **INC-005** (the macOS package could report success with nothing
 at the destination); `KNOWN_ISSUES.md` **KI-013** (the shield-absorbed click still counts toward
@@ -59,11 +91,12 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 797 = 1093 checks green**, up 54 on 0.1.3's
-1039 — four new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 802 = 1098 checks green**, up 59 on 0.1.3's
+1039 — five new state tests (`testANoOpPresetApplyIsNotAUserAction`,
 `testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
-`testThePopupShieldActuallyCoversTheEditor`), each mutation-verified against its own deliberately
+`testThePopupShieldActuallyCoversTheEditor`,
+`testAPopupRowKeepsItsLabelOutOfTheShortcutStrip`), each mutation-verified against its own deliberately
 reverted fix and against no other.
 
 Two of those four exist because a review round found defects the first cut shipped, and both are

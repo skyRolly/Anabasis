@@ -2295,14 +2295,27 @@ void AnabasisAudioProcessorEditor::refreshPopupShield()
 
     if (wanted)
     {
-        // Calibrate the foreground test at the one instant we KNOW the user is
-        // working in this editor: a pop-up has just opened, and only a click on
-        // one of our own controls can do that. If the process is the foreground
-        // application now, it is a process that CAN be foreground, so a later
-        // `false` really does mean the user switched away. If it is not
-        // foreground even now, the test carries no information for this host and
+        // Calibrate BOTH environment probes at the one instant we KNOW the user
+        // is working in this editor: a pop-up has just opened, and only a click
+        // on one of our own controls can do that. The rule is the same for each
+        // — a probe that is already false at this moment cannot distinguish
+        // "went away" from "never says yes here", so
         // `dismissOrphanedPopupMenus` must not act on it.
+        //
+        // Foreground: true now means this is a process that CAN be foreground,
+        // so a later false really is the user switching away. In a bridged or
+        // out-of-process host it is false throughout.
+        //
+        // Showing: `isShowing()` requires every parent up to the peer to be
+        // visible, and a plug-in editor does not own that chain — the host
+        // builds it, and a wrapper that reparents the editor into a hierarchy
+        // this test cannot see reports false while the UI is plainly on screen.
+        // Both probes had the same failure mode and only one had the guard; an
+        // uncalibrated `isShowing()` would cancel every drop-down in such a host
+        // on the first timer tick after it opened, which is the plug-in
+        // appearing to have no working menus at all.
         popupOpenedWhileForeground = juce::Process::isForegroundProcess();
+        popupOpenedWhileShowing    = isShowing();
 
         // Re-order only on the way UP, and only ever here — see the z-order
         // argument on PopupShield for why the direction matters. The synthetic
@@ -2388,24 +2401,23 @@ void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
     if (! shieldRaised)
         return;
 
+    // Both tests below are `<probe was true when the menu opened> && ! <probe
+    // now>`. Neither probe is trusted on its own: each asks the HOST a question
+    // the host is free to answer uninformatively, and a probe that is false for
+    // this plug-in's whole life would otherwise read as "it just went away" on
+    // the first tick. `refreshPopupShield` records the calibration.
+
     // 1) The editor stopped showing. A drop-down is a free-standing desktop
     //    window, so hiding the editor does not take it with it: JUCE only
     //    auto-cancels a modal component when its own hierarchy changes, and a
     //    desktop window's does not. The menu would sit on screen with nothing
     //    behind it, over the host's own UI.
-    const bool editorGone = ! isShowing();
+    const bool editorGone = popupOpenedWhileShowing && ! isShowing();
 
     // 2) The user switched to another application while the pointer was resting
     //    ON the menu. JUCE does dismiss menus on an app change, but that branch
     //    is gated on the pointer NOT being over the menu, so a menu under the
     //    cursor survives the switch and floats above the next application.
-    //
-    //    The foreground test is only trusted where it was shown to carry
-    //    information (see refreshPopupShield). In a bridged or out-of-process
-    //    host the plug-in UI can live in a process that is never the foreground
-    //    application; there `isForegroundProcess()` is false the whole time, and
-    //    acting on it would cancel every menu the instant it opened — the plug-in
-    //    would appear to have no working drop-downs at all.
     const bool switchedAway = popupOpenedWhileForeground
                               && ! juce::Process::isForegroundProcess();
 
