@@ -319,6 +319,15 @@ private:
     // rather than trusted — see `dismissOrphanedPopupMenus`.
     bool popupOpenedWhileForeground = false;
     bool popupOpenedWhileShowing    = false;
+    // Latched when `dismissOrphanedPopupMenus` has acted for the CURRENT raise,
+    // and cleared with the shield. `exitModalState` is asynchronous — the
+    // visibility change and the deletion land on a later dispatch — so
+    // `shieldRaised` is still true on the next 24 Hz tick and the whole sequence
+    // (cancel inline edits, release focus, exit every tracked window) would run
+    // again on windows already exited, for as long as the app stays in the
+    // background, and forever if a window is never deleted. Each repetition is
+    // individually harmless; doing it once is the point.
+    bool orphanDismissDone = false;
     void stepMicroAnims (double dt);
     void registerAnimated (juce::Component&);
     // Seeds the VALUE-derived animation properties (`vpos`, `onA`) for every

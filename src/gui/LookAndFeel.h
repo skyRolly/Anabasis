@@ -25,8 +25,17 @@ namespace menuMetrics
     constexpr float padX       = 12.0f;  // left AND right inset of the row's text area
     constexpr float tickGutter = 14.0f;  // reserved at the left whether or not the row is ticked
     constexpr float chrome     = padX * 2.0f + tickGutter;
-    constexpr int   minimumRow = 64;     // floor; sits just above the chrome so it cannot
-                                         // widen a pop-up past the control that opened it
+    // A floor, NOT a function of `chrome` — it is 26 px above it, and the
+    // comment here used to claim it "sits just above the chrome so it cannot
+    // widen a pop-up past the control that opened it", which is false twice
+    // over: the arithmetic is wrong, and a 64 px floor DOES widen past any
+    // control narrower than that. What it actually buys is a menu that is not
+    // absurdly narrow when every row is short — a two-character list should
+    // still read as a menu. Every control in this editor that opens one is
+    // wider than 64 px, so the floor is inert for all of them today; a narrower
+    // one added later would open a menu wider than itself, and that is a
+    // deliberate trade, not an accident.
+    constexpr int   minimumRow = 64;
     constexpr float inactive   = 0.4f;   // the disabled alpha `drawButtonText` already uses
     constexpr float dim        = 0.88f;  // an enabled, unhighlighted row
     constexpr float shortcutPt = 11.0f;  // the shortcut's own, smaller type size

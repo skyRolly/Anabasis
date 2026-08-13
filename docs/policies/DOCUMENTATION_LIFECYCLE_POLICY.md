@@ -27,7 +27,7 @@ existing doc, run a **drift check** and report any code/doc disagreement (constr
 | **Metering (LUFS / dBTP / PLR / GR history / targets)** | `DSP_ALGORITHMS.md`, `TEST_REPORT.md` (accuracy figures), `USER_MANUAL.md`, `CHANGELOG.md` |
 | **Build / CMake / JUCE pin / C++ baseline** | `BUILD.md`, `CI_CD.md`, `DEPENDENCY_POLICY.md`, **ADR** |
 | **CI workflow** | `CI_CD.md`, `TESTING.md`; **also** `TESTING_POLICY.md` when what a gate REQUIRES changes, and `REPOSITORY_MAP.md` when a script is added or removed. The two-file row let 0.1.4's citation gate land while four other files went on describing `source-lint` as one script. |
-| **Packaging / signing** | `PACKAGING.md`, `RELEASE_PROCESS.md` |
+| **Packaging / signing** | `RELEASE_PROCESS.md`, and the installer's own `INSTALL.txt` / `docs/user/INSTALLATION.md` where user-facing behaviour changes. (`PACKAGING.md` was listed here and has never existed in this repository — a row naming a missing document routes a change to nowhere and reads as satisfied. If packaging grows enough to need its own procedure, create it and restore the row.) |
 | **New/changed test** | `TESTING.md`, `DOCUMENTATION_COVERAGE.md`, the invariant→test map in `DSP_POLICY.md` |
 | **Plugin format** | `COMPATIBILITY_MATRIX.md`, `COMPATIBILITY_POLICY.md`, **ADR**, `CHANGELOG.md` |
 | **Ship a version** | `CHANGELOG.md`, `HANDOVER.md`, `README.md` (status/version) |

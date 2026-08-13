@@ -66,7 +66,8 @@ latency.
 
 ## When the figure recomputes
 
-**One call site** — `updateLatency()` (`src/PluginProcessor.cpp:533-551`, the only
+**One call site** — `updateLatency()` (`src/PluginProcessor.cpp:779-797` — the definition through its
+`setLatencySamples` call, the only
 `setLatencySamples` caller; it no-ops when the figure is unchanged). Reached from five
 triggers (ADR-0004 item 5):
 
@@ -75,14 +76,15 @@ triggers (ADR-0004 item 5):
 | `int_oversample` change | `InternalState::onLatencyInputChanged` |
 | `int_osPhase` change | same callback |
 | `int_offlineQuality` change | same callback |
-| `prepareToPlay` | `src/PluginProcessor.cpp:503` |
-| `setNonRealtime` | `src/PluginProcessor.cpp:523-530` |
+| `prepareToPlay` | `src/PluginProcessor.cpp:696` (`prepareToPlay`, its `updateLatency()` call) |
+| `setNonRealtime` | `src/PluginProcessor.cpp:769-777` (`setNonRealtime`) |
 
 A **session load is one latency event, not six**: `InternalState::replaceFrom` batches the
 whole read behind `ScopedLatencyBatch`, so the reported figure never walks through the
 default (Off) value mid-load (`src/InternalState.h` — the batch's own comment; pinned by
 `testLatencyNotifyIsBatchedAcrossARead`). `setStateInformation` ends with one further,
-deliberately redundant `updateLatency()` (`src/PluginProcessor.cpp:1782`) — belt-and-braces
+deliberately redundant `updateLatency()` (`src/PluginProcessor.cpp:1792`, the last statement of
+`setStateInformation`) — belt-and-braces
 for the rest of the restore body, a no-op because `setLatencySamples` skips an unchanged
 figure, and documented at the site as exactly that: the host still sees at most one PDC
 change per load.

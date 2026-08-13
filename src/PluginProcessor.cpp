@@ -473,7 +473,17 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     undoStacks[activeSlot].removeLast();         // exactly what this bracket pushed
     if (b.evictedOldest)
         undoStacks[activeSlot].insert (0, b.oldest);   // …and the end the cap trimmed
-    redoStacks[activeSlot] = b.redoBefore;       // …and the line it cleared
+    // …and the line it cleared. NOTE THE ASYMMETRY, because it is deliberate and
+    // conditional: the undo side verified above that the top of the stack is its
+    // own push before popping, and the redo side has no equivalent — it assigns
+    // `b.redoBefore` wholesale. That is correct only while nothing between open
+    // and close ADDS to the redo stack without also pushing to the undo stack,
+    // which nothing does: `pushUndoStep` clears redo, `undo()` and `redo()` move
+    // entries between the two in step, and a preset apply's only redo write is
+    // the clear inside its own push. A future path that grew the redo line on
+    // its own would have that growth silently discarded here, and the top-of-
+    // stack guard would not notice, because it is watching the other stack.
+    redoStacks[activeSlot] = b.redoBefore;
 }
 
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)

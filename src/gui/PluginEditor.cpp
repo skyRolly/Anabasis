@@ -2313,6 +2313,10 @@ void AnabasisAudioProcessorEditor::refreshPopupShield()
     if (wanted == shieldRaised)
         return;
     shieldRaised = wanted;
+    // Both transitions clear it: on the way UP a fresh raise deserves a fresh
+    // chance to act, and on the way DOWN it must not stay latched into the next
+    // one. Reset here rather than at either use site, so there is one writer.
+    orphanDismissDone = false;
 
     if (wanted)
     {
@@ -2445,6 +2449,13 @@ void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
     if (! editorGone && ! switchedAway)
         return;
 
+    // Once per raise. See `orphanDismissDone` for why a repeat is reachable at
+    // all: nothing here makes `shieldRaised` false, and the deletion that does
+    // is a message-loop dispatch away.
+    if (orphanDismissDone)
+        return;
+    orphanDismissDone = true;
+
     if (switchedAway)
     {
         // Order matters, and both halves are about not destroying the user's
@@ -2461,8 +2472,20 @@ void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
         // ends, JUCE restores the pre-menu focus and calls `toFront (true)` on
         // whatever holds it — which drags the host's window back to the
         // foreground, in front of the application the user just switched to.
+        //
+        // SCOPED TO THIS EDITOR, because `getCurrentlyFocusedComponent()` is
+        // process-global and this reach was wider than the decision made in
+        // `dismissTrackedPopupMenus`: that function refuses
+        // `PopupMenu::dismissAllActiveMenus()` precisely because it would close a
+        // menu open in ANOTHER instance of this plug-in. Releasing focus from
+        // whatever the process happens to be focusing has the same shape — it
+        // could empty a text field in a second instance, or in a host-owned JUCE
+        // component — so it is confined to our own tree. The focus this needs to
+        // move is ours by construction: it is the pre-menu focus JUCE would
+        // restore, and the menu was opened from a control in this editor.
         if (auto* focused = juce::Component::getCurrentlyFocusedComponent())
-            focused->giveAwayKeyboardFocus();
+            if (focused == this || isParentOf (focused))
+                focused->giveAwayKeyboardFocus();
     }
     // The hidden-editor branch deliberately does NOT release focus: the editor
     // is coming back, and taking focus off the Save Preset field would empty it

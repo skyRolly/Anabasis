@@ -36,9 +36,10 @@ run. What it checks, and the limits of what it can prove, are stated in the scri
 ## Evidence-anchor lint
 
 The other documentation gate, in the `source-lint` job rather than `docs` because it reads SOURCE
-as well as prose. Documents of record cite their evidence as `src/PluginProcessor.cpp:695-752`; an
-edit above such a line re-aims it silently and the document keeps reading as though it were still
-correct.
+as well as prose. Documents of record cite their evidence as `some/file.cpp:695-752`; an edit above such a line
+re-aims it silently and the document keeps reading as though it were still correct. (That example
+names an untracked path deliberately — an illustration spelled with a tracked one is a citation as
+far as the tool is concerned, and gets re-anchored along with the real ones.)
 
 ```bash
 python3 scripts/check-citations.py --check              # base defaults to origin/main; exit 1 on drift
@@ -53,9 +54,14 @@ exists because 0.1.4 proved it does not survive being remembered.
 Three limits are worth knowing before trusting a clean run, all of them stated in the script's
 header:
 
-* It proves anchors did not MOVE, never that they were aimed correctly to begin with. Three
-  citations in this repository were wrong before the tool existed and it carried all three along
-  faithfully.
+* It proves anchors did not MOVE, never that they were aimed correctly to begin with — and this
+  is the limit that matters most, because the tool makes a mis-aimed anchor look MAINTAINED. It
+  was first recorded here as "three citations", which was an under-count found by inspecting three;
+  a full audit of the governed documents found the majority of anchors in the architecture set had
+  been wrong since before the tool existed, each faithfully carried onto the same unrelated code by
+  every re-anchoring since. Anchors are therefore spelled with the SYMBOL beside the line number
+  wherever the claim names one: that is the half a reader can check, and the half that survives
+  the tool being wrong.
 * It judges only citations spelled from the repository root and naming one of its tracked files.
   A bare file name, a sibling checkout's path, or a `<rev>:`-pinned anchor is deliberately left
   alone — the ownership test is narrow because every misclassification is a corrupted document.

@@ -3707,6 +3707,69 @@ static void testTheResizableFrameOverrideDiscriminatesItsCallers()
     lf.isPopupMenuOnScreen = nullptr;
 }
 
+// A combo's drop-down must not open WIDER than the control it drops from.
+// `getOptionsForComboBoxPopupMenu` already floors the menu at the box width; what
+// nothing checked is the ceiling, and the row metrics moved it: `chrome` is
+// `padX * 2 + tickGutter` = 38 against the 30 the measurement used before, so
+// every menu asks for 8 px more than it did. That is fine only while every combo
+// has 8 px of slack, and "fine today" is exactly the kind of claim that stops
+// being true when a font, a metric or an item string changes. The tightest margin
+// in the editor is the dither combo's, and the assertion carries the number so a
+// regression names itself.
+static void testEveryComboMenuFitsItsControl()
+{
+    using namespace abgui;
+    AnabasisAudioProcessor proc;
+    // Advanced ON, or the zone combos are never laid out and every width reads 0
+    // — a walk that measures nothing passes everything.
+    if (auto* adv = proc.apvts.getParameter (pid::advancedMode))
+    {
+        adv->beginChangeGesture();
+        adv->setValueNotifyingHost (1.0f);
+        adv->endChangeGesture();
+    }
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "comboFit: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+    ed->setSize (940, 900);
+
+    AnabasisLookAndFeel lf;
+    int found = 0, tightest = 1 << 20;
+    std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+    {
+        if (auto* cb = dynamic_cast<juce::ComboBox*> (&c))
+        {
+            if (cb->getWidth() > 0 && cb->getNumItems() > 0)
+            {
+                ++found;
+                int worst = 0;
+                for (int i = 0; i < cb->getNumItems(); ++i)
+                {
+                    int w = 0, h = 0;
+                    lf.getIdealPopupMenuItemSize (cb->getItemText (i), false, 23, w, h);
+                    worst = juce::jmax (worst, w);
+                }
+                tightest = juce::jmin (tightest, cb->getWidth() - worst);
+            }
+        }
+        for (auto* k : c.getChildren())
+            walk (*k);
+    };
+    walk (*ed);
+
+    // Premise first: a walk that found nothing would satisfy every assertion
+    // below by running none of them.
+    check (found >= 10, "comboFit: (premise) the walk reached the editor's combo boxes");
+    check (tightest >= 0,
+           "comboFit: every combo's widest row still fits inside the control that opens it");
+    // The margin itself, so the next metric change shows up as a number moving
+    // rather than as a pass that happens to survive.
+    check (tightest >= 24,
+           "comboFit: the tightest combo keeps at least 24 px of slack over its widest row");
+}
+
 static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
 {
     AnabasisAudioProcessor proc;
@@ -6780,6 +6843,7 @@ int main (int argc, char** argv)
         testThePopupShieldActuallyCoversTheEditor();
         testAPopupRowKeepsItsLabelOutOfTheShortcutStrip();
         testTheResizableFrameOverrideDiscriminatesItsCallers();
+        testEveryComboMenuFitsItsControl();
         testAMalformedStoredSlotCannotSplitSoundFromMetadata();
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();

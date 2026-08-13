@@ -37,6 +37,12 @@
 #  anchor — is left alone. Under-checking costs coverage; misclassifying costs
 #  the truth of the document, which is the thing being protected.
 #
+#  PROSE EXAMPLES MUST NOT USE A TRACKED PATH. This tool cannot tell an
+#  illustration of a citation from a citation — `DOCUMENTATION_COVERAGE.md`'s
+#  own worked example of a substitution bug was silently re-anchored, changing
+#  the numbers the sentence depended on. Write examples against a path outside
+#  `TRACKED` (`some/file.cpp:107`) and they are left alone.
+#
 #  Usage:  --check (the default) reports drift · --fix re-anchors it.
 #  Exit codes follow the sibling scripts: 0 clean · 1 drift found (--check only)
 #  · 2 the run could not reach a trustworthy answer (nothing to check against,
@@ -112,15 +118,49 @@ ANCHOR = re.compile(r"(\d+)(?:-(\d+))?")
 # reporting a clean run. The list going empty is the expected end state of every
 # entry here, so it must be the boring case.
 DELIBERATE_REAIMS = set([
-    # 0.1.4 review round 5: `updateLatency()` at the end of `setStateInformation`.
-    # The anchor was mis-aimed before this tool existed, and the tool dutifully
-    # moved it onto the same unrelated line it had always named.
+    # 0.1.4 review round 7 — THE WHOLE ARCHITECTURE SET, and the size of this
+    # list is the finding. An audit of every tracked citation in the governed
+    # documents found that MOST had been aimed at the wrong code since before
+    # this tool existed, and every re-anchoring since had faithfully carried
+    # each one onto the same wrong text: `LATENCY_MODEL.md` cited the undo
+    # stack for `updateLatency()`, `SERIALIZATION_REGISTRY.md` cited the
+    # latency predictor for `saveSlotFromLive()`, `THREAD_MODEL.md` cited a
+    # comment for the OpenGL context. Every anchor below was re-derived from
+    # the SYMBOL its prose names and verified by reading the line, and every
+    # one now carries that symbol beside it — the half a reader can check
+    # without running anything.
     #
-    # The other re-aim of that round — `SERIALIZATION_REGISTRY.md` §1.4's
-    # `BASELINE` carriage and drop sites — needs no entry, and the reason is
-    # worth knowing before adding one here: it was re-SPELLED as well as
-    # re-aimed, so no base citation matches it and there is nothing to compare
-    # against. Only a re-aim that keeps its shape reaches this list.
+    # Each entry is good for exactly one transition (see `is_declared_reaim`):
+    # once `main` carries the corrected spelling, the entry stops matching and
+    # the next run reports it as removable. This list is expected to empty.
+    ("docs/KNOWN_ISSUES.md",
+     "src/PluginProcessor.cpp:195"),
+    ("docs/architecture/COMPATIBILITY_MATRIX.md",
+     "src/PluginProcessor.cpp:12-14"),
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:779-797"),
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:696"),
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:769-777"),
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:1792"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "tests/state_tests.cpp:1951"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.h:453"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.h:431-439"),
+    ("docs/architecture/THREAD_MODEL.md",
+     "src/gui/PluginEditor.h:566"),
+    ("docs/architecture/design-decisions/ADR-0013-release-trim-reaches-auto-poles.md",
+     "src/dsp/AnabasisEngine.cpp:518-520"),
+    ("docs/architecture/design-decisions/ADR-0014-frozen-trim-restore.md",
+     "src/dsp/AnabasisEngine.cpp:262-278"),
+    ("docs/architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md",
+     "src/PluginProcessor.cpp:25-26"),
+    ("docs/architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md",
+     "src/PluginProcessor.h:111"),
 ])
 
 

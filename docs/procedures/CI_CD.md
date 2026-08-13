@@ -83,7 +83,13 @@ is "does it build here".
   the branch's previous tip. It therefore checks **one push of drift at a time**, and catches the
   0.1.4 failure mode only because every push is checked; the merge-base path is exercised by fork
   pull requests. Anchors the run could not judge — re-spelled or removed since the base — are
-  counted and reported separately rather than netted into the pass total.
+  counted and reported separately rather than netted into the pass total, and on a re-anchoring
+  round that is not a footnote: pairing is ORDINAL per path, so a change set that adds or removes
+  a citation drops that document to a fallback which checks only base spellings still present
+  verbatim. On this very round the tool reported *17 checked, 16 beyond what it could judge* —
+  roughly half. Combined with the one-push depth above, that is the mechanism by which a
+  re-anchoring round can still ship stale anchors, and it is why `--fix` is not a substitute for
+  reading what it moved.
 * `linux-clang` catches the AppleClang DIAGNOSTIC set (`-Wshorten-64-to-32`,
   `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …) that `juce_recommended_warning_flags`
   applies to Clang and not to GCC. Those reached us only from the macOS runner before, minutes

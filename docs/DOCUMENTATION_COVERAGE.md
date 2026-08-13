@@ -65,8 +65,14 @@ so a bare file name, a sibling path and a `<rev>:` anchor are all left alone. Un
 coverage; misclassifying costs the truth of the document.
 
 The fifth was in the rewrite itself: substitution was by string, so re-anchoring
-`src/PluginProcessor.cpp:107` to `:130` also turned an untouched `src/PluginProcessor.cpp:1092`
-into `:1306`. It now substitutes by the match's own span, right to left.
+`some/file.cpp:107` to `:130` also turned an untouched `some/file.cpp:1076` into `:1306`. It now
+substitutes by the match's own span, right to left.
+
+Those example anchors name `some/file.cpp` for a reason worth keeping: an ILLUSTRATIVE citation
+spelled with a tracked path is indistinguishable from a real one, and this paragraph's own example
+was silently re-anchored — `:1076` became `:1092`, which is not the shift the sentence describes.
+A tool that rewrites line numbers cannot tell prose about citations from citations. Prose examples
+therefore use a path the tool does not track.
 
 Both remaining fixes are mutation-verified against the exact reported shapes, and the tool runs in
 the `source-lint` CI job — against the fork point with the base branch, computed rather than
@@ -91,21 +97,22 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 810 = 1106 checks green**, up 67 on 0.1.3's
-1039 — six new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 814 = 1110 checks green**, up 71 on 0.1.3's
+1039 — seven new state tests (`testANoOpPresetApplyIsNotAUserAction`,
 `testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
 `testThePopupShieldActuallyCoversTheEditor`,
 `testAPopupRowKeepsItsLabelOutOfTheShortcutStrip`,
-`testTheResizableFrameOverrideDiscriminatesItsCallers`), each mutation-verified against its own
+`testTheResizableFrameOverrideDiscriminatesItsCallers`,
+`testEveryComboMenuFitsItsControl`), each mutation-verified against its own
 deliberately reverted fix and against no other. `testPresetIdentitySharedName` also gained the leg
 that closes the last uncovered corner of the undo compare: with no ADR-0022 trio on either slot —
 a pre-ADR-0022 session — `presetName` is the SOLE discriminator, and nothing asserted that
 direction, so the name could have been stripped from `strippedForUndoCompare` with every test
 still green.
 
-**Four** of those six exist because a review round found defects the first cut shipped, and all
-three are worth recording as coverage lessons rather than quietly fixed. The shield was **added,
+**Four** of those seven exist because a review round found defects the first cut shipped, and all
+four are worth recording as coverage lessons rather than quietly fixed. The shield was **added,
 sized nowhere, and therefore inert**: every part of the mechanism — z-order, interception toggle,
 menu bookkeeping — was correct while the component had empty bounds, so no click could ever reach
 it. Geometry is the one property of that component a headless test CAN read, and there was no test
@@ -118,7 +125,20 @@ unreachable**, which is not coverage at all — `jassert` compiles out of every 
 declaration bound only the developer, and the look-and-feel also serves menus this editor does not
 build. The row now renders what it is handed, and the test that replaced the assertions fails on
 the old drawing. An assertion that a case cannot happen is a claim about callers; where the callers
-include a framework, only rendering it is a claim about the code. The fourth is the same lesson
+ include a framework, only rendering it is a claim about the code.
+
+**The round-7 finding is the one that reframes this whole file's citations.** An audit of every
+tracked `file:line` anchor in the governed documents found that MOST had been aimed at the wrong
+code since before `check-citations.py` existed, and every re-anchoring since had carried each one
+faithfully onto the same wrong text: `LATENCY_MODEL.md` cited the undo stack for `updateLatency()`,
+`SERIALIZATION_REGISTRY.md` cited the latency predictor for `saveSlotFromLive()`, `THREAD_MODEL.md`
+cited a comment for the OpenGL context. Fourteen were re-derived from the SYMBOL each prose claim
+names, verified by reading the line, and declared in `DELIBERATE_REAIMS` so the correction is a
+reviewable act rather than a silent rewrite. Two lessons are worth more than the fix: a tool that
+preserves content identity makes a mis-aimed anchor look MAINTAINED, which is worse than leaving it
+obviously stale; and the earlier entry above calling this "three citations" was itself an
+under-count from inspecting three rather than auditing all of them — the same shape of error, one
+level up. The fourth is the same lesson
 in the neighbouring override: `drawResizableFrame` is reached by two unrelated JUCE callers and
 told them apart by a MAGIC NUMBER — a border of `getPopupMenuBorderSize()` on all four sides — so
 a future `ResizableBorderComponent` with a 3 px drag zone would have silently lost the frame the
