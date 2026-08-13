@@ -51,6 +51,18 @@ Run `--check` before pushing any change that moves lines in a tracked source fil
 the SAME change set that moved them — that is the repository's re-anchoring rule, and the gate
 exists because 0.1.4 proved it does not survive being remembered.
 
+**Run it against BOTH bases, and this is not optional pedantry.** `--check` alone uses
+`origin/main`; CI compares against the PREVIOUS PUSH. Those two disagree about which branch the
+tool takes: a document whose citation COUNT differs from a base falls to the ordinal-pairing
+fallback, which only judges base spellings still present verbatim — so against one base a set of
+re-aimed anchors is silently unjudgeable and against the other it is flagged. Round 7 passed
+locally on `origin/main` and failed CI on nine anchors for exactly that reason.
+
+```bash
+python3 scripts/check-citations.py --check                 # origin/main
+python3 scripts/check-citations.py --check --base HEAD     # what CI will use on the next push
+```
+
 Three limits are worth knowing before trusting a clean run, all of them stated in the script's
 header:
 

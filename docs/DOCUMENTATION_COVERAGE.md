@@ -119,7 +119,7 @@ it. Geometry is the one property of that component a headless test CAN read, and
 reading it. The second was a **vacuous first attempt**: the undo-depth test originally re-applied
 the preset after editing, which is a real restore, so it never entered the retraction path it
 claimed to cover and passed against the reverted fix. It is now a control/subject pair, and the
-mutant separates them by exactly one step (127 vs 128). The third is the sharpest of the three:
+mutant separates them by exactly one step (127 vs 128). The third is the sharpest of the four:
 a pop-up row's two right-hand furniture cases were covered by **`jassert`s declaring them
 unreachable**, which is not coverage at all — `jassert` compiles out of every shipped build, so the
 declaration bound only the developer, and the look-and-feel also serves menus this editor does not

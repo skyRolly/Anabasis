@@ -255,6 +255,20 @@ script that fails the component if the payload is not at the destination when it
 component is therefore written from the payload alone, and an install that did not land reports
 failure instead of success.
 
+**What the first macOS run of that probe established, which changed the incident's shape.**
+`pkgbuild --analyze` does **not** mark a `.vst3` or a `.component` relocatable: its synthesized
+plist emits `<relocate/>` empty for them and `relocatable="false"` on the `pkg-info` element, and
+only the `.app` is marked relocatable. Relocation is a Launch-Services notion about applications,
+so INC-005's relocation half was only ever a live hazard for the **Standalone**; the two plug-in
+components were exposed to the version-check half alone. That also means the `<relocate>` assertion
+is UNFALSIFIABLE for those two components — it passes by finding nothing, which is this incident's
+own silent-success shape one level up. The probe therefore classifies each membership list per
+component instead of demanding all three everywhere: present-with-defaults means the list is live
+and must vanish when its key is switched off; absent-with-defaults is recorded as a platform
+default rather than counted as proof, and must still be absent after patching. A component for
+which NOTHING is falsifiable fails the build, because the A/B would have established nothing about
+it. This was found by the gate failing on its first real run, which is the gate working.
+
 **Prevention:** the build asserts the shipped package, and — the part that matters — first proves
 the assertions can fire. Matching an element name that `pkgbuild` never writes is an assertion that
 always passes, which is the silent-success shape this incident is made of. So the mapping from

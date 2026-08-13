@@ -238,26 +238,70 @@ probe_fail() {                  # $1 = component id, $2 = tag, $3 = message
   exit 1
 }
 
+# WHAT THE FIRST macOS RUN OF THIS PROBE ACTUALLY FOUND, because it changed the
+# design and the finding is more useful than the assertion was.
+#
+# `pkgbuild --analyze` does NOT mark a `.vst3` or a `.component` relocatable. Its
+# synthesized plist emits `<relocate/>` EMPTY for them, and `relocatable="false"`
+# on the `pkg-info` element itself; only the `.app` is marked relocatable, which
+# is consistent with relocation being a Launch-Services notion about
+# applications. So INC-005's relocation half was only ever a hazard for the
+# Standalone — and, more to the point here, the `<relocate><bundle` assertion is
+# UNFALSIFIABLE for the two plug-in components: it passes by finding nothing.
+#
+# That is the exact silent-success shape this block exists to prevent, so a
+# missing list is neither ignored nor treated as failure. It is classified:
+#
+#   * PRESENT with defaults  → the list is LIVE for this bundle type. It must
+#     disappear when the key is switched off, which proves the assertion below
+#     tracks the key it is named for.
+#   * ABSENT with defaults   → NOT APPLICABLE to this bundle type. The platform
+#     already gives the safe answer; the assertion below still runs and is still
+#     correct, but it is evidence about pkgbuild rather than about us, and it is
+#     logged as such so nobody later reads it as proof that our plist patching
+#     works for that component.
+#
+# A component where NOTHING is live would prove nothing at all, and that does
+# fail: it would mean the whole A/B told us nothing about that payload.
 PROBED=0
 for pid in $COMPONENT_IDS; do
   PROBE_ON=$(probe_info "$pid" defaults)
   PROBE_OFF=$(probe_info "$pid" patched --component-plist "$WORK/component-$pid.plist")
-  for pattern in '<relocate><bundle' '<bundle-version><bundle' '<upgrade-bundle><bundle'; do
-    case "$PROBE_ON" in
-      *"$pattern"*) ;;
-      *) probe_fail "$pid" defaults "pkgbuild's defaults produce no '$pattern' — the assertion keyed on it cannot fire" ;;
-    esac
-  done
+
+  live=0
   for pattern in '<relocate><bundle' '<bundle-version><bundle'; do
-    case "$PROBE_OFF" in
-      *"$pattern"*) probe_fail "$pid" patched "'$pattern' survives with its component-plist key switched off — that list does not track the key it is asserted for" ;;
-      *) ;;
+    case "$PROBE_ON" in
+      *"$pattern"*)
+        # Live: it must track the key.
+        case "$PROBE_OFF" in
+          *"$pattern"*) probe_fail "$pid" patched "'$pattern' survives with its component-plist key switched off — that list does not track the key it is asserted for" ;;
+          *) live=$((live + 1)) ;;
+        esac
+        ;;
+      *)
+        echo "note: [$pid] pkgbuild's defaults emit no '$pattern' for this bundle type;" \
+             "the assertion keyed on it is a platform default, not proof of our plist patching" >&2
+        # Still has to be absent once patched — a weaker claim, but a real one.
+        case "$PROBE_OFF" in
+          *"$pattern"*) probe_fail "$pid" patched "'$pattern' appeared only AFTER patching — our component plist is turning ON what it exists to turn off" ;;
+        esac
+        ;;
     esac
   done
-  case "$PROBE_OFF" in
-    *'<upgrade-bundle><bundle'*) ;;
-    *) probe_fail "$pid" patched "BundleOverwriteAction=upgrade did not reach PackageInfo as <upgrade-bundle>" ;;
-  esac
+
+  # `<upgrade-bundle>` is pkgbuild's default AND what we pin explicitly, so it
+  # must be present on both arms; its absence anywhere is a real regression.
+  for arm in ON OFF; do
+    eval "probe=\$PROBE_$arm"
+    case "$probe" in
+      *'<upgrade-bundle><bundle'*) ;;
+      *) probe_fail "$pid" "$( [ "$arm" = ON ] && echo defaults || echo patched )" \
+             "no '<upgrade-bundle><bundle' — BundleOverwriteAction=upgrade is not reaching PackageInfo" ;;
+    esac
+  done
+
+  [ "$live" -gt 0 ] \
+    || probe_fail "$pid" defaults "no membership list is falsifiable for this bundle type — the A/B establishes nothing about this component"
   PROBED=$((PROBED + 1))
 done
 

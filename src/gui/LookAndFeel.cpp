@@ -400,13 +400,34 @@ juce::PopupMenu::Options AnabasisLookAndFeel::getOptionsForComboBoxPopupMenu (ju
 // that a row carrying a shortcut does not draw its label underneath one. A test
 // that hard-coded 12 and 14 would pass while agreeing with nothing.
 //
-// WHAT THIS BUDGET DOES NOT COVER. The sub-menu chevron is drawn at
-// `r.getRight() - padX` and nothing measures it, so a sub-menu row spends the
-// chevron's gap out of its own label — `drawPopupMenuItem` reserves that gap so
-// the two cannot collide. The shortcut IS measured (JUCE appends it to the
-// string it hands this function), and `drawPopupMenuItem` reserves the strip it
-// occupies out of the same rectangle, so the measured total and the drawn total
+// WHAT THIS BUDGET DOES NOT COVER, and how far that reaches. The shortcut IS
+// measured — JUCE appends it to the string it hands this function, via
+// `ItemComponent::getTextForMeasurement` — and `drawPopupMenuItem` reserves the
+// strip it occupies out of the same rectangle, so measured total and drawn total
 // describe the same row.
+//
+// The SUB-MENU CHEVRON is not, and cannot be: this signature carries no
+// `hasSubMenu`, so a budget computed here has no way to know. `drawPopupMenuItem`
+// reserves the chevron's gap anyway, out of the label, so the two can never
+// collide — a sub-menu row degrades to an ellipsised label (~7 px at this row
+// height) rather than to overlapping glyphs.
+//
+// WHO CAN ACTUALLY REACH THAT, checked against the pinned JUCE rather than
+// assumed, because the look-and-feel serves menus this editor does not build:
+//   * `TextEditor::addPopupMenuItems` (juce_TextEditor.cpp) builds Cut/Copy/
+//     Paste/Delete/Select All/Undo/Redo — FLAT, no `addSubMenu`, on every
+//     platform. The cross-platform implementation is the whole of it; there is
+//     no OS services sub-menu grafted on.
+//   * `ComboBox::showPopup` adds items from its own flat list.
+//   * `Slider::showPopupMenu` DOES `addSubMenu ("Rotary mode", …)` — the one
+//     sub-menu in the widgets we use. It is gated on `setPopupMenuEnabled`,
+//     which this editor never calls and which JUCE leaves off, so no slider here
+//     can open it.
+// So the case is unreachable today by construction rather than by luck, and if a
+// slider ever enables that menu the cost is a 7 px shorter label on one row.
+// Widening `chrome` for every menu in the plug-in to pre-pay for it is the worse
+// trade, and `testEveryComboMenuFitsItsControl` is what would notice if it were
+// made.
 
 void AnabasisLookAndFeel::getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
                                                      int, int& idealWidth, int& idealHeight)

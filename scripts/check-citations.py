@@ -161,6 +161,31 @@ DELIBERATE_REAIMS = set([
      "src/PluginProcessor.cpp:25-26"),
     ("docs/architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md",
      "src/PluginProcessor.h:111"),
+    # These nine were re-aimed in the same round but were INVISIBLE to a local
+    # run against `origin/main`: that base has a different citation COUNT for
+    # this document, so it took the ordinal-pairing fallback, which only judges
+    # base spellings still present verbatim — and a re-aim changes the spelling.
+    # CI compares against the PREVIOUS PUSH, where the count matches and ordinal
+    # pairing engages, so the gate flagged all nine. Checking one base is not
+    # checking the gate; `TESTING.md` now says to run both.
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:1544-1600"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:8"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:916"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:1183-1196"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:1057-1124"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:1050-1053"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:1582-1596"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:1602-1793"),
+    ("docs/architecture/SERIALIZATION_REGISTRY.md",
+     "src/PluginProcessor.cpp:1672"),
 ])
 
 
@@ -304,8 +329,27 @@ def apply_edits(text, edits):
     the first by text turns the second into `src/PluginProcessor.cpp:1306` —
     corrupting a citation that had nothing wrong with it. Spans come from the
     match that produced them, so each rewrite lands on exactly its own citation.
+
+    DEDUPED AND CHECKED FOR OVERLAP, because a span is only safe once. The
+    count-mismatch branch pairs a base citation against ALL current spans
+    carrying its spelling, so a document that spells one citation twice queued
+    that span-list once per base occurrence — and applying an identical
+    `(start, end, new)` twice does not repeat a rewrite, it destroys one: the
+    first pass changes the text's length, so `end` no longer bounds what it
+    bounded and the second splices the replacement into the middle of itself
+    (`…cpp:2000` became `…cpp:20000`). A set fixes the duplicate; the overlap
+    check is there because any FUTURE way of generating two different rewrites
+    for one region fails the same way, and this function must not corrupt a
+    governed document in silence when that happens.
     """
-    for start, end, new in sorted(edits, key=lambda e: -e[0]):
+    uniq = sorted(set(edits), key=lambda e: -e[0])
+    for (a_start, a_end, _), (b_start, b_end, _) in zip(uniq, uniq[1:]):
+        if b_end > a_start:
+            raise ValueError(
+                f"check-citations: refusing to rewrite overlapping spans "
+                f"[{b_start},{b_end}) and [{a_start},{a_end}) — this would corrupt the "
+                f"document rather than re-anchor it")
+    for start, end, new in uniq:
         text = text[:start] + new + text[end:]
     return text
 
