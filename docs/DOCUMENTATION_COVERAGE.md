@@ -99,15 +99,16 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 825 = 1121 checks green**, up 82 on 0.1.3's
-1039 — eight new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 827 = 1123 checks green**, up 84 on 0.1.3's
+1039 — nine new state tests (`testANoOpPresetApplyIsNotAUserAction`,
 `testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
 `testThePopupShieldActuallyCoversTheEditor`,
 `testAPopupRowKeepsItsLabelOutOfTheShortcutStrip`,
 `testTheResizableFrameOverrideDiscriminatesItsCallers`,
 `testEveryComboMenuFitsItsControl`,
-`testARootlessSurfaceDropsTheActiveSlotsMetadataToo`), each mutation-verified against its own
+`testARootlessSurfaceDropsTheActiveSlotsMetadataToo`,
+`testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel`), each mutation-verified against its own
 deliberately reverted fix and against no other. `testPresetIdentitySharedName` also gained the leg
 that closes the last uncovered corner of the undo compare: with no ADR-0022 trio on either slot —
 a pre-ADR-0022 session — `presetName` is the SOLE discriminator, and nothing asserted that

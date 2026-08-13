@@ -115,8 +115,20 @@ alone does not carry the property; these are the cases where the wrong stimulus 
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 
 Compiles the **real** plugin sources into its own console target, so it exercises the actual
-`AudioProcessor` rather than a mock. The editor sources compile (because `createEditor()`
-references them) but are never instantiated — the tests run headlessly and open no window.
+`AudioProcessor` rather than a mock — **and, since P5, the actual editor**: a growing set of tests
+call `createEditor()` and walk the resulting component tree
+(`testTheSettingsPanelFollowsAProjectLoad`, `testThePopupShieldActuallyCoversTheEditor`,
+`testEveryComboMenuFitsItsControl`, `testTheSavePresetNameFieldIsTaggedForItsFocusGlow`, the R2
+tooltip sweep, the knob-position sweep). The tests still run **headlessly** and open no window: the
+editor is built, sized and inspected, never shown, and nothing here runs a message loop — which is
+why a `juce::Value` change (asynchronous through that loop) and anything requiring a modal pop-up
+are outside what this target can reach, and are carried in `DEPENDENCY_POLICY.md`'s JUCE-internals
+register instead.
+
+This paragraph said "never instantiated" until 2026-08-13, having gone stale at P5 —
+`TESTING_POLICY.md`'s harness-conventions bullet was corrected on the same point at 0.1.1 and this
+copy was missed. An under-described coverage claim is not harmless: it invites the next contributor
+to add a test that already exists.
 
 Planned coverage: serialized-schema shape; the **parameter-registry snapshot**; raw-exact
 save → load → save round-trip (byte-identical) and its fixed-point precondition

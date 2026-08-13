@@ -162,8 +162,11 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
     # invoking user otherwise.
     if [ "$mode" = system ]; then _owner=0; else _owner=$(id -u); fi
 
-    # Adding a candidate here means adding it to `remove_install_scratch` in
-    # `uninstall.sh` too, or an interrupted install survives an uninstall.
+    # Adding a candidate here means adding it to THREE other places or something
+    # silently stops matching: the creation loop below, `stage_dir_advice` (the
+    # message both callers print when this returns non-zero), and
+    # `remove_install_scratch` in `uninstall.sh` — the last of which, if missed,
+    # lets an interrupted install survive an uninstall.
     #
     # RECOVERY FIRST: an earlier install may have parked the previous version in
     # either candidate, and whichever holds it must be the one used, or
@@ -173,12 +176,27 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
     # passed it; true today, and an induction that a third candidate or an
     # externally-created `.prev` would break silently. Running it is cheaper than
     # relying on that.
+    #
+    # The `.prev` test comes FIRST because it is the selective one, and because
+    # a candidate that holds a parked copy AND fails a trust test is worth SAYING
+    # SO ABOUT rather than skipping in silence. That combination needs the layout
+    # or the directory's ownership to have changed between the interrupted run
+    # and this one — `$HOME` and `$HOME/.vst3` becoming separate filesystems, say
+    # — so it is narrow, but it is the ONE path on which the interrupted-install
+    # guarantee in `INSTALL.txt` does not hold: the parked copy is neither
+    # restored nor removed by this run, and only `uninstall.sh` clears it. Silent
+    # would make that indistinguishable from a clean run.
     for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
-        stage_dir_is_adoptable "$_c" "$_owner" || continue
         [ -d "$_c/Anabasis.vst3.prev" ] || continue
-        stage_dir_is_same_filesystem "$_c" "$_probe" || continue
-        printf '%s\n' "$_c"
-        return 0
+        if stage_dir_is_adoptable "$_c" "$_owner" \
+           && stage_dir_is_same_filesystem "$_c" "$_probe"; then
+            printf '%s\n' "$_c"
+            return 0
+        fi
+        echo "warning: a previous version of the plug-in is parked in" >&2
+        echo "         $_c/Anabasis.vst3.prev," >&2
+        echo "         but that directory is no longer usable for staging, so this run cannot" >&2
+        echo "         put it back. It is left untouched; './uninstall.sh' removes it." >&2
     done
 
     for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
@@ -188,13 +206,33 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
             printf '%s\n' "$_c"
             return 0
         fi
-        # `rmdir`, never `rm -rf`. This only ever names a directory we just
-        # created or already trusted, and rmdir declines a non-empty one — so a
-        # rejected candidate holding someone's staged files keeps them instead of
-        # having root delete them. Tidiness lost this argument in INC-006.
+        # `rmdir`, never `rm -rf`. Two things this can name, and the second is
+        # the one worth being precise about: a directory `make_stage_dir` just
+        # created, OR one that already existed and passed
+        # `stage_dir_is_adoptable` — in which case this run also `chmod 700`'d it
+        # on the way in, and now removes it if it is empty. So the reject path
+        # can take away a directory this run did not create. `rmdir` declines a
+        # non-empty one, so nothing with contents in it is ever lost, which is
+        # the INC-006 lesson and the reason this is not `rm -rf`; what is left is
+        # an empty directory of the right name, owned by the right identity,
+        # which is indistinguishable from one we made.
         $SUDO rmdir "$_c" 2>/dev/null || true
     done
     return 1
+}
+
+# The message BOTH callers print when `choose_stage_dir` returns non-zero. It
+# lives here so the advice cannot name a different set of directories from the
+# one the loops above actually try — the per-user branch named only the first
+# candidate for exactly as long as this text was written out twice, which made
+# the advice unfollowable whenever the SECOND candidate was the blocker.
+stage_dir_advice() {            # $1 = plug-in directory
+    echo "error: no usable staging directory beside $1." >&2
+    echo "       One is present but is a symlink, owned by another account, or writable" >&2
+    echo "       by others — this installer will not stage a privileged copy there." >&2
+    echo "       Inspect and remove whichever of these exists, then re-run:" >&2
+    echo "         ${1%/*}/.anabasis-install-stage" >&2
+    echo "         $1/.anabasis-install-stage" >&2
 }
 
 # Puts back the previous version if an install was interrupted, then clears the
@@ -249,10 +287,7 @@ if [ "$mode" = user ]; then
 
     mkdir -p "$VST3_DIR" "$BIN_DIR"
     STAGE_DIR="$(choose_stage_dir "$VST3_DIR")" || {
-        echo "error: no usable staging directory beside $VST3_DIR." >&2
-        echo "       One is present but is a symlink, owned by another account, or writable" >&2
-        echo "       by others — this installer will not stage a privileged copy there." >&2
-        echo "       Inspect and remove ~/.anabasis-install-stage, then re-run." >&2
+        stage_dir_advice "$VST3_DIR"
         exit 1
     }
     STAGE_VST3="$STAGE_DIR/Anabasis.vst3"
@@ -323,11 +358,7 @@ VST3_DEST="$VST3_DIR/Anabasis.vst3"
 
 priv mkdir -p "$VST3_DIR" "$BIN_DIR"
 STAGE_DIR="$(choose_stage_dir "$VST3_DIR")" || {
-    echo "error: no usable staging directory beside $VST3_DIR." >&2
-    echo "       One is present but is a symlink, owned by another account, or writable" >&2
-    echo "       by others — this installer will not stage a privileged copy there." >&2
-    echo "       Inspect and remove ${VST3_DIR%/*}/.anabasis-install-stage and" >&2
-    echo "       $VST3_DIR/.anabasis-install-stage, then re-run." >&2
+    stage_dir_advice "$VST3_DIR"
     exit 1
 }
 STAGE_VST3="$STAGE_DIR/Anabasis.vst3"

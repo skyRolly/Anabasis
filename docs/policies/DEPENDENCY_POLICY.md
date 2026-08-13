@@ -90,6 +90,7 @@ one third-party action is SHA-pinned because it is.
    | `PluginEditor.cpp` — `dismissOrphanedPopupMenus` re-delivers nothing after `exitModalState` | JUCE re-delivers the mouse-down that exited a modal loop | A dismissal click could act twice, or not reach the control beneath |
    | `LookAndFeel.h` — `drawResizableFrame` suppresses the parented pop-up's doubled edge | `paintOverChildren` calls it with a UNIFORM border equal to `getPopupMenuBorderSize()`, and only when a parent component is set | A non-uniform or differently-sized border stops matching and the doubled edge returns |
    | `PluginEditor.h` — `GatedTooltipWindow` | `TooltipWindow::timerCallback`'s early-show branch ignores `millisecondsBeforeTipAppears` | Tips appear on a different schedule than the gate assumes |
+   | `PluginEditor.cpp` — `animToggle`/`tooltipsToggle` bound to `onStateChange` | `Button::valueChanged` calls `setToggleState (v, dontSendNotification, sendNotification)`, so a value arriving through the `referTo`-bound `juce::Value` fires the STATE callback and NOT the click one | The two mirrors stop following a project load: the widget shows the stored value while `uiAnimOn`/`tooltipsOn` keep the previous session's, until the user clicks the switch. `tooltipsOn` is the sole authority on whether a tip appears at all, so it decides the whole feature, not a delay. Nothing fails to compile and no call site changes |
 
 ## Adding a dependency
 

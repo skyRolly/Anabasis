@@ -16,7 +16,7 @@ transport) are listed under **Planned edges** so their absence is visible rather
 |---|---|---|
 | **Audio** | yes | `AnabasisEngine` state (rings, wedge, envelope, smoothers, crossfade), built-once-per-block `EngineParameters` snapshot |
 | **Message/GUI** | yes | Editor, `MacroEngine`, `InternalState` tree, A/B slots + preset/undo bulk swaps, PDC recompute (with the two host-callback exceptions below) |
-| **GPU render context** | yes, macOS/Windows only | Component painting when attached — created and driven by JUCE, holds no Anabasis state (`src/gui/PluginEditor.h:576`, attach gated per platform per DESIGN §6.1) |
+| **GPU render context** | yes, macOS/Windows only | Component painting when attached — created and driven by JUCE, holds no Anabasis state (`src/gui/PluginEditor.h:591`, attach gated per platform per DESIGN §6.1) |
 | Workers | **none** | Adding one is an Architecture Review Gate item + Hard Stop (ADR-0011) |
 
 ## Cross-thread edges implemented at P1
@@ -82,7 +82,7 @@ single flush-to-zero mechanism; no module carries its own.
 
 ## Which context paints
 
-The OpenGL context attaches on macOS/Windows only, never Linux/X11 (`src/gui/PluginEditor.h:576`
+The OpenGL context attaches on macOS/Windows only, never Linux/X11 (`src/gui/PluginEditor.h:591`
 and the platform gate around its attach). When attached, JUCE paints components on the GL render
 thread; when not, on the message thread. The rule that keeps both safe is the one the policy
 already mandates: GUI-side reads of published state are stateless `const` peeks (at P1 the only

@@ -1514,11 +1514,17 @@ static void testARootlessSurfaceDropsTheActiveSlotsMetadataToo()
 
     root.removeChild (root.getChildWithName ("ANABASIS"), nullptr);   // the only edit
 
-    juce::XmlElement outXml ("dummy");
-    if (auto e = root.createXml())
-        outXml = *e;
+    // A PREMISE, not a convenience. The earlier form defaulted to a `<dummy/>`
+    // element when `createXml()` returned null — which `setStateInformation`
+    // correctly declines as a foreign root, so every assertion below would then
+    // pass trivially against a processor that had loaded nothing: default name,
+    // empty mask, default surface, all three "correct" for the wrong reason. A
+    // test that cannot fail is worse than an absent one.
+    const auto outXml = root.createXml();
+    check (outXml != nullptr, "rootlessActive: (premise) the edited tree re-serialises");
+    if (outXml == nullptr) return;
     juce::MemoryBlock rewritten;
-    juce::AudioProcessor::copyXmlToBinary (outXml, rewritten);
+    juce::AudioProcessor::copyXmlToBinary (*outXml, rewritten);
 
     AnabasisAudioProcessor q;
     q.setStateInformation (rewritten.getData(), (int) rewritten.getSize());
@@ -3854,9 +3860,95 @@ static void testEveryComboMenuFitsItsControl()
     check (tightest >= 0,
            "comboFit: every combo's widest row still fits inside the control that opens it");
     // The margin itself, so the next metric change shows up as a number moving
-    // rather than as a pass that happens to survive.
-    check (tightest >= 24,
-           "comboFit: the tightest combo keeps at least 24 px of slack over its widest row");
+    // rather than as a pass that happens to survive. ADVISORY, and deliberately
+    // stated as such: 24 is a SNAPSHOT of the current fonts, item strings and
+    // layout constants, not a derived bound — `chrome` grew from 30 to 38 this
+    // round, which moved this figure down by 8 on its own. The measured value
+    // goes in the message so a red run says how far it moved rather than only
+    // that it did; the requirement that actually protects the user is the
+    // `>= 0` above.
+    const auto comboMsg = juce::String ("comboFit: the tightest combo keeps at least 24 px of "
+                                        "slack over its widest row (advisory tripwire; measured ")
+                        + juce::String (tightest) + " px)";
+    check (tightest >= 24, comboMsg.toRawUTF8());
+}
+
+// The width budget for a row that carries a SHORTCUT, which
+// `testAPopupRowKeepsItsLabelOutOfTheShortcutStrip` does not cover: that test
+// pins the label and the shortcut not OVERLAPPING once the row has a width,
+// while this one pins the width being enough in the first place.
+//
+// Why it needs pinning at all. `menuMetrics::chrome` is `padX * 2 + tickGutter`
+// and does NOT include `shortcutGap`, so on paper the measurement allows less
+// than the drawing spends. It works out, but through arithmetic no constant
+// states — exactly the implicit, drift-prone budget `menuMetrics` was introduced
+// to end. JUCE measures `text + "   " + shortcut`
+// (`ItemComponent::getTextForMeasurement`) entirely in the 13.5 pt menu font,
+// while `drawPopupMenuItem` renders the shortcut at `shortcutPt` (11 pt).
+//
+// WHAT ACTUALLY PAYS FOR THE GAP, measured rather than reasoned: the tightest
+// row here clears the drawing by **5 px**. Equalising the two fonts (shortcut
+// drawn at 13.5 pt) leaves **2 px** — still positive. So the font difference is
+// worth ~3 px and is NOT the term carrying this; the three measured spaces are,
+// at roughly 10 px against an 8 px `shortcutGap`. Worth knowing which lever
+// matters: a font change costs a few px, and a `shortcutGap` change spends
+// against a 5 px reserve directly — raising it to 20 puts the tightest row at
+// −7 and ellipsises the label, which is this test's own mutant.
+//
+// The alternative — folding `shortcutGap` into `chrome` — is deliberately NOT
+// taken, for the same reason the sub-menu chevron is not: it would widen every
+// menu in the plug-in by 8 px to pre-pay for a case no menu here uses today.
+static void testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel()
+{
+    using namespace abgui;
+    AnabasisLookAndFeel lf;
+    const auto menuFont     = lf.getPopupMenuFont();
+    const auto shortcutFont = menuFont.withHeight (menuMetrics::shortcutPt);
+
+    auto widthOf = [] (const juce::Font& f, const juce::String& s)
+    {
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (f, s, 0.0f, 0.0f);
+        return ga.getBoundingBox (0, -1, true).getWidth();
+    };
+
+    // The rows a `TextEditor` context menu would carry if the host attached
+    // accelerators, plus a deliberately short shortcut (the least slack case,
+    // since the font difference scales with the shortcut's own width).
+    const std::pair<const char*, const char*> rows[] = {
+        { "Cut",        "Ctrl+X" },
+        { "Copy",       "Ctrl+C" },
+        { "Paste",      "Ctrl+V" },
+        { "Select All", "Ctrl+A" },
+        { "Undo",       "Ctrl+Z" },
+        { "A considerably longer label than any menu here uses", "Ctrl+Shift+Alt+K" },
+        { "Go",         "F1" },
+    };
+
+    int tightest = 1 << 20;
+    for (const auto& r : rows)
+    {
+        const juce::String label (r.first), shortcut (r.second);
+
+        int measuredW = 0, measuredH = 0;
+        lf.getIdealPopupMenuItemSize (label + "   " + shortcut, false, 23, measuredW, measuredH);
+
+        // What `drawPopupMenuItem` spends out of that width: the chrome, the
+        // label at the menu font, and the shortcut strip at its own font plus
+        // the gap. (The strip's 50 % cap only ever makes the drawing spend
+        // LESS, so ignoring it keeps this the conservative direction.)
+        const float drawn = menuMetrics::chrome
+                          + widthOf (menuFont, label)
+                          + widthOf (shortcutFont, shortcut) + menuMetrics::shortcutGap;
+
+        tightest = juce::jmin (tightest, (int) std::floor ((float) measuredW - drawn));
+    }
+
+    const auto msg = juce::String ("shortcutRow: a row carrying a shortcut is measured wide "
+                                   "enough to draw its label in full — the label is not "
+                                   "ellipsised to pay for the shortcut gap (tightest ")
+                   + juce::String (tightest) + " px)";
+    check (tightest >= 0, msg.toRawUTF8());
 }
 
 static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
@@ -6933,6 +7025,7 @@ int main (int argc, char** argv)
         testAPopupRowKeepsItsLabelOutOfTheShortcutStrip();
         testTheResizableFrameOverrideDiscriminatesItsCallers();
         testEveryComboMenuFitsItsControl();
+        testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel();
         testAMalformedStoredSlotCannotSplitSoundFromMetadata();
         testARootlessSurfaceDropsTheActiveSlotsMetadataToo();
         testFactoryPresets();

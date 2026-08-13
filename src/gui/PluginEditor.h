@@ -298,6 +298,10 @@ private:
     void notePopupMenuOpened (juce::Component& menuWindow);
     // A tracked pop-up window has gone: drop it and let the shield settle.
     void componentBeingDeleted (juce::Component&) override;
+    // The world-based half of the tracked half's self-heal: drops a window that
+    // is neither visible nor modal on two consecutive ticks. Tick-only — see the
+    // definition for why it cannot be folded into `refreshPopupShield`.
+    void healGhostTrackedPopupMenus();
     void refreshPopupShield();
     // Cancels every pop-up we know about. Unconditional — used when the editor is
     // going away, where there is nothing to decide.
@@ -329,15 +333,26 @@ private:
     // individually harmless; doing it once is the point.
     bool orphanDismissDone = false;
     // Consecutive 24 Hz ticks on which `presetMenusOpen` claimed an open menu
-    // while no child of this editor was modal. `openMenus` self-heals — its
-    // entries are SafePointers the tick prunes — and this counter had no
-    // equivalent: it moves only in `showPresetMenu` and in the completion
-    // callback, so a callback that never arrived would strand `shieldRaised`
-    // true and leave the whole editor unclickable, which is the ONE failure the
-    // shield's own comment says it must not have. Two ticks of grace, because a
-    // single tick can legitimately land in the window between `exitModalState`
-    // and the callback, and the healthy path must keep its exact timing.
+    // while no child of this editor was modal. It moves only in
+    // `showPresetMenu` and in the completion callback, so a callback that never
+    // arrived would strand `shieldRaised` true and leave the whole editor
+    // unclickable, which is the ONE failure the shield's own comment says it
+    // must not have. Two ticks of grace, because a single tick can legitimately
+    // land in the window between `exitModalState` and the callback, and the
+    // healthy path must keep its exact timing.
+    //
+    // This comment used to add that `openMenus` "self-heals — its entries are
+    // SafePointers the tick prunes", offered as the reason the tracked half
+    // needed no equivalent. That OVERCLAIMED: a SafePointer nulls on DELETION,
+    // and a window exited and hidden without being deleted is neither pruned nor
+    // healthy. `healGhostTrackedPopupMenus` is the missing half, and
+    // `trackedGhosts` below is its two-tick grace.
     int  presetMenuGhostTicks = 0;
+    // The entries `healGhostTrackedPopupMenus` found neither visible nor modal on
+    // the PREVIOUS tick. SafePointers rather than raw pointers on purpose: a dead
+    // entry reads back as nullptr and so can never alias a freshly allocated
+    // window that happens to reuse the address.
+    juce::Array<juce::Component::SafePointer<juce::Component>> trackedGhosts;
     void stepMicroAnims (double dt);
     void registerAnimated (juce::Component&);
     // Seeds the VALUE-derived animation properties (`vpos`, `onA`) for every

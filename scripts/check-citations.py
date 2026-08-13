@@ -146,13 +146,13 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/LATENCY_MODEL.md",
      "src/PluginProcessor.cpp:1792"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "tests/state_tests.cpp:2040"),
+     "tests/state_tests.cpp:2046"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.h:453"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.h:431-439"),
     ("docs/architecture/THREAD_MODEL.md",
-     "src/gui/PluginEditor.h:576"),
+     "src/gui/PluginEditor.h:591"),
     ("docs/architecture/design-decisions/ADR-0013-release-trim-reaches-auto-poles.md",
      "src/dsp/AnabasisEngine.cpp:518-520"),
     ("docs/architecture/design-decisions/ADR-0014-frozen-trim-restore.md",
@@ -422,6 +422,14 @@ def main():
                 still = {}
                 for (whole_c, _t, span_c, _a) in curs:
                     still.setdefault(whole_c, []).append(span_c)
+                # A spelling the BASE carries more than once. `still` is keyed by
+                # spelling, so every base occurrence of the same citation resolves
+                # to the same span list and the same rewrite — counting each of
+                # them would report more citations drifted and fixed than the
+                # document contains. `apply_edits` de-duplicates the spans, so
+                # this was only ever a reporting defect; it is still the class of
+                # imprecision this tool exists to remove from documents.
+                counted = set()
                 for (whole_o, _t, _span_o, anchors_o) in olds:
                     # `total` counts every base anchor on BOTH paths, and the ones
                     # this path cannot judge are counted again into `unchecked`
@@ -438,6 +446,15 @@ def main():
                            and (b is None or line_of(base_src[tracked], b) == line_of(now_src[tracked], b))
                            for (a, b) in anchors_o):
                         continue
+                    # Past this point the citation is DRIFTED and will be counted
+                    # and queued. A second base occurrence of the same spelling
+                    # reaches here with the same spans and the same rebuild, so it
+                    # contributes nothing but inflated numbers — its anchors are
+                    # already in `total` above, which is the figure that must stay
+                    # per-occurrence.
+                    if whole_o in counted:
+                        continue
+                    counted.add(whole_o)
                     # No DELIBERATE_REAIMS check here on purpose: this branch
                     # only reaches citations whose spelling is UNCHANGED (that is
                     # the `still.get(whole_o)` filter above), and a re-aim always

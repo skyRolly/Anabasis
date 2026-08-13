@@ -867,6 +867,20 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
         removeChildComponent (t);
         settingsBackdrop.addAndMakeVisible (t);
     }
+    // `onStateChange`, NOT `onClick`, and the distinction is the whole reason
+    // these mirrors follow a project load. `Button::valueChanged` — the listener
+    // the `referTo` binding above installs — calls
+    // `setToggleState (v, dontSendNotification /*click*/, sendNotification /*state*/)`
+    // (juce_Button.cpp), so a stored value arriving through the `juce::Value`
+    // fires the STATE callback and never the CLICK one. Bound to `onClick`,
+    // `uiAnimOn` and `tooltipsOn` would show the loaded widget state while
+    // holding the previous session's value until the user clicked the switch —
+    // and `tooltipsOn` is the sole authority on whether a tip appears at all
+    // (`GatedTooltipWindow`), so that staleness would decide the whole feature
+    // rather than an appearance delay. Registered in `DEPENDENCY_POLICY.md`
+    // rule 7: nothing in a header promises the split notification, and a JUCE
+    // bump that collapsed it would break this silently, with no call site
+    // changing.
     animToggle.onStateChange = [this]
     { uiAnimOn = animToggle.getToggleState(); };
     tooltipsToggle.onStateChange = [this] { applyTooltipsEnabled(); };
@@ -1038,6 +1052,7 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
         if (auto* w = openMenus.getReference (i).getComponent())
             w->removeComponentListener (this);
     openMenus.clear();
+    trackedGhosts.clear();   // its only readers are gone with `openMenus`
     // The look-and-feel outlives this callback only as a member; clear the hook
     // so nothing can call back into a half-destroyed editor.
     lnf.onPopupMenuWindowCreated = nullptr;
@@ -1955,9 +1970,14 @@ void AnabasisAudioProcessorEditor::timerCallback()
         presetMenuGhostTicks = 0;
     }
 
-    // Pop-up housekeeping. `refreshPopupShield` is the backstop that recovers a
-    // shield left raised by a window that died without notice; the orphan check
-    // is the one that acts on the two ways a pop-up can be stranded.
+    // Pop-up housekeeping, in the order the three steps depend on each other.
+    // `healGhostTrackedPopupMenus` first, because it can EMPTY `openMenus` and
+    // the shield's answer is computed from it; it is the world-based heal for a
+    // tracked window that was exited and hidden but never deleted.
+    // `refreshPopupShield` is the backstop that recovers a shield left raised by
+    // a window that died without notice; the orphan check is the one that acts
+    // on the two ways a pop-up can be stranded.
+    healGhostTrackedPopupMenus();
     refreshPopupShield();
     dismissOrphanedPopupMenus();
     refreshInternalSettingsBoxes();
@@ -2327,12 +2347,84 @@ void AnabasisAudioProcessorEditor::componentBeingDeleted (juce::Component& c)
     refreshPopupShield();
 }
 
+// The world-based half of `openMenus`'s self-heal, and the reason it is a
+// SEPARATE function called only from the tick rather than a third loop inside
+// `refreshPopupShield`.
+//
+// WHAT THE SAFEPOINTER PRUNE DOES NOT COVER. `refreshPopupShield` drops an entry
+// once its window has been DESTROYED. A window that was exited and hidden — which
+// is exactly what `dismissTrackedPopupMenus` does — but then never deleted stays a
+// live pointer, keeps `shieldRaised` true, and leaves the whole editor
+// unclickable: the one failure the shield must not have, reached through the
+// function whose job is to prevent it. `presetMenusOpen` was given a world-based
+// heal for precisely this class ("is any child modal?"); this is the same
+// argument applied to the tracked half, which had only the deletion-based one
+// while its own comment claimed it self-healed.
+//
+// Unreachable today, and the reason is a JUCE INTERNAL rather than anything here:
+// every window that reaches `preparePopupMenuWindow` is created by
+// `PopupMenu::showMenuAsync`, which enters the modal state with
+// `deleteWhenDismissed = true`, so `ModalComponentManager` destroys it on a later
+// dispatch and the SafePointer nulls. A menu shown any other way — a future call
+// site, a `PopupMenu` served to a component this look-and-feel does not own —
+// carries no such promise.
+//
+// WHY IT CANNOT LIVE IN `refreshPopupShield`. That function is also called
+// SYNCHRONOUSLY from `notePopupMenuOpened`, at which point the window has been
+// constructed (`preparePopupMenuWindow` runs in the constructor) but is not yet
+// visible and not yet modal. A liveness test there would prune every entry on the
+// tick it was added. So: tick only, and — like `presetMenuGhostTicks` — only after
+// the SECOND consecutive tick in that state, so a single tick landing between
+// `exitModalState` and the deletion dispatch cannot take a healthy window with it.
+//
+// The test is `! visible && ! modal`, not `! modal` alone: an open SUB-menu is a
+// separate `MenuWindow` that does NOT enter the modal state (only the root does),
+// and it is visible the whole time it is on screen.
+void AnabasisAudioProcessorEditor::healGhostTrackedPopupMenus()
+{
+    juce::Array<juce::Component::SafePointer<juce::Component>> ghostsNow;
+
+    for (int i = openMenus.size(); --i >= 0;)
+    {
+        auto* w = openMenus.getReference (i).getComponent();
+        if (w == nullptr)
+            continue;                       // `refreshPopupShield` prunes these
+        if (w->isVisible() || w->isCurrentlyModal (false))
+            continue;                       // on screen, or driving a modal loop
+
+        bool wasGhostLastTick = false;
+        for (auto& g : trackedGhosts)
+            if (g.getComponent() == w)
+            {
+                wasGhostLastTick = true;
+                break;
+            }
+
+        if (wasGhostLastTick)
+        {
+            w->removeComponentListener (this);
+            openMenus.remove (i);
+            continue;
+        }
+
+        ghostsNow.add (openMenus.getReference (i));
+    }
+
+    trackedGhosts.swapWith (ghostsNow);
+}
+
 void AnabasisAudioProcessorEditor::refreshPopupShield()
 {
     // A SafePointer nulls itself if a window died without us hearing about it,
     // so pruning here means the tick alone is enough to recover the shield even
     // if a listener were ever missed. A stuck shield would make the editor
     // unclickable, which is the one failure this must not have.
+    //
+    // DELETION is all this loop sees. A window exited and hidden but never
+    // deleted survives it — `healGhostTrackedPopupMenus`, on the tick, is what
+    // covers that, and it is separate because this function also runs
+    // synchronously from `notePopupMenuOpened` where a not-yet-shown window must
+    // not be mistaken for a ghost.
     for (int i = openMenus.size(); --i >= 0;)
         if (openMenus.getReference (i).getComponent() == nullptr)
             openMenus.remove (i);

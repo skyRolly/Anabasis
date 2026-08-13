@@ -91,6 +91,16 @@ and say so.
   between them can leave the new plug-in beside the old Standalone. Staging happens outside the
   folder your DAW scans wherever the filesystem allows it, so a rescan mid-install cannot see a
   half-written bundle. Evidence: this release. [Verified]
+- **A Linux install that refuses to start now names every folder that could be blocking it.** The
+  installer declines to stage into a folder it cannot trust — a symlink, one owned by another
+  account, one others can write to — and the per-user message named only the first of the two
+  places it looks. On a machine where `~` and `~/.vst3` sit on different filesystems the blocker is
+  the second one, so the printed instruction removed a folder that was not in the way (and often did
+  not exist), and every re-run failed identically. Both candidates are named now, by the message and
+  the check reading the same list. Separately, if a previous version was parked in a folder that has
+  since become untrustworthy, the run says so instead of passing over it in silence: that copy is
+  neither restored nor deleted, and `./uninstall.sh` is what clears it. Evidence: this release.
+  [Verified]
 - **The uninstaller now removes the installer's own leftovers**, by exact name only, so an install
   killed by a signal no handler catches does not survive a deliberate uninstall. Evidence: this
   release. [Verified]
