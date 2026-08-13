@@ -124,8 +124,11 @@ and say so.
   longer draws a doubled border. Evidence: this release. [Verified]
 - **Re-selecting the preset that is already loaded, with nothing edited, no longer discards your
   redo history** and no longer leaves an undo step that does nothing when pressed. Re-applying a
-  preset over an *edited* sound is still a real restore and remains undoable. This changes stored
-  behaviour, not the stored format. Evidence: this release. [Verified]
+  preset over an *edited* sound is still a real restore and remains undoable. The apply itself is
+  unchanged and is **not** inert: it still re-writes the parameter surface and still takes the
+  §2.8 forced duck, so the brief dip is the same as any preset change — what changed is the undo
+  bookkeeping afterwards, not the audio. This changes stored behaviour, not the stored format.
+  Evidence: this release. [Verified]
 - **A damaged A/B slot can no longer put one session's preset name on another session's sound.**
   A stored slot that survives with its labels but without its parameter payload — hand-edited or
   truncated session data — now resolves to defaults as a whole, the same rule the live surface

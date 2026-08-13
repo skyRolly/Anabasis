@@ -1448,6 +1448,95 @@ static void testANoOpPresetApplyDoesNotEatTheOldestUndoStep()
 // parameter payload must not lend its NAME and IDENTITY to a sound that came
 // from somewhere else. The read rule is the one the live surface already
 // follows: a missing payload means DEFAULTS, never "keep whatever is live".
+
+// THE OTHER HALF of the payload-less-slot rule, and the one nothing pinned.
+// `setStateInformation` gates the ACTIVE slot's metadata on `liveSurfaceRestored`
+// — the ROOT `ANABASIS` child being present — rather than on the slot's own
+// payload. So a blob that keeps a COMPLETE `AB` but loses the root surface loads
+// the default sound AND drops the active slot's name, identity, macro baseline,
+// FROZEN TRIMS and DETACH MASK, even though the slot itself carries all of them.
+//
+// That is a strictly larger behaviour change than the malformed-STORED-slot case
+// above, and it is the deliberate one: metadata describes a parameter surface,
+// and the surface this restore installed came from defaults, so a mask naming
+// detachments from a mapping the session never had is not a mask worth keeping.
+// Deliberate is not the same as pinned: the DETACH MASK is the carrier a user
+// cannot otherwise recover, and it had no assertion at all on this path.
+static void testARootlessSurfaceDropsTheActiveSlotsMetadataToo()
+{
+    AnabasisAudioProcessor proc;
+    check (proc.applyFactoryPreset (4), "rootlessActive: (premise) a preset is applied");
+    // Detach a parameter so the mask is NON-EMPTY — an empty one would satisfy
+    // the assertion below by accident.
+    //
+    // SCOPE, stated rather than left to be discovered: this covers the detach
+    // mask and the name, not the frozen latch. `FROZEN_TRIMS` is written only
+    // once `retainedTrimGeneration()` is non-zero, which needs the adaptive
+    // engine to have latched trims from real audio — the setup
+    // `testFrozenTrimRestore` already builds. Asserting it here without that
+    // setup would assert the absence of a child that was never written, which is
+    // the vacuous shape this suite keeps finding. The gate is the same one for
+    // all five carriers; this pins the two a user cannot otherwise recover.
+    if (auto* gain = proc.apvts.getParameter (pid::limGain))
+    {
+        gain->beginChangeGesture();          // a GESTURED managed write detaches (§5.3)
+        gain->setValueNotifyingHost (0.80f);
+        gain->endChangeGesture();
+    }
+    proc.getMacroEngine().drainTick();   // stages -> mask, as `restoreTick` does
+    const auto maskBefore = proc.detachMask();
+    check (! proc.currentPresetName().isEmpty(), "rootlessActive: (premise) the slot has a name");
+
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    check (xml != nullptr, "rootlessActive: (premise) the session blob parses");
+    if (xml == nullptr) return;
+    auto root = juce::ValueTree::fromXml (*xml);
+
+    // The premise that makes the assertions mean something: the ACTIVE slot
+    // still carries everything. Only the ROOT surface is removed.
+    auto ab = root.getChildWithName ("AB");
+    check (ab.isValid(), "rootlessActive: (premise) the blob carries an AB child");
+    if (! ab.isValid()) return;
+    const int active = (int) ab.getProperty ("active", 0);
+    juce::Array<juce::ValueTree> slots;
+    for (int i = 0; i < ab.getNumChildren(); ++i)
+        if (ab.getChild (i).hasType ("SLOT"))
+            slots.add (ab.getChild (i));
+    check (slots.size() == 2, "rootlessActive: (premise) both slots are present");
+    if (slots.size() != 2) return;
+    auto liveSlot = slots[active];
+    check (liveSlot.getChildWithName ("ANABASIS").isValid(),
+           "rootlessActive: (premise) the ACTIVE slot keeps its full parameter payload");
+    check (liveSlot.getChildWithName ("DETACH_MASK").getNumChildren() > 0,
+           "rootlessActive: (premise) the active slot carries a NON-EMPTY detach mask");
+
+    root.removeChild (root.getChildWithName ("ANABASIS"), nullptr);   // the only edit
+
+    juce::XmlElement outXml ("dummy");
+    if (auto e = root.createXml())
+        outXml = *e;
+    juce::MemoryBlock rewritten;
+    juce::AudioProcessor::copyXmlToBinary (outXml, rewritten);
+
+    AnabasisAudioProcessor q;
+    q.setStateInformation (rewritten.getData(), (int) rewritten.getSize());
+
+    check (q.currentPresetName() == "Default",
+           "rootlessActive: a rootless blob loads the DEFAULT name, not the slot's");
+    check (q.detachMask().isEmpty(),
+           "rootlessActive: ...and an EMPTY detach mask, not the slot's — the mask describes "
+           "detachments from a mapping this restore never installed");
+    check (! maskBefore.isEmpty(),
+           "rootlessActive: (premise) the mask being compared against was non-empty");
+    // The sound is the defaults', which is the rule this widening comes from.
+    AnabasisAudioProcessor fresh;
+    check (juce::exactlyEqual (q.apvts.getRawParameterValue (pid::limGain)->load(),
+                               fresh.apvts.getRawParameterValue (pid::limGain)->load()),
+           "rootlessActive: ...and the DEFAULT surface, so metadata and sound agree");
+}
+
 static void testAMalformedStoredSlotCannotSplitSoundFromMetadata()
 {
     AnabasisAudioProcessor proc;
@@ -6845,6 +6934,7 @@ int main (int argc, char** argv)
         testTheResizableFrameOverrideDiscriminatesItsCallers();
         testEveryComboMenuFitsItsControl();
         testAMalformedStoredSlotCannotSplitSoundFromMetadata();
+        testARootlessSurfaceDropsTheActiveSlotsMetadataToo();
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();
         testMeterResetClearsSessionHolds();

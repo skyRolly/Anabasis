@@ -192,11 +192,17 @@ jobs:
       #   * pull_request — FORK pull requests only. This job carries the same
       #     same-repo guard the `docs` job does, so a same-repo branch never
       #     reaches this event here; do not read the branch below as the normal
-      #     case. When it does fire, `base.sha` is the BASE BRANCH TIP at the
-      #     time of the event, not the point the branch left it. Judging against
-      #     the tip charges the branch for every anchor the base moved since it
-      #     forked, so the tip is fed to `git merge-base` and the fork point is
-      #     the base. `fetch-depth: 0` above is what makes that resolvable.
+      #     case.
+      #
+      #     `base.sha` is fed through `git merge-base`, and it is worth being
+      #     accurate about what that buys, because an earlier version of this
+      #     comment claimed it found "the fork point". It does not, on this
+      #     event: `actions/checkout` checks out the GENERATED MERGE COMMIT
+      #     (`refs/pull/N/merge`), whose first parent IS `base.sha`, so
+      #     `merge-base` returns `base.sha` verbatim and the hop is a no-op.
+      #     It is kept because it is the correct expression of the intent and
+      #     stops being a no-op the moment the checkout names the PR head
+      #     instead — not because it is doing work today.
       #   * push — the normal path for work in this repository, and the one that
       #     actually holds the line. `event.before` is the branch's previous tip,
       #     so each push is judged against its immediate predecessor: ONE PUSH OF

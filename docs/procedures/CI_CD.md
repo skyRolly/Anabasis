@@ -76,7 +76,12 @@ is "does it build here".
   **What the citation step compares against, and what that costs.** `fetch-depth: 0` is there for
   this step alone: it reads the base revision's copy of each tracked source and each document. The
   base is `github.event.pull_request.base.sha` fed through `git merge-base` (a FORK pull request),
-  or `github.event.before` (a push). A base that names a commit the repository no longer has —
+  or `github.event.before` (a push). The `merge-base` hop is a no-op on that event and the comment
+  in the workflow now says so: `actions/checkout` checks out the generated MERGE commit, whose
+  first parent is `base.sha`, so the call returns its input. It is kept as the correct expression
+  of the intent — it starts doing work if the checkout is ever pointed at the PR head — but
+  `fetch-depth: 0` is justified by something else entirely: `git show <base>:<file>` needs the base
+  commit to be PRESENT, and a default depth-1 checkout does not have it. A base that names a commit the repository no longer has —
   after a force-push — falls back to `HEAD~1` with a `::notice::` rather than failing on a question
   it cannot answer. Note the reach honestly: this job carries the same-repo `pull_request` guard the
   `docs` job does, so on a same-repo branch the step runs on the PUSH event only, where the base is

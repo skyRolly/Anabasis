@@ -146,7 +146,7 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/LATENCY_MODEL.md",
      "src/PluginProcessor.cpp:1792"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "tests/state_tests.cpp:1951"),
+     "tests/state_tests.cpp:2040"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.h:453"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
@@ -489,7 +489,16 @@ def main():
                     continue
 
                 if is_declared_reaim(doc, whole_o, whole_c):
+                    # BOTH spellings, because the declaration may have been
+                    # written with either (that is what `is_declared_reaim`
+                    # accepts). Recording only the current one left an entry
+                    # declared with the BASE spelling honoured here and then
+                    # ALSO listed in `DELIBERATE_REAIMS - used_reaims`, which
+                    # prints "was not needed … delete it" — advice that, taken,
+                    # re-breaks the gate. Latent today (every entry happens to be
+                    # a current spelling) and cheaper to close than to remember.
                     used_reaims.add((doc, whole_c))
+                    used_reaims.add((doc, whole_o))
                     continue
 
                 mapped, movable = [], True

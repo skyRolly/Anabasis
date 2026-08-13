@@ -99,21 +99,22 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 814 = 1110 checks green**, up 71 on 0.1.3's
-1039 — seven new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 825 = 1121 checks green**, up 82 on 0.1.3's
+1039 — eight new state tests (`testANoOpPresetApplyIsNotAUserAction`,
 `testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
 `testThePopupShieldActuallyCoversTheEditor`,
 `testAPopupRowKeepsItsLabelOutOfTheShortcutStrip`,
 `testTheResizableFrameOverrideDiscriminatesItsCallers`,
-`testEveryComboMenuFitsItsControl`), each mutation-verified against its own
+`testEveryComboMenuFitsItsControl`,
+`testARootlessSurfaceDropsTheActiveSlotsMetadataToo`), each mutation-verified against its own
 deliberately reverted fix and against no other. `testPresetIdentitySharedName` also gained the leg
 that closes the last uncovered corner of the undo compare: with no ADR-0022 trio on either slot —
 a pre-ADR-0022 session — `presetName` is the SOLE discriminator, and nothing asserted that
 direction, so the name could have been stripped from `strippedForUndoCompare` with every test
 still green.
 
-**Four** of those seven exist because a review round found defects the first cut shipped, and all
+**Four** of those eight exist because a review round found defects the first cut shipped, and all
 four are worth recording as coverage lessons rather than quietly fixed. The shield was **added,
 sized nowhere, and therefore inert**: every part of the mechanism — z-order, interception toggle,
 menu bookkeeping — was correct while the component had empty bounds, so no click could ever reach

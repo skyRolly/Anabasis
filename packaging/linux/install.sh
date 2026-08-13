@@ -261,7 +261,10 @@ if [ "$mode" = user ]; then
 
     reconcile
     arm_traps
-    make_stage_dir "$STAGE_DIR"
+    make_stage_dir "$STAGE_DIR" || {
+        echo "error: could not create the staging directory $STAGE_DIR." >&2
+        exit 1
+    }
 
     cp -R "$VST3_SRC" "$STAGE_VST3"
     cp "$APP_SRC" "$STAGE_APP"

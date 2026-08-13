@@ -187,14 +187,16 @@ Evidence [Verified]:
   directions.
 - `.github/workflows/release.yml` parses (`yaml.safe_load`).
 
-## Amendment ⊕ — the Linux installer is two-mode, and item 1's "root-checked" no longer describes it (2026-08-13)
+## Amendment — the Linux installer is two-mode, and item 1's "root-checked" no longer describes it (2026-08-13)
 
-**⊕ NOT RATIFIED. This amendment records a contradiction that already exists in the tree; it does
-not clear a gate.** `CLAUDE.md` lists "conflict with an Accepted ADR" as a hard stop, and
-§Decision item 1 is an Accepted decision. The amendment is written because the alternative is
-worse — an ADR outranks descriptive documentation (`SOURCE_OF_TRUTH.md`), so leaving it silent
-means the highest-authority record in the repository states a contract the shipped script does not
-have. The owner's ratification is what turns this from a reported drift into a decision.
+> **ARCHITECTURE REVIEW GATE — CLEARED (2026-08-13).** `CLAUDE.md` lists "conflict with an
+> Accepted ADR" as a hard stop, and §Decision item 1 is an Accepted decision, so this change was
+> held and reported rather than assumed: the 0.1.4 review round carried it as the one item needing
+> the owner, with the contradiction stated and the revert path named. **The owner approved it on
+> 2026-08-13**, which is what turns this from a reported drift into a decision. Item 1's
+> "root-checked" clause is superseded by the text below; the rest of item 1 stands unchanged.
+
+This amendment records what the installer does and why. It changes no other rule in §Decision.
 
 **What item 1 says.** `linux/{INSTALL.txt,install.sh,uninstall.sh}` install "VST3 →
 `/usr/lib/vst3`, standalone → `/usr/local/bin`, **root-checked**".
@@ -219,7 +221,8 @@ direction: the 0.1.4 rounds exercised fresh, upgrade, interrupted-recovery, unin
 warning and staging-refusal paths against a redirected destination, in both modes. What remains
 unexercised is a real root run against the real `/usr/lib/vst3` on a distribution system.
 
-**If the owner rejects this**, the change to revert is the mode prompt and the per-user branch, not
-the transaction — the staging/park-aside/reconcile machinery is orthogonal to which destination is
-the default. See `POSTMORTEMS.md` INC-006 for why the staging location in that machinery is a trust
+**The revert path, kept because a ratified decision is still reversible**: the gated part is the
+mode prompt and the per-user branch, not the transaction — the staging/park-aside/reconcile
+machinery is orthogonal to which destination is the default, and a later reversal of the default
+must not take it out. See `POSTMORTEMS.md` INC-006 for why the staging location in that machinery is a trust
 boundary rather than a matter of taste.

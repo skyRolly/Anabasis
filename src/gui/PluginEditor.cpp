@@ -2475,11 +2475,18 @@ void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
                               && ! juce::Process::isForegroundProcess();
 
     if (! editorGone && ! switchedAway)
+    {
+        orphanDismissDone = false;   // the trigger cleared: re-arm for the next one
         return;
+    }
 
-    // Once per raise. See `orphanDismissDone` for why a repeat is reachable at
-    // all: nothing here makes `shieldRaised` false, and the deletion that does
-    // is a message-loop dispatch away.
+    // Once per raise, and re-armed when the CONDITION clears rather than only
+    // when the shield drops. The latch used to reset on the `shieldRaised`
+    // transition alone, so a window that was exited but never deleted kept the
+    // shield up with the latch set, and a second background→foreground→
+    // background cycle produced no second attempt. Keying the reset on the
+    // trigger going away makes each new occurrence its own event, which is what
+    // "once per raise" was reaching for.
     if (orphanDismissDone)
         return;
     orphanDismissDone = true;
