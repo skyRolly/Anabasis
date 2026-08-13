@@ -121,9 +121,35 @@ DELIBERATE_REAIMS = set([
     # worth knowing before adding one here: it was re-SPELLED as well as
     # re-aimed, so no base citation matches it and there is nothing to compare
     # against. Only a re-aim that keeps its shape reaches this list.
-    ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:1766"),
 ])
+
+
+def is_declared_reaim(doc, whole_base, whole_cur):
+    """Does a declaration excuse this citation's mismatch?
+
+    TWO conditions, and the second is what stops the list becoming a set of
+    permanent exemptions:
+
+      1. Either spelling is declared. Which side of the change a declaration
+         names should not decide whether it works — the two check paths had
+         drifted apart on exactly that, one testing the current spelling and the
+         other the base one, so a declaration written for one branch was inert in
+         the other and nothing said so.
+      2. THE SPELLING ACTUALLY CHANGED. A re-aim moves an anchor, so it always
+         changes the spelling. If base and current read the same, this diff did
+         not re-aim anything and a mismatch is ordinary drift — the exact case a
+         spelling-keyed declaration would otherwise silence forever. Without this
+         the entry survived its own transition: once the base carried the
+         re-aimed spelling, `1766 == 1766` kept matching and the next commit that
+         moved that code had its drift swallowed by a declaration written for
+         something else.
+
+    So a declaration is good for exactly one transition, and the run after it
+    reports the entry as removable.
+    """
+    if whole_base == whole_cur:
+        return False
+    return any((doc, w) in DELIBERATE_REAIMS for w in (whole_base, whole_cur) if w)
 
 
 def classify(prefix, path):
@@ -273,7 +299,7 @@ def main():
 
     maps = {p: build_line_map(args.base, p) for p in base_src}
 
-    total = drifted = fixed = unmappable = 0
+    total = drifted = fixable = unmappable = unchecked = 0
     used_reaims = set()
     for doc in doc_files():
         base_text = subprocess.run(["git", "show", f"{args.base}:{doc}"],
@@ -313,17 +339,25 @@ def main():
                 for (whole_c, _t, span_c, _a) in curs:
                     still.setdefault(whole_c, []).append(span_c)
                 for (whole_o, _t, _span_o, anchors_o) in olds:
+                    # `total` counts every base anchor on BOTH paths, and the ones
+                    # this path cannot judge are counted again into `unchecked`
+                    # and reported. Counting only the judged ones here made the
+                    # closing "N of M" mean a different thing per document
+                    # depending on which branch it took — the summary of a tool
+                    # whose subject is documents saying what they mean.
+                    total += len(anchors_o)
                     spans = still.get(whole_o)
                     if not spans:
+                        unchecked += len(anchors_o)
                         continue
-                    total += len(anchors_o)
                     if all(line_of(base_src[tracked], a) == line_of(now_src[tracked], a)
                            and (b is None or line_of(base_src[tracked], b) == line_of(now_src[tracked], b))
                            for (a, b) in anchors_o):
                         continue
-                    if (doc, whole_o) in DELIBERATE_REAIMS:
-                        used_reaims.add((doc, whole_o))
-                        continue
+                    # No DELIBERATE_REAIMS check here on purpose: this branch
+                    # only reaches citations whose spelling is UNCHANGED (that is
+                    # the `still.get(whole_o)` filter above), and a re-aim always
+                    # changes the spelling. Anything mismatching here is drift.
                     mapped, movable = [], True
                     for (a, b) in anchors_o:
                         na, nb = maps[tracked](a), (maps[tracked](b) if b else None)
@@ -339,8 +373,16 @@ def main():
                         continue
                     rebuilt = f"{tracked}:" + ", ".join(
                         f"{na}-{nb}" if nb else f"{na}" for na, nb in mapped)
+                    # One citation, however many times the document spells it.
+                    # Identical spellings carry identical anchors, so the same
+                    # rewrite is right for each occurrence — but they are ONE
+                    # drifted citation, and counting the spans inflated `fixed`
+                    # past the number of citations there were to fix.
+                    if len(spans) > 1:
+                        print(f"    (spelled {len(spans)}× in this document; all move together)")
                     print(f"  DRIFTED {doc}: {whole_o} -> {rebuilt}")
                     edits += [(s, e, rebuilt) for (s, e) in spans]
+                    fixable += 1
                 print(f"check-citations: note — {doc} now has {len(curs)} `{tracked}` "
                       f"citation(s) where {args.base} had {len(olds)}; the added ones are "
                       f"not checkable against that base.")
@@ -362,7 +404,7 @@ def main():
                 if same:
                     continue
 
-                if (doc, whole_c) in DELIBERATE_REAIMS:
+                if is_declared_reaim(doc, whole_o, whole_c):
                     used_reaims.add((doc, whole_c))
                     continue
 
@@ -384,11 +426,11 @@ def main():
                     f"{na}-{nb}" if nb else f"{na}" for na, nb in mapped)
                 print(f"  DRIFTED {doc}: {whole_c} -> {rebuilt}")
                 edits.append((span_c[0], span_c[1], rebuilt))
+                fixable += 1
 
         if args.fix and edits:
             with open(doc, "w", encoding="utf-8") as fh:
                 fh.write(apply_edits(text, edits))
-            fixed += len(edits)
 
     # A declared re-aim is never silent: it is announced when it is honoured, and
     # announced again when it has stopped being needed, so the list cannot quietly
@@ -400,20 +442,26 @@ def main():
         print(f"check-citations: note — DELIBERATE_REAIMS entry {doc}: {whole} was not "
               f"needed against {args.base}; delete it once the base carries the re-aim.")
 
+    # Every number below counts base ANCHORS, and `unchecked` is stated rather
+    # than netted off, because the difference between "17 verified" and "17
+    # verified, 4 beyond what this could judge" is the whole value of the run.
+    checked = total - unchecked
+    tail = f" ({unchecked} re-spelled or removed, beyond what this run can judge)" if unchecked else ""
+
     if args.fix:
-        print(f"\ncheck-citations: re-anchored {fixed} of {total} citation(s); "
-              f"{unmappable} need a human.")
+        print(f"\ncheck-citations: re-anchored {fixable} citation(s) across {checked} "
+              f"checked anchor(s){tail}; {unmappable} need a human.")
         return 2 if unmappable else 0
 
     if drifted:
-        print(f"\ncheck-citations: {drifted} of {total} citation(s) no longer point at "
-              f"the text they did at {args.base}. Re-anchor them in THIS change set "
-              f"(scripts/check-citations.py --fix), then re-read the ones marked "
-              f"UNMAPPABLE.", file=sys.stderr)
+        print(f"\ncheck-citations: {drifted} citation(s) across {checked} checked "
+              f"anchor(s){tail} no longer point at the text they did at {args.base}. "
+              f"Re-anchor them in THIS change set (scripts/check-citations.py --fix), "
+              f"then re-read the ones marked UNMAPPABLE.", file=sys.stderr)
         return 1
 
-    print(f"check-citations: {total} citation(s) still point at the same text as "
-          f"{args.base}.")
+    print(f"check-citations: {checked} anchor(s) still point at the same text as "
+          f"{args.base}{tail}.")
     return 0
 
 

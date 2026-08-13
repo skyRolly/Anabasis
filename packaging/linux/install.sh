@@ -104,8 +104,26 @@ reconcile() {
     # The kept copy is only discarded once the plug-in is back in place.
     if [ -e "$VST3_DEST" ]; then
         $SUDO rm -rf "$PREV_VST3" 2>/dev/null || true
-        $SUDO rmdir "$STAGE_DIR" 2>/dev/null || true
     fi
+    # …but the empty stage DIRECTORY goes unconditionally, and that is a
+    # different question from the one above. It used to sit inside the guard, so
+    # a FIRST-TIME install interrupted during the copy — no previous version, so
+    # `$VST3_DEST` does not exist — removed the staged files and left
+    # `.anabasis-install-stage` behind in the plug-in folder. Empty and reused by
+    # the next run, so nothing broke; it simply was not the zero residue this
+    # transaction claims.
+    #
+    # Unguarded is SAFE here, and it is worth saying why rather than trusting it:
+    #   * `rmdir` removes only an EMPTY directory. It cannot take the parked
+    #     `Anabasis.vst3.prev` with it — while that copy exists the call fails and
+    #     `|| true` swallows it, which is exactly the protection the guard was
+    #     providing.
+    #   * `$STAGE_DIR` is never the plug-in directory itself. Both branches of
+    #     `choose_stage_dir` return a path ENDING in `.anabasis-install-stage` —
+    #     the fallback is `$1/.anabasis-install-stage`, a child of the plug-in
+    #     folder, not the folder. So this can never remove `~/.vst3` or
+    #     `/usr/lib/vst3`, even when both are empty.
+    $SUDO rmdir "$STAGE_DIR" 2>/dev/null || true
 }
 
 arm_traps() {
@@ -221,28 +239,51 @@ echo "  Standalone -> $BIN_DIR/Anabasis"
 # one many DAWs load.
 #
 # Finding it needs the INVOKING user's home, not `$HOME` — under `sudo` that is
-# root's. `$SUDO_USER` names the real user, and their home comes from the passwd
-# database rather than from `~$SUDO_USER`, which POSIX sh does not expand.
+# root's. There are TWO ways to reach a system-wide install and they answer that
+# question differently, which is what the branch below is for:
+#
+#   * `sudo ./install.sh` — the whole script runs as root, `$HOME` is root's, and
+#     `$SUDO_USER` names the real account. Their home comes from the passwd
+#     database rather than from `~$SUDO_USER`, which POSIX sh does not expand.
+#   * `./install.sh` answered with 2 — the script runs as the USER and elevates
+#     only individual operations (`priv`), so `$HOME` is already the right home
+#     and `$SUDO_USER` is NEVER SET. Naming it here was an unguarded expansion
+#     under `set -u`: the install completed, the traps were already cleared, and
+#     then the courtesy note aborted the script with "SUDO_USER: parameter not
+#     set" and a non-zero exit — reporting failure for a run that had succeeded.
+#     `user_as` carries the answer instead, empty on this path because the
+#     account is the one already reading the message.
 user_home=''
+user_as=''
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     if command -v getent >/dev/null 2>&1; then
         user_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
     fi
     [ -n "$user_home" ] || user_home="/home/$SUDO_USER"
+    user_as=" as $SUDO_USER"
 elif [ "$(id -u)" -ne 0 ]; then
     user_home="${HOME:-}"          # elevated per-operation; $HOME is still ours
 fi
 
-if [ -n "$user_home" ]; then
-    _uv="$user_home/.vst3/Anabasis.vst3"
-    _ua="$user_home/.local/bin/Anabasis"
-    if [ -e "$_uv" ] || [ -e "$_ua" ]; then
-        echo "Note: a per-user install is also present, so Anabasis may appear twice in"
-        echo "      your DAW and the per-user copy may load instead of this one:"
-        if [ -e "$_uv" ]; then echo "        $_uv"; fi
-        if [ -e "$_ua" ]; then echo "        $_ua"; fi
-        echo "      Remove it as $SUDO_USER with:  ./uninstall.sh"
+# The subshell is the structural half of that fix, and it is worth more than the
+# variable was. Everything above this line has already happened: the payload is
+# installed and `trap -` has released the rollback. Nothing after that point is
+# allowed to decide the exit status, and a `set -u` abort is NOT containable by
+# `|| true` on a plain command or a function — the shell exits regardless. It is
+# containable inside a subshell, which is what this is. An advisory that cannot
+# run correctly should print nothing and cost nothing, not fail the install.
+(
+    if [ -n "$user_home" ]; then
+        _uv="$user_home/.vst3/Anabasis.vst3"
+        _ua="$user_home/.local/bin/Anabasis"
+        if [ -e "$_uv" ] || [ -e "$_ua" ]; then
+            echo "Note: a per-user install is also present, so Anabasis may appear twice in"
+            echo "      your DAW and the per-user copy may load instead of this one:"
+            if [ -e "$_uv" ]; then echo "        $_uv"; fi
+            if [ -e "$_ua" ]; then echo "        $_ua"; fi
+            echo "      Remove it${user_as} with:  ./uninstall.sh"
+        fi
     fi
-fi
+) || true
 
 echo "Rescan plug-ins in your DAW to pick it up. Uninstall later with:  sudo ./uninstall.sh"

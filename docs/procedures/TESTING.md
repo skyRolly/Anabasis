@@ -33,6 +33,38 @@ The `docs` job in `build.yml` runs exactly these two commands on every push, sel
 clean corpus scan is not evidence unless the script's own guarantees were exercised in the same
 run. What it checks, and the limits of what it can prove, are stated in the script's docstring.
 
+## Evidence-anchor lint
+
+The other documentation gate, in the `source-lint` job rather than `docs` because it reads SOURCE
+as well as prose. Documents of record cite their evidence as `src/PluginProcessor.cpp:695-752`; an
+edit above such a line re-aims it silently and the document keeps reading as though it were still
+correct.
+
+```bash
+python3 scripts/check-citations.py --check              # base defaults to origin/main; exit 1 on drift
+python3 scripts/check-citations.py --check --base HEAD~1
+python3 scripts/check-citations.py --fix                # re-anchor, then RE-READ what it moved
+```
+
+Run `--check` before pushing any change that moves lines in a tracked source file, and `--fix` in
+the SAME change set that moved them — that is the repository's re-anchoring rule, and the gate
+exists because 0.1.4 proved it does not survive being remembered.
+
+Three limits are worth knowing before trusting a clean run, all of them stated in the script's
+header:
+
+* It proves anchors did not MOVE, never that they were aimed correctly to begin with. Three
+  citations in this repository were wrong before the tool existed and it carried all three along
+  faithfully.
+* It judges only citations spelled from the repository root and naming one of its tracked files.
+  A bare file name, a sibling checkout's path, or a `<rev>:`-pinned anchor is deliberately left
+  alone — the ownership test is narrow because every misclassification is a corrupted document.
+* Anchors it could not judge (re-spelled or removed since the base) are counted and reported
+  separately, so "17 anchors verified" never quietly means "17 of 33".
+
+`--fix` is not a substitute for reading. It preserves the TEXT an anchor named, which is exactly
+how a citation that was aimed at the wrong code stays aimed at the wrong code.
+
 ## Suite structure
 
 ### `tests/dsp_tests.cpp` → `AnabasisTests`

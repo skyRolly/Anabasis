@@ -77,6 +77,18 @@ one third-party action is SHA-pinned because it is.
 6. **Re-verify third-party attribution after any JUCE bump** — the licence inventory is derived
    from the pinned tree, and components vendored inside JUCE's own dependencies do not all appear
    in JUCE's top-level licence file (`RELEASE_POLICY.md`).
+7. **Re-read the code that reasons about JUCE INTERNALS, not just the code that calls JUCE.** A
+   handful of sites here are correct because of an ordering or a guard inside JUCE that no header
+   promises, and each cites `juce_*.cpp` by line against the pinned tree. A bump can move those
+   lines without breaking a single call, so nothing fails and the reasoning quietly stops holding.
+   The register, to be walked after every bump:
+
+   | Site | What it assumes about JUCE | How it fails if the assumption moves |
+   |---|---|---|
+   | `PluginEditor.cpp` — `showPresetMenu` counts the preset menu itself (`presetMenusOpen`) | A PARENTED `PopupMenu::MenuWindow` binds the DEFAULT look-and-feel before it is added to its parent, so `preparePopupMenuWindow` never reaches `AnabasisLookAndFeel::onPopupMenuWindowCreated` | The hook starts firing and the window is tracked twice — once by the counter, once in `openMenus`. Bounded: the shield still raises and lowers once, and `dismissTrackedPopupMenus`'s second loop skips an already-exited window on `isCurrentlyModal`. What is left is a doubled count while a menu is open |
+   | `PluginEditor.cpp` — `dismissOrphanedPopupMenus` re-delivers nothing after `exitModalState` | JUCE re-delivers the mouse-down that exited a modal loop | A dismissal click could act twice, or not reach the control beneath |
+   | `LookAndFeel.h` — `drawResizableFrame` suppresses the parented pop-up's doubled edge | `paintOverChildren` calls it with a UNIFORM border equal to `getPopupMenuBorderSize()`, and only when a parent component is set | A non-uniform or differently-sized border stops matching and the doubled edge returns |
+   | `PluginEditor.h` — `GatedTooltipWindow` | `TooltipWindow::timerCallback`'s early-show branch ignores `millisecondsBeforeTipAppears` | Tips appear on a different schedule than the gate assumes |
 
 ## Adding a dependency
 

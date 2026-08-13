@@ -159,18 +159,39 @@ public:
     // override has to learn the difference between the two callers rather than
     // answering "nothing" to both.
     //
-    // So it distinguishes them NOW, cheaply, instead of leaving that for the
-    // change that would silently lose a frame: the menu path always passes a
-    // border of `getPopupMenuBorderSize()` on all four edges, which is the
-    // shape suppressed here. Anything else — a `ResizableBorderComponent`,
-    // whose border is its own drag-zone thickness — falls through to the base
-    // implementation and keeps its frame.
+    // So it distinguishes them, on TWO tests, because neither is sufficient
+    // alone and the first one on its own is a magic number:
+    //
+    //   1. SHAPE. `PopupMenu::MenuWindow::paintOverChildren` builds its argument
+    //      as `BorderSize<int> (getPopupMenuBorderSizeWithOptions (options))` —
+    //      the one-argument constructor, which sets all four sides — so the menu
+    //      path always passes a UNIFORM border equal to `getPopupMenuBorderSize()`.
+    //      `ResizableBorderComponent::paint` passes its own `borderSize` member,
+    //      which is usually non-uniform and usually thicker. Usually is the
+    //      problem: a drag zone of exactly 3 px on all four sides is a legal
+    //      thing to construct, and it would land here indistinguishable.
+    //   2. STATE. `isPopupMenuOnScreen` is supplied by the editor and answers
+    //      whether one of ITS menus is open at all. When none is, the caller
+    //      cannot be a menu, whatever its border says, so the frame is drawn.
+    //
+    // Left unset the predicate DRAWS — the doubled edge comes back, visibly, on
+    // a surface someone is looking at. That is the right way for a missing
+    // wire-up to fail: the alternative default silently removes a frame from a
+    // component nobody thought about, which is the failure this override exists
+    // to avoid, arriving through the override itself.
+    //
+    // What survives both tests: a resizable component with a 3 px uniform
+    // border repainting WHILE a menu is on screen. Narrow enough to name rather
+    // than defend against, and it is named in `DEPENDENCY_POLICY.md`'s
+    // JUCE-internals register so the next pin move re-reads it.
+    std::function<bool()> isPopupMenuOnScreen;
     void drawResizableFrame (juce::Graphics& g, int w, int h,
                              const juce::BorderSize<int>& border) override
     {
         const auto b = getPopupMenuBorderSize();
-        if (border.getTop()  == b && border.getBottom() == b
-            && border.getLeft() == b && border.getRight()  == b)
+        const bool menuShaped = border.getTop()  == b && border.getBottom() == b
+                             && border.getLeft() == b && border.getRight()  == b;
+        if (menuShaped && isPopupMenuOnScreen && isPopupMenuOnScreen())
             return;                      // the parented pop-up's doubled edge
         juce::LookAndFeel_V4::drawResizableFrame (g, w, h, border);
     }

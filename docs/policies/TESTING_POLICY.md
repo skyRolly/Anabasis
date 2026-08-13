@@ -11,7 +11,7 @@ Repository Governance Policy. Test acceptance levels and the release gate.
 | **3** | DSP validation | No NaN/Inf/denormals across the feature × oversampling × sample-rate matrix; latency == actual; bypass null; click-free transitions; **ceiling never exceeded**; metering accuracy | `tests/dsp_tests.cpp` |
 | **4** | pluginval | VST3 conformance on all three platforms, **and AU conformance on macOS**; editor open/close under `xvfb` | `scripts/run-pluginval.sh [strictness] [mode] [format]` / `.ps1` |
 | **4b** | Shipped-artefact probe | `AnabasisChannelProbe` LOADS the built bundle through a host and asserts BOTH channels carry audio across the reported field configurations — the only check that exercises the LTO'd, wrapped binary a user installs. macOS runs it for VST3 and AU × arm64 and x86_64 | `tools/channel_probe.cpp`; a step in the `linux`, `windows` and `macos` jobs |
-| **1b** | Portability + memory | Source lint for the JUCE SIMD-overload hazard; a Clang build gating on first-party warnings; ASan + UBSan + valgrind over both suites | `scripts/check-portability.py`; `build.yml` jobs `source-lint`, `linux-clang`, `sanitizers` |
+| **1b** | Portability + memory + evidence anchors | Source lint for the JUCE SIMD-overload hazard; documentation `file:line` anchors still naming the code they were written about; a Clang build gating on first-party warnings; ASan + UBSan + valgrind over both suites | `scripts/check-portability.py`, `scripts/check-citations.py`; `build.yml` jobs `source-lint`, `linux-clang`, `sanitizers` |
 | **5** | Manual validation | Audio quality + GUI appearance + the loudness-matched listening test (cannot be judged headlessly) | Load in a DAW |
 
 ## Phase-escalating strictness (`DEVELOPMENT_BRIEF.md` §2, §11)
@@ -70,11 +70,19 @@ Lowering strictness below the phase value is a deliberate act that must be justi
   a silent skip: a gate that quietly does nothing is worse than no gate, because it reports green.
 - **The cross-platform gates below are blocking too**, and they exist because a green Linux build
   is not evidence about another platform:
-  - `source-lint` — `scripts/check-portability.py`. Rejects an explicit template argument on
-    `{jmin, jmax, snapToZero}`, the juce names `juce_dsp` also overloads for `dsp::SIMDRegister`.
-    **This is a lint and not a build job on purpose.** The defect it guards (INC-003) is a
-    typedef divergence — `size_t` is `uint64_t` on Linux and is not on macOS — so it is invisible
-    to every Linux COMPILER, GCC and Clang alike. No build job on a Linux runner can replace it.
+  - `source-lint` — TWO lints, sharing a job because both guard classes no build can see.
+    - `scripts/check-portability.py` rejects an explicit template argument on
+      `{jmin, jmax, snapToZero}`, the juce names `juce_dsp` also overloads for
+      `dsp::SIMDRegister`. **This is a lint and not a build job on purpose.** The defect it
+      guards (INC-003) is a typedef divergence — `size_t` is `uint64_t` on Linux and is not on
+      macOS — so it is invisible to every Linux COMPILER, GCC and Clang alike. No build job on a
+      Linux runner can replace it.
+    - `scripts/check-citations.py --check` fails the run when a documentation `file:line` anchor
+      no longer names the text it named at the base revision. It is a DOCUMENTATION gate riding
+      in a source job, deliberately: it reads both trees, so it belongs where history is
+      checked out (`fetch-depth: 0`), not in `docs`. What it proves is narrow and must not be
+      overstated — anchors did not MOVE, never that they were aimed correctly to begin with. It
+      reports anchors it could not judge separately rather than counting them as passes.
   - `linux-clang` — builds both test targets **and the plugin** with Clang, runs both
     reproductions against the plugin build, and fails on any warning whose path is
     under `src/` or `tests/`. It catches the AppleClang diagnostic set JUCE does not apply to GCC

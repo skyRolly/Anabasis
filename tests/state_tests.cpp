@@ -3648,6 +3648,65 @@ static void testAPopupRowKeepsItsLabelOutOfTheShortcutStrip()
     check (sub.getWidth() == w, "menuShortcut: a sub-menu row renders");
 }
 
+// `drawResizableFrame` is reached by TWO unrelated JUCE callers — a parented
+// pop-up menu painting its border ring, and any `ResizableBorderComponent`
+// painting itself — and the override must draw nothing for the first and the
+// frame for the second. It cannot see the caller, so it decides on the border's
+// SHAPE plus whether a menu is on screen at all. The shape test alone is a magic
+// number: a drag zone of exactly `getPopupMenuBorderSize()` on all four sides is
+// legal to construct and would silently lose its frame, which is the failure the
+// override exists to prevent, arriving through the override.
+static void testTheResizableFrameOverrideDiscriminatesItsCallers()
+{
+    using namespace abgui;
+    AnabasisLookAndFeel lf;
+    const int b = lf.getPopupMenuBorderSize();
+
+    auto inkOf = [&lf] (juce::BorderSize<int> border)
+    {
+        juce::Image img (juce::Image::ARGB, 60, 40, true);
+        {
+            juce::Graphics g (img);
+            lf.drawResizableFrame (g, 60, 40, border);
+        }
+        int inked = 0;
+        for (int y = 0; y < 40; ++y)
+            for (int x = 0; x < 60; ++x)
+                if (img.getPixelAt (x, y).getAlpha() != 0)
+                    ++inked;
+        return inked;
+    };
+
+    // Premise: the base implementation actually paints something for a menu-
+    // shaped border. Without this the "suppressed" assertions below are vacuous.
+    lf.isPopupMenuOnScreen = nullptr;
+    const int menuShapedInk = inkOf (juce::BorderSize<int> (b));
+    check (menuShapedInk > 0,
+           "resizableFrame: (premise) the base implementation inks a menu-shaped border");
+
+    // 1) No menu on screen — the caller cannot be a menu, so the frame is DRAWN
+    //    even though the border is exactly the menu's shape.
+    lf.isPopupMenuOnScreen = [] { return false; };
+    check (inkOf (juce::BorderSize<int> (b)) == menuShapedInk,
+           "resizableFrame: a menu-shaped border still draws when no menu is open");
+
+    // 2) Menu on screen + menu-shaped border — suppressed, which is the whole
+    //    point of the override.
+    lf.isPopupMenuOnScreen = [] { return true; };
+    check (inkOf (juce::BorderSize<int> (b)) == 0,
+           "resizableFrame: the parented pop-up's doubled edge is suppressed");
+
+    // 3) Menu on screen but a NON-menu border shape — drawn. A resizable
+    //    component that repaints while a drop-down happens to be open keeps its
+    //    frame, so the state test cannot swallow the shape test.
+    check (inkOf (juce::BorderSize<int> (b + 2)) > 0,
+           "resizableFrame: a differently-sized border draws even while a menu is open");
+    check (inkOf (juce::BorderSize<int> (b, b, b, b + 1)) > 0,
+           "resizableFrame: a NON-UNIFORM border draws even while a menu is open");
+
+    lf.isPopupMenuOnScreen = nullptr;
+}
+
 static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
 {
     AnabasisAudioProcessor proc;
@@ -4895,6 +4954,42 @@ static void testPresetIdentityAcrossRestore()
         q2.switchToSlot (1);
         check (! q2.canUndo(),
                "restoreId: a Copy straight after a pre-ADR-0022 load mints no phantom undo step");
+
+        // …and the OTHER direction on that same pre-ADR-0022 footing, which is
+        // the ONLY shape in which `presetName` is the sole discriminator. With
+        // no trio on either slot the identity cannot tell them apart, so if the
+        // NAME stopped travelling through `strippedForUndoCompare` this Copy
+        // would compare equal to what it replaces and silently retract its own
+        // step. Every other case is covered by the trio — distinct presets carry
+        // distinct identities — so without this leg the name could be stripped
+        // and the whole suite would still pass.
+        //
+        // Staged through the blob rather than a setter: the two slots differ by
+        // NAME ALONE, which no public API can produce (`savePresetFile` moves the
+        // identity with the name, and `applyFactoryPreset` moves the surface too).
+        AnabasisAudioProcessor q3;
+        juce::MemoryBlock nameOnly;
+        q3.getStateInformation (nameOnly);
+        auto nroot = unwrap (nameOnly);
+        for (int s = 0; s < 2; ++s)
+        {
+            auto slot = slotOf (nroot, s);
+            slot.removeProperty ("presetSource",    nullptr);
+            slot.removeProperty ("presetFactoryId", nullptr);
+            slot.removeProperty ("presetUserFile",  nullptr);
+            slot.setProperty ("presetName", s == 0 ? "Alpha" : "Beta", nullptr);
+        }
+        const auto nblob = wrap (nroot);
+        q3.setStateInformation (nblob.getData(), (int) nblob.getSize());
+        check (q3.currentPresetName() == "Alpha",
+               "restoreId: (premise) the active slot loaded the name it was given");
+        q3.copySlotToOther();            // "Alpha" over "Beta" — nothing else differs
+        q3.switchToSlot (1);
+        check (q3.canUndo(),
+               "restoreId: with no trio on either slot, a NAME-only Copy is still a real change");
+        q3.undo();
+        check (q3.currentPresetName() == "Beta",
+               "restoreId: ...and undoing it puts the destination's own name back");
     }
 
     // --- A no-AB restore resets the identity WITH the other slot fields -----
@@ -6684,6 +6779,7 @@ int main (int argc, char** argv)
         testANoOpPresetApplyDoesNotEatTheOldestUndoStep();
         testThePopupShieldActuallyCoversTheEditor();
         testAPopupRowKeepsItsLabelOutOfTheShortcutStrip();
+        testTheResizableFrameOverrideDiscriminatesItsCallers();
         testAMalformedStoredSlotCannotSplitSoundFromMetadata();
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();

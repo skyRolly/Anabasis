@@ -189,19 +189,31 @@ jobs:
       # WHAT IT COMPARES AGAINST, precisely — the comment here used to say
       # "the merge base" and neither branch of the shell below computed one.
       #
-      #   * pull_request: `base.sha` is the BASE BRANCH TIP at the time the event
-      #     fired, not the point the branch left it. Judging against the tip
-      #     charges this branch for every anchor the base moved since it forked,
-      #     so the tip is fed to `git merge-base` and the fork point is the base.
-      #     `fetch-depth: 0` above is what makes that resolvable.
-      #   * push: `event.before` is the branch's PREVIOUS TIP. On the first push
-      #     of a branch it is all-zeros; after a FORCE-PUSH it names a commit
-      #     that may no longer exist in the repository at all, and `git show`
-      #     against a missing object fails every file — which the script reports
-      #     as "nothing to check against" and exits 2, a red gate that says
-      #     nothing about the documents. Both cases are tested for and fall back
-      #     to `HEAD~1`, which under-checks (one commit of drift) rather than
-      #     failing on a question it cannot answer.
+      #   * pull_request — FORK pull requests only. This job carries the same
+      #     same-repo guard the `docs` job does, so a same-repo branch never
+      #     reaches this event here; do not read the branch below as the normal
+      #     case. When it does fire, `base.sha` is the BASE BRANCH TIP at the
+      #     time of the event, not the point the branch left it. Judging against
+      #     the tip charges the branch for every anchor the base moved since it
+      #     forked, so the tip is fed to `git merge-base` and the fork point is
+      #     the base. `fetch-depth: 0` above is what makes that resolvable.
+      #   * push — the normal path for work in this repository, and the one that
+      #     actually holds the line. `event.before` is the branch's previous tip,
+      #     so each push is judged against its immediate predecessor: ONE PUSH OF
+      #     DRIFT AT A TIME. That is narrower than a merge base, and it is still
+      #     sufficient for the failure this gate exists to catch — 0.1.4's stale
+      #     anchors came from two LATER commits in the same round, and each of
+      #     those is a push. It is sufficient only while every push is checked,
+      #     which is why this job has no `needs:` and cannot be skipped by a
+      #     failing build.
+      #
+      # Two ways `event.before` is unusable, both tested for below: on the first
+      # push of a branch it is all-zeros, and after a FORCE-PUSH it names a
+      # commit the repository may no longer have at all — `git show` then fails
+      # every file and the script reports "nothing to check against" and exits 2,
+      # a red gate that says nothing about the documents. Both fall back to
+      # `HEAD~1` with a notice, which under-checks rather than failing on a
+      # question it cannot answer.
       - name: Check documentation evidence anchors
         run: |
           set -euo pipefail

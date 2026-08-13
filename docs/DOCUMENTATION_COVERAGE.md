@@ -65,7 +65,7 @@ so a bare file name, a sibling path and a `<rev>:` anchor are all left alone. Un
 coverage; misclassifying costs the truth of the document.
 
 The fifth was in the rewrite itself: substitution was by string, so re-anchoring
-`src/PluginProcessor.cpp:107` to `:130` also turned an untouched `src/PluginProcessor.cpp:1076`
+`src/PluginProcessor.cpp:107` to `:130` also turned an untouched `src/PluginProcessor.cpp:1092`
 into `:1306`. It now substitutes by the match's own span, right to left.
 
 Both remaining fixes are mutation-verified against the exact reported shapes, and the tool runs in
@@ -91,23 +91,39 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 802 = 1098 checks green**, up 59 on 0.1.3's
-1039 — five new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 810 = 1106 checks green**, up 67 on 0.1.3's
+1039 — six new state tests (`testANoOpPresetApplyIsNotAUserAction`,
 `testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
 `testThePopupShieldActuallyCoversTheEditor`,
-`testAPopupRowKeepsItsLabelOutOfTheShortcutStrip`), each mutation-verified against its own deliberately
-reverted fix and against no other.
+`testAPopupRowKeepsItsLabelOutOfTheShortcutStrip`,
+`testTheResizableFrameOverrideDiscriminatesItsCallers`), each mutation-verified against its own
+deliberately reverted fix and against no other. `testPresetIdentitySharedName` also gained the leg
+that closes the last uncovered corner of the undo compare: with no ADR-0022 trio on either slot —
+a pre-ADR-0022 session — `presetName` is the SOLE discriminator, and nothing asserted that
+direction, so the name could have been stripped from `strippedForUndoCompare` with every test
+still green.
 
-Two of those four exist because a review round found defects the first cut shipped, and both are
-worth recording as coverage lessons rather than quietly fixed. The shield was **added, sized
-nowhere, and therefore inert**: every part of the mechanism — z-order, interception toggle, menu
-bookkeeping — was correct while the component had empty bounds, so no click could ever reach it.
-Geometry is the one property of that component a headless test CAN read, and there was no test
+**Four** of those six exist because a review round found defects the first cut shipped, and all
+three are worth recording as coverage lessons rather than quietly fixed. The shield was **added,
+sized nowhere, and therefore inert**: every part of the mechanism — z-order, interception toggle,
+menu bookkeeping — was correct while the component had empty bounds, so no click could ever reach
+it. Geometry is the one property of that component a headless test CAN read, and there was no test
 reading it. The second was a **vacuous first attempt**: the undo-depth test originally re-applied
 the preset after editing, which is a real restore, so it never entered the retraction path it
 claimed to cover and passed against the reverted fix. It is now a control/subject pair, and the
-mutant separates them by exactly one step (127 vs 128).
+mutant separates them by exactly one step (127 vs 128). The third is the sharpest of the three:
+a pop-up row's two right-hand furniture cases were covered by **`jassert`s declaring them
+unreachable**, which is not coverage at all — `jassert` compiles out of every shipped build, so the
+declaration bound only the developer, and the look-and-feel also serves menus this editor does not
+build. The row now renders what it is handed, and the test that replaced the assertions fails on
+the old drawing. An assertion that a case cannot happen is a claim about callers; where the callers
+include a framework, only rendering it is a claim about the code. The fourth is the same lesson
+in the neighbouring override: `drawResizableFrame` is reached by two unrelated JUCE callers and
+told them apart by a MAGIC NUMBER — a border of `getPopupMenuBorderSize()` on all four sides — so
+a future `ResizableBorderComponent` with a 3 px drag zone would have silently lost the frame the
+override exists to protect. It now also asks the editor whether a menu is on screen at all, and
+the test pins both halves: each is killed by its own mutant, on different assertions.
 
 **Superseded header (0.1.3, kept rather than deleted):** the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
 naming only, no DSP change, no new ADR (nothing decided at contract level: the three

@@ -158,6 +158,22 @@ static juce::ValueTree strippedForUndoCompare (const juce::ValueTree& slot)
     // this compare exists to suppress. Defaulting absent to "" here makes the
     // compare see through the encoding, while a REAL identity move (factory
     // vs user under one name) still differs and still mints its step.
+    // WHAT MUST NOT BE ADDED TO THIS FUNCTION, and it is the identity and the
+    // name. Only the ENCODING is normalised above — absent becomes empty — and
+    // the VALUES keep travelling. `closePresetUndoBracket` retracts a preset
+    // apply's undo step when this compare finds the slots equivalent, so those
+    // two properties are what makes applying a DIFFERENT preset that lands on an
+    // identical parameter surface still a real, undoable change. Strip them for
+    // the same "an undo could not restore it anyway" reason the view tier is
+    // stripped and cross-preset applies silently become retractable: the sound
+    // stays put, the name and the selected row do not, and Undo no longer
+    // reaches the preset the user came from.
+    //
+    // It is not left to a comment alone. `testPresetIdentitySharedName` stages a
+    // Copy that moves ONLY the identity — same name, same sound — and asserts a
+    // step is minted and that undoing it restores the previous identity;
+    // stripping the trio and the name here fails "restoreId: undoing that Copy
+    // restores the factory identity" and nothing else.
     for (const auto* key : { "presetSource", "presetFactoryId", "presetUserFile" })
         if (! copy.hasProperty (key))
             copy.setProperty (key, juce::String(), nullptr);

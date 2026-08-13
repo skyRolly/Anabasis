@@ -716,6 +716,11 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // Both feeders into `openMenus`. Every drop-down and context menu we do not
     // build ourselves arrives through the look-and-feel hook.
     lnf.onPopupMenuWindowCreated = [this] (juce::Component& w) { notePopupMenuOpened (w); };
+    // …and the state half of `drawResizableFrame`'s two-part caller test. The
+    // shield's own condition IS "one of our menus is on screen" — both sources,
+    // the hook above and the preset menu's own counter — so it is reused rather
+    // than tracked a second time and left to disagree with itself.
+    lnf.isPopupMenuOnScreen = [this] { return shieldRaised; };
 
     // -- Settings rows (§6.4, all InternalState-bound) -----------------------
     auto& ist = proc.internalState.state();
@@ -1036,6 +1041,7 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
     // The look-and-feel outlives this callback only as a member; clear the hook
     // so nothing can call back into a half-destroyed editor.
     lnf.onPopupMenuWindowCreated = nullptr;
+    lnf.isPopupMenuOnScreen      = nullptr;   // same reason, same lifetime
     // The THIRD source, and leaving it out made the guarantee above two thirds
     // true: `animVBlank`'s callback (`stepMicroAnims`) touches `animated`,
     // `uiAnimOn` and `lastFrameTime`. It is declared BEFORE `lastFrameTime` and
@@ -2144,10 +2150,25 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
     // its parent — so our hook is not called for this window and counting it
     // here is not double-counting.
     //
-    // (If it ever did fire for this window the outcome would be harmless — the
-    // shield is already raised, so `refreshPopupShield` returns early — but the
-    // count would drift, which is why this rests on the ordering rather than on
-    // that safety net.)
+    // WHAT WOULD ACTUALLY HAPPEN IF A JUCE BUMP REORDERED THAT, written out
+    // because the ordering is an internal detail no header promises and the next
+    // reader deserves the blast radius rather than a reassurance. The window
+    // would be counted here AND tracked in `openMenus`:
+    //
+    //   * The shield is unaffected. `refreshPopupShield` wants it raised while
+    //     EITHER source is non-empty, and both are populated and both cleared,
+    //     so it goes up once and comes down once.
+    //   * Dismissal is unaffected. `dismissTrackedPopupMenus` walks `openMenus`
+    //     first and the editor's modal children second, and the second loop
+    //     begins `if (! child->isCurrentlyModal (false)) continue;` — the first
+    //     loop's `exitModalState` has already made that false. A doubly-tracked
+    //     window is skipped by the second path rather than exited twice.
+    //
+    // So the failure mode is a doubled count while a menu is open, not a stuck
+    // shield and not a double dismissal. It still rests on the ordering rather
+    // than on those two guards, which is why the JUCE-internals register in
+    // `DEPENDENCY_POLICY.md` upgrade rule 7 lists this site to be re-read after
+    // every pin move.
     // Raise the shield BEFORE the menu is created, so the menu is appended in
     // front of it (see the z-order argument on PopupShield).
     ++presetMenusOpen;

@@ -107,9 +107,18 @@ POST
   pkgbuild --root "$root" --identifier "com.rollytech.anabasis.$id" \
            --version "$VERSION" --install-location "$dest" \
            --component-plist "$plist" --scripts "$scripts" "$out"
+
+  # Registered only on success, so the probe below can never claim to have
+  # covered a component whose package did not build.
+  COMPONENT_IDS="${COMPONENT_IDS:-} $id"
 }
 
-# One component package per install destination.
+# One component package per install destination. `COMPONENT_IDS` accumulates as
+# they are built rather than being written out a second time, because the
+# liveness probe below iterates it and must cover exactly what was built — a
+# hand-maintained copy that fell behind would silently shrink the proof while
+# the assertion loop kept its reach.
+COMPONENT_IDS=''
 build_component vst3 Anabasis.vst3      "/Library/Audio/Plug-Ins/VST3"       "$WORK/AnabasisVST3.pkg"
 build_component au   Anabasis.component "/Library/Audio/Plug-Ins/Components" "$WORK/AnabasisAU.pkg"
 build_component app  Anabasis.app       "/Applications"                      "$WORK/AnabasisApp.pkg"
@@ -178,20 +187,36 @@ grep -q 'customize="allow"' "$WORK/expanded/Distribution" \
 # is an assertion that always passes — precisely the silent-success shape this
 # block exists to prevent. Proving the name is producible is still not enough:
 # it does not show the list TRACKS the component-plist key it stands for. So the
-# mapping is established by a controlled A/B on the same payload — the app bundle
-# is packaged twice, differing only in the keys build_component() sets. Each list
-# must appear with pkgbuild's defaults and disappear when its key is switched
-# off. If that stops holding, the build stops here rather than shipping
-# assertions that cannot fire.
-probe_info() {                  # $1 = tag; remaining args go to pkgbuild
-  _tag=$1; shift
-  pkgbuild --root "$WORK/root-app" --identifier com.rollytech.anabasis.probe \
+# mapping is established by a controlled A/B — a component's payload is packaged
+# twice, differing only in the keys build_component() sets. Each list must appear
+# with pkgbuild's defaults and disappear when its key is switched off. If that
+# stops holding, the build stops here rather than shipping assertions that
+# cannot fire.
+#
+# The A/B runs ONCE PER COMPONENT, and that is the point rather than thoroughness
+# for its own sake. `pkgbuild --analyze` decides its defaults per bundle, and a
+# `.vst3` or a `.component` is not a `.app`. Proving the mapping on the app alone
+# while the assertion loop below applies it to all three would leave the two
+# plug-in components asserted by patterns never shown to be producible for THEM:
+# if either were analysed differently — not marked relocatable by default, say —
+# its `<relocate>` assertion would pass by finding nothing. That is the same
+# silent success as INC-005 itself, one level up. Three extra `pkgbuild` runs is
+# the whole cost.
+#
+# The probe fixes `--install-location` for every component instead of using the
+# real destination: the membership lists come from the component plist and from
+# what `--analyze` made of the ROOT, and `pkgbuild` never shows the install
+# location to either. Varying it would suggest it mattered; varying only the
+# payload is what makes this a controlled comparison.
+probe_info() {                  # $1 = component id, $2 = tag; rest -> pkgbuild
+  _id=$1; _tag=$2; shift 2
+  pkgbuild --root "$WORK/root-$_id" --identifier com.rollytech.anabasis.probe \
            --version "$VERSION" --install-location "/Applications" \
-           "$@" "$WORK/probe-$_tag.pkg" >/dev/null
-  pkgutil --expand "$WORK/probe-$_tag.pkg" "$WORK/probe-$_tag-x"
-  tr -d ' \n\t' < "$WORK/probe-$_tag-x/PackageInfo"
+           "$@" "$WORK/probe-$_id-$_tag.pkg" >/dev/null
+  pkgutil --expand "$WORK/probe-$_id-$_tag.pkg" "$WORK/probe-$_id-$_tag-x"
+  tr -d ' \n\t' < "$WORK/probe-$_id-$_tag-x/PackageInfo"
 }
-probe_fail() {                  # $1 = tag, $2 = message
+probe_fail() {                  # $1 = component id, $2 = tag, $3 = message
   # READ THIS BEFORE BLAMING build_component(). A failure here does NOT mean the
   # package is wrong — it means the probe could no longer establish that the
   # assertions below can fire. The likeliest cause by far is TOOLCHAIN DRIFT: a
@@ -200,38 +225,51 @@ probe_fail() {                  # $1 = tag, $2 = message
   # package whose guarantees are unverified, which is the intended direction, but
   # it means this job is deliberately sensitive to the platform tools.
   #
+  # If it fails for ONE component only, that is the more interesting outcome and
+  # the reason the probe is per-component: the platform treats that bundle type
+  # differently, and the assertion loop's claim about it was never true.
+  #
   # If that happens: compare the PackageInfo dumped below against the element
   # names the loop matches, update both together, and record the change in
   # POSTMORTEMS.md INC-005 — the incident this whole block exists for.
-  echo "error: $2" >&2
-  echo "---- PackageInfo of probe '$1' ----" >&2
-  cat "$WORK/probe-$1-x/PackageInfo" >&2
+  echo "error: [$1] $3" >&2
+  echo "---- PackageInfo of probe '$1/$2' ----" >&2
+  cat "$WORK/probe-$1-$2-x/PackageInfo" >&2
   exit 1
 }
-PROBE_ON=$(probe_info defaults)
-PROBE_OFF=$(probe_info patched --component-plist "$WORK/component-app.plist")
-for pattern in '<relocate><bundle' '<bundle-version><bundle' '<upgrade-bundle><bundle'; do
-  case "$PROBE_ON" in
-    *"$pattern"*) ;;
-    *) probe_fail defaults "pkgbuild's defaults produce no '$pattern' — the assertion keyed on it cannot fire" ;;
-  esac
-done
-for pattern in '<relocate><bundle' '<bundle-version><bundle'; do
+
+PROBED=0
+for pid in $COMPONENT_IDS; do
+  PROBE_ON=$(probe_info "$pid" defaults)
+  PROBE_OFF=$(probe_info "$pid" patched --component-plist "$WORK/component-$pid.plist")
+  for pattern in '<relocate><bundle' '<bundle-version><bundle' '<upgrade-bundle><bundle'; do
+    case "$PROBE_ON" in
+      *"$pattern"*) ;;
+      *) probe_fail "$pid" defaults "pkgbuild's defaults produce no '$pattern' — the assertion keyed on it cannot fire" ;;
+    esac
+  done
+  for pattern in '<relocate><bundle' '<bundle-version><bundle'; do
+    case "$PROBE_OFF" in
+      *"$pattern"*) probe_fail "$pid" patched "'$pattern' survives with its component-plist key switched off — that list does not track the key it is asserted for" ;;
+      *) ;;
+    esac
+  done
   case "$PROBE_OFF" in
-    *"$pattern"*) probe_fail patched "'$pattern' survives with its component-plist key switched off — that list does not track the key it is asserted for" ;;
-    *) ;;
+    *'<upgrade-bundle><bundle'*) ;;
+    *) probe_fail "$pid" patched "BundleOverwriteAction=upgrade did not reach PackageInfo as <upgrade-bundle>" ;;
   esac
+  PROBED=$((PROBED + 1))
 done
-case "$PROBE_OFF" in
-  *'<upgrade-bundle><bundle'*) ;;
-  *) probe_fail patched "BundleOverwriteAction=upgrade did not reach PackageInfo as <upgrade-bundle>" ;;
-esac
 
 # Count first — a loop over an empty `find` would pass every assertion below
-# without executing one of them.
+# without executing one of them. The probe count is checked against the SAME
+# number for the same reason: the assertions may not be applied to more
+# components than the A/B established them for.
 INFOS=$(find "$WORK/expanded" -name PackageInfo | wc -l | tr -d ' ')
 [ "$INFOS" -eq 3 ] \
   || { echo "error: expected 3 component PackageInfo files in $OUT, found $INFOS" >&2; exit 1; }
+[ "$PROBED" -eq "$INFOS" ] \
+  || { echo "error: the plist->PackageInfo mapping was proved for $PROBED component(s) but $INFOS are asserted below" >&2; exit 1; }
 while IFS= read -r info; do
   flat=$(tr -d ' \n\t' < "$info")
   case "$flat" in
