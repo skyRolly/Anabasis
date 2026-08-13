@@ -288,6 +288,59 @@ construction and by pattern tests; the install behaviour itself needs macOS to o
   a platform tool, so the gate is the build's own fail-closed assertion set.
 - Commit: this one
 
+## INC-006 — A tidiness change put a privileged write path in a world-writable directory
+
+**Symptom:** none observed; found in review of an unmerged branch, one commit after it was
+introduced, and never in a released build. The defect is a **local privilege escalation** in the
+Linux installer: any unprivileged user on the machine could get code of their choosing installed
+system-wide the next time an administrator ran `sudo ./install.sh`.
+
+**Root cause.** `choose_stage_dir` gained `/var/tmp/.anabasis-install-stage` as its preferred
+staging candidate, to stop a system install leaving a dot-directory in `/usr/lib`. `/var/tmp` is
+mode **1777** and the staging name is a **literal**, so the directory is a fixed path any user can
+create and own before root arrives. Two ways that pays:
+
+- **Direct injection, no race.** The recovery scan adopts whichever candidate holds an
+  `Anabasis.vst3.prev`, on the reasoning that an interrupted install parked it there. `reconcile`
+  then runs `mv "$PREV_VST3" "$VST3_DEST"` **as root** whenever the destination is absent. A
+  planted `.prev` is therefore installed to `/usr/lib/vst3/Anabasis.vst3` by the privileged run.
+  Reproduced end to end against a redirected destination before the fix, and again after it.
+- **TOCTOU on the staged bundle.** Root copies the payload into the attacker-owned directory and
+  renames it out at a later step. The sticky bit protects `/var/tmp` itself, never a subdirectory
+  the attacker owns, so the staged bundle can be swapped between those two operations.
+
+A non-adversarial version of the same defect: a stage directory left by another account is adopted
+by the next user's install, whose copy into it then fails on permissions and aborts the run.
+
+**Fix:** the candidate is gone. Staging is back to the plug-in directory's parent and the plug-in
+directory itself — for a system install both are root-owned, for a per-user install both are inside
+`$HOME`. Beyond that, an EXISTING staging directory is now adopted only if `stage_dir_is_adoptable`
+agrees: owned by the identity whose writes land in the destination, not a symlink, and not
+group- or other-writable, failing closed on anything it cannot determine. An untrusted candidate is
+SKIPPED rather than deleted — the reject path must not `rm -rf` a directory this run does not own.
+The recovery scan is gated on the same test, because a `.prev` in a directory we do not trust is
+bait rather than a backup.
+
+**Prevention, and this is the part worth keeping.** The change was made to satisfy a review
+suggestion about tidiness — a dot-directory in a distribution-managed tree — and the suggestion was
+reasonable. What was missing is that **the installer writes as root**, so every path it touches is
+part of a trust boundary, and moving a privileged write into a shared writable location is a
+security change wearing the clothes of a cosmetic one. The rule this leaves behind: a privileged
+installer may stage only in a directory the privileged identity already controls; if a scratch
+location is ever wanted, it is `mktemp -d` under a root-owned parent, never a fixed name under
+`/tmp` or `/var/tmp`. It is recorded at the removal site so the next person to want that tidiness
+finds the reason before the patch.
+
+Evidence [Verified]:
+- Source: `packaging/linux/install.sh` (`choose_stage_dir`, `stage_dir_is_adoptable`)
+- Test:   reproduced as a working exploit against a redirected destination — a planted
+  `Anabasis.vst3.prev` reaching the install path before the fix, and the same input landing on the
+  root-owned candidate after it; plus refusal cases for a world-writable, a foreign-owned and a
+  symlinked staging directory, and a check that an untrusted candidate is not deleted.
+  `TESTING_POLICY.md` rule 1's normal form is not available: the subject is a shell installer with
+  no suite, so the reproduction is the record, as ADR-0025 allows.
+- Commit: this one
+
 ## Relationship to the other status files
 
 | File | Holds |

@@ -52,6 +52,13 @@ removed=0
 
 # Clears temporary files an interrupted install may have left behind. Only the
 # exact names the installer creates are removed; nothing else is touched.
+# THIS LIST MUST MATCH `choose_stage_dir` IN `install.sh`, candidate for
+# candidate. It briefly did not: a `/var/tmp` staging candidate was added there
+# and not here, so an interrupted install's staged bundle survived a deliberate
+# uninstall — against what the CHANGELOG promises. That candidate is gone (it
+# carried a local root exploit; the reasoning is at its removal site), which
+# makes the two lists identical again. Add a candidate to one and it belongs in
+# the other in the same change set.
 remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
     for _scratch in "${1%/*}/.anabasis-install-stage" \
                     "$1/.anabasis-install-stage" \

@@ -79,7 +79,9 @@ the `source-lint` CI job — against the fork point with the base branch, comput
 assumed, with a force-push or a first push falling back to `HEAD~1` instead of failing on a base
 revision that no longer exists.
 
-**New records:** `POSTMORTEMS.md` **INC-005** (the macOS package could report success with nothing
+**New records:** `POSTMORTEMS.md` **INC-006** (a tidiness change put a privileged write path in a
+world-writable directory — a local root exploit introduced and removed inside this PR, recorded for
+the reasoning rather than the fix) and **INC-005** (the macOS package could report success with nothing
 at the destination); `KNOWN_ISSUES.md` **KI-013** (the shield-absorbed click still counts toward
 the multi-click run) and **KI-014** (macOS press-and-hold suppresses key repeat in the Save Preset
 field — platform behaviour, filed rather than fixed); **ADR-0025** (the bounded,
@@ -125,7 +127,12 @@ unreachable**, which is not coverage at all — `jassert` compiles out of every 
 declaration bound only the developer, and the look-and-feel also serves menus this editor does not
 build. The row now renders what it is handed, and the test that replaced the assertions fails on
 the old drawing. An assertion that a case cannot happen is a claim about callers; where the callers
- include a framework, only rendering it is a claim about the code.
+ include a framework, only rendering it is a claim about the code. The fourth is the same lesson
+in the neighbouring override: `drawResizableFrame` is reached by two unrelated JUCE callers and
+told them apart by a MAGIC NUMBER — a border of `getPopupMenuBorderSize()` on all four sides — so
+a future `ResizableBorderComponent` with a 3 px drag zone would have silently lost the frame the
+override exists to protect. It now also asks the editor whether a menu is on screen at all, and
+the test pins both halves: each is killed by its own mutant, on different assertions.
 
 **The round-7 finding is the one that reframes this whole file's citations.** An audit of every
 tracked `file:line` anchor in the governed documents found that MOST had been aimed at the wrong
@@ -138,12 +145,7 @@ reviewable act rather than a silent rewrite. Two lessons are worth more than the
 preserves content identity makes a mis-aimed anchor look MAINTAINED, which is worse than leaving it
 obviously stale; and the earlier entry above calling this "three citations" was itself an
 under-count from inspecting three rather than auditing all of them — the same shape of error, one
-level up. The fourth is the same lesson
-in the neighbouring override: `drawResizableFrame` is reached by two unrelated JUCE callers and
-told them apart by a MAGIC NUMBER — a border of `getPopupMenuBorderSize()` on all four sides — so
-a future `ResizableBorderComponent` with a 3 px drag zone would have silently lost the frame the
-override exists to protect. It now also asks the editor whether a menu is on screen at all, and
-the test pins both halves: each is killed by its own mutant, on different assertions.
+level up.
 
 **Superseded header (0.1.3, kept rather than deleted):** the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
 naming only, no DSP change, no new ADR (nothing decided at contract level: the three

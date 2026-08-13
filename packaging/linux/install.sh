@@ -66,50 +66,87 @@ fi
 # Chooses a temporary working directory for the new version, kept out of the
 # folder your DAW scans whenever that is possible.
 #
-# THREE CANDIDATES, tried in order of how little they intrude, and every one of
-# them validated by the same hard-link probe:
+# TWO CANDIDATES, and the absence of a third is the important part.
 #
-#   1. `/var/tmp/.anabasis-install-stage` — a scratch tree that exists for this,
-#      and the only candidate that leaves NOTHING behind in a
-#      distribution-managed directory if the installer is killed by a signal it
-#      cannot catch. Usually a different filesystem from `/usr/lib`, in which
-#      case the probe rejects it and nothing is lost.
-#   2. `<parent of the plug-in dir>/.anabasis-install-stage` — same filesystem by
-#      construction for a system install, but that parent is `/usr/lib`.
-#   3. `<the plug-in dir>/.anabasis-install-stage` — always same-filesystem, at
+#   1. `<parent of the plug-in dir>/.anabasis-install-stage` — for a system
+#      install that is `/usr/lib`, for a per-user one it is `$HOME`. Same
+#      filesystem as the destination by construction, and in both cases a
+#      directory only the installing identity can create.
+#   2. `<the plug-in dir>/.anabasis-install-stage` — always same-filesystem, at
 #      the cost of sitting inside the folder the DAW scans.
+#
+# `/var/tmp` WAS TRIED HERE AND IS DELIBERATELY GONE. It was added to keep a
+# system install from leaving a dot-directory in `/usr/lib`, and it opened a
+# local root exploit: `/var/tmp` is world-writable (mode 1777), the staging name
+# is a literal, so any unprivileged user can create
+# `/var/tmp/.anabasis-install-stage` first and own it. Two ways that pays off,
+# and the first needs no race at all — the recovery scan below adopts whichever
+# candidate holds an `Anabasis.vst3.prev`, and `reconcile` then does
+# `mv "$PREV_VST3" "$VST3_DEST"` AS ROOT, so a planted `.prev` is installed
+# system-wide. The second is a straightforward TOCTOU: root copies the payload
+# into an attacker-owned directory and renames it out later, and the sticky bit
+# on `/var/tmp` protects only `/var/tmp` itself, never the attacker's own
+# subdirectory. Tidiness in `/usr/lib` is not worth either. If this is
+# revisited, the answer is `mktemp -d` under a root-owned parent, never a
+# fixed name in a shared writable tree.
 #
 # THE PROBE IS NOT TIDINESS, it is the transaction. The final step is `mv`, and a
 # `mv` is atomic only WITHIN a filesystem; across one it degrades to copy-then-
 # delete, which is precisely the "partially written plug-in" window this whole
 # script exists to close. So a candidate is accepted only if a hard link can be
 # made from it INTO the destination directory — the cheapest true test of "same
-# filesystem" there is. Staging somewhere tidier than correct is not on offer.
+# filesystem" there is.
+
+# An EXISTING staging directory is adopted only if this run could have created
+# it: owned by the identity whose writes land in the destination, not a symlink,
+# and writable by nobody else. Both candidates are inside trees only that
+# identity can write today, so this check is defence in depth rather than the
+# primary defence — but it is what makes the safety structural instead of a
+# property of two paths someone might later add a third beside. Fails CLOSED:
+# anything it cannot determine is refused.
+stage_dir_is_adoptable() {      # $1 = candidate, $2 = uid that must own it
+    [ -e "$1" ] || return 0     # absent — we are about to create it ourselves
+    [ -L "$1" ] && return 1     # a symlink could aim the whole transaction elsewhere
+    [ -d "$1" ] || return 1     # a file wearing the directory's name
+    _st=$(LC_ALL=C stat -c '%u %a' "$1" 2>/dev/null) || return 1
+    [ "${_st%% *}" = "$2" ] || return 1
+    case "${_st##* }" in
+        *[2367][0-7]) return 1 ;;   # group-writable
+        *[2367])      return 1 ;;   # other-writable
+    esac
+    return 0
+}
+
 choose_stage_dir() {            # $1 = plug-in directory; prints the stage directory
     _probe="$1/.anabasis-probe"
     $SUDO rm -rf "$_probe" 2>/dev/null || true
+    # Who must own a staging directory for it to be ours: root when the payload
+    # is written with elevation (either `sudo ./install.sh` or `priv`), the
+    # invoking user otherwise.
+    if [ "$mode" = system ]; then _owner=0; else _owner=$(id -u); fi
+
     # NOTE for anyone editing this function: the `rm -rf` on the reject path
-    # below is the highest-consequence line in the script, and it is safe only
-    # because of what surrounds it. Every candidate ends in the SAME
-    # installer-owned basename, so the deletion can only ever name a directory
-    # this script creates; `$1` is one of the two plug-in directories set in the
-    # mode branches, never user input; `/var/tmp` is a literal rather than
-    # `$TMPDIR`, so no environment variable reaches the path; and the recovery
-    # scan below means a parked `Anabasis.vst3.prev` is never what gets removed.
-    # What it DOES remove is a leftover from an aborted run — intended, since the
-    # next candidate is about to be tried instead.
+    # below is the highest-consequence line in the script. It is safe because
+    # BOTH conditions hold — the basename is installer-owned so the path can only
+    # ever name a directory this script makes, AND `stage_dir_is_adoptable` has
+    # just established that anything already there belongs to the installing
+    # identity. The name alone was never enough: it says what a path is called,
+    # not who controls it.
     #
-    # RECOVERY FIRST, across all three: an earlier install may have parked the
-    # previous version in any of them, and whichever holds it must be the one
-    # used, or `reconcile` cannot put it back.
-    for _c in "/var/tmp/.anabasis-install-stage" \
-              "${1%/*}/.anabasis-install-stage" \
-              "$1/.anabasis-install-stage"; do
-        if [ -d "$_c/Anabasis.vst3.prev" ]; then printf '%s\n' "$_c"; return 0; fi
+    # RECOVERY FIRST: an earlier install may have parked the previous version in
+    # either candidate, and whichever holds it must be the one used, or
+    # `reconcile` cannot put it back. A candidate that fails the adoption test is
+    # skipped here too — a `.prev` in a directory we do not trust is bait, not a
+    # backup.
+    for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
+        if stage_dir_is_adoptable "$_c" "$_owner" && [ -d "$_c/Anabasis.vst3.prev" ]; then
+            printf '%s\n' "$_c"; return 0
+        fi
     done
-    for _c in "/var/tmp/.anabasis-install-stage" \
-              "${1%/*}/.anabasis-install-stage" \
-              "$1/.anabasis-install-stage"; do
+    # Adding a candidate here means adding it to `remove_install_scratch` in
+    # `uninstall.sh` too, or an interrupted install survives an uninstall.
+    for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
+        stage_dir_is_adoptable "$_c" "$_owner" || continue
         if $SUDO mkdir -p "$_c" 2>/dev/null \
            && $SUDO touch "$_c/.probe" 2>/dev/null \
            && $SUDO ln "$_c/.probe" "$_probe" 2>/dev/null
@@ -122,9 +159,8 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
         $SUDO rm -rf "$_c" 2>/dev/null || true
     done
     # The last candidate is inside the destination directory itself, so reaching
-    # here means even that could not be created — the install is going to fail at
-    # the next step anyway, and it fails there with a message about the real
-    # problem rather than here with one about staging.
+    # here means even that could not be created or could not be trusted. The
+    # install fails at the next step with a message about the real problem.
     printf '%s\n' "$1/.anabasis-install-stage"
 }
 
