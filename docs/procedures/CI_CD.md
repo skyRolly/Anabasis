@@ -95,6 +95,14 @@ is "does it build here".
   roughly half. Combined with the one-push depth above, that is the mechanism by which a
   re-anchoring round can still ship stale anchors, and it is why `--fix` is not a substitute for
   reading what it moved.
+
+  **Two bounds a green `source-lint` does not cover, stated so the badge is not read as more than
+  it is.** A document that did not exist at the base has NOTHING to compare against, so every
+  anchor in a NEW record — each ADR added by the change set that introduces it — is unjudged on
+  the run that introduces it, and has to be read by hand. And a `--fix` that rewrites a tracked
+  SOURCE file changes that line's text, so any anchor elsewhere aimed at that line is thereafter
+  measured against wording that moved for a reason unrelated to code movement; the tool now names
+  the rewritten lines instead of leaving that silent, but settling it is a human's job.
 * `linux-clang` catches the AppleClang DIAGNOSTIC set (`-Wshorten-64-to-32`,
   `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …) that `juce_recommended_warning_flags`
   applies to Clang and not to GCC. Those reached us only from the macOS runner before, minutes

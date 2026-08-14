@@ -291,14 +291,52 @@ PROVENANCE_MARKER = "Provenance (ADR-0009)"
 def citations(text):
     """(whole matched string, tracked path, span, [(start, end|None), ...])"""
     out = []
-    # Byte offsets of every provenance line, so a match can be tested against
-    # the line it sits on without re-splitting the text per match.
+    # Byte offsets of every provenance BLOCK, so a match can be tested against
+    # the block it sits in without re-splitting the text per match.
+    #
+    # THE BLOCK, NOT THE LINE, and the difference is a live corruption hazard
+    # rather than tidiness. This exclusion was line-scoped, which happens to
+    # cover `LookAndFeel.h:1` and `LookAndFeel.cpp:1` — marker and anchor share
+    # a line there. It does NOT cover `src/gui/PluginEditor.h`, where the marker
+    # sits on one line and the sibling's anchor (`src/PluginEditor.h:36-175 /
+    # .cpp:672-800`) wraps onto the line two below. That file is safe today only
+    # by ACCIDENT of ownership: `src/PluginEditor.h` is the sibling's spelling
+    # and is not in `TRACKED`, this tree's editor being `src/gui/PluginEditor.h`.
+    # The day a provenance sentence wraps a path this repo also owns, a re-anchor
+    # would rewrite the SIBLING's range using this tree's movement — the one
+    # corruption this file's header says it must never commit, reached by a
+    # line break.
+    #
+    # A block is the marker's line plus every following CONTINUATION line: one
+    # whose body, after a leading `//`, `#`, `*` or `>` and whitespace, is not
+    # empty. That ends the block at the `//` separator below the sentence in
+    # `PluginEditor.h`, at a blank line in Markdown, and at the first line of
+    # real content anywhere else — without this function needing to know which
+    # comment syntax it is reading.
     provenance_spans = []
-    pos = 0
-    for line in text.splitlines(keepends=True):
-        if PROVENANCE_MARKER in line:
-            provenance_spans.append((pos, pos + len(line)))
+    lines = text.splitlines(keepends=True)
+    offsets, pos = [], 0
+    for line in lines:
+        offsets.append(pos)
         pos += len(line)
+
+    def _is_continuation(line):
+        body = line.strip()
+        while body[:2] in ("//",) or body[:1] in ("#", "*", ">"):
+            body = body[2:] if body[:2] == "//" else body[1:]
+            body = body.lstrip()
+        return body != ""
+
+    i = 0
+    while i < len(lines):
+        if PROVENANCE_MARKER in lines[i]:
+            j = i + 1
+            while j < len(lines) and _is_continuation(lines[j]):
+                j += 1
+            provenance_spans.append((offsets[i], offsets[j - 1] + len(lines[j - 1])))
+            i = j
+            continue
+        i += 1
 
     for m in CITATION.finditer(text):
         tracked = classify(m.group("prefix"), m.group("path"))
@@ -634,6 +672,28 @@ def main():
             # cannot afford to be casually wrong about.
             if doc in now_src:
                 now_src[doc] = read(doc).split("\n")
+
+                # …AND THE REFRESH IS ONLY HALF OF IT. Keeping the cache in step
+                # with disk fixes what this run judges NEXT; it does nothing about
+                # what the rewrite DID. Re-anchoring a citation that lives inside a
+                # tracked source line changes that line's TEXT, and every anchor
+                # aimed at that line is verified by text identity — so a document
+                # elsewhere pointing there now compares the base's old wording
+                # against the new one and reports drift, or gets re-aimed away from
+                # a line that never moved. The repair is indistinguishable from the
+                # damage, which is this tool's recurring shape.
+                #
+                # Not silently, then. The lines are named, because a human can
+                # settle in seconds what the tool cannot settle at all: whether
+                # anything aims at them. Narrow by construction — it needs an
+                # anchor whose target line is itself a citation — but that is
+                # exactly the shape of the comment in `closePresetUndoBracket`
+                # that motivated scanning source in the first place.
+                touched = sorted({text.count("\n", 0, a) + 1 for a, _b, _r in edits})
+                print(f"check-citations: NOTE — {doc} is a tracked SOURCE file and "
+                      f"line(s) {', '.join(str(n) for n in touched)} were rewritten. "
+                      f"Any citation elsewhere aimed at those lines is now measured "
+                      f"against changed text; re-check them by hand.")
 
     # A declared re-aim is never silent: it is announced when it is honoured, and
     # announced again when it has stopped being needed, so the list cannot quietly
