@@ -84,6 +84,13 @@ plug-in produces, which is what that rule is about.
 decision in front of the owner is a choice between three known states rather than three
 predictions. Each was applied to the tree, built, and run against the full state suite:
 
+**The check TOTAL below is 839 because that is what the suite held on 2026-08-13, the day these
+three states were measured.** It is 841 as of 2026-08-14 (`testEveryComboMenuFitsItsControl` gained
+the menu-measurement identity), and this table is deliberately NOT bumped to match: re-writing a
+figure that was not re-measured turns a record of an experiment into a claim about today. What the
+decision rests on is the FAILURE column, which is a property of these two expressions and did not
+move. Re-run the three options if a fresh total is needed.
+
 | Option | Result | What the suite says |
 |---|---|---|
 | Keep both (the tree as it stands) | 839 checks, **0 failures** | — |

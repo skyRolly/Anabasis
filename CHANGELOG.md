@@ -71,8 +71,10 @@ and say so.
   guessed at: an unrecognised option, the two flags given together (they differ in destination
   *and* in privilege, so there is no intent to infer — less than there is behind a typo), and
   `--user` under `sudo`, because which home directory `$HOME` names there depends on the
-  machine's sudoers configuration. Repeating one option is not a conflict and passes. Evidence:
-  this release. [Verified]
+  machine's sudoers configuration. Repeating one option is not a conflict and passes. **`uninstall.sh`
+  takes the same two flags**, which is the half that would otherwise have been left in the worse
+  place: a script that can INSTALL system-wide without a terminal but can only REMOVE per-user.
+  Evidence: this release. [Verified]
 - **The macOS package verifies itself at build time.** The build now fails rather than shipping a
   package whose components are relocatable, version-checked, missing the overwrite action or
   missing their installed-state check — and it first proves those assertions can actually fire, by

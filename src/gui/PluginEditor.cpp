@@ -2020,6 +2020,11 @@ void AnabasisAudioProcessorEditor::timerCallback()
     // `refreshPopupShield` is the backstop that recovers a shield left raised by
     // a window that died without notice; the orphan check is the one that acts
     // on the two ways a pop-up can be stranded.
+    //
+    // The heal now ends with its own `refreshPopupShield()` — see there for why
+    // it stopped relying on this ordering — so the call below is the BACKSTOP
+    // role only, and is a no-op when the heal has just run one. Kept rather than
+    // deleted: it also covers the null-SafePointer prune, which the heal skips.
     healGhostTrackedPopupMenus();
     refreshPopupShield();
     dismissOrphanedPopupMenus();
@@ -2469,6 +2474,18 @@ void AnabasisAudioProcessorEditor::healGhostTrackedPopupMenus()
     }
 
     trackedGhosts.swapWith (ghostsNow);
+
+    // SELF-CONTAINED, rather than correct-by-caller. This function can EMPTY
+    // `openMenus`, and `shieldRaised` is computed from that list — so a run that
+    // prunes the last tracked window and does not refresh leaves the shield up
+    // and INTERCEPTING with no pop-up on screen, which is the editor accepting no
+    // clicks: the exact failure `PopupShield`'s own comment says the mechanism
+    // must never cause. It is safe today only because `timerCallback` calls the
+    // two in sequence and is the sole caller. A second caller — a dismissal path,
+    // a visibility change — would inherit that obligation silently, so the
+    // function takes it instead. `refreshPopupShield` is idempotent, so the
+    // tick's own call after this one is a no-op rather than a double raise.
+    refreshPopupShield();
 }
 
 void AnabasisAudioProcessorEditor::refreshPopupShield()

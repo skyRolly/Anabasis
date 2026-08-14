@@ -73,10 +73,11 @@ between the two can leave the new plug-in beside the old Standalone — both wor
 installer again to finish the pair.
 
 Uninstall with `./uninstall.sh` (or `sudo ./uninstall.sh` for a system-wide install). It
-asks the same question and keeps your presets and settings. It also **keeps** a plug-in
-copy that an interrupted install parked in its scratch directory — that copy is the only
-one of that version, and only `./install.sh` can put it back, so the uninstaller names it
-and leaves it rather than sweeping it up. Pass `--discard-parked` if you want it gone too.
+asks the same question, takes the same `--user` / `--system` flags for a run with no
+terminal, and keeps your presets and settings. It also **keeps** a plug-in copy that an
+interrupted install parked in its scratch directory — that copy is the only one of that
+version, and only `./install.sh` can put it back, so the uninstaller names it and leaves
+it rather than sweeping it up. Pass `--discard-parked` if you want it gone too.
 
 Rescan plug-ins in your DAW (REAPER: *Options → Preferences → Plug-ins → VST →
 Re-scan*; Bitwig: *Settings → Locations*; Ardour: *Preferences → Plugins*).

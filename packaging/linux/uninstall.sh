@@ -10,21 +10,45 @@
 # says otherwise.
 set -eu
 
-# Opt-in for the ONE thing this script will not throw away on its own: a
-# `Anabasis.vst3.prev` parked in the installer's scratch directory. See
-# `remove_install_scratch`.
+# `--user` / `--system` MIRROR `install.sh`, and the reason is the same one: the
+# prompt below is gated on `[ -t 0 ]`, so a piped or CI invocation silently took
+# the per-user default with no way to ask for anything else. Adding them to the
+# installer alone would have left the asymmetry in the worse place — a script
+# that can INSTALL system-wide non-interactively but can only REMOVE per-user.
+# `sudo ./uninstall.sh` reaches the system-wide path, but that is the
+# whole-script-as-root route the installer's own comments argue against as a
+# different transaction.
+#
+# `--discard-parked` is the opt-in for the ONE thing this script will not throw
+# away on its own: a `Anabasis.vst3.prev` parked in the installer's scratch
+# directory. See `remove_install_scratch`.
 discard_parked=0
+requested=''
 for arg in "$@"; do
     case "$arg" in
+        --user|--system)
+            # Same refusal as the installer: a contradiction has less intent to
+            # infer than a typo, and the two differ in destination AND privilege.
+            _want=${arg#--}
+            if [ -n "$requested" ] && [ "$requested" != "$_want" ]; then
+                echo "error: --user and --system name different installations; pass one." >&2
+                exit 1
+            fi
+            requested=$_want ;;
         --discard-parked) discard_parked=1 ;;
         -h|--help)
-            echo "usage: ./uninstall.sh [--discard-parked]"
+            echo "usage: ./uninstall.sh [--user|--system] [--discard-parked]"
+            echo "  --user            remove the current user's install (~/.vst3) - the default"
+            echo "  --system          remove the system-wide install (/usr/lib/vst3) - needs root"
             echo "  --discard-parked  also delete a plug-in copy parked by an"
             echo "                    interrupted install (default: keep it)"
+            echo "Repeating an option is accepted; --user and --system together are not."
+            echo "With no mode option, an interactive run asks; a non-interactive one"
+            echo "removes the current user's install."
             exit 0 ;;
         *)
             echo "error: unrecognised option '$arg'" >&2
-            echo "usage: ./uninstall.sh [--discard-parked]" >&2
+            echo "usage: ./uninstall.sh [--user|--system] [--discard-parked]" >&2
             exit 1 ;;
     esac
 done
@@ -41,8 +65,25 @@ SUDO=''
 mode=user
 
 if [ "$(id -u)" -eq 0 ]; then
+    # `--user` as root is refused for the installer's reason: which home `$HOME`
+    # names under sudo depends on the sudoers configuration, so the target would
+    # not be predictable — and here the unpredictable operation is a DELETION.
+    if [ "$requested" = user ]; then
+        echo "error: --user cannot be combined with running as root: which home directory" >&2
+        echo "       \$HOME names under sudo depends on the sudoers configuration, so the" >&2
+        echo "       files removed would not be predictable." >&2
+        echo "       Re-run without sudo to remove a per-user install." >&2
+        exit 1
+    fi
     mode=system
     echo "Running as root - removing the system-wide installation."
+elif [ -n "$requested" ]; then
+    mode="$requested"
+    if [ "$mode" = system ]; then
+        echo "Removing the system-wide installation (--system)."
+    else
+        echo "Removing the current user's installation (--user)."
+    fi
 elif [ -t 0 ]; then
     cat <<'EOF'
 Anabasis Linux Uninstaller
@@ -67,6 +108,7 @@ EOF
     esac
 else
     echo "Not running on a terminal - removing the current user's installation (the default)."
+    echo "Pass --system to remove the system-wide installation instead."
 fi
 
 removed=0

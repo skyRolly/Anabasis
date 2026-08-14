@@ -176,31 +176,32 @@ DELIBERATE_REAIMS = set([
      "src/PluginProcessor.cpp:25-26"),
     ("docs/architecture/design-decisions/ADR-0015-pre-ship-contract-refreeze.md",
      "src/PluginProcessor.h:111"),
-    # These nine were re-aimed in the same round but were INVISIBLE to a local
-    # run against `origin/main`: that base has a different citation COUNT for
-    # this document, so it took the ordinal-pairing fallback, which only judges
-    # base spellings still present verbatim — and a re-aim changes the spelling.
-    # CI compares against the PREVIOUS PUSH, where the count matches and ordinal
-    # pairing engages, so the gate flagged all nine. Checking one base is not
-    # checking the gate; `TESTING.md` now says to run both.
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:1544-1600"),
+    # `SERIALIZATION_REGISTRY.md` was re-aimed in the same round but was INVISIBLE
+    # to a local run against `origin/main`: that base has a different citation
+    # COUNT for this document, so it took the ordinal-pairing fallback, which only
+    # judges base spellings still present verbatim — and a re-aim changes the
+    # spelling. CI compares against the PREVIOUS PUSH, where the count matches and
+    # ordinal pairing engages, so the gate flagged the lot. Checking one base is
+    # not checking the gate; `TESTING.md` now says to run both.
+    #
+    # EIGHT ENTRIES WERE REMOVED FROM HERE ON 2026-08-14, and why they existed is
+    # worth one line: they named INTERMEDIATE spellings — `:1544-1600`, `:916`,
+    # `:1183-1196`, `:1057-1124`, `:1050-1053`, `:1582-1596`, `:1602-1793`,
+    # `:1672` — that later commits in the same branch re-aimed again. A
+    # declaration names a spelling; once the document stops carrying it, the entry
+    # can never match and only prints a note on every run. Every one was confirmed
+    # absent from `docs/` and the root Markdown before deletion.
+    #
+    # They were also, together with the count-mismatch fallback, the reason THIS
+    # document's re-anchoring got no machine verification this round. So its
+    # sixteen anchors were read by hand on 2026-08-14 and every one lands on the
+    # symbol its prose names — `copyStateWithRaw` at `:989`, `saveSlotFromLive` at
+    # `:1130`, `reassertFromRaw` at `:1256`, `getStateInformation` at `:1631`,
+    # `setStateInformation` at `:1689`, `liveSurfaceRestored` at `:1742`, the
+    # `SLOT` walk at `:1759`, `kUndoCap` at `PluginProcessor.h:453`, and the rest.
+    # That is the check the tool could not make, made.
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.cpp:8"),
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:916"),
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:1183-1196"),
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:1057-1124"),
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:1050-1053"),
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:1582-1596"),
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:1602-1793"),
-    ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "src/PluginProcessor.cpp:1672"),
 ])
 
 
@@ -562,8 +563,19 @@ def main():
             for (whole_o, _to, _so, anchors_o), (whole_c, _tc, span_c, anchors_c) in zip(olds, curs):
                 total += len(anchors_o)
                 if len(anchors_o) != len(anchors_c):
+                    # COUNTS AS UNMAPPABLE, not merely drifted, and the difference
+                    # is the exit code. `--check` returns 1 on any drift; `--fix`
+                    # returns `2 if unmappable else 0`. This branch declines to
+                    # touch the citation — a `:10` that became `:10-20` is a
+                    # judgement about what the prose means, not a line shift — so
+                    # counting it as drift alone made `--fix` exit 0 while
+                    # promising a clean repair, and the very next `--check` (CI's)
+                    # went red on what it left behind. The documented workflow is
+                    # "run `--fix` in the SAME change set", so `--fix` saying 0 is
+                    # the last word a contributor hears before pushing.
                     print(f"  ANCHOR COUNT {doc}: {whole_o} -> {whole_c}; review by hand")
                     drifted += 1
+                    unmappable += 1
                     continue
 
                 # Correct means: the text at the CURRENT anchors is the text the

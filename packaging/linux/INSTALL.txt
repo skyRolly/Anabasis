@@ -73,6 +73,9 @@ A) Installer installation (recommended) / 脚本安装(推荐)
   To remove later / 以后卸载:
       ./uninstall.sh            (current user / 当前用户)
       sudo ./uninstall.sh       (system-wide / 系统级)
+      ./uninstall.sh --user     (no terminal needed / 无需终端)
+      ./uninstall.sh --system   (no terminal needed, asks for your password /
+                                 无需终端,需要时会提示输入密码)
 
   If an interrupted install parked a copy of your previous plug-in, the uninstaller
   KEEPS it and says so; only './install.sh' can put it back. Add --discard-parked

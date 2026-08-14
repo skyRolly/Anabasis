@@ -99,7 +99,7 @@ own fail-closed assertions plus the A/B probe that proves those assertions can f
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
 the X11/XTEST probe recorded under `worklogs/` for KI-012).
 
-**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 839 = 1135 checks green**, up 96 on 0.1.3's
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 841 = 1137 checks green**, up 98 on 0.1.3's
 1039 — ten new state tests (`testANoOpPresetApplyIsNotAUserAction`,
 `testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
