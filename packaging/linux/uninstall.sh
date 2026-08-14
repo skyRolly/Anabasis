@@ -81,10 +81,17 @@ remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
             # only good copy and the old message said only "removed leftover
             # installer file".
             if $SUDO test -d "$_scratch/Anabasis.vst3.prev"; then
-                echo "note: $_scratch held a saved copy of your previous Anabasis," >&2
-                echo "      parked there by an interrupted install. Removing it with the rest" >&2
-                echo "      of the installer's scratch. Running './install.sh' FIRST would have" >&2
-                echo "      put that copy back instead." >&2
+                # STDOUT, not stderr, and the stream choice is the point. The
+                # OUTCOME line below ("removed leftover installer file …") goes to
+                # stdout; a user redirecting stderr, or reading a log that splits
+                # the streams, would see the removal and not what it cost. This
+                # note exists precisely because the ORDER matters — `install.sh`
+                # restores the parked copy, this script deletes it — so it has to
+                # reach at least as many readers as the line it qualifies.
+                echo "note: $_scratch held a saved copy of your previous Anabasis,"
+                echo "      parked there by an interrupted install. Removing it with the rest"
+                echo "      of the installer's scratch. Running './install.sh' FIRST would have"
+                echo "      put that copy back instead." 
             fi
             if $SUDO rm -rf "$_scratch" 2>/dev/null; then
                 echo "removed leftover installer file $_scratch"

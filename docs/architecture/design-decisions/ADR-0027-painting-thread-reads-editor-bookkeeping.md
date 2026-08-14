@@ -88,11 +88,21 @@ Two facts about when this arrived, because they are not the same:
   and by the register in `DEPENDENCY_POLICY.md` rule 7, not by a test. What is consequently
   unprotected: a future edit that adds a second painting-thread read, or that reintroduces a
   non-atomic one, fails no gate.
-- If the owner declines this, the revert is the whole discriminator: `isPopupMenuOnScreen` is
-  removed, `drawResizableFrame` falls back to the shape test alone, and
-  `testTheResizableFrameOverrideDiscriminatesItsCallers` loses the half that pins the state test.
-  The doubled pop-up edge returns, or the resizable frame does — one or the other, depending on
-  which way the shape test is then tuned.
+- **The revert, MEASURED (2026-08-13) rather than predicted, because the first draft of this
+  paragraph guessed and guessed wrong.** Unwiring `lnf.isPopupMenuOnScreen` in the editor — the
+  whole cross-thread path, one line — leaves the suite at **839 checks, 0 failures**. It was written
+  here that `testTheResizableFrameOverrideDiscriminatesItsCallers` "loses the half that pins the
+  state test"; it does not. That test constructs its OWN `AnabasisLookAndFeel` and assigns the
+  predicate directly (`nullptr`, then `[] { return false; }`, then a true-returning one), so it pins
+  the OVERRIDE's logic and is indifferent to what the editor supplies. The WIRING is therefore
+  untested — which is consistent with this ADR's "untestable by the suites" paragraph, and is the
+  sharper statement of it: not merely that the cross-thread property is unpinned, but that removing
+  the path entirely costs nothing a test would notice.
+
+  So the cost of declining is a BEHAVIOUR the suites cannot see: `drawResizableFrame` falls back to
+  the shape test alone, and a `ResizableBorderComponent` with a 3 px uniform border loses its frame
+  — or, if the shape test is loosened instead, the parented pop-up's doubled edge returns. One or
+  the other, decided by eye in a real host, not by the suite.
 
 ## Verification
 

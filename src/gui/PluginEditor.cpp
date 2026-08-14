@@ -2290,9 +2290,22 @@ void AnabasisAudioProcessorEditor::showPresetMenu()
             // no early return can skip it.
             if (safeThis != nullptr)
             {
-                safeThis->presetMenusOpen.store (
-                    juce::jmax (0, safeThis->presetMenusOpen.load (std::memory_order_relaxed) - 1),
-                    std::memory_order_relaxed);
+                // A CLAMPED DECREMENT AS ONE READ-MODIFY-WRITE. The obvious
+                // spelling — load, `jmax (0, n - 1)`, store — is three steps, and
+                // is correct here only because every WRITER is the message thread
+                // (this callback, `showPresetMenu`, the tick's ghost heal); the
+                // atomic exists for the paint-thread READ (ADR-0027), not to make
+                // writers concurrent. Nothing in the code enforces that invariant,
+                // though, and a second writer added later would silently lose
+                // increments through the load-store window. `compare_exchange`
+                // costs four lines and removes the dependency, so the clamp stays
+                // correct on its own terms rather than on a convention.
+                auto& n = safeThis->presetMenusOpen;
+                for (int open_ = n.load (std::memory_order_relaxed);
+                     open_ > 0 && ! n.compare_exchange_weak (open_, open_ - 1,
+                                                             std::memory_order_relaxed);
+                     )
+                {}   // the failed exchange refreshes `open_`; retry, or stop at 0
                 safeThis->refreshPopupShield();
             }
             if (r == 0 || safeThis == nullptr) return;

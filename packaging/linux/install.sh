@@ -356,7 +356,24 @@ if [ "$mode" = user ]; then
     cp "$APP_SRC" "$STAGE_APP"
     chmod 755 "$STAGE_APP" "$STAGE_VST3/Contents/x86_64-linux/Anabasis.so" 2>/dev/null || true
 
-    [ ! -e "$VST3_DEST" ] || mv "$VST3_DEST" "$PREV_VST3"
+# PARK ONLY INTO AN EMPTY SLOT. `reconcile`'s restore is `|| true`, so a failed
+# `mv "$PREV_VST3" "$VST3_DEST"` leaves the parked bundle where it is — and then
+# this line would move the destination INTO the surviving `.prev` DIRECTORY
+# rather than aside, because `mv a b` with `b` an existing directory means "put
+# `a` inside `b`". The next `rm -rf "$PREV_VST3"` clears the lot, so nothing is
+# left half-installed; what breaks is the MEANING of `.prev`, which `reconcile`
+# reads as "the previous version, restorable". Refusing to park onto a non-empty
+# slot keeps that name true, and an install that cannot park is an install that
+# should stop rather than proceed on a false assumption.
+    if [ -e "$VST3_DEST" ]; then
+        [ ! -e "$PREV_VST3" ] || {
+            echo "error: $PREV_VST3 already holds a parked copy, so this run cannot set the" >&2
+            echo "       previous version aside. Re-run './install.sh' to let it reconcile," >&2
+            echo "       or remove that directory once you are sure of its contents." >&2
+            exit 1
+        }
+        mv "$VST3_DEST" "$PREV_VST3"
+    fi
     mv "$STAGE_VST3" "$VST3_DEST"
     mv "$STAGE_APP" "$BIN_DIR/Anabasis"
     rm -rf "$PREV_VST3"
@@ -428,7 +445,16 @@ priv cp -R "$VST3_SRC" "$STAGE_VST3"
 priv cp "$APP_SRC" "$STAGE_APP"
 $SUDO chmod 755 "$STAGE_APP" "$STAGE_VST3/Contents/x86_64-linux/Anabasis.so" 2>/dev/null || true
 
-[ ! -e "$VST3_DEST" ] || priv mv "$VST3_DEST" "$PREV_VST3"
+# Same rule as the per-user branch: never park onto an occupied slot (see there).
+if [ -e "$VST3_DEST" ]; then
+    $SUDO test ! -e "$PREV_VST3" || {
+        echo "error: $PREV_VST3 already holds a parked copy, so this run cannot set the" >&2
+        echo "       previous version aside. Re-run the installer to let it reconcile," >&2
+        echo "       or remove that directory once you are sure of its contents." >&2
+        exit 1
+    }
+    priv mv "$VST3_DEST" "$PREV_VST3"
+fi
 priv mv "$STAGE_VST3" "$VST3_DEST"
 priv mv "$STAGE_APP" "$BIN_DIR/Anabasis"
 $SUDO rm -rf "$PREV_VST3" 2>/dev/null || true
