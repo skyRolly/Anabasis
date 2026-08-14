@@ -218,8 +218,22 @@ def scratch_names_agree(root: Path) -> int:
     if not (inst.is_file() and uninst.is_file()):
         return 0                       # not a packaging checkout; nothing to compare
 
-    a = set(SCRATCH_NAME.findall(inst.read_text(encoding="utf-8")))
-    b = set(SCRATCH_NAME.findall(uninst.read_text(encoding="utf-8")))
+    def names(path):
+        # CODE ONLY. Both scripts explain themselves at length and name every
+        # scratch file while doing it — including in the paragraph about the
+        # candidate that was REMOVED — so scanning the raw text would let a
+        # mention satisfy the check. An edit that deleted the removal from
+        # `uninstall.sh` but left the comment explaining it behind would keep
+        # this gate green while reopening the exact divergence it exists for:
+        # the comment survives the code, which is the failure mode the whole
+        # repository is written against. Full-line comments are the only form
+        # these scripts use for prose; verified that stripping them leaves both
+        # sets unchanged today, so this is strictly a tightening.
+        code = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("#"))
+        return set(SCRATCH_NAME.findall(code))
+
+    a, b = names(inst), names(uninst)
     if a == b:
         print(f"check-portability: installer/uninstaller scratch names agree "
               f"({', '.join(sorted(a))}).")

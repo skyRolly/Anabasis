@@ -144,9 +144,9 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/LATENCY_MODEL.md",
      "src/PluginProcessor.cpp:842-850"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:1885"),
+     "src/PluginProcessor.cpp:1901"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
-     "tests/state_tests.cpp:2141"),
+     "tests/state_tests.cpp:2171"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.h:453"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
@@ -202,6 +202,26 @@ DELIBERATE_REAIMS = set([
     # That is the check the tool could not make, made.
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.cpp:8"),
+    # 2026-08-14: `applySlotToLive` gained the payload guard that makes ADR-0026's
+    # read rule local instead of caller-dependent, moving everything below it by
+    # 16 lines. Re-anchored in the SAME change set and declared here in the same
+    # commit — the two halves of the rule, because a repair and a slip are the
+    # same event to a text-identity test, and the round that fixed one anchor
+    # without declaring it turned the fix itself into the next red gate. Each
+    # target read by hand after the `--fix`: `liveSurfaceRestored` at `:1758`,
+    # the stored-slot `ANABASIS` gate at `:1802`, the active-slot adopt at
+    # `:1821`, and both `presetBaseline = presetShapeFromLive()` seedings that
+    # `closePresetUndoBracket`'s own comment cites, at `:1537` and `:1607`.
+    ("docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md",
+     "src/PluginProcessor.cpp:1758"),
+    ("docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md",
+     "src/PluginProcessor.cpp:1802"),
+    ("docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md",
+     "src/PluginProcessor.cpp:1821"),
+    ("src/PluginProcessor.cpp",
+     "src/PluginProcessor.cpp:1537"),
+    ("src/PluginProcessor.cpp",
+     "src/PluginProcessor.cpp:1607"),
 ])
 
 

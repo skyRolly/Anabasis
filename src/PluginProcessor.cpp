@@ -506,8 +506,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1521` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1591` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1537` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1607` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -1335,7 +1335,23 @@ void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot, bool 
 {
     const auto params = slot.getChildWithName ("ANABASIS");
     jassert (params.isValid());
-    if (params.isValid())
+    // AND THE RULE IS ENFORCED HERE, not only asserted. `jassert` compiles out
+    // of every shipped build, and what stood below it was an `if` around the
+    // SURFACE adoption alone: a payload-less slot skipped `adoptParamsTree` and
+    // then went on to adopt `presetName`, the ADR-0022 identity trio,
+    // `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally — one state's
+    // metadata over another state's sound, which is the split ADR-0026 is named
+    // for, reached from inside the function that resolves a slot.
+    //
+    // Unreachable today, and the enumeration above is why; this is not a bug
+    // report. What it changes is WHERE the guarantee lives. ADR-0026's decision
+    // is that such a slot resolves as a WHOLE, and `setStateInformation`
+    // implements that by substituting a complete `defaultSlot` upstream — so by
+    // the time control arrives here the tree is always intact. Declining to
+    // apply half of one costs nothing on every path that exists and stops the
+    // rule depending on every caller that ever will.
+    if (! params.isValid())
+        return;
     {
         // View-tier parameters never travel with a slot (the shared
         // predicate): overwrite the incoming copy with the LIVE values —

@@ -1446,6 +1446,36 @@ static void testANoOpPresetApplyIsNotAUserActionAfterASessionRestore()
     check (! juce::exactlyEqual (q.apvts.getRawParameterValue (pid::compKnee)->load(), kneeBefore),
            "restoredNoOp: the surviving redo line still restores the edit it was holding");
 
+    // THE DIRTY MARKER, which the legs above measure only through undo/redo
+    // depth. It is the one place the retraction is observable at all:
+    // `setStateInformation` leaves `presetBaseline` INVALID on purpose (the
+    // marker is not serialized, so a load cannot honestly restore it) and
+    // `presetDirty()` answers false unconditionally while it is absent. The
+    // retraction un-records the bookkeeping WITHOUT rolling the datum back, so
+    // the session comes out of a no-op re-apply holding a working marker where
+    // it had none. Both halves of that are asserted here rather than argued:
+    // still clean straight after — nothing about the sound changed — and
+    // ANSWERING again, which is what a marker seeded by the re-apply buys and
+    // what a rolled-back one would not.
+    juce::MemoryBlock blobD;
+    proc.getStateInformation (blobD);
+    AnabasisAudioProcessor d;
+    d.setStateInformation (blobD.getData(), (int) blobD.getSize());
+    check (! d.presetDirty(),
+           "restoredNoOp: (premise) a restored session reads CLEAN — the marker is absent");
+    check (d.applyFactoryPreset (3), "restoredNoOp: (premise) the same preset re-applies over it");
+    check (! d.presetDirty(),
+           "restoredNoOp: the retracted re-apply leaves the preset reading clean");
+
+    auto* kneeD = d.apvts.getParameter (pid::compKnee);
+    kneeD->beginChangeGesture();
+    kneeD->setValueNotifyingHost (kneeD->getNormalisableRange().convertTo0to1 (1.0f));
+    kneeD->endChangeGesture();
+    d.flushPendingDetach();
+    check (d.presetDirty(),
+           "restoredNoOp: …and the marker now WORKS -- an edit after it reads dirty, "
+           "where before the re-apply the same edit read clean");
+
     // THE OTHER DIRECTION, and it is the one that stops this fix from being a
     // loosening: in a restored session the baseline half is now satisfied by
     // construction, so the SURFACE half is the only thing left deciding. A real
