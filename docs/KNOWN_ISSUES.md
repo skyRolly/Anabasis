@@ -637,7 +637,19 @@ list and each parameter's own atomic and takes no tree lock at all, so the only 
 on the message thread is the gesture-begin snapshot itself — back to "at a gesture-begin", which is
 the rate this entry was originally scoped for. **The inversion is unchanged and the entry stays
 open:** the two edges are exactly as tabulated above, and the fix is still the §7 snapshot-point
-decision. That is the interleaving KI-003 is about, and the §5.3 machinery exists *because*
+decision.
+
+**0.1.4 moves the rate back in the OTHER direction, and this paragraph is the place that has to say
+so.** A bracketed preset apply now takes `saveSlotFromLive()` TWICE — once in
+`openPresetUndoBracket` for the pre-state, once in `closePresetUndoBracket` for the comparison that
+decides whether the apply restored anything — where the pre-0.1.4 path took it once. Each reaches
+`copyStateWithRaw()` → `apvts.copyState()` and therefore M1. No new EDGE: both run on the message
+thread from the editor's own click handlers, never from inside a parameter listener holding M0, so
+the inversion tabulated above is untouched. What changes is the frequency term the estimate above
+rests on — and the path that drives it hardest is the preset ring, where `‹`/`›` walks
+`applyPresetFile` once per keypress and a user can hold the key down. Round 51 halved the
+message-thread M1 rate and this doubles what remains on that one path; neither is the defect, and
+both belong in the same paragraph so the estimate is never read off a stale half of the story. That is the interleaving KI-003 is about, and the §5.3 machinery exists *because*
 gestures and parameter writes on the same managed parameter do overlap across threads.
 
 **Why it is not fixed here.** The M0 → M1 edge is the §7 undo grammar's pre-state snapshot, and it

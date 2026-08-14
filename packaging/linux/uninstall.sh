@@ -72,6 +72,20 @@ remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
             # after the plug-in itself had already been removed, and with nothing
             # printed to say why. Leftover scratch is cosmetic; a half-finished
             # uninstall is not.
+            # SAY WHAT IS BEING THROWN AWAY when it is the user's previous
+            # version. An install interrupted in the two-rename window parks the
+            # working plug-in here as `Anabasis.vst3.prev`; `install.sh` puts it
+            # back, this script DELETES it. That is the right division of labour
+            # — an uninstall should uninstall — but a user who reaches for
+            # `uninstall.sh` first, while the plug-in is missing, discards the
+            # only good copy and the old message said only "removed leftover
+            # installer file".
+            if $SUDO test -d "$_scratch/Anabasis.vst3.prev"; then
+                echo "note: $_scratch held a saved copy of your previous Anabasis," >&2
+                echo "      parked there by an interrupted install. Removing it with the rest" >&2
+                echo "      of the installer's scratch. Running './install.sh' FIRST would have" >&2
+                echo "      put that copy back instead." >&2
+            fi
             if $SUDO rm -rf "$_scratch" 2>/dev/null; then
                 echo "removed leftover installer file $_scratch"
                 # …and it COUNTS as having removed something. Without this the

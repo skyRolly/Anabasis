@@ -1094,6 +1094,15 @@ AnabasisAudioProcessorEditor::~AnabasisAudioProcessorEditor()
     // so nothing can call back into a half-destroyed editor.
     lnf.onPopupMenuWindowCreated = nullptr;
     lnf.isPopupMenuOnScreen      = nullptr;   // same reason, same lifetime
+    // …and the THIRD hook capturing `this`, which was left installed while its
+    // two neighbours were cleared. `tooltips.tooltipsAllowed` reads `tooltipsOn`
+    // through a lambda holding the editor. It is safe by ORDERING — `tooltips` is
+    // declared after `lnf`, so it outlives every later member, and its only
+    // invoker is `TooltipWindow::timerCallback`, which cannot run while a
+    // destructor executes on the message thread — and that is exactly the kind of
+    // argument this destructor refuses two screens up. Clearing it costs one
+    // assignment and removes the argument.
+    tooltips.tooltipsAllowed = nullptr;
     // The THIRD source, and leaving it out made the guarantee above two thirds
     // true: `animVBlank`'s callback (`stepMicroAnims`) touches `animated`,
     // `uiAnimOn` and `lastFrameTime`. It is declared BEFORE `lastFrameTime` and

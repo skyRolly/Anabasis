@@ -125,7 +125,10 @@ and say so.
   whenever any pop-up is on screen and absorbs the dismissing click, including scroll and pinch.
   The residual limitation is registered as **KI-013**: the absorbed click still counts toward the
   system's multi-click run. Evidence: this release. [Verified]
-- **A pop-up menu's border could be drawn from unsynchronised state.** The look-and-feel asks the
+- **A pop-up menu's border could be drawn from unsynchronised state.** ([**ADR-0027**](docs/architecture/design-decisions/ADR-0027-painting-thread-reads-editor-bookkeeping.md)
+  — ⊕ NOT RATIFIED; asking the editor a question from the drawing thread is a new cross-thread path,
+  which is an Architecture Review Gate item, and the gate is OPEN. The defect below is fixed; the
+  gate is about the path existing at all.) The look-and-feel asks the
   editor whether one of its own menus is open, and that question is answered during PAINTING —
   which, where hardware-accelerated drawing is enabled (macOS and Windows), happens on a different
   thread from the one that opens and closes menus. The counter behind the answer is now atomic, and
