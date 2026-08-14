@@ -66,7 +66,12 @@ is "does it build here".
   * **Platform-divergent source (`check-portability.py`).** INC-003 was a hard compile error on
     macOS produced by a line that GCC *and* Clang both accept on Linux, because the divergence is
     in the platform's `<cstdint>` typedefs (`size_t` is `uint64_t` here and is not there), not in
-    the front end. A lint is the only Linux-runnable guard for that.
+    the front end. A lint is the only Linux-runnable guard for that. The same script also compares
+    the scratch names `install.sh` CREATES against the ones `uninstall.sh` REMOVES: that pair has
+    already diverged once — a `/var/tmp` staging candidate added to one file and not the other, so
+    an interrupted install survived a deliberate uninstall — and the two scripts ship as separate
+    files in a zip, with no shared library to source and no build step that could generate one, so
+    the coupling can only be checked, never removed. Both directions are mutation-verified.
   * **Evidence-anchor drift (`check-citations.py`).** A `file:line` citation in a document of
     record is silently re-aimed by any edit ABOVE it, and the document keeps reading as though it
     were still correct. 0.1.4 showed the re-anchoring rule does not survive being remembered — the

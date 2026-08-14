@@ -273,8 +273,10 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
     # and this one — `$HOME` and `$HOME/.vst3` becoming separate filesystems, say
     # — so it is narrow, but it is the ONE path on which the interrupted-install
     # guarantee in `INSTALL.txt` does not hold: the parked copy is neither
-    # restored nor removed by this run, and only `uninstall.sh` clears it. Silent
-    # would make that indistinguishable from a clean run.
+    # restored nor removed by this run, and clearing it takes
+    # `uninstall.sh --discard-parked` — a plain uninstall KEEPS it, as of the
+    # same round that added the flag. Silent would make that indistinguishable
+    # from a clean run.
     for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do
         # Elevated for the same reason as `reconcile`'s test: on the system-wide
         # path this candidate is root-owned at 0700 and the script is running as
@@ -293,8 +295,9 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
         echo "         but that directory is no longer usable for staging, so this run cannot" >&2
         echo "         put it back. It is left untouched. To recover it, make that directory" >&2
         echo "         usable again (it must be a real directory you own, not writable by" >&2
-        echo "         others) and re-run this installer. './uninstall.sh' DELETES it rather" >&2
-        echo "         than restoring it, so run it second, not first." >&2
+        echo "         others) and re-run this installer - that is the only thing that puts" >&2
+        echo "         it back. './uninstall.sh' leaves it alone and says so; only" >&2
+        echo "         './uninstall.sh --discard-parked' deletes it." >&2
     done
 
     for _c in "${1%/*}/.anabasis-install-stage" "$1/.anabasis-install-stage"; do

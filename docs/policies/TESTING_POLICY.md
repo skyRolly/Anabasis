@@ -73,7 +73,9 @@ Lowering strictness below the phase value is a deliberate act that must be justi
   - `source-lint` — TWO lints, sharing a job because both guard classes no build can see.
     - `scripts/check-portability.py` rejects an explicit template argument on
       `{jmin, jmax, snapToZero}`, the juce names `juce_dsp` also overloads for
-      `dsp::SIMDRegister`. **This is a lint and not a build job on purpose.** The defect it
+      `dsp::SIMDRegister`, and requires the Linux installer's scratch names to match the
+      uninstaller's removal list (a pair with no shared library between them, which has
+      already diverged once). **This is a lint and not a build job on purpose.** The defect it
       guards (INC-003) is a typedef divergence — `size_t` is `uint64_t` on Linux and is not on
       macOS — so it is invisible to every Linux COMPILER, GCC and Clang alike. No build job on a
       Linux runner can replace it.
