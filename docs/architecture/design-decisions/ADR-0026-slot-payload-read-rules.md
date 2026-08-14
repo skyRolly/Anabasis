@@ -85,11 +85,17 @@ decision in front of the owner is a choice between three known states rather tha
 predictions. Each was applied to the tree, built, and run against the full state suite:
 
 **The check TOTAL below is 839 because that is what the suite held on 2026-08-13, the day these
-three states were measured.** It is 841 as of 2026-08-14 (`testEveryComboMenuFitsItsControl` gained
-the menu-measurement identity), and this table is deliberately NOT bumped to match: re-writing a
-figure that was not re-measured turns a record of an experiment into a claim about today. What the
-decision rests on is the FAILURE column, which is a property of these two expressions and did not
-move. Re-run the three options if a fresh total is needed.
+three states were measured**, and this table is deliberately NOT bumped as the suite grows:
+re-writing a figure that was not re-measured turns a record of an experiment into a claim about
+today. What the decision rests on is the FAILURE column, which is a property of these two
+expressions and did not move. Re-run the three options if a fresh total is needed.
+
+Today's total is deliberately NOT restated here either. This paragraph carried it once — as a
+parenthetical, kept current by hand — and it went stale within the day, on the round that added
+this ADR's own guard. `HANDOVER.md`'s Test Status row is the count's home, for the same reason
+`CLAUDE.md` quotes no pluginval strictness: a second copy of a moving number is a second thing to
+get wrong, and a dated measurement beside an undated one invites exactly the "these cannot both be
+a re-count" reading it just drew.
 
 | Option | Result | What the suite says |
 |---|---|---|

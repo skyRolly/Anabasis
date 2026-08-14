@@ -83,6 +83,16 @@ and say so.
   empty search cannot pass every assertion by running none of them. Evidence: this release. [Verified]
 
 ### Fixed
+- **A successful per-user Linux install could report failure and print nothing.** The last step of
+  the transaction discards the copy it set aside, and on the per-user branch that `rm -rf` was the
+  one command after the point of no return with no failure tolerance — so under `set -e` an
+  unremovable parked bundle (an immutable attribute, a read-only remount, a mount point inside it)
+  aborted the script *after* both files were correctly in place but *before* the traps were
+  cleared: exit 1, the rollback handler fired, and none of the confirmation, the PATH note or the
+  duplicate-install warning was printed. Reproduced end to end. The system-wide branch had already
+  guarded its copy of that line; both now also SAY what they could not remove instead of
+  discarding the message with the exit status, because what survives is a full plug-in bundle
+  sitting in the user's tree. Evidence: this release. [Verified]
 - **The Linux uninstaller deleted the one copy of your plug-in that only the installer could
   restore.** An install interrupted in the two-rename window parks the working bundle as
   `Anabasis.vst3.prev` inside the installer's scratch directory; `install.sh` puts it back, and

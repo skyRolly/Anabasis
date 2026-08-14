@@ -480,7 +480,29 @@ if [ "$mode" = user ]; then
     fi
     mv "$STAGE_VST3" "$VST3_DEST"
     mv "$STAGE_APP" "$BIN_DIR/Anabasis"
-    rm -rf "$PREV_VST3"
+    # PAST THIS POINT THE INSTALL HAS SUCCEEDED, so nothing below may fail the
+    # run. The two renames above published the new version; what is left is
+    # discarding the copy this run set aside. A bare `rm -rf` here was the one
+    # unguarded command after the point of no return, and under `set -e` a
+    # failure — an immutable attribute, a read-only remount, a mount point
+    # inside the parked bundle — aborted the script BEFORE `trap - EXIT` below,
+    # so `reconcile` fired and the run exited non-zero having printed no
+    # confirmation at all. Reproduced: both files correctly in place, exit 1, no
+    # summary, no PATH note, no duplicate-install warning. Same class as the
+    # trailing advisory's subshell further down, and the system-wide branch had
+    # already guarded its copy of this line — the two branches diverging on one
+    # `|| true` is what left it here.
+    #
+    # …and it SAYS SO rather than swallowing it, which is where this differs
+    # from a bare `|| true`: what survives is a full plug-in bundle in the
+    # user's tree, and a note naming it is the difference between tidying up and
+    # wondering what it is. Failure is not silent, but it is not fatal either.
+    rm -rf "$PREV_VST3" 2>/dev/null || {
+        echo "note: the previous version could not be removed and is left at" >&2
+        echo "      $PREV_VST3." >&2
+        echo "      The new version is installed and in use; that copy is only a" >&2
+        echo "      leftover and is safe to delete." >&2
+    }
     rmdir "$STAGE_DIR" 2>/dev/null || true
     trap - EXIT INT TERM HUP
 
@@ -562,7 +584,17 @@ if [ -e "$VST3_DEST" ]; then
 fi
 priv mv "$STAGE_VST3" "$VST3_DEST"
 priv mv "$STAGE_APP" "$BIN_DIR/Anabasis"
-$SUDO rm -rf "$PREV_VST3" 2>/dev/null || true
+# Guarded for the reason spelled out at the per-user branch's copy of this line
+# — the install is already published — and now SAYING what it could not remove
+# rather than discarding the message with the exit status. A bundle left in
+# `/usr/lib/.anabasis-install-stage` needs root to clear, so the one person who
+# can tidy it is the one least likely to go looking for it unprompted.
+$SUDO rm -rf "$PREV_VST3" 2>/dev/null || {
+    echo "note: the previous version could not be removed and is left at" >&2
+    echo "      $PREV_VST3." >&2
+    echo "      The new version is installed and in use; that copy is only a" >&2
+    echo "      leftover and is safe to delete." >&2
+}
 $SUDO rmdir "$STAGE_DIR" 2>/dev/null || true
 trap - EXIT INT TERM HUP
 
