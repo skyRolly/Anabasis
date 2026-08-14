@@ -3264,17 +3264,41 @@ static void testTheFrozenLatchNeedsNoThreadCrossing()
 
     std::atomic<bool> hostDone { false };
     std::atomic<int>  polls { 0 };
-    std::thread host ([&proc, &hostDone]
+
+    // THE OVERLAP IS ESTABLISHED, NOT HOPED FOR. The first form was a bare
+    // `while (! hostDone) { poll; }` with the host started first, so the premise
+    // held only if the main thread reached the loop condition before the host
+    // finished all 60 `prepareToPlay` calls. Nothing made that true. **CI caught
+    // it** on 2026-08-14 (run 31801408265, sanitizers job): `polls` was 0 and
+    // the suite reported 841 checks / 1 failure while memcheck itself reported
+    // 0 errors from 0 contexts — the test failed, not the detector, which is
+    // worth stating because the job's name says memcheck.
+    //
+    // WHAT IS NOT CLAIMED: the exact interleaving. valgrind serialises threads
+    // under its own scheduler, which is the obvious suspect, but the same build
+    // under the same command reproduces 8440 polls here across repeated runs and
+    // never 0 — so the mechanism is unconfirmed and is deliberately not asserted.
+    // That is what an unguaranteed premise looks like from the inside, and the
+    // fix is to remove the dependency rather than to tune it: the host waits for
+    // the poll loop to be RUNNING, and the loop is a do/while, so `polls > 0`
+    // holds by construction and the concurrency the stimulus is about is
+    // guaranteed instead of raced for. A stronger stimulus than the original,
+    // not a weaker one.
+    std::atomic<bool> pollingStarted { false };
+    std::thread host ([&proc, &hostDone, &pollingStarted]
     {
+        while (! pollingStarted.load (std::memory_order_acquire))
+            std::this_thread::yield();
         for (int i = 0; i < 60; ++i)                     // the host changing rate
             proc.prepareToPlay ((i & 1) != 0 ? 96000.0 : 48000.0, 512);
         hostDone.store (true, std::memory_order_release);
     });
-    while (! hostDone.load (std::memory_order_acquire))
+    do
     {
         proc.presetDirty();                              // what the editor tick does
         polls.fetch_add (1, std::memory_order_relaxed);
-    }
+        pollingStarted.store (true, std::memory_order_release);
+    } while (! hostDone.load (std::memory_order_acquire));
     host.join();
     check (polls.load() > 0, "noCrossing: (premise) the poll actually ran against the re-prepares");
 

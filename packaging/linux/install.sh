@@ -319,6 +319,18 @@ choose_stage_dir() {            # $1 = plug-in directory; prints the stage direc
         # which is indistinguishable from one we made.
         $SUDO rmdir "$_c" 2>/dev/null || true
     done
+    # FAILING CLOSED HERE REFUSES A FIRST-TIME INSTALL TOO, and that is the
+    # intended trade rather than an oversight about the no-previous-install case.
+    # It is tempting to reason "there is nothing to protect yet, so stage
+    # anywhere" — and it is wrong: staging is where the payload is ASSEMBLED
+    # before the rename that publishes it. A world-writable staging directory
+    # lets another local account substitute the bundle between the copy and the
+    # rename, and on the system-wide path that rename runs as root. What a fresh
+    # install has to lose is not a previous version; it is the integrity of the
+    # thing about to be installed. The refusal is narrow — it needs BOTH
+    # candidates to be unusable, so an odd `$HOME` mode still falls through to
+    # `<plug-in dir>/.anabasis-install-stage` — and `stage_dir_advice` names both
+    # paths so the remedy is a command rather than an investigation.
     return 1
 }
 
