@@ -74,6 +74,11 @@ A) Installer installation (recommended) / 脚本安装(推荐)
       ./uninstall.sh            (current user / 当前用户)
       sudo ./uninstall.sh       (system-wide / 系统级)
 
+  If an interrupted install parked a copy of your previous plug-in, the uninstaller
+  KEEPS it and says so; only './install.sh' can put it back. Add --discard-parked
+  to delete it as well. / 若此前的安装被中断并暂存了旧版插件,卸载脚本会保留该副本
+  并给出提示(只有 './install.sh' 能将其恢复);如需一并删除,请加 --discard-parked。
+
 --------------------------------------------------------------------
 B) Manual installation / 手动安装
 --------------------------------------------------------------------

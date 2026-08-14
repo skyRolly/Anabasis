@@ -111,11 +111,11 @@ is a compile-time property of the member's type, and the teardown ordering is re
 site that performs it.
 
 ## Related code
-- `src/gui/PluginEditor.h:330` (the atomic and the reasoning at its declaration)
+- `src/gui/PluginEditor.h:342` (the atomic and the reasoning at its declaration)
 - `src/gui/PluginEditor.cpp:736` (the wiring, and why it reads `presetMenusOpen` not `shieldRaised`)
 - `src/gui/LookAndFeel.h:203-204` (the hook and the override's two-part caller test)
 - `src/gui/PluginEditor.cpp:1090` (detach before the hooks are cleared)
 
 Evidence [Verified]:
-- Source: `src/gui/PluginEditor.h:330`, `src/gui/PluginEditor.cpp:736`
+- Source: `src/gui/PluginEditor.h:342`, `src/gui/PluginEditor.cpp:736`
 - Test:   `testTheResizableFrameOverrideDiscriminatesItsCallers` (message-thread half only)

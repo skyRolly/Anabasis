@@ -5,8 +5,29 @@
 #   2) System-wide  (needs root)        /usr/lib/vst3/Anabasis.vst3, /usr/local/bin/Anabasis
 #
 # Running this script as root (sudo ./uninstall.sh) removes the system-wide
-# installation without asking. Your presets and settings are always kept.
+# installation without asking. Your presets and settings are always kept, and so
+# is a plug-in copy parked by an interrupted install unless --discard-parked
+# says otherwise.
 set -eu
+
+# Opt-in for the ONE thing this script will not throw away on its own: a
+# `Anabasis.vst3.prev` parked in the installer's scratch directory. See
+# `remove_install_scratch`.
+discard_parked=0
+for arg in "$@"; do
+    case "$arg" in
+        --discard-parked) discard_parked=1 ;;
+        -h|--help)
+            echo "usage: ./uninstall.sh [--discard-parked]"
+            echo "  --discard-parked  also delete a plug-in copy parked by an"
+            echo "                    interrupted install (default: keep it)"
+            exit 0 ;;
+        *)
+            echo "error: unrecognised option '$arg'" >&2
+            echo "usage: ./uninstall.sh [--discard-parked]" >&2
+            exit 1 ;;
+    esac
+done
 
 SYS_VST3_DIR="/usr/lib/vst3"
 SYS_BIN_DIR="/usr/local/bin"
@@ -78,26 +99,35 @@ remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
             # after the plug-in itself had already been removed, and with nothing
             # printed to say why. Leftover scratch is cosmetic; a half-finished
             # uninstall is not.
-            # SAY WHAT IS BEING THROWN AWAY when it is the user's previous
-            # version. An install interrupted in the two-rename window parks the
-            # working plug-in here as `Anabasis.vst3.prev`; `install.sh` puts it
-            # back, this script DELETES it. That is the right division of labour
-            # — an uninstall should uninstall — but a user who reaches for
-            # `uninstall.sh` first, while the plug-in is missing, discards the
-            # only good copy and the old message said only "removed leftover
-            # installer file".
-            if $SUDO test -d "$_scratch/Anabasis.vst3.prev"; then
-                # STDOUT, not stderr, and the stream choice is the point. The
-                # OUTCOME line below ("removed leftover installer file …") goes to
-                # stdout; a user redirecting stderr, or reading a log that splits
-                # the streams, would see the removal and not what it cost. This
-                # note exists precisely because the ORDER matters — `install.sh`
-                # restores the parked copy, this script deletes it — so it has to
-                # reach at least as many readers as the line it qualifies.
-                echo "note: $_scratch held a saved copy of your previous Anabasis,"
-                echo "      parked there by an interrupted install. Removing it with the rest"
-                echo "      of the installer's scratch. Running './install.sh' FIRST would have"
-                echo "      put that copy back instead." 
+            # KEEP WHAT ONLY THE INSTALLER CAN RESTORE. An install interrupted in
+            # the two-rename window parks the working plug-in here as
+            # `Anabasis.vst3.prev`; `install.sh` puts it back, and no other path
+            # does. An uninstall should uninstall — but "uninstall" cannot
+            # sensibly mean "destroy the copy that is standing in for the
+            # installation you are removing", so this one case is refused and
+            # named instead of swept up with the scratch.
+            if $SUDO test -d "$_scratch/Anabasis.vst3.prev" && [ "$discard_parked" -eq 0 ]; then
+                # REFUSED, NOT ANNOUNCED. Until 2026-08-14 this printed a note and
+                # deleted the copy anyway — the script establishing that it knew
+                # the copy was valuable, and then destroying it, in the same
+                # breath. The user this reaches is the one whose plug-in has just
+                # vanished mid-install and who reaches for the uninstaller to
+                # clean up: exactly the person for whom `Anabasis.vst3.prev` is
+                # the ONLY working copy, and for whom the note arrives after the
+                # fact. `install.sh` restores it; nothing else can.
+                #
+                # STDOUT, not stderr, and the stream choice is the point: a user
+                # redirecting stderr, or reading a log that splits the streams,
+                # must still see why this directory was left behind.
+                echo "note: $_scratch holds a saved copy of your previous Anabasis,"
+                echo "      parked there by an interrupted install. It is the only copy of that"
+                echo "      version, so it is being KEPT rather than removed."
+                echo "      Run './install.sh' to put it back, or re-run this script with"
+                echo "      --discard-parked to delete it along with the rest of the scratch."
+                # Deliberately does NOT set `removed`: nothing was removed here,
+                # and claiming otherwise would make the summary line disagree with
+                # what is still on disk.
+                continue
             fi
             if $SUDO rm -rf "$_scratch" 2>/dev/null; then
                 echo "removed leftover installer file $_scratch"

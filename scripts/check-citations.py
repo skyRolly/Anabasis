@@ -151,8 +151,12 @@ DELIBERATE_REAIMS = set([
      "src/PluginProcessor.h:453"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "src/PluginProcessor.h:431-439"),
+    # Moved :604 -> :616 on 2026-08-14 when a comment block was added above
+    # `PopupShield`. A declaration names the CURRENT spelling, so it has to be
+    # carried along by whatever moves that line — otherwise the pair stops
+    # matching and the re-aim it excuses reports as fresh drift.
     ("docs/architecture/THREAD_MODEL.md",
-     "src/gui/PluginEditor.h:604"),
+     "src/gui/PluginEditor.h:616"),
     ("docs/architecture/design-decisions/ADR-0013-release-trim-reaches-auto-poles.md",
      "src/dsp/AnabasisEngine.cpp:518-520"),
     ("docs/architecture/design-decisions/ADR-0014-frozen-trim-restore.md",
@@ -438,12 +442,14 @@ def main():
 
     total = drifted = fixable = unmappable = unchecked = 0
     used_reaims = set()
+    base_doc_cites = {}                # doc -> the citation spellings the BASE carries
     for doc in doc_files():
         base_text = subprocess.run(["git", "show", f"{args.base}:{doc}"],
                                    capture_output=True, text=True)
         if base_text.returncode != 0:
             continue                       # new document: nothing to drift from
         old_cites = citations(base_text.stdout)
+        base_doc_cites[doc] = {c[0] for c in old_cites}
         text = read(doc)
         cur_cites = citations(text)
 
@@ -621,9 +627,35 @@ def main():
     for (doc, whole) in sorted(used_reaims & DELIBERATE_REAIMS):
         print(f"check-citations: ACCEPTED re-aim {doc}: {whole} "
               f"(declared in DELIBERATE_REAIMS — verify the aim by hand, not by this tool)")
+    # "DELETE IT" IS ADVICE, so it is only given when it is SAFE, and the two
+    # cases below were one message until 2026-08-14. An entry is unused against a
+    # given base for two entirely different reasons:
+    #
+    #   * The base already CARRIES the re-aimed spelling — the transition this
+    #     entry excused is behind that base, and `is_declared_reaim`'s "the
+    #     spelling actually changed" test can never fire for it again from there.
+    #   * The base is simply not the one that needed it, and does not carry the
+    #     spelling either. It is a declaration for a DIFFERENT base.
+    #
+    # Neither is an instruction, and the old single message ("delete it once the
+    # base carries the re-aim") read as one on both. CI compares against the
+    # previous PUSH (`github.event.before`); on that base ~20 of 23 entries have
+    # nothing to excuse, because they were written for the merge base. Acting on
+    # that log re-breaks the gate against `origin/main` — the tool destroying what
+    # it protects, in a green run. Even the first case is only safe when the base
+    # in hand is the branch's MERGE BASE: an entry retired against the previous
+    # push is very often still live against `main`, which is exactly how this
+    # round's `PluginEditor.h:604` declaration was still doing real work.
     for (doc, whole) in sorted(DELIBERATE_REAIMS - used_reaims):
-        print(f"check-citations: note — DELIBERATE_REAIMS entry {doc}: {whole} was not "
-              f"needed against {args.base}; delete it once the base carries the re-aim.")
+        if whole in base_doc_cites.get(doc, set()):
+            print(f"check-citations: note — DELIBERATE_REAIMS entry {doc}: {whole} was not "
+                  f"needed against {args.base}, which already carries the re-aimed "
+                  f"spelling. Safe to delete ONLY if that base is the branch's merge "
+                  f"base; re-run against that before removing it.")
+        else:
+            print(f"check-citations: note — DELIBERATE_REAIMS entry {doc}: {whole} was not "
+                  f"exercised against {args.base}, which does not carry the re-aimed "
+                  f"spelling either — the entry belongs to a different base. Keep it.")
 
     # Every number below counts base ANCHORS, and `unchecked` is stated rather
     # than netted off, because the difference between "17 verified" and "17

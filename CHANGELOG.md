@@ -81,6 +81,16 @@ and say so.
   empty search cannot pass every assertion by running none of them. Evidence: this release. [Verified]
 
 ### Fixed
+- **The Linux uninstaller deleted the one copy of your plug-in that only the installer could
+  restore.** An install interrupted in the two-rename window parks the working bundle as
+  `Anabasis.vst3.prev` inside the installer's scratch directory; `install.sh` puts it back, and
+  nothing else does. `uninstall.sh` swept that directory away with the rest of the scratch —
+  printing a note first that named exactly what was being lost, which made it worse rather than
+  better: the script established that it knew the copy was valuable and destroyed it in the same
+  breath, and the user this reaches is the one whose plug-in has just vanished mid-install and who
+  reaches for the uninstaller to tidy up. The copy is now KEPT and named, with the command that
+  restores it; `--discard-parked` deletes it for anyone who wants the directory gone. Evidence:
+  this release. [Verified]
 - **Re-installing on macOS after moving or deleting the app could leave the destination empty.**
   Components were built relocatable and version-checked, so the installer looked the bundle up in
   the system's receipt database and, finding a copy anywhere — including one dragged to the Desktop
