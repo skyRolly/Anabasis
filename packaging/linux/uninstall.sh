@@ -161,14 +161,39 @@ remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
                 # STDOUT, not stderr, and the stream choice is the point: a user
                 # redirecting stderr, or reading a log that splits the streams,
                 # must still see why this directory was left behind.
+                # NAME THE MODE, because this is the one message in either script
+                # that crosses them. `install.sh`'s equivalent warning is printed
+                # by a run already in the right mode and can say "re-run this
+                # installer"; this one is printed by the UNINSTALLER, which may be
+                # removing the system-wide install while the plain `./install.sh`
+                # it used to name defaults to per-user. Following that advice
+                # after a system-wide interruption installs into `~/.vst3`,
+                # leaves `/usr/lib/vst3` empty, and never looks at the staging
+                # directory holding the only good copy — a remedy that cannot
+                # reach the thing it is a remedy for.
+                if [ "$mode" = system ]; then
+                    _restore="./install.sh --system"
+                else
+                    _restore="./install.sh"
+                fi
                 echo "note: $_scratch holds a saved copy of your previous Anabasis,"
                 echo "      parked there by an interrupted install. It is the only copy of that"
                 echo "      version, so it is being KEPT rather than removed."
-                echo "      Run './install.sh' to put it back, or re-run this script with"
+                echo "      Run '$_restore' to put it back — the mode matters, since each one"
+                echo "      only looks in its own staging directory. Or re-run this script with"
                 echo "      --discard-parked to delete it along with the rest of the scratch."
-                # Deliberately does NOT set `removed`: nothing was removed here,
-                # and claiming otherwise would make the summary line disagree with
-                # what is still on disk.
+                # The `.probe` hard link IS still swept, because it is scratch
+                # rather than the thing being kept. `stage_dir_is_same_filesystem`
+                # removes it on every branch it takes, so one only survives a HARD
+                # KILL between its `touch` and its `rm` — and this is the single
+                # path on which the directory around it is not removed either, so
+                # it is the only way that file outlives an uninstall. Named in
+                # both scripts' scratch lists, which `check-portability.py`
+                # compares.
+                $SUDO rm -f "$_scratch/.probe" 2>/dev/null || true
+                # Deliberately does NOT set `removed`: nothing the user asked
+                # about was removed here, and claiming otherwise would make the
+                # summary line disagree with what is still on disk.
                 continue
             fi
             if $SUDO rm -rf "$_scratch" 2>/dev/null; then

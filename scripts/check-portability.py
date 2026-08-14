@@ -187,7 +187,14 @@ def lint(root: Path) -> int:
 
 # The scratch names `install.sh` creates. `uninstall.sh` must remove exactly
 # these, and nothing but a human reading both files has ever enforced it.
-SCRATCH_NAME = re.compile(r"\.anabasis-[a-z-]+|\.Anabasis\.new")
+#
+# `\.probe` is in the set and does NOT match inside `.anabasis-probe`, where the
+# character before `probe` is a hyphen. It earns its place: the same-filesystem
+# test's hard link is removed on every branch that test takes, so one survives
+# only a hard kill between the `touch` and the `rm` — and the uninstaller's
+# keep-the-parked-copy path is the single path that also leaves the directory
+# around it standing, which is the only way that file outlives an uninstall.
+SCRATCH_NAME = re.compile(r"\.anabasis-[a-z-]+|\.Anabasis\.new|\.probe\b")
 
 
 def scratch_names_agree(root: Path) -> int:

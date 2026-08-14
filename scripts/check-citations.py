@@ -320,18 +320,35 @@ def citations(text):
         offsets.append(pos)
         pos += len(line)
 
-    def _is_continuation(line):
-        body = line.strip()
-        while body[:2] in ("//",) or body[:1] in ("#", "*", ">"):
-            body = body[2:] if body[:2] == "//" else body[1:]
-            body = body.lstrip()
-        return body != ""
+    # A continuation must wear the SAME comment prefix as the marker line, and
+    # that requirement is the fix for a boundary that was merely heuristic. The
+    # first form stripped `//`, `#`, `*` and `>` interchangeably, so in
+    # `src/gui/LookAndFeel.h` — marker on line 1, `#pragma once` on line 2 —
+    # `#pragma once` stripped to `pragma once`, read as a continuation, and the
+    # block silently swallowed a line of real code. Under-checking rather than
+    # corruption, since the effect is to DECLINE citations, but a block that can
+    # extend over arbitrary following content is not a boundary.
+    def _prefix_of(line):
+        s = line.lstrip()
+        for p in ("//", "#", "*", ">"):
+            if s.startswith(p):
+                return p
+        return ""                      # Markdown prose: no comment marker
+
+    def _is_continuation(line, prefix):
+        s = line.lstrip()
+        if prefix == "":
+            return s != ""             # a wrapped sentence; a blank line ends it
+        if not s.startswith(prefix):
+            return False
+        return s[len(prefix):].strip() != ""
 
     i = 0
     while i < len(lines):
         if PROVENANCE_MARKER in lines[i]:
+            prefix = _prefix_of(lines[i])
             j = i + 1
-            while j < len(lines) and _is_continuation(lines[j]):
+            while j < len(lines) and _is_continuation(lines[j], prefix):
                 j += 1
             provenance_spans.append((offsets[i], offsets[j - 1] + len(lines[j - 1])))
             i = j

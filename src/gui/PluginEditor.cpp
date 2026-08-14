@@ -2784,6 +2784,24 @@ void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
     // shown (`preparePopupMenuWindow` runs in the constructor). Here this editor
     // IS the dismissal and has just hidden every tracked window itself, so
     // "not visible" cannot mean "not shown YET".
+    //
+    // …AND `openMenus` IS ONLY HALF OF `wanted`. The paragraph above claimed
+    // this call closes the window unconditionally, and it did not: `wanted` is
+    // `! openMenus.isEmpty() || presetMenusOpen > 0`, and the preset menu is a
+    // PARENTED child counted in that second term, not tracked in the first
+    // (`DEPENDENCY_POLICY.md`'s register row says why the hook never fires for
+    // it). Pruning `openMenus` therefore left the shield raised on exactly the
+    // preset-menu variant of the same path, until the async completion callback
+    // ran or the tick healed it two ticks later — the residual the fix was
+    // written to remove, surviving in the case the user meets most often.
+    //
+    // Zeroing it here needs no grace for the same reason the prune did not:
+    // `dismissTrackedPopupMenus` has just exited and hidden every modal child of
+    // this editor, and the preset menu IS one. The later completion callback
+    // decrementing a counter already at 0 is a no-op — its CAS loop clamps
+    // there — so the two cannot disagree.
+    presetMenusOpen.store (0, std::memory_order_relaxed);
+    presetMenuGhostTicks = 0;
     refreshPopupShield();
 }
 

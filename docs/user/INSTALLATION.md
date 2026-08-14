@@ -60,7 +60,11 @@ It asks where to install:
 what a provisioning script or a CI step needs: without a flag, the question is only asked
 when the terminal is there to answer it, and anything else takes the per-user default.
 `--system` is not the same as `sudo ./install.sh` — it keeps the elevation per-operation,
-so only the writes to `/usr/lib/vst3` and `/usr/local/bin` run as root. Two combinations
+so only the writes to `/usr/lib/vst3` and `/usr/local/bin` run as root. **With no terminal,
+that has a precondition:** every elevated step goes through plain `sudo`, which cannot prompt
+when there is nothing to prompt on, so a non-interactive `--system` run needs the caller to
+be root already, or to have passwordless or still-cached `sudo`. Without one of those it
+stops with "System installation failed because permission was denied" rather than hanging. Two combinations
 are refused rather than guessed at: `--user --system` together, since the two differ in
 destination *and* in privilege and there is no sensible way to honour both; and `--user`
 under `sudo`, since which home directory `$HOME` names there depends on the machine's

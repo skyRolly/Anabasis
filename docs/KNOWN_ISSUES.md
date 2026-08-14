@@ -649,8 +649,15 @@ the inversion tabulated above is untouched. What changes is the frequency term t
 rests on — and the path that drives it hardest is the preset ring, where `‹`/`›` walks
 `applyPresetFile` once per keypress and a user can hold the key down. Round 51 halved the
 message-thread M1 rate and this doubles what remains on that one path; neither is the defect, and
-both belong in the same paragraph so the estimate is never read off a stale half of the story. That is the interleaving KI-003 is about, and the §5.3 machinery exists *because*
-gestures and parameter writes on the same managed parameter do overlap across threads.
+both belong in the same paragraph so the estimate is never read off a stale half of the story.
+
+**The lock-order inversion tabulated above is the interleaving KI-003 is about**, and the §5.3
+machinery exists *because* gestures and parameter writes on the same managed parameter do overlap
+across threads. (That sentence closed the pre-0.1.4 paragraph, where "that" could only mean the
+inversion; the rate paragraph was later inserted in front of it and left it appearing to point at
+the doubled `saveSlotFromLive()` instead — which is a rate, not an interleaving. Named explicitly
+here rather than pronouned, in a document whose whole point is that the estimate is never read off
+a stale half of the story.)
 
 **Why it is not fixed here.** The M0 → M1 edge is the §7 undo grammar's pre-state snapshot, and it
 has to be taken *at* gesture begin — deferring it to the next drain tick would capture a state the

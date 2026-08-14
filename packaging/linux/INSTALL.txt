@@ -65,6 +65,10 @@ A) Installer installation (recommended) / 脚本安装(推荐)
       ./install.sh --system     (all users, asks for your password when it needs it /
                                  系统级,需要时会提示输入密码)
 
+  With no terminal there is nothing to prompt on, so --system then needs you to be root
+  already, or to have passwordless or still-cached sudo. / 无终端时无法提示输入密码,
+  因此 --system 需要您已经是 root,或已配置免密码 sudo,或 sudo 凭据仍在缓存中。
+
   Without a flag the question is only asked when a terminal is present; otherwise the
   per-user default is used. Passing both options together is an error rather than a
   silent choice. / 未指定选项时,只有在终端环境下才会询问,否则按用户级安装;同时传入
