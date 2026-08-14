@@ -51,10 +51,10 @@ There are **two formats**, deliberately different in fidelity (ADR-0007 option H
 ## 1. The session blob
 
 `getStateInformation` builds a `juce::ValueTree`, serialises it to XML and wraps it with
-`copyXmlToBinary` (`src/PluginProcessor.cpp:1068-1124`). Structure, in write order:
+`copyXmlToBinary` (`getStateInformation`, `src/PluginProcessor.cpp:1647-1703`). Structure, in write order:
 
 ```
-AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, PluginProcessor.cpp:7)
+AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, src/PluginProcessor.cpp:8)
 ├── ANABASIS                      the APVTS tree — the LIVE parameter surface
 │   └── PARAM ×50                 id · value (denormalised) · raw (normalised double, additive)
 │                                 (×49 until 0.1.1 — ADR-0019 ADDED compStereoLink, an
@@ -79,10 +79,10 @@ AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, Plugin
 ### 1.1 The `raw` attribute (host-session contract)
 
 Each `PARAM` node carries APVTS's denormalised `value` **plus** an additive `raw` attribute
-holding the exact normalised position (`copyStateWithRaw`, `src/PluginProcessor.cpp:568`;
+holding the exact normalised position (`copyStateWithRaw`, `src/PluginProcessor.cpp:989`;
 the Anamorph ADR-0013 pattern, adopted by our ADR-0007). Restore prefers `raw` — clamped to
 [0, 1] at the boundary — and falls back to `value` when `raw` is absent
-(`reassertFromRaw`, `src/PluginProcessor.cpp:811-…`). This is what makes a mid-step position
+(`reassertFromRaw`, `src/PluginProcessor.cpp:1256-1269`). This is what makes a mid-step position
 on a discrete `Raw*` parameter survive a host round-trip bit-exactly.
 Pinned by: `testStateRoundTrip` (byte-identical `getState → setState → getState`),
 `testAbRawExact`, `testRawRoundTripIsIdempotent` (`tests/state_tests.cpp`).
@@ -91,7 +91,7 @@ Pinned by: `testStateRoundTrip` (byte-identical `getState → setState → getSt
 
 A slot serialises the **widened StateSet** `{params, presetName, baseline, frozenTrims,
 detachMask}` (ADR-0007) — plus, since **ADR-0022**, the preset-identity trio described below —
-via `saveSlotFromLive()` (`src/PluginProcessor.cpp:695-752`). Two
+via `saveSlotFromLive()` (`src/PluginProcessor.cpp:1130-1197`). Two
 properties of the shape that are rules, not accidents:
 
 - **The slot's `ANABASIS` copy carries the full surface, view-tier entries included.** The
@@ -133,6 +133,25 @@ Rules the shape encodes, each pinned by `testPresetIdentityAcrossRestore`:
   wrong row.
 - **User preset FILES are untouched** — the trio lives in the session blob only; the
   `.anabasis` format is unchanged (§3).
+- **DISCLOSURE OBLIGATION — a saved session can contain an absolute filesystem path.** Stated here
+  because this repository has no user-facing privacy document yet and, under constraint C8 /
+  OQ-002, one cannot be written with invented owner wording. The fact is recorded at the schema it
+  arises from so that whoever writes that document cannot write it without this paragraph. The
+  disclosable content, exactly:
+  - **How many references, and where.** The trio is written on the `SLOT` unit and nowhere else,
+    so a session carries **at most two** preset references — one per A/B slot. There is no
+    root-level copy.
+  - **When a PATH rather than a name is stored.** Only for `presetSource == "user"`, and only in
+    the complement of the bare-name case above: a preset outside `userPresetDirectory()`, one
+    nested in a sub-folder of it, or one whose own file name is something
+    `juce::File::isAbsolutePath` accepts. An absolute path typically contains the user's account
+    name, which is the privacy-relevant part.
+  - **How long it persists.** For as long as the host keeps the session. The INACTIVE slot's copy
+    outlives its use: `getStateInformation` writes that slot verbatim from `storedSlot`, so a
+    reference put there by an earlier A/B state is re-emitted on every subsequent save until that
+    slot is overwritten by a new sound. Switching away from a preset does not clear it.
+  - **What is NOT stored.** No file CONTENT, and nothing about presets other than the one a slot
+    holds. Factory presets store an id, never a path.
 - **On the INACTIVE slot, absence survives a re-save** — a deliberate, narrow exception to
   this file's "the writer emits the schema rather than the input" pattern. `getStateInformation`
   rebuilds the ACTIVE slot through `saveSlotFromLive()` (which always writes the trio) but
@@ -145,7 +164,7 @@ Rules the shape encodes, each pinned by `testPresetIdentityAcrossRestore`:
 ### 1.3 `FROZEN_TRIMS` — written conditionally, by design
 
 Properties: `releaseOctaves`, `stereoLink`, `scHpfHz`, `dynTiltDb` (doubles;
-`src/PluginProcessor.cpp:687-692`). Three rules the shape encodes:
+`saveSlotFromLive`, `src/PluginProcessor.cpp:1123-1126`). Three rules the shape encodes:
 
 - **Freeze OFF ⇒ no child at all.** A slot that is not frozen has nothing latched; writing
   a stale vector was a live defect (it flipped the preset-dirty mark) and is now pinned
@@ -165,11 +184,13 @@ Properties: `releaseOctaves`, `stereoLink`, `scHpfHz`, `dynTiltDb` (doubles;
 
 The §5.3 macro-baseline child ADR-0007 gave a per-slot home. **No code path in this build
 originates one**: the only constructor of a `BASELINE` tree in the whole repository is the
-test that seeds one (`tests/state_tests.cpp:1454`). The wrapper *adopts* the child from an
+test that seeds one (`tests/state_tests.cpp:2171`). The wrapper *adopts* the child from an
 incoming slot or session, *carries* it through A/B, undo and saves
-(`src/PluginProcessor.cpp:708-709, 851, 1208`), and *drops* it where the state it describes
-is replaced — both preset-apply paths and the defaults-based restores
-(`src/PluginProcessor.cpp:972, 1039, 1053`). So the child is live schema with defined
+(`src/PluginProcessor.cpp:1153-1154, 1391, 1834` — `saveSlotFromLive`, `applySlotToLive`,
+`setStateInformation`), and *drops* it where the state it describes
+is replaced — both preset-apply paths and the defaults-based restore
+(`src/PluginProcessor.cpp:1512, 1599, 1632` — `applyFactoryPreset`, `applyPresetFile`,
+`resetSlotFieldsToDefaults`). So the child is live schema with defined
 carriage semantics and no producer — a reader must tolerate it, a writer must not invent
 one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
 
@@ -177,7 +198,7 @@ one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
 
 Written **only** after a Learn commit; its absence is the discriminator, so an
 instance that never learned writes no child and a loaded reference is never resurrected
-from defaults (`src/PluginProcessor.cpp:1083-1120`). While a loaded restore is staged but
+from defaults (`getStateInformation`'s ADAPTIVE block, `src/PluginProcessor.cpp:1685-1699`). While a loaded restore is staged but
 unconsumed, the staged values are authoritative for a re-save (the mirror rule); the
 residual one-save window between the consumer's `exchange` and its adoption is documented
 at the site and in ADR-0012 §Known limits, not claimed away.
@@ -233,11 +254,11 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 ### 1.7 What is deliberately NOT serialized
 
 - **The per-slot undo/redo stacks** (cap `kUndoCap = 128`,
-  `src/PluginProcessor.h:388`) — session-local; a load announces a fresh history via
+  `src/PluginProcessor.h:453`) — session-local; a load announces a fresh history via
   `historyEpoch` and the message thread clears at `syncHistory()`
   (`testHistoryOwnershipAcrossAStateLoad`).
 - **`presetBaseline`** (the dirty-marker comparand, a `PRESET_SHAPE` projection) — rebuilt,
-  never persisted; deliberately outside the StateSet (`src/PluginProcessor.h:296-306`).
+  never persisted; deliberately outside the StateSet (`src/PluginProcessor.h:431-439`).
 - Gesture bookkeeping, meter holds (a load *clears* holds via `requestMeterReset`), and
   every GUI-only datum.
 
@@ -245,7 +266,7 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 
 ## 2. Read rules (structural tolerance — ADR-0007 option C)
 
-`setStateInformation` (`src/PluginProcessor.cpp:1126-…`), in order:
+`setStateInformation` (`src/PluginProcessor.cpp:1705-1902`), in order:
 
 | Input | Behaviour |
 |---|---|
@@ -253,9 +274,10 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 | Foreign root tag | **No-op** — current state kept |
 | `schemaVersion` missing | Treated as 1 |
 | `schemaVersion` > 1 | **Not a rejection** — the reader falls back to shape. A future contributor adding a version gate to the read path is reversing ADR-0007 (its §Consequences says exactly this) |
-| Missing `ANABASIS` child | **Defaults**, not "keep live" — a valid root that omits the surface means the default surface |
+| Missing `ANABASIS` child | **Defaults**, not "keep live" — a valid root that omits the surface means the default surface. **This now defaults the ACTIVE SLOT'S FIELDS too**, and that is a widening of the rule worth stating rather than deducing from the row below: `presetName`, the ADR-0022 identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` are adopted from the active `SLOT` only when the root surface was restored, so a blob carrying a full `AB` block under a root with no `ANABASIS` loads with the DEFAULT name, identity, baseline, trims and an EMPTY detach mask, where it previously adopted all five. Deliberate, and the §5.3 detach mask is the case that has to be looked at rather than waved through: detachment is not otherwise recoverable, so dropping it loses user intent. It is dropped anyway, because the alternative loses more — a mask names parameters that are detached from the MACRO SURFACE, and the surface this restore installed came from defaults, so the mask would describe detachments from a mapping the session never had. A shape with no producer: nothing this plug-in writes omits the root `ANABASIS` while writing `AB`, so no session in the wild takes this path |
 | Missing `ANABASIS_INTERNAL` / missing fields | Defaults first, overlay what exists (§1.6) |
-| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1188-1200`) |
+| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1775`, the `hasType ("SLOT")` filter) |
+| `SLOT` present but carrying **no `ANABASIS` child** | **The whole slot resolves to defaults**, and the two slots reach that by different routes because they are not symmetric. The STORED slot is declined outright and keeps the `defaultSlot` planted by `resetSlotFieldsToDefaults()`, because `storedSlot` is a processor member that survives across restores — accepting a payload-less tree there would leave the PREVIOUS project's sound under this project's name, since `applySlotToLive` adopts parameters only when the payload is valid but adopts `presetName`, the identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally. The ACTIVE slot needs no such test for its sound (that comes from the ROOT `ANABASIS`, not from the slot's redundant copy), so instead its METADATA is adopted only when the root surface was actually restored — otherwise the surface came from defaults and the labels would describe a sound that was never installed. The consequence to read off that, because it is the shape a reviewer expects to be symmetric and is not: a blob with a valid ROOT surface whose ACTIVE slot has lost its payload still adopts that slot's name, identity, baseline, trims and mask — the metadata is gated on the root surface, never on the active slot's own `ANABASIS` child. Defensible (both halves came out of the same blob, and the sound that was installed is the one the root described), and it is why the two slots are governed by two different tests rather than one. One rule, stated per slot ([**ADR-0026**](design-decisions/ADR-0026-slot-payload-read-rules.md) — Accepted 2026-08-14, the owner cleared the gate on this semantic change): **metadata is adopted only alongside the parameters it describes** (`src/PluginProcessor.cpp:1758` the `liveSurfaceRestored` flag, `:1693` the stored-slot guard, `:1712` the active-slot gate; pinned by `testAMalformedStoredSlotCannotSplitSoundFromMetadata`) |
 | Unknown properties/children anywhere | Ignored, and **not** preserved on re-save (the writer emits the schema, not the input) |
 | Out-of-range values | Clamped at the read boundary (`raw` to [0,1]; indices through their clamps; trims per-field finite-checked in `injectTrims`; `int_uiScale` to the ladder) |
 

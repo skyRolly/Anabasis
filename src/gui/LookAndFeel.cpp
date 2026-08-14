@@ -389,14 +389,58 @@ juce::PopupMenu::Options AnabasisLookAndFeel::getOptionsForComboBoxPopupMenu (ju
              .withStandardItemHeight (label.getHeight());
 }
 
+// Pop-up row geometry, in ONE place because two overrides have to agree about it:
+// `getIdealPopupMenuItemSize` decides how wide JUCE makes the menu, and
+// `drawPopupMenuItem` decides how much of that width the text actually gets. When
+// the measurement allowed less than the drawing spends, JUCE sized the menu to the
+// smaller number and then clipped the longest row with an ellipsis. Both read these
+// constants now, so the two cannot drift apart again.
+// The constants themselves now live in `LookAndFeel.h`, because a THIRD reader
+// needs them: `state_tests.cpp` reconstructs this row's rectangles to assert
+// that a row carrying a shortcut does not draw its label underneath one. A test
+// that hard-coded 12 and 14 would pass while agreeing with nothing.
+//
+// WHAT THIS BUDGET DOES NOT COVER, and how far that reaches. The shortcut IS
+// measured — JUCE appends it to the string it hands this function, via
+// `ItemComponent::getTextForMeasurement` — and `drawPopupMenuItem` reserves the
+// strip it occupies out of the same rectangle, so measured total and drawn total
+// describe the same row.
+//
+// The SUB-MENU CHEVRON is not, and cannot be: this signature carries no
+// `hasSubMenu`, so a budget computed here has no way to know. `drawPopupMenuItem`
+// reserves the chevron's gap anyway, out of the label, so the two can never
+// collide — a sub-menu row degrades to an ellipsised label (~7 px at this row
+// height) rather than to overlapping glyphs.
+//
+// WHO CAN ACTUALLY REACH THAT, checked against the pinned JUCE rather than
+// assumed, because the look-and-feel serves menus this editor does not build:
+//   * `TextEditor::addPopupMenuItems` (juce_TextEditor.cpp) builds Cut/Copy/
+//     Paste/Delete/Select All/Undo/Redo — FLAT, no `addSubMenu`, on every
+//     platform. The cross-platform implementation is the whole of it; there is
+//     no OS services sub-menu grafted on.
+//   * `ComboBox::showPopup` adds items from its own flat list.
+//   * `Slider::showPopupMenu` DOES `addSubMenu ("Rotary mode", …)` — the one
+//     sub-menu in the widgets we use. It is gated on `setPopupMenuEnabled`,
+//     which this editor never calls and which JUCE leaves off, so no slider here
+//     can open it.
+// So the case is unreachable today by construction rather than by luck, and if a
+// slider ever enables that menu the cost is a 7 px shorter label on one row.
+// Widening `chrome` for every menu in the plug-in to pre-pay for it is the worse
+// trade, and `testEveryComboMenuFitsItsControl` is what would notice if it were
+// made.
+
 void AnabasisLookAndFeel::getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
                                                      int, int& idealWidth, int& idealHeight)
 {
     if (isSeparator) { idealWidth = 60; idealHeight = 8; return; }
     auto f = getPopupMenuFont();
     juce::GlyphArrangement ga;
+    // JUCE hands us the shortcut already appended to the text for measurement
+    // (`ItemComponent::getTextForMeasurement`), so measuring the argument covers
+    // both halves of what the row draws.
     ga.addLineOfText (f, text, 0.0f, 0.0f);
-    idealWidth  = (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth()) + 30;
+    const auto textW = (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth());
+    idealWidth  = juce::jmax (menuMetrics::minimumRow, textW + (int) menuMetrics::chrome);
     idealHeight = 23; // uniform across every combo regardless of its on-screen height (#3)
 }
 
@@ -441,7 +485,7 @@ void AnabasisLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b
 // solid accent tint with no gradient, sheen or bevel (the previous glassy version
 // read as dated "Vista aero", #3).
 void AnabasisLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area,
-                                             bool isSeparator, bool /*isActive*/, bool isHighlighted,
+                                             bool isSeparator, bool isActive, bool isHighlighted,
                                              bool isTicked, bool hasSubMenu, const juce::String& text,
                                              const juce::String& shortcutKeyText,
                                              const juce::Drawable* /*icon*/, const juce::Colour* /*textColour*/)
@@ -455,47 +499,102 @@ void AnabasisLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rect
     }
 
     auto r = area.toFloat();
-    if (isHighlighted)
+    // A row JUCE reports as inactive cannot be chosen, and until now it drew
+    // exactly like one that can: same text, same tick, same arrow. The whole row
+    // is dimmed instead, so "unavailable" reads before the click rather than after
+    // it does nothing.
+    const float itemAlpha = ! isActive     ? menuMetrics::inactive
+                          : isHighlighted  ? 1.0f
+                                           : menuMetrics::dim;
+    const auto  labelCol  = colours::text.withMultipliedAlpha (itemAlpha);
+
+    if (isHighlighted && isActive)
     {
         // One flat accent tint, lightly rounded -- clean and modern (#3).
         g.setColour (colours::accent.withAlpha (0.18f));
         g.fillRoundedRectangle (r.reduced (3.0f, 1.0f), 4.0f);
     }
 
-    g.setColour (isHighlighted ? colours::text : colours::text.withMultipliedAlpha (0.88f));
+    g.setColour (labelCol);
     g.setFont (getPopupMenuFont());
 
-    auto textArea = r.reduced (12.0f, 0.0f);
+    auto textArea = r.reduced (menuMetrics::padX, 0.0f);
     if (isTicked)
     {
-        auto tick = textArea.removeFromLeft (14.0f);
-        g.setColour (colours::accent);
+        auto tick = textArea.removeFromLeft (menuMetrics::tickGutter);
+        g.setColour (colours::accent.withMultipliedAlpha (itemAlpha));
         g.fillEllipse (tick.getCentreX() - 2.0f, tick.getCentreY() - 2.0f, 4.0f, 4.0f);
-        g.setColour (isHighlighted ? colours::text : colours::text.withMultipliedAlpha (0.88f));
+        g.setColour (labelCol);
     }
     else
     {
-        textArea.removeFromLeft (14.0f);
+        textArea.removeFromLeft (menuMetrics::tickGutter);
     }
 
-    g.drawText (text, textArea, juce::Justification::centredLeft);
+    // The right-hand furniture is taken OUT of the label's rectangle before the
+    // label is drawn. Both pieces used to be drawn over the same rectangle the
+    // label had already filled, guarded by a pair of `jassert`s declaring that
+    // neither could occur — which made a supported JUCE feature a debug-build
+    // hard stop, in a look-and-feel that also serves menus this editor does not
+    // build (a `TextEditor`'s own context menu inherits it through
+    // `getLookAndFeel()`). The row now renders whatever it is handed:
+    //
+    //   * The SHORTCUT is measured into the row's width by JUCE — the ideal-size
+    //     call receives `text + "   " + shortcut` from `getTextForMeasurement`,
+    //     so the budget already covers it — and drawn in the strip reserved here.
+    //     Reserving it is what turns a pathological row (a long label whose
+    //     shortcut the smaller font does not shrink enough) into an ellipsised
+    //     label instead of two runs of glyphs on top of each other.
+    //   * The CHEVRON is drawn in the right-hand inset, outside the label's
+    //     rectangle already; the gap taken here is only so a full-width label
+    //     cannot touch it. Nothing measures it, so a sub-menu row spends that
+    //     gap out of its own label — bounded, visible, and preferable to the
+    //     alternative of widening `menuMetrics::chrome` for every menu in the
+    //     plug-in to reserve space almost none of them use.
+    const float chevronGap = hasSubMenu ? (float) area.getHeight() * 0.12f + 4.0f : 0.0f;
+    textArea.removeFromRight (chevronGap);
 
     if (shortcutKeyText.isNotEmpty())
     {
-        g.setColour (colours::textDim);
-        g.setFont (getPopupMenuFont().withHeight (11.0f));
-        g.drawText (shortcutKeyText, textArea, juce::Justification::centredRight);
+        const auto shortcutFont = getPopupMenuFont().withHeight (menuMetrics::shortcutPt);
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (shortcutFont, shortcutKeyText, 0.0f, 0.0f);
+        const auto w = ga.getBoundingBox (0, -1, true).getWidth();
+        // THE 50 % CAP PROTECTS THE LABEL AND CAN COST THE SHORTCUT, which is
+        // worth stating because the row was MEASURED wide enough for both. JUCE
+        // sizes the row from `text + "   " + shortcut` in the 13.5 pt menu font;
+        // this draws the shortcut at 11 pt. For a very short label with a long
+        // shortcut, half the text area can be narrower than the shortcut's own
+        // width, and `drawText` then ellipsises a shortcut the budget already
+        // paid for. Kept anyway: the alternative is a label ellipsised to
+        // nothing by a pathological shortcut, and a truncated accelerator is the
+        // less damaging of the two. `testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel`
+        // deliberately ignores this cap — ignoring it is conservative for the
+        // LABEL, which is what that test pins, and it leaves the cap's effect on
+        // the SHORTCUT unpinned. No menu this editor builds carries a shortcut;
+        // only a host-supplied `TextEditor` accelerator set could reach it.
+        const auto strip = textArea.removeFromRight (
+                               juce::jmin (w + menuMetrics::shortcutGap,
+                                           textArea.getWidth() * 0.5f));
+
+        g.setColour (colours::textDim.withMultipliedAlpha (itemAlpha));
+        g.setFont (shortcutFont);
+        g.drawText (shortcutKeyText, strip, juce::Justification::centredRight);
+        g.setColour (labelCol);
+        g.setFont (getPopupMenuFont());
     }
+
+    g.drawText (text, textArea, juce::Justification::centredLeft);
 
     if (hasSubMenu)
     {
         const float h = (float) area.getHeight();
         juce::Path p;
-        const float x = r.getRight() - 12.0f, cy = r.getCentreY();
+        const float x = r.getRight() - menuMetrics::padX, cy = r.getCentreY();
         p.startNewSubPath (x, cy - h * 0.12f);
         p.lineTo (x + h * 0.12f, cy);
         p.lineTo (x, cy + h * 0.12f);
-        g.setColour (colours::textDim);
+        g.setColour (colours::textDim.withMultipliedAlpha (itemAlpha));
         g.strokePath (p, juce::PathStrokeType (1.4f));
     }
 }
@@ -506,7 +605,23 @@ void AnabasisLookAndFeel::drawPopupMenuSectionHeader (juce::Graphics& g, const j
 {
     g.setColour (colours::textDim.withAlpha (0.85f));
     g.setFont (juce::Font (juce::FontOptions (10.5f)).withExtraKerningFactor (0.18f));
-    g.drawText (sectionName, area.reduced (12, 0), juce::Justification::centredLeft);
+    // The SAME inset AND tick gutter the item rows spend, so "FACTORY" / "USER"
+    // sit on the text column they head instead of 14 px to the left of it. This
+    // path was left out when the item metrics were unified: it hard-coded its own
+    // 12 and reserved no gutter.
+    //
+    // ALIGNMENT ONLY — the width side needs nothing and is deliberately not
+    // overridden. `LookAndFeel_V2::getIdealPopupMenuSectionHeaderSizeWithOptions`
+    // forwards to `getIdealPopupMenuItemSizeWithOptions`, which reaches the
+    // override above, and then adds a quarter to the result. So a header is
+    // measured with THIS family's item budget in the larger item font and then
+    // widened again, while it draws in a 10.5 pt font — over-measured on both
+    // counts, which is the safe direction. Overriding it to be exact would only
+    // narrow menus, and could do so for a reason no reader would connect to a
+    // header.
+    auto textArea = area.toFloat().reduced (menuMetrics::padX, 0.0f);
+    textArea.removeFromLeft (menuMetrics::tickGutter);
+    g.drawText (sectionName, textArea, juce::Justification::centredLeft);
 }
 
 void AnabasisLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)

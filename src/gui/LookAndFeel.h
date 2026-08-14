@@ -13,6 +13,35 @@ namespace abgui
 //  background, a restrained cool accent gradient, modern thin-arc knobs, no
 //  skeuomorphism (no wood, brushed metal or vintage VU meters).
 // ============================================================================
+// Pop-up row geometry, in ONE place because THREE readers have to agree about
+// it: `getIdealPopupMenuItemSize` decides how wide JUCE makes the menu,
+// `drawPopupMenuItem` decides how much of that width the label actually gets,
+// and `state_tests.cpp` reconstructs both to check they do not overlap. When the
+// measurement allowed less than the drawing spent, JUCE sized the menu to the
+// smaller number and clipped the longest row with an ellipsis; sharing the
+// constants is what stops the two drifting apart again.
+namespace menuMetrics
+{
+    constexpr float padX       = 12.0f;  // left AND right inset of the row's text area
+    constexpr float tickGutter = 14.0f;  // reserved at the left whether or not the row is ticked
+    constexpr float chrome     = padX * 2.0f + tickGutter;
+    // A floor, NOT a function of `chrome` — it is 26 px above it, and the
+    // comment here used to claim it "sits just above the chrome so it cannot
+    // widen a pop-up past the control that opened it", which is false twice
+    // over: the arithmetic is wrong, and a 64 px floor DOES widen past any
+    // control narrower than that. What it actually buys is a menu that is not
+    // absurdly narrow when every row is short — a two-character list should
+    // still read as a menu. Every control in this editor that opens one is
+    // wider than 64 px, so the floor is inert for all of them today; a narrower
+    // one added later would open a menu wider than itself, and that is a
+    // deliberate trade, not an accident.
+    constexpr int   minimumRow = 64;
+    constexpr float inactive   = 0.4f;   // the disabled alpha `drawButtonText` already uses
+    constexpr float dim        = 0.88f;  // an enabled, unhighlighted row
+    constexpr float shortcutPt = 11.0f;  // the shortcut's own, smaller type size
+    constexpr float shortcutGap = 8.0f;  // breathing room between label and shortcut
+}
+
 namespace colours
 {
     const juce::Colour bg        { 0xff0e1014 };
@@ -121,9 +150,88 @@ public:
     void drawPopupMenuSectionHeader (juce::Graphics&, const juce::Rectangle<int>& area,
                                      const juce::String& sectionName) override;
     int  getPopupMenuBorderSize() override { return 3; } // narrower top/bottom dead-zone (#9)
+    // A menu given a PARENT COMPONENT gets a second frame drawn on top of it:
+    // `PopupMenu::MenuWindow::paintOverChildren` calls `drawResizableFrame` over
+    // the border ring, but only when `options.getParentComponent()` is set
+    // (juce_PopupMenu.cpp). The base implementation paints translucent black
+    // rectangles into exactly the ring `drawPopupMenuBackground` has already
+    // rounded and outlined, so the parented preset menu wore a doubled, squared
+    // edge that no unparented combo list showed. The frame is ours to draw and we
+    // draw it in the background; this override says so by drawing nothing.
+    //
+    // SCOPE, because this entry point is not menu-specific:
+    // `juce::ResizableBorderComponent::paint` resolves the same method, so any
+    // resizable component under this look-and-feel would also draw no border.
+    // Nothing in this editor is resizable today — host resize is off and the
+    // Standalone window resolves the DEFAULT look-and-feel, not this one — so no
+    // surface loses a frame. Add a resizable child under this family and this
+    // override has to learn the difference between the two callers rather than
+    // answering "nothing" to both.
+    //
+    // So it distinguishes them, on TWO tests, because neither is sufficient
+    // alone and the first one on its own is a magic number:
+    //
+    //   1. SHAPE. `PopupMenu::MenuWindow::paintOverChildren` builds its argument
+    //      as `BorderSize<int> (getPopupMenuBorderSizeWithOptions (options))` —
+    //      the one-argument constructor, which sets all four sides — so the menu
+    //      path always passes a UNIFORM border equal to `getPopupMenuBorderSize()`.
+    //      `ResizableBorderComponent::paint` passes its own `borderSize` member,
+    //      which is usually non-uniform and usually thicker. Usually is the
+    //      problem: a drag zone of exactly 3 px on all four sides is a legal
+    //      thing to construct, and it would land here indistinguishable.
+    //   2. STATE. `isPopupMenuOnScreen` is supplied by the editor and answers
+    //      whether one of ITS menus is open at all. When none is, the caller
+    //      cannot be a menu, whatever its border says, so the frame is drawn.
+    //
+    // Left unset the predicate DRAWS — the doubled edge comes back, visibly, on
+    // a surface someone is looking at. That is the right way for a missing
+    // wire-up to fail: the alternative default silently removes a frame from a
+    // component nobody thought about, which is the failure this override exists
+    // to avoid, arriving through the override itself.
+    //
+    // What survives both tests: a resizable component with a 3 px uniform
+    // border repainting WHILE A MENU PARENTED TO THE EDITOR IS OPEN. That is the
+    // predicate the editor now supplies (`presetMenusOpen > 0`), and it is worth
+    // stating what it used to be: `shieldRaised`, which is true for ANY tracked
+    // pop-up — including every combo drop-down, none of which can reach this
+    // override, since a desktop pop-up paints its own frame. Under that wiring
+    // the state half was satisfied through most of the editor's pop-up life and
+    // the shape test was carrying the discrimination alone. Narrow enough now to
+    // name rather than defend against, and it is named in
+    // `DEPENDENCY_POLICY.md`'s JUCE-internals register so the next pin move
+    // re-reads it.
+    std::function<bool()> isPopupMenuOnScreen;
+    void drawResizableFrame (juce::Graphics& g, int w, int h,
+                             const juce::BorderSize<int>& border) override
+    {
+        const auto b = getPopupMenuBorderSize();
+        const bool menuShaped = border.getTop()  == b && border.getBottom() == b
+                             && border.getLeft() == b && border.getRight()  == b;
+        if (menuShaped && isPopupMenuOnScreen && isPopupMenuOnScreen())
+            return;                      // the parented pop-up's doubled edge
+        juce::LookAndFeel_V4::drawResizableFrame (g, w, h, border);
+    }
     // Fixed, uniform row height so a taller combo doesn't get taller rows (#3).
     void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
                                     int standardHeight, int& idealWidth, int& idealHeight) override;
+
+    // Reports every pop-up menu window the moment JUCE builds it, so the editor
+    // can know one is on screen without owning it.
+    //
+    // `PopupMenu::MenuWindow`'s constructor calls `preparePopupMenuWindow` on the
+    // MENU's own look-and-feel (juce_PopupMenu.cpp:500), and both of the widgets
+    // that open menus we did not write hand the menu OUR look-and-feel first:
+    // `ComboBox::showPopup` (juce_ComboBox.cpp:561) and `TextEditor`'s context
+    // menu (juce_TextEditor.cpp:1578). One hook therefore catches every drop-down
+    // and every right-click context menu in the editor. A menu we build ourselves
+    // resolves the DEFAULT look-and-feel (we deliberately hand it no pointer), so
+    // it never arrives here and is counted at its own call site instead.
+    std::function<void (juce::Component& menuWindow)> onPopupMenuWindowCreated;
+    void preparePopupMenuWindow (juce::Component& newMenuWindow) override
+    {
+        juce::LookAndFeel_V4::preparePopupMenuWindow (newMenuWindow);
+        if (onPopupMenuWindowCreated) onPopupMenuWindowCreated (newMenuWindow);
+    }
 
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;

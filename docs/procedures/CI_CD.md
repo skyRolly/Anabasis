@@ -50,7 +50,7 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **windows** | `windows-latest` (MSVC, multi-config) | VST3 + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **macos** | `macos-14` (Apple Silicon) | universal VST3 + **AU** + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |
-| **source-lint** | `ubuntu-latest` | nothing — runs `scripts/check-portability.py` (seconds) | n/a |
+| **source-lint** | `ubuntu-latest` | nothing — runs `scripts/check-portability.py`, then `scripts/check-citations.py --check` against a computed base revision. Checked out with `fetch-depth: 0`, because the second needs history rather than a single commit (seconds) | n/a |
 | **macos-intel** | `macos-15-intel` (**native x86_64**) | thin x86_64 VST3 + AU + Standalone (+ tests + probe) | deterministic ×3, VST3 **and** AU — **blocking** |
 | **linux-clang** | `ubuntu-latest` (Clang) | the two test targets **and the plugin, with the product's own LTO flags**; fails on any warning whose RESOLVED path is under `src/`, `tests/` or `tools/` (`scripts/check-clang-warnings.py`, whose `--self-test` runs first so the gate's silence is evidence rather than an assumption); runs the portability compile canary, then both reproductions against the Clang-built bundle | n/a |
 | **AnabasisChannelProbe** (a step in `linux`, `linux-clang`, `windows`, `macos`, `macos-intel`) | — | the only check that HOSTS the built bundle instead of recompiling its sources: LTO'd, wrapped, and on macOS run for **both formats × both slices** | n/a |
@@ -60,12 +60,54 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 **Why three Linux jobs and not one.** They answer three different questions and only one of them
 is "does it build here".
 
-* `source-lint` guards a class NO Linux build can see. INC-003 was a hard compile error on macOS
-  produced by a line that GCC *and* Clang both accept on Linux, because the divergence is in the
-  platform's `<cstdint>` typedefs (`size_t` is `uint64_t` here and is not there), not in the front
-  end. A lint is the only Linux-runnable guard for that, which is why it is a separate job with no
-  `needs:` — a source defect should fail the run on its own terms rather than queue behind a
-  toolchain.
+* `source-lint` guards two classes NO build of any kind can see, which is why it is a separate job
+  with no `needs:` — a source defect should fail the run on its own terms rather than queue behind
+  a toolchain.
+  * **Platform-divergent source (`check-portability.py`).** INC-003 was a hard compile error on
+    macOS produced by a line that GCC *and* Clang both accept on Linux, because the divergence is
+    in the platform's `<cstdint>` typedefs (`size_t` is `uint64_t` here and is not there), not in
+    the front end. A lint is the only Linux-runnable guard for that. The same script also compares
+    the scratch names `install.sh` CREATES against the ones `uninstall.sh` REMOVES: that pair has
+    already diverged once — a `/var/tmp` staging candidate added to one file and not the other, so
+    an interrupted install survived a deliberate uninstall — and the two scripts ship as separate
+    files in a zip, with no shared library to source and no build step that could generate one, so
+    the coupling can only be checked, never removed. Both directions are mutation-verified.
+  * **Evidence-anchor drift (`check-citations.py`).** A `file:line` citation in a document of
+    record is silently re-aimed by any edit ABOVE it, and the document keeps reading as though it
+    were still correct. 0.1.4 showed the re-anchoring rule does not survive being remembered — the
+    anchors were re-anchored once, two later commits in the same round moved code again, and 42 of
+    71 were stale before anyone noticed. Nothing a compiler or a test suite does can detect it.
+
+  **What the citation step compares against, and what that costs.** `fetch-depth: 0` is there for
+  this step alone: it reads the base revision's copy of each tracked source and each document. The
+  base is `github.event.pull_request.base.sha` fed through `git merge-base` (a FORK pull request),
+  or `github.event.before` (a push). The `merge-base` hop is a no-op on that event and the comment
+  in the workflow now says so: `actions/checkout` checks out the generated MERGE commit, whose
+  first parent is `base.sha`, so the call returns its input. It is kept as the correct expression
+  of the intent — it starts doing work if the checkout is ever pointed at the PR head — but
+  `fetch-depth: 0` is justified by something else entirely: `git show <base>:<file>` needs the base
+  commit to be PRESENT, and a default depth-1 checkout does not have it. A base that names a commit the repository no longer has —
+  after a force-push — falls back to `HEAD~1` with a `::notice::` rather than failing on a question
+  it cannot answer. Note the reach honestly: this job carries the same-repo `pull_request` guard the
+  `docs` job does, so on a same-repo branch the step runs on the PUSH event only, where the base is
+  the branch's previous tip. It therefore checks **one push of drift at a time**, and catches the
+  0.1.4 failure mode only because every push is checked; the merge-base path is exercised by fork
+  pull requests. Anchors the run could not judge — re-spelled or removed since the base — are
+  counted and reported separately rather than netted into the pass total, and on a re-anchoring
+  round that is not a footnote: pairing is ORDINAL per path, so a change set that adds or removes
+  a citation drops that document to a fallback which checks only base spellings still present
+  verbatim. On this very round the tool reported *17 checked, 16 beyond what it could judge* —
+  roughly half. Combined with the one-push depth above, that is the mechanism by which a
+  re-anchoring round can still ship stale anchors, and it is why `--fix` is not a substitute for
+  reading what it moved.
+
+  **Two bounds a green `source-lint` does not cover, stated so the badge is not read as more than
+  it is.** A document that did not exist at the base has NOTHING to compare against, so every
+  anchor in a NEW record — each ADR added by the change set that introduces it — is unjudged on
+  the run that introduces it, and has to be read by hand. And a `--fix` that rewrites a tracked
+  SOURCE file changes that line's text, so any anchor elsewhere aimed at that line is thereafter
+  measured against wording that moved for a reason unrelated to code movement; the tool now names
+  the rewritten lines instead of leaving that silent, but settling it is a human's job.
 * `linux-clang` catches the AppleClang DIAGNOSTIC set (`-Wshorten-64-to-32`,
   `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …) that `juce_recommended_warning_flags`
   applies to Clang and not to GCC. Those reached us only from the macOS runner before, minutes

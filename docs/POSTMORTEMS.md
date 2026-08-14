@@ -126,14 +126,18 @@ changed too: the FORM is what admits the mistake.
 
 **The second-order lesson, which is the expensive one.** The compile break was three days of a
 red job; what it COST was three rounds of KI-009 investigation reasoning from a validation
-surface that had silently lost a platform. `tests/state_tests.cpp:5694` sits inside
+surface that had silently lost a platform. `bcebfaf:tests/state_tests.cpp:5694` sits inside
 `testClipMixCannotChangeTheDefaultPresetsSound` — so the round-5, round-6 and round-7 KI-009
 regressions, written specifically for a fault that reproduces ONLY on macOS, had never once
 executed on macOS. A red job on another platform is not someone else's problem; while it is red,
 every conclusion drawn from "the suites are green" is scoped to the platforms that still ran.
 
 Evidence [Verified]:
-- Source: `tests/state_tests.cpp:5694` (before the fix); `scripts/check-portability.py`;
+- Source: `bcebfaf:tests/state_tests.cpp:5694` — the PRE-FIX tree, pinned to the revision
+  rather than left as a bare anchor. A bare one names a line in whatever `main` holds today,
+  and this claim is about a line that no longer exists: `check-citations.py` chased it through
+  three rounds of code movement, correctly preserving text that was never the evidence.
+  The offending expression is `juce::jmax<size_t> (1, v.size())`; `scripts/check-portability.py`;
   `.github/workflows/build.yml` (`source-lint`, `linux-clang`)
 - Test:   `scripts/check-portability.py` (mutation-verified); `--compile-canary`
 - Commit: `6f63573`, PR #14
@@ -227,6 +231,115 @@ Evidence [Verified]:
 - Test:   `tools/engine_repro.cpp`, `tools/channel_probe.cpp`, `.github/workflows/build.yml`
   (`linux-clang` plugin build + both reproductions)
 - Commit: this one, PR #14
+
+## INC-005 — The macOS package could report a successful install with nothing at the destination
+
+**Symptom:** Re-running the macOS installer after moving `Anabasis.app` out of `/Applications` —
+to the Desktop, or to the Trash, which is still on disk and still indexed — completes with a
+success sheet while `/Applications` stays empty. The same shape applies to the VST3 and AU
+components. Found by audit rather than by a user report, before any package had been published.
+
+**Root cause:** `pkgbuild` invoked without `--component-plist` synthesises one, and its analysis
+marks every bundle it finds **relocatable** and **version-checked**. At install time the Installer
+resolves a relocatable bundle by looking its identifier up in the system's receipt/Spotlight
+database and writing the payload over whatever copy it finds, *instead of* the declared
+`--install-location`. So the install did land — somewhere else. Version checking fails from the
+opposite end: a bundle already at or above the package's version is skipped rather than
+overwritten. Both defaults make the result depend on previous installation state rather than on
+the payload, which is exactly what an installer must not do.
+
+**Fix:** `packaging/macos/build-pkg.sh` now builds each component through `build_component()`,
+which patches the plist `pkgbuild --analyze` produced — `BundleIsRelocatable=false`,
+`BundleIsVersionChecked=false`, `BundleOverwriteAction=upgrade` — and attaches a `postinstall`
+script that fails the component if the payload is not at the destination when it finishes. The
+component is therefore written from the payload alone, and an install that did not land reports
+failure instead of success.
+
+**What the first macOS run of that probe established, which changed the incident's shape.**
+`pkgbuild --analyze` does **not** mark a `.vst3` or a `.component` relocatable: its synthesized
+plist emits `<relocate/>` empty for them and `relocatable="false"` on the `pkg-info` element, and
+only the `.app` is marked relocatable. Relocation is a Launch-Services notion about applications,
+so INC-005's relocation half was only ever a live hazard for the **Standalone**; the two plug-in
+components were exposed to the version-check half alone. That also means the `<relocate>` assertion
+is UNFALSIFIABLE for those two components — it passes by finding nothing, which is this incident's
+own silent-success shape one level up. The probe therefore classifies each membership list per
+component instead of demanding all three everywhere: present-with-defaults means the list is live
+and must vanish when its key is switched off; absent-with-defaults is recorded as a platform
+default rather than counted as proof, and must still be absent after patching. A component for
+which NOTHING is falsifiable fails the build, because the A/B would have established nothing about
+it. This was found by the gate failing on its first real run, which is the gate working.
+
+**Prevention:** the build asserts the shipped package, and — the part that matters — first proves
+the assertions can fire. Matching an element name that `pkgbuild` never writes is an assertion that
+always passes, which is the silent-success shape this incident is made of. So the mapping from
+component-plist key to `PackageInfo` element is established by a controlled A/B on the same
+payload: the app bundle is packaged twice, differing only in the keys `build_component()` sets, and
+each membership list must appear with the defaults and disappear when its key is switched off. The
+per-component loop is preceded by a cardinality check (`3`), because a loop over an empty `find`
+passes every assertion inside it without executing one.
+
+Evidence [Partially Verified — the assertions and their liveness proof are verified by
+construction and by pattern tests; the install behaviour itself needs macOS to observe]:
+- Source: `packaging/macos/build-pkg.sh` (`build_component`, `probe_info`/`probe_fail`, the
+  `PackageInfo` assertion loop)
+- Test:   the build-time self-check in that script — it is the regression test, and it runs on
+  every macOS package build in CI. `TESTING_POLICY.md` rule 1's normal form (a suite test that
+  fails on the old code) is not available here: the defect lives in a package format produced by
+  a platform tool, so the gate is the build's own fail-closed assertion set.
+- Commit: this one
+
+## INC-006 — A tidiness change put a privileged write path in a world-writable directory
+
+**Symptom:** none observed; found in review of an unmerged branch, one commit after it was
+introduced, and never in a released build. The defect is a **local privilege escalation** in the
+Linux installer: any unprivileged user on the machine could get code of their choosing installed
+system-wide the next time an administrator ran `sudo ./install.sh`.
+
+**Root cause.** `choose_stage_dir` gained `/var/tmp/.anabasis-install-stage` as its preferred
+staging candidate, to stop a system install leaving a dot-directory in `/usr/lib`. `/var/tmp` is
+mode **1777** and the staging name is a **literal**, so the directory is a fixed path any user can
+create and own before root arrives. Two ways that pays:
+
+- **Direct injection, no race.** The recovery scan adopts whichever candidate holds an
+  `Anabasis.vst3.prev`, on the reasoning that an interrupted install parked it there. `reconcile`
+  then runs `mv "$PREV_VST3" "$VST3_DEST"` **as root** whenever the destination is absent. A
+  planted `.prev` is therefore installed to `/usr/lib/vst3/Anabasis.vst3` by the privileged run.
+  Reproduced end to end against a redirected destination before the fix, and again after it.
+- **TOCTOU on the staged bundle.** Root copies the payload into the attacker-owned directory and
+  renames it out at a later step. The sticky bit protects `/var/tmp` itself, never a subdirectory
+  the attacker owns, so the staged bundle can be swapped between those two operations.
+
+A non-adversarial version of the same defect: a stage directory left by another account is adopted
+by the next user's install, whose copy into it then fails on permissions and aborts the run.
+
+**Fix:** the candidate is gone. Staging is back to the plug-in directory's parent and the plug-in
+directory itself — for a system install both are root-owned, for a per-user install both are inside
+`$HOME`. Beyond that, an EXISTING staging directory is now adopted only if `stage_dir_is_adoptable`
+agrees: owned by the identity whose writes land in the destination, not a symlink, and not
+group- or other-writable, failing closed on anything it cannot determine. An untrusted candidate is
+SKIPPED rather than deleted — the reject path must not `rm -rf` a directory this run does not own.
+The recovery scan is gated on the same test, because a `.prev` in a directory we do not trust is
+bait rather than a backup.
+
+**Prevention, and this is the part worth keeping.** The change was made to satisfy a review
+suggestion about tidiness — a dot-directory in a distribution-managed tree — and the suggestion was
+reasonable. What was missing is that **the installer writes as root**, so every path it touches is
+part of a trust boundary, and moving a privileged write into a shared writable location is a
+security change wearing the clothes of a cosmetic one. The rule this leaves behind: a privileged
+installer may stage only in a directory the privileged identity already controls; if a scratch
+location is ever wanted, it is `mktemp -d` under a root-owned parent, never a fixed name under
+`/tmp` or `/var/tmp`. It is recorded at the removal site so the next person to want that tidiness
+finds the reason before the patch.
+
+Evidence [Verified]:
+- Source: `packaging/linux/install.sh` (`choose_stage_dir`, `stage_dir_is_adoptable`)
+- Test:   reproduced as a working exploit against a redirected destination — a planted
+  `Anabasis.vst3.prev` reaching the install path before the fix, and the same input landing on the
+  root-owned candidate after it; plus refusal cases for a world-writable, a foreign-owned and a
+  symlinked staging directory, and a check that an untrusted candidate is not deleted.
+  `TESTING_POLICY.md` rule 1's normal form is not available: the subject is a shell installer with
+  no suite, so the reproduction is the record, as ADR-0025 allows.
+- Commit: this one
 
 ## Relationship to the other status files
 

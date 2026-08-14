@@ -158,6 +158,22 @@ static juce::ValueTree strippedForUndoCompare (const juce::ValueTree& slot)
     // this compare exists to suppress. Defaulting absent to "" here makes the
     // compare see through the encoding, while a REAL identity move (factory
     // vs user under one name) still differs and still mints its step.
+    // WHAT MUST NOT BE ADDED TO THIS FUNCTION, and it is the identity and the
+    // name. Only the ENCODING is normalised above — absent becomes empty — and
+    // the VALUES keep travelling. `closePresetUndoBracket` retracts a preset
+    // apply's undo step when this compare finds the slots equivalent, so those
+    // two properties are what makes applying a DIFFERENT preset that lands on an
+    // identical parameter surface still a real, undoable change. Strip them for
+    // the same "an undo could not restore it anyway" reason the view tier is
+    // stripped and cross-preset applies silently become retractable: the sound
+    // stays put, the name and the selected row do not, and Undo no longer
+    // reaches the preset the user came from.
+    //
+    // It is not left to a comment alone. `testPresetIdentitySharedName` stages a
+    // Copy that moves ONLY the identity — same name, same sound — and asserts a
+    // step is minted and that undoing it restores the previous identity;
+    // stripping the trio and the name here fails "restoreId: undoing that Copy
+    // restores the factory identity" and nothing else.
     for (const auto* key : { "presetSource", "presetFactoryId", "presetUserFile" })
         if (! copy.hasProperty (key))
             copy.setProperty (key, juce::String(), nullptr);
@@ -390,6 +406,157 @@ void AnabasisAudioProcessor::copySlotToOther()
     // no such call: `saveSlotFromLive()` returns a freshly built tree that
     // nothing else holds.
     storedPresetBaseline = presetBaseline.createCopy();
+}
+
+AnabasisAudioProcessor::PresetUndoBracket AnabasisAudioProcessor::openPresetUndoBracket()
+{
+    // Reconcile FIRST: `pushUndoStep` would do it anyway, and a load-driven
+    // clear happening between the capture and the push would make `redoBefore`
+    // describe a session that is no longer loaded.
+    // COST, stated because it is not free and the preset ring can drive it: a
+    // bracketed apply now takes TWO `saveSlotFromLive()` calls — this one for the
+    // pre-state, and one in `closePresetUndoBracket` for the compare — where the
+    // pre-0.1.4 path took one. Each reaches `copyStateWithRaw()` →
+    // `apvts.copyState()`, which takes the APVTS `CriticalSection` (M1 in
+    // `KNOWN_ISSUES.md` KI-011). No new lock-order edge: both run on the message
+    // thread from the editor's own click handlers, never from inside a parameter
+    // listener holding M0, so KI-011's inversion is unchanged. The second copy is
+    // inherent to the feature — deciding whether an apply changed anything means
+    // reading the surface after it, and the pre-state cannot answer that.
+    syncHistory();
+    PresetUndoBracket b;
+    b.preSlot     = saveSlotFromLive();
+    b.preBaseline = presetBaseline.createCopy();
+    b.redoBefore  = redoStacks[activeSlot];
+    b.slot        = activeSlot;
+    // A push onto a FULL stack costs the oldest entry (`pushCapped` trims index
+    // 0). Capture it before that happens, so a retraction can restore the depth
+    // as well as the top.
+    if (undoStacks[activeSlot].size() >= kUndoCap)
+    {
+        b.evictedOldest = true;
+        b.oldest        = undoStacks[activeSlot].getFirst();
+    }
+    pushUndoStep (b.preSlot);
+    return b;
+}
+
+void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
+{
+    syncHistory();
+    // A load between open and close cleared the stacks; there is nothing left to
+    // retract, and re-seating a redo line from the previous session would be
+    // worse than leaving it empty.
+    if (b.slot != activeSlot || undoStacks[activeSlot].isEmpty())
+        return;
+
+    // `removeLast()` is only the right retraction while THIS bracket's push is
+    // still the top of the stack. Nothing between open and close pushes today —
+    // steps are minted only from gesture-bracketed edits, and the writes an apply
+    // performs (including `relandMacroCurve`, which runs outside the restore
+    // guard) are ungestured — but that is an invariant of code elsewhere, not of
+    // anything visible here. Check it rather than assume it: if something did
+    // push, the top is not ours and popping it would discard a real user step.
+    // Leaving the no-op's step in place is the harmless failure; eating someone
+    // else's is not.
+    if (! undoStacks[activeSlot].getLast().slot.isEquivalentTo (b.preSlot))
+        return;
+
+    // The same test `copySlotToOther` applies to the Copy path, for the same
+    // reason and with the same two halves: the parameter surface through
+    // `strippedForUndoCompare` (which normalises the view-tier entries an undo
+    // could not restore anyway), and the dirty datum beside it, because a
+    // baseline that moved is a real difference even when no parameter did.
+    //
+    // Re-selecting the preset that is already applied, over an UNEDITED surface,
+    // restores nothing: it is not a new user action, so it must neither leave a
+    // dead undo step (one press of Undo appearing to do nothing) nor destroy a
+    // redo line the user can still reach. Re-applying the same preset over an
+    // EDITED surface is a real restore — the surface moves back to the preset —
+    // and stays a normal undoable step, which is what makes this a test of the
+    // STATE rather than of which preset row was clicked.
+    // THE DIRTY DATUM IS COMPARED BY WHAT IT MEANS, NOT BY TREE IDENTITY, and
+    // the reason is that a plain `isEquivalentTo` made this whole feature dead
+    // code in every project opened from a host.
+    //
+    // `resetSlotFieldsToDefaults` INVALIDATES `presetBaseline` on every
+    // `setStateInformation` — deliberately, and the comment there says why: the
+    // datum is not serialized, so a load cannot honestly restore it, and
+    // `presetDirty()` answers false while it is absent. Nothing rebuilds it for
+    // the rest of the session except an apply or a save. So in a restored
+    // session this bracket captures an INVALID `preBaseline`, the apply installs
+    // a VALID one, and invalid-vs-valid is never equivalent: the retraction was
+    // refused exactly in the case the feature exists for — open a project, click
+    // the preset name already showing — leaving the dead step and destroying the
+    // redo line anyway. Both new tests built a FRESH processor, whose
+    // constructor seeds a valid baseline, so neither could see it;
+    // `testANoOpPresetApplyIsNotAUserActionAfterASessionRestore` is the leg that
+    // does, and it fails on the old expression.
+    //
+    // What must match is the DIRTINESS either side, since that is the only thing
+    // this datum is read for. An absent baseline reads clean (`presetDirty()`'s
+    // first line), and the baseline this apply installed is
+    // `presetShapeFromLive()` over a surface the first half has just proved
+    // unmoved — also clean. Same observable state before and after, so nothing
+    // happened that a user could see or undo.
+    //
+    // The datum itself is NOT rolled back, for the same reason the §2.8 forced
+    // duck is not: retraction un-records the bookkeeping, it does not reverse the
+    // apply. The session is left holding a working dirty marker where it had
+    // none, which is strictly better and observably identical.
+    // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
+    // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
+    // before calling this (`src/PluginProcessor.cpp:1537` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1607` in `applyPresetFile` — spelled
+    // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
+    // `check-citations.py` can see, and these two numbers had already drifted 24 lines
+    // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
+    // cannot currently be false and the whole arm collapses to
+    // `! b.preBaseline.isValid()`. It is written out anyway, and not as decoration:
+    // it is a GUARD ON THAT SEEDING. The arm's claim is "the slot read clean
+    // before AND reads clean now"; the first half is what an invalid baseline
+    // means, and the second half is the part that would silently stop being true
+    // if a future path closed the bracket without settling the datum first — at
+    // which point this would start retracting steps over a surface whose marker
+    // disagreed with it. Written as a tautology it costs one tree compare on a
+    // message-thread path; written as `! b.preBaseline.isValid()` it would cost
+    // the next reader the whole argument.
+    const bool dirtyStateUnchanged
+        = b.preBaseline.isEquivalentTo (presetBaseline)
+       || (! b.preBaseline.isValid()                       // it read CLEAN before…
+           && presetBaseline.isEquivalentTo (presetShapeFromLive()));   // …and clean now
+
+    if (! strippedForUndoCompare (b.preSlot)
+             .isEquivalentTo (strippedForUndoCompare (saveSlotFromLive()))
+        || ! dirtyStateUnchanged)
+        return;                                  // a real restore: the step stands
+
+    // THE INVARIANT THIS RETRACTION RESTS ON, named because it is implicit and
+    // was already violated once: every side effect an apply performs must be
+    // VISIBLE IN THE SLOT TREE, or it becomes un-undoable the moment this
+    // retracts the step. `strippedForUndoCompare` sees whatever
+    // `saveSlotFromLive()` emits — the surface, `presetName`, the ADR-0022 trio,
+    // `BASELINE`, `FROZEN_TRIMS`, `DETACH_MASK` — which is why dropping a macro
+    // baseline (`liveBaseline = {}`) or clearing a user's §5.3 detachments
+    // (`replaceDetachMask`) correctly KEEPS the step: each shows up as a slot
+    // difference. `presetBaseline` is the counter-example, and the reason this
+    // note exists: it is not serialized into the slot, so it needed the separate
+    // test above. A future apply-path side effect outside the slot tree needs the
+    // same treatment, and nothing here will notice if it does not get it.
+    undoStacks[activeSlot].removeLast();         // exactly what this bracket pushed
+    if (b.evictedOldest)
+        undoStacks[activeSlot].insert (0, b.oldest);   // …and the end the cap trimmed
+    // …and the line it cleared. NOTE THE ASYMMETRY, because it is deliberate and
+    // conditional: the undo side verified above that the top of the stack is its
+    // own push before popping, and the redo side has no equivalent — it assigns
+    // `b.redoBefore` wholesale. That is correct only while nothing between open
+    // and close ADDS to the redo stack without also pushing to the undo stack,
+    // which nothing does: `pushUndoStep` clears redo, `undo()` and `redo()` move
+    // entries between the two in step, and a preset apply's only redo write is
+    // the clear inside its own push. A future path that grew the redo line on
+    // its own would have that growth silently discarded here, and the top-of-
+    // stack guard would not notice, because it is watching the other stack.
+    redoStacks[activeSlot] = b.redoBefore;
 }
 
 void AnabasisAudioProcessor::pushUndoStep (juce::ValueTree preState)
@@ -1141,10 +1308,50 @@ juce::ValueTree AnabasisAudioProcessor::slotWithLiveAdvancedMode (const juce::Va
     return copy;
 }
 
+// PRECONDITION, stated here because the code below does not enforce it and the
+// consequence of breaking it is silent: `slot` must carry a valid `ANABASIS`
+// child. The parameters are adopted only when that child is valid, but the
+// name, preset identity, macro baseline, frozen trims and detach mask are
+// adopted UNCONDITIONALLY — so a payload-less tree relabels whatever sound is
+// currently live with this slot's metadata. Sound from one session wearing the
+// name of another is not a state this plug-in may reach.
+//
+// The invariant is established at the two places a slot tree can enter the
+// processor from outside, and nowhere else is needed because there is no other
+// producer:
+//
+//   * `setStateInformation` declines a stored SLOT whose `ANABASIS` child is
+//     missing, leaving `resetSlotFieldsToDefaults`'s copy of `defaultSlot` — a
+//     complete tree — in `storedSlot`. That is the guard `switchToSlot`'s
+//     `applySlotToLive (storedSlot)` relies on.
+//   * The undo/redo stacks are written only by `saveSlotFromLive`, which always
+//     emits the full shape.
+//
+// The assertion is kept, unlike the ones removed from `drawPopupMenuItem`,
+// because the argument here comes from three call sites inside this file rather
+// than from a framework that is entitled to pass anything: a failure is a bug
+// in this class, which is exactly what `jassert` is for.
 void AnabasisAudioProcessor::applySlotToLive (const juce::ValueTree& slot, bool adoptAdvanced)
 {
     const auto params = slot.getChildWithName ("ANABASIS");
-    if (params.isValid())
+    jassert (params.isValid());
+    // AND THE RULE IS ENFORCED HERE, not only asserted. `jassert` compiles out
+    // of every shipped build, and what stood below it was an `if` around the
+    // SURFACE adoption alone: a payload-less slot skipped `adoptParamsTree` and
+    // then went on to adopt `presetName`, the ADR-0022 identity trio,
+    // `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally — one state's
+    // metadata over another state's sound, which is the split ADR-0026 is named
+    // for, reached from inside the function that resolves a slot.
+    //
+    // Unreachable today, and the enumeration above is why; this is not a bug
+    // report. What it changes is WHERE the guarantee lives. ADR-0026's decision
+    // is that such a slot resolves as a WHOLE, and `setStateInformation`
+    // implements that by substituting a complete `defaultSlot` upstream — so by
+    // the time control arrives here the tree is always intact. Declining to
+    // apply half of one costs nothing on every path that exists and stops the
+    // rule depending on every caller that ever will.
+    if (! params.isValid())
+        return;
     {
         // View-tier parameters never travel with a slot (the shared
         // predicate): overwrite the incoming copy with the LIVE values —
@@ -1282,7 +1489,7 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
     const auto* table = PresetManager::factoryPresets (count);
     if (index < 0 || index >= count)
         return false;                          // validated BEFORE the undo bracket
-    pushUndoStep (saveSlotFromLive());
+    const auto bracket = openPresetUndoBracket();
 
     juce::StringArray mask;
     {
@@ -1328,6 +1535,9 @@ bool AnabasisAudioProcessor::applyFactoryPreset (int index)
     relandMacroCurve();                        // the mask-replaced invariant lives there
 
     presetBaseline = presetShapeFromLive();    // dirty marker datum
+    // Last, once the surface and the datum have both settled: if this apply
+    // restored nothing, un-record it.
+    closePresetUndoBracket (bracket);
     return true;
 }
 
@@ -1349,8 +1559,20 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     const auto parsed = file.existsAsFile() ? PresetManager::parsePresetFile (file) : nullptr;
     if (parsed == nullptr)
         return false;
-    pushUndoStep (saveSlotFromLive());
+    const auto bracket = openPresetUndoBracket();
 
+    // SCOPED IN A BLOCK, so this path closes its bracket where the factory path
+    // does — OUTSIDE the guard. The two were asymmetric: `applyFactoryPreset`
+    // nests its guard and lets it destruct before `relandMacroCurve`, the
+    // baseline seed and the bracket close, while this one held `guard` alive to
+    // the `return` and therefore closed the bracket INSIDE it. Harmless today —
+    // the close does `saveSlotFromLive()` and `presetShapeFromLive()`, both pure
+    // reads — but the bracket's PRE-state was captured outside the guard and its
+    // comparand inside it, and the guard's destructor aborts whatever mapping is
+    // pending. The moment anything the guard suppresses becomes visible in the
+    // slot tree, the two paths would be comparing different things and only one
+    // of them would be wrong. Aligning the scopes costs a brace.
+    {
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
     // DELIBERATELY before the apply, and NOT undone on failure: a failed
     // applyPreset may still have written some parameters (a partial apply),
@@ -1380,7 +1602,12 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     // preset folder — a file loaded from outside simply matches no list row
     // and leaves the menu unticked, which is what it should show.
     liveSelection  = { PresetManager::Selection::Kind::userFile, {}, file };
+    }   // guard ends here, as it does on the factory path
+
     presetBaseline = presetShapeFromLive();    // dirty marker datum
+    // As the factory path: a completed apply that restored nothing is not a new
+    // user action, so it leaves no step and keeps the redo line.
+    closePresetUndoBracket (bracket);
     return true;
 }
 
@@ -1528,8 +1755,9 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
 
     // Same read rule for the parameter tree: a valid root that omits ANABASIS
     // means "defaults", not "keep whatever is live".
-    if (const auto params = root.getChildWithName ("ANABASIS"); params.isValid())
-        adoptParamsTree (params);
+    const bool liveSurfaceRestored = root.getChildWithName ("ANABASIS").isValid();
+    if (liveSurfaceRestored)
+        adoptParamsTree (root.getChildWithName ("ANABASIS"));
     else
         adoptParamsTree (defaultSlot.getChildWithName ("ANABASIS"));
     internalState.replaceFrom (root.getChildWithName ("ANABASIS_INTERNAL"));
@@ -1550,9 +1778,47 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         activeSlot = anabasis::clampAbSlotIndex ((int) ab.getProperty ("active", 0));
         const auto live   = activeSlot     < slots.size() ? slots[activeSlot]     : juce::ValueTree();
         const auto stored = 1 - activeSlot < slots.size() ? slots[1 - activeSlot] : juce::ValueTree();
-        if (stored.isValid())
+        // ADR-0026 (Accepted 2026-08-14) governs this rule and the active-slot
+        // one below. Both change how a stored session is INTERPRETED, which
+        // `ARCHITECTURE_REVIEW_GATE.md` and `SESSION_COMPATIBILITY_POLICY.md`
+        // rule 1 both class as gated; 0.1.4 implemented them without flagging
+        // that, review caught it, and the owner then cleared the gate.
+        //
+        // A SLOT node can be a perfectly valid ValueTree and still carry no
+        // usable parameter payload — hand-edited, truncated, or a foreign tree
+        // that happens to use the type name. Taking it would split the slot in
+        // two, because `applySlotToLive` adopts the parameters only when the
+        // ANABASIS child is valid but adopts the name, identity, baseline,
+        // frozen trims and detach mask unconditionally. Switching into that slot
+        // would then keep the sound THIS restore just installed and relabel it
+        // with the broken slot's preset name and identity: the sound from one
+        // session wearing the metadata of another.
+        //
+        // The answer is the read rule this function already applies to the live
+        // surface a few lines above — a missing parameter payload means
+        // DEFAULTS, never "keep whatever is live". `resetSlotFieldsToDefaults`
+        // has already planted `defaultSlot` here, so declining the tree IS the
+        // fix, and the slot stays coherent: sound and metadata from one place.
+        if (stored.isValid() && stored.getChildWithName ("ANABASIS").isValid())
             storedSlot = stored.createCopy();
-        if (live.isValid())
+        // THE ASYMMETRY WITH THE STORED SLOT ABOVE IS DELIBERATE, and worth
+        // stating because it looks like an oversight. The active slot's SOUND
+        // does not come from its own SLOT node at all — it comes from the
+        // root-level ANABASIS child, adopted a few lines up; the copy inside the
+        // active SLOT is redundant on this path and is never read. So an active
+        // SLOT missing its payload is not the cross-session hazard the stored
+        // slot has: the sound and the labels still come from the SAME blob.
+        // `storedSlot`, by contrast, is a processor MEMBER that survives across
+        // restores, which is what lets a rejected tree there leave the PREVIOUS
+        // project's sound standing under this project's name.
+        //
+        // The one case where the active slot CAN split is the root child being
+        // absent, because then the surface came from defaults while the metadata
+        // would still come from the blob — a name describing a sound that was
+        // never installed. `liveSurfaceRestored` is that test, and it keeps the
+        // rule identical on both slots: metadata is adopted only alongside the
+        // parameters it describes.
+        if (live.isValid() && liveSurfaceRestored)
         {
             // The ANABASIS child above is already the live surface; take the
             // slot's non-parameter fields (name/identity/baseline/trims/mask)

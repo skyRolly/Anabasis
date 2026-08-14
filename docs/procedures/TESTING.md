@@ -33,6 +33,73 @@ The `docs` job in `build.yml` runs exactly these two commands on every push, sel
 clean corpus scan is not evidence unless the script's own guarantees were exercised in the same
 run. What it checks, and the limits of what it can prove, are stated in the script's docstring.
 
+## Evidence-anchor lint
+
+The other documentation gate, in the `source-lint` job rather than `docs` because it reads SOURCE
+as well as prose. Documents of record cite their evidence as `some/file.cpp:695-752`; an edit above such a line
+re-aims it silently and the document keeps reading as though it were still correct. (That example
+names an untracked path deliberately — an illustration spelled with a tracked one is a citation as
+far as the tool is concerned, and gets re-anchored along with the real ones.)
+
+```bash
+python3 scripts/check-citations.py --check              # base defaults to origin/main; exit 1 on drift
+python3 scripts/check-citations.py --check --base @{u}  # and against what CI will use — see below
+python3 scripts/check-citations.py --fix                # re-anchor, then RE-READ what it moved
+```
+
+**`HEAD~1` is not that base, and reaching for it is how this gate went red twice in a row.** With
+the drifting edits still uncommitted, `HEAD` IS the commit you are pushing on top of, so `HEAD~1`
+is one too far back — it compares against a revision CI will never look at, passes, and says
+nothing about the one it will. `@{u}` is right in both states and is the form to use.
+
+Run `--check` before pushing any change that moves lines in a tracked source file, and `--fix` in
+the SAME change set that moved them — that is the repository's re-anchoring rule, and the gate
+exists because 0.1.4 proved it does not survive being remembered.
+
+**A repair looks exactly like drift to this tool, so declare it in the same commit.** `--check`
+compares the TEXT at the base line against the text at the current line; it has no way to know
+that `:330 -> :342` was a correction rather than a slip. So the run AFTER a re-anchor asks for the
+re-anchor to be reverted, and the gate is red on the commit that fixed it — unless the new
+spelling is added to `DELIBERATE_REAIMS` in that same commit. Re-anchor and declare together;
+never in two pushes.
+
+**Run it against BOTH bases, and this is not optional pedantry.** `--check` alone uses
+`origin/main`; CI compares against the PREVIOUS PUSH. Those two disagree about which branch the
+tool takes: a document whose citation COUNT differs from a base falls to the ordinal-pairing
+fallback, which only judges base spellings still present verbatim — so against one base a set of
+re-aimed anchors is silently unjudgeable and against the other it is flagged. Round 7 passed
+locally on `origin/main` and failed CI on nine anchors for exactly that reason.
+
+```bash
+python3 scripts/check-citations.py --check                 # origin/main
+python3 scripts/check-citations.py --check --base @{u}     # what CI will use on the next push
+```
+
+`@{u}` is the upstream tip — the commit you are pushing ON TOP OF, which is exactly what
+`github.event.before` will be. `--base HEAD` is only the same thing while the drifting edits are
+still uncommitted; once they are committed it means "compare the tree against itself", which is
+clean by construction and tells you nothing.
+
+Three limits are worth knowing before trusting a clean run, all of them stated in the script's
+header:
+
+* It proves anchors did not MOVE, never that they were aimed correctly to begin with — and this
+  is the limit that matters most, because the tool makes a mis-aimed anchor look MAINTAINED. It
+  was first recorded here as "three citations", which was an under-count found by inspecting three;
+  a full audit of the governed documents found the majority of anchors in the architecture set had
+  been wrong since before the tool existed, each faithfully carried onto the same unrelated code by
+  every re-anchoring since. Anchors are therefore spelled with the SYMBOL beside the line number
+  wherever the claim names one: that is the half a reader can check, and the half that survives
+  the tool being wrong.
+* It judges only citations spelled from the repository root and naming one of its tracked files.
+  A bare file name, a sibling checkout's path, or a `<rev>:`-pinned anchor is deliberately left
+  alone — the ownership test is narrow because every misclassification is a corrupted document.
+* Anchors it could not judge (re-spelled or removed since the base) are counted and reported
+  separately, so "17 anchors verified" never quietly means "17 of 33".
+
+`--fix` is not a substitute for reading. It preserves the TEXT an anchor named, which is exactly
+how a citation that was aimed at the wrong code stays aimed at the wrong code.
+
 ## Suite structure
 
 ### `tests/dsp_tests.cpp` → `AnabasisTests`
@@ -60,8 +127,20 @@ alone does not carry the property; these are the cases where the wrong stimulus 
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 
 Compiles the **real** plugin sources into its own console target, so it exercises the actual
-`AudioProcessor` rather than a mock. The editor sources compile (because `createEditor()`
-references them) but are never instantiated — the tests run headlessly and open no window.
+`AudioProcessor` rather than a mock — **and, since P5, the actual editor**: a growing set of tests
+call `createEditor()` and walk the resulting component tree
+(`testTheSettingsPanelFollowsAProjectLoad`, `testThePopupShieldActuallyCoversTheEditor`,
+`testEveryComboMenuFitsItsControl`, `testTheSavePresetNameFieldIsTaggedForItsFocusGlow`, the R2
+tooltip sweep, the knob-position sweep). The tests still run **headlessly** and open no window: the
+editor is built, sized and inspected, never shown, and nothing here runs a message loop — which is
+why a `juce::Value` change (asynchronous through that loop) and anything requiring a modal pop-up
+are outside what this target can reach, and are carried in `DEPENDENCY_POLICY.md`'s JUCE-internals
+register instead.
+
+This paragraph said "never instantiated" until 2026-08-13, having gone stale at P5 —
+`TESTING_POLICY.md`'s harness-conventions bullet was corrected on the same point at 0.1.1 and this
+copy was missed. An under-described coverage claim is not harmless: it invites the next contributor
+to add a test that already exists.
 
 Planned coverage: serialized-schema shape; the **parameter-registry snapshot**; raw-exact
 save → load → save round-trip (byte-identical) and its fixed-point precondition

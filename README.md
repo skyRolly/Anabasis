@@ -30,11 +30,14 @@ headless Linux machine, no IDE.
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
   display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
-  `tests/` (**1039 checks** — `AnabasisTests` 296 + `AnabasisStateTests` 743 — re-count from the suites' own output when editing, the same rule
+  `tests/` (**1141 checks** — `AnabasisTests` 296 + `AnabasisStateTests` 845 — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
-  [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and
-  `docs/policies/TESTING_POLICY.md` for the gate, which is deliberately stated in one place).
+  [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured DSP numbers — aliasing, latency,
+  accuracy, each with the machine and method that produced it (constraint C2); it does NOT carry the
+  suite COUNT, and this line used to imply it did. The count's home is `docs/HANDOVER.md`'s Test
+  Status row, re-counted from the suites' own printed output — and `docs/policies/TESTING_POLICY.md`
+  for the gate, which is deliberately stated in one place).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.

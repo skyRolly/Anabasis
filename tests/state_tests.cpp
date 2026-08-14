@@ -1302,6 +1302,429 @@ static void testTheWaveformStatisticsRowsReadTheirStandards()
 // intents — through the SAME lock/exclusion semantics as file presets, with
 // an empty detach mask (nothing loads pre-detached), one undo step, and the
 // dirty marker clean right after an apply and set by the next edit.
+// ---------------------------------------------------------------------------
+// A preset application that RESTORES NOTHING is not a new user action: it must
+// mint no undo step and must leave the redo line alone. Re-applying the same
+// preset over an EDITED surface is a real restore and stays undoable.
+//
+// The distinction is a test of the STATE, not of which row was clicked, which
+// is why both halves click the SAME preset and differ only in whether the
+// surface moved in between.
+static void testANoOpPresetApplyIsNotAUserAction()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+
+    int count = 0;
+    const auto* table = PresetManager::factoryPresets (count);
+    const juce::String applied = table[3].name;
+
+    // 1) apply a preset  2) edit it  3) undo  4) a redo line exists
+    check (proc.applyFactoryPreset (3), "noOpApply: (premise) the preset applies");
+    auto* knee = apvts.getParameter (pid::compKnee);
+    knee->beginChangeGesture();
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (1.0f));
+    knee->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.canUndo(), "noOpApply: (premise) the edit pushed a step");
+    check (proc.presetDirty(), "noOpApply: (premise) the edit dirties the preset");
+    proc.undo();
+    check (proc.canRedo(), "noOpApply: (premise) the undo leaves a redo line");
+    check (! proc.presetDirty(), "noOpApply: (premise) the undo lands back on the preset");
+
+    // 5) re-apply the ALREADY-CURRENT, unchanged preset.
+    check (proc.applyFactoryPreset (3), "noOpApply: (premise) the same preset re-applies");
+
+    // 6) the redo line survives. This is the whole point: `pushUndoStep` clears
+    //    redo unconditionally, so a step pushed here would have destroyed it.
+    check (proc.canRedo(), "noOpApply: re-applying the current preset KEEPS the redo line");
+
+    // 7) …and no dead step was minted. Read behaviourally rather than through a
+    //    depth accessor: one Undo must now reach past the re-apply to the
+    //    ORIGINAL apply and leave the preset. A dead step would have been
+    //    consumed by this press instead, leaving the preset still applied.
+    check (proc.canUndo(), "noOpApply: (premise) the original apply is still undoable");
+    proc.undo();
+    const juce::String afterUndo = proc.currentPresetName();
+    check (afterUndo != applied,
+           juce::String ("noOpApply: no dead step -- one Undo reaches the original apply, got '"
+                         + afterUndo + "'").toRawUTF8());
+
+    // The other half: the same preset over a MOVED surface IS a restore.
+    AnabasisAudioProcessor p2;
+    check (p2.applyFactoryPreset (3), "noOpApply: (premise) second instance applies it");
+    auto* drive = p2.apvts.getParameter (pid::clipDrive);
+    const float driveBefore = p2.apvts.getRawParameterValue (pid::clipDrive)->load();
+    // Move it RELATIVE to whatever the preset holds — a fixed target would be a
+    // no-op the day a preset happens to name that value, and the premise check
+    // below would then be the only thing failing.
+    const float driveNorm = drive->getValue();
+    drive->beginChangeGesture();
+    drive->setValueNotifyingHost (driveNorm > 0.5f ? driveNorm - 0.4f : driveNorm + 0.4f);
+    drive->endChangeGesture();
+    p2.flushPendingDetach();
+    const float driveEdited = p2.apvts.getRawParameterValue (pid::clipDrive)->load();
+    check (std::abs (driveEdited - driveBefore) > 0.5f, "noOpApply: (premise) the edit moved Clip Drive");
+    check (p2.presetDirty(), "noOpApply: (premise) it dirties the preset");
+
+    check (p2.applyFactoryPreset (3), "noOpApply: (premise) re-apply over the edit");
+    check (! p2.presetDirty(), "noOpApply: re-applying over an edit restores the preset");
+    // A REAL restore, so it is undoable and the edit comes back.
+    check (p2.canUndo(), "noOpApply: (premise) the restore is undoable");
+    p2.undo();
+    check (std::abs (p2.apvts.getRawParameterValue (pid::clipDrive)->load() - driveEdited) < 0.01f,
+           "noOpApply: re-applying over an EDITED surface is a real, undoable step");
+}
+
+// Retracting a no-op preset apply must restore the undo history's DEPTH, not
+// just its top. `pushCapped` trims from the FRONT once the 128-step cap is
+// exceeded, so on a full stack the bracket's push costs the oldest entry —
+// and popping the entry it pushed does not bring that back. Left unfixed,
+// re-clicking the loaded preset quietly shortens how far back a long session
+// can undo, one step per click.
+// ---------------------------------------------------------------------------
+// The restored-session leg of the no-op re-apply, which the two tests above do
+// NOT reach: both build a fresh `AnabasisAudioProcessor`, whose constructor
+// seeds a VALID `presetBaseline`. `setStateInformation` runs
+// `resetSlotFieldsToDefaults`, which deliberately invalidates that datum (the
+// dirty marker is not serialized, so a load cannot honestly restore it), and
+// nothing rebuilds it until the next apply or save. So in every project opened
+// from a host, the bracket captures an INVALID `preBaseline`, the apply installs
+// a VALID one, and the equivalence test in `closePresetUndoBracket` compares
+// invalid against valid — never equivalent — so the retraction is refused and
+// the redo line the push cleared is never re-seated.
+//
+// Open a project, click the preset name that is already showing: redo gone, and
+// an undo step that does nothing. Which is the behaviour 0.1.4 says it fixed.
+static void testANoOpPresetApplyIsNotAUserActionAfterASessionRestore()
+{
+    AnabasisAudioProcessor proc;
+    auto& apvts = proc.apvts;
+
+    int count = 0;
+    const auto* table = PresetManager::factoryPresets (count);
+    const juce::String applied = table[3].name;
+
+    check (proc.applyFactoryPreset (3), "restoredNoOp: (premise) the preset applies");
+
+    // Round-trip through the HOST path, which is what makes this different from
+    // the fresh-processor legs above.
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    AnabasisAudioProcessor q;
+    q.setStateInformation (blob.getData(), (int) blob.getSize());
+    check (q.currentPresetName() == applied,
+           "restoredNoOp: (premise) the restored session carries the preset's name");
+
+    // Edit → undo, so there IS a redo line to lose.
+    auto* knee = q.apvts.getParameter (pid::compKnee);
+    knee->beginChangeGesture();
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (1.0f));
+    knee->endChangeGesture();
+    q.flushPendingDetach();
+    check (q.canUndo(), "restoredNoOp: (premise) the edit pushed a step");
+    q.undo();
+    check (q.canRedo(), "restoredNoOp: (premise) the undo leaves a redo line");
+
+    // Re-apply the preset that is already loaded, over an unedited surface.
+    check (q.applyFactoryPreset (3), "restoredNoOp: (premise) the same preset re-applies");
+
+    check (q.canRedo(),
+           "restoredNoOp: re-applying the current preset KEEPS the redo line in a RESTORED session");
+
+    // …and minted no step. Read as a DEPTH here rather than behaviourally: a
+    // restore clears the per-slot history, so after edit-then-undo the stack is
+    // legitimately EMPTY and there is nothing beneath a dead step to reach past.
+    // That makes the depth the sharper instrument in this leg — `canUndo()` is
+    // true if and ONLY if the bracket's push survived, which is the defect.
+    check (! q.canUndo(),
+           "restoredNoOp: …and mints no dead step -- the bracket's own push is retracted");
+
+    // The redo line is not merely present, it still carries the edit.
+    const float kneeBefore = q.apvts.getRawParameterValue (pid::compKnee)->load();
+    q.redo();
+    check (! juce::exactlyEqual (q.apvts.getRawParameterValue (pid::compKnee)->load(), kneeBefore),
+           "restoredNoOp: the surviving redo line still restores the edit it was holding");
+
+    // THE DIRTY MARKER, which the legs above measure only through undo/redo
+    // depth. It is the one place the retraction is observable at all:
+    // `setStateInformation` leaves `presetBaseline` INVALID on purpose (the
+    // marker is not serialized, so a load cannot honestly restore it) and
+    // `presetDirty()` answers false unconditionally while it is absent. The
+    // retraction un-records the bookkeeping WITHOUT rolling the datum back, so
+    // the session comes out of a no-op re-apply holding a working marker where
+    // it had none. Both halves of that are asserted here rather than argued:
+    // still clean straight after — nothing about the sound changed — and
+    // ANSWERING again, which is what a marker seeded by the re-apply buys and
+    // what a rolled-back one would not.
+    juce::MemoryBlock blobD;
+    proc.getStateInformation (blobD);
+    AnabasisAudioProcessor d;
+    d.setStateInformation (blobD.getData(), (int) blobD.getSize());
+    check (! d.presetDirty(),
+           "restoredNoOp: (premise) a restored session reads CLEAN — the marker is absent");
+    check (d.applyFactoryPreset (3), "restoredNoOp: (premise) the same preset re-applies over it");
+    check (! d.presetDirty(),
+           "restoredNoOp: the retracted re-apply leaves the preset reading clean");
+
+    auto* kneeD = d.apvts.getParameter (pid::compKnee);
+    kneeD->beginChangeGesture();
+    kneeD->setValueNotifyingHost (kneeD->getNormalisableRange().convertTo0to1 (1.0f));
+    kneeD->endChangeGesture();
+    d.flushPendingDetach();
+    check (d.presetDirty(),
+           "restoredNoOp: …and the marker now WORKS -- an edit after it reads dirty, "
+           "where before the re-apply the same edit read clean");
+
+    // THE OTHER DIRECTION, and it is the one that stops this fix from being a
+    // loosening: in a restored session the baseline half is now satisfied by
+    // construction, so the SURFACE half is the only thing left deciding. A real
+    // restore must still mint its step.
+    AnabasisAudioProcessor r;
+    check (r.applyFactoryPreset (3), "restoredNoOp: (premise) third instance applies it");
+    juce::MemoryBlock blob2;
+    r.getStateInformation (blob2);
+    AnabasisAudioProcessor s;
+    s.setStateInformation (blob2.getData(), (int) blob2.getSize());
+
+    auto* drive = s.apvts.getParameter (pid::clipDrive);
+    const float driveNorm   = drive->getValue();
+    const float driveBefore = s.apvts.getRawParameterValue (pid::clipDrive)->load();
+    drive->beginChangeGesture();
+    drive->setValueNotifyingHost (driveNorm > 0.5f ? driveNorm - 0.4f : driveNorm + 0.4f);
+    drive->endChangeGesture();
+    s.flushPendingDetach();
+    check (std::abs (s.apvts.getRawParameterValue (pid::clipDrive)->load() - driveBefore) > 0.5f,
+           "restoredNoOp: (premise) the edit moved Clip Drive in the restored session");
+
+    check (s.applyFactoryPreset (3), "restoredNoOp: (premise) the preset re-applies over the edit");
+    check (s.canUndo(),
+           "restoredNoOp: re-applying over an EDITED surface is still a real restore, and keeps "
+           "its undo step even though the restored session has no baseline");
+    s.undo();
+    check (std::abs (s.apvts.getRawParameterValue (pid::clipDrive)->load() - driveBefore) > 0.5f,
+           "restoredNoOp: …and that step undoes back to the edit, not past it");
+    juce::ignoreUnused (apvts, count);
+}
+
+static void testANoOpPresetApplyDoesNotEatTheOldestUndoStep()
+{
+    // Drains the history to count it — destructive, so it is the last thing done
+    // to an instance.
+    auto depthOf = [] (AnabasisAudioProcessor& p)
+    {
+        int n = 0;
+        while (p.canUndo() && n < 1000) { p.undo(); ++n; }
+        return n;
+    };
+    auto fill = [] (AnabasisAudioProcessor& p, int pushes)
+    {
+        auto* k = p.apvts.getParameter (pid::compKnee);
+        const auto& r = k->getNormalisableRange();
+        for (int i = 0; i < pushes; ++i)
+        {
+            k->beginChangeGesture();
+            k->setValueNotifyingHost (r.convertTo0to1 (1.0f + 0.05f * (float) (i % 20)));
+            k->endChangeGesture();
+            p.flushPendingDetach();
+        }
+    };
+
+    // The cap is private; measure it rather than quote a number this test would
+    // then have to be kept in step with.
+    int cap = 0;
+    {
+        AnabasisAudioProcessor probe;
+        fill (probe, 400);
+        cap = depthOf (probe);
+        check (cap > 0, "undoCap: (premise) gestured edits push undo steps");
+        check (cap < 400, "undoCap: (premise) the stack is capped, so a push can evict");
+    }
+
+    // CONTROL: fill past the cap, then ONE real preset restore. The surface has
+    // moved, so this apply legitimately keeps its step.
+    int control = 0;
+    {
+        AnabasisAudioProcessor a;
+        fill (a, cap + 20);
+        check (a.applyFactoryPreset (3), "undoCap: (premise) the control applies the preset");
+        control = depthOf (a);
+        check (control == cap, "undoCap: (premise) the control history sits at the cap");
+    }
+
+    // SUBJECT: identical, plus a second apply of the SAME preset. By then the
+    // surface is exactly that preset and unedited, so the second apply restores
+    // nothing and must be retracted — including the entry its push evicted from
+    // the FRONT of a full stack, which `removeLast()` alone cannot give back.
+    AnabasisAudioProcessor b;
+    fill (b, cap + 20);
+    check (b.applyFactoryPreset (3), "undoCap: (premise) the subject applies the preset");
+    check (! b.presetDirty(), "undoCap: (premise) the surface now IS the preset, unedited");
+    check (b.applyFactoryPreset (3), "undoCap: (premise) and the same preset re-applies");
+
+    const int subject = depthOf (b);
+    const auto msg = juce::String ("undoCap: a no-op re-apply costs no history depth (subject "
+                                   + juce::String (subject) + " vs control "
+                                   + juce::String (control) + ")");
+    check (subject == control, msg.toRawUTF8());
+}
+
+// A stored A/B slot that is structurally present but carries no usable
+// parameter payload must not lend its NAME and IDENTITY to a sound that came
+// from somewhere else. The read rule is the one the live surface already
+// follows: a missing payload means DEFAULTS, never "keep whatever is live".
+
+// THE OTHER HALF of the payload-less-slot rule, and the one nothing pinned.
+// `setStateInformation` gates the ACTIVE slot's metadata on `liveSurfaceRestored`
+// — the ROOT `ANABASIS` child being present — rather than on the slot's own
+// payload. So a blob that keeps a COMPLETE `AB` but loses the root surface loads
+// the default sound AND drops the active slot's name, identity, macro baseline,
+// FROZEN TRIMS and DETACH MASK, even though the slot itself carries all of them.
+//
+// That is a strictly larger behaviour change than the malformed-STORED-slot case
+// above, and it is the deliberate one: metadata describes a parameter surface,
+// and the surface this restore installed came from defaults, so a mask naming
+// detachments from a mapping the session never had is not a mask worth keeping.
+// Deliberate is not the same as pinned: the DETACH MASK is the carrier a user
+// cannot otherwise recover, and it had no assertion at all on this path.
+static void testARootlessSurfaceDropsTheActiveSlotsMetadataToo()
+{
+    AnabasisAudioProcessor proc;
+    check (proc.applyFactoryPreset (4), "rootlessActive: (premise) a preset is applied");
+    // Detach a parameter so the mask is NON-EMPTY — an empty one would satisfy
+    // the assertion below by accident.
+    //
+    // SCOPE, stated rather than left to be discovered: this covers the detach
+    // mask and the name, not the frozen latch. `FROZEN_TRIMS` is written only
+    // once `retainedTrimGeneration()` is non-zero, which needs the adaptive
+    // engine to have latched trims from real audio — the setup
+    // `testFrozenTrimRestore` already builds. Asserting it here without that
+    // setup would assert the absence of a child that was never written, which is
+    // the vacuous shape this suite keeps finding. The gate is the same one for
+    // all five carriers; this pins the two a user cannot otherwise recover.
+    if (auto* gain = proc.apvts.getParameter (pid::limGain))
+    {
+        gain->beginChangeGesture();          // a GESTURED managed write detaches (§5.3)
+        gain->setValueNotifyingHost (0.80f);
+        gain->endChangeGesture();
+    }
+    proc.getMacroEngine().drainTick();   // stages -> mask, as `restoreTick` does
+    const auto maskBefore = proc.detachMask();
+    check (! proc.currentPresetName().isEmpty(), "rootlessActive: (premise) the slot has a name");
+
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    check (xml != nullptr, "rootlessActive: (premise) the session blob parses");
+    if (xml == nullptr) return;
+    auto root = juce::ValueTree::fromXml (*xml);
+
+    // The premise that makes the assertions mean something: the ACTIVE slot
+    // still carries everything. Only the ROOT surface is removed.
+    auto ab = root.getChildWithName ("AB");
+    check (ab.isValid(), "rootlessActive: (premise) the blob carries an AB child");
+    if (! ab.isValid()) return;
+    const int active = (int) ab.getProperty ("active", 0);
+    juce::Array<juce::ValueTree> slots;
+    for (int i = 0; i < ab.getNumChildren(); ++i)
+        if (ab.getChild (i).hasType ("SLOT"))
+            slots.add (ab.getChild (i));
+    check (slots.size() == 2, "rootlessActive: (premise) both slots are present");
+    if (slots.size() != 2) return;
+    auto liveSlot = slots[active];
+    check (liveSlot.getChildWithName ("ANABASIS").isValid(),
+           "rootlessActive: (premise) the ACTIVE slot keeps its full parameter payload");
+    check (liveSlot.getChildWithName ("DETACH_MASK").getNumChildren() > 0,
+           "rootlessActive: (premise) the active slot carries a NON-EMPTY detach mask");
+
+    root.removeChild (root.getChildWithName ("ANABASIS"), nullptr);   // the only edit
+
+    // A PREMISE, not a convenience. The earlier form defaulted to a `<dummy/>`
+    // element when `createXml()` returned null — which `setStateInformation`
+    // correctly declines as a foreign root, so every assertion below would then
+    // pass trivially against a processor that had loaded nothing: default name,
+    // empty mask, default surface, all three "correct" for the wrong reason. A
+    // test that cannot fail is worse than an absent one.
+    const auto outXml = root.createXml();
+    check (outXml != nullptr, "rootlessActive: (premise) the edited tree re-serialises");
+    if (outXml == nullptr) return;
+    juce::MemoryBlock rewritten;
+    juce::AudioProcessor::copyXmlToBinary (*outXml, rewritten);
+
+    AnabasisAudioProcessor q;
+    q.setStateInformation (rewritten.getData(), (int) rewritten.getSize());
+
+    check (q.currentPresetName() == "Default",
+           "rootlessActive: a rootless blob loads the DEFAULT name, not the slot's");
+    check (q.detachMask().isEmpty(),
+           "rootlessActive: ...and an EMPTY detach mask, not the slot's — the mask describes "
+           "detachments from a mapping this restore never installed");
+    check (! maskBefore.isEmpty(),
+           "rootlessActive: (premise) the mask being compared against was non-empty");
+    // The sound is the defaults', which is the rule this widening comes from.
+    AnabasisAudioProcessor fresh;
+    check (juce::exactlyEqual (q.apvts.getRawParameterValue (pid::limGain)->load(),
+                               fresh.apvts.getRawParameterValue (pid::limGain)->load()),
+           "rootlessActive: ...and the DEFAULT surface, so metadata and sound agree");
+}
+
+static void testAMalformedStoredSlotCannotSplitSoundFromMetadata()
+{
+    AnabasisAudioProcessor proc;
+
+    // A real session first: a named preset with a moved surface.
+    check (proc.applyFactoryPreset (4), "malformedSlot: (premise) a preset is applied");
+    auto* gain = proc.apvts.getParameter (pid::limGain);
+    gain->setValueNotifyingHost (0.80f);
+
+    juce::MemoryBlock blob;
+    proc.getStateInformation (blob);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    check (xml != nullptr, "malformedSlot: (premise) the session blob parses");
+    if (xml == nullptr) return;
+    auto root = juce::ValueTree::fromXml (*xml);
+    auto ab = root.getChildWithName ("AB");
+    check (ab.isValid(), "malformedSlot: (premise) the blob carries an AB child");
+    if (! ab.isValid()) return;
+
+    const int active = (int) ab.getProperty ("active", 0);
+    juce::Array<juce::ValueTree> slots;
+    for (int i = 0; i < ab.getNumChildren(); ++i)
+        if (ab.getChild (i).hasType ("SLOT"))
+            slots.add (ab.getChild (i));
+    check (slots.size() == 2, "malformedSlot: (premise) both slots are present");
+    if (slots.size() != 2) return;
+
+    // The truncation: a SLOT that is a valid node, carries metadata, and has no
+    // parameter payload at all.
+    auto stored = slots[1 - active];
+    stored.removeChild (stored.getChildWithName ("ANABASIS"), nullptr);
+    stored.setProperty ("presetName", "Ghost Session", nullptr);
+    check (! stored.getChildWithName ("ANABASIS").isValid(),
+           "malformedSlot: (premise) the stored slot now has no parameter payload");
+
+    // Restore into the SAME instance, then switch into the broken slot.
+    const auto doc = root.createXml();
+    juce::MemoryBlock hacked;
+    juce::AudioProcessor::copyXmlToBinary (*doc, hacked);
+    proc.setStateInformation (hacked.getData(), (int) hacked.getSize());
+    proc.switchToSlot (1 - proc.activeSlotIndex());
+
+    // Both halves of the slot resolved to pristine defaults. The failure this
+    // pins is the metadata arriving WITHOUT its sound.
+    const juce::String nameAfter = proc.currentPresetName();
+    check (nameAfter != "Ghost Session",
+           juce::String ("malformedSlot: a payload-less slot lent its preset name to another state ('"
+                         + nameAfter + "')").toRawUTF8());
+    check (nameAfter == "Default",
+           juce::String ("malformedSlot: the slot resolves to the default name, got '"
+                         + nameAfter + "'").toRawUTF8());
+    auto* gp = proc.apvts.getParameter (pid::limGain);
+    const float gainDefault = gp->getNormalisableRange().convertFrom0to1 (gp->getDefaultValue());
+    check (std::abs (proc.apvts.getRawParameterValue (pid::limGain)->load() - gainDefault) < 0.01f,
+           "malformedSlot: the slot's SOUND is the default, not the previous state's");
+}
+
 static void testFactoryPresets()
 {
     AnabasisAudioProcessor proc;
@@ -2871,17 +3294,41 @@ static void testTheFrozenLatchNeedsNoThreadCrossing()
 
     std::atomic<bool> hostDone { false };
     std::atomic<int>  polls { 0 };
-    std::thread host ([&proc, &hostDone]
+
+    // THE OVERLAP IS ESTABLISHED, NOT HOPED FOR. The first form was a bare
+    // `while (! hostDone) { poll; }` with the host started first, so the premise
+    // held only if the main thread reached the loop condition before the host
+    // finished all 60 `prepareToPlay` calls. Nothing made that true. **CI caught
+    // it** on 2026-08-14 (run 31801408265, sanitizers job): `polls` was 0 and
+    // the suite reported 841 checks / 1 failure while memcheck itself reported
+    // 0 errors from 0 contexts — the test failed, not the detector, which is
+    // worth stating because the job's name says memcheck.
+    //
+    // WHAT IS NOT CLAIMED: the exact interleaving. valgrind serialises threads
+    // under its own scheduler, which is the obvious suspect, but the same build
+    // under the same command reproduces 8440 polls here across repeated runs and
+    // never 0 — so the mechanism is unconfirmed and is deliberately not asserted.
+    // That is what an unguaranteed premise looks like from the inside, and the
+    // fix is to remove the dependency rather than to tune it: the host waits for
+    // the poll loop to be RUNNING, and the loop is a do/while, so `polls > 0`
+    // holds by construction and the concurrency the stimulus is about is
+    // guaranteed instead of raced for. A stronger stimulus than the original,
+    // not a weaker one.
+    std::atomic<bool> pollingStarted { false };
+    std::thread host ([&proc, &hostDone, &pollingStarted]
     {
+        while (! pollingStarted.load (std::memory_order_acquire))
+            std::this_thread::yield();
         for (int i = 0; i < 60; ++i)                     // the host changing rate
             proc.prepareToPlay ((i & 1) != 0 ? 96000.0 : 48000.0, 512);
         hostDone.store (true, std::memory_order_release);
     });
-    while (! hostDone.load (std::memory_order_acquire))
+    do
     {
         proc.presetDirty();                              // what the editor tick does
         polls.fetch_add (1, std::memory_order_relaxed);
-    }
+        pollingStarted.store (true, std::memory_order_release);
+    } while (! hostDone.load (std::memory_order_acquire));
     host.join();
     check (polls.load() > 0, "noCrossing: (premise) the poll actually ran against the re-prepares");
 
@@ -3319,6 +3766,405 @@ static juce::ComboBox* findComboByTitle (juce::Component& root, const juce::Stri
 // border was unreachable — a styling branch guarded by a flag no owner armed,
 // the same shape as `allCombos`/`hov` and `resetSweep`. Pinning the ARMING side
 // is what a test can do here; the pixels are a brand-pass question.
+// The pop-up shield's geometry, which is the one thing about it a headless test
+// CAN reach — and the one thing whose absence makes the whole mechanism inert
+// while every other part of it looks correct. A component with empty bounds
+// fails the containment test in `getComponentAt`, so `setInterceptsMouseClicks`
+// has nothing to intercept: the dismissing click still lands on the control
+// underneath, and the z-order work and the open-menu bookkeeping become
+// unobservable. Sizing is done in `resized()` like every other overlay.
+static void testThePopupShieldActuallyCoversTheEditor()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "shieldBounds: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+
+    auto* shield = ed->findChildWithID ("popupShield");
+    check (shield != nullptr, "shieldBounds: (premise) the shield is a child of the editor");
+    if (shield == nullptr)
+        return;
+
+    check (! shield->getBounds().isEmpty(),
+           "shieldBounds: the shield has a non-empty area (an empty one intercepts nothing)");
+    check (shield->getBounds() == ed->getLocalBounds(),
+           "shieldBounds: the shield covers the WHOLE editor");
+    // The top bar specifically: it carries the A/B switch, which acts on the
+    // press, so a shield that stopped below the bar would leave the worst case
+    // of this defect uncovered.
+    check (shield->getBounds().getY() == 0,
+           "shieldBounds: the shield covers the top bar, not just the body");
+    check (shield->isAlwaysOnTop(),
+           "shieldBounds: the shield is always-on-top, so it can cover the backdrops");
+
+    // …and it survives a resize, the way the other overlays do.
+    const auto grown = ed->getLocalBounds().expanded (0, 40);
+    ed->setSize (grown.getWidth(), grown.getHeight());
+    check (shield->getBounds() == ed->getLocalBounds(),
+           "shieldBounds: the shield tracks the editor's frame across a resize");
+}
+
+// A pop-up row that carries a shortcut must not draw its LABEL underneath the
+// shortcut. Before this, `drawPopupMenuItem` drew the label across the full text
+// rectangle and then the shortcut right-aligned over the same rectangle, so a
+// label long enough to fill the row put glyphs under the shortcut's; the case was
+// declared unreachable by a pair of `jassert`s, which compile out of every
+// shipped build and made a supported JUCE feature a debug-only hard stop instead
+// of something the row could render.
+//
+// The check is pixel-level and needs no eye: render the row twice with the SAME
+// shortcut, once with a long label and once with none, and compare only the strip
+// the shortcut occupies. If the label stays out of that strip the two are
+// identical; if it intrudes they cannot be. The strip's geometry comes from
+// `menuMetrics`, the same constants the drawing spends, so the test cannot agree
+// with a number the code has stopped using.
+static void testAPopupRowKeepsItsLabelOutOfTheShortcutStrip()
+{
+    using namespace abgui;
+    AnabasisLookAndFeel lf;
+
+    constexpr int   w = 220, h = 23;
+    const juce::String shortcut ("CTRL+SHIFT+ALT+K");
+    const juce::String longLabel ("Compressor Release Time Constant Override");
+
+    auto renderRow = [&] (const juce::String& text)
+    {
+        juce::Image img (juce::Image::ARGB, w, h, true);
+        juce::Graphics g (img);
+        lf.drawPopupMenuItem (g, { 0, 0, w, h },
+                              /*isSeparator*/ false, /*isActive*/ true,
+                              /*isHighlighted*/ false, /*isTicked*/ false,
+                              /*hasSubMenu*/ false, text, shortcut, nullptr, nullptr);
+        return img;
+    };
+
+    // The rectangle `drawPopupMenuItem` hands the shortcut, reconstructed from
+    // the shared constants: the row less its insets, less the tick gutter, then
+    // the right-hand strip the shortcut's own smaller type needs.
+    auto textArea = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h)
+                        .reduced (menuMetrics::padX, 0.0f);
+    textArea.removeFromLeft (menuMetrics::tickGutter);
+    juce::GlyphArrangement ga;
+    ga.addLineOfText (lf.getPopupMenuFont().withHeight (menuMetrics::shortcutPt),
+                      shortcut, 0.0f, 0.0f);
+    const auto strip = textArea.removeFromRight (
+                           juce::jmin (ga.getBoundingBox (0, -1, true).getWidth()
+                                           + menuMetrics::shortcutGap,
+                                       textArea.getWidth() * 0.5f));
+    check (strip.getWidth() > 4.0f,
+           "menuShortcut: (premise) the shortcut strip is a real region to compare");
+
+    const auto withLabel = renderRow (longLabel);
+    const auto bare      = renderRow ({});
+
+    const auto probe = strip.getSmallestIntegerContainer()
+                           .getIntersection (juce::Rectangle<int> (0, 0, w, h));
+    check (! probe.isEmpty(), "menuShortcut: (premise) the strip lies inside the row");
+
+    int differing = 0;
+    for (int y = probe.getY(); y < probe.getBottom(); ++y)
+        for (int x = probe.getX(); x < probe.getRight(); ++x)
+            if (withLabel.getPixelAt (x, y) != bare.getPixelAt (x, y))
+                ++differing;
+
+    check (differing == 0,
+           "menuShortcut: a long label leaves the shortcut's strip untouched "
+           "(it is reserved before the label is drawn, not painted over)");
+
+    // The premise the comparison rests on: this label really is long enough to
+    // have reached the strip. Without it, a row whose label fit anyway would pass
+    // while proving nothing.
+    juce::GlyphArrangement label;
+    label.addLineOfText (lf.getPopupMenuFont(), longLabel, 0.0f, 0.0f);
+    check (label.getBoundingBox (0, -1, true).getWidth() > textArea.getWidth(),
+           "menuShortcut: (premise) the label overflows the space left beside the shortcut");
+
+    // And the sub-menu chevron renders rather than aborting — the other case the
+    // removed assertions forbade.
+    juce::Image sub (juce::Image::ARGB, w, h, true);
+    {
+        juce::Graphics g (sub);
+        lf.drawPopupMenuItem (g, { 0, 0, w, h }, false, true, true, true,
+                              /*hasSubMenu*/ true, longLabel, {}, nullptr, nullptr);
+    }
+    check (sub.getWidth() == w, "menuShortcut: a sub-menu row renders");
+}
+
+// `drawResizableFrame` is reached by TWO unrelated JUCE callers — a parented
+// pop-up menu painting its border ring, and any `ResizableBorderComponent`
+// painting itself — and the override must draw nothing for the first and the
+// frame for the second. It cannot see the caller, so it decides on the border's
+// SHAPE plus whether a menu is on screen at all. The shape test alone is a magic
+// number: a drag zone of exactly `getPopupMenuBorderSize()` on all four sides is
+// legal to construct and would silently lose its frame, which is the failure the
+// override exists to prevent, arriving through the override.
+static void testTheResizableFrameOverrideDiscriminatesItsCallers()
+{
+    using namespace abgui;
+    AnabasisLookAndFeel lf;
+    const int b = lf.getPopupMenuBorderSize();
+
+    auto inkOf = [&lf] (juce::BorderSize<int> border)
+    {
+        juce::Image img (juce::Image::ARGB, 60, 40, true);
+        {
+            juce::Graphics g (img);
+            lf.drawResizableFrame (g, 60, 40, border);
+        }
+        int inked = 0;
+        for (int y = 0; y < 40; ++y)
+            for (int x = 0; x < 60; ++x)
+                if (img.getPixelAt (x, y).getAlpha() != 0)
+                    ++inked;
+        return inked;
+    };
+
+    // Premise: the base implementation actually paints something for a menu-
+    // shaped border. Without this the "suppressed" assertions below are vacuous.
+    lf.isPopupMenuOnScreen = nullptr;
+    const int menuShapedInk = inkOf (juce::BorderSize<int> (b));
+    check (menuShapedInk > 0,
+           "resizableFrame: (premise) the base implementation inks a menu-shaped border");
+
+    // 1) No menu on screen — the caller cannot be a menu, so the frame is DRAWN
+    //    even though the border is exactly the menu's shape.
+    lf.isPopupMenuOnScreen = [] { return false; };
+    check (inkOf (juce::BorderSize<int> (b)) == menuShapedInk,
+           "resizableFrame: a menu-shaped border still draws when no menu is open");
+
+    // 2) Menu on screen + menu-shaped border — suppressed, which is the whole
+    //    point of the override.
+    lf.isPopupMenuOnScreen = [] { return true; };
+    check (inkOf (juce::BorderSize<int> (b)) == 0,
+           "resizableFrame: the parented pop-up's doubled edge is suppressed");
+
+    // 3) Menu on screen but a NON-menu border shape — drawn. A resizable
+    //    component that repaints while a drop-down happens to be open keeps its
+    //    frame, so the state test cannot swallow the shape test.
+    check (inkOf (juce::BorderSize<int> (b + 2)) > 0,
+           "resizableFrame: a differently-sized border draws even while a menu is open");
+    check (inkOf (juce::BorderSize<int> (b, b, b, b + 1)) > 0,
+           "resizableFrame: a NON-UNIFORM border draws even while a menu is open");
+
+    lf.isPopupMenuOnScreen = nullptr;
+}
+
+// A combo's drop-down must not open WIDER than the control it drops from.
+// `getOptionsForComboBoxPopupMenu` already floors the menu at the box width; what
+// nothing checked is the ceiling, and the row metrics moved it: `chrome` is
+// `padX * 2 + tickGutter` = 38 against the 30 the measurement used before, so
+// every menu asks for 8 px more than it did. That is fine only while every combo
+// has 8 px of slack, and "fine today" is exactly the kind of claim that stops
+// being true when a font, a metric or an item string changes. The tightest margin
+// in the editor is the dither combo's, and the assertion carries the number so a
+// regression names itself.
+static void testEveryComboMenuFitsItsControl()
+{
+    using namespace abgui;
+    AnabasisAudioProcessor proc;
+    // Advanced ON, or the zone combos are never laid out and every width reads 0
+    // — a walk that measures nothing passes everything.
+    if (auto* adv = proc.apvts.getParameter (pid::advancedMode))
+    {
+        adv->beginChangeGesture();
+        adv->setValueNotifyingHost (1.0f);
+        adv->endChangeGesture();
+    }
+    std::unique_ptr<juce::AudioProcessorEditor> base (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (base.get());
+    check (ed != nullptr, "comboFit: (premise) the editor was created");
+    if (ed == nullptr)
+        return;
+    ed->setSize (940, 900);
+
+    AnabasisLookAndFeel lf;
+    int found = 0, tightest = 1 << 20;
+    std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+    {
+        if (auto* cb = dynamic_cast<juce::ComboBox*> (&c))
+        {
+            if (cb->getWidth() > 0 && cb->getNumItems() > 0)
+            {
+                ++found;
+                int worst = 0;
+                for (int i = 0; i < cb->getNumItems(); ++i)
+                {
+                    int w = 0, h = 0;
+                    lf.getIdealPopupMenuItemSize (cb->getItemText (i), false, 23, w, h);
+                    worst = juce::jmax (worst, w);
+                }
+                tightest = juce::jmin (tightest, cb->getWidth() - worst);
+            }
+        }
+        for (auto* k : c.getChildren())
+            walk (*k);
+    };
+    walk (*ed);
+
+    // Premise first: a walk that found nothing would satisfy every assertion
+    // below by running none of them.
+    check (found >= 10, "comboFit: (premise) the walk reached the editor's combo boxes");
+    check (tightest >= 0,
+           "comboFit: every combo's widest row still fits inside the control that opens it");
+    // The margin itself is PRINTED, not asserted, and that is a deliberate
+    // downgrade from the `>= 24` check this line used to carry.
+    //
+    // 24 was a SNAPSHOT of one machine's fonts, item strings and layout
+    // constants — `chrome` growing from 30 to 38 moved it by 8 on its own — and
+    // this suite runs on Linux, Windows and macOS, where `GlyphArrangement`
+    // advances for the DEFAULT system font differ. A platform whose menu font is
+    // a few percent wider would have turned the suite red for a metric
+    // difference, with a message reading like a layout regression. A gate that
+    // can fail without anything being wrong teaches people to ignore it, and the
+    // numbers on the other two runners have not been measured here — asserting
+    // them would be asserting something unverified.
+    //
+    // What survives is the requirement that actually protects the user: `>= 0`
+    // above, which is platform-independent in MEANING (a row must fit the control
+    // that opens it) even though its margin is not. The number is emitted every
+    // run, so a metric change is still visible in the log on every platform —
+    // which is what "tripwire" was for. Restore the assertion the moment the
+    // figure is confirmed on all three runners.
+    std::printf ("      comboFit: tightest combo margin %d px (advisory; the gate is >= 0)\n",
+                 tightest);
+
+    // WHAT CAN BE ASSERTED ON ALL THREE RUNNERS TODAY, since the pixel floor
+    // cannot be: the measurement's ARITHMETIC, which is font-independent because
+    // both sides below measure the same string with the same font on the same
+    // machine.
+    //
+    // MEASURED, and the first draft of this comment claimed more than the
+    // assertion delivers. Three mutants were run:
+    //
+    //   * `idealWidth = textW` (chrome dropped from the measurement) — KILLED,
+    //     by this assertion naming the cause and by `shortcutRow` reporting the
+    //     symptom (-30 px). That is the defect class that produced the original
+    //     clipping, so it is the one worth naming.
+    //   * `chrome = padX * 2.0f` (a term deleted from the shared constant) —
+    //     SURVIVES. It has to: measurement and drawing both read `chrome`, so
+    //     redefining it moves them together. That drift is designed out by
+    //     sharing the constant rather than tested, which is the stronger
+    //     arrangement, but it means no assertion here can catch it.
+    //   * `r.reduced (padX * 2.0f, …)` in `drawPopupMenuItem` (the DRAWING
+    //     spending more than the constant says) — SURVIVES, and this one is a
+    //     real gap. Both width tests RECONSTRUCT the row's rectangles from the
+    //     constants instead of observing what was drawn, so a drawing that stops
+    //     agreeing with `chrome` is invisible to them. Closing it needs the test
+    //     to render a row and measure the result; reconstructing it more
+    //     carefully cannot, since the reconstruction is the copy that drifts.
+    //
+    // None of this replaces the floor: a font whose advances grew until a real
+    // row stopped fitting is typography, not arithmetic, which is what the pixel
+    // figure is for and why the advisory print stays until the three-runner
+    // numbers exist.
+    {
+        const auto f = lf.getPopupMenuFont();
+        const juce::String probe ("A measurement probe long enough to clear the minimum row");
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (f, probe, 0.0f, 0.0f);
+        const int textW = (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth());
+
+        int w = 0, h = 0;
+        lf.getIdealPopupMenuItemSize (probe, false, 23, w, h);
+
+        // Premise: the `jmax` against `minimumRow` must not be the term that
+        // wins, or the identity below is asserting the floor instead.
+        check (textW + (int) menuMetrics::chrome > menuMetrics::minimumRow,
+               "comboFit: (premise) the probe row is wider than the minimum-row floor");
+        check (w - textW == (int) menuMetrics::chrome,
+               "comboFit: the ideal width is the measured text plus exactly the chrome a row draws");
+    }
+}
+
+// The width budget for a row that carries a SHORTCUT, which
+// `testAPopupRowKeepsItsLabelOutOfTheShortcutStrip` does not cover: that test
+// pins the label and the shortcut not OVERLAPPING once the row has a width,
+// while this one pins the width being enough in the first place.
+//
+// Why it needs pinning at all. `menuMetrics::chrome` is `padX * 2 + tickGutter`
+// and does NOT include `shortcutGap`, so on paper the measurement allows less
+// than the drawing spends. It works out, but through arithmetic no constant
+// states — exactly the implicit, drift-prone budget `menuMetrics` was introduced
+// to end. JUCE measures `text + "   " + shortcut`
+// (`ItemComponent::getTextForMeasurement`) entirely in the 13.5 pt menu font,
+// while `drawPopupMenuItem` renders the shortcut at `shortcutPt` (11 pt).
+//
+// WHAT ACTUALLY PAYS FOR THE GAP, measured rather than reasoned: the tightest
+// row here clears the drawing by **5 px**. Equalising the two fonts (shortcut
+// drawn at 13.5 pt) leaves **2 px** — still positive. So the font difference is
+// worth ~3 px and is NOT the term carrying this; the three measured spaces are,
+// at roughly 10 px against an 8 px `shortcutGap`. Worth knowing which lever
+// matters: a font change costs a few px, and a `shortcutGap` change spends
+// against a 5 px reserve directly — raising it to 20 puts the tightest row at
+// −7 and ellipsises the label, which is this test's own mutant.
+//
+// The alternative — folding `shortcutGap` into `chrome` — is deliberately NOT
+// taken, for the same reason the sub-menu chevron is not: it would widen every
+// menu in the plug-in by 8 px to pre-pay for a case no menu here uses today.
+static void testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel()
+{
+    using namespace abgui;
+    AnabasisLookAndFeel lf;
+    const auto menuFont     = lf.getPopupMenuFont();
+    const auto shortcutFont = menuFont.withHeight (menuMetrics::shortcutPt);
+
+    auto widthOf = [] (const juce::Font& f, const juce::String& s)
+    {
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (f, s, 0.0f, 0.0f);
+        return ga.getBoundingBox (0, -1, true).getWidth();
+    };
+
+    // The rows a `TextEditor` context menu would carry if the host attached
+    // accelerators, plus a deliberately short shortcut (the least slack case,
+    // since the font difference scales with the shortcut's own width).
+    const std::pair<const char*, const char*> rows[] = {
+        { "Cut",        "Ctrl+X" },
+        { "Copy",       "Ctrl+C" },
+        { "Paste",      "Ctrl+V" },
+        { "Select All", "Ctrl+A" },
+        { "Undo",       "Ctrl+Z" },
+        { "A considerably longer label than any menu here uses", "Ctrl+Shift+Alt+K" },
+        { "Go",         "F1" },
+    };
+
+    int tightest = 1 << 20;
+    for (const auto& r : rows)
+    {
+        const juce::String label (r.first), shortcut (r.second);
+
+        int measuredW = 0, measuredH = 0;
+        lf.getIdealPopupMenuItemSize (label + "   " + shortcut, false, 23, measuredW, measuredH);
+
+        // What `drawPopupMenuItem` spends out of that width: the chrome, the
+        // label at the menu font, and the shortcut strip at its own font plus
+        // the gap. (The strip's 50 % cap only ever makes the drawing spend
+        // LESS, so ignoring it keeps this the conservative direction.)
+        const float drawn = menuMetrics::chrome
+                          + widthOf (menuFont, label)
+                          + widthOf (shortcutFont, shortcut) + menuMetrics::shortcutGap;
+
+        tightest = juce::jmin (tightest, (int) std::floor ((float) measuredW - drawn));
+    }
+
+    // `>= 0` stays a GATE: unlike the combo advisory, this one states a property
+    // rather than a snapshot — the measured width must cover what the drawing
+    // spends, or the label is ellipsised, which is a defect on any platform. Its
+    // MARGIN is font-dependent (5 px here) and is printed for the same reason the
+    // combo one is: so a platform difference shows up as a number rather than as
+    // a mystery. If this ever fails on macOS or Windows alone, read the printed
+    // margin before assuming a layout regression — the fix may be `shortcutGap`,
+    // which spends against that margin directly.
+    std::printf ("      shortcutRow: tightest shortcut-row margin %d px\n", tightest);
+    const auto msg = juce::String ("shortcutRow: a row carrying a shortcut is measured wide "
+                                   "enough to draw its label in full — the label is not "
+                                   "ellipsised to pay for the shortcut gap (tightest ")
+                   + juce::String (tightest) + " px)";
+    check (tightest >= 0, msg.toRawUTF8());
+}
+
 static void testTheSavePresetNameFieldIsTaggedForItsFocusGlow()
 {
     AnabasisAudioProcessor proc;
@@ -4566,6 +5412,42 @@ static void testPresetIdentityAcrossRestore()
         q2.switchToSlot (1);
         check (! q2.canUndo(),
                "restoreId: a Copy straight after a pre-ADR-0022 load mints no phantom undo step");
+
+        // …and the OTHER direction on that same pre-ADR-0022 footing, which is
+        // the ONLY shape in which `presetName` is the sole discriminator. With
+        // no trio on either slot the identity cannot tell them apart, so if the
+        // NAME stopped travelling through `strippedForUndoCompare` this Copy
+        // would compare equal to what it replaces and silently retract its own
+        // step. Every other case is covered by the trio — distinct presets carry
+        // distinct identities — so without this leg the name could be stripped
+        // and the whole suite would still pass.
+        //
+        // Staged through the blob rather than a setter: the two slots differ by
+        // NAME ALONE, which no public API can produce (`savePresetFile` moves the
+        // identity with the name, and `applyFactoryPreset` moves the surface too).
+        AnabasisAudioProcessor q3;
+        juce::MemoryBlock nameOnly;
+        q3.getStateInformation (nameOnly);
+        auto nroot = unwrap (nameOnly);
+        for (int s = 0; s < 2; ++s)
+        {
+            auto slot = slotOf (nroot, s);
+            slot.removeProperty ("presetSource",    nullptr);
+            slot.removeProperty ("presetFactoryId", nullptr);
+            slot.removeProperty ("presetUserFile",  nullptr);
+            slot.setProperty ("presetName", s == 0 ? "Alpha" : "Beta", nullptr);
+        }
+        const auto nblob = wrap (nroot);
+        q3.setStateInformation (nblob.getData(), (int) nblob.getSize());
+        check (q3.currentPresetName() == "Alpha",
+               "restoreId: (premise) the active slot loaded the name it was given");
+        q3.copySlotToOther();            // "Alpha" over "Beta" — nothing else differs
+        q3.switchToSlot (1);
+        check (q3.canUndo(),
+               "restoreId: with no trio on either slot, a NAME-only Copy is still a real change");
+        q3.undo();
+        check (q3.currentPresetName() == "Beta",
+               "restoreId: ...and undoing it puts the destination's own name back");
     }
 
     // --- A no-AB restore resets the identity WITH the other slot fields -----
@@ -6351,6 +7233,16 @@ int main (int argc, char** argv)
         testThePostedDrainAlsoTakesTheWrapperBitsFirst();
         testDetachAndReengageGrammar();
         testUndoIsPerSlotGestureCoalescedAndMaskWide();
+        testANoOpPresetApplyIsNotAUserAction();
+        testANoOpPresetApplyIsNotAUserActionAfterASessionRestore();
+        testANoOpPresetApplyDoesNotEatTheOldestUndoStep();
+        testThePopupShieldActuallyCoversTheEditor();
+        testAPopupRowKeepsItsLabelOutOfTheShortcutStrip();
+        testTheResizableFrameOverrideDiscriminatesItsCallers();
+        testEveryComboMenuFitsItsControl();
+        testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel();
+        testAMalformedStoredSlotCannotSplitSoundFromMetadata();
+        testARootlessSurfaceDropsTheActiveSlotsMetadataToo();
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();
         testMeterResetClearsSessionHolds();

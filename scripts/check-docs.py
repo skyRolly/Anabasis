@@ -146,7 +146,27 @@ FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 TABLE_ROW = re.compile(r"^\s*\|")
 # The newest CHANGELOG entry, whose notes `release.yml` runs to end of file.
 CHANGELOG_VERSION_HEADING = re.compile(r"^## \[\d+\.\d+\.\d+\]")
-SKIP_DIRS = {".git", "build", "node_modules", "JUCE"}
+SKIP_DIRS = {".git", "node_modules", "JUCE"}
+
+# …and every build tree. This set said only the exact name `build`, so a
+# checkout that followed the documented CI reproduction — the sanitizers job
+# creates `build-san` and `build-vg` — had JUCE's own README and
+# BREAKING_CHANGES.md walked into the scan and reported eight findings against
+# the fetched dependency. CI never saw it, because the `docs` job runs in its own
+# checkout with no build tree; the person reproducing a red job locally is
+# exactly who did. A gate that misreports when you follow the instructions is
+# the same shape as the citation gate's wrong-base trap.
+#
+# NAMED, NOT PREFIXED, and the first repair got that wrong in the other
+# direction: `startswith("build")` also swallows a directory called `building`,
+# and a gate that silently scans FEWER files is the same defect wearing the
+# opposite sign. `.gitignore`'s `build*/` really would ignore `docs/building/`
+# too — but the ignore file's job is keeping artefacts out of the index, and
+# this one's is finding every governed document, so matching it literally is not
+# the goal. A build tree here is `build`, `build-<something>` or
+# `cmake-build-<something>`; nothing else is one.
+def _is_build_dir(name: str) -> bool:
+    return name == "build" or name.startswith(("build-", "cmake-build-"))
 
 # Blocks that interrupt a paragraph, and therefore are NOT swallowed by a
 # preceding blockquote's lazy continuation (CommonMark 0.31 §4, §5.1, §6.9).
@@ -345,7 +365,9 @@ def markdown_files(roots: list[Path]) -> list[Path]:
             out.append(root)
             continue
         for path in sorted(root.rglob("*.md")):
-            if SKIP_DIRS.isdisjoint(path.parts):
+            parts = path.parts[:-1]          # directories only; a file may be named anything
+            if SKIP_DIRS.isdisjoint(path.parts) \
+               and not any(_is_build_dir(p) for p in parts):
                 out.append(path)
     return out
 

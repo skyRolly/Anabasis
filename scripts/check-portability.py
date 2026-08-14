@@ -179,8 +179,74 @@ def lint(root: Path) -> int:
               f"juce::{name} ((size_t) 1, v.size()) -- identical result, deduction removes "
               f"the SIMD candidate before it can be instantiated.")
 
+    scratch = scratch_names_agree(root)
+
     print(f"check-portability: {len(files)} file(s) scanned, {len(violations)} violation(s).")
-    return 1 if violations else 0
+    return 1 if (violations or scratch) else 0
+
+
+# The scratch names `install.sh` creates. `uninstall.sh` must remove exactly
+# these, and nothing but a human reading both files has ever enforced it.
+#
+# `\.probe` is in the set and does NOT match inside `.anabasis-probe`, where the
+# character before `probe` is a hyphen. It earns its place: the same-filesystem
+# test's hard link is removed on every branch that test takes, so one survives
+# only a hard kill between the `touch` and the `rm` — and the uninstaller's
+# keep-the-parked-copy path is the single path that also leaves the directory
+# around it standing, which is the only way that file outlives an uninstall.
+SCRATCH_NAME = re.compile(r"\.anabasis-[a-z-]+|\.Anabasis\.new|\.probe\b")
+
+
+def scratch_names_agree(root: Path) -> int:
+    """The installer's scratch names and the uninstaller's removal list must match.
+
+    THIS PAIR HAS ALREADY DIVERGED ONCE, and the failure was silent in the
+    direction that matters: a `/var/tmp` staging candidate was added to
+    `install.sh` and not to `uninstall.sh`, so an interrupted install's staged
+    bundle survived a DELIBERATE uninstall — against what `INSTALL.txt` and the
+    CHANGELOG promise. Both files carry a comment telling the next editor to
+    keep them in step; that comment was present for the divergence.
+
+    The two scripts are separate files in a zip, with no shared library to
+    source and no build step that could generate one, so the coupling cannot be
+    removed — only checked. Comparing the SET OF NAMES is the whole of it: the
+    directories they hang off differ by design (the installer picks a staging
+    parent, the uninstaller is told the install directories), but a name that
+    exists in one and not the other is always a defect in one of them.
+    """
+    inst, uninst = root / "packaging/linux/install.sh", root / "packaging/linux/uninstall.sh"
+    if not (inst.is_file() and uninst.is_file()):
+        return 0                       # not a packaging checkout; nothing to compare
+
+    def names(path):
+        # CODE ONLY. Both scripts explain themselves at length and name every
+        # scratch file while doing it — including in the paragraph about the
+        # candidate that was REMOVED — so scanning the raw text would let a
+        # mention satisfy the check. An edit that deleted the removal from
+        # `uninstall.sh` but left the comment explaining it behind would keep
+        # this gate green while reopening the exact divergence it exists for:
+        # the comment survives the code, which is the failure mode the whole
+        # repository is written against. Full-line comments are the only form
+        # these scripts use for prose; verified that stripping them leaves both
+        # sets unchanged today, so this is strictly a tightening.
+        code = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("#"))
+        return set(SCRATCH_NAME.findall(code))
+
+    a, b = names(inst), names(uninst)
+    if a == b:
+        print(f"check-portability: installer/uninstaller scratch names agree "
+              f"({', '.join(sorted(a))}).")
+        return 0
+
+    for name in sorted(a - b):
+        print(f"packaging/linux/uninstall.sh: error: install.sh creates '{name}' and this "
+              f"script never removes it — an interrupted install would survive a deliberate "
+              f"uninstall.")
+    for name in sorted(b - a):
+        print(f"packaging/linux/install.sh: error: uninstall.sh removes '{name}' and this "
+              f"script never creates it — a stale name, or a rename applied to one file only.")
+    return 1
 
 
 CANARY_BASELINE = """

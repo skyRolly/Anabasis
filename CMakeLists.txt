@@ -17,7 +17,7 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
 
-project(Anabasis VERSION 0.1.3 LANGUAGES C CXX)
+project(Anabasis VERSION 0.1.4 LANGUAGES C CXX)
 
 # The BASELINE is C++20 (ADR-0008 decision B5). The cache seam below exists for
 # exactly ONE caller — the OQ-006 C++23 canary (.github/workflows/cxx23-canary.yml),

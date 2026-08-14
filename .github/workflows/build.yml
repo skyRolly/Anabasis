@@ -171,8 +171,72 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v7
+        with:
+          # `check-citations.py` compares against a BASE REVISION, so the run
+          # needs history rather than the default single-commit checkout.
+          fetch-depth: 0
       - name: Lint source portability (JUCE SIMD overload hazard)
         run: python3 scripts/check-portability.py
+      # Evidence anchors (`src/PluginProcessor.cpp:695-752`) are exact and
+      # therefore fragile: an edit ABOVE one silently re-aims it at unrelated
+      # code while the document keeps reading as though it were still correct.
+      # The repository's rule is that anchors are re-anchored in the SAME change
+      # set that moves them, and 0.1.4 demonstrated that the rule does not
+      # survive being remembered — the anchors were re-anchored once, two later
+      # commits in the same round moved code again, and 42 of 71 were stale
+      # before anyone noticed. This is that rule as a gate.
+      #
+      # WHAT IT COMPARES AGAINST, precisely — the comment here used to say
+      # "the merge base" and neither branch of the shell below computed one.
+      #
+      #   * pull_request — FORK pull requests only. This job carries the same
+      #     same-repo guard the `docs` job does, so a same-repo branch never
+      #     reaches this event here; do not read the branch below as the normal
+      #     case.
+      #
+      #     `base.sha` is fed through `git merge-base`, and it is worth being
+      #     accurate about what that buys, because an earlier version of this
+      #     comment claimed it found "the fork point". It does not, on this
+      #     event: `actions/checkout` checks out the GENERATED MERGE COMMIT
+      #     (`refs/pull/N/merge`), whose first parent IS `base.sha`, so
+      #     `merge-base` returns `base.sha` verbatim and the hop is a no-op.
+      #     It is kept because it is the correct expression of the intent and
+      #     stops being a no-op the moment the checkout names the PR head
+      #     instead — not because it is doing work today.
+      #   * push — the normal path for work in this repository, and the one that
+      #     actually holds the line. `event.before` is the branch's previous tip,
+      #     so each push is judged against its immediate predecessor: ONE PUSH OF
+      #     DRIFT AT A TIME. That is narrower than a merge base, and it is still
+      #     sufficient for the failure this gate exists to catch — 0.1.4's stale
+      #     anchors came from two LATER commits in the same round, and each of
+      #     those is a push. It is sufficient only while every push is checked,
+      #     which is why this job has no `needs:` and cannot be skipped by a
+      #     failing build.
+      #
+      # Two ways `event.before` is unusable, both tested for below: on the first
+      # push of a branch it is all-zeros, and after a FORCE-PUSH it names a
+      # commit the repository may no longer have at all — `git show` then fails
+      # every file and the script reports "nothing to check against" and exits 2,
+      # a red gate that says nothing about the documents. Both fall back to
+      # `HEAD~1` with a notice, which under-checks rather than failing on a
+      # question it cannot answer.
+      - name: Check documentation evidence anchors
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            # A merge base exists only when the two share history; a force-push
+            # that rewrote the fork point can leave them disjoint.
+            BASE="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+          else
+            BASE=''
+          fi
+          if [ -z "$BASE" ]; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+            echo "::notice::No usable base revision for this event; falling back to $BASE"
+          fi
+          echo "Comparing evidence anchors against $BASE"
+          python3 scripts/check-citations.py --check --base "$BASE"
 
   # -------------------------------------------------------------------------
   # Pre-P1 guard. This repository is currently a scaffold: the governance docs,

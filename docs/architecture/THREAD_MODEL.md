@@ -16,7 +16,7 @@ transport) are listed under **Planned edges** so their absence is visible rather
 |---|---|---|
 | **Audio** | yes | `AnabasisEngine` state (rings, wedge, envelope, smoothers, crossfade), built-once-per-block `EngineParameters` snapshot |
 | **Message/GUI** | yes | Editor, `MacroEngine`, `InternalState` tree, A/B slots + preset/undo bulk swaps, PDC recompute (with the two host-callback exceptions below) |
-| **GPU render context** | yes, macOS/Windows only | Component painting when attached — created and driven by JUCE, holds no Anabasis state (`src/gui/PluginEditor.h:38`, attach gated per platform per DESIGN §6.1) |
+| **GPU render context** | yes, macOS/Windows only | Component painting when attached — created and driven by JUCE, holds no Anabasis state (`src/gui/PluginEditor.h:616`, attach gated per platform per DESIGN §6.1) |
 | Workers | **none** | Adding one is an Architecture Review Gate item + Hard Stop (ADR-0011) |
 
 ## Cross-thread edges implemented at P1
@@ -82,12 +82,28 @@ single flush-to-zero mechanism; no module carries its own.
 
 ## Which context paints
 
-The OpenGL context attaches on macOS/Windows only, never Linux/X11 (`src/gui/PluginEditor.h:38`
+The OpenGL context attaches on macOS/Windows only, never Linux/X11 (`src/gui/PluginEditor.h:616`
 and the platform gate around its attach). When attached, JUCE paints components on the GL render
 thread; when not, on the message thread. The rule that keeps both safe is the one the policy
 already mandates: GUI-side reads of published state are stateless `const` peeks (at P1 the only
 such read is `getLatencySamples()` in `paint()`), so the identity of the painting thread carries
 no correctness weight. Recorded here per ADR-0011 §Consequences; no policy amendment implied.
+
+**0.1.4 added the first GUI-side cross-thread read that is NOT a stateless `const` peek, and this
+row exists because the paragraph above is what made it a defect rather than a choice.**
+`AnabasisLookAndFeel::drawResizableFrame` asks the editor whether a parented pop-up is open, through
+`isPopupMenuOnScreen`. That override is reached from `PopupMenu::MenuWindow::paintOverChildren` —
+i.e. from PAINT — so on macOS/Windows it runs on the GL render thread, while every write to the
+counter it reads is on the message thread. As a plain `int` that was a data race and a
+sanitizer-reportable one on exactly the two platforms where the context attaches. `presetMenusOpen`
+is therefore `std::atomic<int>`, read `memory_order_relaxed`: the value guards nothing but itself,
+and a frame that reads a one-tick-stale count draws the border it would have drawn a frame earlier.
+
+The same wiring has a LIFETIME half, fixed in the same place: the editor's destructor used to clear
+`lnf.isPopupMenuOnScreen` (a `std::function`) before `glContext.detach()`, mutating a callable a live
+render thread could still invoke. `detach()` joins that thread, so it now runs FIRST and both hook
+assignments are unobserved. The rule to carry forward is the general one: a hook the paint path calls
+must be torn down after the painting thread is gone, not before.
 
 ## Audio-thread-only state behind a `const` accessor
 

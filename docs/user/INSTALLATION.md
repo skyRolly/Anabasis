@@ -40,26 +40,78 @@ download route — the two installers never carried them either.)
 
 ## Linux
 
-Copy `Anabasis.vst3` (the whole folder) into `/usr/lib/vst3/` and the `Anabasis`
-standalone executable into `/usr/local/bin/` (both need root), then restore the
-executable bits:
+**Use the installer** — it is in the zip beside the plug-in:
 
 ```sh
-sudo mkdir -p /usr/lib/vst3
-sudo cp -R Anabasis.vst3 /usr/lib/vst3/
-sudo cp Anabasis /usr/local/bin/
-sudo chmod +x /usr/local/bin/Anabasis
-sudo chmod +x /usr/lib/vst3/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so
+./install.sh
 ```
+
+It asks where to install:
+
+1. **Current user** (the default, no root) — `~/.vst3/Anabasis.vst3` and
+   `~/.local/bin/Anabasis`. `~/.vst3` is the standard per-user VST3 folder and REAPER,
+   Bitwig and Ardour all scan it by default.
+2. **System-wide** (for every user on the machine) — `/usr/lib/vst3/Anabasis.vst3` and
+   `/usr/local/bin/Anabasis`. Only the steps that write to those locations ask for your
+   password; the script does not run as root as a whole. `sudo ./install.sh` skips the
+   question and installs system-wide directly.
+
+`./install.sh --user` and `./install.sh --system` answer the question up front, which is
+what a provisioning script or a CI step needs: without a flag, the question is only asked
+when the terminal is there to answer it, and anything else takes the per-user default.
+`--system` is not the same as `sudo ./install.sh` — it keeps the elevation per-operation,
+so only the writes to `/usr/lib/vst3` and `/usr/local/bin` run as root. **With no terminal,
+that has a precondition:** every elevated step goes through plain `sudo`, which cannot prompt
+when there is nothing to prompt on, so a non-interactive `--system` run needs the caller to
+be root already, or to have passwordless or still-cached `sudo`. Without one of those it
+stops with "System installation failed because permission was denied" rather than hanging. Two combinations
+are refused rather than guessed at: `--user --system` together, since the two differ in
+destination *and* in privilege and there is no sensible way to honour both; and `--user`
+under `sudo`, since which home directory `$HOME` names there depends on the machine's
+sudoers configuration. Repeating the same option is not a conflict and is accepted.
+
+Replacing an existing install is safe: the previous version is kept until the new one is
+in place, and an interrupted run is tidied up by the next one. The VST3 and the
+Standalone are replaced one after the other rather than together, so an interruption
+between the two can leave the new plug-in beside the old Standalone — both work; run the
+installer again to finish the pair.
+
+Uninstall with `./uninstall.sh` (or `sudo ./uninstall.sh` for a system-wide install). It
+asks the same question, takes the same `--user` / `--system` flags for a run with no
+terminal, and keeps your presets and settings. It also **keeps** a plug-in copy that an
+interrupted install parked in its scratch directory — that copy is the only one of that
+version, and only `./install.sh` can put it back, so the uninstaller names it and leaves
+it rather than sweeping it up. Pass `--discard-parked` if you want it gone too.
 
 Rescan plug-ins in your DAW (REAPER: *Options → Preferences → Plug-ins → VST →
 Re-scan*; Bitwig: *Settings → Locations*; Ardour: *Preferences → Plugins*).
 
+**Installing by hand**, if you would rather not run the script — per-user:
+
+```sh
+mkdir -p ~/.vst3 ~/.local/bin
+cp -R Anabasis.vst3 ~/.vst3/
+cp Anabasis ~/.local/bin/
+chmod +x ~/.local/bin/Anabasis
+chmod +x ~/.vst3/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so
+```
+
+…or system-wide, with `sudo` and the `/usr/lib/vst3` + `/usr/local/bin` paths in place of
+the two above.
+
 **Troubleshooting**
 
+- **`./install.sh` says "Permission denied"** — the executable bit was lost in transit
+  (per-push CI artifact downloads do not preserve file modes). Run it through the shell
+  instead: `sh ./install.sh`, or `sudo sh ./install.sh` for a system-wide install.
 - **"Permission denied" or the DAW can't load the plug-in** — the `chmod` steps above.
-- **DAW doesn't find it** — check `/usr/lib/vst3` is in the DAW's VST3 search path (it is
-  by default in REAPER/Bitwig/Ardour), then rescan.
+- **Anabasis appears twice in your DAW** — you have both a per-user and a system-wide
+  install. The installer warns when it finds one alongside the other. Remove whichever you
+  do not want with `./uninstall.sh` or `sudo ./uninstall.sh`.
+- **DAW doesn't find it** — check that the directory you installed into (`~/.vst3` or
+  `/usr/lib/vst3`) is in the DAW's VST3 search path — both are by default in
+  REAPER/Bitwig/Ardour — then rescan. Make sure the whole `Anabasis.vst3` folder was
+  copied, not a file from inside it.
 - **Standalone needs audio** — a working ALSA/JACK/PipeWire setup; pick the device in the
   app's audio settings.
 

@@ -6,7 +6,170 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
+**Last updated:** for the **0.1.4 installer and interaction round (2026-08-13)**.
+
+Scope, stated precisely because the previous round's header made a branch-snapshot claim in the
+present tense with no expiry ("display/naming fixes only") that its own CHANGELOG then retracted:
+this round changes **packaging, pop-up/menu interaction, and two stored-state behaviours inside the
+unchanged schema**. It contains **no audible DSP change** and **no parameter-surface change**, so
+the registry snapshot is untouched and PARAMETER_COMPATIBILITY_POLICY is not engaged. It **does**
+change layout-adjacent code — pop-up menu measurement (`getIdealPopupMenuItemSize` now derives its
+allowance from the constants `drawPopupMenuItem` spends, so long rows stop being clipped) and the
+preset menu's column cap — which widens some menus by up to 8 px; the closed-state geometry of
+every control is unchanged. That distinction is the point: "no layout change" would have been the
+convenient sentence and it would have been false.
+
+**New tooling:** `scripts/check-citations.py`, which verifies every `file:line` evidence anchor in
+`docs/` and the root Markdown still points at the text it pointed at in a base revision, and
+re-anchors the ones an edit above them moved. It exists because this round proved the rule cannot be
+held by hand: the anchors were re-anchored once, then TWO later review commits moved code again and
+the docs were not re-run, leaving 42 of 71 stale. Its header states what it cannot do — a citation
+aimed at the wrong code from the start is preserved faithfully, so a clean run means none MOVED, not
+that all are correct. That limit is not theoretical: THREE anchors here were already wrong before the
+tool existed, and it dutifully carried each one along. Two were mis-aimed — `SERIALIZATION_REGISTRY.md`
+§1.4's `BASELINE` carriage and drop sites, and `LATENCY_MODEL.md`'s redundant `updateLatency()` — and
+are corrected, both now carrying the FUNCTION beside the line number, which is the half of a citation
+a reader can check without running anything. The third was a category error rather than an aim error:
+`POSTMORTEMS.md` INC-003 cites the line that BROKE the macOS build, a line the fix deleted, and its
+own Evidence row says "(before the fix)" — but it was spelled as a bare anchor, so it named whatever
+`main` holds today and the tool re-aimed it through three rounds of code movement. It is now pinned to
+the pre-fix revision (`bcebfaf:tests/state_tests.cpp:5694`), which is the same spelling ADR-0016 uses
+and which the ownership test declines by construction. A historical claim needs a historical anchor;
+a bare one is a claim about the present. `worklogs/` is out
+of scope: those records cite the sibling product, including by bare file name, and an early version
+of the script rewrote those upstream anchors against this tree's line numbers before the scoping was
+added.
+
+The tool went through five corrections of its own before it was trustworthy, and they are worth
+recording because each was a way of being confidently wrong — a tool that rewrites line numbers
+turns every misjudgement into a corrupted document that reads as maintained.
+
+It matched bare file names, so it rewrote the P0 worklog's UPSTREAM anchors against this tree
+(caught in the diff, reverted, `worklogs/` now excluded). It read only the first anchor of a
+compound citation (`…cpp:708-709, 851, 1208`), so it moved the head and left the tail — producing
+`:1040, 1039, 1053`, out of order, in the very file it was meant to keep true. It paired citations
+by their base SPELLING, so once one had been re-anchored the tool could no longer see it drift
+again — the exact failure it exists to prevent; it now pairs the Nth reference to a path with the
+Nth in the base.
+
+The fourth was the worst, because it was silent and it shipped. A citation qualified by another
+checkout or a pinned revision — `<checkout>:src/PluginProcessor.cpp:485-491`,
+`7686204:src/gui/PluginEditor.cpp:1171-1174` — was matched from the path onwards, so the qualifier
+never reached the ownership test and **27 anchors across `DESIGN.md`, `OPEN_QUESTIONS.md` and five
+ADRs were shifted by THIS tree's code movement onto unrelated lines of the sibling product**,
+including the ADR-0016 table whose own heading says it was read from the pre-change tree. Those
+anchors are ADR-0009's mandated attribution; re-aiming them defeats the thing they are for. All 27
+are restored, and the ownership test is now narrow by construction: a citation is checked only when
+it names its path from this repository's root, unqualified, and that path is `TRACKED` verbatim —
+so a bare file name, a sibling path and a `<rev>:` anchor are all left alone. Under-checking costs
+coverage; misclassifying costs the truth of the document.
+
+The fifth was in the rewrite itself: substitution was by string, so re-anchoring
+`some/file.cpp:107` to `:130` also turned an untouched `some/file.cpp:1076` into `:1306`. It now
+substitutes by the match's own span, right to left.
+
+Those example anchors name `some/file.cpp` for a reason worth keeping: an ILLUSTRATIVE citation
+spelled with a tracked path is indistinguishable from a real one, and this paragraph's own example
+was silently re-anchored — `:1076` became `:1092`, which is not the shift the sentence describes.
+A tool that rewrites line numbers cannot tell prose about citations from citations. Prose examples
+therefore use a path the tool does not track.
+
+Both remaining fixes are mutation-verified against the exact reported shapes, and the tool runs in
+the `source-lint` CI job — against the fork point with the base branch, computed rather than
+assumed, with a force-push or a first push falling back to `HEAD~1` instead of failing on a base
+revision that no longer exists.
+
+**New records:** `POSTMORTEMS.md` **INC-006** (a tidiness change put a privileged write path in a
+world-writable directory — a local root exploit introduced and removed inside this PR, recorded for
+the reasoning rather than the fix) and **INC-005** (the macOS package could report success with nothing
+at the destination); `KNOWN_ISSUES.md` **KI-013** (the shield-absorbed click still counts toward
+the multi-click run) and **KI-014** (macOS press-and-hold suppresses key repeat in the Save Preset
+field — platform behaviour, filed rather than fixed); **ADR-0025** (the bounded,
+disclosure-bound exception to `TESTING_POLICY.md` rule 1) and its rule-1 amendment.
+
+**Untested surface of this round, in one place — the ADR-0025 disclosure.** The pop-up shield, the
+pop-up lifetime cancellations, the keyboard-focus release, the inline-edit abandonment and the
+tooltip gate ship with **no suite regression test**: the suites construct the editor but synthesise
+no pointer device and run no modal loop, so the event sequence that constitutes each defect cannot
+be produced at all. What is verified instead is the reasoning — each carries the framework
+mechanism it depends on, read out of the pinned source, at the site that depends on it. What is
+consequently unprotected: a future edit to the shield's z-order, its interception toggle, the
+menu-tracking hooks or the focus ordering can regress silently. INC-005 is defended by the build's
+own fail-closed assertions plus the A/B probe that proves those assertions can fire. The exception
+lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
+the X11/XTEST probe recorded under `worklogs/` for KI-012).
+
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 845 = 1141 checks green**, up 102 on 0.1.3's
+1039 — ten new state tests (`testANoOpPresetApplyIsNotAUserAction`,
+`testANoOpPresetApplyDoesNotEatTheOldestUndoStep`,
+`testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
+`testThePopupShieldActuallyCoversTheEditor`,
+`testAPopupRowKeepsItsLabelOutOfTheShortcutStrip`,
+`testTheResizableFrameOverrideDiscriminatesItsCallers`,
+`testEveryComboMenuFitsItsControl`,
+`testARootlessSurfaceDropsTheActiveSlotsMetadataToo`,
+`testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel`,
+`testANoOpPresetApplyIsNotAUserActionAfterASessionRestore`), each mutation-verified against its own
+deliberately reverted fix and against no other. `testPresetIdentitySharedName` also gained the leg
+that closes the last uncovered corner of the undo compare: with no ADR-0022 trio on either slot —
+a pre-ADR-0022 session — `presetName` is the SOLE discriminator, and nothing asserted that
+direction, so the name could have been stripped from `strippedForUndoCompare` with every test
+still green.
+
+**Five** of those ten exist because a review round found defects the first cut shipped, and all
+five are worth recording as coverage lessons rather than quietly fixed. The shield was **added,
+sized nowhere, and therefore inert**: every part of the mechanism — z-order, interception toggle,
+menu bookkeeping — was correct while the component had empty bounds, so no click could ever reach
+it. Geometry is the one property of that component a headless test CAN read, and there was no test
+reading it. The second was a **vacuous first attempt**: the undo-depth test originally re-applied
+the preset after editing, which is a real restore, so it never entered the retraction path it
+claimed to cover and passed against the reverted fix. It is now a control/subject pair, and the
+mutant separates them by exactly one step (127 vs 128). The third is the sharpest of the five:
+a pop-up row's two right-hand furniture cases were covered by **`jassert`s declaring them
+unreachable**, which is not coverage at all — `jassert` compiles out of every shipped build, so the
+declaration bound only the developer, and the look-and-feel also serves menus this editor does not
+build. The row now renders what it is handed, and the test that replaced the assertions fails on
+the old drawing. An assertion that a case cannot happen is a claim about callers; where the callers
+ include a framework, only rendering it is a claim about the code. The fourth is the same lesson
+in the neighbouring override: `drawResizableFrame` is reached by two unrelated JUCE callers and
+told them apart by a MAGIC NUMBER — a border of `getPopupMenuBorderSize()` on all four sides — so
+a future `ResizableBorderComponent` with a 3 px drag zone would have silently lost the frame the
+override exists to protect. It now also asks the editor whether a menu PARENTED TO THIS EDITOR is
+on screen, and the test pins both halves: each is killed by its own mutant, on different
+assertions. (A later round narrowed that second half again: it was first wired to `shieldRaised`,
+which is true for any tracked pop-up including every combo drop-down — and a drop-down is a desktop
+window that never reaches this override. Two tests that are both true whenever one of them is are
+not two tests; it now reads `presetMenusOpen > 0`.)
+
+**The fifth is the one that cost the most and is the most worth reading**, because the test and the
+fix were both correct and the feature was still dead in the field. The no-op preset re-apply shipped
+with two tests, both mutation-verified, both building a FRESH `AnabasisAudioProcessor` — whose
+constructor seeds a valid `presetBaseline`. `setStateInformation` deliberately INVALIDATES that
+datum (it is not serialized, so a load cannot honestly restore it) and nothing rebuilds it until the
+next apply or save, so in every project opened from a host the retraction's dirty-datum comparison
+was invalid-against-valid: never equivalent, always refused. The feature worked in exactly the
+session shape the tests constructed and in no other. The lesson is not "add a restore case" but the
+sharper one: **a fixture that a processor can only be in for the first few seconds of its life is
+not the state the code runs in.** `setStateInformation` is the entry point for nearly every real
+session, and a test suite that never passes through it is testing a constructor. The comparison now
+tests what the datum MEANS (did the slot read clean either side?) rather than tree identity, and
+`testANoOpPresetApplyIsNotAUserActionAfterASessionRestore` fails on the old expression while the
+fresh-processor legs still pass — which is what shows the fix is a widening and not a loosening.
+
+**The round-7 finding is the one that reframes this whole file's citations.** An audit of every
+tracked `file:line` anchor in the governed documents found that MOST had been aimed at the wrong
+code since before `check-citations.py` existed, and every re-anchoring since had carried each one
+faithfully onto the same wrong text: `LATENCY_MODEL.md` cited the undo stack for `updateLatency()`,
+`SERIALIZATION_REGISTRY.md` cited the latency predictor for `saveSlotFromLive()`, `THREAD_MODEL.md`
+cited a comment for the OpenGL context. Fourteen were re-derived from the SYMBOL each prose claim
+names, verified by reading the line, and declared in `DELIBERATE_REAIMS` so the correction is a
+reviewable act rather than a silent rewrite. Two lessons are worth more than the fix: a tool that
+preserves content identity makes a mis-aimed anchor look MAINTAINED, which is worse than leaving it
+obviously stale; and the earlier entry above calling this "three citations" was itself an
+under-count from inspecting three rather than auditing all of them — the same shape of error, one
+level up.
+
+**Superseded header (0.1.3, kept rather than deleted):** the **0.1.3 polish round (2026-08-09)** — seven owner items, display and
 naming only, no DSP change, no new ADR (nothing decided at contract level: the three
 Colour → Color NAME renames and the MATCH caption ride PARAMETER_COMPATIBILITY_POLICY rule 2
 with the snapshot re-frozen, the same lane as 0.1.2's "Limiter Stereo Link"). **Amended:**

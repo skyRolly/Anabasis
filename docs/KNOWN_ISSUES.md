@@ -619,7 +619,7 @@ They are acquired in **both** orders:
 
 | Order | Path |
 |---|---|
-| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:122`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:195`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
@@ -637,8 +637,27 @@ list and each parameter's own atomic and takes no tree lock at all, so the only 
 on the message thread is the gesture-begin snapshot itself — back to "at a gesture-begin", which is
 the rate this entry was originally scoped for. **The inversion is unchanged and the entry stays
 open:** the two edges are exactly as tabulated above, and the fix is still the §7 snapshot-point
-decision. That is the interleaving KI-003 is about, and the §5.3 machinery exists *because*
-gestures and parameter writes on the same managed parameter do overlap across threads.
+decision.
+
+**0.1.4 moves the rate back in the OTHER direction, and this paragraph is the place that has to say
+so.** A bracketed preset apply now takes `saveSlotFromLive()` TWICE — once in
+`openPresetUndoBracket` for the pre-state, once in `closePresetUndoBracket` for the comparison that
+decides whether the apply restored anything — where the pre-0.1.4 path took it once. Each reaches
+`copyStateWithRaw()` → `apvts.copyState()` and therefore M1. No new EDGE: both run on the message
+thread from the editor's own click handlers, never from inside a parameter listener holding M0, so
+the inversion tabulated above is untouched. What changes is the frequency term the estimate above
+rests on — and the path that drives it hardest is the preset ring, where `‹`/`›` walks
+`applyPresetFile` once per keypress and a user can hold the key down. Round 51 halved the
+message-thread M1 rate and this doubles what remains on that one path; neither is the defect, and
+both belong in the same paragraph so the estimate is never read off a stale half of the story.
+
+**The lock-order inversion tabulated above is the interleaving KI-003 is about**, and the §5.3
+machinery exists *because* gestures and parameter writes on the same managed parameter do overlap
+across threads. (That sentence closed the pre-0.1.4 paragraph, where "that" could only mean the
+inversion; the rate paragraph was later inserted in front of it and left it appearing to point at
+the doubled `saveSlotFromLive()` instead — which is a rate, not an interleaving. Named explicitly
+here rather than pronouned, in a document whose whole point is that the estimate is never read off
+a stale half of the story.)
 
 **Why it is not fixed here.** The M0 → M1 edge is the §7 undo grammar's pre-state snapshot, and it
 has to be taken *at* gesture begin — deferring it to the next drain tick would capture a state the
@@ -657,7 +676,7 @@ observed against this plugin (the same standing caveat as KI-003).
 listener callback.
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:122` (the M0 → M1 edge); JUCE
+- Source: `src/PluginProcessor.cpp:195` (the M0 → M1 edge); JUCE
   `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
 - Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
   stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite
@@ -830,6 +849,61 @@ Evidence [Partially Verified]:
 - Test:   none — the report does not reproduce; the runtime harness above is recorded in
   `worklogs/`, not in the suites, because a passing probe of a fault that never appears would
   pin nothing
+- Commit: this one
+
+### KI-013 — The click absorbed by the pop-up shield still counts toward the multi-click run (2026-08-13)
+
+**Severity:** Low
+**Status:** Confirmed
+**Affects:** All platforms and formats; any control with a double-click action — in practice the
+knobs, whose double-click resets to default.
+
+Dismissing a pop-up by clicking outside it no longer operates the control underneath (the shield
+absorbs that press). What the shield cannot do is *un-count* it. JUCE tracks the multi-click run on
+the mouse source rather than on the component that received the press, so the absorbed click still
+advances the run: click a knob to open something, click away to dismiss, then click that knob again
+within the double-click interval and the second press can arrive as a double-click and reset the
+knob to its default.
+
+Two things keep this narrow. The absorbed press and the following one must land inside the system
+double-click interval, and the reset is a normal undoable step, so the value comes straight back
+with Undo.
+
+**Workaround:** press Undo; or leave a moment between dismissing a pop-up and clicking a knob.
+**Cause:** the multi-click counter lives on `juce::MouseInputSource` and is advanced when the event
+is delivered, before any component decides what to do with it. A component that consumes an event
+does not decrement it, and JUCE exposes no way to reset the run.
+
+Evidence [Partially Verified]:
+- Source: `src/gui/PluginEditor.h` (`PopupShield`), `src/gui/PluginEditor.cpp`
+  (`refreshPopupShield`)
+- Test:   none — not reproducible headlessly; it needs real double-click timing from a pointer
+  device, which the suites do not synthesise
+- Commit: this one
+
+### KI-014 — macOS: a held letter or digit does not repeat in the Save Preset name field (2026-08-13)
+
+**Severity:** Low
+**Status:** Confirmed (platform behaviour, not a defect in this plug-in)
+**Affects:** macOS only, all formats; the Save Preset name field. Punctuation and symbol keys
+repeat normally, letters and digits do not.
+
+Holding a letter or a digit in the Save Preset name field types one character and then stops.
+Holding a punctuation key repeats as expected. Typing normally is unaffected, so the field is fully
+usable — only auto-repeat is missing for those keys.
+
+**Workaround:** none needed; type the character repeatedly rather than holding it.
+**Cause:** macOS press-and-hold. For letter and digit keys the system suppresses key repeat in
+favour of the accent/character picker, and delivers no repeat events for the framework to forward.
+The plug-in never sees the repeats, so there is nothing here to fix. Fixes were considered and
+rejected: suppressing the system behaviour requires a global preference this plug-in has no
+business writing, and synthesising repeats from a timer would fire where the system deliberately
+does not and would diverge from every other text field on the machine. Recorded so the next
+investigation does not re-derive it.
+
+Evidence [Partially Verified]:
+- Source: `src/gui/PluginEditor.h` (`saveNameEditor`)
+- Test:   none — platform input behaviour, not reachable from the suites
 - Commit: this one
 
 ## Standing note for P1 onward

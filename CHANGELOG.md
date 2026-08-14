@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Three such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Four such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,186 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.1.4] — 2026-08-13
+
+**The installer and interaction round.** Everything here is packaging, pop-up/menu interaction or
+state bookkeeping: **no audible DSP change**, no parameter added, renamed or removed, and no change
+to the serialization schema. Two entries change stored-state *behaviour* within the existing schema
+and say so.
+
+### Added
+- **The Linux installer offers a per-user install, and it is now the default.** `install.sh` asks
+  where to install: the current user (`~/.vst3` and `~/.local/bin`, no root at all — `~/.vst3` is
+  the standard per-user VST3 folder that most DAWs scan) or system-wide (`/usr/lib/vst3` and
+  `/usr/local/bin`). Running it as root still installs system-wide without asking, and a
+  system-wide install elevates only the individual copy/move steps rather than the whole script,
+  so a machine without `sudo` gets a clear instruction instead of a failure. A per-user install
+  that finds an older system-wide copy still present now says so, names both files and gives the
+  command to remove them — otherwise the DAW shows Anabasis twice and may load the older one.
+  `uninstall.sh` mirrors the same two modes. Evidence: this release. [Verified]
+- **`install.sh --user` / `install.sh --system` answer that question up front.** The prompt is
+  gated on stdin being a terminal, so a provisioning script, a CI step or a piped run silently
+  took the per-user default and had no way to ask for anything else — the only non-interactive
+  route to a system-wide install was to run the whole script under `sudo`, which is a different
+  install: it makes the entire transaction root's, where the flag keeps the elevation
+  per-operation. `--help` prints the two options, and three things are refused rather than
+  guessed at: an unrecognised option, the two flags given together (they differ in destination
+  *and* in privilege, so there is no intent to infer — less than there is behind a typo), and
+  `--user` under `sudo`, because which home directory `$HOME` names there depends on the
+  machine's sudoers configuration. Repeating one option is not a conflict and passes. **`uninstall.sh`
+  takes the same two flags**, which is the half that would otherwise have been left in the worse
+  place: a script that can INSTALL system-wide without a terminal but can only REMOVE per-user.
+  Evidence: this release. [Verified]
+- **The macOS package verifies itself at build time.** The build now fails rather than shipping a
+  package whose components are relocatable, version-checked, missing the overwrite action or
+  missing their installed-state check — and it first proves those assertions can actually fire, by
+  packaging one payload twice and confirming each state appears with the installer defaults and
+  disappears when its key is switched off. A count check precedes the per-component loop so an
+  empty search cannot pass every assertion by running none of them. Evidence: this release. [Verified]
+
+### Fixed
+- **A successful per-user Linux install could report failure and print nothing.** The last step of
+  the transaction discards the copy it set aside, and on the per-user branch that `rm -rf` was the
+  one command after the point of no return with no failure tolerance — so under `set -e` an
+  unremovable parked bundle (an immutable attribute, a read-only remount, a mount point inside it)
+  aborted the script *after* both files were correctly in place but *before* the traps were
+  cleared: exit 1, the rollback handler fired, and none of the confirmation, the PATH note or the
+  duplicate-install warning was printed. Reproduced end to end. The system-wide branch had already
+  guarded its copy of that line; both now also SAY what they could not remove instead of
+  discarding the message with the exit status, because what survives is a full plug-in bundle
+  sitting in the user's tree. Evidence: this release. [Verified]
+- **The Linux uninstaller deleted the one copy of your plug-in that only the installer could
+  restore.** An install interrupted in the two-rename window parks the working bundle as
+  `Anabasis.vst3.prev` inside the installer's scratch directory; `install.sh` puts it back, and
+  nothing else does. `uninstall.sh` swept that directory away with the rest of the scratch —
+  printing a note first that named exactly what was being lost, which made it worse rather than
+  better: the script established that it knew the copy was valuable and destroyed it in the same
+  breath, and the user this reaches is the one whose plug-in has just vanished mid-install and who
+  reaches for the uninstaller to tidy up. The copy is now KEPT and named, with the command that
+  restores it; `--discard-parked` deletes it for anyone who wants the directory gone. Evidence:
+  this release. [Verified]
+- **Re-installing on macOS after moving or deleting the app could leave the destination empty.**
+  Components were built relocatable and version-checked, so the installer looked the bundle up in
+  the system's receipt database and, finding a copy anywhere — including one dragged to the Desktop
+  or sitting in the Trash — wrote the payload over *that* copy and reported success while
+  `/Applications` stayed empty. Version checking failed the same way from the other side, skipping
+  a destination already at or above the package version. Both are now off: every component writes
+  its payload to its declared location from the payload alone. Each component also carries a
+  fail-closed check, so an install that did not land reports failure instead of success.
+  Recorded as **INC-005**. Evidence: this release. [Verified]
+- **An interrupted Linux install could leave no working plug-in behind.** The installer deleted the
+  installed VST3 and only then copied its replacement, so an interruption between the two left
+  nothing. The replacement is now a transaction: the new version is staged, the previous one is
+  moved aside rather than deleted, and the old copy is discarded only once the new one is in place.
+  Interrupting the run — Ctrl-C, a closed terminal, a logout — leaves a working plug-in, and the
+  next run reconciles whatever was left behind. Two limits, stated rather than implied: a signal
+  no handler can catch (a kill, a power loss) landing in the two-rename window between moving the
+  old bundle aside and moving the new one in leaves the plug-in absent until the installer is run
+  again; and the VST3 and the Standalone are replaced one after the other, so an interruption
+  between them can leave the new plug-in beside the old Standalone. Staging happens outside the
+  folder your DAW scans wherever the filesystem allows it, so a rescan mid-install cannot see a
+  half-written bundle. Evidence: this release. [Verified]
+- **An interrupted system-wide install now really does put the previous version back.** The
+  transaction parks the old plug-in in a staging folder only the administrator can open, and the
+  automatic rollback then checked for it *without* administrator rights — so on the normal
+  system-wide path (running the installer and choosing "system-wide" rather than launching it with
+  `sudo`) the check said "nothing parked" even with the old plug-in sitting right there, and
+  interrupting the upgrade at the wrong moment left **no plug-in installed at all** while the only
+  good copy stayed unreachable. Reproduced end to end before the fix, on the two-rename window the
+  transaction exists to protect. Every check inside that folder is now made with the same rights as
+  the writes. The same blindness also stopped a later run from finding the parked copy and from
+  printing the warning that says it is there. Evidence: this release. [Verified]
+- **A Linux install that refuses to start now names every folder that could be blocking it.** The
+  installer declines to stage into a folder it cannot trust — a symlink, one owned by another
+  account, one others can write to — and the per-user message named only the first of the two
+  places it looks. On a machine where `~` and `~/.vst3` sit on different filesystems the blocker is
+  the second one, so the printed instruction removed a folder that was not in the way (and often did
+  not exist), and every re-run failed identically. Both candidates are named now, by the message and
+  the check reading the same list. Separately, if a previous version was parked in a folder that has
+  since become untrustworthy, the run says so instead of passing over it in silence: that copy is
+  neither restored nor deleted, and `./uninstall.sh` is what clears it. Evidence: this release.
+  [Verified]
+- **The uninstaller no longer says "nothing to remove" in the same breath as removing something.**
+  Clearing an installer leftover did not count as work done, so a run that found no plug-in but
+  did clear staged files printed both lines — and the second is the one you read to decide
+  whether anything happened. Evidence: this release. [Verified]
+- **The uninstaller now removes the installer's own leftovers**, by exact name only, so an install
+  killed by a signal no handler catches does not survive a deliberate uninstall. Evidence: this
+  release. [Verified]
+- **A click that dismissed a menu could also operate the control underneath it.** The framework
+  re-delivers that click by design, and several controls act on the press itself — the A/B switch,
+  the graph-well toggles, a knob's Alt-click reset, and the panel backdrops, where the Save Preset
+  panel closing threw away the name being typed. One transparent shield now covers the editor
+  whenever any pop-up is on screen and absorbs the dismissing click, including scroll and pinch.
+  The residual limitation is registered as **KI-013**: the absorbed click still counts toward the
+  system's multi-click run. Evidence: this release. [Verified]
+- **A pop-up menu's border could be drawn from unsynchronised state.** ([**ADR-0027**](docs/architecture/design-decisions/ADR-0027-painting-thread-reads-editor-bookkeeping.md)
+  — Accepted 2026-08-14; asking the editor a question from the drawing thread is a new cross-thread
+  path, which is an Architecture Review Gate item. Review found the path unflagged and the owner
+  then cleared the gate. What follows is the defect; the gate was about the path existing at all.) The look-and-feel asks the
+  editor whether one of its own menus is open, and that question is answered during PAINTING —
+  which, where hardware-accelerated drawing is enabled (macOS and Windows), happens on a different
+  thread from the one that opens and closes menus. The counter behind the answer is now atomic, and
+  the editor tears the hook down after the drawing thread has stopped rather than before. No
+  behaviour change; it removes undefined behaviour that a sanitizer would report.
+  Evidence: this release. [Verified]
+- **Menus and drop-downs no longer outlive the editor.** Closing the editor with a drop-down open
+  left the drop-down on screen over the host; so did switching to another application while the
+  pointer rested on the menu. Both are now cancelled. The application-switch check calibrates
+  itself when a pop-up opens, so a plug-in hosted in a process that is never the foreground
+  application keeps working menus instead of losing every one of them the moment it opens.
+  Evidence: this release. [Verified]
+- **Leaving the application no longer commits a half-typed value.** A value box being edited is
+  abandoned rather than applied when the editor releases keyboard focus on the user's behalf, and
+  the focus release itself no longer drags the host window back in front of the application the
+  user just switched to. Evidence: this release. [Verified]
+- **Turning tooltips off now switches them off.** The setting only lengthened the appear delay,
+  which a tooltip already on screen ignores — so a visible tip stayed, and a moving pointer chained
+  new ones past the setting indefinitely. Tooltips are now refused at the source. Evidence: this
+  release. [Verified]
+- **Long menu entries are no longer clipped**, and **disabled menu entries now look disabled.** The
+  width the menu asked for was smaller than the width its own row drawing spends, so the longest
+  item was measured narrower than it draws; both now read the same constants. A row the menu
+  reports as unavailable is dimmed instead of drawing identically to a selectable one.
+  Evidence: this release. [Verified]
+- **The preset menu no longer splits into two columns** once enough user presets are saved, and no
+  longer draws a doubled border. Evidence: this release. [Verified]
+- **Re-selecting the preset that is already loaded, with nothing edited, no longer discards your
+  redo history** and no longer leaves an undo step that does nothing when pressed. Re-applying a
+  preset over an *edited* sound is still a real restore and remains undoable. The apply itself is
+  unchanged and is **not** inert: it still re-writes the parameter surface and still takes the
+  §2.8 forced duck, so the brief dip is the same as any preset change — what changed is the undo
+  bookkeeping afterwards, not the audio. **This works in a project opened from your DAW, which is
+  where it matters and where the first cut did not reach**: the check that decides "nothing changed"
+  compared a dirty-marker value that a session load deliberately leaves blank, so in any restored
+  project it always read "something changed" and did neither half of what this entry promises. It
+  now compares what that marker MEANS — was the preset showing as edited before, and is it now —
+  rather than the value itself. This changes stored behaviour, not the stored format.
+  Evidence: this release. [Verified]
+- **A damaged A/B slot can no longer put one session's preset name on another session's sound.**
+  ([**ADR-0026**](docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md) —
+  Accepted 2026-08-14; this is a change to how a stored session is INTERPRETED, so it is an
+  Architecture Review Gate item, and the owner cleared the gate after review found it unflagged.)
+  A stored slot that survives with its labels but without its parameter payload — hand-edited or
+  truncated session data — now resolves to defaults as a whole, the same rule the live surface
+  already followed, instead of lending its name and preset identity to whatever was loaded.
+  This changes stored behaviour, not the stored format. Evidence: this release. [Verified]
+
+### Changed
+- **The Settings tooltip for UI Scale** now names UI scale rather than window size, matching the
+  label and the accessibility title beside it; the control scales the whole interface, and on a
+  host applying its own DPI scale the window is not the quantity it describes. Display text only —
+  no stored setting changed. Evidence: this release. [Verified]
+
+### Known issues
+- **KI-013** — the click absorbed by the pop-up shield still counts toward the system's multi-click
+  run, so a dismissal immediately followed by a click on the same knob can register as a
+  double-click. See `docs/KNOWN_ISSUES.md`.
+- **KI-014** — on macOS, holding a letter or digit in the Save Preset name field types one
+  character and stops, while punctuation repeats normally. Traced to platform key-repeat handling
+  outside this plug-in's control; the fixes considered were rejected as worse than the symptom.
+  See `docs/KNOWN_ISSUES.md`.
 
 ## [0.1.3] — 2026-08-09
 
