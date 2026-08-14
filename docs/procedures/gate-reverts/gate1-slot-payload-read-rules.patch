@@ -1,0 +1,22 @@
+diff --git a/src/PluginProcessor.cpp b/src/PluginProcessor.cpp
+index 7df84aa..4f237fe 100644
+--- a/src/PluginProcessor.cpp
++++ b/src/PluginProcessor.cpp
+@@ -1769,7 +1769,7 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
+         // DEFAULTS, never "keep whatever is live". `resetSlotFieldsToDefaults`
+         // has already planted `defaultSlot` here, so declining the tree IS the
+         // fix, and the slot stays coherent: sound and metadata from one place.
+-        if (stored.isValid() && stored.getChildWithName ("ANABASIS").isValid())
++        if (stored.isValid())
+             storedSlot = stored.createCopy();
+         // THE ASYMMETRY WITH THE STORED SLOT ABOVE IS DELIBERATE, and worth
+         // stating because it looks like an oversight. The active slot's SOUND
+@@ -1788,7 +1788,7 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
+         // never installed. `liveSurfaceRestored` is that test, and it keeps the
+         // rule identical on both slots: metadata is adopted only alongside the
+         // parameters it describes.
+-        if (live.isValid() && liveSurfaceRestored)
++        if (live.isValid())
+         {
+             // The ANABASIS child above is already the live surface; take the
+             // slot's non-parameter fields (name/identity/baseline/trims/mask)

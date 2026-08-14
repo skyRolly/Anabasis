@@ -1,0 +1,14 @@
+diff --git a/src/gui/PluginEditor.cpp b/src/gui/PluginEditor.cpp
+index 9a1f08d..099fe33 100644
+--- a/src/gui/PluginEditor.cpp
++++ b/src/gui/PluginEditor.cpp
+@@ -733,7 +733,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
+     // (`withParentComponent (this)` in `showPresetMenu`), and `presetMenusOpen`
+     // counts exactly it — so this now says what the comment always claimed:
+     // a menu PARENTED to this editor is on screen.
+-    lnf.isPopupMenuOnScreen = [this] { return presetMenusOpen.load (std::memory_order_relaxed) > 0; };
++    // ADR-0027 declined: the editor supplies no painting-thread predicate.
++    lnf.isPopupMenuOnScreen = nullptr;
+ 
+     // -- Settings rows (§6.4, all InternalState-bound) -----------------------
+     auto& ist = proc.internalState.state();
