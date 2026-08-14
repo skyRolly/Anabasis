@@ -3975,6 +3975,53 @@ static void testEveryComboMenuFitsItsControl()
     // figure is confirmed on all three runners.
     std::printf ("      comboFit: tightest combo margin %d px (advisory; the gate is >= 0)\n",
                  tightest);
+
+    // WHAT CAN BE ASSERTED ON ALL THREE RUNNERS TODAY, since the pixel floor
+    // cannot be: the measurement's ARITHMETIC, which is font-independent because
+    // both sides below measure the same string with the same font on the same
+    // machine.
+    //
+    // MEASURED, and the first draft of this comment claimed more than the
+    // assertion delivers. Three mutants were run:
+    //
+    //   * `idealWidth = textW` (chrome dropped from the measurement) — KILLED,
+    //     by this assertion naming the cause and by `shortcutRow` reporting the
+    //     symptom (-30 px). That is the defect class that produced the original
+    //     clipping, so it is the one worth naming.
+    //   * `chrome = padX * 2.0f` (a term deleted from the shared constant) —
+    //     SURVIVES. It has to: measurement and drawing both read `chrome`, so
+    //     redefining it moves them together. That drift is designed out by
+    //     sharing the constant rather than tested, which is the stronger
+    //     arrangement, but it means no assertion here can catch it.
+    //   * `r.reduced (padX * 2.0f, …)` in `drawPopupMenuItem` (the DRAWING
+    //     spending more than the constant says) — SURVIVES, and this one is a
+    //     real gap. Both width tests RECONSTRUCT the row's rectangles from the
+    //     constants instead of observing what was drawn, so a drawing that stops
+    //     agreeing with `chrome` is invisible to them. Closing it needs the test
+    //     to render a row and measure the result; reconstructing it more
+    //     carefully cannot, since the reconstruction is the copy that drifts.
+    //
+    // None of this replaces the floor: a font whose advances grew until a real
+    // row stopped fitting is typography, not arithmetic, which is what the pixel
+    // figure is for and why the advisory print stays until the three-runner
+    // numbers exist.
+    {
+        const auto f = lf.getPopupMenuFont();
+        const juce::String probe ("A measurement probe long enough to clear the minimum row");
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (f, probe, 0.0f, 0.0f);
+        const int textW = (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth());
+
+        int w = 0, h = 0;
+        lf.getIdealPopupMenuItemSize (probe, false, 23, w, h);
+
+        // Premise: the `jmax` against `minimumRow` must not be the term that
+        // wins, or the identity below is asserting the floor instead.
+        check (textW + (int) menuMetrics::chrome > menuMetrics::minimumRow,
+               "comboFit: (premise) the probe row is wider than the minimum-row floor");
+        check (w - textW == (int) menuMetrics::chrome,
+               "comboFit: the ideal width is the measured text plus exactly the chrome a row draws");
+    }
 }
 
 // The width budget for a row that carries a SHORTCUT, which

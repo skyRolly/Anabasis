@@ -43,13 +43,25 @@ far as the tool is concerned, and gets re-anchored along with the real ones.)
 
 ```bash
 python3 scripts/check-citations.py --check              # base defaults to origin/main; exit 1 on drift
-python3 scripts/check-citations.py --check --base HEAD~1
+python3 scripts/check-citations.py --check --base @{u}  # and against what CI will use — see below
 python3 scripts/check-citations.py --fix                # re-anchor, then RE-READ what it moved
 ```
+
+**`HEAD~1` is not that base, and reaching for it is how this gate went red twice in a row.** With
+the drifting edits still uncommitted, `HEAD` IS the commit you are pushing on top of, so `HEAD~1`
+is one too far back — it compares against a revision CI will never look at, passes, and says
+nothing about the one it will. `@{u}` is right in both states and is the form to use.
 
 Run `--check` before pushing any change that moves lines in a tracked source file, and `--fix` in
 the SAME change set that moved them — that is the repository's re-anchoring rule, and the gate
 exists because 0.1.4 proved it does not survive being remembered.
+
+**A repair looks exactly like drift to this tool, so declare it in the same commit.** `--check`
+compares the TEXT at the base line against the text at the current line; it has no way to know
+that `:330 -> :342` was a correction rather than a slip. So the run AFTER a re-anchor asks for the
+re-anchor to be reverted, and the gate is red on the commit that fixed it — unless the new
+spelling is added to `DELIBERATE_REAIMS` in that same commit. Re-anchor and declare together;
+never in two pushes.
 
 **Run it against BOTH bases, and this is not optional pedantry.** `--check` alone uses
 `origin/main`; CI compares against the PREVIOUS PUSH. Those two disagree about which branch the

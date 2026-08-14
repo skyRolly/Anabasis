@@ -157,6 +157,17 @@ DELIBERATE_REAIMS = set([
     # matching and the re-aim it excuses reports as fresh drift.
     ("docs/architecture/THREAD_MODEL.md",
      "src/gui/PluginEditor.h:616"),
+    # `presetMenusOpen`, moved :330 -> :342 by the same comment block, and this
+    # entry is the HALF THAT WAS MISSED when the THREAD_MODEL one above was
+    # written in the same commit. The repair itself is what needs declaring: this
+    # tool compares TEXT at the base line against text at the current line, so a
+    # correct re-anchor and a drift are the same event to it, and the run that
+    # follows a repair asks for the repair to be REVERTED (`:342 -> :330`). Fixing
+    # an anchor without declaring it therefore turns the gate red on the commit
+    # that fixed it — which is exactly what happened, twice in a row, on this
+    # branch. Re-anchor and declare in ONE change set, never in two.
+    ("docs/architecture/design-decisions/ADR-0027-painting-thread-reads-editor-bookkeeping.md",
+     "src/gui/PluginEditor.h:342"),
     ("docs/architecture/design-decisions/ADR-0013-release-trim-reaches-auto-poles.md",
      "src/dsp/AnabasisEngine.cpp:518-520"),
     ("docs/architecture/design-decisions/ADR-0014-frozen-trim-restore.md",
