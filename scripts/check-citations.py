@@ -144,7 +144,7 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/LATENCY_MODEL.md",
      "src/PluginProcessor.cpp:842-850"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:1871"),
+     "src/PluginProcessor.cpp:1885"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "tests/state_tests.cpp:2141"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",

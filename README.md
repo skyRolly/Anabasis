@@ -33,8 +33,11 @@ headless Linux machine, no IDE.
   `tests/` (**1135 checks** — `AnabasisTests` 296 + `AnabasisStateTests` 839 — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
-  [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured numbers and
-  `docs/policies/TESTING_POLICY.md` for the gate, which is deliberately stated in one place).
+  [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured DSP numbers — aliasing, latency,
+  accuracy, each with the machine and method that produced it (constraint C2); it does NOT carry the
+  suite COUNT, and this line used to imply it did. The count's home is `docs/HANDOVER.md`'s Test
+  Status row, re-counted from the suites' own printed output — and `docs/policies/TESTING_POLICY.md`
+  for the gate, which is deliberately stated in one place).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.0** at commit `f8f8864…`, the
   same revision Anamorph pins) and the plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.

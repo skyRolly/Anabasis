@@ -51,7 +51,7 @@ There are **two formats**, deliberately different in fidelity (ADR-0007 option H
 ## 1. The session blob
 
 `getStateInformation` builds a `juce::ValueTree`, serialises it to XML and wraps it with
-`copyXmlToBinary` (`getStateInformation`, `src/PluginProcessor.cpp:1617-1673`). Structure, in write order:
+`copyXmlToBinary` (`getStateInformation`, `src/PluginProcessor.cpp:1631-1687`). Structure, in write order:
 
 ```
 AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, src/PluginProcessor.cpp:8)
@@ -186,10 +186,10 @@ The §5.3 macro-baseline child ADR-0007 gave a per-slot home. **No code path in 
 originates one**: the only constructor of a `BASELINE` tree in the whole repository is the
 test that seeds one (`tests/state_tests.cpp:2141`). The wrapper *adopts* the child from an
 incoming slot or session, *carries* it through A/B, undo and saves
-(`src/PluginProcessor.cpp:1153-1154, 1375, 1804` — `saveSlotFromLive`, `applySlotToLive`,
+(`src/PluginProcessor.cpp:1153-1154, 1375, 1818` — `saveSlotFromLive`, `applySlotToLive`,
 `setStateInformation`), and *drops* it where the state it describes
 is replaced — both preset-apply paths and the defaults-based restore
-(`src/PluginProcessor.cpp:1496, 1571, 1602` — `applyFactoryPreset`, `applyPresetFile`,
+(`src/PluginProcessor.cpp:1496, 1583, 1616` — `applyFactoryPreset`, `applyPresetFile`,
 `resetSlotFieldsToDefaults`). So the child is live schema with defined
 carriage semantics and no producer — a reader must tolerate it, a writer must not invent
 one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
@@ -198,7 +198,7 @@ one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
 
 Written **only** after a Learn commit; its absence is the discriminator, so an
 instance that never learned writes no child and a loaded reference is never resurrected
-from defaults (`getStateInformation`'s ADAPTIVE block, `src/PluginProcessor.cpp:1655-1669`). While a loaded restore is staged but
+from defaults (`getStateInformation`'s ADAPTIVE block, `src/PluginProcessor.cpp:1669-1683`). While a loaded restore is staged but
 unconsumed, the staged values are authoritative for a re-save (the mirror rule); the
 residual one-save window between the consumer's `exchange` and its adoption is documented
 at the site and in ADR-0012 §Known limits, not claimed away.
@@ -266,7 +266,7 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 
 ## 2. Read rules (structural tolerance — ADR-0007 option C)
 
-`setStateInformation` (`src/PluginProcessor.cpp:1675-1872`), in order:
+`setStateInformation` (`src/PluginProcessor.cpp:1689-1886`), in order:
 
 | Input | Behaviour |
 |---|---|
@@ -276,8 +276,8 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 | `schemaVersion` > 1 | **Not a rejection** — the reader falls back to shape. A future contributor adding a version gate to the read path is reversing ADR-0007 (its §Consequences says exactly this) |
 | Missing `ANABASIS` child | **Defaults**, not "keep live" — a valid root that omits the surface means the default surface. **This now defaults the ACTIVE SLOT'S FIELDS too**, and that is a widening of the rule worth stating rather than deducing from the row below: `presetName`, the ADR-0022 identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` are adopted from the active `SLOT` only when the root surface was restored, so a blob carrying a full `AB` block under a root with no `ANABASIS` loads with the DEFAULT name, identity, baseline, trims and an EMPTY detach mask, where it previously adopted all five. Deliberate, and the §5.3 detach mask is the case that has to be looked at rather than waved through: detachment is not otherwise recoverable, so dropping it loses user intent. It is dropped anyway, because the alternative loses more — a mask names parameters that are detached from the MACRO SURFACE, and the surface this restore installed came from defaults, so the mask would describe detachments from a mapping the session never had. A shape with no producer: nothing this plug-in writes omits the root `ANABASIS` while writing `AB`, so no session in the wild takes this path |
 | Missing `ANABASIS_INTERNAL` / missing fields | Defaults first, overlay what exists (§1.6) |
-| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1745`, the `hasType ("SLOT")` filter) |
-| `SLOT` present but carrying **no `ANABASIS` child** | **The whole slot resolves to defaults**, and the two slots reach that by different routes because they are not symmetric. The STORED slot is declined outright and keeps the `defaultSlot` planted by `resetSlotFieldsToDefaults()`, because `storedSlot` is a processor member that survives across restores — accepting a payload-less tree there would leave the PREVIOUS project's sound under this project's name, since `applySlotToLive` adopts parameters only when the payload is valid but adopts `presetName`, the identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally. The ACTIVE slot needs no such test for its sound (that comes from the ROOT `ANABASIS`, not from the slot's redundant copy), so instead its METADATA is adopted only when the root surface was actually restored — otherwise the surface came from defaults and the labels would describe a sound that was never installed. The consequence to read off that, because it is the shape a reviewer expects to be symmetric and is not: a blob with a valid ROOT surface whose ACTIVE slot has lost its payload still adopts that slot's name, identity, baseline, trims and mask — the metadata is gated on the root surface, never on the active slot's own `ANABASIS` child. Defensible (both halves came out of the same blob, and the sound that was installed is the one the root described), and it is why the two slots are governed by two different tests rather than one. One rule, stated per slot ([**ADR-0026**](design-decisions/ADR-0026-slot-payload-read-rules.md) — ⊕ NOT RATIFIED, the gate on this semantic change is OPEN): **metadata is adopted only alongside the parameters it describes** (`src/PluginProcessor.cpp:1728` the `liveSurfaceRestored` flag, `:1693` the stored-slot guard, `:1712` the active-slot gate; pinned by `testAMalformedStoredSlotCannotSplitSoundFromMetadata`) |
+| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1759`, the `hasType ("SLOT")` filter) |
+| `SLOT` present but carrying **no `ANABASIS` child** | **The whole slot resolves to defaults**, and the two slots reach that by different routes because they are not symmetric. The STORED slot is declined outright and keeps the `defaultSlot` planted by `resetSlotFieldsToDefaults()`, because `storedSlot` is a processor member that survives across restores — accepting a payload-less tree there would leave the PREVIOUS project's sound under this project's name, since `applySlotToLive` adopts parameters only when the payload is valid but adopts `presetName`, the identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally. The ACTIVE slot needs no such test for its sound (that comes from the ROOT `ANABASIS`, not from the slot's redundant copy), so instead its METADATA is adopted only when the root surface was actually restored — otherwise the surface came from defaults and the labels would describe a sound that was never installed. The consequence to read off that, because it is the shape a reviewer expects to be symmetric and is not: a blob with a valid ROOT surface whose ACTIVE slot has lost its payload still adopts that slot's name, identity, baseline, trims and mask — the metadata is gated on the root surface, never on the active slot's own `ANABASIS` child. Defensible (both halves came out of the same blob, and the sound that was installed is the one the root described), and it is why the two slots are governed by two different tests rather than one. One rule, stated per slot ([**ADR-0026**](design-decisions/ADR-0026-slot-payload-read-rules.md) — ⊕ NOT RATIFIED, the gate on this semantic change is OPEN): **metadata is adopted only alongside the parameters it describes** (`src/PluginProcessor.cpp:1742` the `liveSurfaceRestored` flag, `:1693` the stored-slot guard, `:1712` the active-slot gate; pinned by `testAMalformedStoredSlotCannotSplitSoundFromMetadata`) |
 | Unknown properties/children anywhere | Ignored, and **not** preserved on re-save (the writer emits the schema, not the input) |
 | Out-of-range values | Clamped at the read boundary (`raw` to [0,1]; indices through their clamps; trims per-field finite-checked in `injectTrims`; `int_uiScale` to the ladder) |
 

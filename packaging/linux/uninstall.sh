@@ -65,7 +65,13 @@ remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
                     "$1/.anabasis-probe" \
                     "$2/.Anabasis.new"
     do
-        if [ -e "$_scratch" ]; then
+        # `-L` FIRST, for the reason `stage_dir_is_adoptable` was fixed for: `-e`
+        # follows the link, so a DANGLING symlink wearing a scratch name reads as
+        # "absent" and is never cleaned. The installer never creates such a link,
+        # so this is residue rather than a defect — but the two lists were using
+        # different tests for the same question, and that is how one of them ends
+        # up wrong later.
+        if [ -L "$_scratch" ] || [ -e "$_scratch" ]; then
             # Never fatal. Under `set -e` an `rm && echo` list is one command whose
             # status is tested, so a scratch file this user cannot remove (owned by
             # a root-mode install, an immutable parent) would abort the script —

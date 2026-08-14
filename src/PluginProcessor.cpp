@@ -507,7 +507,7 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
     // before calling this (`src/PluginProcessor.cpp:1521` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1577` in `applyPresetFile` — spelled
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1591` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -1545,6 +1545,18 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
         return false;
     const auto bracket = openPresetUndoBracket();
 
+    // SCOPED IN A BLOCK, so this path closes its bracket where the factory path
+    // does — OUTSIDE the guard. The two were asymmetric: `applyFactoryPreset`
+    // nests its guard and lets it destruct before `relandMacroCurve`, the
+    // baseline seed and the bracket close, while this one held `guard` alive to
+    // the `return` and therefore closed the bracket INSIDE it. Harmless today —
+    // the close does `saveSlotFromLive()` and `presetShapeFromLive()`, both pure
+    // reads — but the bracket's PRE-state was captured outside the guard and its
+    // comparand inside it, and the guard's destructor aborts whatever mapping is
+    // pending. The moment anything the guard suppresses becomes visible in the
+    // slot tree, the two paths would be comparing different things and only one
+    // of them would be wrong. Aligning the scopes costs a brace.
+    {
     const MacroEngine::ScopedRestore guard (*macroEngine);   // §5.3, as above
     // DELIBERATELY before the apply, and NOT undone on failure: a failed
     // applyPreset may still have written some parameters (a partial apply),
@@ -1574,6 +1586,8 @@ bool AnabasisAudioProcessor::applyPresetFile (const juce::File& file)
     // preset folder — a file loaded from outside simply matches no list row
     // and leaves the menu unticked, which is what it should show.
     liveSelection  = { PresetManager::Selection::Kind::userFile, {}, file };
+    }   // guard ends here, as it does on the factory path
+
     presetBaseline = presetShapeFromLive();    // dirty marker datum
     // As the factory path: a completed apply that restored nothing is not a new
     // user action, so it leaves no step and keeps the redo line.

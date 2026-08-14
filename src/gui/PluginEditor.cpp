@@ -2499,6 +2499,17 @@ void AnabasisAudioProcessorEditor::refreshPopupShield()
 
     if (wanted)
     {
+        // NOTE THE ASYMMETRY: the shield is sent to FRONT on the way up and never
+        // sent back on the way down — only its interception is toggled. So after
+        // the first pop-up of a session it sits permanently ahead of
+        // `dimOverlay`, the three backdrops and `aboutLink`. Harmless as it
+        // stands: it paints nothing, and with interception off
+        // `Component::getComponentAt` skips it, so nothing is covered visually or
+        // for input. The consequence to know about is for what comes LATER — a
+        // new always-on-top overlay, or any hit test that walks the child list
+        // itself instead of going through `getComponentAt`, would silently find
+        // the shield in front of it.
+        //
         // Calibrate BOTH environment probes at the one instant we KNOW the user
         // is working in this editor: a pop-up has just opened, and only a click
         // on one of our own controls can do that. The rule is the same for each

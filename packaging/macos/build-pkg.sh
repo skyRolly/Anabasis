@@ -200,8 +200,17 @@ grep -q 'customize="allow"' "$WORK/expanded/Distribution" \
 # plug-in components asserted by patterns never shown to be producible for THEM:
 # if either were analysed differently — not marked relocatable by default, say —
 # its `<relocate>` assertion would pass by finding nothing. That is the same
-# silent success as INC-005 itself, one level up. Three extra `pkgbuild` runs is
-# the whole cost.
+# silent success as INC-005 itself, one level up.
+#
+# THE COST, COUNTED PROPERLY. An earlier version of this comment said "three
+# extra `pkgbuild` runs", which undercounts by half: the probe runs TWO arms per
+# component — `defaults` and `patched` — over three components, so it is SIX extra
+# `pkgbuild` invocations and six extra `pkgutil --expand` passes over the full
+# universal payload, on top of the three real component builds. Nine `pkgbuild`
+# runs where a naive build does three, paid on every packaging run rather than
+# only when a plist changes: the packaging step's runtime roughly triples. That is
+# the price of the assertions below being falsifiable rather than decorative, and
+# it is worth knowing before someone times the job and calls it a regression.
 #
 # The probe fixes `--install-location` for every component instead of using the
 # real destination: the membership lists come from the component plist and from
