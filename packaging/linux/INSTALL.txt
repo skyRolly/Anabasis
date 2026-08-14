@@ -59,6 +59,15 @@ A) Installer installation (recommended) / 脚本安装(推荐)
   To install system-wide without being asked / 直接进行系统级安装:
       sudo ./install.sh
 
+  To answer up front, e.g. from a script that has no terminal / 在无终端的脚本中
+  直接指定安装位置:
+      ./install.sh --user       (current user / 当前用户)
+      ./install.sh --system     (all users, asks for your password when it needs it /
+                                 系统级,需要时会提示输入密码)
+
+  Without a flag the question is only asked when a terminal is present; otherwise the
+  per-user default is used. / 未指定选项时,只有在终端环境下才会询问,否则按用户级安装。
+
   To remove later / 以后卸载:
       ./uninstall.sh            (current user / 当前用户)
       sudo ./uninstall.sh       (system-wide / 系统级)

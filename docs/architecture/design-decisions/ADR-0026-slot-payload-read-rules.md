@@ -1,21 +1,22 @@
 # ADR-0026 — A `SLOT` without its parameter payload resolves to defaults, and metadata travels only with the parameters it describes
 
-> **⊕ NOT RATIFIED — THE ARCHITECTURE REVIEW GATE IS OPEN.** This ADR records a decision the owner
-> has **not** taken. It exists because the change it describes was implemented and merged into the
-> 0.1.4 branch **without being flagged as gated**, which is the miss, not the change. Under
-> `ARCHITECTURE_REVIEW_GATE.md` a "Serialization Registry change — any field add/remove/**semantic
-> change**" must not merge on a green build, and `SESSION_COMPATIBILITY_POLICY.md` rule 1 says a
-> field may not "have its meaning changed without an ADR + migration". Both apply here. The 0.1.4
-> round flagged only the ADR-0021 installer amendment and added ADR-0025 for the testing-policy
-> exception; **neither covers this**, and `SESSION_COMPATIBILITY_POLICY.md` was untouched. Found by
-> review, 2026-08-13.
+> **✅ RATIFIED — THE ARCHITECTURE REVIEW GATE IS CLEARED (2026-08-14).** The owner approved this
+> decision. How it arrived stays in the record, because the record of a decision includes how it was
+> nearly taken without one: the change was implemented and merged onto the 0.1.4 branch **without
+> being flagged as gated**, and review caught it on 2026-08-13. Under `ARCHITECTURE_REVIEW_GATE.md`
+> a "Serialization Registry change — any field add/remove/**semantic change**" must not merge on a
+> green build, and `SESSION_COMPATIBILITY_POLICY.md` rule 1 says a field may not "have its meaning
+> changed without an ADR + migration". The round had flagged only the ADR-0021 installer amendment
+> and added ADR-0025 for the testing-policy exception; neither covered this.
 >
-> **What the owner is being asked to decide** is the read rule below, not whether to keep the code:
-> the "Alternatives" section states exactly what reverting costs and which two lines carry it.
+> What the owner decided is the read rule below. The "Alternatives" section keeps its measured
+> table — three states, each executed rather than predicted — because a ratified decision is worth
+> more when the options it beat are on the record beside it.
 
-**Status:** Proposed — 2026-08-13. **Not** covered by the standing blanket approval for the
-post-v0.1.0 rounds: that approval is what let implementation proceed, and a gated change is
-precisely the class a green build does not clear.
+**Status:** **Accepted — 2026-08-14**, on the owner's explicit approval of this record. It was NOT
+covered by the standing blanket approval for the post-v0.1.0 rounds: that approval is what let
+implementation proceed, and a gated change is precisely the class a green build does not clear, so
+it needed a decision of its own and now has one.
 
 ## Context
 

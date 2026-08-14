@@ -1,24 +1,23 @@
 # ADR-0027 — A look-and-feel override may read one editor counter from the painting thread, through an atomic
 
-> **⊕ NOT RATIFIED — THE ARCHITECTURE REVIEW GATE IS OPEN.** `ARCHITECTURE_REVIEW_GATE.md` lists
-> "**Thread Model change** — new thread, new cross-thread path, new atomic ordering
-> (`THREAD_MODEL.md`)" among the changes that "must NOT be auto-merged even if CI, the self-tests,
-> and pluginval all pass"; `CLAUDE.md` repeats "threading-model change" in its hard-stop list; and
-> `THREADING_POLICY.md`'s allowed-paths table closes with "Any path not in this table is a new
-> cross-thread path → Architecture Review Gate." This is such a path, and 0.1.4 introduced it
-> **without flagging it**. Found by review, 2026-08-13.
->
-> **The self-indicting part, recorded because it is the useful half of the lesson.** The paragraph
-> added to `THREAD_MODEL.md` in the round that made the read atomic says, in its own words, that
-> this is "the first GUI-side cross-thread read that is NOT a stateless `const` peek". That
-> sentence IS the gate trigger, written out by the change that should have stopped for it, in the
-> same commit — while the PR description continued to assert "no threading change". A rule can be
-> quoted accurately and still not be applied.
+> **✅ RATIFIED — THE ARCHITECTURE REVIEW GATE IS CLEARED (2026-08-14).** The owner approved this
+> decision. How it arrived stays in the record, because it is the useful half:
+> `ARCHITECTURE_REVIEW_GATE.md` lists "**Thread Model change** — new thread, new cross-thread path,
+> new atomic ordering (`THREAD_MODEL.md`)" among the changes that "must NOT be auto-merged even if
+> CI, the self-tests, and pluginval all pass"; `CLAUDE.md` repeats "threading-model change" in its
+> hard-stop list; and `THREADING_POLICY.md`'s table closes with "Any path not in this table is a new
+> cross-thread path → Architecture Review Gate." 0.1.4 introduced such a path **without flagging
+> it**, and the paragraph added to `THREAD_MODEL.md` in the round that made the read atomic states
+> the trigger in its own words — "the first GUI-side cross-thread read that is NOT a stateless
+> `const` peek" — written by the change that should have stopped for it, in the same commit, while
+> the pull request went on asserting "no threading change". A rule can be quoted accurately and
+> still not be applied. Found by review 2026-08-13; decided 2026-08-14.
 
-**Status:** Proposed — 2026-08-13. **Not** covered by the standing blanket approval for the
-post-v0.1.0 rounds. `DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger row for a cross-thread path
-requires `THREAD_MODEL.md` **and** `THREADING_POLICY.md` **and** an ADR; only the first was done,
-which is what this record and the accompanying table row repair.
+**Status:** **Accepted — 2026-08-14**, on the owner's explicit approval of this record. It was NOT
+covered by the standing blanket approval for the post-v0.1.0 rounds.
+`DOCUMENTATION_LIFECYCLE_POLICY.md`'s trigger row for a cross-thread path requires
+`THREAD_MODEL.md` **and** `THREADING_POLICY.md` **and** an ADR; only the first was done, which is
+what this record and the accompanying table row repaired.
 
 ## Context
 
@@ -78,8 +77,8 @@ Two facts about when this arrived, because they are not the same:
 
 ## Consequences
 
-- `THREADING_POLICY.md`'s allowed-paths table gains a **Message → Painting** row, marked pending
-  this ADR's ratification, so the table stays the authority it claims to be.
+- `THREADING_POLICY.md`'s allowed-paths table gains a **Message → Painting** row, settled rather
+  than pending, so the table stays the authority it claims to be.
 - `THREAD_MODEL.md` already carries the mechanism and the teardown-ordering rule; this ADR is the
   decision the policy row and that description both point at.
 - **Untestable by the suites, deliberately stated.** No headless test can open a modal menu or run a

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Anabasis Linux installer. Two modes, chosen interactively:
+# Anabasis Linux installer. Two modes — `--user` / `--system`, or chosen
+# interactively when neither is given and stdin is a terminal:
 #
 #   1) Current user (default, no root)  VST3 -> ~/.vst3, Standalone -> ~/.local/bin
 #   2) System-wide  (needs root)        VST3 -> /usr/lib/vst3, Standalone -> /usr/local/bin
@@ -29,11 +30,56 @@ SUDO=''
 [ -f "$APP_SRC" ]  || { echo "error: Anabasis (Standalone) not found next to install.sh" >&2; exit 1; }
 
 # ---------------------------------------------------------------- mode choice
+# EXPLICIT SELECTION EXISTS BECAUSE THE PROMPT CANNOT ALWAYS BE ASKED. The gate
+# on it is `[ -t 0 ]`, so any non-interactive invocation — a provisioning script,
+# a CI step, `sh install.sh < /dev/null` — silently took the per-user default,
+# and the ONLY non-interactive route to a system-wide install was to run the
+# whole script as root. That is not the same install: `sudo ./install.sh` makes
+# the entire transaction root's, where answering `2` at the prompt elevates one
+# operation at a time and is the path the staging guards are written for.
+requested=''
+for arg in "$@"; do
+    case "$arg" in
+        --user)   requested=user   ;;
+        --system) requested=system ;;
+        -h|--help)
+            echo "usage: ./install.sh [--user|--system]"
+            echo "  --user    install for the current user (~/.vst3) - the default"
+            echo "  --system  install for all users (/usr/lib/vst3) - needs root"
+            echo "With neither option, an interactive run asks; a non-interactive one"
+            echo "installs for the current user."
+            exit 0 ;;
+        *)
+            echo "error: unrecognised option '$arg'" >&2
+            echo "usage: ./install.sh [--user|--system]" >&2
+            exit 1 ;;
+    esac
+done
+
 mode=user
 
 if [ "$(id -u)" -eq 0 ]; then
+    # `--user` AS ROOT IS REFUSED RATHER THAN GUESSED. The per-user branch writes
+    # to `$HOME`, and under `sudo` whose home that is depends on the sudoers
+    # configuration (`always_set_home`, `env_keep`) — so the same command would
+    # install to `/root/.vst3` on one machine and the caller's folder, root-owned,
+    # on another. Neither is what the flag was asking for.
+    if [ "$requested" = user ]; then
+        echo "error: --user cannot be combined with running as root: which home directory" >&2
+        echo "       \$HOME names under sudo depends on the sudoers configuration, so the" >&2
+        echo "       install location would not be predictable." >&2
+        echo "       Re-run without sudo for a per-user install." >&2
+        exit 1
+    fi
     mode=system
     echo "Running as root - installing system-wide (for all users)."
+elif [ -n "$requested" ]; then
+    mode="$requested"
+    if [ "$mode" = system ]; then
+        echo "Installing system-wide (--system)."
+    else
+        echo "Installing for the current user (--user)."
+    fi
 elif [ -t 0 ]; then
     cat <<'EOF'
 Anabasis Linux Installer
@@ -58,6 +104,7 @@ EOF
     esac
 else
     echo "Not running on a terminal - installing for the current user (the default)."
+    echo "Pass --system to install for all users instead."
 fi
 
 # ------------------------------------------------------------ install helpers
@@ -116,6 +163,23 @@ stage_dir_is_adoptable() {      # $1 = candidate, $2 = uid that must own it
     [ -d "$1" ] || return 1     # a file wearing the directory's name
     _st=$(LC_ALL=C stat -c '%u %a' "$1" 2>/dev/null) || return 1
     [ "${_st%% *}" = "$2" ] || return 1
+    # BOTH PATTERNS ARE ANCHORED TO THE LAST TWO DIGITS, which is what makes them
+    # correct for a mode string of either length. `%a` prints three digits
+    # normally but FOUR when any special bit is set — `2700` for set-gid — so a
+    # test written against a fixed offset would read the wrong digits. Anchored
+    # at the end, `2770` is still rejected as group-writable and `2700` is still
+    # accepted; only the special-bit digit itself goes unexamined.
+    #
+    # That omission is deliberate, and the reason is the same self-refusal trap
+    # the `chmod` in `make_stage_dir` exists for: set-gid is INHERITED by `mkdir`
+    # from the parent directory and survives `chmod 700`, verified — under a
+    # set-gid parent, `make_stage_dir`'s own directory lands at `2700`. A guard
+    # that rejected four-digit modes would refuse the directory it had just
+    # created. Nor is there anything to reject on the merits: on a 0700
+    # directory, set-gid grants no access the owner bits do not already deny,
+    # sticky only narrows who may unlink, and set-uid has no meaning for a
+    # directory on Linux. The permission bits are the whole question, and those
+    # are the two digits actually tested.
     case "${_st##* }" in
         *[2367][0-7]) return 1 ;;   # group-writable
         *[2367])      return 1 ;;   # other-writable
@@ -365,6 +429,15 @@ if [ "$mode" = user ]; then
 # reads as "the previous version, restorable". Refusing to park onto a non-empty
 # slot keeps that name true, and an install that cannot park is an install that
 # should stop rather than proceed on a false assumption.
+#
+# HOW NARROW THIS IS, since a reader who traces the control flow will conclude it
+# is dead code and be almost right: `reconcile` ran two lines above, and its last
+# act when `$VST3_DEST` exists is `rm -rf "$PREV_VST3"`. So on every path where
+# the outer `if` is entered, the slot has just been cleared. The one way through
+# is that `rm -rf` FAILING — it is `2>/dev/null || true`, so an immutable
+# attribute, a mount point or a read-only remount leaves `.prev` standing and
+# says nothing. That is the case this refusal is for: not a race, but a silent
+# failure two lines up. Keep it.
     if [ -e "$VST3_DEST" ]; then
         [ ! -e "$PREV_VST3" ] || {
             echo "error: $PREV_VST3 already holds a parked copy, so this run cannot set the" >&2
@@ -445,7 +518,8 @@ priv cp -R "$VST3_SRC" "$STAGE_VST3"
 priv cp "$APP_SRC" "$STAGE_APP"
 $SUDO chmod 755 "$STAGE_APP" "$STAGE_VST3/Contents/x86_64-linux/Anabasis.so" 2>/dev/null || true
 
-# Same rule as the per-user branch: never park onto an occupied slot (see there).
+# Same rule as the per-user branch: never park onto an occupied slot (see there,
+# including why this is not the dead code it reads as).
 if [ -e "$VST3_DEST" ]; then
     $SUDO test ! -e "$PREV_VST3" || {
         echo "error: $PREV_VST3 already holds a parked copy, so this run cannot set the" >&2

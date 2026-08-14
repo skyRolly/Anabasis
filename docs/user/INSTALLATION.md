@@ -56,6 +56,14 @@ It asks where to install:
    password; the script does not run as root as a whole. `sudo ./install.sh` skips the
    question and installs system-wide directly.
 
+`./install.sh --user` and `./install.sh --system` answer the question up front, which is
+what a provisioning script or a CI step needs: without a flag, the question is only asked
+when the terminal is there to answer it, and anything else takes the per-user default.
+`--system` is not the same as `sudo ./install.sh` — it keeps the elevation per-operation,
+so only the writes to `/usr/lib/vst3` and `/usr/local/bin` run as root. `--user` combined
+with `sudo` is refused rather than guessed at, because which home directory `$HOME` names
+under `sudo` depends on the machine's sudoers configuration.
+
 Replacing an existing install is safe: the previous version is kept until the new one is
 in place, and an interrupted run is tidied up by the next one. The VST3 and the
 Standalone are replaced one after the other rather than together, so an interruption

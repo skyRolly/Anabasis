@@ -62,6 +62,15 @@ and say so.
   that finds an older system-wide copy still present now says so, names both files and gives the
   command to remove them — otherwise the DAW shows Anabasis twice and may load the older one.
   `uninstall.sh` mirrors the same two modes. Evidence: this release. [Verified]
+- **`install.sh --user` / `install.sh --system` answer that question up front.** The prompt is
+  gated on stdin being a terminal, so a provisioning script, a CI step or a piped run silently
+  took the per-user default and had no way to ask for anything else — the only non-interactive
+  route to a system-wide install was to run the whole script under `sudo`, which is a different
+  install: it makes the entire transaction root's, where the flag keeps the elevation
+  per-operation. `--help` prints the two options; an unrecognised option is refused rather than
+  ignored; and `--user` under `sudo` is refused rather than guessed at, because which home
+  directory `$HOME` names there depends on the machine's sudoers configuration. Evidence: this
+  release. [Verified]
 - **The macOS package verifies itself at build time.** The build now fails rather than shipping a
   package whose components are relocatable, version-checked, missing the overwrite action or
   missing their installed-state check — and it first proves those assertions can actually fire, by
@@ -126,9 +135,9 @@ and say so.
   The residual limitation is registered as **KI-013**: the absorbed click still counts toward the
   system's multi-click run. Evidence: this release. [Verified]
 - **A pop-up menu's border could be drawn from unsynchronised state.** ([**ADR-0027**](docs/architecture/design-decisions/ADR-0027-painting-thread-reads-editor-bookkeeping.md)
-  — ⊕ NOT RATIFIED; asking the editor a question from the drawing thread is a new cross-thread path,
-  which is an Architecture Review Gate item, and the gate is OPEN. The defect below is fixed; the
-  gate is about the path existing at all.) The look-and-feel asks the
+  — Accepted 2026-08-14; asking the editor a question from the drawing thread is a new cross-thread
+  path, which is an Architecture Review Gate item. Review found the path unflagged and the owner
+  then cleared the gate. What follows is the defect; the gate was about the path existing at all.) The look-and-feel asks the
   editor whether one of its own menus is open, and that question is answered during PAINTING —
   which, where hardware-accelerated drawing is enabled (macOS and Windows), happens on a different
   thread from the one that opens and closes menus. The counter behind the answer is now atomic, and
@@ -169,9 +178,9 @@ and say so.
   rather than the value itself. This changes stored behaviour, not the stored format.
   Evidence: this release. [Verified]
 - **A damaged A/B slot can no longer put one session's preset name on another session's sound.**
-  ([**ADR-0026**](docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md) — ⊕ NOT
-  RATIFIED; this is a change to how a stored session is INTERPRETED, so it is an Architecture
-  Review Gate item, the gate is OPEN, and the ADR states which two expressions revert it.)
+  ([**ADR-0026**](docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md) —
+  Accepted 2026-08-14; this is a change to how a stored session is INTERPRETED, so it is an
+  Architecture Review Gate item, and the owner cleared the gate after review found it unflagged.)
   A stored slot that survives with its labels but without its parameter payload — hand-edited or
   truncated session data — now resolves to defaults as a whole, the same rule the live surface
   already followed, instead of lending its name and preset identity to whatever was loaded.

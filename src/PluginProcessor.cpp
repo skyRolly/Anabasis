@@ -1762,11 +1762,11 @@ void AnabasisAudioProcessor::setStateInformation (const void* data, int sizeInBy
         activeSlot = anabasis::clampAbSlotIndex ((int) ab.getProperty ("active", 0));
         const auto live   = activeSlot     < slots.size() ? slots[activeSlot]     : juce::ValueTree();
         const auto stored = 1 - activeSlot < slots.size() ? slots[1 - activeSlot] : juce::ValueTree();
-        // ADR-0026 (⊕ NOT RATIFIED — the ARCHITECTURE REVIEW GATE IS OPEN on this
-        // rule and the active-slot one below). Both change how a stored session
-        // is INTERPRETED, which `ARCHITECTURE_REVIEW_GATE.md` and
-        // `SESSION_COMPATIBILITY_POLICY.md` rule 1 both class as gated; 0.1.4
-        // implemented them without flagging that, and review caught it.
+        // ADR-0026 (Accepted 2026-08-14) governs this rule and the active-slot
+        // one below. Both change how a stored session is INTERPRETED, which
+        // `ARCHITECTURE_REVIEW_GATE.md` and `SESSION_COMPATIBILITY_POLICY.md`
+        // rule 1 both class as gated; 0.1.4 implemented them without flagging
+        // that, review caught it, and the owner then cleared the gate.
         //
         // A SLOT node can be a perfectly valid ValueTree and still carry no
         // usable parameter payload — hand-edited, truncated, or a foreign tree

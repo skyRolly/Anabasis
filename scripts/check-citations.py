@@ -354,8 +354,12 @@ def doc_files():
     line and never changes a line COUNT, so the numbering the citation is
     measured against survives its own repair.
     """
+    # `splitlines`, not `split()`: a tracked path may legally contain a space,
+    # and whitespace-splitting would shatter it into fragments that match
+    # nothing — silently dropping the file from the scan rather than failing.
+    # No such path exists here today, which is exactly why the bug would ship.
     tracked = subprocess.run(["git", "ls-files"],
-                             capture_output=True, text=True).stdout.split()
+                             capture_output=True, text=True).stdout.splitlines()
     out = []
     for p in tracked:
         if p.startswith(EXCLUDED_PREFIXES):

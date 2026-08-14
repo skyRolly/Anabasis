@@ -2533,12 +2533,27 @@ void AnabasisAudioProcessorEditor::refreshPopupShield()
         popupOpenedWhileShowing    = isShowing();
 
         // Re-order only on the way UP, and only ever here — see the z-order
-        // argument on PopupShield for why the direction matters. The synthetic
-        // mouse move this fires is asynchronous, so it is dispatched after the
-        // menu is already modal, and `Component::internalMouseEnter/Exit` return
-        // early for a blocked component without clearing its cached
-        // inside-component flag. Hover, which this editor reads geometrically
-        // through `isMouseOver`, therefore survives the raise.
+        // argument on PopupShield for why the direction matters.
+        //
+        // WHAT THE RAISE COSTS, stated the right way round because the text
+        // that stood here claimed the opposite: combo hover art DROPS while a
+        // menu is up, and that is accepted rather than prevented. The chain, in
+        // the pinned JUCE: the synthetic mouse move re-resolves the pointer
+        // through `MouseInputSourceInternal::findComponentAt`, which goes via
+        // `getComponentAt` and therefore lands on the shield or the modal menu;
+        // `setComponentUnderMouse` then re-points `componentUnderMouse`
+        // UNCONDITIONALLY — the modality early-return lives in
+        // `Component::internalMouseEnter/Exit` and skips only the callbacks and
+        // the `cachedMouseInsideComponent` flag, never the source's own
+        // tracking. And `Component::isMouseOver` consults that cached flag ONLY
+        // off the message thread; ON it — where the 24 Hz `hov` sweep and the
+        // animation tick both run — it iterates the mouse sources and asks
+        // `getComponentUnderMouse()`. So both readers see false and the lift
+        // eases out.
+        //
+        // Cosmetic, and arguably correct: while a menu is modal the control
+        // underneath is not what the pointer is addressing. It eases back in on
+        // the first tick after dismissal, from wherever the easing had reached.
         popupShield.toFront (false);
     }
     // WHY LOWERING IT EARLY DOES NOT LOSE THE CLICK, which is not obvious: this
