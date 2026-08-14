@@ -102,8 +102,17 @@ fi
 # and writable by nobody else. Fails CLOSED — anything it cannot determine is
 # refused, including `stat` being unavailable.
 stage_dir_is_adoptable() {      # $1 = candidate, $2 = uid that must own it
-    [ -e "$1" ] || return 0     # absent — we are about to create it ourselves
+    # THE SYMLINK TEST COMES FIRST, and the order is the difference between the
+    # guard doing its job and something else covering for it. `-e` follows the
+    # link, so a DANGLING symlink named `.anabasis-install-stage` reads as
+    # "absent" and this returned 0 — the explicit symlink rejection below never
+    # ran. The install still failed closed, but by accident downstream:
+    # `mkdir -p` on a dangling symlink returns EEXIST and `make_stage_dir`
+    # returns 1, which is indistinguishable from a full disk and says nothing
+    # about a symlink. `-L` does not follow, so testing it first rejects both
+    # kinds of symlink for the stated reason.
     [ -L "$1" ] && return 1     # a symlink could aim the whole transaction elsewhere
+    [ -e "$1" ] || return 0     # absent — we are about to create it ourselves
     [ -d "$1" ] || return 1     # a file wearing the directory's name
     _st=$(LC_ALL=C stat -c '%u %a' "$1" 2>/dev/null) || return 1
     [ "${_st%% *}" = "$2" ] || return 1

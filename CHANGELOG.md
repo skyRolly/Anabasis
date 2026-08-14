@@ -111,6 +111,10 @@ and say so.
   since become untrustworthy, the run says so instead of passing over it in silence: that copy is
   neither restored nor deleted, and `./uninstall.sh` is what clears it. Evidence: this release.
   [Verified]
+- **The uninstaller no longer says "nothing to remove" in the same breath as removing something.**
+  Clearing an installer leftover did not count as work done, so a run that found no plug-in but
+  did clear staged files printed both lines — and the second is the one you read to decide
+  whether anything happened. Evidence: this release. [Verified]
 - **The uninstaller now removes the installer's own leftovers**, by exact name only, so an install
   killed by a signal no handler catches does not survive a deliberate uninstall. Evidence: this
   release. [Verified]

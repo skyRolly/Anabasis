@@ -506,8 +506,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1509` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1565` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1521` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1577` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -531,6 +531,18 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
         || ! dirtyStateUnchanged)
         return;                                  // a real restore: the step stands
 
+    // THE INVARIANT THIS RETRACTION RESTS ON, named because it is implicit and
+    // was already violated once: every side effect an apply performs must be
+    // VISIBLE IN THE SLOT TREE, or it becomes un-undoable the moment this
+    // retracts the step. `strippedForUndoCompare` sees whatever
+    // `saveSlotFromLive()` emits — the surface, `presetName`, the ADR-0022 trio,
+    // `BASELINE`, `FROZEN_TRIMS`, `DETACH_MASK` — which is why dropping a macro
+    // baseline (`liveBaseline = {}`) or clearing a user's §5.3 detachments
+    // (`replaceDetachMask`) correctly KEEPS the step: each shows up as a slot
+    // difference. `presetBaseline` is the counter-example, and the reason this
+    // note exists: it is not serialized into the slot, so it needed the separate
+    // test above. A future apply-path side effect outside the slot tree needs the
+    // same treatment, and nothing here will notice if it does not get it.
     undoStacks[activeSlot].removeLast();         // exactly what this bracket pushed
     if (b.evictedOldest)
         undoStacks[activeSlot].insert (0, b.oldest);   // …and the end the cap trimmed

@@ -3954,18 +3954,27 @@ static void testEveryComboMenuFitsItsControl()
     check (found >= 10, "comboFit: (premise) the walk reached the editor's combo boxes");
     check (tightest >= 0,
            "comboFit: every combo's widest row still fits inside the control that opens it");
-    // The margin itself, so the next metric change shows up as a number moving
-    // rather than as a pass that happens to survive. ADVISORY, and deliberately
-    // stated as such: 24 is a SNAPSHOT of the current fonts, item strings and
-    // layout constants, not a derived bound — `chrome` grew from 30 to 38 this
-    // round, which moved this figure down by 8 on its own. The measured value
-    // goes in the message so a red run says how far it moved rather than only
-    // that it did; the requirement that actually protects the user is the
-    // `>= 0` above.
-    const auto comboMsg = juce::String ("comboFit: the tightest combo keeps at least 24 px of "
-                                        "slack over its widest row (advisory tripwire; measured ")
-                        + juce::String (tightest) + " px)";
-    check (tightest >= 24, comboMsg.toRawUTF8());
+    // The margin itself is PRINTED, not asserted, and that is a deliberate
+    // downgrade from the `>= 24` check this line used to carry.
+    //
+    // 24 was a SNAPSHOT of one machine's fonts, item strings and layout
+    // constants — `chrome` growing from 30 to 38 moved it by 8 on its own — and
+    // this suite runs on Linux, Windows and macOS, where `GlyphArrangement`
+    // advances for the DEFAULT system font differ. A platform whose menu font is
+    // a few percent wider would have turned the suite red for a metric
+    // difference, with a message reading like a layout regression. A gate that
+    // can fail without anything being wrong teaches people to ignore it, and the
+    // numbers on the other two runners have not been measured here — asserting
+    // them would be asserting something unverified.
+    //
+    // What survives is the requirement that actually protects the user: `>= 0`
+    // above, which is platform-independent in MEANING (a row must fit the control
+    // that opens it) even though its margin is not. The number is emitted every
+    // run, so a metric change is still visible in the log on every platform —
+    // which is what "tripwire" was for. Restore the assertion the moment the
+    // figure is confirmed on all three runners.
+    std::printf ("      comboFit: tightest combo margin %d px (advisory; the gate is >= 0)\n",
+                 tightest);
 }
 
 // The width budget for a row that carries a SHORTCUT, which
@@ -4039,6 +4048,15 @@ static void testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel()
         tightest = juce::jmin (tightest, (int) std::floor ((float) measuredW - drawn));
     }
 
+    // `>= 0` stays a GATE: unlike the combo advisory, this one states a property
+    // rather than a snapshot — the measured width must cover what the drawing
+    // spends, or the label is ellipsised, which is a defect on any platform. Its
+    // MARGIN is font-dependent (5 px here) and is printed for the same reason the
+    // combo one is: so a platform difference shows up as a number rather than as
+    // a mystery. If this ever fails on macOS or Windows alone, read the printed
+    // margin before assuming a layout regression — the fix may be `shortcutGap`,
+    // which spends against that margin directly.
+    std::printf ("      shortcutRow: tightest shortcut-row margin %d px\n", tightest);
     const auto msg = juce::String ("shortcutRow: a row carrying a shortcut is measured wide "
                                    "enough to draw its label in full — the label is not "
                                    "ellipsised to pay for the shortcut gap (tightest ")

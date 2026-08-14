@@ -74,6 +74,12 @@ remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
             # uninstall is not.
             if $SUDO rm -rf "$_scratch" 2>/dev/null; then
                 echo "removed leftover installer file $_scratch"
+                # …and it COUNTS as having removed something. Without this the
+                # run printed "removed leftover installer file …" and "nothing to
+                # remove" in the same output — two lines contradicting each
+                # other, the second being the one a user reads to decide whether
+                # the uninstall did anything.
+                removed=1
             else
                 echo "note: could not remove $_scratch (left in place)" >&2
             fi

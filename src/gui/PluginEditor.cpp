@@ -1029,9 +1029,20 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // `registerAnimated` calls above fill. Unreachable today, because vblank
     // callbacks are delivered on the message thread and cannot preempt a
     // constructor running there; but that is the same platform-dispatch
-    // argument the destructor already refuses to rely on one screen down
-    // (`animVBlank = {}` runs FIRST there, so the callback cannot outlive the
-    // state it reads). The two ends of the lifetime now say the same thing.
+    // argument the destructor already refuses to rely on one screen down, where
+    // `animVBlank = {}` detaches the attachment rather than trusting dispatch
+    // order to make it unreachable.
+    //
+    // THAT SENTENCE USED TO SAY "runs FIRST there", and it stopped being true:
+    // the destructor now detaches the GL context before clearing the
+    // look-and-feel hooks (a `std::function` the render thread can be inside),
+    // and `animVBlank = {}` sits after `stopTimer`, `cancelPendingUpdate`,
+    // `dismissTrackedPopupMenus` and the listener detach. Nothing there is
+    // unsafe — no message loop runs inside a destructor, so none of those steps
+    // can deliver a vblank callback — but "first" was an ordering guarantee, and
+    // this file refuses ordering arguments elsewhere, so it should not have been
+    // making one here. What the two ends actually share is the mechanism: each
+    // end DETACHES rather than reasoning about when a callback could arrive.
     animVBlank = juce::VBlankAttachment (this, [this]
     {
         const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;

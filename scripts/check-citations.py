@@ -138,13 +138,13 @@ DELIBERATE_REAIMS = set([
     ("docs/architecture/COMPATIBILITY_MATRIX.md",
      "src/PluginProcessor.cpp:12-14"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:840-858"),
+     "src/PluginProcessor.cpp:852-870"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:757"),
+     "src/PluginProcessor.cpp:769"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:830-838"),
+     "src/PluginProcessor.cpp:842-850"),
     ("docs/architecture/LATENCY_MODEL.md",
-     "src/PluginProcessor.cpp:1859"),
+     "src/PluginProcessor.cpp:1871"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
      "tests/state_tests.cpp:2141"),
     ("docs/architecture/SERIALIZATION_REGISTRY.md",
@@ -259,7 +259,7 @@ def line_of(lines, n):
 # spelling at the head of every adapted file. It carries an anchor into the
 # SIBLING product spelled with a path this repository also owns:
 #
-#     // Provenance (ADR-0009): adapted from Anamorph src/gui/LookAndFeel.cpp:1-912 @ b6a3db8.
+#     // Provenance (ADR-0009): adapted from <the sibling product> src/gui/LookAndFeel.cpp:1-912 @ <sha>.
 #
 # The ownership test cannot see the difference. `<prefix>` catches a `rev:`
 # qualifier and the lookbehind catches a path glued to another token, but here
@@ -590,6 +590,17 @@ def main():
         if args.fix and edits:
             with open(doc, "w", encoding="utf-8") as fh:
                 fh.write(apply_edits(text, edits))
+            # `now_src` IS THE WORKING TREE, and it stopped being so the moment a
+            # TRACKED SOURCE joined the scanned set. The snapshot is taken once,
+            # before this loop; a `--fix` that rewrites `src/PluginProcessor.cpp`
+            # leaves the cached copy holding pre-rewrite lines, and any document
+            # processed LATER that cites one of the rewritten lines is then judged
+            # against text no longer on disk. Narrow — it needs a citation whose
+            # own line is a citation — but it is an invariant, and an invariant
+            # this tool holds about a file it just edited is exactly the kind it
+            # cannot afford to be casually wrong about.
+            if doc in now_src:
+                now_src[doc] = read(doc).split("\n")
 
     # A declared re-aim is never silent: it is announced when it is honoured, and
     # announced again when it has stopped being needed, so the list cannot quietly

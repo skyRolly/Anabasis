@@ -560,6 +560,19 @@ void AnabasisLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rect
         juce::GlyphArrangement ga;
         ga.addLineOfText (shortcutFont, shortcutKeyText, 0.0f, 0.0f);
         const auto w = ga.getBoundingBox (0, -1, true).getWidth();
+        // THE 50 % CAP PROTECTS THE LABEL AND CAN COST THE SHORTCUT, which is
+        // worth stating because the row was MEASURED wide enough for both. JUCE
+        // sizes the row from `text + "   " + shortcut` in the 13.5 pt menu font;
+        // this draws the shortcut at 11 pt. For a very short label with a long
+        // shortcut, half the text area can be narrower than the shortcut's own
+        // width, and `drawText` then ellipsises a shortcut the budget already
+        // paid for. Kept anyway: the alternative is a label ellipsised to
+        // nothing by a pathological shortcut, and a truncated accelerator is the
+        // less damaging of the two. `testAShortcutRowIsMeasuredWideEnoughForItsOwnLabel`
+        // deliberately ignores this cap — ignoring it is conservative for the
+        // LABEL, which is what that test pins, and it leaves the cap's effect on
+        // the SHORTCUT unpinned. No menu this editor builds carries a shortcut;
+        // only a host-supplied `TextEditor` accelerator set could reach it.
         const auto strip = textArea.removeFromRight (
                                juce::jmin (w + menuMetrics::shortcutGap,
                                            textArea.getWidth() * 0.5f));
