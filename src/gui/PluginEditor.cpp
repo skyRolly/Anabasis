@@ -2644,6 +2644,31 @@ void AnabasisAudioProcessorEditor::dismissTrackedPopupMenus()
                 stillThere->setVisible (false);   // same reason as above
         }
     }
+
+    // PRUNE WHAT WE JUST CLOSED, synchronously, and this is the one place the
+    // two-tick grace `healGhostTrackedPopupMenus` insists on does NOT apply.
+    // That grace exists because a `MenuWindow` is constructed before it is shown
+    // (`preparePopupMenuWindow` runs in the constructor), so on the TICK a
+    // not-visible entry may simply be one that has not appeared yet. Here this
+    // editor performed the dismissal itself, two loops up: any survivor of that
+    // is a window we exited and hid, never one waiting to be shown.
+    //
+    // Without this, `openMenus` kept an entry for a window that JUCE hides but
+    // never deletes, `refreshPopupShield`'s prune could not drop it — it removes
+    // only NULL SafePointers — and the shield stayed raised and intercepting for
+    // ~83 ms after the menu was gone, absorbing the user's first click back.
+    // `componentBeingDeleted` still fires later for the ones that DO get
+    // deleted; its removal loop simply finds nothing, which it already tolerates.
+    for (int i = openMenus.size(); --i >= 0;)
+    {
+        auto* w = openMenus.getReference (i).getComponent();
+        if (w == nullptr || (! w->isVisible() && ! w->isCurrentlyModal (false)))
+        {
+            if (w != nullptr)
+                w->removeComponentListener (this);
+            openMenus.remove (i);
+        }
+    }
 }
 
 void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
@@ -2724,6 +2749,25 @@ void AnabasisAudioProcessorEditor::dismissOrphanedPopupMenus()
     // of the caret the user left there.
 
     dismissTrackedPopupMenus();
+
+    // LOWER THE SHIELD NOW, rather than leaving it to the tick. Without this the
+    // shield stayed raised and INTERCEPTING for up to two 24 Hz ticks (~83 ms)
+    // after the pop-up was gone on one specific path — the one where a window is
+    // exited and hidden but never deleted, which is the case
+    // `healGhostTrackedPopupMenus` exists for. On that path the user's first
+    // click on returning to the plug-in is absorbed by a shield guarding nothing.
+    //
+    // `refreshPopupShield()` ON ITS OWN WOULD NOT DO IT, which is worth stating
+    // because it is the obvious one-line fix and it is inert here: that
+    // function's prune drops only NULL SafePointers, and a hidden-but-undeleted
+    // window is not null, so `wanted` stays true and it returns having changed
+    // nothing. The prune in `dismissTrackedPopupMenus` is what makes this call
+    // effective — and it is sound there for a reason that does NOT hold on the
+    // tick: the two-tick grace protects a window that is constructed but not yet
+    // shown (`preparePopupMenuWindow` runs in the constructor). Here this editor
+    // IS the dismissal and has just hidden every tracked window itself, so
+    // "not visible" cannot mean "not shown YET".
+    refreshPopupShield();
 }
 
 void AnabasisAudioProcessorEditor::cancelInlineEdits()

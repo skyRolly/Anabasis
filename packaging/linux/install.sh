@@ -37,11 +37,27 @@ SUDO=''
 # whole script as root. That is not the same install: `sudo ./install.sh` makes
 # the entire transaction root's, where answering `2` at the prompt elevates one
 # operation at a time and is the path the staging guards are written for.
+#
+# A CONTRADICTORY PAIR IS REFUSED, NOT RESOLVED. `--user --system` used to take
+# whichever was written last, silently, which is the one thing this whole block
+# exists to prevent: the same loop hard-fails on a MISSPELLED option on the
+# reasoning that a non-interactive caller must never have its intent guessed at,
+# and there is less intent to infer from a contradiction than from a typo. The
+# two outcomes are not near-misses either — they differ in destination AND in
+# privilege, since `--system` elevates individual operations through `priv`. A
+# REPEATED option (`--user --user`) is not a conflict and passes.
 requested=''
 for arg in "$@"; do
     case "$arg" in
-        --user)   requested=user   ;;
-        --system) requested=system ;;
+        --user|--system)
+            _want=${arg#--}
+            if [ -n "$requested" ] && [ "$requested" != "$_want" ]; then
+                echo "error: --user and --system ask for different installs; pass one." >&2
+                echo "       They differ in destination and in privilege, so there is no" >&2
+                echo "       sensible way to honour both." >&2
+                exit 1
+            fi
+            requested=$_want ;;
         -h|--help)
             echo "usage: ./install.sh [--user|--system]"
             echo "  --user    install for the current user (~/.vst3) - the default"

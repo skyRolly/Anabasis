@@ -67,10 +67,12 @@ and say so.
   took the per-user default and had no way to ask for anything else — the only non-interactive
   route to a system-wide install was to run the whole script under `sudo`, which is a different
   install: it makes the entire transaction root's, where the flag keeps the elevation
-  per-operation. `--help` prints the two options; an unrecognised option is refused rather than
-  ignored; and `--user` under `sudo` is refused rather than guessed at, because which home
-  directory `$HOME` names there depends on the machine's sudoers configuration. Evidence: this
-  release. [Verified]
+  per-operation. `--help` prints the two options, and three things are refused rather than
+  guessed at: an unrecognised option, the two flags given together (they differ in destination
+  *and* in privilege, so there is no intent to infer — less than there is behind a typo), and
+  `--user` under `sudo`, because which home directory `$HOME` names there depends on the
+  machine's sudoers configuration. Repeating one option is not a conflict and passes. Evidence:
+  this release. [Verified]
 - **The macOS package verifies itself at build time.** The build now fails rather than shipping a
   package whose components are relocatable, version-checked, missing the overwrite action or
   missing their installed-state check — and it first proves those assertions can actually fire, by

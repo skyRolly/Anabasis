@@ -66,7 +66,9 @@ A) Installer installation (recommended) / 脚本安装(推荐)
                                  系统级,需要时会提示输入密码)
 
   Without a flag the question is only asked when a terminal is present; otherwise the
-  per-user default is used. / 未指定选项时,只有在终端环境下才会询问,否则按用户级安装。
+  per-user default is used. Passing both options together is an error rather than a
+  silent choice. / 未指定选项时,只有在终端环境下才会询问,否则按用户级安装;同时传入
+  两个选项会报错,而不会静默选择其一。
 
   To remove later / 以后卸载:
       ./uninstall.sh            (current user / 当前用户)

@@ -151,6 +151,18 @@ private:
     // Keyboard focus is left alone deliberately — `toFront (false)` does not grab
     // it and `setMouseClickGrabsKeyboardFocus (false)` covers the click — which is
     // what keeps the Save Preset field focused while its context menu is open.
+    //
+    // TWO THINGS REGRESS WHILE THIS IS RAISED, both accepted, and they are stated
+    // here as well as at their own sites because this declaration is where the
+    // next reader of the component looks. While interception is on,
+    // `Component::getComponentAt` resolves the shield for every pointer position,
+    // so: (1) `TooltipWindow::getTipFor` sees the shield, which has no tip, and no
+    // control underneath can show one; (2) combo hover art eases out, because
+    // `Component::isMouseOver` on the message thread asks
+    // `getComponentUnderMouse()` rather than the cached inside-component flag, and
+    // that pointer follows the shield. Both end when the shield lowers. The
+    // JUCE-internals half of the reasoning lives in `DEPENDENCY_POLICY.md`'s
+    // rule-7 register, to be re-walked after a JUCE bump.
     struct PopupShield : public juce::Component
     {
         PopupShield()

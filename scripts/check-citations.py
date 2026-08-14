@@ -609,7 +609,16 @@ def main():
     # A declared re-aim is never silent: it is announced when it is honoured, and
     # announced again when it has stopped being needed, so the list cannot quietly
     # become a set of permanent exemptions.
-    for (doc, whole) in sorted(used_reaims):
+    # INTERSECTED, because `used_reaims` deliberately holds BOTH spellings of an
+    # honoured re-aim (see the `is_declared_reaim` branch) and only one of them is
+    # a declaration. Reporting the set raw announced the UNDECLARED spelling too,
+    # so a run printed twice as many accepted re-aims as `DELIBERATE_REAIMS` has
+    # entries — a tool whose subject is documents saying exactly what they mean,
+    # not saying exactly what it means. The intersection is never empty for an
+    # honoured re-aim: `is_declared_reaim` returns true only when at least one of
+    # the two spellings is literally in the set, so the "never silent" property
+    # below survives the narrowing.
+    for (doc, whole) in sorted(used_reaims & DELIBERATE_REAIMS):
         print(f"check-citations: ACCEPTED re-aim {doc}: {whole} "
               f"(declared in DELIBERATE_REAIMS — verify the aim by hand, not by this tool)")
     for (doc, whole) in sorted(DELIBERATE_REAIMS - used_reaims):
