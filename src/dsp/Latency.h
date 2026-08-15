@@ -36,9 +36,12 @@ inline int maxLookaheadSamples (double sampleRate) noexcept
 // instance with useIntegerLatency = true, whose internal fractional-delay
 // compensator rounds the cascade's group delay up to a whole base sample.
 //
-// The values are getLatencyInSamples() MEASURED against the pinned JUCE tree
-// (f8f8864…) in that mode. A JUCE bump that changes either filter design
-// fails testReportedLatencyMatchesImpulse across the OS matrix — that is
+// The values are getLatencyInSamples() MEASURED against the JUCE tree pinned
+// when they were taken (9.0.0, f8f8864…) in that mode. They still describe the
+// current pin (9.0.1, e18f7f5…) because juce_dsp differs between those two tags
+// only in its module-declaration version string — no filter design moved
+// (ADR-0028). A JUCE bump that DOES change either design fails
+// testReportedLatencyMatchesImpulse across the OS matrix — that is
 // RISK-001's tripwire doing its job, not an inconvenience to suppress.
 // prepare() also asserts table == getLatencyInSamples() per instance, so a
 // drift is caught at the first debug run even before the matrix test.

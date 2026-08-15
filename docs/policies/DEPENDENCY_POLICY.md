@@ -6,7 +6,7 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
 
 | Dependency | Pin | Mechanism | Status |
 |---|---|---|---|
-| **JUCE** | **9.0.0**, pinned by the tag's **IMMUTABLE commit SHA** `f8f8864172464b9adf9eba6101e1f784838d1597` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH` | Decided (OQ-001, 2026-07-30). Must be written into `CMakeLists.txt` as `ANABASIS_JUCE_VERSION` + `ANABASIS_JUCE_TAG` when that file is created at P1 |
+| **JUCE** | **9.0.1**, pinned by the tag's **IMMUTABLE commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH` | Decided (OQ-001, 2026-07-30) at **9.0.0** / `f8f8864…`, written into `CMakeLists.txt` as `ANABASIS_JUCE_VERSION` + `ANABASIS_JUCE_TAG` at P1; moved to 9.0.1 by **ADR-0028, 2026-08-16** (compliance log below) |
 | **pluginval** | latest release (downloaded) | `scripts/run-pluginval.sh` / `.ps1` | pinning it is a tracked improvement, not yet done |
 | **C++ standard** | **C++20** | `CMAKE_CXX_STANDARD 20`, `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | per `DEVELOPMENT_BRIEF.md` §2.1 |
 | Linux system libs | distro packages | `scripts/setup-linux.sh` (ALSA, JACK, X11, FreeType, GTK/WebKit, mesa, **EGL — required by JUCE 9's Linux GL context path**, xvfb) | scaffolded |
@@ -48,11 +48,24 @@ one third-party action is SHA-pinned because it is.
   not negotiable — it is what makes the dependency immutable — so if the combination misbehaves,
   drop `GIT_SHALLOW`, never the SHA. Check this explicitly when `CMakeLists.txt` lands rather than
   discovering it on someone else's machine.
-- **The pin is shared with Anamorph on purpose.** Both products sit on JUCE 9.0.0 at the same
-  commit, so a JUCE-attributable behaviour difference between them is impossible by construction,
-  one dependency audit covers both, and a Level-5 audition of one is a meaningful baseline for the
-  other. The corollary is that a future bump is a **product-family decision**, not a per-repo one:
-  bumping only Anabasis re-introduces exactly the divergence this pin removes.
+- **The pin was shared with Anamorph on purpose, and as of 2026-08-16 it is not.** Both products
+  sat on JUCE 9.0.0 at the same commit, so a JUCE-attributable behaviour difference between them
+  was impossible by construction, one dependency audit covered both, and a Level-5 audition of one
+  was a meaningful baseline for the other. The corollary was stated here as a rule — a future bump
+  is a **product-family decision**, not a per-repo one, because bumping only Anabasis re-introduces
+  exactly the divergence the pin removes. **ADR-0028 bumped only Anabasis**, on the owner's
+  directive and with the divergence named rather than glossed: Anamorph is a read-only reference
+  from this repository (`AI_AGENT_POLICY.md` §Cross-repository constraint), so no change here can
+  carry the sibling along. Until Anamorph follows, three of the four properties above are
+  suspended — the shared audit, the transferable audition, and the impossibility of a
+  JUCE-attributable difference. What limits the cost is measured rather than assumed: of the
+  fifteen JUCE modules Anabasis links, **six are byte-identical between the two tags apart from
+  their module-declaration version string, and they are the six that decide how the plug-in sounds
+  and what a host sees** — `juce_dsp`, `juce_audio_basics`, `juce_audio_processors`,
+  `juce_data_structures`, `juce_audio_utils` and `juce_audio_plugin_client`. So no DSP, parameter,
+  state or wrapper behaviour can differ between the products for this reason; the nine that did
+  change are GUI, platform-native, file-format and web-view surfaces. ADR-0028 tabulates each with
+  its diff size and why it is or is not reachable here, and carries the re-convergence obligation.
 - **C++20 is the baseline, not a floor to drift above.** C++20 **modules are not used** — they
   remain a build-system liability in plugin projects. Where a C++23 library feature would clearly
   improve the code (`std::expected`, `std::mdspan`, `std::float32_t`, `[[assume]]`, `std::print`
@@ -83,6 +96,19 @@ one third-party action is SHA-pinned because it is.
    lines without breaking a single call, so nothing fails and the reasoning quietly stops holding.
    The register, to be walked after every bump:
 
+   > **Walked at the 9.0.1 bump (2026-08-16, ADR-0028), and every row survives for a stronger
+   > reason than re-reading it.** `juce_PopupMenu.cpp`, `juce_Component.cpp`,
+   > `juce_MouseInputSource.cpp`, `juce_ModalComponentManager.cpp`, `juce_TooltipWindow.cpp`,
+   > `juce_Button.cpp`, `juce_LookAndFeel_V2.cpp` and `juce_LookAndFeel_V4.cpp` — the files every
+   > row below reasons about — are **byte-identical between `f8f8864…` and `e18f7f5…`**, so no
+   > assumption here can have moved, and no `juce_*.cpp:line` citation anywhere else in the tree
+   > can have shifted either. The one file in that neighbourhood that DID change,
+   > `juce_gui_basics/detail/juce_MouseInputSourceImpl.h`, changed `getTargetForGesture` alone
+   > (magnify-gesture positioning under global scaling); the `isMouseOver` row turns on
+   > `setComponentUnderMouse`, which is untouched. This is what walking the register looks like
+   > when the answer is clean: the check is the diff between the two trees, not a re-reading of
+   > the prose.
+
    | Site | What it assumes about JUCE | How it fails if the assumption moves |
    |---|---|---|
    | `PluginEditor.cpp` — `showPresetMenu` counts the preset menu itself (`presetMenusOpen`) | A PARENTED `PopupMenu::MenuWindow` binds the DEFAULT look-and-feel before it is added to its parent, so `preparePopupMenuWindow` never reaches `AnabasisLookAndFeel::onPopupMenuWindowCreated` | The hook starts firing and the window is tracked twice — once by the counter, once in `openMenus`. Bounded: the shield still raises and lowers once, and `dismissTrackedPopupMenus`'s second loop skips an already-exited window on `isCurrentlyModal`. What is left is a doubled count while a menu is open |
@@ -112,5 +138,10 @@ ecosystem, and a JUCE bump is deliberately manual and review-gated.
 
 ## Compliance log
 
-*(empty — no dependency bump has occurred. Every future bump is recorded here with its ADR and
-the rule-2 verification result.)*
+| Date | Bump | ADR | Rule-2 verification |
+|---|---|---|---|
+| **2026-08-16** | **JUCE 9.0.0 `f8f8864…` → 9.0.1 `e18f7f5…`** (owner directive; version 0.1.5) | [ADR-0028](../architecture/design-decisions/ADR-0028-juce-901-pin.md) | **Headless half done, audition half OWED.** Linux x86-64 / GCC 13.3 / Release, fresh build tree: both suites green at the same counts as the old pin (1141 checks, 0 failures) and pluginval at the `build.yml` strictness in both modes ×3 with the editor under xvfb. `AnabasisChannelProbe` printed per-channel output for 33 configurations against the built VST3 bundle at both pins and the two runs agree **digit for digit at nine decimal places**, the macro-with-editor scenario included. Also clean at the new pin: valgrind memcheck on both suites (0 errors from 0 contexts each) and the full Clang leg — build, first-party warning gate, the `SIMDRegister` compile canary, both suites, and the probe against the **Clang-LTO'd** bundle, which agrees with the GCC one digit for digit. The other two OSes are CI's half of rule 2 and land with this commit's run. **Rule 2's Level-5 manual audition has NOT been performed** — it is a human sign-off, it is what this rule exists to demand of a JUCE change, and no measurement above substitutes for it. Rules 3, 6 and 7 are discharged in ADR-0028 §Verification |
+
+Every future bump appends a row here with its ADR and the rule-2 verification result. A row whose
+rule-2 cell claims a Level-5 audition must name who performed it and when; the first row does not,
+because nobody has.

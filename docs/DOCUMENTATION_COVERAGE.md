@@ -6,9 +6,37 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **0.1.4 installer and interaction round (2026-08-13)**.
+**Last updated:** for the **0.1.5 framework bump (2026-08-16)** — JUCE 9.0.0 → 9.0.1.
 
-Scope, stated precisely because the previous round's header made a branch-snapshot claim in the
+**Scope of the 0.1.5 round.** One dependency pin moved and nothing else was implemented. The
+documentation surface it touched is exactly the one `DOCUMENTATION_LIFECYCLE_POLICY.md`'s
+"Build / CMake / JUCE pin / C++ baseline" row names — `BUILD.md`, `CI_CD.md` (no edit needed: it
+describes wiring, not the pin), `DEPENDENCY_POLICY.md`, and an **ADR** — plus the "Ship a version"
+row (`CHANGELOG.md`, `HANDOVER.md`, `README.md`) and the live records of the pin itself
+(`THIRD_PARTY_LICENSES.md`, `NOTICE`, `COMPATIBILITY_MATRIX.md`, `src/dsp/Latency.h`'s provenance
+comment). **New record: [ADR-0028](architecture/design-decisions/ADR-0028-juce-901-pin.md)**, with
+an amendment banner on ADR-0008 and a forward-pointer on the resolved OQ-001, both per the
+`ADR_INDEX.md` convention that an earlier record keeps its text.
+
+Two things this round deliberately did **not** rewrite, for the same reason it wrote them down:
+`TEST_REPORT.md`'s environment line still says the measurements were taken at 9.0.0, because they
+were, and re-stamping an environment nobody re-measured in would turn a record of an experiment
+into a claim about today (the ADR-0026 lesson, applied to a different file); and the historical
+records of the ORIGINAL pin decision — `CHANGELOG.md`'s P1 entry, `DESIGN.md`, `DEVELOPMENT_BRIEF.md`,
+ADR-0008's decision text, OQ-001's resolution — say 9.0.0 and keep saying it. What changed is the
+set of documents that describe the pin **now**.
+
+**The one C6 drift found and reported rather than corrected.** `AI_AGENT_POLICY.md` §Hard Stop
+conditions closes with "These map one-to-one to the `ARCHITECTURE_REVIEW_GATE.md` items". They do
+not: the gate lists ten changes, the hard-stop list seven. **Build System change** — the item this
+round is — has no hard-stop counterpart, and neither does *DSP Graph change*, *Ceiling guarantee
+change* or *Plugin Format change*, while the hard-stop list's *Accepted-ADR conflict* has no gate
+counterpart. The reading matters here rather than academically: under the accurate mapping a JUCE
+pin bump is a gated change needing human review **and an ADR**, which is what happened, not an
+agent hard stop that must halt before touching anything. Reported, not silently repaired — C6, and
+because rewording a hard-stop list is not a change this task authorises.
+
+Scope of the previous round (0.1.4), stated precisely because the round before it made a branch-snapshot claim in the
 present tense with no expiry ("display/naming fixes only") that its own CHANGELOG then retracted:
 this round changes **packaging, pop-up/menu interaction, and two stored-state behaviours inside the
 unchanged schema**. It contains **no audible DSP change** and **no parameter-surface change**, so

@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Four such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Five such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,47 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.1.5] — 2026-08-16
+
+**The framework bump.** Anabasis moves from JUCE 9.0.0 to **JUCE 9.0.1**. Nothing in this
+repository's own DSP, parameter surface, state format or GUI code changed to accommodate it, and
+nothing needed to: the audio-path modules are byte-identical between the two upstream tags. What
+the release carries is upstream's own patch-release fixes, three of which are on Linux and land on
+exactly the surface a standing field report lives on.
+([**ADR-0028**](docs/architecture/design-decisions/ADR-0028-juce-901-pin.md) — Accepted
+2026-08-16; a JUCE pin change is an Architecture Review Gate item and the owner directed it.)
+
+### Changed
+
+- **The plug-in is now built against JUCE 9.0.1** (commit
+  `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`), replacing 9.0.0 (`f8f8864…`). **No audible change is
+  expected or intended, and this is measured rather than asserted**: `juce_dsp`,
+  `juce_audio_basics`, `juce_audio_processors` and the VST3/AU wrapper sources are identical
+  between the two upstream tags apart from a version string, and the shipped bundle's per-channel
+  output over 33 sample-rate / block-size / parameter configurations is the same to nine decimal
+  places built either way. Reported latency, the parameter surface and the session format are
+  unchanged. Evidence: this release. [Verified]
+- **On Linux, three upstream defects that could leave the editor unresponsive are fixed.** JUCE
+  9.0.0 loaded the X11 input extension by a filename that only exists on machines with development
+  packages installed, so on an ordinary end-user machine it silently registered for no pointer
+  events at all; it also restarted the redraw timer on every display query because the guard
+  compared a millisecond period against a refresh rate in hertz, and let a busy message queue
+  starve the X event pump. All three are upstream fixes carried by the bump, not changes made here.
+  **This does not close the outstanding report** ([KI-012](docs/KNOWN_ISSUES.md)) — it has never
+  reproduced in this repository, so nothing here could test the fix against the configuration that
+  shows it — but each of the three was a live candidate at 9.0.0 and none is at 9.0.1.
+  Evidence: this release. [Verified]
+
+### Fixed
+
+- **A hand-edited or foreign session file containing an XML processing instruction inside element
+  text now loads** instead of being cut short at that point. No file this plug-in writes has ever
+  contained one, so no session, preset or A/B slot saved from Anabasis is read differently than
+  before — this widens what the reader tolerates and narrows nothing. Carried by the JUCE bump.
+  Evidence: this release. [Verified]
 
 ---
 

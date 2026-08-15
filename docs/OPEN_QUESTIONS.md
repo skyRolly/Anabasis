@@ -477,6 +477,17 @@ verification. Also: §2 requires checking for a newer stable 9.x (and reporting 
 adopting a JUCE 10) — that check is now a *deliberate deferral*, not an oversight. Re-run it if
 9.0.0 turns out to lack something this project needs.
 
+> **Amended by [ADR-0028](architecture/design-decisions/ADR-0028-juce-901-pin.md) (2026-08-16).**
+> The standing obligation above was exercised exactly as written: the pin moved to **9.0.1**
+> `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` through the gate, with an ADR and the rule-2
+> verification. This entry is **not** rewritten — the decision recorded here is the decision that
+> was taken on 2026-07-30, and the resolution text stays as it stood. What has lapsed is the
+> *rationale*, and only half of it: the two products no longer share a framework revision, because
+> Anamorph stays at 9.0.0 and is a read-only reference from this repository, so no change here
+> could carry it along. ADR-0028 §"What this costs the product family" enumerates which of the four
+> properties this rationale claimed survive and which are suspended, and carries the
+> re-convergence obligation.
+
 ---
 
 ### OQ-003 — Plugin identity codes and bundle ID · `Resolved 2026-07-30`

@@ -22,7 +22,7 @@ Framework
 --------------------------------------------------------------------------
 
 Anabasis is built with the JUCE framework (Raw Material Software Limited),
-pinned to JUCE 9.0.0 (commit f8f8864172464b9adf9eba6101e1f784838d1597).
+pinned to JUCE 9.0.1 (commit e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8).
 The JUCE Framework modules are dual-licensed under the AGPLv3 and the
 commercial JUCE 9 licence. Anabasis is a closed-source commercial product,
 which cannot satisfy the AGPLv3 arm; obtaining the commercial JUCE licence
