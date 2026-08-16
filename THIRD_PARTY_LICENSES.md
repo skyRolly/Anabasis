@@ -14,9 +14,12 @@ Copy-and-adapt provenance (ADR-0009): the structure and verification protocol of
 inventory are adapted from `Anamorph:THIRD_PARTY_LICENSES.md`. The **findings are not
 copied**: every row below was re-verified against this repository's own pinned JUCE tree and
 its own build objects, exactly because "an inventory copied from another project is not
-evidence" (`RELEASE_POLICY.md`, constraint C7). That the resulting component set matches the
-sibling's is the expected consequence of both products pinning the same JUCE commit — it is a
-result, not an assumption.
+evidence" (`RELEASE_POLICY.md`, constraint C7). The resulting component set still matches the
+sibling's — a result, not an assumption, and now one that carries more weight rather than less:
+**the two products stopped pinning the same JUCE commit on 2026-08-16** (ADR-0028 moved Anabasis
+to 9.0.1 while Anamorph stays at 9.0.0), so the match is no longer the arithmetic consequence of
+an identical tree. It survives because the 9.0.0 → 9.0.1 delta adds and removes no vendored
+component, which is stated with its evidence below.
 
 ## How this inventory was produced
 
@@ -40,9 +43,25 @@ To re-verify after a JUCE bump, repeat exactly that: read the new `LICENSE.md`, 
 the symbol probes against a fresh Release build's object files. See
 [`docs/policies/DEPENDENCY_POLICY.md`](docs/policies/DEPENDENCY_POLICY.md).
 
-Pinned version at the time of writing: **JUCE 9.0.0**, commit
-`f8f8864172464b9adf9eba6101e1f784838d1597`. Paths below are relative to that checkout
-(`build/_deps/juce-src/` in a local build) unless stated otherwise.
+Pinned version: **JUCE 9.0.1**, commit `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`. Paths below
+are relative to that checkout (`build/_deps/juce-src/` in a local build) unless stated otherwise.
+
+**Re-verified at the 9.0.1 bump (2026-08-16, ADR-0028), by the procedure above rather than by
+inspection.** JUCE's own `LICENSE.md` is byte-identical between the two tags, and so is every
+licence file this document cites — `git diff 9.0.0 9.0.1` reports **no change** to any
+`LICENSE*`, `COPYING*`, `FTL.TXT`, `Flac Licence.txt` or the `jpglib/README` that carries the
+IJG condition-(2) wording. The symbol probes were re-run against a fresh Release build's object
+files at the new pin, and every §2 component is still present by the same symbol it was found by:
+`FLAC__stream_decoder_init_stream`, `SBAlgorithmCreate`, `jcopy_block_row`,
+`png_create_read_struct`, `hb_buffer_create`, `PVG_FT_*` (30), `plutovg_*` (223),
+`vorbis_synthesis` and zlib's `deflateInit2_`, plus 1675 `Steinberg`-namespaced symbols in the
+VST3 wrapper object. §4's exclusions are still absent by the same test — zero
+`lilv_`/`serd_`/`sord_`/`sratom_`/`lv2_`, zero MP3-named and no `ASIOInit`. The only licence files ADDED anywhere in the tree
+belong to `modules/juce_gui_extra/native/typescript/webview-interop/` — JUCE's own new npm
+package (`@juce-framework/webview`, "AGPL-3.0-only OR LicenseRef-JUCE", i.e. the same dual grant
+as the framework), which is TypeScript and JavaScript that no compiler in this build ever reads,
+so it adds no component to §2 and no third-party obligation. Its `package-lock.json` pins that
+package's own *build* dependencies; nothing in this repository fetches or executes them.
 
 ---
 
@@ -140,7 +159,7 @@ zlib and libpng ask for acknowledgement but explicitly do *not* require it; it i
 
 ## 3. Steinberg VST 3 — separate review required
 
-The VST 3 SDK **source code** bundled with JUCE 9.0.0 is under the **MIT licence**
+The VST 3 SDK **source code** bundled with JUCE 9.0.1 is under the **MIT licence**
 (`.../VST3_SDK/LICENSE.txt`, "Copyright (c) 2025, Steinberg Media Technologies GmbH").
 
 The MIT grant covers the code. It does **not** cover the "VST" name and logo, or the terms on

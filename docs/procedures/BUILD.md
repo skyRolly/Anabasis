@@ -12,10 +12,15 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
 ## Toolchain
 
 - **CMake ≥ 3.22**, a **C++20** compiler, **Ninja** (recommended generator).
-- **JUCE 9.0.0** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
-  commit SHA** `f8f8864172464b9adf9eba6101e1f784838d1597`) — or pointed at a local checkout. Same
-  revision as the sibling product (`docs/OPEN_QUESTIONS.md` OQ-001, resolved). See
+- **JUCE 9.0.1** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
+  commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`) — or pointed at a local checkout.
+  OQ-001 pinned the sibling product's revision; **ADR-0028 (2026-08-16) moved this repository to
+  9.0.1 while Anamorph stayed at 9.0.0**, so the two are a patch apart. See
   `docs/policies/DEPENDENCY_POLICY.md` for the version-lock reasoning.
+  A tree configured against the previous pin does **not** pick this up: `ANABASIS_JUCE_TAG` is a
+  cache entry, and `set(... CACHE ...)` never overwrites one. Reconfiguring an existing `build/`
+  keeps fetching 9.0.0 silently. Delete the build directory, or pass
+  `-DANABASIS_JUCE_TAG=e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` explicitly.
 
 ## Linux dependencies (Ubuntu)
 
@@ -56,7 +61,7 @@ scripts/build.sh            # scripts/build.sh [Release|Debug]
 | `ANABASIS_BUILD_TESTS` | ON | Build the `AnabasisTests` + `AnabasisStateTests` console apps |
 | `ANABASIS_BUILD_STANDALONE` | ON | Add the Standalone target (debugging convenience) |
 | `ANABASIS_JUCE_PATH` | "" | Use a local JUCE checkout instead of fetching |
-| `ANABASIS_JUCE_TAG` | `f8f8864…` (= tag 9.0.0) | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` (`9.0.0`) carries the human-readable version |
+| `ANABASIS_JUCE_TAG` | `e18f7f5…` (= tag 9.0.1) | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` (`9.0.1`) carries the human-readable version |
 | `ANABASIS_BUILD_NUMBER` | 0 | CI build/dev number shown in the About box (`-DANABASIS_BUILD_NUMBER=${{ github.run_number }}`) |
 
 Offline build (no network) with a local JUCE:

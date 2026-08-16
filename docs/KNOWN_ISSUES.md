@@ -844,6 +844,63 @@ controls is an *input-routing* fault; frozen meters with dead controls is a *rep
 fault (on Linux JUCE drives `dispatchDeferredRepaints` from the same vblank timer that feeds
 `VBlankAttachment`, so both symptoms share one carrier), and the two lead to opposite places.
 
+**Addendum, 2026-08-16 (the JUCE 9.0.1 bump — ADR-0028). Three candidate mechanisms that were
+live at 9.0.0 are closed at 9.0.1, one on each branch of the paragraph above. This entry stays
+OPEN and its status is unchanged**: the report still does not reproduce here, this is not the
+reporter's machine, and nothing below was *tested* against the reported configuration — it is
+read from the upstream diff between the two pinned trees. It is recorded because the next round
+should not re-derive it, and because if the report recurs at 9.0.1 these three are already
+excluded.
+
+*On the input-routing branch:*
+
+- **JUCE dlopened `libXi.so`, not `libXi.so.6`** (`juce_XSymbols_linux.h:655` at `f8f8864…`).
+  Every other X11 helper it loads is a SONAME — `libX11.so.6`, `libXext.so.6`,
+  `libXcursor.so.1`, `libXinerama.so.1`, `libXrender.so.1`, `libXrandr.so.2` — and XInput alone
+  asked for the *unversioned* name, which is the symlink `libxi-dev` installs. A developer machine
+  has it (this container does, via the `scripts/setup-linux.sh` X11 dev packages); **an end user's
+  machine has `libxi6` and no symlink.** That first step is MEASURED rather than assumed — with
+  `/usr/lib/x86_64-linux-gnu/libXi.so` (a symlink to `libXi.so.6.1.0`) temporarily moved aside,
+  `dlopen ("libXi.so", RTLD_LOCAL | RTLD_NOW)` returns null with *"cannot open shared object file"*
+  while `dlopen ("libXi.so.6")` still succeeds; with the symlink in place both open. The failure is
+  silent and total rather than loud:
+  `X11Symbols`' stub for a missing symbol returns a default-constructed value, `Status` is `int`,
+  and `Success` is `0` (`/usr/include/X11/X.h:350`) — so `setupXI2`'s
+  `xiQueryVersion (…) != Success` test *passes* against the stub, `major`/`minor` keep the `2, 2`
+  they were initialised with, `XQueryExtension` succeeds because the **server** has XInput2 even
+  when the client library is missing, and JUCE proceeds as though XI2 were live. Then
+  `registerForXI2Events` calls the `xiQueryDevice` stub, gets `nullptr` with `numDevices` still 0,
+  iterates nothing, and **selects no XI2 event mask at all**. Dead pointer, live window, no
+  diagnostic. 9.0.1 loads `libXi.so.6`, and makes the `XIQueryVersion` stub return `BadRequest` so
+  the same absence would now fail closed; it also null-checks `xiQueryDevice`.
+
+*On the repaint/event-loop branch:*
+
+- **The Linux vblank timer compared milliseconds against hertz.**
+  `juce_Windowing_linux.cpp` guarded its restart with
+  `if (vBlankManager.getTimerInterval() != frequencyToUse) vBlankManager.startTimerHz (frequencyToUse)`
+  — `getTimerInterval()` returns a **period in ms**, `frequencyToUse` is a **rate in Hz**, so for
+  any display the two never agree (60 Hz → interval 16) and every call re-`start`s the timer,
+  resetting its countdown. 9.0.1 converts to a period first and compares like with like. This is
+  the same timer that drives `dispatchDeferredRepaints`, which is why it lands on this branch and
+  not the other.
+- **The message queue could starve the X event pump.** `juce_Messaging_linux.cpp`'s fd callback
+  drained `popNextMessage` in an unbounded loop; 9.0.1 breaks out after 100 ms, with the comment
+  "Avoid starving other LinuxEventLoop callbacks such as the XWindowSystem". Upstream's
+  `CHANGE_LIST.md` files this under "Fixed unresponsive Linux GUIs".
+
+*Also on the display-geometry path, and relevant because it feeds the timer above:*
+`findDisplays` skipped the whole XRandR branch unless `_NET_WORKAREA` existed, so a bare X session
+or a WM that sets no work area got no per-monitor refresh rate — hence the 100 Hz fallback, hence
+the timer restart. 9.0.1 consults XRandR regardless and guards a division by a zero
+`hTotal`/`vTotal`.
+
+**What would now settle it, and it is unchanged in kind.** The same single observation — do the
+meters move while audio plays — plus one new one that is cheap for the reporter and decisive
+about the first mechanism: `ldconfig -p | grep libXi`. If that machine has `libXi.so.6` but no
+bare `libXi.so`, the 9.0.0 build could not have received a pointer event and 0.1.5 should behave
+differently for exactly that reason.
+
 Evidence [Partially Verified]:
 - Source: `src/gui/PluginEditor.cpp` (GL gate, overlays, `applyUiScale`), `CMakeLists.txt`
 - Test:   none — the report does not reproduce; the runtime harness above is recorded in

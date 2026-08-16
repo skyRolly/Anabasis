@@ -78,7 +78,7 @@ depth for the audition. Results, when they exist, belong in this table with per-
 
 | Dependency | Pin | Status | Evidence |
 |---|---|---|---|
-| JUCE | **9.0.0** — immutable commit `f8f8864172464b9adf9eba6101e1f784838d1597` (FetchContent + `GIT_SHALLOW`; same pin as the sibling) | **Verified** | `CMakeLists.txt` (`ANABASIS_JUCE_TAG`); ADR-0008, OQ-001 |
+| JUCE | **9.0.1** — immutable commit `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` (FetchContent + `GIT_SHALLOW`). **No longer the sibling's pin**: Anamorph stays at 9.0.0 / `f8f8864…` (ADR-0028) | **Verified** | `CMakeLists.txt` (`ANABASIS_JUCE_TAG`); ADR-0028, and ADR-0008/OQ-001 for the original pin |
 | C++ standard | **C++20** baseline (`ANABASIS_CXX_STANDARD`, legal values 20/23 — 23 exists only for the OQ-006 canary and is never a shipping configuration) | **Verified** | `CMakeLists.txt`; ADR-0008 decision B5; `cxx23-canary.yml` |
 | pluginval | latest release, downloaded at validation time — **not pinned** | **Verified (that it is unpinned)** | `scripts/run-pluginval.sh`; recorded as a tracked improvement in `HANDOVER.md` §Critical dependencies |
 

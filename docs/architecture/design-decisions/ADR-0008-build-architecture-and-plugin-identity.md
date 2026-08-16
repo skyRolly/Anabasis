@@ -192,6 +192,14 @@ mutable tag *name*. Two cache variables carry it: `ANABASIS_JUCE_VERSION "9.0.0"
 and the value `README.md` records) and `ANABASIS_JUCE_TAG "f8f8864…"` (the SHA `FetchContent`
 actually uses).
 
+> **⚠ AMENDED BY [ADR-0028](ADR-0028-juce-901-pin.md) (2026-08-16): the VERSION and the SHA in this
+> paragraph have moved to 9.0.1 / `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`.** Nothing else here
+> has. Everything this paragraph and decision A5 actually decide about the dependency — acquisition
+> by `FetchContent`, a pin by immutable SHA and never a tag name, `GIT_SHALLOW` with the caveat
+> below, and the two cache variables that carry it — is what ADR-0028 *used*, not what it replaced.
+> The record is not rewritten, per the `ADR_INDEX.md` amendment convention: the two values above are
+> the decision as taken on 2026-07-31, and `CMakeLists.txt` is the live copy.
+
 > **`GIT_SHALLOW TRUE` + a commit SHA is a documented CMake trap, and dropping the shallow flag is
 > the sanctioned fix.** CMake's own `ExternalProject`/`FetchContent` documentation says
 > `GIT_SHALLOW` expects `GIT_TAG` to name a **branch or tag**; fetching an arbitrary SHA shallowly

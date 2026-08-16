@@ -623,7 +623,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 | Area | Anamorph | Anabasis | Why |
 |---|---|---|---|
 | **C++ standard** | C++17 | **C++20** + a non-blocking C++23 canary CI job | §2.1 of this brief |
-| **JUCE** | 9.0.0, SHA-pinned | **9.0.0 at the same commit** `f8f8864…` — §2 asked for the newest stable 9.x to be checked at P0; that check was made and resolved in favour of matching the sibling product, so the line shares one framework baseline (OQ-001, resolved — see §23.2) | §2 |
+| **JUCE** | 9.0.0, SHA-pinned | **9.0.1**, SHA-pinned at `e18f7f5…` — §2 asked for the newest stable 9.x to be checked at P0; that check was made and resolved in favour of matching the sibling, so the line started on one framework baseline (**9.0.0** at `f8f8864…`, OQ-001). **ADR-0028 (2026-08-16) ended that**: Anabasis moved to 9.0.1 on the owner's directive and Anamorph did not, so this row is now a real delta rather than a shared value. The six modules that decide DSP, parameters, state and the format wrappers are byte-identical across the two tags, so the divergence cannot produce an audible or host-visible difference between the products | §2 |
 | **Signal chain** | Input → engine → Mix → Mono Maker → Output → Solo | Input Gain → EQ → Comp → Clipper/Sat → Limiter → Ceiling → Dither → Output | §3 |
 | **Oversampling scope** | wraps the nonlinear stages only | must additionally serve **true-peak detection at ≥ 4×** (BS.1770-4) | §4.3 |
 | **Simple/Advanced** | Advanced *adds* modules; Advanced-only modules default-bypass | Simple is a **macro layer over the same parameter model**; switching must not change the sound | §5.3 — a new policy, `MODE_AND_ADAPTATION_POLICY.md` |
@@ -651,7 +651,9 @@ licence tier and whether to extract a shared `rollytech-ui` module (§1.2). **Do
 of them** (§13).
 
 Two are now **resolved** and are therefore *decisions*, not choices to revisit: the JUCE pin
-(**9.0.0** at commit `f8f8864…`, the same revision Anamorph pins — OQ-001) and the plugin identity
+(OQ-001 resolved it at **9.0.0**, commit `f8f8864…`, the revision Anamorph pins; **ADR-0028 moved
+it to 9.0.1 at `e18f7f5…` on 2026-08-16**, through the Architecture Review Gate, and Anamorph
+stayed — so the pin is still a decision and no longer a shared one) and the plugin identity
 (**`RTec` / `Anbs` / `com.rollytech.anabasis`** — OQ-003; the vendor code spells RollyTech, and
 Anamorph moved to it in its 0.9.1 so the product line agrees from the start). Both must be written
 into `CMakeLists.txt` at P1 and are frozen from the first build that leaves the repository

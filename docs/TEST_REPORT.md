@@ -8,6 +8,12 @@ re-measurement updates both the test comment and this table.
 
 **Environment for all measurements:** Linux x86-64 container, GCC, Release build (`-O3` via
 `juce_recommended_config_flags`, no `-ffast-math`), JUCE 9.0.0 @ `f8f8864…`, fs = 48 kHz.
+The pin moved to 9.0.1 @ `e18f7f5…` on 2026-08-16 (ADR-0028) and this line is **not** rewritten:
+these are dated measurements, and re-stamping an environment nobody re-measured in turns a record
+of what was run into a claim about today. What carries them forward is the named test beside each
+number — every one of them re-asserted green at the new pin — plus the file-level fact that
+`juce_dsp` and `juce_audio_basics` differ between the two tags only in their module-declaration
+version string, so no filter, oversampler or block primitive moved underneath them.
 Deterministic stimuli (exact-bin sines, fixed seeds); FFT = `juce::dsp::FFT`, 8192-point,
 rectangular window on exact-bin content.
 

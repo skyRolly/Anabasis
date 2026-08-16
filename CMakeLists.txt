@@ -17,7 +17,7 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
 
-project(Anabasis VERSION 0.1.4 LANGUAGES C CXX)
+project(Anabasis VERSION 0.1.5 LANGUAGES C CXX)
 
 # The BASELINE is C++20 (ADR-0008 decision B5). The cache seam below exists for
 # exactly ONE caller — the OQ-006 C++23 canary (.github/workflows/cxx23-canary.yml),
@@ -71,14 +71,14 @@ endif()
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
 
-# --- JUCE: version 9.0.0 pinned to the tag's IMMUTABLE COMMIT SHA -----------
+# --- JUCE: version 9.0.1 pinned to the tag's IMMUTABLE COMMIT SHA -----------
 # A tag NAME can be re-pointed upstream; the SHA cannot (ADR-0008 decision A5,
 # OQ-001). GIT_SHALLOW with a SHA is a documented CMake trap: if the fetch
 # misbehaves, drop GIT_SHALLOW, NEVER the SHA (ADR-0008's caveat carries the
 # sanctioned fix). Changing this pin is an Architecture Review Gate item
-# (DEPENDENCY_POLICY.md).
-set(ANABASIS_JUCE_VERSION "9.0.0" CACHE STRING "Human-readable JUCE version (README records this)")
-set(ANABASIS_JUCE_TAG "f8f8864172464b9adf9eba6101e1f784838d1597" CACHE STRING "Immutable commit SHA of the JUCE tag")
+# (DEPENDENCY_POLICY.md); 9.0.0 -> 9.0.1 is ADR-0028.
+set(ANABASIS_JUCE_VERSION "9.0.1" CACHE STRING "Human-readable JUCE version (README records this)")
+set(ANABASIS_JUCE_TAG "e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8" CACHE STRING "Immutable commit SHA of the JUCE tag")
 
 if(ANABASIS_JUCE_PATH)
     add_subdirectory(${ANABASIS_JUCE_PATH} ${CMAKE_BINARY_DIR}/juce)

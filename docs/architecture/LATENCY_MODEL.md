@@ -91,7 +91,7 @@ change per load.
 
 ## The offline rule
 
-`effectiveFactor()` (`src/dsp/Latency.h:93-96`): with **Offline quality = Force Max** and
+`effectiveFactor()` (`src/dsp/Latency.h:96-99`): with **Offline quality = Force Max** and
 `isNonRealtime()`, the engine renders — and the wrapper reports — the **forced 16×**
 factor regardless of the live setting. This is why `setNonRealtime` is a recompute
 trigger. The transition edges are asymmetric by design and both pinned: a

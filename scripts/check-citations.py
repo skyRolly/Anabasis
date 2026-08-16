@@ -168,6 +168,18 @@ DELIBERATE_REAIMS = set([
     # branch. Re-anchor and declare in ONE change set, never in two.
     ("docs/architecture/design-decisions/ADR-0027-painting-thread-reads-editor-bookkeeping.md",
      "src/gui/PluginEditor.h:342"),
+    # 0.1.5, the JUCE 9.0.1 bump (ADR-0028): `LATENCY_MODEL.md`'s
+    # `effectiveFactor()` anchor moved :93-96 -> :96-99 when the OS-latency
+    # table's provenance comment above it gained three lines. NO entry was added,
+    # and the reason is the one thing this list must not get wrong:
+    # `src/dsp/Latency.h` IS NOT IN `TRACKED`, so `classify()` declines the
+    # citation and the tool never looks at it — not checked, not re-anchored, not
+    # excusable. The :96-99 edit was made and verified BY HAND. Both `Latency.h`
+    # anchors in that document (`:25-31` and `:96-99`) are hand-maintained; a
+    # clean run of this gate says nothing about either. Recorded here because the
+    # gate exiting 0 across both bases is equally consistent with "the anchor is
+    # fine" and with "the anchor was never examined", and only this comment
+    # distinguishes them.
     ("docs/architecture/design-decisions/ADR-0013-release-trim-reaches-auto-poles.md",
      "src/dsp/AnabasisEngine.cpp:518-520"),
     ("docs/architecture/design-decisions/ADR-0014-frozen-trim-restore.md",
