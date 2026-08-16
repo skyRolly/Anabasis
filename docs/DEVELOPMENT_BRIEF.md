@@ -450,7 +450,7 @@ Copy the structural pattern from Anamorph's `CMakeLists.txt`:
 - Triggers: `push` to `"**"`, `pull_request`, `workflow_dispatch`, **and `workflow_call`** so the
   release pipeline can reuse the exact same matrix and gates. `permissions: contents: read`.
 - Matrix: `ubuntu-latest` (VST3 + Standalone), `windows-latest` (VST3 + Standalone, MSVC
-  multi-config), `macos-14` (universal `arm64;x86_64` VST3 + **AU** + Standalone).
+  multi-config), `macos-latest` (universal `arm64;x86_64` VST3 + **AU** + Standalone).
 - **Validation is uniform and BLOCKING on all three platforms.** No `continue-on-error`.
 - **pluginval runs in two modes, 3 consecutive passes each**: `deterministic` (a fixed **nonzero**
   `--random-seed` — 0 is pluginval's "generate a random seed" sentinel and pins nothing) **and**

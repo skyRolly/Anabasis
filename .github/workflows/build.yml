@@ -1105,7 +1105,18 @@ jobs:
   macos:
     needs: preflight
     if: needs.preflight.outputs.ready == 'true'
-    runs-on: macos-14   # Apple Silicon runner; we build a universal binary
+    # Apple Silicon runner; we build a universal binary. FLOATING, like
+    # `ubuntu-latest` and `windows-latest` above -- macOS was the one platform
+    # pinned to a numbered image, and `macos-14` is now DEPRECATED upstream
+    # (actions/runner-images: macos-14 / macos-14-xlarge, arm64, deprecated).
+    # `macos-latest` resolves to macOS 26 arm64 today. The float is deliberate
+    # and is NOT the JUCE-pin discipline being relaxed: the framework is pinned
+    # because a silent bump can move DSP, latency and the state ABI, whereas the
+    # runner image is the ENVIRONMENT this product is tested against, and letting
+    # it age is how a toolchain regression reaches users first. The x86_64 half
+    # of the universal build is covered on real hardware by `macos-intel` below,
+    # which stays on a numbered Intel label because "latest" has no Intel meaning.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
 
