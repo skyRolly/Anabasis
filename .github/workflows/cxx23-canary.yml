@@ -90,7 +90,11 @@ jobs:
         run: build/AnabasisTests_artefacts/Release/AnabasisTests.exe
 
   macos:
-    runs-on: macos-14
+    # Floating, matching `build.yml`'s macOS job: `macos-14` is deprecated
+    # upstream (actions/runner-images), and a canary that asks "does tomorrow's
+    # baseline still compile?" is the last job that should be answering it on
+    # yesterday's toolchain.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
 

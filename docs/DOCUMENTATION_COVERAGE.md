@@ -6,7 +6,41 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **0.1.5 framework bump (2026-08-16)** — JUCE 9.0.0 → 9.0.1.
+**Last updated:** for the **macOS runner float (2026-08-16)** — `macos-14` → `macos-latest`, on top
+of the 0.1.5 framework bump recorded below.
+
+**Scope of the runner-float round.** CI configuration only; **no version change** — this is 0.1.5's
+CI, not a release. `actions/runner-images` marks `macos-14` (arm64) deprecated, so both jobs naming
+it move to `macos-latest`: `build.yml`'s `macos` (universal `arm64;x86_64`, both pluginval modes ×3
+for VST3 **and** AU, and the shipped `.pkg`) and `cxx23-canary.yml`'s `macos`. `macos-intel` stays
+on `macos-15-intel` — still GA upstream, and `latest` has no Intel meaning, so pointing it at an
+arm64 image would delete the guaranteed-native-Intel execution that job exists to provide. The
+documentation surface is the `DOCUMENTATION_LIFECYCLE_POLICY.md` **CI workflow** row: `CI_CD.md`'s
+build-matrix row and `DEVELOPMENT_BRIEF.md` §19.1's matrix line. `TESTING_POLICY.md` and
+`CI_CD.md`'s §"three Linux jobs" prose name only `macos-15-intel` and needed no edit.
+
+**Two hazards a float creates were CHECKED against the first green run rather than reasoned about**
+(run 31936166366, `macos` job, `a36149e`) — worth recording because both are the kind that stay
+green while quietly changing what was covered:
+
+- **The 10.13 deployment floor.** Floating the image floats Xcode too, and `CMAKE_OSX_DEPLOYMENT_TARGET=10.13`
+  is a SHIPPING claim (OQ-011; `COMPATIBILITY_MATRIX.md`), not a CI convenience — a toolchain that
+  refused it would move the supported-OS statement, not just the label. Xcode **26.6** accepted it
+  for the universal build with **zero** deployment-target diagnostics in the log. The claim
+  (macOS 10.13+ Intel, 11.0+ Apple Silicon) is unchanged.
+- **Rosetta 2.** Three steps degrade to a `::warning::` when `arch -x86_64` is unavailable, so an
+  image without Rosetta would keep the job green while three Intel-slice coverage points vanished.
+  The image has it: **zero** `Rosetta 2 unavailable` annotations were emitted, and the x86_64
+  self-test and both x86_64 probes ran (15 s / 15 s / 9 s rather than the 0 s warn-and-skip path).
+- The job's only emitted annotations are the **four documented dSYM ones** ("expected under
+  Release+LTO"), identical to those the `macos-14` run produced; the sole compiler warning is
+  JUCE's own `JUCE_DISPLAY_SPLASH_SCREEN` `#pragma message`, vendored and pre-existing. The
+  C++23 canary was **dispatched** (run 31937847998) because it is weekly-only and would otherwise
+  never have exercised its own changed label; green on all three platforms.
+
+---
+
+**Last updated before that:** for the **0.1.5 framework bump (2026-08-16)** — JUCE 9.0.0 → 9.0.1.
 
 **Scope of the 0.1.5 round.** One dependency pin moved and nothing else was implemented. The
 documentation surface it touched is exactly the one `DOCUMENTATION_LIFECYCLE_POLICY.md`'s
