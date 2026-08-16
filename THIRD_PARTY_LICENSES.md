@@ -14,9 +14,12 @@ Copy-and-adapt provenance (ADR-0009): the structure and verification protocol of
 inventory are adapted from `Anamorph:THIRD_PARTY_LICENSES.md`. The **findings are not
 copied**: every row below was re-verified against this repository's own pinned JUCE tree and
 its own build objects, exactly because "an inventory copied from another project is not
-evidence" (`RELEASE_POLICY.md`, constraint C7). That the resulting component set matches the
-sibling's is the expected consequence of both products pinning the same JUCE commit — it is a
-result, not an assumption.
+evidence" (`RELEASE_POLICY.md`, constraint C7). The resulting component set still matches the
+sibling's — a result, not an assumption, and now one that carries more weight rather than less:
+**the two products stopped pinning the same JUCE commit on 2026-08-16** (ADR-0028 moved Anabasis
+to 9.0.1 while Anamorph stays at 9.0.0), so the match is no longer the arithmetic consequence of
+an identical tree. It survives because the 9.0.0 → 9.0.1 delta adds and removes no vendored
+component, which is stated with its evidence below.
 
 ## How this inventory was produced
 

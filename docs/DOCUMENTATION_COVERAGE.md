@@ -22,9 +22,22 @@ Two things this round deliberately did **not** rewrite, for the same reason it w
 `TEST_REPORT.md`'s environment line still says the measurements were taken at 9.0.0, because they
 were, and re-stamping an environment nobody re-measured in would turn a record of an experiment
 into a claim about today (the ADR-0026 lesson, applied to a different file); and the historical
-records of the ORIGINAL pin decision — `CHANGELOG.md`'s P1 entry, `DESIGN.md`, `DEVELOPMENT_BRIEF.md`,
-ADR-0008's decision text, OQ-001's resolution — say 9.0.0 and keep saying it. What changed is the
-set of documents that describe the pin **now**.
+records of the ORIGINAL pin decision — `CHANGELOG.md`'s P1 entry, `DESIGN.md`, ADR-0008's decision
+text, OQ-001's resolution — say 9.0.0 and keep saying it. What changed is the set of documents that
+describe the pin **now**.
+
+**`DEVELOPMENT_BRIEF.md` was on that list for one round and did not belong there.** Review caught
+it: the brief's only two pin sites are **§23**, the live "where Anabasis deliberately differs from
+Anamorph" table, and **§23.2**, which lists the pin among the resolved decisions — both
+current-state statements about the product family, not specification history. §2 asks for "the
+newest stable 9.x" and quotes no revision at all, so nothing in the brief's *spec* half was
+affected either way. That §23 tracks the present rather than the drafting date is visible in the
+table itself: its Plugin-identity row already records "Anamorph moved to it in its 0.9.1", an event
+later than the brief. Both sites now name 9.0.1 and the divergence, which is the same correction
+ADR-0028 made for `README.md` and refused to skip. The misclassification is left recorded rather
+than quietly dropped, because "which documents are historical?" was the judgement call of this
+round and getting it wrong in the safe-looking direction — declaring a live document historical —
+is how a delta table stops enumerating deltas.
 
 **The one C6 drift found and reported rather than corrected.** `AI_AGENT_POLICY.md` §Hard Stop
 conditions closes with "These map one-to-one to the `ARCHITECTURE_REVIEW_GATE.md` items". They do
