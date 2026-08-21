@@ -137,6 +137,16 @@ why a `juce::Value` change (asynchronous through that loop) and anything requiri
 are outside what this target can reach, and are carried in `DEPENDENCY_POLICY.md`'s JUCE-internals
 register instead.
 
+A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
+needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
+statics — `windowEntries`, `buckets`, `drawsZeroRegion` and, since 0.1.6, `grY` — because an
+expression reachable only from `paint` is one no test can pin and no mutant can kill; the GR
+trace's vertical mapping under-reported reduction past 12 dB for three rounds while it sat inline.
+`testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
+renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
+window) to check the OTHER readout of the same quantity independently — a test that quoted the
+shared constant twice would pass with the meter dividing by anything.
+
 This paragraph said "never instantiated" until 2026-08-13, having gone stale at P5 —
 `TESTING_POLICY.md`'s harness-conventions bullet was corrected on the same point at 0.1.1 and this
 copy was missed. An under-described coverage claim is not harmless: it invites the next contributor

@@ -64,8 +64,9 @@ private:
 // A per-channel GR meter for a panel well (COMP / LIMITER), fed by the
 // editor's timer from the per-stage published atomics. TWO LANES since 0.1.2
 // (item 12): one well split horizontally, L above R — the convention every
-// stacked channel meter uses — same right-anchored fill and 24 dB span per
-// lane. Below 100 % stereo link the lanes diverge, which is both the feature
+// stacked channel meter uses — same right-anchored fill and the shared
+// `abgui::meters::grSpanDb` span per lane (24 dB; since 0.1.6 the GR history
+// reads the same constant, so the two GR readouts cannot drift apart). Below 100 % stereo link the lanes diverge, which is both the feature
 // and the KI-009 field disambiguator (a channel silent with its lane pinned
 // deep says "per-channel gain collapse"; silent at zero says "not the
 // dynamics stages"). In a mono layout the editor feeds `mono = true` and one
@@ -92,7 +93,7 @@ public:
 
         auto lane = [&g] (juce::Rectangle<float> r, float grDb)
         {
-            const float t = juce::jlimit (0.0f, 1.0f, -grDb / 24.0f);
+            const float t = juce::jlimit (0.0f, 1.0f, -grDb / abgui::meters::grSpanDb);
             if (t > 0.001f)
             {
                 g.setColour (abgui::colours::accent);

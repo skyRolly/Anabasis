@@ -84,13 +84,67 @@ struct RawBool : juce::RangedAudioParameter
 // --- Formatters / suffix-tolerant parsers (Anamorph :97-103,153-194) --------
 auto dbText  = [] (float v, int) { return juce::String (v, 1) + " dB"; };
 auto msText  = [] (float v, int) { return juce::String (v, 1) + " ms"; };
-auto pctText = [] (float v, int) { return juce::String (juce::roundToInt (v)) + " %"; };
+// PERCENT, and since 0.1.6 the DISPLAY PRECISION FOLLOWS THE VALUE: a whole
+// percent prints as an integer — "50 %", exactly as it always has — while a
+// value that is not a whole percent prints one decimal.
+//
+// Not cosmetic. `pctFrom` below reads an explicit "0.1 %" as a literal tenth
+// of a percent (the owner's 0.1.6 item 2), and an integer-only formatter
+// showed that value back as "0 %": the box denied the existence of the value
+// the user had just typed into it, which is the one thing a value box must
+// never do. The same shape as the ceiling's two decimals (`twoDecimalRange`
+// below) — a knob that reads one number while holding another lies about the
+// thing it exists to show.
+//
+// One decimal rather than two, and the same one `dbText`/`msText` already
+// print unconditionally, so a percent box carrying a decimal is the surface's
+// existing idiom rather than a new one. The residual bound is stated instead
+// of hidden: a value below 0.05 % reads "0.0 %" — the tenth it is finer than,
+// not the "0 %" that only an exact zero prints, so the two remain
+// distinguishable — and closing that last gap would mean quantising the RANGE
+// the way the ceiling does, which is a parameter-surface change
+// (PARAMETER_COMPATIBILITY_POLICY rule 3) this fix neither needs nor is
+// licensed to make.
+auto pctText = [] (float v, int)
+{
+    const float whole = std::round (v);
+    return (juce::approximatelyEqual (v, whole) ? juce::String ((int) whole)
+                                                : juce::String (v, 1)) + " %";
+};
 auto hzText  = [] (float v, int) { return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " kHz"
                                                        : juce::String (juce::roundToInt (v)) + " Hz"; };
 
 auto dbFrom  = [] (const juce::String& t) { return t.removeCharacters ("dB ").getFloatValue(); };
 auto msFrom  = [] (const juce::String& t) { return t.removeCharacters ("ms ").getFloatValue(); };
-auto pctFrom = [] (const juce::String& t) { return t.removeCharacters ("% ").getFloatValue(); };
+// PERCENT ENTRY, with the FRACTION rule (0.1.6 item 2, owner directive) —
+// the percent boxes' equivalent of the kHz shorthand below. Two spellings
+// reach these boxes and they mean different things:
+//
+//   * a bare number in (0, 1] is a FRACTION of full scale — "0.5" is 50 %,
+//     "1" is 100 %. All seven percent parameters span 0…100, so a user who
+//     types "0.5" meaning "half" would otherwise land on half of ONE percent:
+//     a value indistinguishable from zero at the knob, in the readout and in
+//     the sound.
+//   * anything carrying an explicit '%' is LITERAL — "0.1 %" is a tenth of a
+//     percent. That is the escape hatch the fraction rule requires, because
+//     without it the whole sub-1 % region would be untypeable.
+//
+// The discontinuity at 1 is real and deliberate: "1" is 100 % while "1.5" is
+// 1.5 %. One of the two readings has to win at the boundary and the owner's
+// example pins which ("1 → 100 %"); "1 %" reaches the other one.
+//
+// ROUND-TRIP STAYS EXACT, and `pctText` is what guarantees it rather than
+// luck: the formatter ALWAYS emits the '%' suffix, so every string this
+// product displays takes the literal branch and `getValueForText(getText(v))`
+// returns v for every v in range — the (0, 1] region included. A formatter
+// that dropped the suffix would multiply small values by 100 on every host
+// round-trip, which is why the suffix is a contract here and not decoration.
+auto pctFrom = [] (const juce::String& t)
+{
+    const bool literal = t.containsChar ('%');
+    const float v = t.removeCharacters ("% ").getFloatValue();
+    return (! literal && v > 0.0f && v <= 1.0f) ? v * 100.0f : v;
+};
 auto hzFrom  = [] (const juce::String& t)
 {
     auto s = t.toLowerCase().trim();

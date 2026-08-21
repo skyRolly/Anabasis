@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Five such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Six such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,40 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.1.6] — 2026-08-21
+
+**Two field reports: the GR history and the percent value boxes.** The gain-reduction history was
+under-reporting the plug-in's own work — its trace stopped at half the panel height and went flat
+for anything deeper, while the limiter's own GR meter beside it read further — and a fraction typed
+into a percent box landed a hundredth of where it was meant to. No DSP change, no parameter added,
+renamed or removed, no change to the serialization schema, and no change to reported latency.
+
+### Fixed
+
+- **The GR history trace uses the whole panel again, at the same 24 dB span as the GR meters.**
+  It divided by 12 dB and then spent only half the panel height getting there, so every reduction
+  past 12 dB drew the same horizontal line across the middle of the graph — the display's ceiling,
+  read as the limiter's. Everything that was already visible is drawn at exactly the height it was
+  before (12 dB still lands at half the panel); what changed is the reduction that used to be
+  flattened out of sight. The trace and the per-stage GR meters now read one shared span, so the
+  two cannot drift apart again. Evidence: this release. [Verified]
+
+### Changed
+
+- **A percent box reads a bare number between 0 and 1 as a fraction: `0.5` is 50 %, `1` is 100 %.**
+  Typed into a 0–100 % control, `0.5` used to land on half of ONE percent — a value
+  indistinguishable from zero at the knob, in the readout and in the sound. A number carrying an
+  explicit `%` is the literal percent, which is how the sub-1 % region is reached: `0.1%` is a
+  tenth of a percent, and `1 %` is one percent. This affects the seven percent controls (Loudness,
+  Comp Mix, Comp Stereo Link, Clip Mix, Color Depth, Limiter Stereo Link, Transients); no
+  parameter range, default, ID or automation behaviour changed. Evidence: this release. [Verified]
+- **A percent box holding a fractional value shows its decimal** — `0.1 %` where it used to round
+  to `0 %`. Whole percents print exactly as before (`50 %`). Without it the box denied the value it
+  had just accepted, and any path that re-read its own displayed text — the round-trip a host
+  performs — turned that value back into zero. Evidence: this release. [Verified]
 
 ---
 

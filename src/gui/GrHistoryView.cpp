@@ -109,7 +109,6 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         return;
 
     auto area = getLocalBounds().toFloat().reduced (10.0f, 8.0f);
-    const float grSpan = 12.0f;                     // dB of visible reduction
     const int cols = juce::jmax (1, (int) area.getWidth());
 
     // FIXED-IDENTITY decimation buckets + an area fill (0.1.1, owner shimmer
@@ -172,15 +171,16 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // from `paint` is a rule no test can pin, which is how this defect
     // survived the round that introduced it.
     const float zeroWy = area.getBottom() - 0.5f;       // == the wh floor below
+    const float zeroGy = grY (0.0f, area.getY(), area.getHeight());   // the GR zero line
     if (drawsZeroRegion (head, want))
     {
         const float xFirst = bucketX (nb, nb.kFirst, area.getX(), area.getWidth());
         if (xFirst > area.getX() + 0.5f)
         {
             wave.startNewSubPath (area.getX(), zeroWy);
-            gr.startNewSubPath (area.getX(), area.getY());
+            gr.startNewSubPath (area.getX(), zeroGy);
             wave.lineTo (xFirst, zeroWy);
-            gr.lineTo (xFirst, area.getY());
+            gr.lineTo (xFirst, zeroGy);
             started = true;
         }
     }
@@ -203,8 +203,10 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         const float x  = bucketX (nb, k, area.getX(), area.getWidth());
         const float wh = juce::jmax (0.5f, area.getHeight() * juce::jlimit (0.0f, 1.0f, peak));
         const float wy = area.getBottom() - wh;
-        const float gy = area.getY()
-                       + area.getHeight() * juce::jlimit (0.0f, 1.0f, -grDb / grSpan) * 0.5f;
+        // 0.1.6 item 1: `grY`, which spends the WHOLE panel height on
+        // `abgui::meters::grSpanDb` — see the header. The expression that used
+        // to sit here stopped at half the height and went flat past 12 dB.
+        const float gy = grY (grDb, area.getY(), area.getHeight());
         if (! started)
         {
             // A full scrolling window (the filling case starts its paths in

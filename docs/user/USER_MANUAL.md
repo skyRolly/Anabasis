@@ -143,7 +143,10 @@ Universal gestures:
 - **Knobs**: drag to change; **double-click or Alt/Option-click to reset** to default (one
   undoable step).
 - **Value boxes** (the number under a knob): **drag vertically** to change, double-click to
-  type. Typed entry is forgiving — `%` is optional and `2k`/`2kHz` means 2000 Hz.
+  type. Typed entry speaks the shorthand you would say out loud: `2k`/`2kHz` means 2000 Hz, and in
+  a **percent** box a number between 0 and 1 is a fraction — `0.5` is 50 %, `1` is 100 %. Add the
+  `%` when you mean the literal percent, which is how you reach values below one: `0.1%` is a tenth
+  of a percent.
 - **Tooltips**: every control has one, but they are **off by default** — enable them in
   Settings.
 
@@ -240,7 +243,9 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   fresh instance grows its trace from the right edge, and the region to the left stays
   empty until twenty seconds of audio have actually been measured — nothing is estimated
   or stretched. Pausing and resuming continues the timeline; it restarts only when the
-  sample rate or block size changes.
+  sample rate or block size changes. Vertically the trace hangs from the top of the graph
+  and reaches the bottom at **24 dB** of reduction — the same span the COMP and LIMITER
+  panels' own GR meters use, so the two read against each other directly.
 
 **Click the STATISTICS panel to reset** the integrated measurement, the loudness range and
 both peak holds — do it after changing the section you are judging. The rolling windows (M,
