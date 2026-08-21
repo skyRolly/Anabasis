@@ -5638,6 +5638,77 @@ static void testFrequencyTextEntrySpeaksMasteringShorthand()
     check (near (hz (pid::eqLowShelfFreq, "0.1k"), 100.0f), "freqText: LS '0.1k' lands 100 Hz");
 }
 
+// 0.1.6 item 2 (owner directive): the percent value boxes speak the same kind
+// of shorthand the frequency boxes above do, and for the same reason — the
+// number a user types has an obvious intent the old parser threw away. A bare
+// number in (0, 1] is a FRACTION of full scale ("0.5" is half, i.e. 50 %),
+// while an explicit '%' means the LITERAL percent ("0.1 %" is a tenth of one).
+// Without the first rule, typing "0.5" into a 0…100 knob landed on half of ONE
+// percent — indistinguishable from zero at the knob and in the sound; without
+// the second, the whole sub-1 % region became untypeable.
+//
+// Every case goes text → parser → normalise → denormalise through the REAL
+// parameter, exactly as the frequency test does, so the range's clamp
+// participates the way it does in a host or in the value box.
+static void testPercentTextEntryReadsFractionsAndLiteralPercents()
+{
+    AnabasisAudioProcessor proc;
+    auto* mix = dynamic_cast<juce::RangedAudioParameter*> (proc.apvts.getParameter (pid::compMix));
+    check (mix != nullptr, "pctText: (premise) a percent parameter was found");
+    if (mix == nullptr)
+        return;
+
+    auto pct = [&] (const char* id, const char* text) -> float
+    {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (proc.apvts.getParameter (id));
+        return p->convertFrom0to1 (p->getValueForText (text));
+    };
+    auto near = [] (float got, float want) { return std::abs (got - want) < 1.0e-3f; };
+
+    // The fraction rule, on the owner's own two examples.
+    check (near (pct (pid::compMix, "0.5"), 50.0f),  "pctText: '0.5' is half of full scale — 50 %");
+    check (near (pct (pid::compMix, "1"),  100.0f),  "pctText: '1' is all of it — 100 %");
+    check (near (pct (pid::compMix, "1.0"), 100.0f), "pctText: …and the same number spelled with a decimal point");
+    check (near (pct (pid::clipMix, "0.25"), 25.0f), "pctText: '0.25' is a quarter — 25 %");
+    check (near (pct (pid::colourDepth, "0.001"), 0.1f),
+           "pctText: the fraction rule reaches the bottom of the range too");
+
+    // Above the window and at zero, nothing changed — these are the spellings
+    // that already worked and a fix that broke them would trade one defect for
+    // a louder one.
+    check (near (pct (pid::compMix, "0"),    0.0f),   "pctText: '0' is zero under either reading");
+    check (near (pct (pid::transientPreserve, "50"),  50.0f),  "pctText: '50' is still 50 %");
+    check (near (pct (pid::compMix, "1.5"),  1.5f),   "pctText: '1.5' is past the fraction window — 1.5 %");
+    check (near (pct (pid::compMix, "100"), 100.0f),  "pctText: '100' is still 100 %");
+    check (near (pct (pid::stereoLink, "37.5"), 37.5f), "pctText: …and a fractional percent above 1 is literal already");
+
+    // The escape hatch: an explicit '%' is the literal percent, which is the
+    // ONLY way to reach the sub-1 % region and the owner's second example.
+    check (near (pct (pid::compMix, "0.1%"),  0.1f),  "pctText: '0.1%' is a tenth of a percent, not a tenth of full scale");
+    check (near (pct (pid::compMix, "0.1 %"), 0.1f),  "pctText: …with the space the boxes themselves print");
+    check (near (pct (pid::compMix, "1 %"),   1.0f),  "pctText: '1 %' reaches the other reading of the boundary");
+    check (near (pct (pid::compMix, "0.5 %"), 0.5f),  "pctText: …and so does every value the fraction rule would otherwise claim");
+
+    // THE DISPLAY, which is half of what makes the literal rule real: a box
+    // that showed "0 %" back would have denied the value it had just accepted.
+    check (mix->getText (mix->convertTo0to1 (50.0f),  0) == "50 %",
+           "pctShow: a whole percent prints as it always has");
+    check (mix->getText (mix->convertTo0to1 (100.0f), 0) == "100 %",
+           "pctShow: …at the top of the range too");
+    check (mix->getText (mix->convertTo0to1 (0.1f),   0) == "0.1 %",
+           "pctShow: a fractional percent prints its decimal instead of rounding to zero");
+
+    // ROUND-TRIP: every string this product DISPLAYS carries the '%', so it
+    // reads back as the literal — including the (0, 1] values the fraction
+    // rule would otherwise multiply by a hundred on every host query.
+    bool roundTrips = true;
+    for (float v : { 0.0f, 0.1f, 0.5f, 1.0f, 12.5f, 50.0f, 99.9f, 100.0f })
+        roundTrips = roundTrips
+                  && near (mix->convertFrom0to1 (mix->getValueForText (mix->getText (mix->convertTo0to1 (v), 0))), v);
+    check (roundTrips,
+           "pctText: getValueForText(getText(v)) == v for every v, the fraction window included");
+}
+
 // R2 item 11: every parameter control carries a hover hint. The wording lives
 // in ONE table (`tipFor`, file-static in PluginEditor.cpp) which this suite
 // cannot reach — what it CAN pin is the outcome: no slider or combo in the
@@ -6073,6 +6144,74 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
         check (! GrHistoryView::drawsZeroRegion (want * 97 + 3, want),
                "grZeroRegion: …however long it has been scrolling, at any bucket-expiry phase");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 0.1.6 item 1 — the GR trace's VERTICAL mapping, and its agreement with the
+// panel GR meter lanes.
+//
+// The owner's report had two halves and one cause: the history's trace "sticks
+// at half the height and goes flat", while the limiter's own GR meter beside
+// it reads deeper reduction than the trace admits to. One expression carried
+// both — `jlimit (0, 1, -grDb / 12) * 0.5` saturated at 12 dB AND spent only
+// half the panel getting there, so every reduction past 12 dB drew the same
+// horizontal line across mid-panel while the 24 dB meter went on filling.
+//
+// Two properties are asserted and the second matters as much as the first:
+//   (a) the trace now reaches the panel's bottom edge at the shared span; and
+//   (b) NOTHING that was already visible moved — 12 dB still lands at half
+//       height, because 24 dB over the full height is exactly the
+//       pixels-per-dB the old form had. A fix that also re-scaled the trace
+//       would be a different change from the one that was asked for.
+//
+// The meter's half is pinned by RENDERING one rather than by re-reading its
+// source: the claim under test is that the two readouts agree, and a test that
+// quoted the constant twice would pass with the meter dividing by anything.
+static void testGrHistoryAndTheMeterLanesShareOneReductionSpan()
+{
+    const float y0 = 8.0f, h = 120.0f;
+    auto y    = [y0, h] (float grDb) { return GrHistoryView::grY (grDb, y0, h); };
+    auto near = [] (float got, float want) { return std::abs (got - want) < 1.0e-3f; };
+
+    check (near (y (0.0f), y0),
+           "grY: no reduction rides the top of the panel");
+    check (near (y (-12.0f), y0 + h * 0.5f),
+           "grY: 12 dB still lands at half height — the fix re-scales nothing that was already drawn");
+    check (near (y (-6.0f), y0 + h * 0.25f) && near (y (-18.0f), y0 + h * 0.75f),
+           "grY: …and the mapping stays linear in dB at that one scale");
+    check (near (y (-abgui::meters::grSpanDb), y0 + h),
+           "grY: the shared span spends the WHOLE panel height, not half of it");
+    check (y (-13.0f) > y0 + h * 0.5f + 1.0e-3f,
+           "grY: past 12 dB the trace keeps descending — the flat mid-panel line WAS the defect");
+    check (near (y (-36.0f), y0 + h) && near (y (-600.0f), y0 + h),
+           "grY: deeper than the span pins to the bottom edge — nothing wraps or leaves the panel");
+    check (near (y (6.0f), y0),
+           "grY: a positive value (gain, not reduction) cannot lift the trace off the top");
+
+    // The other readout, rendered. `GrMiniMeter` fills from the RIGHT by the
+    // same fraction, so HALF the span must start its accent at half the well's
+    // width — the arithmetic identity that says both readouts divide by
+    // `abgui::meters::grSpanDb` and not merely that both compile.
+    GrMiniMeter meter;
+    meter.setBounds (0, 0, 122, 20);
+    meter.setGrDb (-abgui::meters::grSpanDb * 0.5f, -abgui::meters::grSpanDb * 0.5f, true);
+    const auto shot = meter.createComponentSnapshot (meter.getLocalBounds(), false);
+    check (shot.getWidth() == 122 && shot.getHeight() == 20,
+           "grMeter: (premise) the lane rendered");
+
+    // `paint` insets the well by 1 px and rounds the fill's corners by 2, so
+    // the centre row crosses the fill's straight left edge. The accent is gold
+    // (0xf0b432) over a near-black raised well (0x1d222b) — a red-channel
+    // threshold separates them with no colour arithmetic to get wrong.
+    const int row = shot.getHeight() / 2;
+    int firstAccent = -1;
+    for (int x = 0; x < shot.getWidth() && firstAccent < 0; ++x)
+        if (shot.getPixelAt (x, row).getRed() > 128)
+            firstAccent = x;
+    const float wellX = 1.0f, wellW = (float) shot.getWidth() - 2.0f;
+    check (firstAccent > 0
+               && std::abs (((float) firstAccent - wellX) / wellW - 0.5f) < 0.03f,
+           "grMeter: half the shared span fills half the lane — the history and the meter agree by construction");
 }
 
 // ---------------------------------------------------------------------------
@@ -7262,9 +7401,11 @@ int main (int argc, char** argv)
         testPresetIdentityAcrossRestore();
         testTheAboutPanelShowsTheBuildItIsRunning();
         testFrequencyTextEntrySpeaksMasteringShorthand();
+        testPercentTextEntryReadsFractionsAndLiteralPercents();
         testTheGraphWellViewsOnlyClaimTheirModeChips();
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
+        testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();

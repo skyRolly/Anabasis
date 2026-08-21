@@ -140,6 +140,31 @@ public:
         return juce::jmax ((int64_t) 0, head - want) == 0;
     }
 
+    // Where a bucket's reduction lands VERTICALLY. The trace hangs from the
+    // top (`grDb` ≤ 0, zero reduction on `y0`) and the FULL panel height is
+    // `abgui::meters::grSpanDb` of reduction — the same span the per-stage GR
+    // meter lanes use, which is the whole point of the shared constant.
+    //
+    // Pure and public for exactly the reason `windowEntries`, `buckets` and
+    // `drawsZeroRegion` are — and this mapping is the case that proves the
+    // rule rather than merely repeating it. Until 0.1.6 it lived inline in
+    // `paintHistory` as `jlimit (0, 1, -grDb / 12) * 0.5`: the trace reached
+    // its deepest at HALF the panel height and drew a flat line for every
+    // reduction past 12 dB, while the limiter's own meter — 24 dB, same
+    // screen — kept filling. No test could reach the expression without a
+    // graphics context, so the suites stayed green for the whole time the
+    // display was under-reporting the plug-in's own work.
+    //
+    // The fix is a divisor and a dropped factor, NOT a re-scaling: 24 dB over
+    // the full height puts 12 dB at half height, exactly where the old form
+    // put it, so every reduction that was already visible is drawn at the
+    // same y it was before and only the previously unreachable bottom half is
+    // new.
+    static float grY (float grDb, float y0, float height) noexcept
+    {
+        return y0 + height * juce::jlimit (0.0f, 1.0f, -grDb / abgui::meters::grSpanDb);
+    }
+
     // Where bucket `k` lands: anchored at the RIGHT edge (bucket `kHead` at
     // `x0 + width − 1`) on a FIXED pitch — the width divided by the bucket
     // count of one FULL window — so a filling ring renders at exactly the

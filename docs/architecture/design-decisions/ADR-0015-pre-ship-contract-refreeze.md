@@ -114,11 +114,11 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
 
 ## Decision
 
-1. **`ceiling` defaults to −0.1 dB** (`src/PluginParameters.cpp:160`, `EngineParameters.h:79`), and
+1. **`ceiling` defaults to −0.1 dB** (`src/PluginParameters.cpp:303`, `EngineParameters.h:79`), and
    the one factory table that overrode it to −0.5 no longer needs to
    (`src/PresetManager.cpp`, "EDM Club").
 
-2. **`truePeakMode` defaults to off** (`src/PluginParameters.cpp:218`,
+2. **`truePeakMode` defaults to off** (`src/PluginParameters.cpp:377`,
    `EngineParameters.h`), and the true-peak **meter row** likewise (`int_tpMeterOn`,
    `src/InternalState.h:105`). These are independent fields with the same new default and one
    reason: neither should be on in a patch the user has not asked anything of yet.
@@ -247,8 +247,8 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
 
 ## Related code
 
-- `src/PluginParameters.cpp:160` — `ceiling`, default −0.1, mode-aware value text
-- `src/PluginParameters.cpp:218` — `truePeakMode`, default off
+- `src/PluginParameters.cpp:303` — `ceiling`, default −0.1, mode-aware value text
+- `src/PluginParameters.cpp:377` — `truePeakMode`, default off
 - `src/PluginParameters.h:93` — `CeilingUnitSource` (the unit source and its fallback)
 - `src/PluginProcessor.h:111` · `src/PluginProcessor.cpp:25-26` — the holder's placement and wiring
 - `src/InternalState.h` — `setDefaults()` (nine `int_*` properties; `tpMeterOn` false), and

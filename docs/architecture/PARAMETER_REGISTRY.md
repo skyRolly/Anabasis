@@ -25,7 +25,12 @@ changelog entry. `kVersion = 1` on every parameter; a parameter-set change bumps
   their round declared values — `limRelease` 100.000015, `eqBell2Freq` 2999.999756 — recorded in
   `docs/procedures/TESTING.md`; do not "fix" the snapshot to hide them.
 - Units render through the shared `db`/`ms`/`hz`/`pct` formatter lambdas with suffix-tolerant
-  parsers.
+  parsers. Two of those parsers read a bare number by the knob's own range rather than literally,
+  and both are owner directives rather than conveniences: the frequency parsers treat a bare number
+  below the knob's Hz floor as kHz (0.1.1), and `pctFrom` treats a bare number in (0, 1] as a
+  FRACTION of full scale — `0.5` is 50 %, `1` is 100 % — while an explicit `%` is always the
+  literal percent, `0.1%` included (0.1.6). None of this touches a range, a default or an ID; the
+  frozen snapshot carries no display text, so neither change re-froze it.
 
 ## The 50 rows
 

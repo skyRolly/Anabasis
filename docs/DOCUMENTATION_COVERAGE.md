@@ -6,8 +6,62 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **macOS runner float (2026-08-16)** — `macos-14` → `macos-latest`, on top
-of the 0.1.5 framework bump recorded below.
+**Last updated:** for **0.1.6 (2026-08-21)** — the two field-report fixes: the GR history's
+vertical scale and the percent value boxes' typed entry.
+
+**Scope of the 0.1.6 round.** Two owner reports, both display/entry surfaces, **no DSP change, no
+parameter added, renamed or removed, no schema, threading or latency change** — so the
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged are **Metering (… GR history)**
+(`USER_MANUAL.md`, `CHANGELOG.md`; `DSP_ALGORITHMS.md` is named by that row and has never existed
+here — the same standing gap `PACKAGING.md` has, recorded rather than silently satisfied;
+`TEST_REPORT.md` carries measured DSP accuracy figures and none moved), **New/changed test**
+(`TESTING.md`, this file, `DSP_POLICY.md`'s invariant→test map — no DSP invariant is involved, so
+the map is unchanged) and **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`).
+`PARAMETER_REGISTRY.md`'s Conventions bullet is amended too — not by a trigger row but by the
+drift rule: it describes the shared formatter/parser lambdas, and one of them changed meaning.
+No row for the parameter table itself: rule 3's ranges, defaults and orderings are untouched, and
+`tests/fixtures/parameter_registry.snapshot` carries no display text, so it needed no re-freeze.
+
+**What was actually wrong, since a display defect leaves no other trace.** `GrHistoryView`'s trace
+mapped reduction through `jlimit (0, 1, -grDb / 12) * 0.5`: it saturated at 12 dB AND spent only
+half the panel height reaching that, so anything deeper drew one flat line across mid-panel while
+the per-stage `GrMiniMeter` beside it — 24 dB, right there on the same screen — went on filling.
+The two spans now come from one constant (`abgui::meters::grSpanDb`), and the mapping moved out of
+`paintHistory` into the pure `GrHistoryView::grY` for the reason this view's header has stated
+since 0.1.1: an expression reachable only from `paint` is one no test can pin, which is how this
+one survived three rounds of work on the same function. `pctFrom` read every bare number as a
+literal percent, so `0.5` typed into a 0…100 knob became half of one percent.
+
+**Drift found and corrected in passing (C6, reported rather than silently fixed).** Three line
+anchors into `src/PluginParameters.cpp` were ALREADY stale before this round and this round's +54
+lines would have carried them further: this file's own automation paragraph cited `:145` for
+`advancedMode` (actually 227 at the previous head, now **281**), and ADR-0015 cited `:160` for
+`ceiling` (249 → now **303**) and `:218` for `truePeakMode` (323 → now **377**), each twice. All
+five citations are re-aimed to the line they name. The mechanism is worth recording because it is
+the one `check-citations.py` documents and cannot cover: `src/PluginParameters.cpp` is **not in
+that script's `TRACKED` tuple**, so no gate has ever read these anchors, and the drift accumulated
+silently across every round that inserted lines above them. Widening `TRACKED` is not done here —
+it is a change to a CI gate that this round's two fixes do not need, and it would want its own
+verification pass against every anchor into the newly covered file. `src/PluginParameters.h:93` is
+left alone: it is four lines off but still inside the comment block it cites.
+
+**Suites: `AnabasisTests` 296 + `AnabasisStateTests` 873 = 1169 checks green** (Linux, GCC,
+Release), up 28 on 0.1.5's 1141 — two new state tests,
+`testGrHistoryAndTheMeterLanesShareOneReductionSpan` and
+`testPercentTextEntryReadsFractionsAndLiteralPercents`. Four mutants were run and each killed a
+DISJOINT set of assertions, which is what says the two tests measure different things: the
+pre-0.1.6 GR mapping kills 4 of the 9 GR assertions (the scale-preservation ones survive, as they
+must — 12 dB lands at half height under both forms); a `GrMiniMeter` divisor of 12 kills ONLY the
+rendered-lane assertion, so that one is measuring the meter rather than re-quoting the constant;
+the pre-0.1.6 parser kills exactly the 5 fraction assertions and none of the literal, unchanged,
+display or round-trip ones; and the integer-only formatter kills the fractional-display assertion
+**and the `getValueForText(getText(v)) == v` round-trip**, which is the evidence that the display
+half was destroying values rather than merely under-reporting them.
+
+---
+
+**Last updated before that:** for the **macOS runner float (2026-08-16)** — `macos-14` →
+`macos-latest`, on top of the 0.1.5 framework bump recorded below.
 
 **Scope of the runner-float round.** CI configuration only; **no version change** — this is 0.1.5's
 CI, not a release. `actions/runner-images` marks `macos-14` (arm64) deprecated, so both jobs naming
@@ -710,7 +764,7 @@ self-coverage row and `REPOSITORY_MAP.md`).
 (3) **The user manual's automation answer drew the line in the wrong place.** It listed eight
 of the nine `withAutomatable(false)` parameters and then said "Settings items are not
 parameters at all" — leaving the missing ninth, `advancedMode`, to be read as Settings state
-when it is a host parameter (`src/PluginParameters.cpp:145`). Two distinct facts now stated as
+when it is a host parameter (`src/PluginParameters.cpp:281`). Two distinct facts now stated as
 two: host parameters not offered as automation targets (now including the **ADV** toggle), and
 the Settings overlay's items, which are not host parameters at all. No new claims, no
 expansion.

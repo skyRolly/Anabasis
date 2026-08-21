@@ -347,6 +347,35 @@ namespace graph_switch
     }
 } // namespace graph_switch
 
+// ============================================================================
+//  The GAIN-REDUCTION DISPLAY SPAN — how many dB of reduction a GR readout's
+//  full extent stands for. ONE definition for the two readouts that show the
+//  same quantity in two shapes: the per-stage `GrMiniMeter` lanes (CurveView.h)
+//  and the graph well's scrolling `GrHistoryView` trace.
+//
+//  Held here rather than per-view because the two are read TOGETHER — the
+//  panel meter says how deep the stage is working now, the history says how
+//  deep it has been working — so a user compares them directly. Until 0.1.6
+//  they disagreed: the meter lanes spanned 24 dB while the history divided by
+//  12 dB and then halved the result, so its trace saturated at MID-PANEL and
+//  drew a flat line for every reduction past 12 dB while the meter beside it
+//  went on filling (the owner's 0.1.6 item 1 report — "the real GR is more
+//  than this"). Sharing the constant is what makes the two agree by
+//  construction instead of by coincidence.
+//
+//  The pixels-per-dB scale did not change with that fix: 12 dB still lands at
+//  half height. What the history gained is the bottom half it never used.
+//
+//  A reduction deeper than this reads as the extreme of the scale in both
+//  readouts. The ring stores the value unclamped (`GrHistoryBuffer`, floored
+//  at −60 dB where it is published), so this is a display choice and nothing
+//  the audio thread knows about.
+// ============================================================================
+namespace meters
+{
+    inline constexpr float grSpanDb = 24.0f;
+}
+
 // `CompactComboLookAndFeel` and `SimpleComboLookAndFeel` used to sit here — two
 // `AnabasisLookAndFeel` subclasses varying the combo font and pop-up row
 // height. Removed at review round 53 as unported migration state, and the
