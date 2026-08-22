@@ -194,7 +194,7 @@ because one path is noisy*): an ignorelist entry would exempt **first-party** co
 to exempt the whole enclosing function, which is `processChunk`, the largest audio-path body in the
 tree. Rewriting the generator is out of the question for a different reason: the dither RNG is
 frozen by `DSP_POLICY` (offline renders must repeat exactly), so changing it is a hard-stop item, not
-a sanitizer accommodation. **Excluding this one sub-check exempts nothing and keeps the other six
+a sanitizer accommodation. **Excluding this one sub-check exempts nothing and keeps the other five
 instrumenting every translation unit**, first-party included.
 
 **Finding 2 — the state suite overflows an 8 MB stack under the deeper instrumentation.**

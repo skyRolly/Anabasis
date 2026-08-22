@@ -226,7 +226,7 @@ JUCE singletons being reported at exit. Measured: nothing is reported.
 - **macOS caching changes the critical path**, which is the largest CI-time effect in this round —
   and it changes nothing a user receives: the `lipo` slice assertion and the dSYM contract are
   unmoved.
-- **The sanitizer job is materially stronger**: six new sub-checks and four new ASan runtime options,
+- **The sanitizer job is materially stronger**: five new sub-checks and four new ASan runtime options,
   at the cost of one sub-check the sibling has and one `ulimit` line it does not need.
 - **What this does NOT change**: no DSP algorithm, parameter, serialization schema, threading model
   or reported latency; no first-party C++ source at all.

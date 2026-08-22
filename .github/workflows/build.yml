@@ -969,7 +969,7 @@ jobs:
   # target legally delete a guard.
   #
   # THE FLAG SET IS THE SIBLING'S, WITH ONE SUB-CHECK LEFT OUT AND THE REASON
-  # MEASURED (0.2.2, ADR-0034). Six sub-checks beyond `address,undefined` are
+  # MEASURED (0.2.2, ADR-0034). Five sub-checks beyond `address,undefined` are
   # adopted -- `vptr`, `float-divide-by-zero`, `implicit-conversion`,
   # `local-bounds`, `nullability` -- behind a narrowly scoped
   # `-fsanitize-ignorelist` (`scripts/ubsan-ignorelist.txt`: one sub-check, one
@@ -986,7 +986,7 @@ jobs:
   # enclosing `processChunk`; and the generator itself is frozen by DSP_POLICY
   # (offline renders must repeat exactly), so rewriting it is a hard-stop item,
   # not a sanitizer accommodation. Leaving the sub-check off exempts nothing --
-  # the other six instrument every translation unit, first-party included. MemorySanitizer, the dedicated uninitialised
+  # the other five instrument every translation unit, first-party included. MemorySanitizer, the dedicated uninitialised
   # -read tool, is deliberately NOT used: it requires every dependency including
   # libc++ and all of JUCE to be instrumented, and an uninstrumented dependency
   # produces false positives rather than silence. valgrind memcheck answers the
@@ -2125,9 +2125,21 @@ jobs:
       # taking effect (so symbolication is silently gone again). Neither may
       # pass as a warning.
       #
-      # A UNIVERSAL BUILD LINKS ONCE PER SLICE and there are three format
-      # targets, so several objects are expected; the assertion is on presence,
-      # not on count, because the count is a property of the target list.
+      # A UNIVERSAL BUILD LINKS ONCE PER SLICE and there are several LTO-linked
+      # targets, so several objects are expected -- and "expected" was doing no
+      # work here until 0.2.5, because the assertion only tested COUNT -eq 0.
+      # It read 1 and passed, on a build that should have retained one object
+      # per (target x architecture). Every link was writing to the same path and
+      # overwriting the last, so the single survivor was one target's x86_64
+      # object; the arm64 slice of every bundle had NO retained object, hence no
+      # DWARF, hence no usable arm64 dSYM -- while the aggregate checks
+      # downstream still reported success. See ADR-0035.
+      #
+      # The assertion is now on ARCHITECTURE COVERAGE rather than on a count.
+      # A count is brittle (it tracks the target list, which options change) and
+      # it was not what mattered; what mattered is that EVERY architecture this
+      # build produces has at least one retained LTO object to symbolicate from.
+      # That is the property that was violated, so that is the property gated.
       - name: Assert LTO ran and its objects were retained
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
@@ -2136,6 +2148,32 @@ jobs:
           echo "retained LTO objects: $COUNT"
           if [ "$COUNT" -eq 0 ]; then
             echo "::error::build/lto-objects is empty -- either -flto did not run on the shipped targets, or -Wl,-object_path_lto stopped taking effect. macOS crash symbolication depends on these objects; do NOT resolve this by disabling LTO."
+            exit 1
+          fi
+          # Which architectures the shipped bundle actually carries, read off the
+          # artifact rather than assumed from the configure line.
+          SHIPPED="build/Anabasis_artefacts/Release/VST3/Anabasis.vst3/Contents/MacOS/Anabasis"
+          ARCHES="$(lipo -archs "$SHIPPED")"
+          echo "shipped architectures: $ARCHES"
+          MISSING=""
+          for A in $ARCHES; do
+            FOUND=0
+            for O in build/lto-objects/*; do
+              [ -f "$O" ] || continue
+              if lipo -archs "$O" 2>/dev/null | tr ' ' '\n' | grep -qx "$A"; then
+                FOUND=1
+                break
+              fi
+            done
+            if [ "$FOUND" -eq 1 ]; then
+              echo "  $A: retained LTO object present"
+            else
+              echo "  $A: NO retained LTO object"
+              MISSING="$MISSING $A"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::no retained LTO object covers:$MISSING -- dsymutil will find no DWARF for those slices and the shipped bundle will not be debuggable on them. The usual cause is several links sharing one -Wl,-object_path_lto path and overwriting each other; CMakeLists.txt gives each (target, architecture) its own file for exactly this reason. Do NOT resolve this by disabling LTO or by relaxing this assertion."
             exit 1
           fi
 
@@ -2367,19 +2405,42 @@ jobs:
                 DSYM_OK=0
               else
                 DSYM_UUIDS="$(dwarfdump --uuid "$DWARF_FILE" | awk '{print $2}' | sort)" || DSYM_UUIDS=""
-                CU_COUNT="$(dwarfdump --debug-info "$DWARF_FILE" 2>/dev/null | grep -c 'DW_TAG_compile_unit' || true)"
+                # PER ARCHITECTURE, NOT AGGREGATE -- this is the 0.2.5 fix, and
+                # the distinction is the whole defect. A universal dSYM carries a
+                # UUID for every slice whether or not that slice has any DWARF,
+                # so the UUID-set comparison below passes on a dSYM that is
+                # empty for one architecture. The compile-unit count used to be
+                # taken over the WHOLE fat file, so 39 units from x86_64 and 0
+                # from arm64 summed to 39, cleared `-eq 0`, and the job printed
+                # "validated dSYM captured (UUID-matched, 39 compile units)"
+                # while arm64 crash logs were unsymbolicatable. Counting per
+                # slice is what makes the claim mean what it says.
+                ARCHES="$(lipo -archs "$BIN" 2>/dev/null || true)"
+                CU_COUNT=0
+                CU_SUMMARY=""
+                THIN_ARCHES=""
+                for A in $ARCHES; do
+                  N="$(dwarfdump --arch="$A" --debug-info "$DWARF_FILE" 2>/dev/null | grep -c 'DW_TAG_compile_unit' || true)"
+                  [ -n "$N" ] || N=0
+                  CU_COUNT=$((CU_COUNT + N))
+                  CU_SUMMARY="$CU_SUMMARY $A=$N"
+                  [ "$N" -eq 0 ] && THIN_ARCHES="$THIN_ARCHES $A"
+                done
                 if [ "$DSYM_UUIDS" != "$BIN_UUIDS" ]; then
                   echo "::warning::$NAME: dSYM UUIDs do not match the binary's slices -- discarding the mismatched dSYM"
                   DSYM_OK=0
-                elif [ "$CU_COUNT" -eq 0 ]; then
-                  echo "::warning::$NAME: dSYM carries no DWARF compile units (degenerate) -- discarding it"
+                elif [ -z "$ARCHES" ]; then
+                  echo "::warning::$NAME: cannot enumerate the binary's architecture slices -- a per-slice DWARF check is impossible, discarding the unvalidatable dSYM"
+                  DSYM_OK=0
+                elif [ -n "$THIN_ARCHES" ]; then
+                  echo "::warning::$NAME: dSYM carries NO DWARF compile units for:$THIN_ARCHES (per-slice units:$CU_SUMMARY) -- discarding it, because a dSYM that symbolicates only some slices of a universal binary is not a usable one"
                   DSYM_OK=0
                 fi
               fi
             fi
             if [ "$DSYM_OK" -eq 1 ]; then
               USABLE_DSYMS=$((USABLE_DSYMS + 1))
-              echo "$NAME: validated dSYM captured (UUID-matched, $CU_COUNT compile units)"
+              echo "$NAME: validated dSYM captured (UUID-matched; compile units per slice:$CU_SUMMARY)"
             else
               rm -rf "$DSYM"
             fi
@@ -2485,8 +2546,13 @@ jobs:
       #
       # `debug_artifacts` is written by the packaging step only when at least
       # one dSYM survived every validity test -- DWARF payload present, UUID set
-      # matching the binary's slices exactly, and at least one compile unit. So
-      # this reads a verdict rather than re-deriving one.
+      # matching the binary's slices exactly, and, since 0.2.5, at least one
+      # DWARF compile unit **per architecture slice** rather than one across the
+      # fat file. That last distinction is what this assertion had been unable
+      # to see: a dSYM with 39 x86_64 units and 0 arm64 units cleared the old
+      # aggregate test, so the run reported a captured dSYM while every arm64
+      # crash log stayed unsymbolicatable (ADR-0035). So this reads a verdict
+      # rather than re-deriving one -- but the verdict now means what it says.
       - name: Assert a validated dSYM was captured
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: |
