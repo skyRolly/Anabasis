@@ -58,7 +58,7 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **AnabasisEngineRepro** (a step in `linux`, `macos`, `macos-intel`) | — | the same stimulus with NO wrapper, format or host, so a failure names the DSP core directly instead of leaving "engine or wrapper?" to be inferred | n/a |
 | **sanitizers** | `ubuntu-latest` (Clang) | the two test targets under ASan + UBSan, plus a plain build for valgrind memcheck over **both** suites | n/a |
 
-**Why four Linux jobs and not one.** They answer four different questions and only one of them
+**Why five Linux jobs and not one.** They answer five different questions and only one of them
 is "does it build here".
 
 * `source-lint` guards two classes NO build of any kind can see, which is why it is a separate job
@@ -122,15 +122,25 @@ is "does it build here".
   green checks. **Since ADR-0032 this is also the job that SHIPS**, so the configuration those
   gates read and the configuration a user installs are now the same bytes rather than two builds
   argued to be equivalent.
-* `linux-lto-tests` closes the other half of that gap and keeps the second toolchain alive
-  (ADR-0033). The suites do not link the LTO flags the plugin does, so every assertion this
+* **`linux-lto-clang` and `linux-lto-tests` are two jobs, not one lane with two arms** (ADR-0033,
+  split by ADR-0034). Between them they close the other half of that gap and keep the second
+  toolchain alive. The suites do not link the LTO flags the plugin does, so every assertion this
   repository makes used to be made against non-LTO objects — the configuration INC-004 needed in
-  order to *not* manifest. Its `clang` arm runs them against the shipped optimization class and its
-  `gcc` arm is, since ADR-0032, the only place a GCC this repository CHOSE compiles this tree —
-  the image's GCC still builds the unsanitized `build-vg` copy in `sanitizers`, but that compiler is
-  incidental to a memcheck run and its version is the runner's. Its two targets
-  between them build every first-party translation unit, which is why the GCC arm is a compatibility
-  guarantee about the source rather than only about a sample of it.
+  order to *not* manifest.
+  * `linux-lto-clang` runs them against the **shipped optimization class** — the pinned Clang at
+    `-flto`, INC-004's own configuration. This job has no counterpart in the sibling product, and
+    that is deliberate: a GCC-only lane cannot reproduce the incident this one is named after.
+  * `linux-lto-tests` runs them under the **pinned GCC, inside `container: gcc:16`**, which is
+    since ADR-0032 the only place a GCC this repository CHOSE compiles this tree — the image's GCC
+    still builds the unsanitized `build-vg` copy in `sanitizers`, but that compiler is incidental to
+    a memcheck run and its version is the runner's. It installs the `headless` dependency profile,
+    because `build-essential` inside that container would put a distribution GCC over the pinned one.
+  * **Why two jobs rather than a matrix:** `container:` is a per-job key, so one containerised arm
+    and one bare arm cannot share a `strategy.matrix`. Two jobs are also two independent results — a
+    red Clang result cannot hide a GCC one.
+  * Each builds the same two targets, which between them compile every first-party translation unit
+    — which is why the GCC job is a compatibility guarantee about the source rather than about a
+    sample of it.
 * `sanitizers` catches, on Linux, defects that only MANIFEST elsewhere: memory this OS hands back
   zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous there
   while the defect itself is platform-independent.
@@ -334,7 +344,7 @@ OQ-006 carries the same supersession.
 | **`linux-clang` deleted** | Its three own steps — the portability compile canary, the warning-gate self-test + gate, and the engine reproduction — moved into `linux`. What is gone is a second full Release compile of the same tree, not a check. |
 | **The warning gate runs last, after the uploads** | A DIAGNOSTIC finding must not withhold a beta artifact whose behavioural gates passed. It still fails the job. Same rule the ABI assertion follows. |
 | **`merge-check` moved to the same compiler** | A merge-check on a different compiler from the one that will build the merge result is a check of a tree nobody ships; it also shares `linux`'s ccache lineage, and two lineages in one budget evict each other. |
-| **`linux-lto-tests`, two arms** (ADR-0033) | The suites do not link the LTO flags the plugin does, so every assertion was made against non-LTO objects — the configuration INC-004 needed in order to stay hidden. The `clang` arm runs them against the shipped optimization class; the `gcc` arm keeps the second major toolchain compiling this tree on every push. |
+| **`linux-lto-clang` + `linux-lto-tests`, two jobs** (ADR-0033, split by ADR-0034) | The suites do not link the LTO flags the plugin does, so every assertion was made against non-LTO objects — the configuration INC-004 needed in order to stay hidden. `linux-lto-clang` runs them against the shipped optimization class; `linux-lto-tests` keeps the second major toolchain compiling this tree on every push, in its container. They are separate jobs because `container:` is a per-job key. |
 | **The pinned GCC** | `ANABASIS_GCC_VERSION` in `build.yml`, installed from the distribution archive through the composite action's `extra-packages`. Pinned for the same reason the Clang major is: a compatibility compiler is only a compatibility statement while WHICH compiler is a fact of this file rather than of a runner image. |
 
 ## What 0.2.2 changed in the pipeline — the parity audit

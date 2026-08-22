@@ -10,7 +10,8 @@ Common failures and where to look. Build/test/CI details are in `BUILD.md`, `TES
 | CMake cannot find a compiler or Ninja | build deps missing | `scripts/setup-linux.sh` (Ubuntu) |
 | `FetchContent` fails to clone JUCE | no network / restricted sandbox | use a local checkout: `-DANABASIS_JUCE_PATH=/path/to/JUCE`; the build otherwise needs `github.com` |
 | Missing EGL headers on Linux | **JUCE 9 creates Linux GL contexts via EGL, not GLX** | install `libegl-dev` (already in `setup-linux.sh`) |
-| `libwebkit2gtk-4.1-dev` unavailable | older Ubuntu release | try `libwebkit2gtk-4.0-dev` |
+| `libwebkit2gtk-4.1-dev` unavailable | the name moves between releases — `4.0` on older Ubuntu, `libwebkitgtk-6.0-dev` on Debian trixie and later | it is a **`full`-profile extra** that nothing here compiles (`JUCE_WEB_BROWSER=0` on every target), so `scripts/setup-linux.sh headless` skips it entirely; otherwise install your release's name by hand |
+| `Unable to locate package libfreetype6-dev` | Debian trixie (the `gcc:16` container base) dropped that spelling; Ubuntu keeps it only as a `Provides:` | the scripts use `libfreetype-dev`, which is a real package on both — update a local copy that still says `6` |
 | Link errors with duplicated JUCE symbols | the DSP core was made a `STATIC` library | it must be an `INTERFACE` library so its sources compile into each final target (`BUILD.md`) |
 | A new wrapper/GUI file builds in the plugin but not in the state tests | the source list was edited in only one place | both targets read the same CMake source-list variable — restore that (`BUILD.md`) |
 

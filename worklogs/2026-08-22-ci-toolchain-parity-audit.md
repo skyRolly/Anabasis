@@ -284,3 +284,93 @@ That is the compatibility lane doing its job rather than a surprise.
 5. Carried forward unchanged from 0.2.0/0.2.1: the `DEPENDENCY_POLICY` rule-2 Level-5 JUCE audition,
    re-converging the JUCE pin with the read-only sibling, and CI's own first green `realtime`,
    MSVC/AppleClang C++23 and macOS dSYM demonstrations.
+
+---
+
+## Review round (same day): the doc drift, and a container package that would have killed the lane
+
+Two findings, both fixed. The owner has reviewed and signed off the remaining migration decisions —
+the sanitizer set and its one exclusion, the fuzz and preflight verdicts, the warning gates and the
+GCC-16 strategy — so those are **approved as they stand** and are not re-opened here.
+
+### 1. `CI_CD.md` still described a two-arm lane that no longer exists
+
+The job table was updated when the lane split; the prose bullet below it was not, and still read
+"Its `clang` arm … and its `gcc` arm". One more copy had the same fault — the "What 0.2.2 changed"
+row still said "`linux-lto-tests`, two arms".
+
+Both now describe the actual structure: two jobs, what each answers, and **why** they are two rather
+than a matrix (`container:` is a per-job key, so one containerised arm and one bare arm cannot share
+a `strategy.matrix`). The "why four Linux jobs" heading became five, and the bullet gained the
+`headless` profile and the container.
+
+**Asserted rather than eyeballed:** a check parses `build.yml`, confirms every one of the twelve jobs
+is named somewhere in `CI_CD.md`, and confirms that every surviving mention of an "arm" is a sentence
+saying the arms are separate jobs. `linux-clang` still appears once, as history, which is correct.
+
+### 2. `libfreetype6-dev` does not exist in the container's distribution
+
+The reviewer asked whether the `headless` profile's Ubuntu-named packages are valid inside a Debian
+container. Investigated properly, and the answer is **yes for the packages they named and no for one
+they did not**.
+
+**What the container actually is:** `gcc:16` is `FROM buildpack-deps:trixie` — Debian 13, read from
+the official image's Dockerfile, not assumed.
+
+**Every name checked against the trixie archive**, with the check validated in both directions first
+(the naive "does the page 200" test says yes for `definitely-not-a-real-package-xyz`, and a
+"Package not available" grep says ABSENT for `libgtk-3-dev`, which is present — both were discarded
+before the real sweep):
+
+| Package | trixie | Note |
+|---|---|---|
+| `libwebkit2gtk-4.1-dev` | **present** (2.52.5) | the reviewer's example — fine as it stands |
+| `libgtk-3-dev` | **present** (3.24.49) | fine |
+| every X11 `-dev`, `libasound2-dev`, `libjack-jackd2-dev`, `libcurl4-openssl-dev`, `libegl-dev`, `libglu1-mesa-dev`, `mesa-common-dev`, `libfontconfig1-dev`, `cmake`, `ninja-build`, `pkg-config`, `ca-certificates`, `python3`, `git` | **present** | fine |
+| **`libfreetype6-dev`** | **ABSENT** | neither real nor virtual in trixie |
+| `libfreetype-dev` | **present** (2.13.3) | and present on noble (2.13.2) |
+
+**So the lane would have failed at dependency install** — on a package nobody flagged. It passes on
+the runners only because Ubuntu noble's `libfreetype-dev` carries `Provides: libfreetype6-dev`; noble
+has no real `libfreetype6-dev` either (`apt-cache policy` → `Candidate: (none)`). The `6` spelling
+has been a compatibility shim for a while, and one distribution has now dropped the shim.
+
+**Fixed by naming `libfreetype-dev`**, which is a real package on both — not by adding a fallback for
+a name that is obsolete on both.
+
+**And the web-browser binding moved `CORE` → `FULL_EXTRA`, on evidence rather than to dodge a name.**
+It is not a compile dependency of this project at all: every target sets `JUCE_WEB_BROWSER=0`
+(`CMakeLists.txt`), JUCE gates its webkit include on that macro (`juce_gui_extra.cpp:123`), and JUCE
+9.0.1 declares **no `linuxPackages` for `juce_gui_extra`** — only `alsa`, `freetype2 fontconfig` and
+`egl gl`, in three other modules. It is also the heaviest entry in the list and the most volatile
+name in it (`4.0` already gone from trixie, successor `libwebkitgtk-6.0-dev`). `full` keeps it, so a
+developer flipping the macro does not face a second dependency hunt; `headless` — which builds two
+console targets and no browser — no longer installs it. **That is the profile split doing its job,
+not a weakening of it.**
+
+The script now also prints the distribution it resolved the names on. A container lane makes the
+package list a portability surface, and review-gate rule 2 asks for detection and record where a
+version cannot be pinned.
+
+### Validation of the review round
+
+| Gate | Result |
+|---|---|
+| `docs/procedures/CI_CD.md` vs `build.yml` | asserted from the parsed workflow: all **12** jobs documented, no surviving two-arm claim, container and profile both described |
+| `bash -n` on both setup scripts | clean; a bad profile still exits **2** with usage |
+| Profile contents | asserted: `headless` is webkit/gtk-free and carries the portable freetype name; `full` = `headless` + 7 |
+| `apt-get install -s` on Ubuntu noble | **both profiles resolve, rc=0**, no "Unable to locate" |
+| Debian trixie archive | every name in both profiles present (table above), discriminator validated in both directions |
+| All five workflows + composite action + `dependabot.yml` | parse |
+| `scripts/preflight.sh` | **rc = 0** |
+| Suites | **301 + 873 = 1174 checks, 0 failures** (no C++ source touched) |
+| Checker self-tests | 134 · 67 · 120 · 37 · 19 · 15 · 50 anchors unmoved |
+
+### Signed off, no change required
+
+The owner's manual review confirms the remaining migration decisions, so these are **acknowledged
+and closed** rather than carried as open items: the sanitizer set with `unsigned-shift-base`
+excluded and the 64 MB stack; `detect_leaks=1`; the absent `fuzz` job (A2-33) and the retained
+`preflight` job (K-04); both warning gates at zero with no baseline file; and the GCC-16 container
+strategy. The one open item that is **not** a decision remains open on its own terms: the container
+lane has still never executed, and its first CI run is the measurement.

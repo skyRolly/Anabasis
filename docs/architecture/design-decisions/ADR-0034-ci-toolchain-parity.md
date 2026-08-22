@@ -100,6 +100,22 @@ JUCE singletons being reported at exit. Measured: nothing is reported.
   container runtime. The first push is the measurement. If `g++-16` rejects something this tree
   compiles under 14, that is the lane reporting a real portability finding — and the pin is one env
   line plus one tag to move back.
+- **The container's DISTRIBUTION is part of this decision, and the review round found a defect in
+  it.** `gcc:16` is `FROM buildpack-deps:trixie` — Debian 13, not Ubuntu — and package names are not
+  a constant across the two. `scripts/setup-linux.sh` installed **`libfreetype6-dev`**, which trixie
+  ships neither as a real package nor as a virtual one; the lane would have died at dependency
+  install. It worked on the runners only because Ubuntu noble's `libfreetype-dev` carries
+  `Provides: libfreetype6-dev` — a compatibility name one distribution has already dropped. The
+  scripts now name `libfreetype-dev`, real on both. Two consequences worth keeping: a container lane
+  makes the package list a **portability surface**, and the script therefore prints the distribution
+  it resolved the names on (review-gate rule 2, detect and record).
+- **The web-browser binding moved to the `full` profile**, on evidence rather than to dodge a name:
+  every target sets `JUCE_WEB_BROWSER=0`, JUCE gates its webkit include on that macro, and JUCE
+  9.0.1 declares no `linuxPackages` for `juce_gui_extra` (only `alsa`, `freetype2 fontconfig` and
+  `egl gl`, in three other modules). It is not a compile dependency of this project, it is the
+  heaviest entry in the list, and it is the most volatile name in it — `libwebkit2gtk-4.0-dev` is
+  already gone from trixie and the successor there is `libwebkitgtk-6.0-dev`. `full` keeps it so a
+  developer flipping the macro does not face a second dependency hunt.
 - **The GCC arm's warning gate is measured at 14, not at 16.** It gates first-party warnings at zero
   through `check-clang-warnings.py`. Under `juce_recommended_warning_flags` for GCC that measured
   zero at 14.2.0; 16 is unmeasured. Kept strict deliberately: ADR-0031's rule is that a pin which
@@ -123,5 +139,8 @@ Evidence [Verified, except where stated]:
 - Test:   both suites under the adopted sanitizer set — **300 + 873, 0 failures, exit 0**, with
   `detect_leaks=1` and a 64 MB stack; the excluded sub-check and the stack limit each measured in
   both directions
-- **Unverified locally:** the `gcc:16` container lane (no container runtime in this environment)
+- **Unverified locally:** the `gcc:16` container lane itself (no container runtime in this
+  environment). Its PACKAGE SET is verified another way: every name in both profiles was checked
+  against the Debian trixie archive and the Ubuntu noble archive, and both profiles resolve under
+  `apt-get install -s` on noble
 - Worklog: `worklogs/2026-08-22-ci-toolchain-parity-audit.md`
