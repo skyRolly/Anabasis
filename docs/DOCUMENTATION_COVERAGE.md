@@ -6,8 +6,24 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.0 (2026-08-22)** — the engineering-standard round, executed from the
-round-2 Anamorph→Anabasis migration audit.
+**Last updated:** for **0.2.1 (2026-08-22)** — the sibling-alignment round.
+
+**Scope of the 0.2.1 round.** Two ADRs Accepted (**0032** the Linux release toolchain — Clang ships,
+GCC becomes the pinned compatibility compiler and `linux-clang` is deleted; **0033** the
+`linux-lto-tests` lane, two arms, both suites under `-flto`). Both re-open a verdict the 0.2.0 audit
+had taken — A2-31 NOT NEEDED and A2-32 deferred-on-cost — under the owner's rule that the two
+products stay aligned on engineering infrastructure unless a concrete technical reason says
+otherwise. No DSP algorithm change, no parameter added/renamed/removed, no schema, threading or
+latency change, and the frozen registry snapshot untouched. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows
+engaged: **New ADR** (`ADR_INDEX.md` + both records + `ADR-0031`'s amendment +
+`ARCHITECTURE_REVIEW_GATE.md`), **Build-system change** (`BUILD.md`, `CI_CD.md`, `REPOSITORY_MAP.md`,
+`POSTMORTEMS.md`), **Policy change** (`TESTING_POLICY.md` — a new Level-1c row),
+**New/changed test** (`TESTING.md`, this file) and **Ship a version** (`CHANGELOG.md`,
+`HANDOVER.md`). Two staleness repairs were taken while in the files: `BUILD.md` still documented the
+`ANABASIS_CXX_STANDARD` option 0.2.0 removed, and this file's `.github` and `scripts` rows still
+described the pre-0.2.0 tree.
+
+**Below is the 0.2.0 record, kept as written.**
 
 **Scope of the 0.2.0 round.** Three ADRs Accepted (0029 realtime enforcement, 0030 the C++23
 baseline, 0031 the Clang pin), no DSP algorithm change, no parameter added/renamed/removed, no
@@ -6129,8 +6145,8 @@ landed — the staleness the same date's audit entry reports.)
 | root — developer/status | README, CHANGELOG, CLAUDE | Present |
 | root — legal | `NOTICE`, `THIRD_PARTY_LICENSES.md` | **Factual attribution half Present (2026-08-05)** — produced against the actually-pinned JUCE tree per `RELEASE_POLICY.md`'s own prescription: inventory from JUCE's `LICENSE.md` plus a compiled-TU walk, compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides them), exclusions from their gates plus symbol absence. **Delivery changed in 0.1.1** (**ADR-0021**, `RELEASE_POLICY.md` §Third-party attribution): both ship as version-named release-page assets — `Anabasis-<version>-NOTICE.txt` and `Anabasis-<version>-THIRD_PARTY_LICENSES.md` — and are no longer copied into the zips, the `.pkg` or the Inno payload, because the release page is the one carrier every distribution route passes through and a loose unversioned copy cannot be told apart from another build's once extracted. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) stays absent — waits on OQ-002 and owner wording, never invented (C8) |
 | root — internal/testing | `SUPPORT.md` (**landed 0.1.1**), `.github/ISSUE_TEMPLATE/` | The class's rule is "restates the legal class, never diverges from it" — and Anabasis has no approved licence, EULA or privacy document to restate (OQ-002 / OQ-009 open). `SUPPORT.md` states that as its own §1 and confines itself to what the repository can evidence: the reporting channel, what a usable report contains, and that terms come from the owner rather than from it. Deliberately SHORTER than the sibling's, which restates documents that exist there |
-| .github | workflows/{build,codeql,msvc,dependency-review,cxx23-canary,release}.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml | Present — **`release.yml` landed in 0.1.1** (**ADR-0021**: tag-triggered validate → build → draft-release, publishing left a human action). The OQ-007 deferral this row quoted is **superseded 2026-08-07** for the pipeline-and-installers half; only signing/notarization stays deferred |
-| scripts | setup-linux, build, run-tests, run-pluginval.{sh,ps1} | Present |
+| .github | workflows/{build,codeql,msvc,dependency-review,release}.yml, actions/setup-linux-build/action.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml (**`cxx23-canary.yml` deleted at 0.2.0**, ADR-0030 — the baseline it was waiting for arrived) | Present — **`release.yml` landed in 0.1.1** (**ADR-0021**: tag-triggered validate → build → draft-release, publishing left a human action). The OQ-007 deferral this row quoted is **superseded 2026-08-07** for the pipeline-and-installers half; only signing/notarization stays deferred |
+| scripts | setup-linux, setup-llvm-apt, build, preflight, run-tests, run-pluginval.{sh,ps1}, and the six checkers each carrying its own `--self-test`: check-docs, check-portability, check-citations, check-realtime, check-clang-warnings, check-linux-abi | Present — the checker set landed at 0.2.0 (`TESTING_POLICY.md` rule 5: a lint without a self-test is not a gate) |
 
 ## Known coverage gaps / TODOs
 

@@ -47,6 +47,14 @@ the version** — not which platform it is on, and not whether that compiler's o
    pinned one — **is gated when that toolchain builds shipped artifacts**, because that is the
    repository taking or handing over control of the shipped bytes.
 
+**Rule 3's first application is ADR-0032 (0.2.1), and it went the other way.** The Linux shipping
+toolchain moved from the image's `g++` to the already-pinned `clang-<n>`: a floating label that
+built shipped artifacts became a pin, which is the repository *taking* control of the shipped bytes
+and is gated by the second half of rule 3. In the same change GCC stopped building anything that
+ships and gained a pin of its own (`ANABASIS_GCC_VERSION`, ADR-0033), so it moved from rule 2 to
+rule 1 — not because it ships, but because this repository now chooses its version. Both halves are
+worth naming: rule 3 is about the transition, and rule 1 is about what the toolchain is afterwards.
+
 **The `macos-14` → `macos-latest` move (2026-08-20) is reconciled by rule 2, not exempted from
 rule 1.** It changed no version this repository had pinned — AppleClang has never been pinned here
 — and the compiler that followed was GitHub's choice, not a value in this tree, so it was handled

@@ -10,8 +10,9 @@ Repository Governance Policy. Test acceptance levels and the release gate.
 | **2** | Unit / behaviour | Deterministic DSP assertions + state/parameter compatibility (schema shape, registry snapshot, raw-exact round-trip, legacy migrations, corrupt-state robustness, preset round-trip) | `tests/dsp_tests.cpp` (`AnabasisTests`) + `tests/state_tests.cpp` (`AnabasisStateTests`) |
 | **3** | DSP validation | No NaN/Inf/denormals across the feature × oversampling × sample-rate matrix; latency == actual; bypass null; click-free transitions; **ceiling never exceeded**; metering accuracy | `tests/dsp_tests.cpp` |
 | **4** | pluginval | VST3 conformance on all three platforms, **and AU conformance on macOS**; editor open/close under `xvfb` | `scripts/run-pluginval.sh [strictness] [mode] [format]` / `.ps1` |
-| **4b** | Shipped-artefact probe | `AnabasisChannelProbe` LOADS the built bundle through a host and asserts BOTH channels carry audio across the reported field configurations — the only check that exercises the LTO'd, wrapped binary a user installs. macOS runs it for VST3 and AU × arm64 and x86_64 | `tools/channel_probe.cpp`; a step in the `linux`, `windows` and `macos` jobs |
-| **1b** | Portability + memory + evidence anchors | Source lint for the JUCE SIMD-overload hazard; documentation `file:line` anchors still naming the code they were written about; a Clang build gating on first-party warnings; ASan + UBSan + valgrind over both suites | `scripts/check-portability.py`, `scripts/check-citations.py`; `build.yml` jobs `source-lint`, `linux-clang`, `sanitizers` |
+| **4b** | Shipped-artefact probe | `AnabasisChannelProbe` LOADS the built bundle through a host and asserts BOTH channels carry audio across the reported field configurations — the only check that exercises the LTO'd, wrapped binary a user installs. macOS runs it for VST3 and AU × arm64 and x86_64 | `tools/channel_probe.cpp`; a step in the `linux`, `windows`, `macos` and `macos-intel` jobs — and on Linux it hosts the bundle that SHIPS (ADR-0032) |
+| **1b** | Portability + memory + evidence anchors | Source lint for the JUCE SIMD-overload hazard; documentation `file:line` anchors still naming the code they were written about; **both** compilers gating on first-party warnings at zero; ASan + UBSan + valgrind over both suites | `scripts/check-portability.py`, `scripts/check-citations.py`, `scripts/check-clang-warnings.py`; `build.yml` jobs `source-lint`, `linux`, `linux-lto-tests`, `sanitizers` |
+| **1c** | Shipped-class codegen | Both suites built with `-flto` on the compile AND the link and run against that codegen, on the pinned Clang (the shipped optimization class) and the pinned GCC (the other major toolchain). The gap it closes is named: by ADR-0008 the suites do not link the LTO flags the plugin does, which is the configuration INC-004 needed in order to stay hidden for five months | `build.yml` job `linux-lto-tests` (ADR-0033) |
 | **5** | Manual validation | Audio quality + GUI appearance + the loudness-matched listening test (cannot be judged headlessly) | Load in a DAW |
 
 ## Phase-escalating strictness (`DEVELOPMENT_BRIEF.md` §2, §11)
@@ -85,8 +86,8 @@ Lowering strictness below the phase value is a deliberate act that must be justi
       checked out (`fetch-depth: 0`), not in `docs`. What it proves is narrow and must not be
       overstated — anchors did not MOVE, never that they were aimed correctly to begin with. It
       reports anchors it could not judge separately rather than counting them as passes.
-  - `linux-clang` — builds both test targets **and the plugin** with Clang, runs both
-    reproductions against the plugin build, and fails on any warning whose path is
+  - `linux` — builds both test targets **and the plugin** with the pinned Clang, ships that
+    build (ADR-0032), runs both reproductions against it, and fails on any warning whose path is
     under `src/` or `tests/`. It catches the AppleClang diagnostic set JUCE does not apply to GCC
     (`-Wshorten-64-to-32`, `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …), which
     previously reached us only from the macOS runner. It does **not** catch the typedef class;
@@ -217,7 +218,8 @@ its methodology is not permitted (constraint C2).
    because a liveness proof somewhere else proves nothing about the run whose silence is being
    read. The pairs, with the job each lives in: `check-docs.py` (`docs`); `check-portability.py`,
    `check-citations.py` and `check-realtime.py` (`source-lint`); `check-clang-warnings.py`
-   (`linux-clang`); `check-linux-abi.py` (`linux`). A checker that has stopped matching anything is
+   (`linux`, and again in `linux-lto-tests` where it gates the GCC arm's log too);
+   `check-linux-abi.py` (`linux`). A checker that has stopped matching anything is
    indistinguishable from a clean tree, and a gate that cannot fail is indistinguishable from a
    gate that passes. **Adding a lint without one is not adding a gate.**
 

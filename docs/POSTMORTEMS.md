@@ -116,10 +116,12 @@ changed too: the FORM is what admits the mistake.
    overloads for `SIMDRegister`. It is a LINT rather than a build job precisely because no
    Linux build can see this class. Mutation-verified: reinstating the exact line fails the lint
    at that line and nowhere else.
-2. `--compile-canary`, run in the `linux-clang` job — compiles the deduced and explicit forms
+2. `--compile-canary`, run in the `linux` job (it lived in `linux-clang` until ADR-0032 deleted
+   that job and moved the step to where the pinned Clang and the pinned JUCE now are) — compiles
+   the deduced and explicit forms
    against the pinned JUCE and requires the first to succeed and the second to fail, so a JUCE
    bump that changes the overload set fails loudly instead of silently voiding the lint.
-3. The `linux-clang` job's first-party warning gate — it does not catch THIS defect, and saying
+3. The `linux` job's first-party warning gate — it does not catch THIS defect, and saying
    so is the point: it catches the AppleClang diagnostic set (`-Wshorten-64-to-32`,
    `-Wimplicit-int-float-conversion`, `-Wshadow-field`, …) that GCC does not apply, which is a
    different gap that was also only visible from the macOS runner.
@@ -138,7 +140,7 @@ Evidence [Verified]:
   and this claim is about a line that no longer exists: `check-citations.py` chased it through
   three rounds of code movement, correctly preserving text that was never the evidence.
   The offending expression is `juce::jmax<size_t> (1, v.size())`; `scripts/check-portability.py`;
-  `.github/workflows/build.yml` (`source-lint`, `linux-clang`)
+  `.github/workflows/build.yml` (`source-lint`, `linux` — `linux-clang` until ADR-0032)
 - Test:   `scripts/check-portability.py` (mutation-verified); `--compile-canary`
 - Commit: `6f63573`, PR #14
 
@@ -212,8 +214,11 @@ an absent one, because it is counted.
 
 **Prevention:** `tools/engine_repro.cpp` drives the bare engine — no wrapper, no format, no host
 — so a failure names the DSP core directly; `tools/channel_probe.cpp` hosts the built bundle; and
-`linux-clang` now builds the **plugin** with the product's own LTO flags and runs both on every
-push. `ANABASIS_NO_LTO` and `ANABASIS_STAGE_TRACE` are retained as the two bisection tools that
+`linux` now builds the **plugin** with the product's own LTO flags and runs both on every push —
+and, since **ADR-0032**, that is the build that SHIPS, so the two instruments no longer prove their
+result about a Clang build that was thrown away. **ADR-0033** closes the other half: the suites
+themselves are built with `-flto` and re-run in `linux-lto-tests`, which is the configuration this
+defect needed and the one every console-target gate lacked while it shipped. `ANABASIS_NO_LTO` and `ANABASIS_STAGE_TRACE` are retained as the two bisection tools that
 found it: the first separates "the compiler" from "the link-time optimiser", the second reports
 per-channel energy at twelve taps of the chain and named the exact pair of taps between which the
 channels diverged.
@@ -229,7 +234,8 @@ Evidence [Verified]:
 - Source: `src/dsp/AnabasisEngine.cpp` (the `nCh` bound), `CMakeLists.txt` (`ANABASIS_NO_LTO`,
   `ANABASIS_STAGE_TRACE`), `src/dsp/StageTrace.h`
 - Test:   `tools/engine_repro.cpp`, `tools/channel_probe.cpp`, `.github/workflows/build.yml`
-  (`linux-clang` plugin build + both reproductions)
+  (the `linux` job's shipped plugin build + both reproductions, `linux-clang`'s until ADR-0032;
+  and the `linux-lto-tests` suites under `-flto`, ADR-0033)
 - Commit: this one, PR #14
 
 ## INC-005 — The macOS package could report a successful install with nothing at the destination

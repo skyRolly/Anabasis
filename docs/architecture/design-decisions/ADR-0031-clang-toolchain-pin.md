@@ -6,7 +6,7 @@
 > repository pins is gated.* Taken on the owner's migration directive, which asked in as many words
 > to "align toolchain versions and dependency versions with Anamorph".
 
-**Status:** **Accepted — 2026-08-22.** Version 0.2.0.
+**Status:** **Accepted — 2026-08-22.** Version 0.2.0. **Amended by [ADR-0032](ADR-0032-linux-release-toolchain.md) (0.2.1)**, which moved the shipped Linux build onto this pin and pinned GCC beside it; decision clauses 3 and 5 carry the amendment inline.
 
 ## Context
 
@@ -59,12 +59,21 @@ sanitizer host behind a packaging decision nobody here made.
    than letting it proceed on the image's default compiler.
 3. Three jobs use it: `linux-clang` (build + warning gate + portability canary), `sanitizers`
    (ASan/UBSan; the same package carries those runtimes) and `realtime` (RTSan, ADR-0029).
+   **Amended by ADR-0032 (0.2.1):** `linux-clang` is gone, and the pin's callers are now `linux`
+   (which builds the shipped artifact with it and carries the warning gate and the canary),
+   `merge-check`, `sanitizers`, `realtime` and the Clang arm of `linux-lto-tests`.
 4. **No warning baseline file is introduced.** The gate stays at zero first-party warnings. If a
    future major surfaces diagnostics, they get **fixed**; re-taking that decision requires amending
    this ADR.
 5. The GCC leg is untouched. `linux` still builds and ships the Linux artifact with the image's GCC,
    which is a rule-2 toolchain under the review gate's new §"Compiler and toolchain versions" — the
    repository does not pin it, so it is covered by detection and record rather than by review.
+   **Superseded by ADR-0032 (0.2.1).** That decision reversed exactly this clause: Clang ships,
+   GCC moves to `linux-lto-tests` as the compatibility compiler, and its major is pinned
+   (`ANABASIS_GCC_VERSION`) — so it is a rule-1 toolchain now, not a rule-2 one. The sentence is
+   kept rather than rewritten because it is the record of what this ADR decided, and the reason it
+   changed is worth a reader's attention: the exposure it accepted ("the repository does not pin
+   it") was on the SHIPPED artifact, which is the one place the argument does not hold.
 
 ## Consequences
 
@@ -98,8 +107,8 @@ The Windows and macOS toolchains are unaffected by this ADR and are rule-2 cases
 
 ## Related code
 
-- `.github/workflows/build.yml` (`env.ANABASIS_CLANG_VERSION`; `linux-clang`, `sanitizers`,
-  `realtime`)
+- `.github/workflows/build.yml` (`env.ANABASIS_CLANG_VERSION`; `linux`, `merge-check`,
+  `sanitizers`, `realtime`, `linux-lto-tests` — `linux-clang` until ADR-0032)
 - `scripts/setup-llvm-apt.sh`
 - `docs/policies/DEPENDENCY_POLICY.md` · `docs/policies/ARCHITECTURE_REVIEW_GATE.md`
 - Worklog: `worklogs/2026-08-22-migration-roadmap-execution.md`

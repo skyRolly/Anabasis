@@ -9,6 +9,48 @@ by id instead of re-argued.
 **No migration was implemented in this round, deliberately.** The instruction was to investigate,
 categorise and plan.
 
+---
+
+## STATUS UPDATE — 2026-08-22 (round A3, version 0.2.1): two verdicts re-opened and reversed
+
+This section amends the verdicts below rather than replacing them. The reasoning recorded further
+down was correct **under the premises it was given**, and both premises were withdrawn by the
+owner's brief for round A3 — so what changed is the question, not the evidence.
+
+| Item | Verdict below | Now | Why the verdict moved |
+|---|---|---|---|
+| **A2-32** `linux-lto-tests` | INVESTIGATE → *adopt, but not in this round* | **IMPLEMENTED** ([ADR-0033](../docs/architecture/design-decisions/ADR-0033-lto-validation-lane.md)) | The deferral rested on one clause — "deferred only because of CI cost". The brief states that GitHub Actions cost is not a constraint for this project. With that term gone, the verdict's own body ("technically valuable · passes identically") argues **for**. |
+| **A2-31** Linux release toolchain | NOT NEEDED — "a release-topology decision with no reported problem behind it here" | **ADOPTED / ALIGNED** ([ADR-0032](../docs/architecture/design-decisions/ADR-0032-linux-release-toolchain.md)) | The verdict tested for a *product-specific reason to change*. The brief replaces that test with its inverse: the two repositories stay aligned on engineering infrastructure unless there is a concrete technical reason to differ. Under the new test "Anabasis has no problem today" stops being a reason to keep the divergence. |
+| **A2-34** `setup-linux.sh` dependency profiles | NOT NEEDED (conditional on A2-32) | **NOT NEEDED — unchanged, and the condition it depended on was re-checked** | The profile split exists to stop `build-essential` overwriting a *container's* pinned compiler. A2-32 landed as an ordinary runner job — `g++-14` is packaged in Noble's archive, so no container is needed — so the split still has nothing to serve. |
+
+**What A2-31's implementation actually is.** `linux` builds the shipped VST3 and Standalone with
+the pinned Clang; `linux-clang` is deleted and its portability canary, warning-gate self-test +
+gate and `AnabasisEngineRepro` move into `linux`; `merge-check` moves to the same compiler and
+shares its ccache lineage; GCC is pinned (`ANABASIS_GCC_VERSION`) and keeps a job in
+`linux-lto-tests`. The exposure this closes is that ADR-0031 pinned the compiler that gated
+*diagnostics* while the one that produced the *binary* floated with the runner image.
+
+**What A2-32's implementation actually is.** `linux-lto-tests`, on every push, two arms: clang-22
+`-flto` (the shipped optimization class — INC-004's configuration) and g++-14 `-flto` (the other
+major toolchain, which after A2-31 has no other pinned job). One arm more than the sibling's lane,
+for a reason specific to this product and recorded in the ADR.
+
+**Measured this round** (Linux x86-64, 4 cores, JUCE prebuilt, ccache cold):
+
+| Build | Time | Result |
+|---|---|---|
+| Ship class, clang-22, full (VST3 + Standalone + tests + bench + probe) | 24.7 s configure + **539.4 s** build | 301 + 873 checks, 0 failures |
+| Suites, clang-22, **no** LTO | 16.2 + **169.0 s** | 301 + 873, 0 failures |
+| Suites, clang-22, **`-flto`** | 16.3 + **263.8 s** | 301 + 873, 0 failures — **identical** |
+| Suites, g++-14, **no** LTO | 25.4 + **234.2 s** | 301 + 873, 0 failures |
+| Suites, g++-14, **`-flto`** | 28.3 + **312.2 s** | 301 + 873, 0 failures — **identical** |
+
+The full evidence trail, including the ABI re-measurement on the Clang artifact and the pluginval
+and probe runs against it, is
+[`worklogs/2026-08-22-lto-lane-and-linux-toolchain-alignment.md`](2026-08-22-lto-lane-and-linux-toolchain-alignment.md).
+
+---
+
 ## Purpose
 
 Determine what has landed in Anamorph since the last audit that Anabasis does not have, decide per

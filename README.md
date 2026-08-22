@@ -63,6 +63,9 @@ headless Linux machine, no IDE.
 - **Formats:** VST3 (all platforms), **AU** (macOS, for Logic Pro), Standalone (debugging).
   **AAX is not supported.**
 - **Platforms:** Linux x86-64 (headless CI build), Windows x86-64, macOS universal (arm64 + x86_64).
+  The Linux binary is built by a **pinned Clang** since 0.2.1 (ADR-0032) and carries a declared,
+  gated ABI floor; `scripts/check-linux-abi.py` holds the numbers and the CI job asserts them on
+  every push.
 
 ## Requirements
 
