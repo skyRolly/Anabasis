@@ -314,6 +314,28 @@ def _is_digit_separator(text: str, i: int) -> bool:
     return text[start] == "." and start + 1 < i and text[start + 1].isdigit()
 
 
+# The prefixes a RAW string may carry, spelled as what must sit to the LEFT of
+# the `R` -- `R"(...)"` itself, or an encoding prefix with `R` appended. This is
+# `check-portability.py`'s `RAW_STRING_PREFIXES` viewed from one character
+# earlier, because that scanner keys its raw branch on the QUOTE and this one
+# keys it on the `R`. Same rule, same set, different cursor.
+RAW_PREFIX_LEFT_OF_R = frozenset(("", "L", "u", "U", "u8"))
+
+
+def _left_token(out: list) -> str:
+    """The identifier-ish run already emitted immediately left of the cursor.
+
+    Read back off `out` rather than off `text`, because that is what the caller
+    below reasons about and because the comment branches push MULTI-character
+    padding: those entries stop the walk, which is right -- a comment does not
+    continue a token.
+    """
+    j = len(out)
+    while j > 0 and len(out[j - 1]) == 1 and (out[j - 1].isalnum() or out[j - 1] == "_"):
+        j -= 1
+    return "".join(out[j:])
+
+
 def strip_comments_and_strings(text: str) -> str:
     """Blank out comments and string/char literals, preserving line structure.
 
@@ -337,13 +359,22 @@ def strip_comments_and_strings(text: str) -> str:
             if i < n:
                 out.append("  ")
                 i += 2
-        elif c == "R" and i + 1 < n and text[i + 1] == '"':
+        elif (c == "R" and i + 1 < n and text[i + 1] == '"'
+              and _left_token(out) in RAW_PREFIX_LEFT_OF_R):
             # RAW STRING LITERAL. Without this branch the plain-quote scan below
             # stops at the first `"` inside the raw text -- so `R"(say "hi")"`
             # would leave `hi")"` lexed as code, and a `new` after it read as a
             # violation, or a real one swallowed. Neither shape exists in `src`
             # today; the point is that arriving later must not silently change
             # what the scanner sees.
+            #
+            # THE `R` MUST BE A WHOLE TOKEN, or a prefix ending in one. This
+            # condition used to fire on any `R` sitting before a quote, which
+            # made the two scanners in this repository disagree about the same
+            # C++: `check-portability.py` requires the same thing and this did
+            # not. The divergence is harmless on valid code -- an identifier
+            # glued to a string is not C++ -- but two lexers that answer
+            # differently are two lexers a future edit can only fix one of.
             j = text.find("(", i + 2)
             delim = text[i + 2:j] if j != -1 else None
             if delim is not None and "\n" not in delim:
@@ -394,7 +425,20 @@ def strip_comments_and_strings(text: str) -> str:
             # the file readable.
             while i < n and text[i] != quote and text[i] != "\n":
                 if text[i] == "\\" and i + 1 < n:
-                    out.append("  ")
+                    # A LINE SPLICE, not an ordinary escape, when the escaped
+                    # character is the newline itself. The splice joins two
+                    # logical lines but the FILE still has two physical ones,
+                    # and this scanner's callers count newlines in the CLEANED
+                    # text to get a line number while echoing the source line
+                    # out of the ORIGINAL -- so blanking that newline shortens
+                    # the cleaned text by a line and every violation below the
+                    # literal is reported at the wrong line AND printed with
+                    # the wrong source. Two spaces for a real escape, one space
+                    # and the newline for a splice: two characters either way,
+                    # so the brace positions the body extractor depends on are
+                    # unmoved. `check-portability.py` carries the same branch
+                    # for the same reason.
+                    out.append(" \n" if text[i + 1] == "\n" else "  ")
                     i += 2
                     continue
                 out.append(" ")
@@ -1034,6 +1078,96 @@ def self_test() -> int:
             print(f"self-test FAIL: definition head ({label}) -> {got}, want {want}",
                   file=sys.stderr)
             failures += 1
+    # ---- LINE NUMBERS MUST SURVIVE EVERY LITERAL SHAPE -------------------
+    # `scan_text` counts newlines in the CLEANED text to get a line number and
+    # then echoes that line out of the ORIGINAL. The two only agree while the
+    # stripper is length- AND line-preserving, so a literal that eats a newline
+    # reports every violation below it at the wrong line and prints the wrong
+    # source -- a finding that sends the reader to innocent code, which is worse
+    # than no finding at all. A line-spliced string did exactly that until
+    # 0.2.1; the other shapes are here so the next one cannot regress quietly.
+    #
+    # Each case puts the literal on line 3 and the violation on line 5, and
+    # asserts BOTH halves of the report: the number and the echoed source.
+    for label, literal in [
+        ("a plain string", '    const char* s = "plain";'),
+        ("an escaped quote", '    const char* s = "he said \\"hi\\"";'),
+        ("a char literal", "    char c = 'x';"),
+        ("an escaped-quote char literal", "    char c = '\\'';"),
+        ("a raw string", '    const char* s = R"(paren ) and quote " inside)";'),
+        ("a multi-line raw string", '    const char* s = R"(one\ntwo)";'),
+        # THE FIX. A backslash-newline inside a literal is a LINE SPLICE: it
+        # joins two logical lines while the file still has two physical ones.
+        ("a line-spliced string", '    const char* s = "spliced \\\n        tail";'),
+        ("two line splices", '    const char* s = "a \\\n b \\\n c";'),
+    ]:
+        total += 1
+        head = "void reset() noexcept\n{\n"
+        tail = "\n    int keep = 0; (void) keep;\n    v.push_back (1.0f);\n}\n"
+        src = head + literal + tail
+        want_line = src.split("\n").index("    v.push_back (1.0f);") + 1
+        found = scan_text(src, "synthetic.cpp")
+        ok = (len(found) == 1
+              and found[0][1] == want_line
+              and found[0][4] == "v.push_back (1.0f);")
+        if not ok:
+            print(f"self-test FAIL: line alignment after {label} -> {found} "
+                  f"(want line {want_line} carrying the push_back)", file=sys.stderr)
+            failures += 1
+
+    # ...and the stripper's own invariant, asserted directly because it is what
+    # every case above depends on: a cleaned file has exactly as many lines as
+    # the file it came from.
+    for label, src in [
+        ("a line-spliced string", 'const char* s = "a \\\n b";\n'),
+        ("a multi-line raw string", 'const char* s = R"(a\nb\nc)";\n'),
+        ("an unterminated literal at EOF", 'const char* s = "never closed'),
+        ("an unterminated block comment", "/* never closed\nand on\n"),
+    ]:
+        total += 1
+        cleaned = strip_comments_and_strings(src)
+        if cleaned.count("\n") != src.count("\n"):
+            print(f"self-test FAIL: {label} changed the line count "
+                  f"({src.count(chr(10))} -> {cleaned.count(chr(10))})", file=sys.stderr)
+            failures += 1
+
+    # ---- THE RAW-STRING PREFIX MUST BE A WHOLE TOKEN ---------------------
+    # `check-portability.py` requires it and this scanner did not, so the two
+    # lexers in this repository disagreed about the same C++. The observable is
+    # the `R` itself: the raw branch BLANKS it, the ordinary-string path leaves
+    # it as code.
+    for label, src, r_survives in [
+        ("a bare raw string", 'R"(x)";', False),
+        ("an L-prefixed raw string", 'LR"(x)";', False),
+        ("a u-prefixed raw string", 'uR"(x)";', False),
+        ("a U-prefixed raw string", 'UR"(x)";', False),
+        ("a u8-prefixed raw string", 'u8R"(x)";', False),
+        # NOT a raw string: `xR` is one identifier, so this is `xR` followed by
+        # an ordinary string. Not valid C++, which is exactly why the two
+        # scanners must not disagree about it.
+        ("an identifier glued to R", 'xR"(x)";', True),
+        ("a longer identifier ending in R", 'MY_VAR"(x)";', True),
+        ("an underscore-prefixed identifier", '_R"(x)";', True),
+    ]:
+        total += 1
+        if ("R" in strip_comments_and_strings(src)) != r_survives:
+            print(f"self-test FAIL: raw-string token boundary, {label} -> "
+                  f"{strip_comments_and_strings(src)!r}", file=sys.stderr)
+            failures += 1
+
+    # A GENUINE RAW STRING STILL SWALLOWS ITS EMBEDDED QUOTES, which is the
+    # reason the branch exists: without it the plain-quote scan stops at the
+    # first inner `"` and the rest of the line is lexed as code.
+    total += 1
+    if "hi" in strip_comments_and_strings('const char* s = R"(say "hi")"; keep();'):
+        print("self-test FAIL: a raw string's embedded quote leaked back as code",
+              file=sys.stderr)
+        failures += 1
+    total += 1
+    if "keep()" not in strip_comments_and_strings('const char* s = R"(say "hi")"; keep();'):
+        print("self-test FAIL: a raw string swallowed the code after it", file=sys.stderr)
+        failures += 1
+
     if failures:
         print(f"check-realtime: {failures} of {total} self-test case(s) failed", file=sys.stderr)
         return 1

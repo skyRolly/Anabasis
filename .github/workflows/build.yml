@@ -179,7 +179,34 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # THE SAME PRE-P1 GUARD THE OTHER BUILD JOBS GET, INLINED RATHER THAN
+      # TAKEN AS A `needs:`, and the difference is forced rather than stylistic.
+      #
+      # `preflight` carries the same-repo-PR skip every other job relies on, so
+      # on THIS job's only event it does not run at all. `needs: preflight` would
+      # therefore skip merge-check outright and report the whole workflow green
+      # while building nothing -- which is precisely the hazard that job's own
+      # comment warns about ("would get ZERO build jobs while still reporting
+      # success"), reached from the other direction.
+      #
+      # So the CHECK is duplicated and the JOB is not. The behaviour is the one
+      # every other build job has: on a tree with no `CMakeLists.txt` the
+      # configure never runs and the job passes with a notice instead of failing
+      # on a missing project. If `preflight` is ever deleted -- it is a permanent
+      # no-op now that the build exists -- this stays correct on its own.
+      - name: Pre-P1 guard
+        id: preflight
+        shell: bash
+        run: |
+          if [ -f CMakeLists.txt ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CMakeLists.txt (pre-P1 scaffold) -- the merge-result build is skipped."
+          fi
+
       - name: Install build dependencies
+        if: steps.preflight.outputs.ready == 'true'
         uses: ./.github/actions/setup-linux-build
 
       # Shares the `linux` job's GCC cache lineage on purpose: this job compiles
@@ -187,6 +214,7 @@ jobs:
       # entries are interchangeable and a merge-check is nearly free after the
       # push build of either parent has populated it.
       - name: Restore the compiler cache
+        if: steps.preflight.outputs.ready == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ccache
@@ -194,6 +222,7 @@ jobs:
           restore-keys: ccache-ubuntu-gcc-release-
 
       - name: Configure
+        if: steps.preflight.outputs.ready == 'true'
         run: >
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DANABASIS_BUILD_STANDALONE=OFF
@@ -202,15 +231,17 @@ jobs:
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + tests)
+        if: steps.preflight.outputs.ready == 'true'
         run: cmake --build build --target Anabasis_VST3 AnabasisTests AnabasisStateTests
 
       - name: DSP + state self-tests
+        if: steps.preflight.outputs.ready == 'true'
         run: |
           ./build/AnabasisTests_artefacts/Release/AnabasisTests
           ./build/AnabasisStateTests_artefacts/Release/AnabasisStateTests
 
       - name: Compiler cache statistics
-        if: ${{ !cancelled() && env.ANABASIS_COMPILER_LAUNCHER != '' }}
+        if: ${{ !cancelled() && steps.preflight.outputs.ready == 'true' && env.ANABASIS_COMPILER_LAUNCHER != '' }}
         run: ccache --show-stats --verbose || true
 
   docs:

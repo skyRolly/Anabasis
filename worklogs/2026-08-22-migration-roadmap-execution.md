@@ -314,6 +314,94 @@ Linux x86-64, JUCE 9.0.1 `e18f7f5…`, C++23.
 | check-docs / check-portability / check-realtime / check-citations / check-clang-warnings self-tests | 67 / 120 / 90 / 37 / 15 cases |
 | `check-citations --check` | 50 anchors unmoved against `origin/main` |
 
+## Review round (same day): three findings fixed, two declined
+
+A review of the round above raised five findings. Three are fixed here; two are acknowledged and
+deliberately left alone, which is recorded because "we looked and decided not to" is a different
+state from "nobody looked".
+
+**It folds into 0.2.0 rather than taking a version of its own, and the CHANGELOG gains no entry.**
+Nothing has been tagged, so 0.2.0's notes are still being written rather than published
+(`CHANGELOG.md`'s preamble carries that fact), and `CHANGELOG_POLICY.md` admits **user-visible
+changes only**: a lint's line numbering, a lexer's agreement with its sibling and a CI job's
+skip condition are none of them things a user of the plug-in can observe. The record for all three
+is here and in the diff.
+
+### 1. `check-realtime.py` reported violations at the wrong line after a line-spliced literal
+
+**The real defect of the three, and the only one that could mislead a reader.** `scan_text` derives
+a line number by counting newlines in the CLEANED text and then echoes that line out of the
+ORIGINAL source. The two agree only while the stripper is line-preserving — and the escape branch
+collapsed a backslash-newline (a C++ **line splice**, which joins two logical lines while the file
+still has two physical ones) to two spaces, dropping the newline. Every violation below such a
+literal was therefore reported one line high **and printed with the wrong source line**, which
+sends the reader to innocent code.
+
+`check-portability.py` had carried the fix since its own round; this scanner had not. Both now
+emit `" \n"` for a splice and `"  "` for an ordinary escape — two characters either way, so the
+brace positions the body extractor depends on are unmoved.
+
+**Measured, with the pre-fix form restored as a mutant:** a `push_back` on line 6 under a spliced
+string was reported at **line 5, carrying `int keep = 0; (void) keep;`** — an unrelated statement.
+The mutant kills 3 of the new cases and nothing else.
+
+**Detection is unchanged.** In both forms the violation is FOUND; only its location was wrong. On
+the real tree the scanner's output is byte-identical before and after (40 files, 0 violations).
+
+### 2. The raw-string branch ignored the preceding token
+
+`check-portability.py` requires a raw-string prefix to be a whole token; this scanner fired on any
+`R` sitting before a quote. Harmless on valid C++ — an identifier glued to a string literal is not
+C++ — but **two lexers in one repository that answer differently about the same input are two
+lexers a future edit can only fix one of**, which is the whole reason the sibling's version was
+adopted rather than re-invented.
+
+The condition now reads the already-emitted token, through the same `_left_token` helper
+`check-portability.py` uses. The two scanners key their raw branch on different characters (that
+one on the quote, this one on the `R`), so the set is expressed one character earlier —
+`RAW_PREFIX_LEFT_OF_R = {"", "L", "u", "U", "u8"}` — and means the same thing.
+
+Mutant (the condition without the token test): kills 3 cases, **disjoint from finding 1's**.
+
+### 3. `merge-check` had no pre-P1 guard
+
+Every other build job skips cleanly on a tree with no `CMakeLists.txt`; `merge-check` would have
+attempted to configure one.
+
+**It could not be given `needs: preflight`, and that is forced rather than stylistic.** The
+`preflight` job carries the same-repo-PR skip every other job relies on, so on `merge-check`'s only
+event it does not run at all — a `needs:` on it would skip `merge-check` outright and report the
+workflow green while building nothing. That is exactly the hazard `preflight`'s own comment warns
+about, reached from the other direction. So the CHECK is duplicated as an in-job step and the JOB
+is not, which also leaves `merge-check` correct on its own the day the permanently-no-op `preflight`
+job is finally deleted.
+
+### Declined, with reasons
+
+- **`tests/AllocationGuard.h` replaces global `operator new`/`delete` from a single TU.** Correct as
+  observed: it is included only by `tests/dsp_tests.cpp`, so the replacement is unique within
+  `AnabasisTests` and there is no ODR problem to fix. Including it in a second TU of the same
+  executable WOULD be one — but that is a rule about a future edit, not a defect in this one, and
+  the redesign it would take (a separate TU owning the operators, linked into the suite) buys
+  nothing today. Left as is, deliberately.
+- **The ABI gate is coupled to the staged artifact paths.** Also correct, and it is the intended
+  behaviour: if the Standalone ever stops being staged, `check-linux-abi.py` exits 2 and the job
+  fails. A gate that silently passes when its input is missing is the false-green class this whole
+  round exists to remove — the same reasoning as `check-docs.py`'s empty-scan guard. Not weakened.
+
+### Validation of the patch round
+
+| Gate | Result |
+|---|---|
+| `scripts/preflight.sh` | **rc = 0** |
+| Both suites | **301 + 873 = 1174 checks, 0 failures** (unchanged — no C++ source was touched) |
+| `check-realtime.py --self-test` | **112 cases** (was 90; +22 for line alignment and the raw prefix) |
+| Other self-tests | check-docs 67 · check-portability 120 · check-citations 37 · check-linux-abi 19 · check-clang-warnings 15 |
+| `check-realtime.py` on the real tree | 40 files, 0 violations — **output byte-identical to before the fix** |
+| Mutants | pre-fix splice handling → 3 cases; raw branch without the token test → 3 cases; **disjoint** |
+| Workflow YAML | all five workflows, the composite action and `dependabot.yml` parse |
+| pluginval | unchanged from the 0.2.0 run; no shipped source changed |
+
 ## What this round did NOT do
 
 - **No DSP algorithm changed.** The only edit to `src/dsp/AnabasisEngine.cpp` is a type attribute on
