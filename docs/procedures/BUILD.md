@@ -27,9 +27,12 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
   `scripts/preflight.sh` reports the first two as skipped-with-a-note when the pinned compiler is
   absent.
 - **GCC is the compatibility compiler, and its major is pinned too** — `ANABASIS_GCC_VERSION` in the
-  same file, installed from the distribution archive. It builds the two test suites with `-flto` in
-  `linux-lto-tests` ([ADR-0033](../architecture/design-decisions/ADR-0033-lto-validation-lane.md)),
-  which is where "the tree still compiles under the other major toolchain" is checked.
+  same file, supplied by the official `gcc:<major>` **container** rather than by apt, because no apt
+  source ships a released g++-16 ([ADR-0034](../architecture/design-decisions/ADR-0034-ci-toolchain-parity.md)).
+  It builds the two test suites with `-flto` in `linux-lto-tests`
+  ([ADR-0033](../architecture/design-decisions/ADR-0033-lto-validation-lane.md)), which is where "the
+  tree still compiles under the other major toolchain" is checked. A local GCC build needs none of
+  this — any g++ that supports C++23 will do; the pin is about what CI's compatibility claim means.
 - **JUCE 9.0.1** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
   commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`) — or pointed at a local checkout.
   OQ-001 pinned the sibling product's revision; **ADR-0028 (2026-08-16) moved this repository to
@@ -43,16 +46,33 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
 ## Linux dependencies (Ubuntu)
 
 ```bash
-scripts/setup-linux.sh     # safe to re-run; installs build + X11/audio/GTK deps + xvfb
+scripts/setup-linux.sh              # `full` (default): a developer's machine
+scripts/setup-linux.sh headless     # what compiling + linking needs, and nothing else
 ```
 
-Installs: `build-essential cmake git ninja-build pkg-config`, `curl unzip`, ALSA/JACK/libcurl,
-FreeType/Fontconfig, X11 (`libx11/xcomposite/xcursor/xext/xinerama/xrandr/xrender`),
-`libglu1-mesa-dev mesa-common-dev libegl-dev`, `libwebkit2gtk-4.1-dev libgtk-3-dev`, and `xvfb`.
+**Two profiles, because one caller is not a fresh Ubuntu machine.** `full` is the default and what a
+developer or a packaging job wants; `headless` is what the `linux-lto-tests` container job installs,
+and it drops the host toolchain, the pluginval fetch/display pair, lld and the web-browser binding.
+The package lists live in the script so there is one place that knows what a build needs.
+
+**`headless` (both profiles install these):** `cmake git ninja-build pkg-config ca-certificates
+python3`, ALSA/JACK/libcurl, FreeType/Fontconfig, X11
+(`libx11/xcomposite/xcursor/xext/xinerama/xrandr/xrender`), `libglu1-mesa-dev mesa-common-dev
+libegl-dev`.
+**`full` adds:** `build-essential`, `curl unzip`, `xvfb`, `lld`, `libwebkit2gtk-4.1-dev libgtk-3-dev`.
 
 **`libegl-dev` is required for JUCE 9** — it creates Linux OpenGL contexts via EGL instead of GLX,
 so the EGL headers are a build dependency even if the plugin never attaches a GL context on Linux.
-If `libwebkit2gtk-4.1-dev` is unavailable on your release, try `libwebkit2gtk-4.0-dev`.
+
+**`libfreetype-dev`, not `libfreetype6-dev`.** The `6` spelling is gone from Debian trixie — the base
+of the `gcc:16` container — and survives on Ubuntu only as a `Provides:` on the modern package. The
+unsuffixed name is real on both.
+
+**The web-browser binding is a `full`-only extra and nothing here compiles it:** every target sets
+`JUCE_WEB_BROWSER=0`, JUCE gates the webkit include on that macro, and JUCE 9.0.1 declares no
+`linuxPackages` for `juce_gui_extra`. Where `libwebkit2gtk-4.1-dev` is absent the successor is
+`libwebkitgtk-6.0-dev` (Debian trixie and later); `libwebkit2gtk-4.0-dev` is the OLDER name and is
+already gone from trixie, so it is not a fallback there.
 
 Three of these serve **pluginval**, not the build: `xvfb` (the editor open/close tests need a
 display) and `curl` + `unzip` (`run-pluginval.sh` downloads and extracts the pluginval release).
