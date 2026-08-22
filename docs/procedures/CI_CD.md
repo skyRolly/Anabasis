@@ -345,7 +345,35 @@ OQ-006 carries the same supersession.
 | **The warning gate runs last, after the uploads** | A DIAGNOSTIC finding must not withhold a beta artifact whose behavioural gates passed. It still fails the job. Same rule the ABI assertion follows. |
 | **`merge-check` moved to the same compiler** | A merge-check on a different compiler from the one that will build the merge result is a check of a tree nobody ships; it also shares `linux`'s ccache lineage, and two lineages in one budget evict each other. |
 | **`linux-lto-clang` + `linux-lto-tests`, two jobs** (ADR-0033, split by ADR-0034) | The suites do not link the LTO flags the plugin does, so every assertion was made against non-LTO objects — the configuration INC-004 needed in order to stay hidden. `linux-lto-clang` runs them against the shipped optimization class; `linux-lto-tests` keeps the second major toolchain compiling this tree on every push, in its container. They are separate jobs because `container:` is a per-job key. |
-| **The pinned GCC** | `ANABASIS_GCC_VERSION` in `build.yml`, installed from the distribution archive through the composite action's `extra-packages`. Pinned for the same reason the Clang major is: a compatibility compiler is only a compatibility statement while WHICH compiler is a fact of this file rather than of a runner image. |
+| **The pinned GCC** | `ANABASIS_GCC_VERSION` in `build.yml`, asserted against `g++ -dumpversion` inside `container: gcc:16` — the image supplies the compiler, so the workflow's job is to CHECK the major rather than to install it (ADR-0034; it came from the distribution archive while the pin was 14). Pinned for the same reason the Clang major is: a compatibility compiler is only a compatibility statement while WHICH compiler is a fact of this file rather than of a runner image. **Measured at 16.2.0: zero first-party warnings across all 13 translation units in the two suites** — see the 0.2.3 row below. |
+
+## What 0.2.3 changed in the pipeline — the GCC 16 warning gate, measured
+
+0.2.2 shipped the `gcc:16` container lane without ever having run it — this environment has no
+container runtime, and the ADR said so. The first push measured it, and the measurement is the
+point of this row.
+
+| Change | Why |
+| --- | --- |
+| **`libxi-dev` added to `CORE_PACKAGES`, on BOTH profiles** | The lane died in three JUCE translation units at `fatal error: X11/extensions/XInput2.h: No such file or directory`. JUCE 9.0.1 defaults `JUCE_USE_XINPUT` to 1, so `juce_gui_basics.h:393` includes that header unconditionally in practice, and it belongs to `libxi-dev` — a package the list never named. It reached `full` transitively, via `libgtk-3-dev`'s `Depends: libxi-dev`, which is why no runner and no developer machine ever noticed; `headless` drops the gtk/webkit pair on purpose and dropped the X-input headers with it. |
+| **The gate's failure message no longer says "Clang"** | Three lanes feed `check-clang-warnings.py` and two of them are GCC. `--compiler` is now passed by each caller (`clang++-22`, `g++-16`, `clang++-22`), defaulting to a neutral `the compiler` rather than to the wrong one. Attribution only, no change to what the gate accepts or rejects. |
+| **Three self-test cases for driver-level warnings** | Every GCC LTO link emits `lto-wrapper: warning: using serial compilation of N LTRANS jobs`. It carries no source location, so it is correctly not a diagnostic this gate can attribute — and now that is pinned rather than incidental, alongside the `cc1plus:` and `ld:` forms. 15 → 18 cases. |
+
+**The warning finding, stated plainly: GCC 16 introduced no new diagnostics in this tree.** Run
+32565784751 compiled all **13 first-party translation units** of the two suites under g++ **16.2.0**
+at `-O3 -flto -std=c++23` with the full `juce_recommended_warning_flags` set, and none emitted a
+warning. The zero-warning policy holds at 16 exactly as it held at 14.2.0, so nothing about the gate
+was weakened — the lane's failure was a missing header, not a diagnostic. The build aborted before
+the **LTO link**, which is where `-Wodr` and `-Wlto-type-mismatch` fire; that phase is measured
+locally at GCC 14.2.0 over both suites with the same `-flto` configuration and is likewise clean.
+The first green run of the fixed lane closes the last cell.
+
+**The methodological finding is the one worth carrying forward.** 0.2.2 verified that every package
+name *resolves* on trixie and on noble. Whether the declared set is *sufficient* is a different
+question, and it was never asked. The check that asks it: enumerate the system headers the vendored
+tree includes, map each to its owning package with `dpkg -S`, and diff against the declared list.
+Against JUCE 9.0.1 that is fifteen headers over eight packages, and `libxi-dev` was the only
+omission.
 
 ## What 0.2.2 changed in the pipeline — the parity audit
 

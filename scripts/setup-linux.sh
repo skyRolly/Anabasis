@@ -85,12 +85,28 @@ $SUDO apt-get update -y
 # a compatibility name one distribution has already dropped. `libfreetype-dev` is
 # a REAL package on both (noble 2.13.2, trixie 2.13.3), so it resolves natively
 # either way. Verified against both archives, 2026-08-22.
+#
+# `libxi-dev` is named here for the same class of reason, and it is the second
+# lane-killer this list has had to learn. JUCE 9.0.1 defaults `JUCE_USE_XINPUT`
+# to 1 (juce_gui_basics.h), so `juce_gui_basics.h:393` includes
+# <X11/extensions/XInput2.h> UNCONDITIONALLY in practice -- and that header
+# belongs to `libxi-dev`, which nothing here used to ask for. It arrived anyway
+# on `full`, as a transitive dependency of `libgtk-3-dev` (`Depends: libxi-dev`),
+# which is why a developer machine and the Ubuntu runners never noticed. The
+# `headless` profile drops the gtk/webkit pair on purpose -- nothing this project
+# compiles needs webkit -- and silently dropped the X-input HEADERS with it, so
+# the GCC container lane died at `fatal error: X11/extensions/XInput2.h: No such
+# file or directory` in three JUCE translation units. Depending on a GUI toolkit
+# we do not compile to supply a header we DO compile is exactly the accident an
+# explicit list exists to prevent, so it is explicit on BOTH profiles.
+# `libxi-dev` is a real package on noble and on trixie alike; verified against
+# both archives, 2026-08-22.
 CORE_PACKAGES="
     cmake git ninja-build pkg-config ca-certificates python3
     libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev
     libfreetype-dev libfontconfig1-dev
     libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
-    libxinerama-dev libxrandr-dev libxrender-dev
+    libxi-dev libxinerama-dev libxrandr-dev libxrender-dev
     libglu1-mesa-dev mesa-common-dev libegl-dev
 "
 

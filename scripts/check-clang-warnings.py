@@ -147,6 +147,21 @@ def self_test() -> int:
             ("/repo/src/a.cpp:12:3: note: expanded from macro",    False, "a note"),
             ("cmake: -- warning: something happened",              False, "prose containing 'warning:'"),
             ("[52/91] Building CXX object src/a.cpp.o",            False, "a progress line"),
+            # The GCC LTO lane emits this on EVERY link, so its treatment is
+            # pinned rather than left incidental. Driver-level warnings carry no
+            # source location at all, which is precisely why they must not be
+            # gated: there is no file to attribute them to, and `lto-wrapper`'s
+            # LTRANS-parallelism notice in particular is a property of the
+            # machine, not of this tree. Measured, not assumed -- every GCC
+            # diagnostic that DOES name first-party code was checked to carry
+            # the `path:line:col:` form this matcher requires, including the
+            # link-time `-Wodr` and `-Wlto-type-mismatch` pair that is the whole
+            # reason the LTO lane exists.
+            ("lto-wrapper: warning: using serial compilation of 5 LTRANS jobs",
+                                                                   False, "LTO driver warning, no source location"),
+            ("cc1plus: warning: command-line option is valid for C but not C++",
+                                                                   False, "front-end driver warning, no source location"),
+            ("/usr/bin/ld: warning: section has no contents",      False, "linker warning, no source location"),
         ]
         for raw, expected, label in line_cases:
             got = DIAGNOSTIC.match(raw.replace("/repo", root, 1).strip()) is not None
@@ -155,7 +170,7 @@ def self_test() -> int:
                 print(f"self-test FAIL: {label}: {raw!r} matched={got}, want {expected}",
                       file=sys.stderr)
 
-    total = len(SELF_TEST_CASES) + 5
+    total = len(SELF_TEST_CASES) + len(line_cases)
     if failures:
         print(f"\ncheck-clang-warnings: {failures} of {total} self-test case(s) failed.",
               file=sys.stderr)
@@ -172,6 +187,16 @@ def main() -> int:
     parser.add_argument("--build-dir", default=None,
                         help="directory the compiler ran in; relative diagnostic "
                              "paths resolve against it (default: --root)")
+    # The script is named for the compiler it was written against, but three
+    # lanes now feed it and two of them are GCC (`linux-lto-tests` runs g++ in
+    # the pinned container; `linux`/`linux-lto-clang` run clang++). A failure
+    # message that says "Clang emitted 4 warnings" underneath a g++ build is a
+    # false attribution in the one output an operator reads first, so the name
+    # is passed in rather than assumed. The default stays neutral: a caller that
+    # does not say gets "the compiler", never the wrong one.
+    parser.add_argument("--compiler", default="the compiler",
+                        help="name of the compiler that produced the log, for "
+                             "the failure message (default: 'the compiler')")
     parser.add_argument("--self-test", action="store_true",
                         help="prove the classifier is live, then exit")
     args = parser.parse_args()
@@ -190,7 +215,8 @@ def main() -> int:
     if first_party:
         for line in first_party:
             print(line)
-        print(f"::error::Clang emitted {len(first_party)} warning(s) in first-party sources "
+        print(f"::error::{args.compiler} emitted {len(first_party)} warning(s) in "
+              f"first-party sources "
               f"({', '.join(d + '/' for d in FIRST_PARTY_DIRS)}).", file=sys.stderr)
         return 1
 

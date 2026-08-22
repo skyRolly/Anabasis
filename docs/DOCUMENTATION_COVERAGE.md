@@ -6,7 +6,19 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.2 (2026-08-22)** — the CI/toolchain parity round.
+**Last updated:** for **0.2.3 (2026-08-22)** — the GCC 16 warning-gate validation round.
+
+**Scope of the 0.2.3 round.** No new ADR; **ADR-0034 amended** with the measured GCC 16.2.0 warning
+baseline and with the package-sufficiency finding the container lane's first run exposed. The lane failed
+on a missing header (`X11/extensions/XInput2.h`, owned by `libxi-dev`, previously reaching the `full`
+profile only as a transitive dependency of `libgtk-3-dev`), not on a diagnostic: **GCC 16 introduced no new
+warnings in this tree**, so the gate was strengthened rather than relaxed — `--compiler` stops a GCC lane's
+findings being attributed to Clang, and three self-test cases pin the driver-level `lto-wrapper:` /
+`cc1plus:` / `ld:` forms as non-diagnostics (15 → 18). No DSP algorithm change, no parameter
+added/renamed/removed, no schema, threading or latency change, **and no first-party source file was
+touched**; the frozen registry snapshot is untouched. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged:
+**Build-system change** (`CI_CD.md`, `REPOSITORY_MAP.md`), **New/changed test** (the gate's self-test) and
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`).
 
 **Scope of the 0.2.2 round.** One ADR Accepted (**0034**, CI/toolchain parity), amending ADR-0033.
 An audit of the sibling's build pipeline area by area found twelve mismatches in the configuration

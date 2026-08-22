@@ -116,10 +116,51 @@ JUCE singletons being reported at exit. Measured: nothing is reported.
   heaviest entry in the list, and it is the most volatile name in it — `libwebkit2gtk-4.0-dev` is
   already gone from trixie and the successor there is `libwebkitgtk-6.0-dev`. `full` keeps it so a
   developer flipping the macro does not face a second dependency hunt.
-- **The GCC arm's warning gate is measured at 14, not at 16.** It gates first-party warnings at zero
-  through `check-clang-warnings.py`. Under `juce_recommended_warning_flags` for GCC that measured
-  zero at 14.2.0; 16 is unmeasured. Kept strict deliberately: ADR-0031's rule is that a pin which
-  surfaces diagnostics gets them **fixed**, not baselined.
+- **The GCC arm's warning gate is now measured at 16 — the pin held, and the gate was never the
+  problem.** *(Amended 2026-08-22, after the container lane ran.)* The lane was kept strict on the
+  reasoning below even though 16 was unmeasured; run **32565784751** measured it. Every one of the
+  **13 first-party translation units** in the two suites — `tests/dsp_tests.cpp`,
+  `tests/state_tests.cpp`, `src/dsp/AnabasisEngine.cpp` (in both targets), `src/PluginProcessor.cpp`,
+  `src/PluginParameters.cpp`, `src/MacroEngine.cpp`, `src/PresetManager.cpp` and all six
+  `src/gui/*.cpp` — was compiled by **g++ 16.2.0** under the full
+  `juce_recommended_warning_flags` set at `-O3 -flto -std=c++23`, and **not one emitted a
+  diagnostic**. Two majors, a different distribution, and the zero-warning policy did not move. It
+  stays strict: ADR-0031's rule is that a pin which surfaces diagnostics gets them **fixed**, not
+  baselined, and there was nothing to fix.
+
+  The evidence survives the obvious objection, which is worth stating because 43 of that run's 47
+  compiles were ccache hits. **ccache replays stored stderr on a hit** — measured directly here, the
+  same `-Wunused-variable` printed on the miss and on the hit — and `CCACHE_COMPILERCHECK=content`
+  means a hit requires the byte-identical compiler, so a replayed diagnostic is still g++ 16.2.0's.
+  A warning would have appeared either way.
+
+  **What that run did NOT measure, and this is the honest limit of it:** the build aborted at 36/56
+  on the header defect below, so the **LTO link stage never ran** — and the link is where GCC emits
+  `-Wodr` and `-Wlto-type-mismatch`, the cross-TU class this lane exists for. That phase is measured
+  locally instead, at GCC 14.2.0 with the same `-flto` configuration over both suites: the full
+  compile-and-link log is clean of first-party diagnostics. So: **compile phase measured at 16,
+  link phase measured at 14**, and the first green run of the fixed lane closes the remaining cell.
+- **A missing header, not a warning, is what actually failed the lane — and the previous round's
+  package verification could not have caught it.** `juce_gui_basics.h:393` includes
+  `<X11/extensions/XInput2.h>` whenever `JUCE_USE_XINPUT` is set, and JUCE 9.0.1 defaults it to 1,
+  so the include is unconditional in practice. That header belongs to **`libxi-dev`**, which
+  `CORE_PACKAGES` never named. On `full` it arrived anyway, as a transitive dependency of
+  `libgtk-3-dev` (`Depends: libxi-dev`) — the very package this ADR moved to `full` on the grounds
+  that nothing here compiles webkit. Correct on its own terms, and it took the X-input headers with
+  it: three JUCE translation units died at `fatal error: X11/extensions/XInput2.h: No such file or
+  directory`.
+
+  The methodological finding is the durable part. This ADR's evidence block verified that **every
+  package name resolves** on trixie and on noble. That is a different question from whether the
+  **set is sufficient**, and only the first was asked. The check that answers the second is the one
+  now on record: enumerate every system header the vendored tree includes
+  (`grep -rhoE '<(X11|GL|EGL|freetype2?|fontconfig|alsa|xcb)/[^>]+>' modules/`), map each to its
+  owning package with `dpkg -S`, and diff that against the declared list. Run against JUCE 9.0.1 it
+  yields fifteen headers across eight packages, of which `libxi-dev` was the single omission —
+  every other one was already named explicitly, and `x11proto-dev` (which owns `X11/Xmd.h`) is a
+  hard `Depends:` of `libx11-dev`. `libxi-dev` is now explicit on **both** profiles: depending on a
+  GUI toolkit we do not compile to supply a header we do compile is exactly the accident an
+  explicit list exists to prevent.
 - **macOS caching changes the critical path**, which is the largest CI-time effect in this round —
   and it changes nothing a user receives: the `lipo` slice assertion and the dSYM contract are
   unmoved.
@@ -139,8 +180,19 @@ Evidence [Verified, except where stated]:
 - Test:   both suites under the adopted sanitizer set — **300 + 873, 0 failures, exit 0**, with
   `detect_leaks=1` and a 64 MB stack; the excluded sub-check and the stack limit each measured in
   both directions
-- **Unverified locally:** the `gcc:16` container lane itself (no container runtime in this
-  environment). Its PACKAGE SET is verified another way: every name in both profiles was checked
-  against the Debian trixie archive and the Ubuntu noble archive, and both profiles resolve under
-  `apt-get install -s` on noble
+- **GCC 16.2.0 warning baseline: 0 first-party diagnostics over 13/13 translation units**, from CI
+  run 32565784751's `linux-lto-tests` job (compile phase). ccache stderr replay verified locally in
+  both directions, so cache hits do not weaken the reading
+- **GCC LTO link phase: 0 first-party diagnostics**, both suites, `g++-14 14.2.0` with `-flto` on
+  compile and link, gate run over the complete log
+- The gate itself re-verified against real GCC output, not only its synthetic self-test: a fixture
+  carrying a GCC `-Wunused-variable`, a GCC LTO-time `-Wodr` and a vendored diagnostic classifies
+  2 first-party / 1 vendored and exits 1. `-Wodr` and `-Wlto-type-mismatch` were generated from
+  purpose-built two-TU cases to confirm GCC's link-time diagnostics carry the `path:line:col:`
+  form the matcher requires — they do
+- **Still unverified locally:** the `gcc:16` container lane end to end (this environment has a
+  `docker` client but no reachable daemon). Its PACKAGE SET is verified two ways: every name in
+  both profiles resolves against the Debian trixie and Ubuntu noble archives (with known-absent
+  negative controls), and the declared set is now checked for SUFFICIENCY as well as resolvability
+  by the header→package enumeration described above
 - Worklog: `worklogs/2026-08-22-ci-toolchain-parity-audit.md`

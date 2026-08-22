@@ -951,6 +951,7 @@ jobs:
           --log clang-build.log
           --root "${{ github.workspace }}"
           --build-dir "${{ github.workspace }}/build"
+          --compiler "clang++-${{ env.ANABASIS_CLANG_VERSION }}"
 
   # -------------------------------------------------------------------------
   # Sanitizers (Linux). The point of this job is to catch, ON LINUX, defects
@@ -1271,7 +1272,8 @@ jobs:
           python3 scripts/check-clang-warnings.py \
             --log gcc-lto-build.log \
             --root "${GITHUB_WORKSPACE}" \
-            --build-dir "${GITHUB_WORKSPACE}/build-lto"
+            --build-dir "${GITHUB_WORKSPACE}/build-lto" \
+            --compiler "g++-${ANABASIS_GCC_VERSION}"
 
       - name: Self-tests against LTO codegen
         env:
@@ -1372,7 +1374,8 @@ jobs:
           python3 scripts/check-clang-warnings.py \
             --log clang-lto-build.log \
             --root "${GITHUB_WORKSPACE}" \
-            --build-dir "${GITHUB_WORKSPACE}/build-lto"
+            --build-dir "${GITHUB_WORKSPACE}/build-lto" \
+            --compiler "clang++-${ANABASIS_CLANG_VERSION}"
 
       # THE POINT OF THE JOB. Same assertions, different codegen: whatever the
       # optimiser is entitled to do across translation units, it has to leave

@@ -16,7 +16,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
 notes are written, dated and complete — not that the build shipped. Nine such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`) and none has been tagged; WHICH version the first annotated
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,53 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.2.3] — 2026-08-22
+
+**The GCC 16 warning gate, measured — and the missing header that stopped it being measured.** The
+`gcc:16` container lane shipped in 0.2.2 without ever having been run (ADR-0034 said so: no
+container runtime here, the first push is the measurement). It ran, and it failed — not on a
+warning but on `fatal error: X11/extensions/XInput2.h: No such file or directory`, in three JUCE
+translation units. No DSP algorithm changed, no parameter was added, renamed or removed, no
+serialization schema, threading model or reported latency moved, and **no first-party source file
+was touched**. Measurements and reasoning:
+[`worklogs/2026-08-22-gcc16-warning-gate-validation.md`](worklogs/2026-08-22-gcc16-warning-gate-validation.md).
+
+### Fixed
+- **`libxi-dev` is now an explicit dependency on both `setup-linux.sh` profiles.** JUCE 9.0.1
+  defaults `JUCE_USE_XINPUT` to 1, so `juce_gui_basics.h:393` includes `<X11/extensions/XInput2.h>`
+  unconditionally in practice; that header belongs to `libxi-dev`, which the package list never
+  named. It reached the `full` profile transitively — `libgtk-3-dev` carries `Depends: libxi-dev` —
+  which is why the Ubuntu runners and every developer machine compiled it anyway. The `headless`
+  profile drops the gtk/webkit pair deliberately (nothing here compiles webkit) and took the
+  X-input headers with it, killing the container lane at compile.
+  Evidence: run 32565784751, job `linux-lto-tests`; `dpkg -S`, and the package present in the
+  Debian trixie and Ubuntu noble archives alike. [Verified]
+
+### Changed
+- **The first-party warning gate no longer attributes its findings to Clang when GCC produced
+  them.** `check-clang-warnings.py` takes `--compiler`, and the three lanes that call it pass the
+  compiler they ran; the default is a neutral `the compiler` rather than a wrong name. What the
+  gate accepts and rejects is unchanged.
+  Evidence: `scripts/check-clang-warnings.py`, `.github/workflows/build.yml`. [Verified]
+- **Three self-test cases pin the driver-level warning forms.** Every GCC LTO link emits
+  `lto-wrapper: warning: using serial compilation of N LTRANS jobs`, which carries no source
+  location and therefore cannot be attributed to a file; that it is not treated as a diagnostic is
+  now asserted rather than incidental, alongside the `cc1plus:` and `ld:` forms. 15 → 18 cases.
+  Evidence: `python3 scripts/check-clang-warnings.py --self-test`. [Verified]
+
+### Notes
+- **GCC 16 introduced no new diagnostics in this tree, and the zero-warning policy is unchanged.**
+  All **13 first-party translation units** of the two suites compiled under **g++ 16.2.0** at
+  `-O3 -flto -std=c++23` with the full `juce_recommended_warning_flags` set and none emitted a
+  warning — the policy measured at 14.2.0 holds at 16 across two majors and a change of
+  distribution. The failing run aborted before the LTO **link**, where `-Wodr` and
+  `-Wlto-type-mismatch` fire; that phase is measured locally at GCC 14.2.0 over both suites in the
+  same `-flto` configuration and is likewise clean of first-party diagnostics.
+  Evidence: run 32565784751; ccache stderr replay verified in both directions, so the run's 43
+  cache hits do not weaken the reading. [Verified]
 
 ---
 
