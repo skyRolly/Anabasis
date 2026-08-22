@@ -27,9 +27,12 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
   `scripts/preflight.sh` reports the first two as skipped-with-a-note when the pinned compiler is
   absent.
 - **GCC is the compatibility compiler, and its major is pinned too** — `ANABASIS_GCC_VERSION` in the
-  same file, installed from the distribution archive. It builds the two test suites with `-flto` in
-  `linux-lto-tests` ([ADR-0033](../architecture/design-decisions/ADR-0033-lto-validation-lane.md)),
-  which is where "the tree still compiles under the other major toolchain" is checked.
+  same file, supplied by the official `gcc:<major>` **container** rather than by apt, because no apt
+  source ships a released g++-16 ([ADR-0034](../architecture/design-decisions/ADR-0034-ci-toolchain-parity.md)).
+  It builds the two test suites with `-flto` in `linux-lto-tests`
+  ([ADR-0033](../architecture/design-decisions/ADR-0033-lto-validation-lane.md)), which is where "the
+  tree still compiles under the other major toolchain" is checked. A local GCC build needs none of
+  this — any g++ that supports C++23 will do; the pin is about what CI's compatibility claim means.
 - **JUCE 9.0.1** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
   commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`) — or pointed at a local checkout.
   OQ-001 pinned the sibling product's revision; **ADR-0028 (2026-08-16) moved this repository to

@@ -5,7 +5,7 @@
 > versions". Taken on the owner's directive for this round, which reopened audit item **A2-32** and
 > withdrew the premise it was deferred under.
 
-**Status:** **Accepted — 2026-08-22.** Version 0.2.1. Pairs with **ADR-0032**.
+**Status:** **Accepted — 2026-08-22.** Version 0.2.1. Pairs with **ADR-0032**. **Amended by [ADR-0034](ADR-0034-ci-toolchain-parity.md) (0.2.2)**: the GCC arm moved to `g++-16` in the official `gcc:16` container, and — because `container:` is a per-job key — the two arms became two jobs (`linux-lto-tests` for GCC, `linux-lto-clang` for Clang). The two questions the lane answers are unchanged; §"GCC is pinned from apt, not from a container" below is the clause that was reversed, and it is kept as the record of what this ADR decided.
 
 ## Context
 
@@ -80,7 +80,7 @@ Two questions need a job, and they are not the same question:
    arm this nearly duplicates `linux`'s gate and is kept because it costs a `tee`; for the GCC arm it
    is the **only** warning gate this repository has.
 
-### GCC is pinned from apt, not from a container
+### GCC is pinned from apt, not from a container — *reversed by ADR-0034*
 
 The sibling pins `gcc:16` through a container image, and its own comment records why: no apt source
 ships a released g++-16 — only trunk snapshots, which is the "newest, not stable" a toolchain pin
@@ -92,6 +92,12 @@ and no second dependency-installation path to keep in agreement.
 This is also what keeps audit item **A2-34** (the sibling's `dependency-profile` split) NOT NEEDED
 for its original measured reason: that split exists to stop `build-essential` installing a
 distribution compiler over a container's pinned one, and this lane is not containerised.
+
+> **ADR-0034 reversed both halves of this section (0.2.2).** The 0.2.2 parity audit found the
+> argument above inverted: the sibling's container exists *because* no apt source ships a released
+> g++-16, so "apt has 14, therefore pin 14" chose the version to fit the acquisition method. The lane
+> is containerised now, which also makes A2-34's condition true and brings the `headless` profile
+> with it.
 
 ## Consequences
 

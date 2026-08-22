@@ -25,35 +25,88 @@
 #  xvfb, curl and unzip are for pluginval (editor tests need a display; the
 #  release download needs the other two), not for the build itself.
 # ============================================================================
+#  TWO PROFILES, because one caller is not a fresh Ubuntu machine. The GCC
+#  compatibility job (`linux-lto-tests`, ADR-0033) runs inside the official `gcc`
+#  image -- Debian, with its own pinned compiler already installed -- and builds
+#  only the two headless test targets. `headless` installs what COMPILING AND
+#  LINKING the JUCE targets needs and nothing else; `full` (the default, and what
+#  a developer or any packaging job wants) adds the host toolchain, the pluginval
+#  fetch/display pair and lld. The lists stay HERE rather than in the workflow so
+#  there is still ONE place that knows what a build needs; the profile only
+#  decides how much of it.
+#
+#  Both profiles name `python3` EXPLICITLY, and that line is load-bearing rather
+#  than tidy. Every checker in `scripts/` is Python, and GitHub's Ubuntu images
+#  preinstall an interpreter, so nothing ever had to ask -- but a container
+#  carries one only if something else happened to pull it in. A gate that cannot
+#  run because its interpreter is absent is the failure this prevents.
+#  `ca-certificates` is here for the same class of reason: FetchContent clones
+#  JUCE over HTTPS, and a minimal container may ship no trust store.
+# ============================================================================
 set -euo pipefail
+
+PROFILE="${1:-full}"
+case "$PROFILE" in
+    full|headless) ;;
+    *)
+        echo "setup-linux: usage: $0 [full|headless]  (got '${PROFILE}')" >&2
+        exit 2
+        ;;
+esac
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
 
 $SUDO apt-get update -y
 
-# curl + unzip are for scripts/run-pluginval.sh, which downloads and extracts the
-# pluginval release. They are NOT implied by libcurl4-openssl-dev (that is the
-# development headers, not the CLI). GitHub-hosted runners preinstall both, which
-# is exactly why their absence would only ever bite on a fresh machine or a
-# minimal container -- i.e. the case this script exists to cover.
+# What compiling and linking the JUCE targets needs, on any profile. The GUI
+# development headers are NOT optional for a headless build: the test targets
+# link juce_gui_basics, juce_gui_extra and juce_opengl (CMakeLists.txt), so their
+# headers are required to compile even though nothing here opens a window.
+CORE_PACKAGES="
+    cmake git ninja-build pkg-config ca-certificates python3
+    libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev
+    libfreetype6-dev libfontconfig1-dev
+    libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
+    libxinerama-dev libxrandr-dev libxrender-dev
+    libglu1-mesa-dev mesa-common-dev libegl-dev
+    libwebkit2gtk-4.1-dev libgtk-3-dev
+"
+
+# Everything `headless` deliberately leaves out.
+#   build-essential -- the HOST toolchain. A container that ships its own pinned
+#                      compiler must not have a distribution one installed over
+#                      the top of it; that would silently un-pin the lane.
+#   curl, unzip     -- run-pluginval.sh fetches and extracts a release. They are
+#                      NOT implied by libcurl4-openssl-dev, which is the
+#                      development headers rather than the CLI.
+#   xvfb            -- pluginval needs a display; nothing else here does.
+#   lld             -- the Clang LTO link (see above). GCC never reaches it.
+FULL_EXTRA_PACKAGES="
+    build-essential
+    curl unzip
+    xvfb
+    lld
+"
+
+PACKAGES="$CORE_PACKAGES"
+if [ "$PROFILE" = "full" ]; then
+    PACKAGES="$PACKAGES $FULL_EXTRA_PACKAGES"
+fi
+
 # `env` carries the assignment whether $SUDO is "sudo" or empty (as root).
 # A bare `$SUDO DEBIAN_FRONTEND=... apt-get` breaks in the root case: the
 # assignment is not in assignment position at parse time (the first word is
-# $SUDO), so when $SUDO expands to nothing it becomes the COMMAND NAME.
-# CI always runs the sudo path, which is why this never failed there.
-$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    build-essential cmake git ninja-build pkg-config \
-    curl unzip \
-    libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev \
-    libfreetype6-dev libfontconfig1-dev \
-    libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
-    libxinerama-dev libxrandr-dev libxrender-dev \
-    libglu1-mesa-dev mesa-common-dev libegl-dev \
-    libwebkit2gtk-4.1-dev libgtk-3-dev \
-    xvfb \
-    lld
+# $SUDO), so when $SUDO expands to nothing it becomes the COMMAND NAME and the
+# script dies with "command not found". CI always took the sudo path, which is
+# why this never failed there -- it fails in a root container, i.e. exactly the
+# minimal environment the `headless` profile exists for.
+# Unquoted ON PURPOSE: $PACKAGES is a whitespace-separated LIST and word
+# splitting is how it becomes several arguments. The values are literals from
+# this file, never caller input.
+# shellcheck disable=SC2086
+$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y $PACKAGES
 
 echo
-echo "Anabasis: Linux build dependencies installed."
+echo "Anabasis: Linux build dependencies installed (profile: ${PROFILE})."
 echo "Note: if 'libwebkit2gtk-4.1-dev' is unavailable on your release, try 'libwebkit2gtk-4.0-dev'."

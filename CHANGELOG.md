@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Eight such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Nine such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,47 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.2] — 2026-08-22
+
+**The CI/toolchain parity round: an audit of the sibling's build pipeline area by area, and the
+twelve places the previous migration had moved structure without moving configuration.** No DSP
+algorithm changed, no parameter was added, renamed or removed, no serialization schema, threading
+model or reported latency moved, and **no first-party source file was touched** — the change set is
+CI, records and documentation. The patch bump is for one user-relevant fact and one contributor-
+relevant one: the sanitizer gate the shipped code passes is materially deeper, and the compatibility
+compiler moved two majors. Audit, verdicts and measurements:
+[`worklogs/2026-08-22-ci-toolchain-parity-audit.md`](worklogs/2026-08-22-ci-toolchain-parity-audit.md).
+
+### Changed
+
+- **The `sanitizers` gate deepened from `address,undefined` to seven sub-checks, with leak detection
+  on** ([ADR-0034](docs/architecture/design-decisions/ADR-0034-ci-toolchain-parity.md)). Added:
+  `vptr`, `float-divide-by-zero`, `implicit-conversion`, `local-bounds`, `nullability`, behind a
+  narrowly scoped ignorelist (one sub-check, one vendored tree). `ASAN_OPTIONS` gains
+  `detect_leaks=1` and three tightened runtime checks — the previous `detect_leaks=0` rested on an
+  assumption about JUCE's singletons that measurement retired. `unsigned-shift-base` is deliberately
+  **not** adopted: measured, it fires once, on the dither RNG's xorshift, where the wrap is the
+  algorithm and the shift is well defined. Both suites pass the new set: **300 + 873, 0 failures**.
+  Evidence: ADR-0034 §Evidence. [Verified]
+- **The compatibility compiler moved from `g++-14` (apt) to `g++-16` (the official `gcc:16`
+  container)**, with the `headless` dependency profile that a containerised toolchain requires. No
+  apt source ships a released g++-16, so 0.2.1's pin had chosen the version to fit the acquisition
+  method. The LTO lane is now two jobs, because `container:` is a per-job key.
+  Evidence: ADR-0034 §Decision; `.github/workflows/build.yml`. [Verified — except the container
+  lane itself, which no local environment here can run]
+
+### Added
+
+- **The Windows toolset is recorded and its ABI series asserted.** `windows-latest` floats and MSVC
+  is auto-detected, so until now a shipped `.vst3` could be built by a toolset no artifact named.
+  The job prints the toolset, writes it to the run summary, and fails if the ABI series leaves
+  `14.x` — which is what decides the Visual C++ redistributable a user needs.
+  Evidence: `.github/workflows/build.yml` (`windows`). [Verified]
+- **The macOS jobs are cached**, and every job gained a timeout and a printed record of the
+  toolchain it resolved. The `dsymutil` objection that had kept macOS uncached was refuted, not
+  outvoted: a cached object is a real `.o` at the path the linker recorded.
+  Evidence: ADR-0034 §3. [Verified]
 
 ## [0.2.1] — 2026-08-22
 

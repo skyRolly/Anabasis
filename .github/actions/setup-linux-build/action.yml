@@ -25,13 +25,15 @@
 #  job it may or may not share entries with. Folding those into an input would
 #  turn seven readable explanations into one parameter nobody can read.
 #
-#  NOR THE CONTAINER QUESTION. The sibling's equivalent action carries a
-#  `dependency-profile` input, because its GCC lane runs inside a `gcc:16`
-#  container where `build-essential` would install a distribution compiler over
-#  the top of the pinned one. This repository's GCC lane pins a major that IS
-#  packaged (`g++-14`, Noble's own archive), so it is an ordinary runner job and
-#  `extra-packages` is the whole of what it needs -- there is no second
-#  dependency-installation path here, and so nothing for a profile to select.
+#  THE CONTAINER QUESTION, ANSWERED BY `dependency-profile` (0.2.2). The GCC
+#  compatibility lane runs inside the official `gcc:<major>` image, which ships
+#  its own pinned compiler: installing `build-essential` there would put a
+#  DISTRIBUTION GCC over the top of it and silently un-pin the lane. The profile
+#  is what stops that, and the package lists stay in `setup-linux.sh` so the
+#  input selects HOW MUCH of one list to install rather than introducing a
+#  second one. 0.2.1 shipped this action without the input, on the reasoning
+#  that Anabasis's GCC lane was an ordinary runner job; the 0.2.2 parity audit
+#  moved that lane into the container (ADR-0034) and the input came with it.
 #
 #  NOT A DEPENDENCY. A `./`-prefixed local action is this repository, and
 #  Dependabot ignores it by design (`.github/dependabot.yml` says so for
@@ -52,10 +54,19 @@ inputs:
       set: the compiler is the job, unlike ccache below.
     required: false
     default: ""
+  dependency-profile:
+    description: >-
+      Which `scripts/setup-linux.sh` profile to install: `full` (default) or
+      `headless`. `headless` installs what compiling and linking the JUCE
+      targets needs and drops the host toolchain, the pluginval fetch/display
+      pair and lld -- for a job that runs inside a toolchain container and
+      builds only the test targets. The lists live in that script, not here, so
+      there is one place that knows what a build needs.
+    required: false
+    default: "full"
   extra-packages:
     description: >-
-      Additional apt packages, space-separated (e.g. `valgrind`, or the pinned
-      `gcc-<n> g++-<n>` pair `linux-lto-tests`' GCC arm builds with).
+      Additional apt packages, space-separated (e.g. `valgrind`).
       FAIL-CLOSED for the same reason: a job asks for these because it cannot
       do its work without them.
     required: false
@@ -78,11 +89,12 @@ runs:
       # interface should have rather than one its callers happen to supply.
       env:
         CLANG_VERSION: ${{ inputs.clang-version }}
+        DEPENDENCY_PROFILE: ${{ inputs.dependency-profile }}
         EXTRA_PACKAGES: ${{ inputs.extra-packages }}
       run: |
         set -euo pipefail
         chmod +x scripts/*.sh
-        ./scripts/setup-linux.sh
+        ./scripts/setup-linux.sh "$DEPENDENCY_PROFILE"
 
         if [ -n "$CLANG_VERSION" ]; then
           ./scripts/setup-llvm-apt.sh "$CLANG_VERSION"
@@ -116,3 +128,17 @@ runs:
           echo "::warning::ccache unavailable -- building without the compiler cache"
           echo "ANABASIS_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
         fi
+
+        # WHAT THIS RUN ACTUALLY RESOLVED, printed once for every Linux job that
+        # passes through here. Three of these four are supplied by the runner
+        # image or the container and are therefore NOT pinned by this repository
+        # (`ARCHITECTURE_REVIEW_GATE.md` rule 2: what cannot be reviewed must be
+        # detected and recorded) -- so a log that names them is the whole of the
+        # record. `setup-llvm-apt.sh` already prints and ASSERTS the Clang major
+        # above when a job asked for one; this is the rest of the toolchain.
+        echo "::group::Toolchain versions"
+        cmake --version | head -1
+        ninja --version
+        c++ --version | head -1 || true
+        ld --version | head -1 || true
+        echo "::endgroup::"

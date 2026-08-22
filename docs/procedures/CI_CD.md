@@ -52,7 +52,8 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |
 | **source-lint** | `ubuntu-latest` | nothing — runs `scripts/check-portability.py`, then `scripts/check-citations.py --check` against a computed base revision. Checked out with `fetch-depth: 0`, because the second needs history rather than a single commit (seconds) | n/a |
 | **macos-intel** | `macos-15-intel` (**native x86_64**) | thin x86_64 VST3 + AU + Standalone (+ tests + probe) | deterministic ×3, VST3 **and** AU — **blocking** |
-| **linux-lto-tests** | `ubuntu-latest`, matrix × 2: **pinned Clang** and **pinned GCC** (ADR-0033) | the two test targets with `-flto` on the compile AND the link, then both suites run against that codegen; each arm asserts its compiler's major before building and gates first-party warnings at zero | n/a |
+| **linux-lto-tests** | `ubuntu-latest`, **inside `container: gcc:16`** (ADR-0034) | the two test targets with `-flto` on the compile AND the link, under the **pinned GCC**, then both suites run against that codegen; asserts the container's major before building and gates first-party warnings at zero. Installs the `headless` dependency profile, because `build-essential` would put a distribution GCC over the pinned one | n/a |
+| **linux-lto-clang** | `ubuntu-latest`, **pinned Clang** (ADR-0033) | the same two targets under `-flto` with the **shipped optimization class** — INC-004's configuration, which a GCC-only lane cannot reproduce. Separate job rather than a matrix arm because `container:` is a per-job key | n/a |
 | **AnabasisChannelProbe** (a step in `linux`, `windows`, `macos`, `macos-intel`) | — | the only check that HOSTS the built bundle instead of recompiling its sources: LTO'd, wrapped, and on macOS run for **both formats × both slices** | n/a |
 | **AnabasisEngineRepro** (a step in `linux`, `macos`, `macos-intel`) | — | the same stimulus with NO wrapper, format or host, so a failure names the DSP core directly instead of leaving "engine or wrapper?" to be inferred | n/a |
 | **sanitizers** | `ubuntu-latest` (Clang) | the two test targets under ASan + UBSan, plus a plain build for valgrind memcheck over **both** suites | n/a |
@@ -336,6 +337,24 @@ OQ-006 carries the same supersession.
 | **`linux-lto-tests`, two arms** (ADR-0033) | The suites do not link the LTO flags the plugin does, so every assertion was made against non-LTO objects — the configuration INC-004 needed in order to stay hidden. The `clang` arm runs them against the shipped optimization class; the `gcc` arm keeps the second major toolchain compiling this tree on every push. |
 | **The pinned GCC** | `ANABASIS_GCC_VERSION` in `build.yml`, installed from the distribution archive through the composite action's `extra-packages`. Pinned for the same reason the Clang major is: a compatibility compiler is only a compatibility statement while WHICH compiler is a fact of this file rather than of a runner image. |
 
+## What 0.2.2 changed in the pipeline — the parity audit
+
+Every row here came from reading the sibling's tree, not from memory of the previous round. The full
+table, including the areas that were **already** equivalent, is in
+`worklogs/2026-08-22-ci-toolchain-parity-audit.md`.
+
+| Change | Why |
+|---|---|
+| **GCC 14 → 16, in `container: gcc:16`** (ADR-0034) | No apt source ships a *released* g++-16, so pinning 14 was choosing the version to fit the acquisition method. The image is the only package-managed route to a released 16. `dependency-profile: headless` comes with it — `build-essential` inside that container would un-pin the lane. |
+| **The LTO lane is two jobs** | `container:` is a per-job key, so one containerised arm and one bare arm cannot share a matrix. `linux-lto-tests` is GCC; `linux-lto-clang` is the Clang arm ADR-0033 added for INC-004. |
+| **ccache: `CCACHE_DIR`, `CCACHE_MAXSIZE`, `CCACHE_COMPILERCHECK=content`** | None of the three were set, so the cache ran on defaults: unbounded in practice, `mtime` compiler identity (which can serve an object built by a different compiler that shares a timestamp — defeating the pin), and a home-relative path that is wrong inside a container. |
+| **The macOS jobs are cached** | See the artifact-safety note above; it is also the run's critical path. |
+| **Sanitizers: six more sub-checks, `detect_leaks=1`, a 64 MB stack** | Measured, not transcribed — including the one sub-check deliberately left out and why (ADR-0034 §4). |
+| **The MSVC toolset is recorded, its ABI series asserted** | `windows-latest` floats and MSVC is auto-detected, so a shipped `.vst3` was built by a toolset no artifact named. A record plus one narrow assertion, not a pin — MSVC cannot be installed the way apt.llvm.org's Clang can. |
+| **`timeout-minutes` on every job** | Without it a hung job burns the 6-hour default. |
+| **Toolchain versions printed** | The composite action prints cmake, ninja, the default `c++` and `ld` once per Linux job; macOS prints ninja and cmake; the LTO lanes assert and print their compiler; `setup-llvm-apt.sh` already asserted the Clang major. What the review gate cannot pin, it requires to be detected and recorded. |
+| **`ca-certificates` + `python3` named explicitly** | Preinstalled on a runner, not promised in a container — and every checker in `scripts/` is Python. |
+
 ## Reproducing CI locally
 
 `scripts/preflight.sh` runs the checkers with their self-tests and then the suites, in CI's own
@@ -394,6 +413,10 @@ These are the rules, not incidental details — each blocks a specific way a bad
 - Customer uploads are gated on the self-tests **and** on the public copy having been assembled,
   purged and validated — never `if: always()`. An unstripped or unvalidated binary cannot reach the
   public artifact.
+- **The macOS jobs are cached** (0.2.2). The claim that `dsymutil`'s debug-map walk made caching
+  unsafe was refuted rather than outvoted: a cached object is a real `.o` at the path the linker
+  recorded, so the walk reads the same files either way, and ccache hashes the full `-arch` list so
+  a universal object cannot be served to a thin build. The `lipo` slice assertion is the backstop.
 - **On Linux the gate also names the two instruments that read the shipped bundle** (0.2.1):
   `AnabasisEngineRepro` and `AnabasisChannelProbe --assert-discriminating`. Before ADR-0032 they ran
   in `linux-clang` against a build that was thrown away, so their outcome could not sensibly gate an
