@@ -728,12 +728,29 @@ jobs:
       # removes symbol tables, never version references, so the answer is the
       # same either way; reading the shipped copy means it cannot drift from
       # what shipped.
+
+      # The self-test reads no artifact -- it asserts that the checker still
+      # fires on a synthetic binary -- so it keeps `strip` as its gate: it is
+      # worth running whenever the pipeline got as far as producing binaries at
+      # all, including on the run where staging is what failed.
       - name: ABI floor self-test (the checker still fires)
         if: ${{ !cancelled() && steps.strip.outcome == 'success' }}
         run: python3 scripts/check-linux-abi.py --self-test
 
+      # GATED ON THE STEP THAT WRITES THE FILES IT READS, which is `stage`, not
+      # `strip`. The two conditions coincide today (`stage` is itself gated on
+      # `strip` succeeding), so this is not a live bug -- it is the coupling that
+      # makes it one the moment `stage`'s own gate changes: this step would then
+      # run against an empty `dist/` and fail with "cannot read", pointing the
+      # reader at the ABI rather than at the staging step that actually broke.
+      #
+      # IT REMAINS FAIL-CLOSED. `stage` skipping or failing does not let an
+      # unvalidated binary through: the upload step carries the same
+      # `steps.stage.outcome == 'success'` precondition, so there is no run in
+      # which an artifact ships while this assertion is skipped, and a failing
+      # `stage` fails the job on its own.
       - name: Assert the shipped Linux ABI floor
-        if: ${{ !cancelled() && steps.strip.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: |
           python3 scripts/check-linux-abi.py \
             "dist/Anabasis-Linux/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so" \

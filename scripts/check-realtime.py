@@ -96,6 +96,23 @@ AUDIO_FN = re.compile(r"\b(process|processBlock|processChunk|processFrame|proces
                       r"reset|resetState|resetWindow|resetEpoch|resetGeneration|"
                       r"resetMeterHolds|resetIntegrated)\b")
 
+# BOTH SPELLINGS OF "MEMBER OF", which is what the growth rules key on. They
+# match an ACCESS OPERATOR followed by a forbidden operation rather than a
+# receiver name, so the operator set is the whole of their reach -- and `.` alone
+# is half the language. This engine holds its oversamplers in `std::unique_ptr`
+# and reaches them through a pointer on the audio path -- `osActive->` inside
+# `processChunk` (`AnabasisEngine.cpp`), `oversamplers[f][ph]->` outside it -- so
+# a growth call written on that receiver (`osActive->resize (n)`) was invisible,
+# while the identical regression on a value member (`scratch.resize (n)`) was
+# reported. Same violation, two spellings, one of them unseen. `->` is added for
+# that reason and no other: WHICH operations are forbidden is unchanged, and so
+# is the scope they are looked for in.
+#
+# It cannot collide with a trailing return type, the other `->` in C++: that
+# arrow is followed by a TYPE, and a match needs the arrow, one of six operation
+# names and an opening paren with nothing but space between them.
+MEMBER = r"(?:\.|->)"
+
 # (regex, human-readable violation class). Kept deliberately small: every entry
 # is a construct from the policy's forbidden list that can be written literally.
 FORBIDDEN = [
@@ -114,9 +131,9 @@ FORBIDDEN = [
     # confined to `prepare()` (via `std::vector::assign` ...)"). The most
     # probable realtime regression here is one of those lines being copied into
     # a `reset()` or `process()` body, which is exactly what this entry sees.
-    (re.compile(r"\.(resize|push_back|emplace_back|reserve|assign|insert)\s*\("),
+    (re.compile(MEMBER + r"(resize|push_back|emplace_back|reserve|assign|insert)\s*\("),
                                                    "container growth"),
-    (re.compile(r"\.setSize\s*\("),                "buffer resize (`setSize`)"),
+    (re.compile(MEMBER + r"setSize\s*\("),         "buffer resize (`setSize`)"),
     (re.compile(r"\b(std::)?(mutex|recursive_mutex|lock_guard|unique_lock|scoped_lock)\b"),
                                                    "lock"),
     (re.compile(r"\bjuce::(ScopedLock|CriticalSection|SpinLock)\b"), "JUCE lock"),
@@ -852,6 +869,56 @@ MUST_FIRE = [
      "void Engine::process (Buf& b) noexcept { v.push_back (1.0f); }"),
     ("setSize in process",
      "void Engine::process (Buf& b) noexcept { scratch.setSize (2, n); }"),
+    # ---- BOTH SPELLINGS OF "MEMBER OF" -------------------------------------
+    # The growth rules key on the ACCESS OPERATOR, so before `MEMBER` they had a
+    # blind spot the exact width of the operator set: the same seven operations,
+    # on the pointer receiver this engine really uses on the audio path
+    # (`osActive->` in `processChunk`), were written in a form the scan could not
+    # see. Each pair below is ONE violation in its two spellings -- the `.` case
+    # is there so the pointer case cannot be read as new coverage bought by
+    # losing old coverage. (Verified non-vacuous: through the `\.`-only patterns
+    # every `->` case here reports zero and every `.` case reports one.)
+    ("resize on a value member",
+     "void Engine::process (Buf& b) noexcept { scratch.resize (n); }"),
+    ("...and on a pointer member",
+     "void Engine::process (Buf& b) noexcept { osActive->resize (n); }"),
+    ("push_back on a value member",
+     "void Engine::process (Buf& b) noexcept { pending.push_back (1.0f); }"),
+    ("...and on a pointer member",
+     "void Engine::process (Buf& b) noexcept { pending->push_back (1.0f); }"),
+    ("emplace_back on a value member",
+     "void Engine::process (Buf& b) noexcept { pending.emplace_back (1.0f); }"),
+    ("...and on a pointer member",
+     "void Engine::process (Buf& b) noexcept { pending->emplace_back (1.0f); }"),
+    ("reserve on a value member",
+     "void Engine::process (Buf& b) noexcept { pending.reserve (64); }"),
+    ("...and on a pointer member",
+     "void Engine::process (Buf& b) noexcept { pending->reserve (64); }"),
+    ("assign on a value member",
+     "void Engine::process (Buf& b) noexcept { scratch.assign (256, 0.0f); }"),
+    ("...and on a pointer member",
+     "void Engine::process (Buf& b) noexcept { scratch->assign (256, 0.0f); }"),
+    ("insert on a value member",
+     "void Engine::process (Buf& b) noexcept { pending.insert (pending.end(), 1); }"),
+    ("...and on a pointer member",
+     "void Engine::process (Buf& b) noexcept { pending->insert (pending->end(), 1); }"),
+    ("setSize on a value member",
+     "void Engine::process (Buf& b) noexcept { region.setSize (2, n); }"),
+    ("...and on a pointer member",
+     "void Engine::process (Buf& b) noexcept { region->setSize (2, n); }"),
+    # The receiver is not required to be an identifier: what the rule reads is
+    # the operator, so a pointer a CALL returned carries the same violation.
+    ("...on a pointer a call returned",
+     "void Engine::process (Buf& b) noexcept { scratchFor (ch)->assign (n, 0.0f); }"),
+    # `reset` is bound by the policy exactly as `process` is, and it is the body
+    # a `prepare()` line gets copied into -- through a pointer as easily as not.
+    ("a pointer-member growth in a module reset",
+     "void MasteringComp::reset() noexcept { line->assign (n, 0.0f); }"),
+    # ...and the closure carries it: a helper reached from an audio body is
+    # audio-path code whichever operator it spells its growth with.
+    ("...and through the same-file helper closure",
+     "void Engine::sizeUp() { os->resize (8); }\n"
+     "void Engine::process (Buf& b) noexcept { sizeUp(); }"),
     ("lock in process",
      "void Engine::process (Buf& b) noexcept { std::lock_guard<std::mutex> g (m); }"),
     ("JUCE lock in processBlock",
@@ -936,6 +1003,37 @@ MUST_STAY_SILENT = [
      "void Engine::prepare (double sr, int n) { widthSmooth.reset (sr, 0.05); os2->reset(); buf.resize (n); }"),
     ("a ->reset() call from an audio body is a call, not a scanned definition",
      "void Engine::process (Buf& b) noexcept { if (os2) os2->reset(); }"),
+    # ---- AND THE OTHER SIDE OF `MEMBER`: `->` IS NOT ITSELF A FINDING ------
+    # Widening the growth rules to the pointer spelling widens what they can be
+    # wrong about, so the discriminators are pinned here: the rule needs the
+    # operator, one of the six operation NAMES, and an opening paren. Every
+    # shape below has the arrow and fails one of the other two, and each was
+    # already silent under the `\.`-only patterns -- which is the claim, since
+    # this round must not change what the lint says about valid code.
+    ("an unrelated call through the same pointer is not a growth call",
+     "void Engine::process (Buf& b) noexcept { region = osActive->processSamplesUp (block); }"),
+    ("...including the reads this engine really makes through it",
+     "void Engine::process (Buf& b) noexcept { const auto l = osActive->getLatencyInSamples(); use (l); }"),
+    # A longer identifier that merely BEGINS with a forbidden name is not one --
+    # the paren has to follow the name. True of `.` before this round and true of
+    # `->` after it, which is the symmetry being asserted.
+    ("a name that merely begins with a forbidden one is not it",
+     "void Engine::process (Buf& b) noexcept { if (os->resizeRequested()) run(); }"),
+    ("...on a value member either",
+     "void Engine::process (Buf& b) noexcept { if (buf.insertionPointValid()) run(); }"),
+    # THE OTHER `->` IN C++, in the only position where it is INSIDE a scanned
+    # body and can therefore reach the rule at all: a lambda's trailing return
+    # type. (A function's own sits before the `{`, so it is outside the segment
+    # by construction -- `_bodies` starts the segment AT the brace -- and cannot
+    # be tested through `scan_text`.) Two independent conditions keep it silent:
+    # the arrow is separated from the name by a space, and the name is a TYPE
+    # with no paren after it. So no single relaxation of the rule reaches it --
+    # measured: tolerating whitespace after the operator leaves it silent, and
+    # so does dropping the paren; only doing BOTH makes it fire. It is pinned as
+    # the second meaning of `->`, with its distance from the rule stated rather
+    # than implied.
+    ("a lambda's trailing return type is not a member access",
+     "void Engine::process (Buf& b) noexcept { auto f = [] (int n) -> reserve_t { return {}; }; f (4); }"),
     ("the word new inside a comment in process",
      "void Engine::process (Buf& b) noexcept { /* the new-cutoff bank takes over */ active = 1 - active; }"),
     ("the word malloc inside a string literal in process",
@@ -1085,7 +1183,7 @@ def self_test() -> int:
     # reports every violation below it at the wrong line and prints the wrong
     # source -- a finding that sends the reader to innocent code, which is worse
     # than no finding at all. A line-spliced string did exactly that until
-    # 0.2.1; the other shapes are here so the next one cannot regress quietly.
+    # 0.2.0; the other shapes are here so the next one cannot regress quietly.
     #
     # Each case puts the literal on line 3 and the violation on line 5, and
     # asserts BOTH halves of the report: the number and the echoed source.

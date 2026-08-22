@@ -402,6 +402,118 @@ job is finally deleted.
 | Workflow YAML | all five workflows, the composite action and `dependabot.yml` parse |
 | pluginval | unchanged from the 0.2.0 run; no shipped source changed |
 
+## Second review round (same day): the ABI gate's dependency, and the lint's other member operator
+
+Two findings, both fixed. The three declines from the first review round were re-raised and are
+**unchanged** — see below. Same disposition as that round: **folds into 0.2.0, no version of its
+own, no CHANGELOG entry.** Nothing is tagged, and `CHANGELOG_POLICY.md` admits user-visible changes
+only — a CI step's skip condition and a lint's matcher are not observable from the plug-in.
+
+### 1. The ABI assertion gated on `strip`, not on the step that writes the files it reads
+
+`Assert the shipped Linux ABI floor` reads two paths under `dist/Anabasis-Linux/`. Those are
+written by `stage`. Its condition named `steps.strip.outcome`.
+
+**Not a live bug, and that is the point.** `stage` is itself gated on `steps.strip.outcome ==
+'success'`, so the two conditions coincide today and the step has never run without its input. What
+the finding identifies is the COUPLING: the moment `stage`'s own gate changes, this step runs
+against an empty `dist/` and fails with `check-linux-abi.py`'s "cannot read" — a red ABI gate
+pointing the reader at the ABI, when what broke was staging. A gate whose failure message names the
+wrong subsystem is a gate people learn to distrust.
+
+The condition now names `steps.stage.outcome`.
+
+**It stays fail-closed, and this is the part worth checking rather than asserting.** A skipped
+assertion cannot let an unvalidated binary ship, because `Upload Linux artifacts` carries the same
+`steps.stage.outcome == 'success'` precondition: there is no run in which an artifact is uploaded
+and this step is skipped. And a `stage` that FAILS fails the job on its own. So the change removes
+a misleading failure mode without opening a silent-pass one.
+
+Three things deliberately not changed:
+
+- **The artifact paths.** Byte-identical, asserted in validation below.
+- **The step's position.** It still runs LAST, after both uploads, so a compatibility FINDING does
+  not withhold a beta artifact whose behavioural gates all passed. It still fails the job.
+- **The self-test step's gate.** `ABI floor self-test (the checker still fires)` reads no artifact —
+  it runs the checker against synthetic input — so `strip` remains the right precondition for it:
+  it is worth running on exactly the run where staging is what failed. The split is now stated in
+  the workflow rather than left to be inferred from two identical conditions.
+
+### 2. The static lint saw `.resize (n)` and not `->resize (n)`
+
+The container-growth and `setSize` rules match an **access operator** followed by an operation name,
+which makes the operator set the whole of their reach — and they carried only `.`. So a growth call
+on a pointer receiver was invisible while the identical call on a value member was reported.
+
+**That receiver is not hypothetical in this engine.** `AnabasisEngine` holds its oversamplers as
+`std::unique_ptr<juce::dsp::Oversampling<float>> oversamplers[..][2]` (`AnabasisEngine.h:455`) and
+reaches the active one through a raw pointer on the audio path — `osActive->processSamplesUp (...)`
+at `AnabasisEngine.cpp:762`, inside `processChunk`, which is a scanned body. A `prepare()` line
+copied onto that receiver is the exact regression this lint exists to catch, and it would have
+passed silently.
+
+The two rules now key on `MEMBER = r"(?:\.|->)"`, defined once above the table so the operator set
+is a single fact rather than a duplicated literal.
+
+**What did NOT change:**
+
+- **The forbidden API list.** The same six growth operations and the same `setSize`; nothing added.
+- **The scanning model.** Still function-scoped, still seeded from `AUDIO_FN` and closed over
+  same-file callees, `prepare` still out of scope by not being named.
+- **What the rule requires.** The operator, then one of the names with no space between them, then
+  optional space, then `(`. `os->resizeRequested()` and `buf.insertionPointValid()` stay silent for
+  the same reason they always did.
+- **The real tree's output**, which is the claim that matters for false positives: `src/` contains
+  no pointer-member growth call at all (measured), so the scan prints exactly what it printed
+  before — 40 files, 0 violations, byte-identical.
+
+**Self-test coverage added (112 → 134 cases), in the three directions the finding asks for:**
+
+| Direction | Cases |
+|---|---|
+| Direct member calls still detected | seven `.` cases — `resize`, `push_back`, `emplace_back`, `reserve`, `assign`, `insert`, `setSize` — each paired with its `->` twin so the pointer coverage cannot read as bought by losing value coverage |
+| Pointer-member calls detected | the seven `->` twins, plus a pointer a CALL returned (`scratchFor (ch)->assign (...)`), a growth in a module `reset()` through a pointer, and one reached through the same-file helper closure |
+| Unrelated pointer calls not falsely detected | `osActive->processSamplesUp (...)`, `osActive->getLatencyInSamples()`, a name that merely BEGINS with a forbidden one (`->resizeRequested()`, and its `.` twin), and a lambda's trailing return type — the other meaning of `->` in C++ |
+
+**Mutants, all three run:**
+
+| Mutant | Kills |
+|---|---|
+| `MEMBER = r"\."` (the pre-fix operator set) | **10** — every `->` must-fire case, and nothing else: every `.` case and every new silence case survives, which is the "direct detection unchanged / valid code unchanged" claim measured rather than asserted |
+| Paren requirement dropped | **2** — the two "merely begins with a forbidden name" silence cases, which is what pins the name boundary |
+| Whitespace tolerated after the operator AND the paren dropped | **3** — the two above plus the lambda trailing return type |
+
+The trailing-return case is silent under **two** independent conditions (the space after the arrow,
+and the type name with no paren), so no single relaxation reaches it; that is stated in its comment
+rather than left implied, because a case that cannot fail is documentation and should say so.
+
+One-word correction in the same file while there: a comment dated the line-splice fix to "0.2.1", a
+version that does not exist. It landed in this 0.2.0 round.
+
+### The three declines stand
+
+- **`tests/AllocationGuard.h`'s single-TU global operator replacement** — unchanged, for the reason
+  recorded above: the replacement is unique within `AnabasisTests`, there is no active multi-TU
+  problem, and the redesign buys nothing today.
+- **The ABI gate's coupling to the staged artifact layout** — unchanged and intended. If the
+  Standalone stops being staged, `check-linux-abi.py` exits 2 and the job fails. Fix 1 changes
+  WHICH step the assertion waits for; it does not make the assertion independent of the staging
+  layout, and a missing artifact still fails closed.
+
+### Validation of this round
+
+| Gate | Result |
+|---|---|
+| `scripts/preflight.sh` | **rc = 0** |
+| Both suites | **301 + 873 = 1174 checks, 0 failures** (unchanged — no C++ source was touched) |
+| `check-realtime.py --self-test` | **134 cases** (was 112; +17 must-fire, +5 must-stay-silent) |
+| Other self-tests | check-docs 67 · check-portability 120 · check-citations 37 · check-linux-abi 19 · check-clang-warnings 15 |
+| `check-realtime.py` on the real tree | 40 files, 0 violations — **byte-identical to the pre-change output** |
+| Realtime lint behaviour | unchanged except for the added `->` coverage; no existing case changed verdict |
+| Workflow YAML | all five workflows, the composite action and `dependabot.yml` parse |
+| ABI step, asserted from the parsed YAML | condition is `steps.stage.outcome == 'success'`; step index 15 > `stage` at 11 and > `Upload Linux artifacts` at 12; both `dist/` paths unchanged |
+| pluginval | unchanged from the 0.2.0 run; no shipped source changed |
+
 ## What this round did NOT do
 
 - **No DSP algorithm changed.** The only edit to `src/dsp/AnabasisEngine.cpp` is a type attribute on
