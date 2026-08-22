@@ -388,7 +388,7 @@ table, including the areas that were **already** equivalent, is in
 | **GCC 14 → 16, in `container: gcc:16`** (ADR-0034) | No apt source ships a *released* g++-16, so pinning 14 was choosing the version to fit the acquisition method. The image is the only package-managed route to a released 16. `dependency-profile: headless` comes with it — `build-essential` inside that container would un-pin the lane. |
 | **The LTO lane is two jobs** | `container:` is a per-job key, so one containerised arm and one bare arm cannot share a matrix. `linux-lto-tests` is GCC; `linux-lto-clang` is the Clang arm ADR-0033 added for INC-004. |
 | **ccache: `CCACHE_DIR`, `CCACHE_MAXSIZE`, `CCACHE_COMPILERCHECK=content`** | None of the three were set, so the cache ran on defaults: unbounded in practice, `mtime` compiler identity (which can serve an object built by a different compiler that shares a timestamp — defeating the pin), and a home-relative path that is wrong inside a container. |
-| **The macOS jobs are cached** | See the artifact-safety note above; it is also the run's critical path (18m43s, the longest job in the matrix). **Measured on the universal build, not assumed** (0.2.4): ccache 4.13.6 reports `Cacheable calls: 182 / 182 (100.0%)` — it declines none of the two-`-arch` compilations — and the build step falls **630.6s cold → 233.5s warm**, hits 14.29% → 95.60%. |
+| **The macOS jobs are cached** | See the artifact-safety note above; it is also the run's critical path (18m43s, the longest job in the matrix). **Measured on the universal build, not assumed** (0.2.4): ccache 4.13.6 reports `Cacheable calls: 182 / 182 (100.0%)` — it declines none of the two-`-arch` compilations — and hits go 14.29% cold → 95.60% warm. Quote the phase, not the step total: the **compile phase** — the only part ccache acts on — falls **501s → 46–86s across two warm runs (415–455s, 83–91%)**. The step *total* says 261–398s (41–63%), a far wider spread, because it also carries an LTO link that drifted 130s → 187s → 284s between runs on a phase ccache never sees. |
 | **Sanitizers: six more sub-checks, `detect_leaks=1`, a 64 MB stack** | Measured, not transcribed — including the one sub-check deliberately left out and why (ADR-0034 §4). |
 | **The MSVC toolset is recorded, its ABI series asserted** | `windows-latest` floats and MSVC is auto-detected, so a shipped `.vst3` was built by a toolset no artifact named. A record plus one narrow assertion, not a pin — MSVC cannot be installed the way apt.llvm.org's Clang can. |
 | **`timeout-minutes` on every job** | Without it a hung job burns the 6-hour default. |
@@ -460,9 +460,11 @@ These are the rules, not incidental details — each blocks a specific way a bad
   than one `-arch`, which is exactly what `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` produces — was
   settled by reading the runner's own statistics rather than the sibling's: ccache **4.13.6** reports
   `Cacheable calls: 182 / 182 (100.0%)` with no `Uncacheable` bucket at all, over three consecutive
-  runs. The build step falls **630.6s cold → 233.5s warm** (**397s, 63%**), hit rate **14.29% →
-  95.60%**, with the object count unchanged at 182 — so the drop is cache hits, not less work. The
-  `lipo` slice assertion is the backstop against a thin object reaching a universal artifact.
+  runs. Hit rate goes **14.29% cold → 95.60% warm** with the object count unchanged at 182 — only
+  `.ccache` is restored, never `build/`, so ninja issues all 182 invocations every time and the drop
+  is cache hits rather than an incremental build. On timing, quote the phase rather than the step
+  total: the **compile phase** — the only part ccache acts on — falls **501s → 46–86s across two warm runs (415–455s, 83–91%)**. The step *total* says 261–398s (41–63%), a far wider spread, because it also carries an LTO link that drifted 130s → 187s → 284s between runs on a phase ccache never sees. The `lipo` slice assertion is the backstop against a thin object
+  reaching a universal artifact.
 - **On Linux the gate also names the two instruments that read the shipped bundle** (0.2.1):
   `AnabasisEngineRepro` and `AnabasisChannelProbe --assert-discriminating`. Before ADR-0032 they ran
   in `linux-clang` against a build that was thrown away, so their outcome could not sensibly gate an

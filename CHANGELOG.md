@@ -66,10 +66,11 @@ reported latency moved, and **no first-party source file was touched**. Measurem
 
 ### Added
 - **`macos-intel` reports compiler-cache statistics.** It is the single-arch control — it differs
-  from `macos` in exactly one variable — yet it restored a cache and never said what the cache did,
-  so the comparison that settles the universal-build question could not be made from the logs. The
-  step is read-only and `|| true`; it reports, it cannot fail the job.
-  Evidence: `.github/workflows/build.yml`. [Verified]
+  from `macos` in exactly one variable — yet it restored a cache and never said what the cache did.
+  The step is read-only and `|| true`; it reports, it cannot fail the job. **Added, not yet run**,
+  so it has produced no measurement so far; it is also not load-bearing, since the decisive control
+  is cold-vs-warm on the universal lane itself.
+  Evidence: `.github/workflows/build.yml` (verified as an edit, not as an observation). [Verified]
 
 ### Changed
 - **The macOS caching rationale now quotes figures measured here.** The workflow comment, ADR-0034
@@ -83,9 +84,12 @@ reported latency moved, and **no first-party source file was touched**. Measurem
 ### Notes
 - **ccache does cache the universal build, completely.** `macos-latest` installs ccache **4.13.6**,
   and across three consecutive runs the job reports `Cacheable calls: 182 / 182 (100.0%)` with **no
-  `Uncacheable` bucket in any log**. Hits go **14.29% cold → 95.60% warm**, and the build step falls
-  **630.6s → 233.5s** — **397s (63%)** — at an unchanged object count, so the drop is cache hits and
-  not less work. The review's concern was historically correct and is version-bound: ccache 3.2.5
+  `Uncacheable` bucket in any log**. Hits go **14.29% cold → 95.60% warm** at an unchanged object
+  count of 182 — only `.ccache` is restored, never `build/`, so ninja issues all 182 invocations
+  every run and the drop is cache hits, not an incremental build. On timing, the honest figure is
+  the **compile phase**, which is all ccache acts on: **501s cold → 46–86s across two warm runs
+  (415–455s, 83–91%)**. The step *total* spans 261–398s (41–63%) only because it also carries an
+  LTO link that drifted 130s → 187s → 284s on a phase ccache never sees. The review's concern was historically correct and is version-bound: ccache 3.2.5
   bailed out with "More than one -arch compiler option is unsupported"; 3.3 added fat-binary support
   and 3.3.1 corrected direct-mode arch discrimination, nine years before the version in use.
   Evidence: runs 32563814120 / 32565784751 / 32568563583; ccache `ccache.c` v3.2.5 and `NEWS.adoc`;
@@ -93,8 +97,21 @@ reported latency moved, and **no first-party source file was touched**. Measurem
   [Verified]
 - **What the cache does not reach:** ccache's counters stop moving ~46s into the 233.5s warm build
   step. The remainder is the LTO link, which ccache does not cache — the saving is almost all of the
-  compile time and none of the link time.
+  compile time and none of the link time. This is why the step total is the wrong number to quote:
+  across the two warm runs the uncached link alone varied by 97s.
   Evidence: run 32565784751 (`Stats updated: 09:46:46`). [Verified]
+- **Reported, not changed — a run-varying `PUBLIC` define is costing direct-mode cache hits.**
+  `CMakeLists.txt:280` (and `:336`) put `ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}"` on the
+  target as `PUBLIC`, and CI passes the run number, so the value changes every run. ccache's direct
+  mode hashes the command line, so every translation unit carrying that define misses direct mode
+  and can only hit via preprocessed mode — which on this lane means running the preprocessor once
+  per `-arch`. It matches what the logs show: 58 direct vs 116 preprocessed hits, with the direct
+  hits concentrated in `AnabasisTests`, the one target that does not define it. The only consumer is
+  `src/gui/PluginEditor.cpp:210`. Narrowing it to that source file would leave output bytes
+  unchanged, but it is a Build System change under the Architecture Review Gate, so it is proposed
+  rather than applied.
+  Evidence: `CMakeLists.txt:74,280,336`; `src/gui/PluginEditor.cpp:116,210`; run 32565784751 stats.
+  [Verified]
 - **GCC 16 is now clean through the LTO link, not only the compile.** 0.2.3 had to record "compile
   phase measured at 16, link phase measured at 14" because the failing lane aborted before linking.
   Run **32568563583** — the first after the `libxi-dev` fix — completed it: `linux-lto-tests`

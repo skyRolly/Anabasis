@@ -43,20 +43,34 @@ The decisive evidence is the job's own statistics, over three consecutive runs:
 | 32568563583 | warm | **182 / 182 (100.0%)** | 172 / 182 (94.51%) | 370.0s |
 
 `182 / 182` is the whole answer. ccache classifies **every** two-`-arch` compilation as cacheable and
-declines none of them; there is **no `Uncacheable` bucket in any of the three logs**, confirmed by
-keyword sweep rather than inferred from silence. Cold → warm takes **397s (63%)** off the build step
-at an unchanged object count of 182 — the drop is cache hits, not less work.
+declines none of them. That line is the only *positive* evidence — the missing `Uncacheable` section
+is ccache omitting an empty section, so it is not a second witness, though a keyword sweep of all
+three full logs does confirm the string appears nowhere. The object count is 182 in every run
+because only `.ccache` is restored and never `build/`: ninja issues all 182 invocations every time,
+so the drop is cache hits, not an incremental build. Timing is treated separately below, because the
+step total is the wrong number to quote.
 
-Split at the compile/link boundary (build-step start → `Stats updated`), the **compile half goes
-500.5s cold → 45.9s warm, about 91%**. Worth recording next to the 63% step-level figure because it
-pre-empts a misread: the warm run's *link* was ~58s **slower** than the cold run's (130.1s → 187.6s,
-runner variance on a step ccache never touches), so comparing step totals alone could suggest the
-cache cost something. It did not — it removed ~455s of compile and gave ~58s back to a slower link,
-which makes the 397s headline conservative.
+### Quote the compile phase, not the step total
 
-The third run is higher than the second (370.0s) because one translation unit,
-`juce_audio_plugin_client_VST3.mm`, took ~248s on its own that run; it is a miss-side and
-link-side effect, not a cache regression. The hit rate is stable at 94–96%.
+An earlier draft of this worklog led with "630.6s → 233.5s, a 397s (63%) saving". That is the better
+of two warm samples, and it credits ccache with variance on a phase it never touches. Splitting each
+step at `Stats updated` — the moment ccache's counters stop moving — gives the honest picture:
+
+| run | step total | compile | LTO link |
+| --- | --- | --- | --- |
+| cold 32563814120 | 631s | 501s | 130s |
+| warm 32565784751 | 233s | **46s** | 187s |
+| warm 32568563583 | 370s | **86s** | 284s |
+
+The **compile phase falls 501s → 46–86s: 415–455s, 83–91%**, consistent across both warm runs. The
+step total spans **261–398s (41–63%)** — a far wider range — because the uncached LTO link drifted
+**130s → 187s → 284s** between the same runs. The link alone varies by 97s across the two warm runs,
+which is a quarter of the step-total "saving" the earlier draft claimed.
+
+So the cache's effect is *larger* than the headline said (83–91%, not 63%) and far more stable, and
+the step-total figure was carrying someone else's noise. The third run's higher step total is a
+single translation unit — `juce_audio_plugin_client_VST3.mm` took ~248s on its own — landing on the
+miss side and the link, not a cache regression: the hit rate is 94–96% in both warm runs.
 
 ### Reproduced independently, with a control
 
@@ -111,7 +125,11 @@ the cache did**. An audit of every cached job:
 | **`macos-intel`** | yes | yes | **no** |
 | `sanitizers`, `realtime` | yes | yes | **no** |
 
-`macos-intel` now has one. A cache whose hit rate is unobservable can be neither defended nor retired
+`macos-intel` now has one — **added this round, so it has not yet run and has produced no
+measurement**. It is worth being precise that it was never load-bearing either: the decisive control
+is cold-vs-warm on the universal lane itself, which holds architecture, compiler, flags and object
+count fixed and varies only whether a cache was restored. The cross-lane comparison would have added
+a second variable. A cache whose hit rate is unobservable can be neither defended nor retired
 on evidence — the same "a gate that cannot fail is indistinguishable from one that passes" failure
 the lint self-tests exist to prevent, applied to a measurement instead of a gate. `sanitizers` and
 `realtime` share the gap and were **left alone deliberately**: they are Linux jobs, outside the macOS
@@ -141,6 +159,26 @@ hypothesised. 0.2.3's "compile phase measured at 16, link phase measured at 14" 
 **GCC 16.2.0 is clean through compile and link.**
 
 ## Reported, deliberately not fixed
+
+**A run-varying `PUBLIC` define is costing direct-mode hits repo-wide.** `CMakeLists.txt:280` (and
+`:336` for `AnabasisStateTests`) declare `ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}"` as a
+`PUBLIC` target definition, and CI passes the run number — `547`, `549`, a different value every
+run. ccache's **direct mode hashes the command line**, so every translation unit carrying that
+define is a guaranteed direct miss on every run and can only hit through **preprocessed** mode,
+which on the universal lane costs one preprocessor invocation *per `-arch`*.
+
+The statistics match the prediction exactly: **58 direct vs 116 preprocessed** hits, with the direct
+hits concentrated in `AnabasisTests` — the one test target whose `target_compile_definitions` does
+*not* include the build number. The sole consumer of the macro is `src/gui/PluginEditor.cpp:210`
+(the About string), behind an `#ifndef` fallback at `:116`.
+
+Narrowing it to that one source file would leave the shipped bytes identical while stopping ~180
+translation units having their command line perturbed each run. That is a **Build System** change
+under the Architecture Review Gate, and the brief for this round said not to change build
+configuration — so it is proposed and measured, not applied. The test is cheap: make the change,
+push once, read `Direct:` in the same stats block.
+
+
 
 **The arm64 slice of the shipped macOS bundle has no dSYM.** `dsymutil` emits
 `warning: (arm64) .../lto-objects/lto.o unable to open object file: No object file for requested

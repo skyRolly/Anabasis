@@ -82,9 +82,25 @@ would have been inert and the restore/save pure cost. It does not hold. `macos-l
 | 32568563583 | warm | **182 / 182 (100.0%)** | 172 / 182 (94.51%) | 370.0s |
 
 `182 / 182` is the whole answer: ccache classifies **every** two-`-arch` compilation as cacheable and
-declines none. There is no `Uncacheable` bucket in any of the three logs — an absence confirmed by
-keyword sweep, not inferred from silence. Cold → warm is **397s (63%)** off the build step at an
-unchanged object count of 182, so the drop is cache hits rather than less work.
+declines none. That line is the *only* positive evidence — the missing `Uncacheable` section is just
+ccache omitting an empty section, not a second witness. The object count is 182 in every run because
+only `.ccache` is restored and never `build/`, so ninja always issues all 182 invocations: the drop
+is cache hits, not an incremental build.
+
+**Quote the compile phase, not the step total.** Splitting each build step at `Stats updated` — the
+moment ccache's counters stop moving — separates what the cache acts on from what it cannot touch:
+
+| | step total | compile | LTO link |
+| --- | --- | --- | --- |
+| cold 32563814120 | 631s | 501s | 130s |
+| warm 32565784751 | 233s | **46s** | 187s |
+| warm 32568563583 | 370s | **86s** | 284s |
+
+The compile phase falls **501s → 46–86s (415–455s, 83–91%)** and is consistent across both warm runs.
+The step total says **261–398s (41–63%)** — a far wider spread, because it also carries an LTO link
+that drifted **130s → 187s → 284s** on a phase ccache never sees. An earlier draft of this amendment
+quoted a single "397s (63%)": that is the better of two warm samples and it attributes link variance
+to the cache, so it is replaced by the range and the split.
 
 Two honesties the amendment adds. First, **ccache reaches only the compile half**: its counters stop
 moving ~46s into the 233.5s warm step, and the remainder is the LTO link, which ccache does not
@@ -98,7 +114,11 @@ that carried it here was imported, and is now replaced by local measurement.
 **The measurement gap that made this hard to answer, and is now closed for macOS.** `macos-intel` —
 the single-arch control, differing from `macos` in exactly one variable — restored a ccache and then
 never reported what it did, so the obvious comparison could not be made from the logs. It now has a
-`Compiler cache statistics` step. `sanitizers` and `realtime` have the same gap and were left alone:
+`Compiler cache statistics` step — **added, not yet run**, so the cross-lane comparison it enables is
+still pending its first measurement. It is also not load-bearing: the decisive control is
+cold-vs-warm on the universal lane itself, which holds architecture, compiler, flags and object count
+fixed and varies only whether a cache was restored.
+`sanitizers` and `realtime` have the same gap and were left alone:
 they are Linux jobs, outside the question that prompted this. A cache whose hit rate is unobservable
 can be neither defended nor retired on evidence, which is the "a gate that cannot fail is
 indistinguishable from one that passes" failure applied to a measurement.
@@ -131,8 +151,10 @@ JUCE singletons being reported at exit. Measured: nothing is reported.
 - **The compatibility compiler is two majors newer** and is now a *released* one rather than the
   newest an archive happened to carry. It is also a **different distribution** (Debian, in the
   image) — which widens what the lane can catch, and is the point of having it.
-- **CI has never run the container lane**, and it cannot be run here: this environment has no
-  container runtime. The first push is the measurement. If `g++-16` rejects something this tree
+- **CI had never run the container lane** at the time of this decision, and it cannot be run here:
+  this environment has no container runtime. The first push was the measurement. *(Resolved: it ran,
+  failed on a missing header rather than a diagnostic, and after the `libxi-dev` fix passed end to
+  end in run 32568563583 — see the GCC-16 bullets below.)* If `g++-16` rejects something this tree
   compiles under 14, that is the lane reporting a real portability finding — and the pin is one env
   line plus one tag to move back.
 - **The container's DISTRIBUTION is part of this decision, and the review round found a defect in
@@ -223,8 +245,9 @@ Evidence [Verified, except where stated]:
 - **GCC 16.2.0 warning baseline: 0 first-party diagnostics over 13/13 translation units**, from CI
   run 32565784751's `linux-lto-tests` job (compile phase). ccache stderr replay verified locally in
   both directions, so cache hits do not weaken the reading
-- **GCC LTO link phase: 0 first-party diagnostics**, both suites, `g++-14 14.2.0` with `-flto` on
-  compile and link, gate run over the complete log
+- **GCC LTO link phase: 0 first-party diagnostics** — at **16.2.0** in CI (run 32568563583, the lane
+  complete: both links, gate clean, 301 + 873 passing), and at `g++-14 14.2.0` locally with `-flto`
+  on compile and link, gate run over the complete log
 - The gate itself re-verified against real GCC output, not only its synthetic self-test: a fixture
   carrying a GCC `-Wunused-variable`, a GCC LTO-time `-Wodr` and a vendored diagnostic classifies
   2 first-party / 1 vendored and exits 1. `-Wodr` and `-Wlto-type-mismatch` were generated from
