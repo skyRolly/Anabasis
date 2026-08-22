@@ -2044,6 +2044,16 @@ jobs:
       # the LTO link, which ccache does not cache and never will. So the cache
       # removes almost all of the COMPILE time and none of the link time.
       #
+      # Split at that boundary (build-step start -> `Stats updated`), the
+      # compile half goes 500.5s cold -> 45.9s warm, about 91%. That figure is
+      # recorded next to the 63% step-level one because it pre-empts a misread:
+      # the warm run's LINK was ~58s SLOWER than the cold run's (130.1s ->
+      # 187.6s, runner variance on a step ccache never touches), so a reader
+      # comparing only step totals could conclude the cache had cost something.
+      # It did not -- it removed ~455s of compile and handed ~58s back to a
+      # slower link, which makes the 397s headline conservative rather than
+      # generous.
+      #
       # And the honest proportion: this job IS the run's critical path (18m43s,
       # the longest in the matrix), but 12m34s of that is the four pluginval
       # passes and only 3m53s is the build step ccache acts on. The figure this

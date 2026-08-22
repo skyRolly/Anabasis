@@ -47,6 +47,13 @@ declines none of them; there is **no `Uncacheable` bucket in any of the three lo
 keyword sweep rather than inferred from silence. Cold → warm takes **397s (63%)** off the build step
 at an unchanged object count of 182 — the drop is cache hits, not less work.
 
+Split at the compile/link boundary (build-step start → `Stats updated`), the **compile half goes
+500.5s cold → 45.9s warm, about 91%**. Worth recording next to the 63% step-level figure because it
+pre-empts a misread: the warm run's *link* was ~58s **slower** than the cold run's (130.1s → 187.6s,
+runner variance on a step ccache never touches), so comparing step totals alone could suggest the
+cache cost something. It did not — it removed ~455s of compile and gave ~58s back to a slower link,
+which makes the 397s headline conservative.
+
 The third run is higher than the second (370.0s) because one translation unit,
 `juce_audio_plugin_client_VST3.mm`, took ~248s on its own that run; it is a miss-side and
 link-side effect, not a cache regression. The hit rate is stable at 94–96%.
