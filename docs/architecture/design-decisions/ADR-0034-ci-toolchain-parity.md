@@ -68,6 +68,41 @@ verified that, and verified that ccache hashes the full `-arch` list so a univer
 served to a thin build. It also measured the equivalent job as the run's critical path — 29m44s, of
 which 16m40s is the build step.
 
+*(Amended 2026-08-22, 0.2.4 — the universal build's cache is now measured HERE.)* A review asked the
+question this ADR should have asked itself: ccache has historically **refused** to cache a
+compilation carrying more than one `-arch`, and `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` produces
+exactly that — one clang invocation with both, not two invocations. Had that still held, the cache
+would have been inert and the restore/save pure cost. It does not hold. `macos-latest` installs
+**ccache 4.13.6**, and the job's own statistics say so across three consecutive runs:
+
+| Run | Cache state | Cacheable calls | Hits | Build step |
+| --- | --- | --- | --- | --- |
+| 32563814120 | cold (first cached run) | **182 / 182 (100.0%)** | 26 / 182 (14.29%) | **630.6s** |
+| 32565784751 | warm | **182 / 182 (100.0%)** | 174 / 182 (95.60%) | **233.5s** |
+| 32568563583 | warm | **182 / 182 (100.0%)** | 172 / 182 (94.51%) | 370.0s |
+
+`182 / 182` is the whole answer: ccache classifies **every** two-`-arch` compilation as cacheable and
+declines none. There is no `Uncacheable` bucket in any of the three logs — an absence confirmed by
+keyword sweep, not inferred from silence. Cold → warm is **397s (63%)** off the build step at an
+unchanged object count of 182, so the drop is cache hits rather than less work.
+
+Two honesties the amendment adds. First, **ccache reaches only the compile half**: its counters stop
+moving ~46s into the 233.5s warm step, and the remainder is the LTO link, which ccache does not
+cache. Second, **the 29m44s / 16m40s figures above are the SIBLING's job**, and this ADR quoted them
+as if they sized the local one. Measured here, `macos` is genuinely the run's critical path at
+**18m43s** — but **12m34s (67%)** of that is the four pluginval passes and only **3m53s (20.7%)** is
+the build step ccache acts on. 16m40s overstates this repository's build step by roughly 4×. The
+decision stands on 397s of real saving on the longest job in the matrix; the *magnitude* argument
+that carried it here was imported, and is now replaced by local measurement.
+
+**The measurement gap that made this hard to answer, and is now closed for macOS.** `macos-intel` —
+the single-arch control, differing from `macos` in exactly one variable — restored a ccache and then
+never reported what it did, so the obvious comparison could not be made from the logs. It now has a
+`Compiler cache statistics` step. `sanitizers` and `realtime` have the same gap and were left alone:
+they are Linux jobs, outside the question that prompted this. A cache whose hit rate is unobservable
+can be neither defended nor retired on evidence, which is the "a gate that cannot fail is
+indistinguishable from one that passes" failure applied to a measurement.
+
 ### 4. The sanitizer set is adopted **minus one sub-check**, measured
 
 `sanitizers` goes from `address,undefined` to
@@ -134,12 +169,17 @@ JUCE singletons being reported at exit. Measured: nothing is reported.
   means a hit requires the byte-identical compiler, so a replayed diagnostic is still g++ 16.2.0's.
   A warning would have appeared either way.
 
-  **What that run did NOT measure, and this is the honest limit of it:** the build aborted at 36/56
-  on the header defect below, so the **LTO link stage never ran** — and the link is where GCC emits
-  `-Wodr` and `-Wlto-type-mismatch`, the cross-TU class this lane exists for. That phase is measured
-  locally instead, at GCC 14.2.0 with the same `-flto` configuration over both suites: the full
-  compile-and-link log is clean of first-party diagnostics. So: **compile phase measured at 16,
-  link phase measured at 14**, and the first green run of the fixed lane closes the remaining cell.
+  **The link phase is now measured at 16 as well — the remaining cell is closed.** *(0.2.4.)* The
+  0.2.3 statement of this limit was that the failing run aborted at 36/56 before the **LTO link**,
+  where GCC emits `-Wodr` and `-Wlto-type-mismatch` — the cross-TU class this lane exists for — so
+  the link was measured only locally, at 14.2.0. Run **32568563583**, the first run after the
+  `libxi-dev` fix, completed the lane: `linux-lto-tests` **succeeded**, both links ran ([54/56],
+  [55/56]), and the gate printed `check-clang-warnings: no first-party warnings (0 in
+  vendored/other paths, not gated)`. The entire job log contains **two** `warning:` lines, both
+  `lto-wrapper: warning: using serial compilation of N LTRANS jobs` (N=5, N=101) — precisely the
+  location-less driver form 0.2.3 pinned as a non-diagnostic, now observed in the wild rather than
+  hypothesised. Both suites then passed against that codegen: **301 + 873, 0 failures**. So GCC
+  16.2.0 is clean through **compile and link**, and the zero-warning policy needs no qualifier.
 - **A missing header, not a warning, is what actually failed the lane — and the previous round's
   package verification could not have caught it.** `juce_gui_basics.h:393` includes
   `<X11/extensions/XInput2.h>` whenever `JUCE_USE_XINPUT` is set, and JUCE 9.0.1 defaults it to 1,
@@ -190,8 +230,10 @@ Evidence [Verified, except where stated]:
   2 first-party / 1 vendored and exits 1. `-Wodr` and `-Wlto-type-mismatch` were generated from
   purpose-built two-TU cases to confirm GCC's link-time diagnostics carry the `path:line:col:`
   form the matcher requires — they do
-- **Still unverified locally:** the `gcc:16` container lane end to end (this environment has a
-  `docker` client but no reachable daemon). Its PACKAGE SET is verified two ways: every name in
+- **Verified in CI, still not locally:** the `gcc:16` container lane ran end to end and **passed** in
+  run 32568563583 — build, LTO link, warning gate and both suites (301 + 873, 0 failures). It
+  remains unrunnable in this environment (a `docker` client with no reachable daemon), so the
+  measurement is CI's, not a local one. Its PACKAGE SET is verified two ways: every name in
   both profiles resolves against the Debian trixie and Ubuntu noble archives (with known-absent
   negative controls), and the declared set is now checked for SUFFICIENCY as well as resolvability
   by the header→package enumeration described above

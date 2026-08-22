@@ -6,7 +6,18 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.3 (2026-08-22)** — the GCC 16 warning-gate validation round.
+**Last updated:** for **0.2.4 (2026-08-22)** — the macOS ccache validation round.
+
+**Scope of the 0.2.4 round.** No new ADR; **ADR-0034 amended** twice — with the measured macOS universal-build
+cache result (ccache 4.13.6, `Cacheable calls: 182 / 182`, 630.6s cold → 233.5s warm) replacing an imported
+justification, and with the GCC 16 LTO **link** phase now measured at 16 rather than 14. One read-only
+observability step added (`macos-intel` compiler-cache statistics); no build configuration changed. Two stale
+claims corrected: the changelog's entry count, and a `CI_CD.md` row asserting the macOS jobs were not cached.
+One finding filed for the owner rather than fixed: the arm64 slice of the shipped macOS bundle carries no
+dSYM. No DSP algorithm change, no parameter added/renamed/removed, no schema, threading or latency change,
+**and no first-party source file was touched**; the frozen registry snapshot is untouched.
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **Build-system change** (`CI_CD.md`), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`).
 
 **Scope of the 0.2.3 round.** No new ADR; **ADR-0034 amended** with the measured GCC 16.2.0 warning
 baseline and with the package-sufficiency finding the container lane's first run exposed. The lane failed

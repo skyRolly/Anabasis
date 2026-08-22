@@ -331,7 +331,7 @@ OQ-006 carries the same supersession.
 | **`merge-check`** | The ONLY job that runs on a same-repo pull request. Every other job is skipped there because the push trigger already built that SHA — the TIP, not the merge — so `refs/pull/N/merge`, the tree the merge button produces, was never compiled. Build and self-tests only: what a moved base breaks is compilation and behaviour, and both are platform-independent. |
 | **`realtime`** | RealtimeSanitizer over the DSP suite (ADR-0029), in its own job because the Clang driver refuses to combine `-fsanitize=realtime` with the `sanitizers` job's set. A liveness canary runs first and the job fails if it does NOT abort. Also carries the compile-only `-Wfunction-effects` gate over the JUCE-free leaf layer, compiled twice so a dead diagnostic cannot pass. |
 | **The pinned Clang** | `ANABASIS_CLANG_VERSION` in `build.yml` is the single authority; `scripts/setup-llvm-apt.sh` installs it fail-closed. Four jobs use it, and since ADR-0032 one of them SHIPS with it. Without it the zero-first-party-warning gate has no stable reference point and the RTSan runtime does not exist (ADR-0031). |
-| **The composite action + ccache** | `./.github/actions/setup-linux-build` carries the setup and the "ccache is an optimization, never a requirement" fallback ONCE for five jobs; the per-job cache lineage stays in the workflow because that is the part that differs. **The macOS jobs are deliberately not cached** — `dsymutil` walks the debug map back to the object files, which is the one place object provenance is observable. |
+| **The composite action + ccache** | `./.github/actions/setup-linux-build` carries the setup and the "ccache is an optimization, never a requirement" fallback ONCE for five jobs; the per-job cache lineage stays in the workflow because that is the part that differs. **The macOS jobs are cached too** (0.2.2, measured 0.2.4) — this row said they were "deliberately not cached" on the `dsymutil` argument long after 0.2.2 refuted it and cached them, contradicting two other rows in this same file. |
 | **The Linux ABI floor** | `scripts/check-linux-abi.py` on the STRIPPED bytes, last in the `linux` job so a compatibility finding never withholds an artifact whose behavioural gates passed. |
 | **macOS symbolication as a contract** | `-Wl,-object_path_lto` keeps the object `dsymutil` needs; two assertions — LTO ran and its objects were retained, and a UUID-matched dSYM was captured — turn a best-effort capture into a gate. Both run after the uploads. |
 | **Self-tests beside their checks** | `TESTING_POLICY.md` rule 5. Five checkers ship `--self-test` and each runs in the job that uses it, ahead of the use. |
@@ -363,10 +363,12 @@ point of this row.
 32565784751 compiled all **13 first-party translation units** of the two suites under g++ **16.2.0**
 at `-O3 -flto -std=c++23` with the full `juce_recommended_warning_flags` set, and none emitted a
 warning. The zero-warning policy holds at 16 exactly as it held at 14.2.0, so nothing about the gate
-was weakened — the lane's failure was a missing header, not a diagnostic. The build aborted before
-the **LTO link**, which is where `-Wodr` and `-Wlto-type-mismatch` fire; that phase is measured
-locally at GCC 14.2.0 over both suites with the same `-flto` configuration and is likewise clean.
-The first green run of the fixed lane closes the last cell.
+was weakened — the lane's failure was a missing header, not a diagnostic. That run aborted before the
+**LTO link**, where `-Wodr` and `-Wlto-type-mismatch` fire; **run 32568563583 closed that cell**
+(0.2.4). The fixed lane succeeded end to end, both links ran, the gate printed `no first-party
+warnings`, and the only two `warning:` lines in the whole job were the `lto-wrapper` LTRANS notices
+the 0.2.3 self-test had just pinned as non-diagnostics. Both suites passed against that codegen:
+301 + 873, 0 failures. **GCC 16.2.0 is clean through compile and link.**
 
 **The methodological finding is the one worth carrying forward.** 0.2.2 verified that every package
 name *resolves* on trixie and on noble. Whether the declared set is *sufficient* is a different
@@ -386,7 +388,7 @@ table, including the areas that were **already** equivalent, is in
 | **GCC 14 → 16, in `container: gcc:16`** (ADR-0034) | No apt source ships a *released* g++-16, so pinning 14 was choosing the version to fit the acquisition method. The image is the only package-managed route to a released 16. `dependency-profile: headless` comes with it — `build-essential` inside that container would un-pin the lane. |
 | **The LTO lane is two jobs** | `container:` is a per-job key, so one containerised arm and one bare arm cannot share a matrix. `linux-lto-tests` is GCC; `linux-lto-clang` is the Clang arm ADR-0033 added for INC-004. |
 | **ccache: `CCACHE_DIR`, `CCACHE_MAXSIZE`, `CCACHE_COMPILERCHECK=content`** | None of the three were set, so the cache ran on defaults: unbounded in practice, `mtime` compiler identity (which can serve an object built by a different compiler that shares a timestamp — defeating the pin), and a home-relative path that is wrong inside a container. |
-| **The macOS jobs are cached** | See the artifact-safety note above; it is also the run's critical path. |
+| **The macOS jobs are cached** | See the artifact-safety note above; it is also the run's critical path (18m43s, the longest job in the matrix). **Measured on the universal build, not assumed** (0.2.4): ccache 4.13.6 reports `Cacheable calls: 182 / 182 (100.0%)` — it declines none of the two-`-arch` compilations — and the build step falls **630.6s cold → 233.5s warm**, hits 14.29% → 95.60%. |
 | **Sanitizers: six more sub-checks, `detect_leaks=1`, a 64 MB stack** | Measured, not transcribed — including the one sub-check deliberately left out and why (ADR-0034 §4). |
 | **The MSVC toolset is recorded, its ABI series asserted** | `windows-latest` floats and MSVC is auto-detected, so a shipped `.vst3` was built by a toolset no artifact named. A record plus one narrow assertion, not a pin — MSVC cannot be installed the way apt.llvm.org's Clang can. |
 | **`timeout-minutes` on every job** | Without it a hung job burns the 6-hour default. |
@@ -451,10 +453,16 @@ These are the rules, not incidental details — each blocks a specific way a bad
 - Customer uploads are gated on the self-tests **and** on the public copy having been assembled,
   purged and validated — never `if: always()`. An unstripped or unvalidated binary cannot reach the
   public artifact.
-- **The macOS jobs are cached** (0.2.2). The claim that `dsymutil`'s debug-map walk made caching
-  unsafe was refuted rather than outvoted: a cached object is a real `.o` at the path the linker
-  recorded, so the walk reads the same files either way, and ccache hashes the full `-arch` list so
-  a universal object cannot be served to a thin build. The `lipo` slice assertion is the backstop.
+- **The macOS jobs are cached** (0.2.2), and the universal build's cache is **measured** (0.2.4).
+  The claim that `dsymutil`'s debug-map walk made caching unsafe was refuted rather than outvoted: a
+  cached object is a real `.o` at the path the linker recorded, so the walk reads the same files
+  either way. The second objection — that ccache historically REFUSED compilations carrying more
+  than one `-arch`, which is exactly what `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` produces — was
+  settled by reading the runner's own statistics rather than the sibling's: ccache **4.13.6** reports
+  `Cacheable calls: 182 / 182 (100.0%)` with no `Uncacheable` bucket at all, over three consecutive
+  runs. The build step falls **630.6s cold → 233.5s warm** (**397s, 63%**), hit rate **14.29% →
+  95.60%**, with the object count unchanged at 182 — so the drop is cache hits, not less work. The
+  `lipo` slice assertion is the backstop against a thin object reaching a universal artifact.
 - **On Linux the gate also names the two instruments that read the shipped bundle** (0.2.1):
   `AnabasisEngineRepro` and `AnabasisChannelProbe --assert-discriminating`. Before ADR-0032 they ran
   in `linux-clang` against a build that was thrown away, so their outcome could not sensibly gate an

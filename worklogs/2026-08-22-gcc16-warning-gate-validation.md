@@ -110,6 +110,15 @@ failures**, with the allocation guard armed over 2,040 `process()` calls.
 So: **compile phase measured at 16, link phase measured at 14.** The first green run of the fixed
 lane closes the last cell.
 
+> **SUPERSEDED 2026-08-22 (0.2.4).** That green run happened: **32568563583**. `linux-lto-tests`
+> passed end to end under g++ 16.2.0 — both LTO links completed, the gate printed
+> `check-clang-warnings: no first-party warnings (0 in vendored/other paths, not gated)`, and both
+> suites passed against that codegen (301 + 873, 0 failures). The whole job log carries exactly two
+> `warning:` lines, both `lto-wrapper: warning: using serial compilation of N LTRANS jobs` (N=5,
+> N=101) — the location-less driver form this same round had just pinned as a non-diagnostic,
+> observed in the wild rather than hypothesised. **The link phase is measured at 16 too; the
+> "measured at 14" qualifier above no longer applies.**
+
 ## The gate itself, validated rather than assumed
 
 The script is called `check-clang-warnings.py` and two of its three callers are now GCC, so its

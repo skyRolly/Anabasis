@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Ten such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Eleven such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,74 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.2.4] — 2026-08-22
+
+**The macOS universal build's compiler cache, measured rather than inherited.** A review asked
+whether ccache really caches an `arm64;x86_64` build — older ccache refused compilations carrying
+more than one `-arch` — and whether the CI saving claimed for it was this repository's number or the
+sibling's. Both questions are now answered from this repository's own logs. No DSP algorithm
+changed, no parameter was added, renamed or removed, no serialization schema, threading model or
+reported latency moved, and **no first-party source file was touched**. Measurements:
+[`worklogs/2026-08-22-macos-ccache-validation.md`](worklogs/2026-08-22-macos-ccache-validation.md).
+
+### Fixed
+- **The changelog's own entry count said nine while listing ten.** 0.2.2 and 0.2.3 each added an
+  entry; the count word advanced once. Cross-checked against the `## [0.x.y]` headings rather than
+  the parenthetical beside it.
+  Evidence: `CHANGELOG.md`. [Verified]
+- **`docs/procedures/CI_CD.md` still asserted the macOS jobs were "deliberately not cached"** in one
+  row while two other rows in the same file said they were cached — stale since 0.2.2 enabled them.
+  Evidence: `docs/procedures/CI_CD.md`. [Verified]
+
+### Added
+- **`macos-intel` reports compiler-cache statistics.** It is the single-arch control — it differs
+  from `macos` in exactly one variable — yet it restored a cache and never said what the cache did,
+  so the comparison that settles the universal-build question could not be made from the logs. The
+  step is read-only and `|| true`; it reports, it cannot fail the job.
+  Evidence: `.github/workflows/build.yml`. [Verified]
+
+### Changed
+- **The macOS caching rationale now quotes figures measured here.** The workflow comment, ADR-0034
+  and `CI_CD.md` justified caching with "the sibling measured the equivalent job at 29m44s, 16m40s
+  of it building". Measured locally, `macos` is genuinely the run's critical path at **18m43s** —
+  but **12m34s (67%)** is the four pluginval passes and only **3m53s (20.7%)** is the build step
+  ccache acts on, so 16m40s overstates this repository's build step about fourfold. The decision is
+  unchanged; the magnitude argument is now local.
+  Evidence: `.github/workflows/build.yml`, ADR-0034, `docs/procedures/CI_CD.md`. [Verified]
+
+### Notes
+- **ccache does cache the universal build, completely.** `macos-latest` installs ccache **4.13.6**,
+  and across three consecutive runs the job reports `Cacheable calls: 182 / 182 (100.0%)` with **no
+  `Uncacheable` bucket in any log**. Hits go **14.29% cold → 95.60% warm**, and the build step falls
+  **630.6s → 233.5s** — **397s (63%)** — at an unchanged object count, so the drop is cache hits and
+  not less work. The review's concern was historically correct and is version-bound: ccache 3.2.5
+  bailed out with "More than one -arch compiler option is unsupported"; 3.3 added fat-binary support
+  and 3.3.1 corrected direct-mode arch discrimination, nine years before the version in use.
+  Evidence: runs 32563814120 / 32565784751 / 32568563583; ccache `ccache.c` v3.2.5 and `NEWS.adoc`;
+  reproduced locally on ccache 4.9.1 against a control that shows what a real decline looks like.
+  [Verified]
+- **What the cache does not reach:** ccache's counters stop moving ~46s into the 233.5s warm build
+  step. The remainder is the LTO link, which ccache does not cache — the saving is almost all of the
+  compile time and none of the link time.
+  Evidence: run 32565784751 (`Stats updated: 09:46:46`). [Verified]
+- **GCC 16 is now clean through the LTO link, not only the compile.** 0.2.3 had to record "compile
+  phase measured at 16, link phase measured at 14" because the failing lane aborted before linking.
+  Run **32568563583** — the first after the `libxi-dev` fix — completed it: `linux-lto-tests`
+  succeeded, both links ran, the gate printed `no first-party warnings`, and both suites passed
+  (301 + 873, 0 failures). The only two `warning:` lines in the job are the `lto-wrapper` LTRANS
+  notices 0.2.3 had just pinned as non-diagnostics.
+  Evidence: run 32568563583. [Verified]
+- **Reported, deliberately not fixed — the arm64 slice of the shipped macOS bundle has no dSYM.**
+  `dsymutil` emits `warning: (arm64) … No object file for requested architecture` and `warning: no
+  debug symbols in executable (-arch arm64)` for VST3, AU and Standalone, because the retained
+  `lto-objects/lto.o` holds only the x86_64 slice. The "Assert LTO ran and its objects were
+  retained" step cannot see it: it gates on `COUNT -eq 0`, and the count is 1. This is a
+  shipped-artifact symbolication contract and outside the scope of this round, so it is filed for
+  the owner rather than changed here.
+  Evidence: run 32568563583, `macos` job. [Verified]
 
 ---
 
