@@ -158,9 +158,12 @@ env:
 # Customer uploads are gated on the self-tests AND their strip/packaging steps
 # SUCCEEDING (never `if: always()`), and the staging steps self-validate (no
 # symbol table, no debug files in the public copy) -- neither a partial packaging
-# failure nor a failed behavioural gate can ship a customer artifact. Developer
-# *-debug artifacts and (on pluginval-only failures) beta artifacts remain
-# available.
+# failure nor a failed behavioural gate can ship a customer artifact. ON LINUX
+# THE LIST IS LONGER since ADR-0032 made that the shipping job: the upload also
+# names the engine reproduction and the channel probe, which are the two
+# instruments that read the SHIPPED bundle rather than a rebuild of its sources
+# (see that step for why). Developer *-debug artifacts and (on pluginval-only
+# failures) beta artifacts remain available.
 
 jobs:
   # -------------------------------------------------------------------------
@@ -676,16 +679,6 @@ jobs:
           MALLOC_PERTURB_: 255
         run: ./scripts/run-tests.sh
 
-      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
-      # installs rather than a rebuild of its sources. `AnabasisStateTests`
-      # drives the real processBlock, but compiled into a console app: no LTO
-      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
-      # one architecture. The probe LOADS the built bundle through
-      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
-      # output is the shipped code path including whatever the optimiser did to
-      # it, and its oracle is the field report's own question: is there audio on
-      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
-      # a channel was actually lost. Different codes on purpose.
       # ---- THE TWO REPRODUCTIONS, AND WHY THEY ARE HERE ---------------------
       #
       # ABSORBED FROM `linux-clang` (0.2.1), and the absorption is the point.
@@ -701,11 +694,27 @@ jobs:
       # drives `AnabasisEngine` with no wrapper, no format and no host, so a
       # failure there says the defect is in the DSP core; a repro that passes
       # while the probe fails says it is not.
+      #
+      # BOTH CARRY AN `id`, and it is load-bearing rather than tidy: the customer
+      # upload below names them. A probe that reports a lost channel while the
+      # artifact ships anyway is a gate in name only.
       - name: Engine reproduction (no wrapper, no format, no host)
+        id: repro
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
 
+      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
+      # installs rather than a rebuild of its sources. `AnabasisStateTests`
+      # drives the real processBlock, but compiled into a console app: no LTO
+      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
+      # one architecture. The probe LOADS the built bundle through
+      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
+      # output is the shipped code path including whatever the optimiser did to
+      # it, and its oracle is the field report's own question: is there audio on
+      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
+      # a channel was actually lost. Different codes on purpose.
       - name: Channel probe (hosts the built VST3)
+        id: probe
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # xvfb because the macro scenario opens the editor, exactly as
         # run-pluginval.sh does for the same reason. Absent a display the
@@ -801,11 +810,38 @@ jobs:
           # modes; a P6 release.yml must restore the executable bits before
           # archiving the published release zip, behind a fail-closed self-check.
 
-      # A failed self-test blocks the CUSTOMER upload (fail-closed: only a build
-      # that passed its behavioural gate may ship), while a pluginval-only
-      # failure still yields beta artifacts.
+      # THE CUSTOMER GATE, AND IT NAMES EVERY BEHAVIOURAL CHECK ON THE SHIPPED
+      # BYTES. Fail-closed: only a build that passed all of them may ship.
+      #
+      # `tests` and `stage` were here from the start. `repro` and `probe` joined
+      # them when ADR-0032 made this the SHIPPING job (0.2.1), and that is the
+      # point of the absorption rather than a detail of it. While those two
+      # instruments lived in the discarded `linux-clang` build their outcome
+      # could not sensibly gate an upload from a different job; now they run
+      # against the exact bundle staged into `dist/`, so a probe reporting a lost
+      # channel -- the KI-009 / INC-004 defect they exist to catch -- has to stop
+      # the artifact rather than merely redden a job that already uploaded it.
+      #
+      # A SKIPPED step does not satisfy `== 'success'`, so an earlier failure
+      # that skips either instrument blocks this upload too. That is the intended
+      # direction: the gate asks "did this pass", never "did this not fail".
+      #
+      # `stage` is deliberately NOT gated on them, and nothing is lost by that.
+      # It self-validates the tree it builds (no symbol table, no debug files)
+      # and produces the `dist/` copy the ABI floor assertion reads -- a
+      # compatibility FINDING is still worth reporting on a build that failed a
+      # behavioural gate. Nothing ships from it while this step is skipped, which
+      # is the property that matters.
+      #
+      # pluginval is still absent from this list, unchanged: a pluginval-only
+      # failure yields beta artifacts on purpose (see the header block).
       - name: Upload Linux artifacts
-        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage.outcome == 'success' }}
+        if: >-
+          ${{ !cancelled()
+              && steps.tests.outcome == 'success'
+              && steps.repro.outcome == 'success'
+              && steps.probe.outcome == 'success'
+              && steps.stage.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-Linux

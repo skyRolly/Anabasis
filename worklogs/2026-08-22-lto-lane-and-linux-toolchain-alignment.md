@@ -295,6 +295,57 @@ is "no material increase", not "cheaper".
 
 ---
 
+---
+
+## 4b. Review round (same day): the customer upload was not gated on the two reproductions
+
+One finding, fixed. `Upload Linux artifacts` named only `steps.tests` and `steps.stage`, so a
+bundle that failed the engine reproduction or the channel probe was still staged and **still
+uploaded as the customer artifact** — only the job's conclusion turned red, after the fact.
+
+**Pre-existing for the probe, and made to matter by this round.** While those two instruments lived
+in `linux-clang` their outcome could not sensibly gate an upload from a different job: they read a
+build that was discarded. ADR-0032 moved them onto the bundle that ships and gave `linux` the
+upload, which is exactly the arrangement in which "the probe reports a lost channel and the artifact
+ships anyway" becomes reachable. Leaving the gate at two names would have made the absorption
+cosmetic — the instruments would have been *pointed* at the shipped bytes without being *able to
+stop them*.
+
+The two steps gained ids (`repro`, `probe`) and the upload names all four:
+
+```yaml
+if: >-
+  ${{ !cancelled()
+      && steps.tests.outcome == 'success'
+      && steps.repro.outcome == 'success'
+      && steps.probe.outcome == 'success'
+      && steps.stage.outcome == 'success' }}
+```
+
+**Three properties, asserted rather than asserted-to:**
+
+- **A skipped instrument does not pass.** `outcome` is `skipped` when an earlier failure skips the
+  step, and `skipped != 'success'`, so the upload is skipped too. The gate asks "did this pass",
+  never "did this not fail" — which is the direction `!cancelled()` alone does not give.
+- **`stage` is deliberately unchanged.** It still runs on `strip` alone, still self-validates the
+  tree it assembles, and still produces the `dist/` copy the ABI floor assertion reads — a
+  compatibility FINDING is worth reporting even on a build that failed a behavioural gate. Nothing
+  ships from it while the upload is skipped, which is the property that matters. `pluginval` stays
+  out of the list, unchanged: a pluginval-only failure still yields beta artifacts on purpose.
+- **Nothing else moved.** The parsed workflow was diffed against `HEAD` job by job and step by step:
+  **exactly three semantic differences** — two added `id:` keys and the one `if:`. The GCC arm of
+  `linux-lto-tests`, raised in the same review as *safe as written* (GCC's `-flto` links through
+  binutils with the LTO plugin; `CMakeLists.txt:196-208` forces `-fuse-ld=lld` for Clang only, and
+  probes even then), was deliberately not touched.
+
+**Validated:** all five `.github` YAML files parse; the four named ids exist in the job, are each
+compared against `'success'`, and all four run *before* the upload step (asserted from the parsed
+document, not read by eye); `preflight.sh` rc=0 with 301 + 873 checks and the six self-tests
+unchanged. No C++ source was touched, so no rebuild was required.
+
+The prose that describes the gate moved with it: the workflow's own header block and
+`CI_CD.md` §"Artifact safety rules (fail-closed)".
+
 ## 5. What this round deliberately did NOT do
 
 - **No DSP algorithm, parameter, serialization, threading-model or latency change.** No first-party

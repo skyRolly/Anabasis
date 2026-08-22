@@ -394,6 +394,15 @@ These are the rules, not incidental details — each blocks a specific way a bad
 - Customer uploads are gated on the self-tests **and** on the public copy having been assembled,
   purged and validated — never `if: always()`. An unstripped or unvalidated binary cannot reach the
   public artifact.
+- **On Linux the gate also names the two instruments that read the shipped bundle** (0.2.1):
+  `AnabasisEngineRepro` and `AnabasisChannelProbe --assert-discriminating`. Before ADR-0032 they ran
+  in `linux-clang` against a build that was thrown away, so their outcome could not sensibly gate an
+  upload from a different job; now they run against the exact bundle staged into `dist/`. Without
+  this, a bundle that dropped a channel — the KI-009 / INC-004 defect these two exist to catch —
+  would still have been uploaded, with only the job conclusion turning red afterwards. A *skipped*
+  instrument does not satisfy the gate either: the condition asks "did this pass", not "did this not
+  fail". Staging itself is deliberately **not** gated on them, so the ABI floor assertion still gets
+  a `dist/` to read and still reports; nothing ships from it while the upload is skipped.
 - **Two checkpoints, not one step outcome (Windows).** The staging step emits `public_ok=true` as
   soon as the public copy passes its leak check, *before* the PDB retention that follows it, and
   the customer upload gates on that output rather than on the step's overall outcome. `$GITHUB_OUTPUT`
