@@ -30,7 +30,7 @@ headless Linux machine, no IDE.
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
   display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
-  `tests/` (**1169 checks** — `AnabasisTests` 296 + `AnabasisStateTests` 873 — re-count from the suites' own output when editing, the same rule
+  `tests/` (**1174 checks** — `AnabasisTests` 301 + `AnabasisStateTests` 873 — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
   [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured DSP numbers — aliasing, latency,
@@ -66,7 +66,7 @@ headless Linux machine, no IDE.
 
 ## Requirements
 
-- **CMake ≥ 3.22**, a **C++20** compiler, **Ninja** (recommended).
+- **CMake ≥ 3.22**, a **C++23** compiler (GCC 13+, Clang 17+, MSVC 19.35+, AppleClang 15+ — ADR-0030), **Ninja** (recommended).
 - **JUCE 9.0.1**, fetched automatically by CMake `FetchContent` and pinned to that tag's
   **immutable commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`. OQ-001 pinned the
   revision the sibling product Anamorph pins, so both plugins shared one framework baseline;

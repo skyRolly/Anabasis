@@ -10,7 +10,7 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 | `codeql.yml` | CodeQL analysis (`c-cpp` + `actions`). |
 | `msvc.yml` | MSVC `/analyze` → SARIF. |
 | `dependency-review.yml` | Dependency Review on PRs to `main`. |
-| `cxx23-canary.yml` | Weekly non-blocking C++23 early-warning build + run of the DSP suite (OQ-006, resolved 2026-08-05). **Never a gate.** |
+| ~~`cxx23-canary.yml`~~ | **Removed at 0.2.0 (ADR-0030).** C++23 is the baseline, so every job in `build.yml` compiles it on all three platforms as a blocking check and the weekly non-blocking copy became a duplicate build of the baseline. |
 | `release.yml` | Tag-triggered draft release. Not present — deferred to the first commercial release by **OQ-007** (resolved 2026-08-02), no longer a P6 item. |
 
 ## The pre-P1 preflight guard
@@ -290,40 +290,40 @@ The conclusion still holds — the workflow is inert until P1 — but the pinned
 action has consequently **never executed** here. **Run it once via `workflow_dispatch` at P1**,
 rather than discovering an incompatibility inside the P1 build PR.
 
-## The C++23 canary — early warning, never a gate
+## The C++23 canary — retired (ADR-0030)
 
-`cxx23-canary.yml` is the `DEVELOPMENT_BRIEF.md` §2.1 / ADR-0008 job: it builds the
-**`AnabasisTests` target** — `AnabasisDSP`'s sources, the JUCE modules they pull in, and the DSP
-suite — at **C++23** on all three platforms, then **runs** the suite. Scope and cadence are
-OQ-006's resolution (its own recommendation, adopted 2026-08-05): DSP core + tests only, weekly
-(`schedule`, Monday 06:17 UTC) plus `workflow_dispatch`; the wrapper/GUI half and the plugin
-formats are deliberately out of scope because full-matrix per-push roughly doubles CI cost for an
-early-warning signal. macOS builds **native-arch only** and sets no deployment target — the
-10.13/universal contract is a shipping claim (OQ-011) about binaries this job does not produce.
+This section described a weekly, non-blocking job that built the DSP suite at C++23 on three OSes to
+answer "does tomorrow's baseline still compile?". **At 0.2.0 the baseline moved to C++23**, so the
+question is answered by every job in `build.yml` on every push, as a blocking check, and the canary
+workflow was deleted along with the `ANABASIS_CXX_STANDARD` seam it drove.
 
-Three properties worth stating precisely:
+The reasoning is kept here rather than removed: the canary was correct while it stood, and the
+condition it was waiting for — the baseline catching up — is what retired it. `OPEN_QUESTIONS.md`
+OQ-006 carries the same supersession.
 
-- **Non-blocking by structure, not by `continue-on-error`.** The workflow is in no `needs:` chain
-  of `build.yml`, so it *cannot* stop the main pipeline; within itself, failures still fail the
-  run, because a red canary on the Actions page **is the product** — ADR-0008: "a red canary is a
-  to-do, not a gate". Swallowing the exit code would delete the signal the job exists to produce.
-- **The C++23 request goes through `ANABASIS_CXX_STANDARD`** (a `CMakeLists.txt` cache seam whose
-  only legal values are 20 and 23). Passing `-DCMAKE_CXX_STANDARD=23` directly does **not** work,
-  and fails silently: the project `set()`s that variable unconditionally, which shadows a
-  same-named cache entry. The seam exists so the override is loud, named and validated.
-- **`schedule` fires only from the default branch, and GitHub disables it after ~60 days without
-  repository activity.** After a quiet spell, check the workflow is still enabled and fire it
-  once via `workflow_dispatch` — which is also how to rehearse the first run right after the
-  workflow merges, the same advice `msvc.yml` carries about never-yet-executed pinned actions.
+## What 0.2.0 added to the pipeline
 
-Reproducing it locally (POSIX; the Windows difference is only the generator default and the
-`.exe` suffix):
+| Job / mechanism | Why it exists |
+|---|---|
+| **`merge-check`** | The ONLY job that runs on a same-repo pull request. Every other job is skipped there because the push trigger already built that SHA — the TIP, not the merge — so `refs/pull/N/merge`, the tree the merge button produces, was never compiled. Build and self-tests only: what a moved base breaks is compilation and behaviour, and both are platform-independent. |
+| **`realtime`** | RealtimeSanitizer over the DSP suite (ADR-0029), in its own job because the Clang driver refuses to combine `-fsanitize=realtime` with the `sanitizers` job's set. A liveness canary runs first and the job fails if it does NOT abort. Also carries the compile-only `-Wfunction-effects` gate over the JUCE-free leaf layer, compiled twice so a dead diagnostic cannot pass. |
+| **The pinned Clang** | `ANABASIS_CLANG_VERSION` in `build.yml` is the single authority; `scripts/setup-llvm-apt.sh` installs it fail-closed. Three jobs use it. Without it the zero-first-party-warning gate has no stable reference point and the RTSan runtime does not exist (ADR-0031). |
+| **The composite action + ccache** | `./.github/actions/setup-linux-build` carries the setup and the "ccache is an optimization, never a requirement" fallback ONCE for four jobs; the per-job cache lineage stays in the workflow because that is the part that differs. **The macOS jobs are deliberately not cached** — `dsymutil` walks the debug map back to the object files, which is the one place object provenance is observable. |
+| **The Linux ABI floor** | `scripts/check-linux-abi.py` on the STRIPPED bytes, last in the `linux` job so a compatibility finding never withholds an artifact whose behavioural gates passed. |
+| **macOS symbolication as a contract** | `-Wl,-object_path_lto` keeps the object `dsymutil` needs; two assertions — LTO ran and its objects were retained, and a UUID-matched dSYM was captured — turn a best-effort capture into a gate. Both run after the uploads. |
+| **Self-tests beside their checks** | `TESTING_POLICY.md` rule 5. Five checkers ship `--self-test` and each runs in the job that uses it, ahead of the use. |
 
-```bash
-cmake -B build-cxx23 -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_CXX_STANDARD=23
-cmake --build build-cxx23 --config Release --target AnabasisTests
-./build-cxx23/AnabasisTests_artefacts/Release/AnabasisTests
-```
+## Reproducing CI locally
+
+`scripts/preflight.sh` runs the checkers with their self-tests and then the suites, in CI's own
+order. It states what it CANNOT run rather than skipping quietly: the Clang warning gate needs a
+build log from the pinned compiler, and the ABI floor needs linked artifacts (it runs for real when
+a local Release build has produced them). A green preflight means "the checkers and suites pass",
+not "CI will be green".
+
+It runs the citation gate against **three** bases — `origin/main`, the branch's merge base, and
+`HEAD~1`. The third is what CI actually compares on a push and is the only one that reads the change
+since the last push on a branch with more than one commit.
 
 ## Before enabling branch protection — read this
 

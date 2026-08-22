@@ -1,4 +1,4 @@
-# CodeQL analysis for Anabasis (C++20 / JUCE audio plugin).
+# CodeQL analysis for Anabasis (C++23 / JUCE audio plugin).
 #
 # Languages analyzed:
 #   * c-cpp   -- src/ + tests/ (the only application code in the repo)
@@ -76,7 +76,7 @@ jobs:
     outputs:
       matrix: ${{ steps.check.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: check
         shell: bash
         run: |
@@ -110,10 +110,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4.37.7
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -144,6 +144,6 @@ jobs:
           cmake --build build --target Anabasis_VST3 AnabasisTests
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4.37.7
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: "/language:${{ matrix.language }}"

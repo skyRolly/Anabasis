@@ -67,6 +67,31 @@ re-baseline is a recorded gap (`DOCUMENTATION_COVERAGE.md` §Known coverage gaps
 
 ## Enforcement
 
+**Mechanical, since 0.2.0 (ADR-0029).** Until that version this policy — the repository's
+Priority-1 rule — was the one binding constraint here with **no** check in CI: ASan, UBSan and
+valgrind all treat an audio-path allocation as perfectly correct code, and the audit below is a
+document rather than a gate. Three tiers now enforce it, and none of them subsumes another:
+
+1. **The allocation guard** (`tests/AllocationGuard.h`), compiled into `AnabasisTests` and armed
+   ONLY around `AnabasisEngine::process`. Replaceable `operator new`/`delete` plus glibc malloc
+   interposition; it proves its counters live before reporting a zero, and discloses-and-skips
+   where a half is unavailable. `operator new` replacement is standard C++, so this is the tier
+   that reaches **MSVC**, where no sanitizer lane runs. Measured at 0.2.0: **2,040 armed
+   `process()` calls across 80 configurations — 0 allocations**, the mid-stream oversample rewire
+   included.
+2. **RealtimeSanitizer** in its own `realtime` job. `AnabasisEngine::process` carries
+   `ANABASIS_NONBLOCKING` (`src/dsp/RealtimeAnnotations.h`), and the whole serial chain runs
+   inside it, so one annotation places the chain under enforcement. A liveness canary runs first
+   and the job fails if the canary does NOT abort. Its bounds are real and stated in ADR-0029:
+   Clang-only, Linux/macOS-only, and it sees only what the suite executes.
+3. **A static lint over audio-path bodies** (`scripts/check-realtime.py`, in `source-lint` with its
+   own `--self-test`). Both runtime tiers see only executed code; measured with gcov, the DSP suite
+   runs 73.7 % of the lines and 63.4 % of the branches in `src/dsp`, so this one reads the rest. It
+   is function-scoped — the bodies this policy names, and `prepare()` deliberately not among them.
+
+None of this adds a constraint. The rule above is unchanged; what changed is that breaking it now
+fails a job instead of waiting for a review.
+
 - Any change touching an audio path is reviewed against the forbidden list.
 - Buffer sizing must happen in `prepare()`. If a feature needs more scratch, grow it in
   `prepare()`, never in `process()`.

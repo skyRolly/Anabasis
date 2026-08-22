@@ -11,7 +11,17 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
 
 ## Toolchain
 
-- **CMake ≥ 3.22**, a **C++20** compiler, **Ninja** (recommended generator).
+- **CMake ≥ 3.22**, a **C++23** compiler, **Ninja** (recommended generator). The baseline moved
+  from C++20 at 0.2.0 ([ADR-0030](../architecture/design-decisions/ADR-0030-cxx23-language-standard.md)),
+  so the floor is GCC 13+, Clang 17+, MSVC 19.35+ or AppleClang 15+. It is a hard `set()` in
+  `CMakeLists.txt`, not a cache variable: `-DCMAKE_CXX_STANDARD=20` does not take effect, and
+  that is deliberate — changing the baseline is an Architecture Review Gate item, so the way to
+  change it is an ADR and a commit rather than a flag.
+- **The Linux Clang jobs use a PINNED major** ([ADR-0031](../architecture/design-decisions/ADR-0031-clang-toolchain-pin.md)),
+  installed by `scripts/setup-llvm-apt.sh <major>`; the value is `ANABASIS_CLANG_VERSION` in
+  `.github/workflows/build.yml`. An ordinary local build needs no such thing — the pin matters
+  for the zero-first-party-warning gate and for RealtimeSanitizer, both of which
+  `scripts/preflight.sh` reports as skipped-with-a-note when the pinned compiler is absent.
 - **JUCE 9.0.1** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
   commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`) — or pointed at a local checkout.
   OQ-001 pinned the sibling product's revision; **ADR-0028 (2026-08-16) moved this repository to

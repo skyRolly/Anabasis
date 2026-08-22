@@ -104,7 +104,10 @@ refers to the pluginval **gate**, not to which bytes it sees.
 
 ## Resolved
 
-### OQ-006 — Where does the C++23 canary run, and what does it gate? · `Resolved 2026-08-05`
+### OQ-006 — Where does the C++23 canary run, and what does it gate? · `Resolved 2026-08-05` · `Superseded 2026-08-22 (ADR-0030)`
+
+> **SUPERSEDED — the canary no longer exists.** [ADR-0030](architecture/design-decisions/ADR-0030-cxx23-language-standard.md) raised the baseline to C++23 at 0.2.0, so the question this entry answers — where a *non-blocking early warning* about tomorrow's standard should run — has no subject: tomorrow's standard is today's, and every job in `build.yml` compiles it on all three platforms as a blocking check. The workflow file is deleted and the
+> `ANABASIS_CXX_STANDARD` seam with it. The resolution below is kept in full because it is the record of a decision that was correct while it stood.
 
 **Decision (2026-08-05, taken while executing the owner's post-v0.1.0 continue-autonomously
 directive; ⊕ for review like every decision taken under a standing approval rather than an

@@ -8,26 +8,42 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
 |---|---|---|---|
 | **JUCE** | **9.0.1**, pinned by the tag's **IMMUTABLE commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH` | Decided (OQ-001, 2026-07-30) at **9.0.0** / `f8f8864…`, written into `CMakeLists.txt` as `ANABASIS_JUCE_VERSION` + `ANABASIS_JUCE_TAG` at P1; moved to 9.0.1 by **ADR-0028, 2026-08-16** (compliance log below) |
 | **pluginval** | latest release (downloaded) | `scripts/run-pluginval.sh` / `.ps1` | pinning it is a tracked improvement, not yet done |
-| **C++ standard** | **C++20** | `CMAKE_CXX_STANDARD 20`, `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | per `DEVELOPMENT_BRIEF.md` §2.1 |
+| **C++ standard** | **C++23** | `CMAKE_CXX_STANDARD 23` (a hard `set()`, not a cache variable — an override must fail rather than configure), `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | `DEVELOPMENT_BRIEF.md` §2.1 set 20 with a canary; **ADR-0030, 2026-08-22** raised the baseline, removed the `ANABASIS_CXX_STANDARD` seam and retired the canary job, closing OQ-006 |
+| **Clang (Linux CI)** | **major 22**, upstream stable | `ANABASIS_CLANG_VERSION` in `.github/workflows/build.yml`; installed by `scripts/setup-llvm-apt.sh` from apt.llvm.org, signing key pinned by identity | **ADR-0031, 2026-08-22.** Not a Dependabot ecosystem; maintained by this row and that ADR. Ubuntu's own archives stop two majors short and ship no `libclang_rt.rtsan`, which the `realtime` job cannot run without |
 | Linux system libs | distro packages | `scripts/setup-linux.sh` (ALSA, JACK, X11, FreeType, GTK/WebKit, mesa, **EGL — required by JUCE 9's Linux GL context path**, xvfb) | scaffolded |
-| GitHub Actions | floating **major** refs (`@v7`, `@v4`, `@v5`), except `microsoft/msvc-code-analysis-action`, pinned by SHA | `.github/workflows/*` + Dependabot (`github-actions` ecosystem) | Verified to resolve, 2026-07-30 — see below |
+| GitHub Actions | **every ref pinned to a COMMIT SHA**, with the version in a trailing comment | `.github/workflows/*` + `.github/actions/*` + Dependabot (`github-actions` ecosystem, split by semver impact) | Floating majors until 0.1.6; **SHA-pinned 2026-08-22** (migration audit item A2-15) — see below |
 
-### Action-ref verification (2026-07-30)
+### Action refs: SHA-pinned since 0.2.0 (2026-08-22)
 
-Every `uses:` ref in `.github/workflows/` was resolved against GitHub. All exist:
-`actions/checkout@v7` and `actions/upload-artifact@v7` (tags), `github/codeql-action/{init,analyze,upload-sarif}@v4`
-(tag), `microsoft/msvc-code-analysis-action@96315324…` (commit, still a ref tip).
+**Every `uses:` ref in `.github/` names a commit SHA**, with the version it corresponds to in a
+trailing comment — Dependabot's own convention, which it reads and rewrites. Local refs
+(`./.github/workflows/build.yml`, `./.github/actions/setup-linux-build`) are this repository and are
+not dependencies.
 
-**`actions/dependency-review-action@v5` resolves through a BRANCH, not a tag** — the repository's
-tags run `v4.9.0` → `v5.0.0` with no bare `v5` tag, and `refs/heads/v5` is what the ref matches.
-It works, and it is the vendor's own advertised usage, but it is worth knowing that this one moves
-under a branch rather than a re-pointable tag: strictly less immutable than the others, on the one
-workflow that is **not** gated behind `preflight` and therefore runs on every PR today. This is the
-only ref in the repository whose resolution differs in kind from what its `@vN` spelling suggests.
+**This reverses the position recorded here until 0.1.6**, which read: *"Floating majors are a
+deliberate trade — Dependabot tracks them and a first-party GitHub action re-pointing a major tag
+maliciously is not the threat model this repository defends against. The one third-party action is
+SHA-pinned because it is."* The 0.2.0 migration audit re-took that decision (item A2-15) on an
+internal-consistency argument the original framing did not weigh: **JUCE is pinned by immutable
+commit SHA precisely "so the dependency cannot change under a re-pointed tag" — and JUCE never sees
+a token, while every one of these actions runs on the runner with the job's credentials.** A
+repointed `v7` was the more privileged hole of the two. The threat model is not "a first-party
+action turns malicious"; it is "a tag is a mutable pointer, and this repository already decided
+mutable pointers are unacceptable for the dependency that cannot reach a secret".
 
-Floating majors are a deliberate trade — Dependabot tracks them and a first-party GitHub action
-re-pointing a major tag maliciously is not the threat model this repository defends against. The
-one third-party action is SHA-pinned because it is.
+Two prior findings are preserved because pinning is what settles them:
+
+- **`actions/dependency-review-action@v5` resolved through a BRANCH, not a tag** — that repository's
+  tags run `v4.9.0` → `v5.0.0` with no bare `v5` tag, so `refs/heads/v5` was what the ref matched:
+  strictly less immutable than the others, on the one workflow **not** gated behind `preflight` and
+  therefore running on every PR. It is now a SHA and the distinction is moot.
+- **`microsoft/msvc-code-analysis-action` is pinned AHEAD of its last release** and is the one entry
+  Dependabot is told to ignore; `.github/dependabot.yml` carries the reasoning, and
+  `.github/workflows/msvc.yml` carries the reason for the pin itself.
+
+The cost is update volume: a bare major moves only when the major does, a SHA moves on every
+release. `.github/dependabot.yml` splits the updates by semver impact so patch bumps land on a green
+run without a major blocking them.
 
 ## Version-lock reasoning
 
@@ -66,15 +82,17 @@ one third-party action is SHA-pinned because it is.
   state or wrapper behaviour can differ between the products for this reason; the nine that did
   change are GUI, platform-native, file-format and web-view surfaces. ADR-0028 tabulates each with
   its diff size and why it is or is not reachable here, and carries the re-convergence obligation.
-- **C++20 is the baseline, not a floor to drift above.** C++20 **modules are not used** — they
-  remain a build-system liability in plugin projects. Where a C++23 library feature would clearly
-  improve the code (`std::expected`, `std::mdspan`, `std::float32_t`, `[[assume]]`, `std::print`
-  in test tooling), it is guarded behind feature-test macros (`__cpp_lib_expected`,
-  `__has_include(<mdspan>)`, …) **and a thin first-party abstraction**, so raising the baseline
-  later is a localised change rather than a rewrite. C++26 is not targeted
-  (`DEVELOPMENT_BRIEF.md` §2.1).
-- **The C++23 canary CI job is early warning, never a gate.** Its failure must not block the main
-  pipeline; its status is reported in each phase summary (`OPEN_QUESTIONS.md` OQ-006).
+- **C++23 is the baseline since ADR-0030 (0.2.0), and modules are still not used** — they remain a
+  build-system liability in plugin projects, which is the half of ADR-0008 decision B5 that ADR-0030
+  did NOT supersede. The **library** rule is unchanged and still binds: a C++23 library feature
+  (`std::expected`, `std::mdspan`, `std::float32_t`, `std::print` in test tooling) is admitted only
+  behind feature-test macros (`__cpp_lib_expected`, `__has_include(<mdspan>)`, …) **and a thin
+  first-party abstraction**, because the three shipped standard libraries do not implement them on
+  the same schedule. Language features carry no such caveat: every CI compiler implements the
+  standard the build now requires. C++26 is not targeted.
+- ~~**The C++23 canary CI job is early warning, never a gate.**~~ **Retired by ADR-0030.** The
+  canary asked "does tomorrow's baseline still compile?"; tomorrow's baseline is today's, and every
+  job on all three platforms compiles it as a blocking check. OQ-006 is closed.
 
 ## Upgrade rules
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EngineParameters.h"
+#include "RealtimeAnnotations.h"
 #include "Latency.h"
 #include "MasteringEQ.h"
 #include "MasteringComp.h"
@@ -81,7 +82,7 @@ public:
     // block's values. The wrapper asks rather than re-deriving the condition:
     // a re-derivation drifts the moment this early return grows a term, and it
     // did — the first version of the publish guard missed `ringSizeOs <= 0`.
-    bool process (juce::AudioBuffer<float>& buffer, const EngineParameters& params) noexcept;
+    bool process (juce::AudioBuffer<float>& buffer, const EngineParameters& params) noexcept ANABASIS_NONBLOCKING;
 
     int groupDelaySamples() const noexcept { return delaySamples; }
 

@@ -6,8 +6,51 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.1.6 (2026-08-21)** — the two field-report fixes: the GR history's
-vertical scale and the percent value boxes' typed entry.
+**Last updated:** for **0.2.0 (2026-08-22)** — the engineering-standard round, executed from the
+round-2 Anamorph→Anabasis migration audit.
+
+**Scope of the 0.2.0 round.** Three ADRs Accepted (0029 realtime enforcement, 0030 the C++23
+baseline, 0031 the Clang pin), no DSP algorithm change, no parameter added/renamed/removed, no
+schema, threading or latency change, and the frozen registry snapshot untouched. The
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged are **New ADR** (`ADR_INDEX.md` + the three
+records + every policy each amends), **Build-system change** (`BUILD.md`, `CI_CD.md`,
+`DEPENDENCY_POLICY.md`, `README.md`, `REPOSITORY_MAP.md`), **New/changed test** (`TESTING.md`, this
+file), **Policy change** (`REALTIME_AUDIO_POLICY.md`, `TESTING_POLICY.md`,
+`ARCHITECTURE_REVIEW_GATE.md`, `CODE_STYLE.md`) and **Ship a version** (`CHANGELOG.md`,
+`HANDOVER.md`, `README.md`).
+
+**Mutations run this round, each killing a disjoint set** — the evidence that the new gates measure
+what they name:
+
+| Mutant | Killed |
+|---|---|
+| `check-docs.py` skip filtering restored to the absolute path | 7 of 67 self-test cases |
+| the `check-docs.py` empty-scan guard deleted | exactly 1, and only that one |
+| raw strings unrecognised in `check-portability.py` | 7 of 120 |
+| the single-character digit-separator test (prefixed char literals blind the scanner) | 6 of 120 |
+| line splices inside a literal not preserved | 10 of 120 |
+| the unterminated-literal length invariant dropped | 4 of 120 |
+| a seeded `new` in `AnabasisEngine::process` / `resize` in the wrapper `processBlock` / `resize` in `LookaheadLimiter::reset` | each reported by `check-realtime.py`; the tree clean without them |
+| a third probe configuration made identical to another | the discrimination check names the undeclared pair and refuses |
+| the pre-0.2.0 release-notes fence tracker | truncates a nested-fence entry at the sample heading; the new form publishes it whole |
+
+**Three claims this round DECLINED to carry across from the sibling**, because they are that
+product's measurements and not ours: the `prepare()` allocation split (re-measured here at
+`new=205 malloc=1313`), the `src/dsp` coverage figure (re-measured at 73.7 % lines / 63.4 %
+branches, materially lower, which strengthens the static lint's case) and the `CXXABI` floor
+(re-measured at 1.3.9, five ABI versions below the sibling's declaration — copying it would have
+left headroom in which a real raise passes unnoticed).
+
+**One finding the round produced by running its own new instrument.** The channel probe's
+`--assert-discriminating` immediately reported that `field: mix 100, links 0` and
+`field: mix 100, links 100` produce identical output at every rate and block size — a property of
+the equal-level stimulus rather than a defect, but it means ADR-0028's "33 configurations agree
+digit for digit" is 32 distinct experiments plus one run twice. It is DECLARED in the probe's source
+with the measured reason rather than engineered away, because the stimulus change that would fix it
+would trip the probe's primary skew oracle.
+
+**Last updated before that:** for **0.1.6 (2026-08-21)** — the two field-report fixes: the GR
+history's vertical scale and the percent value boxes' typed entry.
 
 **Scope of the 0.1.6 round.** Two owner reports, both display/entry surfaces, **no DSP change, no
 parameter added, renamed or removed, no schema, threading or latency change** — so the

@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Six such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Seven such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,91 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.2.0] — 2026-08-22
+
+**The engineering-standard round: the Priority-1 realtime policy becomes a gate, the toolchain
+stops moving under the build, and the shipped artifact's properties become measurements.** No DSP
+algorithm changed, no parameter was added, renamed or removed, no serialization schema, threading
+model or reported latency moved, and the frozen parameter-registry snapshot needed no re-freeze.
+The minor bump is for the C++ baseline and the toolchain pin, both of which change what a
+contributor needs installed. Executed from the migration audit in
+[`worklogs/2026-08-21-anamorph-migration-audit-round-2.md`](worklogs/2026-08-21-anamorph-migration-audit-round-2.md);
+the execution record is
+[`worklogs/2026-08-22-migration-roadmap-execution.md`](worklogs/2026-08-22-migration-roadmap-execution.md).
+
+### Added
+
+- **`REALTIME_AUDIO_POLICY` is now enforced mechanically, in three tiers**
+  ([ADR-0029](docs/architecture/design-decisions/ADR-0029-realtime-enforcement-strategy.md)). An
+  allocation guard armed around the engine's audio entry point and compiled into the DSP suite (the
+  tier that reaches Windows, where no sanitizer runs); a **RealtimeSanitizer** job behind a liveness
+  canary; and a static lint over audio-path bodies for the branches neither runtime tier executes.
+  The audit document had asked for the first of these since P2. Measured: **0 allocations over 2,040
+  armed `process()` calls across 80 configurations**, and the DSP suite runs violation-free under
+  RealtimeSanitizer.
+  Evidence: ADR-0029 §Evidence; `tests/AllocationGuard.h`, `scripts/check-realtime.py`. [Verified]
+- **The shipped Linux binaries have a declared, gated ABI floor** — `scripts/check-linux-abi.py`.
+  Until now the compatibility document said no Linux OS floor "has been decided or measured"; the
+  artifact had one all along and nothing reported it. Measured on this repository's own build:
+  GLIBC 2.38, GLIBCXX 3.4.31, CXXABI 1.3.9. The run that raises it is now the run that fails.
+  Evidence: `scripts/check-linux-abi.py`; `docs/architecture/COMPATIBILITY_MATRIX.md`. [Verified]
+- **macOS crash symbolication actually works.** Under Release + LTO, ld64 deleted the object
+  `dsymutil` needs, so the `-debug` artifact was never produced on the one platform whose users hand
+  developers OS crash logs. `-Wl,-object_path_lto` retains it, and two assertions turn the
+  best-effort capture into a contract.
+  Evidence: `CMakeLists.txt` (Apple link options); `.github/workflows/build.yml` `macos` job. [Verified]
+- **`scripts/preflight.sh`** — the lint gates and the suites in one local command, with no silent
+  skips, and the citation gate run against all three bases including the push predecessor CI
+  actually compares.
+  Evidence: `scripts/preflight.sh`. [Verified]
+
+### Changed
+
+- **The language baseline moves C++20 → C++23**
+  ([ADR-0030](docs/architecture/design-decisions/ADR-0030-cxx23-language-standard.md)), superseding
+  ADR-0008 decision B5's standard and closing OQ-006. A C++23 compiler is now required to build:
+  GCC 13+, Clang 17+, MSVC 19.35+, AppleClang 15+. Modules remain unused and C++23 *library*
+  features remain admissible only behind feature-test macros. The `ANABASIS_CXX_STANDARD` seam and
+  the weekly `cxx23-canary` workflow are removed — every job on all three platforms now compiles
+  the baseline as a blocking check.
+  Evidence: ADR-0030 §Evidence. [Verified]
+- **The Linux CI Clang major is pinned**
+  ([ADR-0031](docs/architecture/design-decisions/ADR-0031-clang-toolchain-pin.md)). The
+  zero-first-party-warning gate had no stable reference point, and RealtimeSanitizer does not exist
+  in the major Ubuntu's archives stop at. **No warning baseline file was introduced** — the gate
+  stays at zero, and it holds at the pinned major with no source change.
+  Evidence: ADR-0031 §Evidence. [Verified]
+- **Every GitHub Actions ref is pinned to a commit SHA**, and Dependabot is split by semver impact.
+  This reverses a decision `DEPENDENCY_POLICY.md` previously recorded; that policy section is
+  rewritten with the argument that changed it rather than left contradicting the workflows.
+  Evidence: `.github/dependabot.yml`; `docs/policies/DEPENDENCY_POLICY.md`. [Verified]
+- **pluginval's crash-retry is scoped to Linux.** The retry exists for one documented X11/XEmbed
+  host-side flake; on macOS it was giving a genuine intermittent crash three chances to disappear.
+  Evidence: `scripts/run-pluginval.sh`. [Verified]
+
+### Fixed
+
+- **The documentation gate could report a clean run over an empty set.** `check-docs.py` tested its
+  skip list against the ABSOLUTE path, so a checkout living anywhere under a directory named
+  `build`, `JUCE` or `node_modules` excluded every file in the repository — and `main()` then printed
+  `0 file(s) clean` and exited 0. Both halves are fixed and both are pinned by new self-test cases.
+  No document's content changed; what changed is that the gate now reads them.
+  Evidence: `scripts/check-docs.py`; `--self-test` (67 cases). [Verified]
+- **The portability lint could be silently blinded** by a raw string, a prefixed character literal,
+  a line splice inside a literal, or an unterminated literal or block comment — each of which
+  desynchronises its scanner and turns findings below it into false negatives or wrong line numbers.
+  No such construct exists in the tree today; the failure direction is what made it worth fixing.
+  Evidence: `scripts/check-portability.py`; `--self-test` (120 cases). [Verified]
+- **Published release notes could be truncated by a nested code fence.** The extractor recorded a
+  fence opener as three characters and closed on a bare prefix, so a three-backtick line closed a
+  four-backtick block, and a fence carrying an info string closed the block it was nested inside —
+  after which the next `##` heading ended the notes early. The closer now follows CommonMark: same
+  character, at least as long, nothing but whitespace after the run. Every existing entry extracts
+  byte-identically; the fix is for the first entry that adds a nested sample.
+  Evidence: `.github/workflows/release.yml`. [Verified]
 
 ---
 

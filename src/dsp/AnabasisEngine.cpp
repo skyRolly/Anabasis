@@ -218,7 +218,7 @@ void AnabasisEngine::reset() noexcept
     bypassMix = bypassTarget ? 1.0f : 0.0f;
 }
 
-bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept
+bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept ANABASIS_NONBLOCKING
 {
     const int totalSamples = buffer.getNumSamples();
     const int numChannels  = juce::jmin (buffer.getNumChannels(), wetRing.getNumChannels());

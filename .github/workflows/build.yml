@@ -50,8 +50,38 @@ concurrency:
 # number, so it carries no duplicate rows: the 2026-08-02 raise briefly added a
 # second P6 line that disagreed with the first.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE CLANG MAJOR IS PINNED, and for the same one-place reason (ADR-0031, 0.2.0).
+#
+# `linux-clang` gates on ZERO first-party warnings. Which diagnostics Clang
+# emits is a property of the COMPILER VERSION -- `-Wshadow-field`,
+# `-Wsign-conversion`, `-Wmissing-prototypes` and `-Wunused-but-set-variable`
+# have all moved between majors -- so an unpinned `clang` means the bar that
+# gate measures against is whatever `ubuntu-latest` happens to resolve to that
+# week. A runner-image bump would then turn the gate red on a push that changed
+# nothing in the tree, or, worse, quietly green with fewer diagnostics.
+#
+# It is also a HARD REQUIREMENT for the `realtime` job rather than a preference:
+# RealtimeSanitizer arrived in Clang 20, and Ubuntu's archives for `noble` stop
+# at clang-20 with no `libclang_rt.rtsan` for a newer major. The pinned install
+# comes from apt.llvm.org via `scripts/setup-llvm-apt.sh`, which is upstream's
+# own channel for this distribution.
+#
+# 22 is the current upstream stable major and is the version the sibling product
+# pins, which keeps the two products' Clang diagnostics comparable -- the whole
+# point of sharing an engineering standard across a product family. Moving it is
+# a Build System change under the Architecture Review Gate (see that document's
+# "Compiler and toolchain versions" rule 1) and needs an ADR.
+#
+# DELIBERATELY NOT PAIRED WITH A WARNING BASELINE FILE. The sibling carries
+# `clang-warning-baseline.txt`, a debt list of accepted first-party warnings;
+# this repository gates on zero instead, which is the stricter contract, and the
+# 0.2.0 migration audit rejected importing that file for exactly that reason.
+# If the pin ever surfaces diagnostics, they get FIXED.
+# ---------------------------------------------------------------------------
 env:
   ANABASIS_PLUGINVAL_STRICTNESS: 10
+  ANABASIS_CLANG_VERSION: 22
 
 # Every push builds the FULL set of formats on all three desktop OSes so beta
 # testers can install on any platform:
@@ -116,6 +146,73 @@ jobs:
   # run. Both commands are plain `python3` invocations with no dependencies
   # beyond the standard library.
   # -------------------------------------------------------------------------
+  # -------------------------------------------------------------------------
+  # THE MERGE RESULT -- the one tree no push build ever compiles (0.2.0).
+  #
+  # `actions/checkout` on a `pull_request` event checks out `refs/pull/N/merge`,
+  # so this job builds the PR merged with the base AS IT STANDS RIGHT NOW. That
+  # is the tree the merge button produces, and nothing else in this workflow sees
+  # it: every other job is skipped on a same-repo PR because the push trigger
+  # already built the same SHA -- the TIP, not the merge. So a semantic conflict
+  # between a PR and a base that moved under it reaches `main` unbuilt.
+  #
+  # SCOPED TO SAME-REPO PRs, the exact complement of the guard every other job
+  # carries. A fork PR is not covered by the push trigger, so it already runs the
+  # full matrix and does not need this. Under `workflow_call` the caller's event
+  # decides: release.yml triggers on a tag push and workflow_dispatch, so this
+  # job is skipped on every release and rehearsal, which is correct -- a tag has
+  # no merge result.
+  #
+  # BUILD AND SELF-TESTS ONLY, and that is the whole design. What a moved base
+  # breaks is compilation and behaviour, and both are platform-independent.
+  # Packaging, pluginval and the other two platforms validate properties of the
+  # TIP that the push build already gated, so re-running them here would restore
+  # the duplicate matrix the same-repo guard exists to remove. No artifacts are
+  # produced: this job answers "does the merge build and pass", not "what would
+  # we ship".
+  # -------------------------------------------------------------------------
+  merge-check:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build dependencies
+        uses: ./.github/actions/setup-linux-build
+
+      # Shares the `linux` job's GCC cache lineage on purpose: this job compiles
+      # the same sources with the same compiler in the same configuration, so the
+      # entries are interchangeable and a merge-check is nearly free after the
+      # push build of either parent has populated it.
+      - name: Restore the compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-gcc-release-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-gcc-release-
+
+      - name: Configure
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DANABASIS_BUILD_STANDALONE=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build (VST3 + tests)
+        run: cmake --build build --target Anabasis_VST3 AnabasisTests AnabasisStateTests
+
+      - name: DSP + state self-tests
+        run: |
+          ./build/AnabasisTests_artefacts/Release/AnabasisTests
+          ./build/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
+      - name: Compiler cache statistics
+        if: ${{ !cancelled() && env.ANABASIS_COMPILER_LAUNCHER != '' }}
+        run: ccache --show-stats --verbose || true
+
   docs:
     runs-on: ubuntu-latest
     # Same rationale as `preflight` below: skip the duplicate same-repo PR event,
@@ -134,7 +231,7 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint documentation structure
         run: |
           python3 scripts/check-docs.py --self-test
@@ -170,11 +267,38 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # `check-citations.py` compares against a BASE REVISION, so the run
           # needs history rather than the default single-commit checkout.
           fetch-depth: 0
+      # PROVE EACH CHECKER IS LIVE BEFORE TRUSTING ITS SILENCE -- TESTING_POLICY
+      # rule 5, and it says "in the same job, ahead of the check it vouches
+      # for" for a reason a different arrangement would lose: a liveness proof
+      # in another job proves nothing about the run whose silence is being read
+      # here. Both of these are seconds and need nothing but Python, so they run
+      # before the lints rather than after.
+      #
+      # The portability lint's `--compile-canary` is NOT this and does not
+      # replace it: that step lives in `linux-clang` because it needs the pinned
+      # JUCE on disk, and it answers "does the dependency still HAVE the
+      # hazard?". This answers "does the CHECKER still find it?" -- a question
+      # about ~200 lines of hand-written lexing in that file, and the half that
+      # can silently stop working without anything going red.
+      - name: Portability lint self-test (the lint still fires, and still stays quiet)
+        run: python3 scripts/check-portability.py --self-test
+      - name: Citation-gate self-test (recognition, mapping and rewriting)
+        run: python3 scripts/check-citations.py --self-test
+      # The THIRD realtime tier (ADR-0029), and the only one that needs no build
+      # and runs on every platform. RTSan and the allocation guard both see only
+      # the code the suite EXECUTES; measured with gcov on this tree, the DSP
+      # suite runs 73.7 % of the lines and 63.4 % of the branches in `src/dsp`,
+      # so better than a third of the branches are invisible to both of them.
+      # This one reads the text.
+      - name: Realtime lint self-test (the lint still fires, and still stays quiet)
+        run: python3 scripts/check-realtime.py --self-test
+      - name: Lint audio-path bodies (REALTIME_AUDIO_POLICY forbidden constructs)
+        run: python3 scripts/check-realtime.py
       - name: Lint source portability (JUCE SIMD overload hazard)
         run: python3 scripts/check-portability.py
       # Evidence anchors (`src/PluginProcessor.cpp:695-752`) are exact and
@@ -269,7 +393,7 @@ jobs:
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: check
         shell: bash
         run: |
@@ -285,12 +409,34 @@ jobs:
     if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install build dependencies
-        run: |
-          chmod +x scripts/*.sh
-          ./scripts/setup-linux.sh
+        uses: ./.github/actions/setup-linux-build
+
+      # THE COMPILER CACHE (0.2.0). Every Linux job here previously fetched and
+      # compiled JUCE from scratch on every push -- four full builds of a
+      # dependency that changes only when its pinned SHA does. ccache is keyed on
+      # preprocessed source and the compiler's identity, so a JUCE bump or a
+      # compiler pin change invalidates it correctly by construction.
+      #
+      # AN OPTIMIZATION, NEVER A REQUIREMENT. The composite action publishes an
+      # EMPTY `ANABASIS_COMPILER_LAUNCHER` if ccache cannot be installed, and the
+      # configure step below passes it through unset -- slower, never different.
+      # A cache hit changes where the .o files came from, never what they
+      # contain.
+      #
+      # THE LINEAGE IS PER JOB and stays here rather than in the action, because
+      # it is the part that is genuinely different in each: which compiler
+      # produced the objects, and which build directory. `github.run_id` in the
+      # key makes every run write a fresh entry; `restore-keys` is what makes it
+      # read the previous one.
+      - name: Restore the compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-gcc-release-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-gcc-release-
 
       - name: Configure
         # ANABASIS_BUILD_BENCH is ON here and nowhere else. The bench stays OFF
@@ -313,11 +459,27 @@ jobs:
         #     re-measure, which PERFORMANCE_BUDGET.md already requires; it is
         #     deliberately not a CI job, because the numbers a shared runner
         #     produces are exactly the ones that must not be quoted.
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_PROBE=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_PROBE=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build (VST3 + Standalone + tests + bench)
         id: build
         run: cmake --build build --config Release
+
+      # A cache hit changes where the .o files came from, never what they
+      # contain, so the link is fed identical input. Note what the strip step
+      # reads: `objcopy --only-keep-debug` operates on the LINKED binary, not on
+      # the objects, so object provenance cannot reach it. macOS is the case
+      # where provenance genuinely matters -- `dsymutil` walks the debug map back
+      # to the object files -- which is why those jobs are deliberately NOT
+      # cached.
+      - name: Compiler cache statistics
+        if: ${{ !cancelled() && env.ANABASIS_COMPILER_LAUNCHER != '' }}
+        run: ccache --show-stats --verbose || true
 
       # Capture split debug info, then strip the shipped binaries. Runs BEFORE
       # pluginval so the release gate validates the exact stripped bytes users
@@ -409,8 +571,17 @@ jobs:
         # reported configuration includes the UI, so give it one where we can.
         run: |
           if command -v xvfb-run >/dev/null 2>&1; then RUN="xvfb-run -a"; else RUN=""; fi
+          # --assert-discriminating: this probe's table is also the evidence a
+          # DEPENDENCY BUMP is judged by (ADR-0028 compared two JUCE builds row
+          # by row). Agreement between two runs only means something if the rows
+          # differ from EACH OTHER -- a collapsed scenario set makes any two
+          # builds agree perfectly while testing nothing. The flag refuses to
+          # report a baseline it has not shown to be discriminating; the one pair
+          # that genuinely coincides is declared in the source with its measured
+          # reason, and anything new fails.
           $RUN ./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe \
-               build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+               build/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3 \
+               --assert-discriminating
 
       - name: pluginval (deterministic x3 -- release gate)
         # Explicit condition rather than relying on "no `if:`, so it self-skips".
@@ -493,7 +664,7 @@ jobs:
       # failure still yields beta artifacts.
       - name: Upload Linux artifacts
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage.outcome == 'success' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-Linux
           path: dist/Anabasis-Linux
@@ -504,11 +675,38 @@ jobs:
       # itself completed, which is what actually produced the .debug files.
       - name: Upload Linux debug symbols (crash symbolication)
         if: ${{ !cancelled() && steps.strip.outputs.debug_artifacts == 'true' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-Linux-debug
           path: dist/Anabasis-Linux-debug
           if-no-files-found: error
+
+      # THE SHIPPED LINUX ABI FLOOR (ADR-0029 round, 0.2.0). A Linux binary
+      # records, per imported symbol, the oldest glibc/libstdc++ version that
+      # provides it; the maximum of those is the oldest system it can load on at
+      # all. Nothing decided this project's number -- it fell out of whichever
+      # image `ubuntu-latest` resolved to -- and nothing reported it, so the
+      # compatibility claim for Linux was "it builds on ubuntu-latest", which is
+      # a statement about CI rather than about users.
+      #
+      # RUN LAST, AFTER THE UPLOADS, and deliberately: a compatibility FINDING
+      # must not withhold the beta artifact whose behavioural gates all passed.
+      # It still fails the job.
+      #
+      # ON THE STRIPPED BYTES -- the same files the user receives. `strip`
+      # removes symbol tables, never version references, so the answer is the
+      # same either way; reading the shipped copy means it cannot drift from
+      # what shipped.
+      - name: ABI floor self-test (the checker still fires)
+        if: ${{ !cancelled() && steps.strip.outcome == 'success' }}
+        run: python3 scripts/check-linux-abi.py --self-test
+
+      - name: Assert the shipped Linux ABI floor
+        if: ${{ !cancelled() && steps.strip.outcome == 'success' }}
+        run: |
+          python3 scripts/check-linux-abi.py \
+            "dist/Anabasis-Linux/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so" \
+            "dist/Anabasis-Linux/Anabasis"
 
   # -------------------------------------------------------------------------
   # Linux + Clang, and the first-party warning gate.
@@ -541,20 +739,50 @@ jobs:
     if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # THE PINNED MAJOR, not the image's default -- see the env block for why
+      # the warning gate in this job is meaningless without it.
       - name: Install build dependencies
-        run: |
-          chmod +x scripts/*.sh
-          ./scripts/setup-linux.sh
+        uses: ./.github/actions/setup-linux-build
+        with:
+          clang-version: ${{ env.ANABASIS_CLANG_VERSION }}
+
+      # THE COMPILER CACHE (0.2.0). Every Linux job here previously fetched and
+      # compiled JUCE from scratch on every push -- four full builds of a
+      # dependency that changes only when its pinned SHA does. ccache is keyed on
+      # preprocessed source and the compiler's identity, so a JUCE bump or a
+      # compiler pin change invalidates it correctly by construction.
+      #
+      # AN OPTIMIZATION, NEVER A REQUIREMENT. The composite action publishes an
+      # EMPTY `ANABASIS_COMPILER_LAUNCHER` if ccache cannot be installed, and the
+      # configure step below passes it through unset -- slower, never different.
+      # A cache hit changes where the .o files came from, never what they
+      # contain.
+      #
+      # THE LINEAGE IS PER JOB and stays here rather than in the action, because
+      # it is the part that is genuinely different in each: which compiler
+      # produced the objects, and which build directory. `github.run_id` in the
+      # key makes every run write a fresh entry; `restore-keys` is what makes it
+      # read the previous one.
+      - name: Restore the compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-
+
 
       - name: Configure (Clang)
         run: >
           cmake -B build-clang -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
+          -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
           -DANABASIS_BUILD_STANDALONE=OFF
           -DANABASIS_BUILD_PROBE=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       # The canary belongs HERE rather than in source-lint: it needs the pinned
@@ -564,7 +792,9 @@ jobs:
       # that changes the SIMDRegister overload set fails this step instead of
       # silently turning the lint into a no-op.
       - name: Portability compile canary (pinned JUCE still has the hazard)
-        run: python3 scripts/check-portability.py --compile-canary build-clang/_deps/juce-src/modules --cxx clang++
+        run: >
+          python3 scripts/check-portability.py --compile-canary build-clang/_deps/juce-src/modules
+          --cxx clang++-${{ env.ANABASIS_CLANG_VERSION }}
 
       # PROVE THE GATE IS LIVE BEFORE TRUSTING ITS SILENCE. This is the same
       # move `check-docs.py --self-test` and `check-portability.py
@@ -630,6 +860,7 @@ jobs:
         run: >
           ./build-clang/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
           build-clang/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
+          --assert-discriminating
 
   # -------------------------------------------------------------------------
   # Sanitizers (Linux). The point of this job is to catch, ON LINUX, defects
@@ -666,32 +897,59 @@ jobs:
     if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # THE PINNED MAJOR (ADR-0031) carries the sanitizer runtime with it:
+      # `libclang-rt-<major>-dev` is in the same fail-closed transaction as the
+      # compiler, so this job and `realtime` cannot end up on different
+      # toolchains. Before the pin this job installed the unsuffixed
+      # `libclang-rt-dev` alias, which does not exist on every image and failed
+      # as "cannot find libclang_rt.asan-x86_64.a" -- a link error that reads as
+      # a project problem and is not one. valgrind stays an image package and is
+      # the one thing this job cannot run without, so it is fail-closed too.
       - name: Install build dependencies
-        run: |
-          chmod +x scripts/*.sh
-          ./scripts/setup-linux.sh
-          # clang's sanitizer runtime ships SEPARATELY from clang on Debian/Ubuntu.
-          # Without it the link fails with "cannot find libclang_rt.asan-x86_64.a",
-          # which reads as a project problem and is not one. The version-suffixed
-          # package is the reliable name; the unsuffixed one is a convenience alias
-          # that does not exist on every image, so try both and fail loudly if
-          # neither lands (`set -e` is on -- the final `-y valgrind` is not a
-          # swallow, it is the minimum this job cannot run without).
-          sudo apt-get install -y valgrind clang
-          sudo apt-get install -y libclang-rt-dev \
-            || sudo apt-get install -y "libclang-rt-$(clang --version | sed -n 's/.*clang version \([0-9]*\).*/\1/p')-dev"
+        uses: ./.github/actions/setup-linux-build
+        with:
+          clang-version: ${{ env.ANABASIS_CLANG_VERSION }}
+          extra-packages: valgrind
+
+      # THE COMPILER CACHE (0.2.0). Every Linux job here previously fetched and
+      # compiled JUCE from scratch on every push -- four full builds of a
+      # dependency that changes only when its pinned SHA does. ccache is keyed on
+      # preprocessed source and the compiler's identity, so a JUCE bump or a
+      # compiler pin change invalidates it correctly by construction.
+      #
+      # AN OPTIMIZATION, NEVER A REQUIREMENT. The composite action publishes an
+      # EMPTY `ANABASIS_COMPILER_LAUNCHER` if ccache cannot be installed, and the
+      # configure step below passes it through unset -- slower, never different.
+      # A cache hit changes where the .o files came from, never what they
+      # contain.
+      #
+      # THE LINEAGE IS PER JOB and stays here rather than in the action, because
+      # it is the part that is genuinely different in each: which compiler
+      # produced the objects, and which build directory. `github.run_id` in the
+      # key makes every run write a fresh entry; `restore-keys` is what makes it
+      # read the previous one.
+      - name: Restore the compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-san-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-san-
+
 
       - name: Configure (Clang, ASan + UBSan)
         run: >
           cmake -B build-san -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
+          -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DANABASIS_BUILD_STANDALONE=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build test targets (sanitized)
@@ -711,9 +969,31 @@ jobs:
       # pipeline (see the MemorySanitizer note above), so its exit code is the
       # gate: --error-exitcode makes a reported error fail the job, which is not
       # valgrind's default.
+      # -DANABASIS_NO_ALLOC_GUARD IS REQUIRED HERE, and it is a correctness
+      # requirement rather than a preference. `tests/AllocationGuard.h` replaces
+      # `operator new`/`delete` and forwards the delete side to `std::free`,
+      # which is the CONSISTENT pairing for the memory `rawAlloc` returns --
+      # ordinary glibc heap blocks. memcheck does not follow that reasoning: it
+      # intercepts the `new`/`delete` and `malloc`/`free` families SEPARATELY
+      # and tracks which family produced each block, so every delete through the
+      # guard is reported as "Mismatched free() / delete / delete []".
+      # Measured on this repository, GCC 13.3 Release, the DSP suite alone:
+      # hundreds of such reports and a non-zero exit under the invocation below,
+      # which `--error-exitcode=1` turns into a red job.
+      #
+      # Nothing is lost by standing the guard down here. memcheck answers a
+      # different question (uninitialised reads), the allocation counters are
+      # asserted in the `linux`/`linux-clang` builds where they are live, and
+      # `selfCheck()` DISCLOSES that both halves are compiled out so the suite
+      # skips its allocation assertions with a note rather than passing a
+      # vacuous zero. memcheck leaves no compile-time marker to detect, which is
+      # why this is a flag rather than a feature test like the RTSan case.
       - name: Configure + build both suites (unsanitized, for valgrind)
         run: |
-          cmake -B build-vg -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_STANDALONE=OFF
+          cmake -B build-vg -G Ninja -DCMAKE_BUILD_TYPE=Release -DANABASIS_BUILD_STANDALONE=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER="${ANABASIS_COMPILER_LAUNCHER}" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="${ANABASIS_COMPILER_LAUNCHER}" \
+            -DCMAKE_CXX_FLAGS=-DANABASIS_NO_ALLOC_GUARD
           cmake --build build-vg --target AnabasisTests AnabasisStateTests
 
       # BOTH suites, and the state one is the point. memcheck is the only
@@ -729,12 +1009,162 @@ jobs:
           $VG ./build-vg/AnabasisTests_artefacts/Release/AnabasisTests
           $VG ./build-vg/AnabasisStateTests_artefacts/Release/AnabasisStateTests
 
+  # -------------------------------------------------------------------------
+  # RealtimeSanitizer (ADR-0029) -- the FIRST mechanical detector this repository
+  # has had for its Priority-1 policy. `REALTIME_AUDIO_POLICY.md` forbids
+  # allocation, locking and blocking on the audio thread; ASan, UBSan and
+  # valgrind all treat an audio-path `malloc` as perfectly correct code, so
+  # until 0.2.0 the rule was enforced by review and by a hand-written audit.
+  #
+  # ITS OWN JOB, AND THAT IS FORCED RATHER THAN CHOSEN. The Clang driver rejects
+  # `-fsanitize=realtime` combined with `address`, `undefined`, the
+  # `sanitizers` job's actual `address,undefined` set, or `thread`: RTSan needs
+  # its own binary, so it needs its own build directory and its own job.
+  #
+  # DEFAULT `RTSAN_OPTIONS`, DELIBERATELY UNSET. RTSan halts on the first
+  # violation by default and exits 43. The one setting that would break this
+  # gate is `halt_on_error=false`, under which the process PRINTS violations and
+  # still exits 0 -- a step that reports and passes, which TESTING_POLICY rule 4
+  # is written against. Do not configure it.
+  #
+  # ONLY `AnabasisTests` RUNS HERE. `AnabasisStateTests` drives the wrapper, but
+  # its audio-path coverage is a handful of blocks; the DSP suite is where the
+  # chain is exercised across the whole feature matrix, and a runtime tool's
+  # value is proportional to path coverage.
+  #
+  # THE ALLOCATION GUARD STANDS ITSELF DOWN IN THIS BUILD, and must: its
+  # `operator new`/`malloc` definitions take precedence over RTSan's own
+  # interceptors and would blind the lane. `tests/AllocationGuard.h` detects
+  # `__has_feature(realtime_sanitizer)` for that, and `-DANABASIS_RTSAN_LANE=1`
+  # below states the same fact from outside the compiler so the two cannot drift
+  # apart -- if the feature test ever stops firing, the BUILD fails with an
+  # #error naming the reason instead of the lane going quietly blind.
+  # -------------------------------------------------------------------------
+  realtime:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # RTSan's runtime ships in `libclang-rt-<major>-dev` from apt.llvm.org.
+      # Ubuntu's own archives carry no `libclang_rt.rtsan` for this major at all,
+      # so the pin is a hard requirement here rather than a preference.
+      - name: Install build dependencies
+        uses: ./.github/actions/setup-linux-build
+        with:
+          clang-version: ${{ env.ANABASIS_CLANG_VERSION }}
+
+      # THE COMPILER CACHE (0.2.0). Every Linux job here previously fetched and
+      # compiled JUCE from scratch on every push -- four full builds of a
+      # dependency that changes only when its pinned SHA does. ccache is keyed on
+      # preprocessed source and the compiler's identity, so a JUCE bump or a
+      # compiler pin change invalidates it correctly by construction.
+      #
+      # AN OPTIMIZATION, NEVER A REQUIREMENT. The composite action publishes an
+      # EMPTY `ANABASIS_COMPILER_LAUNCHER` if ccache cannot be installed, and the
+      # configure step below passes it through unset -- slower, never different.
+      # A cache hit changes where the .o files came from, never what they
+      # contain.
+      #
+      # THE LINEAGE IS PER JOB and stays here rather than in the action, because
+      # it is the part that is genuinely different in each: which compiler
+      # produced the objects, and which build directory. `github.run_id` in the
+      # key makes every run write a fresh entry; `restore-keys` is what makes it
+      # read the previous one.
+      - name: Restore the compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-rtsan-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-rtsan-
+
+
+      # PROVE THE LANE CAN FAIL BEFORE TRUSTING ITS SILENCE (TESTING_POLICY
+      # rule 5). Compiled standalone -- it needs no JUCE and no project
+      # configuration, which is why it is not a CMake target.
+      #
+      # TWO assertions, and the second is not caution. A non-zero exit alone is
+      # satisfied by a canary that died for an unrelated reason, so the report
+      # SIGNATURE is checked too. The canary's own failure message deliberately
+      # avoids that token; an earlier draft of this pattern in the sibling
+      # product carried it and made a dead lane report itself live.
+      - name: RealtimeSanitizer liveness canary (the lane must be able to fail)
+        run: |
+          set -euo pipefail
+          clang++-${ANABASIS_CLANG_VERSION} -std=c++23 -O2 -fsanitize=realtime \
+            -fno-omit-frame-pointer tests/realtime_canary.cpp -o rtsan-canary
+          set +e
+          ./rtsan-canary > canary.log 2>&1
+          RC=$?
+          set -e
+          cat canary.log
+          if [ "$RC" -eq 0 ]; then
+            echo "::error::the RealtimeSanitizer canary exited 0 -- this lane is instrumenting nothing"
+            exit 1
+          fi
+          if ! grep -q "ERROR: RealtimeSanitizer" canary.log; then
+            echo "::error::the canary aborted, but not with a RealtimeSanitizer report -- it died for some other reason"
+            exit 1
+          fi
+
+      # THE COMPILE-TIME TIER, over the JUCE-free leaf layer only. Compiled
+      # TWICE: clean, then with the seeded violation, because a clean compile is
+      # also what a dead gate prints. `-Werror=unknown-warning-option` makes a
+      # renamed flag fail by name on the first compile; the canary compile
+      # catches the case the option name cannot -- still accepted, no longer
+      # implemented.
+      - name: Realtime effect diagnostics (first-party leaf layer)
+        run: |
+          set -euo pipefail
+          EFFECTS_FLAGS="-std=c++23 -O2 -I src -I src/dsp
+                         -Werror=unknown-warning-option -Werror=function-effects"
+          echo "clean compile -- must succeed with no diagnostics"
+          clang++-${ANABASIS_CLANG_VERSION} $EFFECTS_FLAGS -fsyntax-only tests/realtime_effects.cpp
+          echo "canary compile -- must FAIL with a -Wfunction-effects diagnostic"
+          set +e
+          clang++-${ANABASIS_CLANG_VERSION} $EFFECTS_FLAGS -DANABASIS_EFFECTS_CANARY \
+            -fsyntax-only tests/realtime_effects.cpp > effects-canary.log 2>&1
+          RC=$?
+          set -e
+          cat effects-canary.log
+          if [ "$RC" -eq 0 ]; then
+            echo "::error::the function-effects canary COMPILED -- the diagnostic is not being applied"
+            exit 1
+          fi
+          if ! grep -q -- "-Wfunction-effects" effects-canary.log; then
+            echo "::error::the function-effects canary failed, but not with a -Wfunction-effects diagnostic"
+            exit 1
+          fi
+
+      - name: Configure (Clang, RealtimeSanitizer)
+        run: >
+          cmake -B build-rt -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
+          -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
+          -DCMAKE_C_FLAGS="-fsanitize=realtime -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=realtime -fno-omit-frame-pointer -DANABASIS_RTSAN_LANE=1"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=realtime"
+          -DANABASIS_BUILD_STANDALONE=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Build the DSP suite (RealtimeSanitizer)
+        run: cmake --build build-rt --target AnabasisTests
+
+      # No RTSAN_OPTIONS: see the job comment. A violation anywhere in the
+      # chain aborts here with a symbolized stack and exit 43.
+      - name: DSP self-tests under RealtimeSanitizer
+        run: ./build-rt/AnabasisTests_artefacts/RelWithDebInfo/AnabasisTests
+
   windows:
     needs: preflight
     if: needs.preflight.outputs.ready == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Default Visual Studio generator (multi-config); MSVC is auto-detected.
       - name: Configure
@@ -1080,7 +1510,7 @@ jobs:
 
       - name: Upload Windows installer
         if: ${{ !cancelled() && steps.package_windows.outcome == 'success' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-Windows-installer
           path: dist/Anabasis-*-Windows-Installer.exe
@@ -1088,7 +1518,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outputs.public_ok == 'true' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-Windows
           path: dist/Anabasis-Windows
@@ -1096,7 +1526,7 @@ jobs:
 
       - name: Upload Windows debug symbols (crash symbolication)
         if: ${{ !cancelled() && steps.stage_windows.outputs.debug_artifacts == 'true' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-Windows-debug
           path: dist/Anabasis-Windows-debug
@@ -1118,7 +1548,7 @@ jobs:
     # which stays on a numbered Intel label because "latest" has no Intel meaning.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install build tools
         run: brew install ninja || true
@@ -1151,6 +1581,29 @@ jobs:
       - name: Build (VST3 + AU + Standalone + tests)
         id: build
         run: cmake --build build --config Release
+
+      # HALF ONE OF THE SYMBOLICATION CONTRACT (0.2.0). `CMakeLists.txt` gives
+      # ld64 `-object_path_lto,<dir>` so the LTO codegen objects SURVIVE the
+      # link -- without them `dsymutil` has a debug map pointing at deleted
+      # temporaries and produces a dSYM with no DWARF. An empty directory here
+      # means one of two things and both need a human: LTO did not run (so the
+      # shipped bytes are not what ADR-0008 says they are), or the flag stopped
+      # taking effect (so symbolication is silently gone again). Neither may
+      # pass as a warning.
+      #
+      # A UNIVERSAL BUILD LINKS ONCE PER SLICE and there are three format
+      # targets, so several objects are expected; the assertion is on presence,
+      # not on count, because the count is a property of the target list.
+      - name: Assert LTO ran and its objects were retained
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          COUNT="$(find build/lto-objects -type f | wc -l | tr -d ' ')"
+          echo "retained LTO objects: $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::build/lto-objects is empty -- either -flto did not run on the shipped targets, or -Wl,-object_path_lto stopped taking effect. macOS crash symbolication depends on these objects; do NOT resolve this by disabling LTO."
+            exit 1
+          fi
 
       - name: Self-tests (DSP + state)
         id: tests
@@ -1323,9 +1776,16 @@ jobs:
       # binary's slices exactly, and it carries at least one DWARF compile unit;
       # anything else is discarded with a ::warning:: and packaging CONTINUES.
       # The customer pipeline (strip -x -> codesign -> verify) is never blocked by
-      # debug-capture problems. Restoring full macOS symbolication needs the LTO
-      # object persisted via -Wl,-object_path_lto -- a linker-flag change that is
-      # a deliberate future decision, not a silent addition.
+      # debug-capture problems.
+      #
+      # SINCE 0.2.0 THE CAPTURE IS EXPECTED TO SUCCEED. The LTO objects are
+      # persisted via `-Wl,-object_path_lto` (CMakeLists.txt carries the full
+      # reasoning), so `dsymutil` can follow the debug map back to real files.
+      # The validity tests below are unchanged and still discard anything that
+      # fails them -- what changed is what a discard MEANS. It used to be the
+      # expected outcome of Release+LTO; it is now a regression, and the
+      # assertion at the end of this job says so rather than leaving a
+      # ::warning:: nobody reads.
       # Gated on the BUILD (see the Windows staging step): with a failed build
       # `strip -x` would run against a nonexistent binary and fail a second time.
       - name: Package macOS plugins (VST3 + AU + Standalone)
@@ -1394,7 +1854,7 @@ jobs:
             strip -x "$BIN"
           done
           if [ "$USABLE_DSYMS" -eq 0 ]; then
-            echo "::warning::no usable dSYM was produced (expected under Release+LTO) -- the -debug upload will be skipped; crash symbolication is unavailable for this build"
+            echo "::warning::no usable dSYM was produced -- since 0.2.0 this is a REGRESSION, not the expected Release+LTO outcome: -Wl,-object_path_lto keeps the objects dsymutil needs, and the 'Assert LTO ran' step earlier in this job confirmed they exist. The assertion at the end of this job will fail the run; the customer artifacts are unaffected."
           fi
           # Written BEFORE codesign/copy/verification below so dSYMs captured
           # above still upload even if those later steps fail.
@@ -1458,7 +1918,7 @@ jobs:
 
       - name: Upload macOS installer
         if: ${{ !cancelled() && steps.package_macos.outcome == 'success' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-macOS-installer
           path: dist/Anabasis-*-macOS.pkg
@@ -1466,7 +1926,7 @@ jobs:
 
       - name: Upload macOS plugins (VST3 + AU + Standalone)
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.package.outcome == 'success' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-macOS
           path: dist/Anabasis-macOS
@@ -1477,11 +1937,31 @@ jobs:
       # the package step -- instead of failing on an empty directory.
       - name: Upload macOS debug symbols (dSYMs, crash symbolication)
         if: ${{ !cancelled() && steps.package.outcome != 'skipped' && steps.package.outputs.debug_artifacts == 'true' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-macOS-debug
           path: dist/Anabasis-macOS-debug
           if-no-files-found: error
+
+      # HALF TWO OF THE SYMBOLICATION CONTRACT (0.2.0), and the reason it is a
+      # separate step LAST rather than an `exit 1` inside the packaging block:
+      # a debug-capture finding must not withhold customer artifacts whose
+      # behavioural gates all passed. They are built, validated and uploaded
+      # above; this still fails the job.
+      #
+      # `debug_artifacts` is written by the packaging step only when at least
+      # one dSYM survived every validity test -- DWARF payload present, UUID set
+      # matching the binary's slices exactly, and at least one compile unit. So
+      # this reads a verdict rather than re-deriving one.
+      - name: Assert a validated dSYM was captured
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.package.outputs.debug_artifacts }}" != "true" ]; then
+            echo "::error::no usable dSYM was produced. Since -Wl,-object_path_lto landed this is a REGRESSION, not the expected Release+LTO outcome: ld64 keeps the LTO object dsymutil needs, and the 'Assert LTO ran' step earlier in this job confirmed it did. Check that flag and the retained-object directory. Do NOT resolve this by disabling LTO, and do NOT relax this assertion -- the customer artifacts for this run were built, validated and uploaded before this step ran."
+            exit 1
+          fi
+          echo "a UUID-matched dSYM with compile units was captured and uploaded"
 
   # ==========================================================================
   #  NATIVE INTEL macOS — the one execution environment nothing else covers.
@@ -1509,7 +1989,7 @@ jobs:
     if: needs.preflight.outputs.ready == 'true'
     runs-on: macos-15-intel   # NATIVE x86_64 hardware -- not Apple Silicon, not Rosetta
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # FAIL, do not warn. A job whose entire purpose is "run on Intel" is
       # worthless if it quietly runs somewhere else, and a green tick from the

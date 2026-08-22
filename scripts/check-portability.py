@@ -72,6 +72,8 @@ Exit codes: 0 clean, 1 violations found, 2 usage/environment error.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import re
 import subprocess
 import sys
@@ -88,6 +90,62 @@ HAZARD = re.compile(r"(?:juce\s*::\s*)?\b(" + "|".join(SIMD_OVERLOADED) + r")\s*
 
 SOURCE_SUFFIXES = (".h", ".hpp", ".cpp", ".cc", ".mm")
 SOURCE_DIRS = ("src", "tests", "tools")
+
+
+# The encoding prefixes a CHARACTER LITERAL may carry (C++11 `L`/`u`/`U`, C++17
+# `u8`). Each puts an alphanumeric immediately left of the opening quote, which
+# is exactly what the digit-separator test below reads -- so without this set
+# `L'<'` is classified as a separator, its CLOSING quote then opens a literal,
+# and everything to the next `'` (or EOF) is blanked. That is the silent
+# false negative this lint must not have.
+CHAR_LITERAL_PREFIXES = frozenset(("L", "u", "U", "u8"))
+
+# ...and the prefixes a RAW string may carry: `R` alone or an encoding prefix
+# with `R` appended. A raw string ends at `)<delim>"`, NOT at the next `"`, and
+# it processes no escapes -- so scanning one as an ordinary string leaves the
+# literal early, reads its contents as code, and then treats the real closing
+# quote as an OPENING one, blanking to the next `"` in the file. That last part
+# is the false-negative shape this lint exists to avoid.
+RAW_STRING_PREFIXES = frozenset(("R", "LR", "uR", "UR", "u8R"))
+
+
+def _raw_string_end(text: str, i: int, n: int) -> int | None:
+    """Index just past the raw string opening at `text[i] == '"'`, or None.
+
+    `None` means "not a valid raw string here", and the caller then reads the
+    quote as an ordinary one -- exactly what it did before raw strings were
+    recognised at all, so a malformed prefix cannot change existing behaviour.
+
+    The delimiter is at most 16 d-chars and excludes space, `(`, `)`, `\\` and
+    control characters (C++ [lex.string]); anything else between the quote and
+    the `(` means this is not a raw string. An UNTERMINATED one returns `n`:
+    a raw string it still is, so it swallows the rest of the file rather than
+    resuming as code halfway through a literal.
+    """
+    j = start = i + 1
+    while j < n and text[j] != "(":
+        if text[j] in " )\\" or ord(text[j]) < 32 or j - start >= 16:
+            return None
+        j += 1
+    if j >= n:
+        return None
+    closer = ")" + text[start:j] + '"'
+    k = text.find(closer, j + 1)
+    return n if k < 0 else k + len(closer)
+
+
+def _left_token(out: list) -> str:
+    """The identifier-ish run already emitted immediately left of the cursor.
+
+    Read back off `out` rather than off `text`, because that is what the callers
+    below reason about and because the comment branches push MULTI-character
+    padding: those entries stop the walk, which is right -- a comment does not
+    continue a token.
+    """
+    j = len(out)
+    while j > 0 and len(out[j - 1]) == 1 and (out[j - 1].isalnum() or out[j - 1] == "_"):
+        j -= 1
+    return "".join(out[j:])
 
 
 def blank_comments_and_literals(text: str) -> str:
@@ -112,35 +170,69 @@ def blank_comments_and_literals(text: str) -> str:
             while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
                 out.append("\n" if text[i] == "\n" else " ")
                 i += 1
-            out.append("  ")
-            i += 2
-        elif c == "'" and (
-            (out and str(out[-1]).isalnum()) or (i + 1 < n and text[i + 1].isdigit())
-        ):
+            # ONLY WHEN THERE IS A `*/` TO BLANK, for the same reason as the
+            # literal branch below: this loop also exits at `i == n` -- an
+            # unterminated comment, including one whose last character is a bare
+            # `*` -- and emitting the two-character pad there produces two more
+            # characters than were consumed.
+            if i < n:
+                out.append("  ")
+                i += 2
+        elif c == "'" and _left_token(out) not in CHAR_LITERAL_PREFIXES | {""}:
             # A C++ DIGIT SEPARATOR, not a character literal: 1'000'000. Treating
             # it as a quote would blank the source from here to the next `'`,
             # which can only ever hide a hazard (a false NEGATIVE) -- the one
             # failure mode a lint must not have, because it fails by going quiet.
-            # The test is local and deliberately conservative: a separator always
-            # has an alphanumeric on its left (the preceding digit, already
-            # emitted) or a digit on its right, and a real char literal never
-            # does -- `'a'` follows an operator or whitespace, and `x'` is not
-            # valid C++ otherwise.
+            #
+            # The test reads the whole token to the left, not one character, and
+            # that is the difference that matters. A separator always sits
+            # between digits, so SOMETHING alphanumeric precedes it; but so does
+            # the quote of `L'x'`, `u'x'`, `U'x'` and `u8'x'`. Reading one
+            # character cannot tell those apart -- and misreading a literal's
+            # OPENING quote is worse than misreading a separator, because its
+            # closing quote then opens a literal instead and blanks to the next
+            # `'` or to EOF. Comparing the token against the prefix set separates
+            # them exactly: an empty token is an ordinary `'a'`, a prefix is a
+            # prefixed literal, and anything else alphanumeric is a separator (or
+            # is not valid C++, where continuing to scan is the safe reading).
             out.append(c)
             i += 1
+        elif (c == '"' and _left_token(out) in RAW_STRING_PREFIXES
+              and (raw_end := _raw_string_end(text, i, n)) is not None):
+            # Blanked whole, delimiters included, one character per character.
+            # No escape handling: a raw string has none, so a trailing `\` in it
+            # must not swallow the character after it.
+            while i < raw_end:
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
         elif c in ('"', "'"):
             quote = c
             out.append(" ")
             i += 1
             while i < n and text[i] != quote:
                 if text[i] == "\\" and i + 1 < n:
-                    out.append("  ")
+                    # A LINE SPLICE, not an ordinary escape, when the escaped
+                    # character is the newline itself. The splice joins two
+                    # logical lines but the FILE still has two physical ones, and
+                    # `lint()` reads the source back by physical line number
+                    # (`raw.splitlines()[lineno - 1]`) -- so blanking that
+                    # newline shortens the stripped text by a line and every
+                    # finding below it is reported against the wrong line and
+                    # echoes the wrong source. The block-comment branch above
+                    # keeps its newlines for exactly this reason.
+                    out.append(" \n" if text[i + 1] == "\n" else "  ")
                     i += 2
                     continue
                 out.append("\n" if text[i] == "\n" else " ")
                 i += 1
-            out.append(" ")
-            i += 1
+            # ONLY WHEN THERE IS A CLOSING QUOTE. The loop above also exits at
+            # `i == n` -- an unterminated literal at end of file -- and blanking a
+            # character that is not there emits one more than it consumed, which
+            # is the character-for-character contract broken by the branch that
+            # depends on it most.
+            if i < n:
+                out.append(" ")
+                i += 1
         else:
             out.append(c)
             i += 1
@@ -338,6 +430,377 @@ def compile_canary(modules: Path, cxx: str) -> int:
     return 0 if ok else 1
 
 
+def self_test() -> int:
+    """Assert the lint fires on the hazard and stays silent on valid code.
+
+    THE CANARY DOES NOT COVER THIS, and conflating the two is how the gap got
+    here. `--compile-canary` asks "does the pinned JUCE still HAVE the hazard?"
+    -- a question about the dependency, answerable only where JUCE is checked
+    out, which is why it runs in `linux`. This asks "does the CHECKER
+    still find it?" -- a question about 60 lines of regex and hand-written
+    lexing in this file, answerable with nothing but Python, which is why it can
+    run in `source-lint` immediately before the lint it verifies. A green canary
+    with a broken scanner reports a clean tree, which is exactly the shape
+    TESTING_POLICY rule 4 exists to forbid.
+
+    Both directions are pinned. A lint that only proves it can fire drifts into
+    false positives and gets switched off; one that only proves it stays quiet
+    is the failure this file is written against.
+    """
+    # (label, expected violation count, source text) -- run through the REAL
+    # stripper and the REAL pattern, in the same order `lint()` applies them.
+    cases: list[tuple[str, int, str]] = [
+        # --- must fire ------------------------------------------------------
+        ("qualified explicit argument", 1, "auto n = juce::jmax<size_t> (1, v.size());"),
+        ("unqualified explicit argument", 1, "auto n = jmax<size_t> (1, v.size());"),
+        ("jmin is in the hazard set", 1, "auto n = juce::jmin<size_t> (a, b);"),
+        ("snapToZero is in the hazard set", 1, "juce::snapToZero<float> (x);"),
+        ("space before the angle bracket", 1, "juce::jmax <size_t> (a, b);"),
+        ("spaces around the scope operator", 1, "juce :: jmax<size_t> (a, b);"),
+        ("two hazards on separate lines are both found", 2,
+         "juce::jmax<size_t> (a, b);\njuce::jmin<size_t> (c, d);"),
+        ("code after a closed block comment is still scanned", 1,
+         "/* prose about juce::jmax<size_t> */ juce::jmin<size_t> (a, b);"),
+        ("code after a string literal is still scanned", 1,
+         'log ("juce::jmax<size_t>"); juce::jmin<size_t> (a, b);'),
+        # A RAW STRING ENDS AT `)<delim>"`, NOT AT THE NEXT `"`. Read as an
+        # ordinary string it terminates on the embedded quote, its contents are
+        # scanned as code, and its real closing quote then OPENS a literal that
+        # blanks to the next `"` in the file -- so the code after it stops being
+        # checked. Every prefix is listed because each is a separate token and
+        # only the exact set is a raw-string prefix.
+        ("code after R\"( ... )\" is still scanned", 1,
+         'const char* s = R"(a " b)"; juce::jmax<size_t> (a, b);'),
+        ("code after LR\"( ... )\" is still scanned", 1,
+         'auto s = LR"(a " b)"; juce::jmax<size_t> (a, b);'),
+        ("code after uR\"( ... )\" is still scanned", 1,
+         'auto s = uR"(a " b)"; juce::jmin<size_t> (a, b);'),
+        ("code after UR\"( ... )\" is still scanned", 1,
+         'auto s = UR"(a " b)"; juce::snapToZero<float> (x);'),
+        ("code after u8R\"( ... )\" is still scanned", 1,
+         'auto s = u8R"(a " b)"; juce::jmax<size_t> (a, b);'),
+        # A CUSTOM DELIMITER is what makes `)"` embeddable at all, and the
+        # implementation cannot pass by stopping at the first `)"` it sees.
+        ("a custom delimiter's inner )\" does not end the raw string", 1,
+         'const char* s = R"xy(a)" b)xy"; juce::jmax<size_t> (a, b);'),
+        # ...nor by consuming to the end of the LINE or the end of the FILE.
+        ("a multi-line raw string ends at its delimiter, not at EOF", 1,
+         'auto s = R"(l1\nl2)";\njuce::jmax<size_t> (a, b);'),
+        ("an unterminated raw string does not blind the code above it", 1,
+         'juce::jmax<size_t> (a, b);\nauto s = R"(never closed'),
+        # A raw string has NO escapes, so a trailing backslash must not swallow
+        # the delimiter that follows it.
+        ("a trailing backslash inside a raw string is literal", 1,
+         'const char* s = R"(a\\)"; juce::jmax<size_t> (a, b);'),
+        # WHAT IS *NOT* A RAW STRING has to be decided too, and getting it wrong
+        # sends the scan into a delimiter that never closes -- blanking to EOF
+        # and losing everything after it. A d-char excludes space, `(`, `)`, `\`
+        # and control characters, and there are at most 16 of them
+        # (C++ [lex.string]); a `"` after an R-token that fails any of those is
+        # an ordinary string, which is what this branch read before raw strings
+        # were recognised at all. Each rule below is pinned by an input whose
+        # hazard count changes when that rule alone is removed.
+        ("a space before the paren means it is not a raw string", 1,
+         'auto s = R" (a)"; juce::jmax<size_t> (x, y);'),
+        ("a close paren in the delimiter means it is not a raw string", 1,
+         'auto s = R")x(a)"; juce::jmax<size_t> (x, y);'),
+        ("a delimiter longer than 16 chars means it is not a raw string", 1,
+         'auto s = R"' + 'a' * 17 + '(x"; juce::jmax<size_t> (a, b);'),
+        ("a newline in the delimiter means it is not a raw string", 1,
+         'auto s = R"ab\ncd(x"; juce::jmin<size_t> (a, b);'),
+        # A DIGIT SEPARATOR MUST NOT OPEN A LITERAL. If `'` in `1'000'000` were
+        # treated as a quote, everything to the next `'` would be blanked -- a
+        # false NEGATIVE, the one failure mode a lint must not have, and the
+        # reason that branch in the stripper exists at all.
+        ("digit separator does not swallow the rest of the line", 1,
+         "auto n = 1'000'000 + juce::jmax<size_t> (a, b);"),
+        ("hex digit separator does not swallow the rest of the line", 1,
+         "auto n = 0x1F'FF + juce::jmax<size_t> (a, b);"),
+        ("binary digit separator does not swallow the rest of the line", 1,
+         "auto n = 0b1010'1010 + juce::jmin<size_t> (a, b);"),
+        # ...AND NEITHER MUST A PREFIXED CHARACTER LITERAL, which is the same
+        # blindness reached from the other side. `L`/`u`/`U`/`u8` put an
+        # alphanumeric immediately left of the OPENING quote, so a one-character
+        # test reads it as a separator; the closing quote then opens a literal
+        # and everything to the next `'` -- here the rest of the line, in a real
+        # file the rest of the file -- stops being scanned. Each prefix is listed
+        # separately because `u8` is the one that survives the obvious partial
+        # fix: its token ends in a DIGIT, so "the left character is not a digit"
+        # would still misclassify it.
+        ("L'' does not swallow the rest of the line", 1,
+         "wchar_t c = L'<'; auto n = juce::jmax<size_t> (a, b);"),
+        ("u'' does not swallow the rest of the line", 1,
+         "auto c = u'<'; auto n = juce::jmin<size_t> (a, b);"),
+        ("U'' does not swallow the rest of the line", 1,
+         "auto c = U'<'; auto n = juce::snapToZero<float> (x);"),
+        ("u8'' does not swallow the rest of the line", 1,
+         "auto c = u8'<'; auto n = juce::jmax<size_t> (a, b);"),
+        ("an escaped quote in a prefixed literal does not end it early", 1,
+         "auto c = L'\\''; auto n = juce::jmax<size_t> (a, b);"),
+        ("an escape sequence in a prefixed literal is consumed", 1,
+         "auto c = u8'\\n'; auto n = juce::jmax<size_t> (a, b);"),
+        ("a prefixed literal on one line does not blind the next", 1,
+         "auto c = L'<';\nauto n = juce::jmax<size_t> (a, b);"),
+        # A CHAR LITERAL HOLDING A QUOTE CHARACTER is where "scan the literal's
+        # contents as code" stops being harmless: the `"` inside it would open a
+        # STRING and blank to the next one, which is the same blindness again.
+        # Both quotes of a character literal must therefore be consumed by the
+        # literal branch, not emitted verbatim -- prefixed or not.
+        ("a char literal holding a double quote does not open a string", 1,
+         'char q = \'"\'; auto n = juce::jmax<size_t> (a, b);'),
+        ("a prefixed char literal holding a double quote does not either", 1,
+         'wchar_t q = L\'"\'; auto n = juce::jmax<size_t> (a, b);'),
+        # --- must stay silent -----------------------------------------------
+        ("deduced form is the fix, not a defect", 0, "juce::jmax ((size_t) 1, v.size());"),
+        ("jlimit has no SIMD overload", 0, "juce::jlimit<int> (0, 10, x);"),
+        ("roundToInt has no SIMD overload", 0, "juce::roundToInt<float> (x);"),
+        ("line comment naming the hazard", 0, "// juce::jmax<size_t> is the thing we forbid"),
+        ("block comment naming the hazard", 0, "/* juce::jmax<size_t> forbidden */"),
+        ("multi-line block comment naming the hazard", 0,
+         "/*\n * juce::jmax<size_t> (a, b)\n * and juce::jmin<size_t> too\n */"),
+        ("string literal naming the hazard", 0, 'const char* s = "juce::jmax<size_t>";'),
+        # THE CONTENTS ARE LITERAL, so a hazard that exists only inside one is
+        # not a finding -- the other half of the same property.
+        ("raw string naming the hazard", 0, 'const char* s = R"(juce::jmax<size_t>)";'),
+        ("raw string naming the hazard, custom delimiter", 0,
+         'const char* s = R"d(juce::jmax<size_t>)" and more)d";'),
+        ("comment markers inside a raw string are not comments", 0,
+         'const char* s = R"(/* juce::jmax<size_t> // )";'),
+        # `R` must be the WHOLE token to be a prefix: an identifier ending in R
+        # followed by an ordinary string is not a raw string.
+        ("an identifier ending in R does not make a raw string", 0,
+         'auto fooR = 1; const char* s = "juce::jmax<size_t>";'),
+        ("escaped quote inside a string does not end it early", 0,
+         'const char* s = "a\\" juce::jmax<size_t>";'),
+        ("char literal", 0, "char c = '<';"),
+        ("digit char literal", 0, "char c = '0';"),
+        ("prefixed char literals are not themselves hazards", 0,
+         "wchar_t a = L'<'; auto b = u'<'; auto c = U'<'; auto d = u8'<';"),
+        ("the hazard named inside a prefixed literal's comment stays quiet", 0,
+         "auto c = L'x'; // juce::jmax<size_t> in a comment"),
+        # DELIBERATE OVER-MATCH, PINNED HERE SO IT IS A DECISION AND NOT A
+        # SURPRISE. `\s*<` is what lets the pattern see `juce::jmax <size_t>`
+        # (the case six rows above), and the same tolerance necessarily reads a
+        # spaced comparison as a template argument. `jmax` is a function template
+        # in every JUCE header, so `jmax < b` is not valid code to begin with and
+        # the over-match costs nothing real; tightening the pattern to exclude it
+        # would reopen the spaced-argument hole, which is a false NEGATIVE. If a
+        # future edit "fixes" this, that edit fails here and reads this comment.
+        ("a spaced comparison is accepted as the price of spaced arguments", 1,
+         "if (jmax < b) return;"),
+    ]
+
+    failures = checked = 0
+    for label, expected, text in cases:
+        got = sum(1 for line in blank_comments_and_literals(text).splitlines()
+                  if HAZARD.search(line))
+        checked += 1
+        if got != expected:
+            failures += 1
+            print(f"self-test FAIL: {label}: expected {expected} violation(s), got {got}",
+                  file=sys.stderr)
+
+    # LINE NUMBERS MUST SURVIVE THE STRIPPER, because the lint reports them and a
+    # report that names the wrong line sends the reader to innocent code. Every
+    # branch that consumes a newline has to emit one, and each is pinned by the
+    # physical line the hazard below it lands on.
+    for label, text, want in [
+        # The block-comment branch: a space per character, a newline per newline.
+        ("block comment", "a\n/* x\n y\n z */\njuce::jmax<size_t> (a, b);", [5]),
+        # THE LITERAL BRANCH'S ESCAPE PAIR. A backslash immediately followed by a
+        # physical newline is a C++ LINE SPLICE: it joins two logical lines, but
+        # the file still has two physical ones and `lint()` reads the source back
+        # by physical line number. Consuming the pair as two spaces dropped that
+        # newline, so every finding below a spliced literal was reported one line
+        # short and echoed the wrong source text.
+        ("string line splice",
+         'const char* s = "abc\\\ndef";\nauto n = juce::jmax<size_t> (a, b);', [3]),
+        # ...and the shift must not merely be off by one: it accumulates, so a
+        # hazard several lines further down has to land correctly too.
+        ("string line splice, hazard further down",
+         'const char* s = "abc\\\ndef";\nint a;\nint b;\njuce::jmax<size_t> (a, b);', [5]),
+        ("two splices in one literal",
+         'const char* s = "a\\\nb\\\nc";\njuce::jmin<size_t> (a, b);', [4]),
+        ("splice in a character literal",
+         "char c = '\\\n<';\njuce::jmax<size_t> (a, b);", [3]),
+        # An ORDINARY escape still consumes two characters and emits no newline.
+        ("ordinary escape", 'const char* s = "a\\tb";\njuce::jmax<size_t> (a, b);', [2]),
+        ("escaped quote", 'const char* s = "a\\" juce::jmax<size_t>";\n'
+                          'juce::jmin<size_t> (a, b);', [2]),
+        # A newline inside a literal with no backslash was already preserved;
+        # pinned so the repair cannot be "fixed" into a regression.
+        ("raw newline inside a literal", 'const char* s = "a\nb";\njuce::jmax<size_t> (a, b);',
+         [3]),
+        # AN UNTERMINATED LITERAL AT END OF FILE. The inner scan also exits at
+        # `i == n`, and blanking a closing quote that is not there emitted one
+        # character more than it consumed. Latent -- the extra character is a
+        # space, so no line moved -- but the contract these cases assert is
+        # character-for-character, and a branch that does not hold it is the one
+        # the next edit builds on.
+        ("unterminated string at EOF",
+         'juce::jmax<size_t> (a, b);\nconst char* s = "abc', [1]),
+        ("unterminated character literal at EOF",
+         "juce::jmin<size_t> (a, b);\nchar c = '<", [1]),
+        ("unterminated prefixed character literal at EOF",
+         "juce::jmax<size_t> (a, b);\nauto c = L'<", [1]),
+        ("unterminated literal spanning physical lines",
+         'juce::jmax<size_t> (a, b);\nconst char* s = "abc\ndef', [1]),
+        # AN UNTERMINATED BLOCK COMMENT, the same EOF shape in the other branch.
+        # Its inner loop exits at `i == n` too, and the two-character `*/` pad ran
+        # regardless -- including for a comment whose last character is a bare
+        # `*`, which the loop condition sends down the same exit because the
+        # closer needs a following `/`.
+        ("unterminated block comment at EOF",
+         "juce::jmax<size_t> (a, b);\n/* abc", [1]),
+        # RAW STRINGS, on the same invariant: blanked one character per
+        # character, one newline per newline, and the physical line the code
+        # after them lands on is unchanged.
+        ("raw string spanning physical lines",
+         'auto s = R"(l1\nl2\nl3)";\njuce::jmax<size_t> (a, b);', [4]),
+        ("unterminated raw string spanning physical lines",
+         'juce::jmax<size_t> (a, b);\nauto s = R"(l1\nl2', [1]),
+        ("raw string with a newline inside a custom delimiter's body",
+         'auto s = R"tag(a)" b\nc)tag";\njuce::jmin<size_t> (a, b);', [3]),
+        ("unterminated block comment spanning physical lines",
+         "juce::jmin<size_t> (a, b);\n/* unterminated\nmore", [1]),
+        ("unterminated block comment ending on a bare star",
+         "juce::jmax<size_t> (a, b);\n/* abc*", [1]),
+        ("block-comment opener alone at EOF",
+         "juce::jmax<size_t> (a, b);\n/*", [1]),
+        # The terminated forms must be unchanged by that guard.
+        ("terminated block comment", "/* abc */ juce::jmax<size_t> (a, b);", [1]),
+    ]:
+        stripped = blank_comments_and_literals(text)
+        hits = [n for n, line in enumerate(stripped.splitlines(), 1) if HAZARD.search(line)]
+        checked += 1
+        if hits != want:
+            failures += 1
+            print(f"self-test FAIL: {label} shifted the reported line: {hits}, want {want}",
+                  file=sys.stderr)
+        # The stripper's contract is CHARACTER-FOR-CHARACTER, which is what makes
+        # both the line number and the column exact. A branch that emits the
+        # wrong COUNT would pass the line test above whenever the loss happens to
+        # fall on a blank stretch.
+        checked += 1
+        if len(stripped) != len(text):
+            failures += 1
+            print(f"self-test FAIL: {label} changed the text length: "
+                  f"{len(stripped)} != {len(text)}", file=sys.stderr)
+        # ...and the other half of the same contract: every source newline is
+        # represented by exactly one output newline. Length alone cannot see a
+        # newline swapped for a space, which is how the line-splice defect got in.
+        checked += 1
+        if stripped.count("\n") != text.count("\n"):
+            failures += 1
+            print(f"self-test FAIL: {label} changed the newline count: "
+                  f"{stripped.count(chr(10))} != {text.count(chr(10))}", file=sys.stderr)
+
+    # --- the end-to-end lint, over a temporary tree ------------------------
+    # The cases above verify the matcher; this verifies that `lint()` actually
+    # REACHES source with it -- suffix filter, recursion, and the report path.
+    # A scanner that works on a string and a walker that never hands it a file
+    # fail identically from outside: silently, green.
+    # `lint()` and `scratch_names_agree()` PRINT their findings, and the findings
+    # below are deliberate. Left on stdout they read as a red run inside a green
+    # one -- a self-test whose passing output contains the word `error:` teaches
+    # the reader to skim past it, which is the habit that hides a real one.
+    def quietly(fn, *a):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            return fn(*a)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "src" / "dsp").mkdir(parents=True)
+        (root / "src" / "Clean.cpp").write_text("int f() { return juce::jmax (1, 2); }\n")
+        checked += 1
+        if quietly(lint, root) != 0:
+            failures += 1
+            print("self-test FAIL: lint() reported a violation on a clean tree", file=sys.stderr)
+
+        (root / "src" / "dsp" / "Bad.h").write_text("auto n = juce::jmax<size_t> (a, b);\n")
+        checked += 1
+        if quietly(lint, root) != 1:
+            failures += 1
+            print("self-test FAIL: lint() did not report a nested hazardous file",
+                  file=sys.stderr)
+
+        # WHAT THE DIAGNOSTIC ACTUALLY PRINTS, not just how many there are. The
+        # line number and the echoed source come from two different places --
+        # the stripped text's line index and `raw.splitlines()[lineno - 1]` --
+        # and a lost newline desynchronises them from the real file without
+        # changing the finding count, so only reading the report catches it.
+        (root / "src" / "dsp" / "Bad.h").unlink()
+        (root / "src" / "Splice.cpp").write_text(
+            'const char* s = "abc\\\ndef";\nint a;\njuce::jmax<size_t> (a, b);\n')
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            lint(root)
+        report = buf.getvalue()
+        checked += 1
+        if "src/Splice.cpp:4: error:" not in report:
+            failures += 1
+            print("self-test FAIL: a hazard after a line-spliced literal was reported at the "
+                  f"wrong line; report was:\n{report}", file=sys.stderr)
+        checked += 1
+        if "\n    juce::jmax<size_t> (a, b);\n" not in report:
+            failures += 1
+            print("self-test FAIL: the diagnostic echoed the wrong source line after a "
+                  f"line-spliced literal; report was:\n{report}", file=sys.stderr)
+        (root / "src" / "Splice.cpp").unlink()
+
+        # An unscanned suffix must NOT be read -- that is the declared scope, and
+        # a widening would surface here rather than as a surprise finding.
+        (root / "src" / "notes.txt").write_text("auto n = juce::jmax<size_t> (a, b);\n")
+        checked += 1
+        if quietly(lint, root) != 0:
+            failures += 1
+            print("self-test FAIL: lint() scanned a file outside SOURCE_SUFFIXES",
+                  file=sys.stderr)
+
+    # --- the installer/uninstaller scratch-name coupling -------------------
+    # Its own sub-check, its own failure mode: it compares two SETS, and the
+    # comment-stripping in `names()` is what stops a mention satisfying it.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        pkg = root / "packaging" / "linux"
+        pkg.mkdir(parents=True)
+
+        def scratch_case(label, expected, install, uninstall):
+            nonlocal failures, checked
+            (pkg / "install.sh").write_text(install)
+            (pkg / "uninstall.sh").write_text(uninstall)
+            checked += 1
+            got = quietly(scratch_names_agree, root)
+            if got != expected:
+                failures += 1
+                print(f"self-test FAIL: scratch names {label}: expected {expected}, got {got}",
+                      file=sys.stderr)
+
+        scratch_case("agreeing sets are clean", 0,
+                     'touch "$d/.anabasis-probe"\nmv x "$d/.Anabasis.new"\n',
+                     'rm -rf "$d/.anabasis-probe" "$d/.Anabasis.new"\n')
+        scratch_case("a name the uninstaller never removes is caught", 1,
+                     'touch "$d/.anabasis-probe"\ntouch "$d/.anabasis-stage"\n',
+                     'rm -rf "$d/.anabasis-probe"\n')
+        scratch_case("a name the installer never creates is caught", 1,
+                     'touch "$d/.anabasis-probe"\n',
+                     'rm -rf "$d/.anabasis-probe" "$d/.anabasis-stage"\n')
+        # THE COMMENT MUST NOT COUNT. An edit that deletes the removal and leaves
+        # the paragraph explaining it behind is the exact divergence this check
+        # exists for, and it is the shape that survives review.
+        scratch_case("a name mentioned only in a comment does not satisfy the check", 1,
+                     'touch "$d/.anabasis-probe"\ntouch "$d/.anabasis-stage"\n',
+                     '# we also remove .anabasis-stage here\nrm -rf "$d/.anabasis-probe"\n')
+
+    if failures:
+        print(f"\ncheck-portability: {failures} of {checked} self-test case(s) failed.",
+              file=sys.stderr)
+        return 1
+    print(f"check-portability: self-test passed ({checked} cases).")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Anabasis source portability lint.")
     ap.add_argument("--root", default=str(Path(__file__).resolve().parent.parent),
@@ -345,8 +808,18 @@ def main() -> int:
     ap.add_argument("--compile-canary", metavar="JUCE_MODULES_DIR",
                     help="instead of linting, verify the pinned JUCE still has the hazard")
     ap.add_argument("--cxx", default="g++", help="compiler for --compile-canary (default: g++)")
+    # PROVE THE CHECKER IS LIVE BEFORE TRUSTING ITS SILENCE (TESTING_POLICY rule
+    # 4). The compile canary answers a DIFFERENT question -- "does the pinned
+    # JUCE still have the hazard?" -- and needs JUCE on disk, which is why it
+    # runs in `linux-clang`. This one asks "does the CHECKER still find it?" and
+    # needs nothing but Python, so it runs in `source-lint` immediately before
+    # the lint it vouches for.
+    ap.add_argument("--self-test", action="store_true",
+                    help="run the checker's own test cases and exit")
     args = ap.parse_args()
 
+    if args.self_test:
+        return self_test()
     if args.compile_canary:
         return compile_canary(Path(args.compile_canary), args.cxx)
     return lint(Path(args.root))

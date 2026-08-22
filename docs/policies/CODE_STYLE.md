@@ -5,9 +5,9 @@ read as one codebase. New code must read like the surrounding code.
 
 ## Language / build
 
-- **C++20**, no compiler extensions (`CMAKE_CXX_STANDARD 20`, `CMAKE_CXX_EXTENSIONS OFF`).
+- **C++23**, no compiler extensions (`CMAKE_CXX_STANDARD 23`, `CMAKE_CXX_EXTENSIONS OFF`) — ADR-0030.
   *(Anamorph is C++17; the raise is a deliberate Anabasis decision — `DEVELOPMENT_BRIEF.md` §2.1.)*
-- **No C++20 modules.** Header/TU structure only.
+- **No modules.** Header/TU structure only — ADR-0008 decision B5's other half, which ADR-0030 reaffirmed rather than moved.
 - A C++23 library feature may be used only behind a feature-test macro **and** a thin first-party
   abstraction (`DEPENDENCY_POLICY.md`).
 - Builds clean under `juce::juce_recommended_warning_flags` — keep it warning-free.

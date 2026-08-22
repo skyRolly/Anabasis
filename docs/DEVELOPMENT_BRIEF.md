@@ -622,7 +622,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 
 | Area | Anamorph | Anabasis | Why |
 |---|---|---|---|
-| **C++ standard** | C++17 | **C++20** + a non-blocking C++23 canary CI job | §2.1 of this brief |
+| **C++ standard** | C++17 | **C++23** — §2.1 asked for C++20 plus a non-blocking C++23 canary, and that is what shipped from P1 through 0.1.6. **ADR-0030 (2026-08-22) ended it**: the baseline moved to 23 on the owner's directive, the `ANABASIS_CXX_STANDARD` seam and the canary workflow were removed, and OQ-006 is superseded. The two products are aligned again at 23. §2.1's other rule — no modules, and C++23 *library* features only behind feature-test macros and a first-party abstraction — is unchanged | §2.1; ADR-0030 |
 | **JUCE** | 9.0.0, SHA-pinned | **9.0.1**, SHA-pinned at `e18f7f5…` — §2 asked for the newest stable 9.x to be checked at P0; that check was made and resolved in favour of matching the sibling, so the line started on one framework baseline (**9.0.0** at `f8f8864…`, OQ-001). **ADR-0028 (2026-08-16) ended that**: Anabasis moved to 9.0.1 on the owner's directive and Anamorph did not, so this row is now a real delta rather than a shared value. The six modules that decide DSP, parameters, state and the format wrappers are byte-identical across the two tags, so the divergence cannot produce an audible or host-visible difference between the products | §2 |
 | **Signal chain** | Input → engine → Mix → Mono Maker → Output → Solo | Input Gain → EQ → Comp → Clipper/Sat → Limiter → Ceiling → Dither → Output | §3 |
 | **Oversampling scope** | wraps the nonlinear stages only | must additionally serve **true-peak detection at ≥ 4×** (BS.1770-4) | §4.3 |

@@ -83,7 +83,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       is-release: ${{ steps.meta.outputs.is-release }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate release metadata (tag ⇄ version ⇄ CHANGELOG)
         id: meta
@@ -209,10 +209,10 @@ jobs:
     permissions:
       contents: write   # create the draft release + upload assets (this job only)
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download customer artifacts (from the build call in this run)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           # The Anabasis-<OS> artifacts hold each platform's validated
           # staging tree as loose files; the release zips are archived from
@@ -348,17 +348,54 @@ jobs:
           #     the entry template `## [x.y.z] - YYYY-MM-DD` inside a fence:
           #     without fence tracking, a release whose version ever appeared in
           #     such a sample would start extracting there, and a fenced `##`
-          #     line inside a real entry would cut that entry short. A fence is
-          #     closed by its OWN character, so a `~~~` line inside a ``` block
-          #     stays data -- the rule `check-docs.py` applies to the same file.
+          #     line inside a real entry would cut that entry short.
+          #
+          # WHAT CLOSES A FENCE (CommonMark 0.31 section 4.5), and all three
+          # clauses earn their place -- the form that stood here until 0.2.0 had
+          # only the first, recorded the opener as `substr ($0, 1, 3)` (never
+          # longer than three characters however long the real run was) and
+          # closed on a bare prefix test, so two ordinary Markdown shapes broke
+          # it. Both corrupt the PUBLISHED notes, which is the one output nobody
+          # re-reads before it ships:
+          #   1. the SAME character. A `~~~` line inside a ``` block is data.
+          #   2. at least AS LONG as the opener. A ``` line inside a ```` block
+          #      is data -- which is exactly how a Markdown example that itself
+          #      contains a fence is written, and the old `substr(...,3)` closed
+          #      the outer block on it.
+          #   3. NOTHING BUT TRAILING WHITESPACE after the run. A line carrying
+          #      an info string is an OPENING fence and can never be a closer, so
+          #      a nested ```cpp inside a ```markdown example does not end it.
+          #      With only clause 1 it did: the example's body was then scanned
+          #      as real structure and the real closer re-opened a block,
+          #      inverting the state for the rest of the file.
+          # Up to three leading blanks are allowed on a fence line, per the same
+          # section and per `check-docs.py`'s FENCE pattern on this file.
+          #
+          # THE TERMINATOR IS DELIBERATELY NOT THE SIBLING'S. It ends on ANY h2
+          # (`^## `), not on `^## \[`, for the first reason above; the sibling
+          # relies on a separate documentation contract to make the narrower test
+          # safe, and this one needs no such contract to hold.
           #
           # `index(...) == 1` is an exact prefix compare: version dots are not
-          # treated as regex. For 0.1.1 the output is byte-identical to the
-          # earlier form; the change is what happens to the versions after it.
+          # treated as regex. For every entry in this file today the output is
+          # byte-identical to the earlier form -- CHANGELOG.md carries one fenced
+          # block, the preamble template, with no nesting; the change is what
+          # happens to the first entry that adds one.
           awk -v ver="${VERSION}" '
-            /^(```|~~~)/                   { if (! fence)                   { fence = 1; f = substr ($0, 1, 3) }
-                                             else if (index ($0, f) == 1)   { fence = 0 }
-                                             if (on) print; next }
+            /^[ \t]*(```|~~~)/ {
+                fl = $0
+                if (match (fl, /[^ \t]/) <= 4) {                 # <= 3 leading blanks
+                    sub (/^[ \t]+/, "", fl)
+                    fc = substr (fl, 1, 1)
+                    n  = 0
+                    while (substr (fl, n + 1, 1) == fc) n++
+                    rest = substr (fl, n + 1)
+                    if (! fence)                                            { fence = 1; f = fc; w = n }
+                    else if (fc == f && n >= w && rest ~ /^[ \t]*$/)        { fence = 0 }
+                    if (on) print
+                    next
+                }
+            }
             fence                          { if (on) print; next }
             index($0, "## [" ver "]") == 1 { on = 1; print; next }
             on && /^## /                   { exit }
