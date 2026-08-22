@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Eleven such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Twelve such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,63 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.2.5] — 2026-08-22
+
+**The arm64 slice of the shipped macOS bundle had no debug symbols, and three checks said it did.**
+Every macOS run emitted `warning: no debug symbols in executable (-arch arm64)` for VST3, AU and
+Standalone while the job reported a validated dSYM. On Apple Silicon — the population most likely to
+hand a developer an OS crash log — the bundle was not symbolicatable. No DSP algorithm changed, no
+parameter was added, renamed or removed, no serialization schema, threading model or reported
+latency moved, and **no first-party C++ source file was touched**. Analysis, citations and
+verification: [`worklogs/2026-08-22-macos-arm64-dsym.md`](worklogs/2026-08-22-macos-arm64-dsym.md),
+[ADR-0035](docs/architecture/design-decisions/ADR-0035-macos-per-architecture-symbolication.md).
+
+### Fixed
+- **Each `(target, architecture)` now gets its own retained LTO object.** A universal build links
+  once per architecture and several targets link with LTO, so one build performed six links — all
+  naming the same `-Wl,-object_path_lto` destination, five of them overwritten. The surviving object
+  was one target's x86_64 codegen, so every bundle's arm64 debug map pointed at a file with no arm64
+  slice, and the two non-surviving bundles' x86_64 maps pointed at another target's symbols. The
+  `CMakeLists.txt` comment asserting a directory made ld64 generate unique names had it backwards:
+  ld64 appends the fixed name `lto.o` to a directory (`ld/parsers/lto_file.cpp`), while a
+  non-directory path is used verbatim — which is the branch that actually gives uniqueness.
+  `$<TARGET_PROPERTY:NAME>` now separates targets and `-Xarch_<arch>` separates slices.
+  Evidence: generated link lines show **6 distinct object paths** for 3 targets × 2 architectures
+  where 1 exists today; single-arch and no-arch shapes degrade to one per target. [Verified]
+- **The sanitizer comment claimed six UBSan sub-checks and named five.** The flags carry five beyond
+  `address,undefined` — `vptr`, `float-divide-by-zero`, `implicit-conversion`, `local-bounds`,
+  `nullability` (the C flags carry four; `vptr` is C++-only). A leftover from the sibling's set
+  before `unsigned-shift-base` was dropped. Corrected in all **four** places it appeared: `build.yml`
+  twice, ADR-0034 §Consequences, the ADR index row and the 0.2.2 worklog. No flag changed.
+  Evidence: `.github/workflows/build.yml` `-fsanitize=` lines. [Verified]
+
+### Changed
+- **The macOS symbolication gates are per architecture slice.** Both were blind in the same way. A
+  fat dSYM lists a UUID for every slice whether or not that slice carries DWARF, so the UUID-set
+  match passed; and compile units were counted across the whole fat file, so 39 from x86_64 plus 0
+  from arm64 cleared `-eq 0` and printed "validated dSYM captured (UUID-matched, 39 compile units)".
+  The retention assertion tested only `COUNT -eq 0` and read 1 where its own comment expects one per
+  (target × slice). Now: compile units are counted per slice with `dwarfdump --arch <A>`, and
+  retention gates on every shipped architecture having a retained LTO object — coverage rather than
+  a count, because a count tracks the target list and was not the property that broke. The success
+  line reports per-slice counts instead of a sum.
+  Evidence: gate logic exercised over six cases against stub `lipo`/`dwarfdump` — arm64-empty and
+  x86_64-empty both discard where the aggregate logic kept; single-arch keeps, so `macos-intel` is
+  unaffected. [Verified]
+
+### Notes
+- **The universal build is preserved exactly** — same architectures, same `-flto`, same shipped
+  bytes. `-object_path_lto` controls only *where* ld64 writes the LTO temporary; no compiler flag,
+  optimization setting or sanitizer flag changed anywhere in this round.
+- **ld64's runtime behaviour is CI's measurement, not this machine's.** This environment is Linux
+  with no Apple linker, `lipo`, `dwarfdump` or `dsymutil`. The CMake half is verified here by
+  reading generated link lines; the effect on a real universal link is verified by the new gates on
+  the next macOS run — the posture ADR-0034 took for the `gcc:16` container lane. Xcode 15+ defaults
+  to `ld-prime`, which Apple has not open-sourced, so the `lto.o` naming is read from classic ld64
+  and corroborated by the observed single `lto.o`.
 
 ---
 

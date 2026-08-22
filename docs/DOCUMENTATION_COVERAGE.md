@@ -6,7 +6,18 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.4 (2026-08-22)** — the macOS ccache validation round.
+**Last updated:** for **0.2.5 (2026-08-22)** — the arm64 symbolication round.
+
+**Scope of the 0.2.5 round.** One ADR Accepted (**0035**, macOS symbolication is a per-ARCHITECTURE
+contract), amending ADR-0034's macOS bullets. The shipped universal bundle's arm64 slice had no DWARF while
+three checks reported success; the cause was several LTO links sharing one `-object_path_lto` destination,
+and the code comment explaining why that was safe was inverted with respect to ld64's own source. Fixed with
+per-(target, architecture) object paths; both gates now work per slice. Also corrected: a sanitizer sub-check
+count that said six and named five, in four places. No DSP algorithm change, no parameter added/renamed/
+removed, no schema, threading or latency change, **and no first-party C++ source file was touched**; the
+frozen registry snapshot is untouched. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **New ADR**
+(`ADR_INDEX.md`, ADR-0035), **Build-system change** (`CI_CD.md`, `CMakeLists.txt`), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`).
 
 **Scope of the 0.2.4 round.** No new ADR; **ADR-0034 amended** twice — with the measured macOS universal-build
 cache result (ccache 4.13.6, `Cacheable calls: 182 / 182`, 630.6s cold → 233.5s warm) replacing an imported
