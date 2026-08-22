@@ -211,7 +211,30 @@ its methodology is not permitted (constraint C2).
    flag may be added **only** together with a `KNOWN_ISSUES.md` entry stating what is no longer
    verified and on which platform. A gate documented as "uniform and blocking" that quietly skips
    a category on one platform is worse than an honestly narrower gate.
-5. **Hostile inputs are part of the suite**, not an afterthought: full-scale square waves,
+5. **A checker must prove it is live before its silence is trusted.** Every lint in the pipeline
+   ships a `--self-test`, and it runs **in the same job as the check it vouches for, ahead of that
+   job's use of the checker** — never in a different job, a different workflow or an earlier run,
+   because a liveness proof somewhere else proves nothing about the run whose silence is being
+   read. The pairs, with the job each lives in: `check-docs.py` (`docs`); `check-portability.py`,
+   `check-citations.py` and `check-realtime.py` (`source-lint`); `check-clang-warnings.py`
+   (`linux-clang`); `check-linux-abi.py` (`linux`). A checker that has stopped matching anything is
+   indistinguishable from a clean tree, and a gate that cannot fail is indistinguishable from a
+   gate that passes. **Adding a lint without one is not adding a gate.**
+
+   The rule is written because this repository had the habit without the rule, and the gap it left
+   was exactly where you would expect: `check-docs.py` and `check-clang-warnings.py` shipped
+   self-tests and ran them beside their checks, while `check-portability.py` and
+   `check-citations.py` — the latter gating every push — had none at all until 0.2.0. The
+   portability lint's compile canary is **not** a substitute and the distinction is the whole
+   point: `--compile-canary` asks *"does the pinned JUCE still have the hazard?"*, a question about
+   the dependency; `--self-test` asks *"does the checker still find it?"*, a question about the
+   scanner. A green canary with a broken scanner reports a clean tree.
+
+   It binds the instruments too, not only the lints. A comparator whose clean output is a table of
+   equal numbers — the twin-run bit-identity check a dependency bump is judged by — must show its
+   scenarios DISCRIMINATE before its agreement means anything (`tools/channel_probe.cpp`,
+   `tools/engine_repro.cpp`, `--assert-discriminating`).
+6. **Hostile inputs are part of the suite**, not an afterthought: full-scale square waves,
    inter-sample-peak-heavy material, DC, silence, and automation swept at audio rate. A limiter
    that only holds its ceiling on well-behaved music does not satisfy `DSP_POLICY.md` invariant 4.
 

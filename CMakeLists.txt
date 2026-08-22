@@ -17,28 +17,30 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
 
-project(Anabasis VERSION 0.1.6 LANGUAGES C CXX)
+project(Anabasis VERSION 0.2.0 LANGUAGES C CXX)
 
-# The BASELINE is C++20 (ADR-0008 decision B5). The cache seam below exists for
-# exactly ONE caller — the OQ-006 C++23 canary (.github/workflows/cxx23-canary.yml),
-# which asks "does tomorrow's baseline still compile?" without touching what
-# ships: 20 stays the default in every configuration nobody overrides, 23 is
-# legal only so the canary can request it, and anything else refuses loudly
-# rather than configuring a standard ADR-0008 never admitted. A plain
-# -DCMAKE_CXX_STANDARD=23 would NOT work here and would fail SILENTLY — the
-# unconditional set() below shadows a same-named cache entry — which is why the
-# knob is an ANABASIS_* option instead of advice to pass the standard directly.
-set(ANABASIS_CXX_STANDARD "20" CACHE STRING
-    "C++ standard the tree compiles at (20 = ADR-0008 baseline; 23 = the OQ-006 canary configuration)")
-if(NOT ANABASIS_CXX_STANDARD MATCHES "^(20|23)$")
-    message(FATAL_ERROR "ANABASIS_CXX_STANDARD must be 20 or 23 (got '${ANABASIS_CXX_STANDARD}') -- "
-                        "the baseline is fixed by ADR-0008; 23 exists only for the C++23 canary")
-endif()
-set(CMAKE_CXX_STANDARD ${ANABASIS_CXX_STANDARD})
+# THE BASELINE IS C++23 (ADR-0030, 0.2.0), superseding ADR-0008 decision B5's
+# C++20 and closing OQ-006. What used to sit here was a cache seam
+# (`ANABASIS_CXX_STANDARD`, 20 default, 23 legal) whose ONE caller was the weekly
+# canary asking "does tomorrow's baseline still compile?". That question is now
+# answered permanently and by the main matrix rather than weekly and off to one
+# side: every job on all three platforms compiles at 23. The seam and the canary
+# workflow went with it -- an option with no caller is dead state, and this
+# repository removes those rather than leaving them to imply a configuration
+# somebody supports.
+#
+# The version is a HARD set, not a cache variable, deliberately: an unconditional
+# `set()` shadows a same-named cache entry, so `-DCMAKE_CXX_STANDARD=20` would
+# fail SILENTLY rather than configure. Changing the baseline is a Build System
+# change under the Architecture Review Gate; the way to change it is an ADR and
+# this line, not a command-line flag.
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-# C++20 modules are not used (ADR-0008 decision B5); C++23 library features are
-# admitted only behind feature-test macros AND a thin first-party abstraction.
+# Modules are still not used (ADR-0008 decision B5's other half, which ADR-0030
+# does NOT supersede); C++23 LIBRARY features are admitted only behind
+# feature-test macros and a thin first-party abstraction, because the three
+# shipped standard libraries do not implement them on the same schedule.
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
@@ -112,7 +114,54 @@ else()
         -fstack-protector-strong -ffunction-sections -fdata-sections
         $<$<CONFIG:Release>:-g>)
     if(APPLE)
-        target_link_options(AnabasisHardening INTERFACE -Wl,-dead_strip)
+        # ------------------------------------------------------------------
+        #  -object_path_lto: the one flag that makes macOS crash symbolication
+        #  EXIST (0.2.0). Not an optimisation and not a hardening flag -- a fix
+        #  for a contract this project claimed to meet and did not.
+        #
+        #  WHAT WAS BROKEN. `dsymutil` does not read DWARF out of the linked
+        #  binary; it reads the binary's DEBUG MAP (the `N_OSO` stabs), walks
+        #  back to each object file the linker consumed, and pulls the DWARF
+        #  from there. Under `-flto` -- which `juce_recommended_lto_flags` puts
+        #  on the shipped plugin, and ADR-0008 puts it there alone -- ld64 does
+        #  codegen itself, writes the merged result to a TEMPORARY object, and
+        #  deletes it when the link finishes. The OSO entry then names a path
+        #  that no longer exists, `dsymutil` warns "unable to open object file",
+        #  exits 0, and emits a dSYM with no usable DWARF -- which the packaging
+        #  step correctly discards. The net effect was that `Anabasis-macOS-debug`
+        #  was never produced, on the one platform whose users routinely hand a
+        #  developer an OS crash log. Linux and Windows were unaffected:
+        #  `objcopy --only-keep-debug` and MSVC's `/DEBUG` both read the LINKED
+        #  image.
+        #
+        #  The macOS packaging step named this exact change as "a deliberate
+        #  future decision, not a silent addition". This is that decision,
+        #  taken: it is recorded in the 0.2.0 migration round rather than
+        #  slipped in beside the packaging code.
+        #
+        #  WHAT IT CHANGES, precisely: WHERE ld64 writes that temporary. The
+        #  bitcode, the codegen and the shipped bytes are untouched -- LTO is
+        #  still LTO, and this is emphatically NOT a workaround that turns it
+        #  off. The macOS jobs assert both halves after the build: that the
+        #  directory below is non-empty (so LTO really ran) and that a
+        #  UUID-matched dSYM with compile units came out (so the fix worked).
+        #
+        #  IT MUST BE A DIRECTORY, not a file. A universal build runs the linker
+        #  once per architecture; a single file path would have the second slice
+        #  overwrite the first, leaving one slice's OSO pointing at the other
+        #  slice's object. Given a directory, ld64 generates a unique name per
+        #  link invocation, so the two slices -- and the three format targets
+        #  that link separately -- coexist.
+        #
+        #  The directory is created at CONFIGURE time because ld64 does not
+        #  create it: a missing path makes the link FAIL rather than silently
+        #  fall back, which is the failure direction to want if this is ever
+        #  edited carelessly.
+        set(ANABASIS_LTO_OBJECT_DIR "${CMAKE_BINARY_DIR}/lto-objects")
+        file(MAKE_DIRECTORY "${ANABASIS_LTO_OBJECT_DIR}")
+        target_link_options(AnabasisHardening INTERFACE
+            -Wl,-dead_strip
+            "-Wl,-object_path_lto,${ANABASIS_LTO_OBJECT_DIR}")
     else()
         target_link_options(AnabasisHardening INTERFACE
             -Wl,--gc-sections -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)

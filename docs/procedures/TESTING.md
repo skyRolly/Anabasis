@@ -10,6 +10,40 @@ How to run and interpret the validation suite. Acceptance levels and the hard ga
 
 ## Headless self-tests
 
+
+## Realtime enforcement (0.2.0, ADR-0029)
+
+Three tiers, and none of them subsumes another. Run them in this order when touching the audio path:
+
+1. `python3 scripts/check-realtime.py --self-test && python3 scripts/check-realtime.py` — seconds,
+   no build, every platform. It reads the branches the suite never executes.
+2. `scripts/run-tests.sh` — `testTheAudioPathAllocatesNothing` arms `tests/AllocationGuard.h` around
+   `AnabasisEngine::process` across the configuration matrix. **Read its two `note:` lines**: they
+   say how many calls were armed and which counters were live. A run that skips the assertions says
+   so; it never passes them silently.
+3. RealtimeSanitizer, which needs the pinned Clang (`scripts/setup-llvm-apt.sh <major>`; the major
+   is `ANABASIS_CLANG_VERSION` in `build.yml`):
+
+   ```
+   cmake -B build-rt -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+     -DCMAKE_C_COMPILER=clang-<n> -DCMAKE_CXX_COMPILER=clang++-<n> \
+     -DCMAKE_C_FLAGS="-fsanitize=realtime -fno-omit-frame-pointer" \
+     -DCMAKE_CXX_FLAGS="-fsanitize=realtime -fno-omit-frame-pointer -DANABASIS_RTSAN_LANE=1" \
+     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=realtime" -DANABASIS_BUILD_STANDALONE=OFF
+   cmake --build build-rt --target AnabasisTests
+   ./build-rt/AnabasisTests_artefacts/RelWithDebInfo/AnabasisTests
+   ```
+
+   **Do not set `RTSAN_OPTIONS`.** The default halts on the first violation and exits 43;
+   `halt_on_error=false` makes the process print violations and exit 0, which is a gate that cannot
+   fail.
+
+**A comparator proves it discriminates before its agreement counts.** `AnabasisChannelProbe
+--assert-discriminating` refuses to print a baseline when two configurations produce identical
+output and the pair is not declared in its source. A twin-build comparison over a collapsed scenario
+set makes any two builds agree while testing nothing — which is exactly the evidence a dependency
+bump is judged on.
+
 ```bash
 scripts/build.sh                 # build (produces AnabasisTests + AnabasisStateTests)
 scripts/run-tests.sh             # runs BOTH console apps (fail-closed: a missing binary fails)

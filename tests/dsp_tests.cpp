@@ -14,8 +14,11 @@
 #include <RmsMeter.h>
 #include <Latency.h>
 #include <juce_dsp/juce_dsp.h>
+#include "AllocationGuard.h"
+
 #include <cstdio>
 #include <cmath>
+#include <algorithm>
 
 static int failures = 0;
 static int checks   = 0;
@@ -4677,6 +4680,208 @@ static void testLimiterAlignment()
 }
 
 
+// ---------------------------------------------------------------------------
+// REALTIME_AUDIO_POLICY, ENFORCED RATHER THAN INSPECTED (0.2.0).
+//
+// The policy is Priority 1 and unconditional -- no allocation, no lock, no
+// blocking call on the audio thread -- and until this test the only enforcement
+// was human review plus `REALTIME_SAFETY_AUDIT.md`, a hand-written per-module
+// audit. That document asked for exactly this instrument, in as many words:
+// "a malloc-interposition run (e.g. an RT-safety checker under the DSP suite)
+// would upgrade the allocation claims from Verified-by-inspection to
+// machine-verified; tracked for P6's gate". P6 closed without it.
+//
+// WHY A COUNTER AND NOT A SANITIZER, when RealtimeSanitizer exists and is the
+// stronger tool. RTSan is Clang-only and Linux/macOS-only; the shipped Windows
+// binary is built by MSVC, where it never runs. `operator new` replacement is
+// standard C++ and works on every conforming implementation, so this tier
+// reaches the platform the sanitizer cannot. The two are complementary and both
+// ship: the `realtime` job runs RTSan over this same suite, and this guard
+// stands ITSELF down there (see AllocationGuard.h) so it cannot shadow the
+// sanitizer's own interceptors.
+//
+// IT PROVES IT CAN COUNT BEFORE IT REPORTS ZERO (TESTING_POLICY rule 5).
+// "No allocations were observed" and "nothing was observing" print identically,
+// and the halves genuinely differ by configuration -- the malloc interposer
+// needs glibc and is compiled out under ASan, and the whole guard is compiled
+// out under RTSan and valgrind. `selfCheck()` performs one known allocation of
+// each kind and reports which halves moved; a half that is not live is
+// DISCLOSED and skipped, never silently passed.
+//
+// WHAT IS ARMED. `prepare()` is REQUIRED to allocate and is deliberately
+// outside every armed scope; only `AnabasisEngine::process` is measured, which
+// is the whole §2 chain -- EQ, comp, clip/colour, limiter, oversampling,
+// dither, the §2.8 transition layer, the §2.7/§2.9 meter taps and the §5.4
+// adaptive engine. The matrix sweeps both channel counts, all five oversample
+// factors, both phase modes and four parameter sets including bypass and delta,
+// because a branch the suite does not execute is a branch no runtime tool sees.
+//
+// THE MID-STREAM REWIRE IS ITS OWN CASE, and it is the one most likely to
+// allocate: changing the oversample factor between blocks re-plans JUCE's
+// oversampler, and ADR-0023's §2.8 duck exists precisely so that rewire lands
+// at a silent bottom. That path is driven here WITHOUT a re-prepare, which is
+// the shape a user gets when they turn oversampling up while audio is running.
+static void testTheAudioPathAllocatesNothing()
+{
+    using namespace anabasis::testing;
+
+    const auto live = selfCheck();
+    if (! live.newLive && ! live.mallocLive)
+    {
+        // Disclosed, not silent: this is the expected state under RTSan and
+        // valgrind, where the guard compiles out and a stronger tool is
+        // watching instead.
+        std::printf ("note: allocation guard is compiled out in this configuration "
+                     "(new=%d malloc=%d aligned=%d mallocCompiledIn=%d) -- "
+                     "skipping the audio-path allocation assertions\n",
+                     (int) live.newLive, (int) live.mallocLive,
+                     (int) live.alignedNewLive, (int) live.mallocCompiledIn);
+        return;
+    }
+
+    check (live.newLive, "alloc guard: the operator new counter is live");
+    check (live.alignedNewLive, "alloc guard: the over-aligned operator new counter is live");
+    // COMPILED-IN-BUT-DEAD IS A DEFECT; NOT-COMPILED-IN IS A DOCUMENTED STATE.
+    // They fail for opposite reasons, so they are asserted apart: the malloc
+    // half does not exist on MSVC, macOS or under ASan, and where it DOES exist
+    // and does not fire, the interposition has stopped working.
+    if (live.mallocCompiledIn)
+        check (live.mallocLive, "alloc guard: the malloc interposer is live where it is compiled in");
+
+    const double sr = 48000.0;
+    const int    block = 256;
+
+    // WHAT `prepare()` ALLOCATES, measured and printed rather than asserted.
+    // It is not a gate -- prepare is REQUIRED to allocate -- but it is the
+    // evidence that the two counters are two ROUTES rather than one counted
+    // twice, and the numbers AllocationGuard.h quotes are reproducible from
+    // this line. JUCE's AudioBuffer/HeapBlock take the raw-malloc path, so a
+    // guard with only the `operator new` half would miss most of it.
+    {
+        anabasis::AnabasisEngine probe;
+        resetCounts();
+        {
+            Armed arm;
+            probe.prepare (sr, block, 2);
+        }
+        std::printf ("note: one AnabasisEngine::prepare(48k, 256, 2) allocates "
+                     "new=%ld malloc=%ld\n", newCount.load(), mallocCount.load());
+    }
+
+    struct Variant { const char* name; void (*apply) (anabasis::EngineParameters&); };
+    const Variant variants[] = {
+        { "defaults", [] (anabasis::EngineParameters&) {} },
+        { "pushed",   [] (anabasis::EngineParameters& p) {
+              p.limGainDb = 9.0f; p.clipDriveDb = 6.0f; p.colourDepth = 0.8f;
+              p.colourModel = 2; p.compRatio = 4.0f; p.compThresholdDb = -12.0f;
+              p.eqTiltDb = 3.0f; p.eqPosition = 1; p.eqBell1GainDb = -4.0f;
+              p.truePeakMode = true; p.ditherMode = 1; p.ditherShaping = true;
+              p.limStyle = 2; p.stereoLink = 0.25f; p.transientPreserve = 0.9f; } },
+        { "bypass",   [] (anabasis::EngineParameters& p) { p.bypass = true; } },
+        { "delta",    [] (anabasis::EngineParameters& p) {
+              p.deltaMonitor = true; p.loudnessComp = true; p.freeze = true; } },
+    };
+    const anabasis::OversampleFactor factors[] = {
+        anabasis::OversampleFactor::off,  anabasis::OversampleFactor::x2,
+        anabasis::OversampleFactor::x4,   anabasis::OversampleFactor::x8,
+        anabasis::OversampleFactor::x16 };
+    const anabasis::OsPhaseMode phases[] = {
+        anabasis::OsPhaseMode::minimum, anabasis::OsPhaseMode::linear };
+
+    long worstNew = 0, worstMalloc = 0, armedCalls = 0;
+    int  configs = 0;
+    const char* firstOffender = nullptr;
+
+    for (int channels = 1; channels <= 2; ++channels)
+        for (auto factor : factors)
+            for (auto phase : phases)
+                for (const auto& v : variants)
+                {
+                    anabasis::AnabasisEngine engine;
+                    engine.prepare (sr, block, channels);      // allocation lives HERE, by design
+
+                    anabasis::EngineParameters p;
+                    v.apply (p);
+                    p.oversample = factor;
+                    p.osPhase    = phase;
+
+                    juce::AudioBuffer<float> buf (channels, block);
+                    resetCounts();
+                    {
+                        Armed arm;
+                        for (int b = 0; b < 24; ++b)
+                        {
+                            for (int ch = 0; ch < channels; ++ch)
+                            {
+                                auto* d = buf.getWritePointer (ch);
+                                for (int n = 0; n < block; ++n)
+                                    d[n] = 0.7f * std::sin (0.031f * (float) (b * block + n)
+                                                            + 0.4f * (float) ch);
+                            }
+                            engine.process (buf, p);
+                            ++armedCalls;
+                        }
+                    }
+                    const long n = newCount.load(), m = mallocCount.load();
+                    if ((n > 0 || m > 0) && firstOffender == nullptr)
+                        firstOffender = v.name;
+                    worstNew    = std::max (worstNew, n);
+                    worstMalloc = std::max (worstMalloc, m);
+                    ++configs;
+                }
+
+    check (worstNew == 0 && worstMalloc == 0,
+           "realtime: AnabasisEngine::process allocates nothing across the whole matrix");
+    if (worstNew > 0 || worstMalloc > 0)
+        std::printf ("       worst config '%s': new=%ld malloc=%ld\n",
+                     firstOffender != nullptr ? firstOffender : "?", worstNew, worstMalloc);
+
+    // --- the mid-stream oversample rewire, with no re-prepare ---------------
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, block);
+        for (int ch = 0; ch < 2; ++ch)
+            juce::FloatVectorOperations::fill (buf.getWritePointer (ch), 0.5f, block);
+
+        // Prime every factor ONCE before arming: the first visit to a factor is
+        // where a lazily-planned oversampler would allocate, and that is a
+        // question about the PREPARE contract rather than about steady-state
+        // audio. Priming here keeps this case about the rewire itself; the
+        // unprimed first visit is covered by the matrix above, which prepares
+        // per configuration.
+        for (auto factor : factors)
+        {
+            p.oversample = factor;
+            for (int b = 0; b < 8; ++b) engine.process (buf, p);
+        }
+
+        resetCounts();
+        {
+            Armed arm;
+            for (int pass = 0; pass < 3; ++pass)
+                for (auto factor : factors)
+                {
+                    p.oversample = factor;
+                    engine.requestForcedDuck();
+                    for (int b = 0; b < 8; ++b) { engine.process (buf, p); ++armedCalls; }
+                }
+        }
+        check (newCount.load() == 0 && mallocCount.load() == 0,
+               "realtime: a mid-stream oversample rewire allocates nothing on the audio thread");
+        if (newCount.load() > 0 || mallocCount.load() > 0)
+            std::printf ("       rewire: new=%ld malloc=%ld\n",
+                         newCount.load(), mallocCount.load());
+    }
+
+    std::printf ("note: allocation guard armed over %ld process() calls across %d configurations "
+                 "(new counter %s, malloc counter %s)\n",
+                 armedCalls, configs,
+                 live.newLive ? "live" : "DEAD",
+                 live.mallocCompiledIn ? (live.mallocLive ? "live" : "DEAD") : "not compiled in");
+}
+
 int main()
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -4685,6 +4890,7 @@ int main()
     setvbuf (stdout, nullptr, _IONBF, 0);
 
     testNullWithDefaults();
+    testTheAudioPathAllocatesNothing();
     testLimiterWindowCoverage();
     testLimiterAlignment();
     testCeilingIsSmoothed();

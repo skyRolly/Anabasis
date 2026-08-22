@@ -40,9 +40,20 @@ restate: **macOS 10.13+ (Intel), 11.0+ (Apple Silicon)**. `CMAKE_OSX_DEPLOYMENT_
 governs the x86_64 slice (deliberate — above JUCE 9's documented 10.11 floor, matching the
 sibling product); the arm64 slice floors at 11.0 by toolchain regardless. Evidence: the
 `build.yml` macOS configure step and its comment, `docs/OPEN_QUESTIONS.md` OQ-011.
-**No Windows or Linux OS floor is claimed** — none has been decided or measured, and inventing
-one here would be a C7 violation. CI builds on `ubuntu-latest` / `windows-latest`, which proves
-buildability there and nothing about older systems.
+**Supported-OS floor (Linux) — MEASURED AND GATED since 0.2.0.** This paragraph previously read
+"no Windows or Linux OS floor is claimed — none has been decided or measured", which was accurate
+and was the problem: the artifact had a floor all along, nobody had chosen it, and nothing reported
+it. `scripts/check-linux-abi.py` now measures the shipped VST3 and Standalone on every push and
+fails the run that raises the requirement. **This document quotes no number of its own and defers
+to that file**, for the same reason `CLAUDE.md` quotes no pluginval strictness: the copy that rots
+is the one nobody edits. What the floor means in user terms is stated there too — the families
+gated, why `CXXABI` is one of them, and which systems fall below.
+
+**No Windows OS floor is claimed** — none has been decided or measured, and inventing one here
+would be a C7 violation. CI builds on `windows-latest`, which proves buildability there and nothing
+about older systems. The Linux equivalent of that sentence stood for five versions before the
+measurement above replaced it; the Windows one is the same shape and is a known gap rather than a
+claim.
 
 ## I/O layouts
 

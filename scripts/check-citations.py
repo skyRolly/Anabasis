@@ -400,10 +400,16 @@ def citations(text):
     return out
 
 
-def build_line_map(base, path):
-    """old line -> new line, from the diff hunks. None inside an edited hunk."""
-    diff = subprocess.run(["git", "diff", "-U0", base, "--", path],
-                          capture_output=True, text=True).stdout
+def line_map_from_diff(diff):
+    """old line -> new line, from `git diff -U0` text. None inside an edited hunk.
+
+    SPLIT OUT OF `build_line_map` SO A TEST CAN REACH IT (0.2.0). The arithmetic
+    here is the whole correctness of the tool -- every re-anchor this file writes
+    is this function's answer -- and until it was separated from the subprocess
+    that feeds it, the only way to exercise it was to construct a git history.
+    That is the same rule the GUI headers state about expressions reachable only
+    from `paint`: a version no test can pin is a version that drifts.
+    """
     edits = [(int(h.group(1)), int(h.group(2) or 1), int(h.group(4) or 1))
              for h in re.finditer(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@",
                                   diff, re.M)]
@@ -427,6 +433,13 @@ def build_line_map(base, path):
                 break
         return n + off
     return m
+
+
+def build_line_map(base, path):
+    """old line -> new line for `path` between `base` and the working tree."""
+    diff = subprocess.run(["git", "diff", "-U0", base, "--", path],
+                          capture_output=True, text=True).stdout
+    return line_map_from_diff(diff)
 
 
 # `worklogs/` is deliberately OUT of scope. Those files are research records
@@ -510,16 +523,221 @@ def apply_edits(text, edits):
     return text
 
 
+def self_test():
+    """Prove the checker still recognises, still maps and still rewrites.
+
+    TESTING_POLICY rule 4, applied to the gate whose SILENCE is read on every
+    push. A citation checker that has stopped matching anything reports "N
+    anchor(s) still point at the same text" with N = 0 and exits 0 -- which is
+    indistinguishable from a clean tree, and is the shape this repository's
+    lints are written against. Nothing here touches git or the working tree: the
+    three halves that can silently stop working are the CITATION pattern, the
+    `line_map_from_diff` arithmetic and `apply_edits`, and all three are pure.
+
+    Both directions are pinned throughout. A recogniser that only proves it can
+    match drifts into rewriting other people's line numbers -- which this tool
+    has done once already, to 27 anchors -- so every ownership case below also
+    asserts what must NOT be claimed.
+    """
+    failures = checked = 0
+
+    def check(label, got, want):
+        nonlocal failures, checked
+        checked += 1
+        if got != want:
+            failures += 1
+            print(f"self-test FAIL: {label}: got {got!r}, want {want!r}", file=sys.stderr)
+
+    # --- 1. RECOGNITION: what the pattern is and is not allowed to match ------
+    def found(text):
+        return [(m.group("prefix"), m.group("path"), m.group("anchors"))
+                for m in CITATION.finditer(text)]
+
+    check("a plain anchor is recognised",
+          found("see src/PluginProcessor.cpp:695 for it"),
+          [(None, "src/PluginProcessor.cpp", "695")])
+    check("a range is recognised",
+          found("src/PluginProcessor.cpp:695-752"),
+          [(None, "src/PluginProcessor.cpp", "695-752")])
+    # THE COMPOUND FORM is what an early version of this file missed: it
+    # re-anchored the first anchor and left the bare numbers behind it, producing
+    # an out-of-order, internally contradictory citation.
+    check("a compound list is one match carrying every anchor",
+          found("src/PluginProcessor.cpp:708-709, 851, 1208"),
+          [(None, "src/PluginProcessor.cpp", "708-709, 851, 1208")])
+    # THE QUALIFIER MUST BE CAPTURED, not skipped past. Without the lookbehind
+    # the scan matched from `src/...` and the qualifier never reached
+    # `classify()`, so another product's anchors were rewritten with this tree's
+    # code movement.
+    check("a revision qualifier is captured as the prefix",
+          found("7686204:src/PluginProcessor.cpp:485-491"),
+          [("7686204", "src/PluginProcessor.cpp", "485-491")])
+    check("a checkout qualifier is captured as the prefix",
+          found("some-checkout:src/PluginProcessor.cpp:485"),
+          [("some-checkout", "src/PluginProcessor.cpp", "485")])
+    # ...and rejecting the qualified match is not enough on its own: WITHOUT the
+    # lookbehind the scan retries one character later and matches a TRUNCATED
+    # path -- `rc/PluginProcessor.cpp` -- which classifies as not-ours by luck
+    # rather than by rule. The lookbehind blocks every one of those restarts,
+    # because each is preceded by a path or word character, so an absolute path
+    # produces no match at all rather than a mangled one.
+    check("an absolute path yields no match and no restart",
+          found("/abs/path/src/PluginProcessor.cpp:485"), [])
+    # RECOGNITION AND OWNERSHIP ARE SEPARATE STAGES, and this is the case that
+    # shows why the second one has to exist. At offset 0 there is nothing for the
+    # lookbehind to reject, so `xsrc/PluginProcessor.cpp` IS matched -- and it is
+    # `classify()`, testing the path against TRACKED verbatim, that declines it.
+    check("a near-miss path is matched but not owned",
+          [(pth, classify(pre, pth)) for pre, pth, _ in found("xsrc/PluginProcessor.cpp:485")],
+          [("xsrc/PluginProcessor.cpp", None)])
+    check("a bare file name is not a citation",
+          found("PluginProcessor.cpp:7"), [])
+    check("prose with a colon and a number is not a citation",
+          found("see section 4: 7 of them"), [])
+
+    # --- 2. OWNERSHIP: classify() decides what may be rewritten ---------------
+    check("a tracked path is ours", classify(None, "src/PluginProcessor.cpp"),
+          "src/PluginProcessor.cpp")
+    check("a windows spelling of a tracked path normalises",
+          classify(None, "src\\gui\\PluginEditor.cpp"), "src/gui/PluginEditor.cpp")
+    check("an untracked path is not ours", classify(None, "src/dsp/CeilingClamp.h"), None)
+    # THE SIBLING PRODUCT'S EDITOR lives at `src/PluginEditor.cpp`; ours is
+    # `src/gui/PluginEditor.cpp`. The spellings differ, which is what makes the
+    # verbatim-TRACKED test sufficient without a foreign-root rule.
+    check("the sibling product's editor path is not ours",
+          classify(None, "src/PluginEditor.cpp"), None)
+    check("a qualified citation is never ours",
+          classify("7686204", "src/PluginProcessor.cpp"), None)
+    check("an absolute path is never ours",
+          classify(None, "/home/x/src/PluginProcessor.cpp"), None)
+
+    # --- 3. THE PROVENANCE BLOCK: the sibling's anchors are never ours --------
+    # BLOCK-SCOPED, NOT LINE-SCOPED. The marker and the anchor share a line in
+    # two files and do NOT in a third, where the sibling's range wraps two lines
+    # below the marker. A line-scoped exclusion is safe there only by accident of
+    # which spellings this repository happens to own.
+    prov_same_line = ("// Provenance (ADR-0009): adapted from the sibling "
+                      "src/gui/LookAndFeel.cpp:1-912 @ abc123.\n")
+    check("an anchor on the provenance line is excluded",
+          citations(prov_same_line), [])
+    prov_wrapped = ("// Provenance (ADR-0009): adapted from the sibling product\n"
+                    "// at revision abc123, covering\n"
+                    "// src/gui/PluginEditor.cpp:36-175 and the rest.\n")
+    check("an anchor two lines below the marker is excluded too",
+          citations(prov_wrapped), [])
+    # ...and the exclusion must END. A citation after the block is ours again.
+    after = prov_same_line + "\nOur own note: src/PluginProcessor.cpp:695.\n"
+    check("a citation after the provenance block is still checked",
+          [c[1] for c in citations(after)], ["src/PluginProcessor.cpp"])
+
+    # --- 4. MAPPING: line_map_from_diff, every hunk shape --------------------
+    def hunk(*specs):
+        return "".join(f"@@ -{a} +{b} @@\n" for a, b in specs)
+
+    m = line_map_from_diff("")
+    check("no diff moves nothing", [m(1), m(500)], [1, 500])
+
+    # A PURE INSERTION sits AFTER the old line it names, so that line does not
+    # move. `start + old_count - 1` is `start - 1` here, and the general test
+    # would shift line `start` one line too far.
+    m = line_map_from_diff(hunk(("9,0", "10,2")))
+    check("a pure insertion does not move the line it follows", m(9), 9)
+    check("a pure insertion shifts the lines after it", m(10), 12)
+
+    m = line_map_from_diff(hunk(("10,3", "10,0")))
+    check("a deletion pulls later lines up", m(20), 17)
+    check("a line inside a deleted hunk has no image", m(11), None)
+    check("a line before a deletion is unmoved", m(9), 9)
+
+    m = line_map_from_diff(hunk(("10,2", "10,5")))
+    check("an edited hunk's own lines have no image", m(10), None)
+    check("lines after an edited hunk shift by the size delta", m(20), 23)
+
+    # Several hunks accumulate, and a `,1` count is implicit in the short form.
+    m = line_map_from_diff(hunk(("5,0", "6,3"), ("40", "43")))
+    check("offsets accumulate across hunks", m(100), 103)
+    check("a single-line hunk parses as count 1", m(40), None)
+
+    # --- 5. REWRITING: apply_edits ------------------------------------------
+    # BY SPAN, RIGHT TO LEFT, NEVER BY STRING. `str.replace` matches a prefix:
+    # rewriting `...cpp:107` by text turns a correct `...cpp:1076` into
+    # `...cpp:1306`.
+    text = "a:107 and a:1076"
+    check("spans rewrite only their own citation",
+          apply_edits(text, [(0, 5, "a:130")]), "a:130 and a:1076")
+    check("two spans both land",
+          apply_edits(text, [(0, 5, "a:130"), (10, 16, "a:2000")]),
+          "a:130 and a:2000")
+    # A DUPLICATE SPAN MUST NOT BE APPLIED TWICE: the first pass changes the
+    # text's length, so the second splices the replacement into itself.
+    check("an identical edit queued twice is applied once",
+          apply_edits("a:2000", [(0, 6, "a:2001"), (0, 6, "a:2001")]), "a:2001")
+    overlapped = False
+    try:
+        apply_edits("a:2000", [(0, 6, "a:2001"), (2, 6, "a:9")])
+    except ValueError:
+        overlapped = True
+    check("overlapping rewrites raise instead of corrupting", overlapped, True)
+
+    # --- 6. DECLARED RE-AIMS: good for exactly one transition ----------------
+    doc, base, cur = "docs/X.md", "src/PluginProcessor.cpp:100", "src/PluginProcessor.cpp:200"
+    saved = set(DELIBERATE_REAIMS)
+    try:
+        DELIBERATE_REAIMS.clear()
+        check("an undeclared move is not excused", is_declared_reaim(doc, base, cur), False)
+        DELIBERATE_REAIMS.add((doc, cur))
+        check("a declaration naming the current spelling excuses it",
+              is_declared_reaim(doc, base, cur), True)
+        DELIBERATE_REAIMS.clear()
+        DELIBERATE_REAIMS.add((doc, base))
+        check("a declaration naming the base spelling excuses it too",
+              is_declared_reaim(doc, base, cur), True)
+        # THE SPELLING MUST ACTUALLY HAVE CHANGED. Once the base carries the
+        # re-aimed anchor, `200 == 200` kept matching and swallowed the drift of
+        # whatever moved that code NEXT -- so the entry survived its own
+        # transition and silenced an unrelated failure.
+        DELIBERATE_REAIMS.clear()
+        DELIBERATE_REAIMS.add((doc, cur))
+        check("a declaration is inert once base and current agree",
+              is_declared_reaim(doc, cur, cur), False)
+        # ...and it is scoped to its document.
+        DELIBERATE_REAIMS.clear()
+        DELIBERATE_REAIMS.add(("docs/OTHER.md", cur))
+        check("a declaration does not excuse another document",
+              is_declared_reaim(doc, base, cur), False)
+    finally:
+        DELIBERATE_REAIMS.clear()
+        DELIBERATE_REAIMS.update(saved)
+
+    if failures:
+        print(f"\ncheck-citations: {failures} of {checked} self-test case(s) failed.",
+              file=sys.stderr)
+        return 1
+    print(f"check-citations: self-test passed ({checked} cases).")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="Verify documentation evidence anchors.")
     ap.add_argument("--base", default="origin/main",
                     help="revision the citations were last verified against")
+    # PROVE THE CHECKER IS LIVE BEFORE TRUSTING ITS SILENCE (TESTING_POLICY
+    # rule 4). This gate's clean output is a COUNT, and a recogniser that has
+    # stopped matching prints zero and exits 0 -- the same text a genuinely
+    # clean tree prints. It runs in `source-lint`, immediately before the check
+    # it vouches for, because a liveness proof in another job proves nothing
+    # about this run.
+    ap.add_argument("--self-test", action="store_true",
+                    help="run the checker's own test cases and exit")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true",
                       help="report drifted citations (the default)")
     mode.add_argument("--fix", action="store_true",
                       help="re-anchor drifted citations instead of only reporting")
     args = ap.parse_args()
+
+    if args.self_test:
+        return self_test()
 
     base_src, now_src = {}, {}
     for path in TRACKED:

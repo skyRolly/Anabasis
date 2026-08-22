@@ -22,6 +22,7 @@
 //  pushed chain, both stereo links at 0.
 //
 //  Usage:  AnabasisChannelProbe <bundle path> [--format vst3|au] [--verbose]
+//                                [--assert-discriminating]
 //  Exit:   0 = every configuration kept both channels; 1 = a channel was lost;
 //          2 = the plugin could not be loaded (an environment failure, which is
 //          deliberately a DIFFERENT exit code from a real defect).
@@ -31,6 +32,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -64,6 +66,58 @@ const Config kConfigs[] = {
     { "field: mix 100, links 100",100.0f, 15.4f, 70.0f, 2.0f,  12.6f,  100.0f, 100.0f },
     { "pushed, colour off",       100.0f, 15.4f,  0.0f, 0.0f,  12.6f,    0.0f,   0.0f },
 };
+
+// ============================================================================
+//  DECLARED COLLAPSES — the discrimination check's escape hatch, and the only
+//  one it has (0.2.0).
+//
+//  WHY A COMPARATOR NEEDS THIS AT ALL. This probe's other job is the twin-build
+//  comparison a dependency bump is judged by: build the same source against two
+//  JUCE checkouts, run both, diff the tables. ADR-0028 did exactly that and the
+//  two runs agreed digit for digit. But AGREEMENT ONLY MEANS SOMETHING IF THE
+//  ROWS DIFFER FROM EACH OTHER: a scenario set that has collapsed produces a
+//  table of equal numbers, the two builds agree perfectly, and nothing was
+//  tested. That is not hypothetical — the sibling product's first bit-identity
+//  run left an amount parameter at an identity default and reported 32 matching
+//  hashes that proved nothing, caught only because a human noticed two rows that
+//  should differ did not. `--assert-discriminating` is that human, mechanised.
+//
+//  MEASURED HERE, AND ONE PAIR REALLY DOES COLLAPSE. `field: mix 100, links 0`
+//  and `field: mix 100, links 100` produce IDENTICAL output to nine decimal
+//  places at every rate and block size. That is a property of the STIMULUS
+//  rather than a defect in the plug-in: the probe drives 220 Hz on the left and
+//  330 Hz on the right at the SAME amplitude, so both detectors see the same
+//  level, and a gain computer that takes the maximum across channels computes
+//  the same gain as one that takes each channel's own. The link axis has no
+//  purchase on equal-level material.
+//
+//  IT IS DECLARED RATHER THAN FIXED, deliberately. Making the two channels
+//  differ in LEVEL would give the link axis something to bite on and would break
+//  this probe's primary oracle: the `> 6 dB apart` skew test is how it detects a
+//  half-lost channel (KI-009), and a deliberately lopsided stimulus trips it by
+//  construction. The two purposes want opposite stimuli, so the collapse is
+//  recorded where a reader of the evidence will see it instead of being
+//  engineered away.
+//
+//  WHAT THIS BUYS: any NEW collapse fails the check. A future edit that leaves a
+//  parameter at its default, or a wrapper change that stops a value landing,
+//  makes two rows equal that are not on this list and the probe refuses to
+//  report a baseline it has not shown to be discriminating.
+// ============================================================================
+struct DeclaredCollapse { const char* a; const char* b; };
+
+const DeclaredCollapse kDeclaredCollapses[] = {
+    { "field: mix 100, links 0", "field: mix 100, links 100" },
+};
+
+static bool collapseIsDeclared (const char* a, const char* b)
+{
+    for (const auto& d : kDeclaredCollapses)
+        if ((std::strcmp (d.a, a) == 0 && std::strcmp (d.b, b) == 0)
+         || (std::strcmp (d.a, b) == 0 && std::strcmp (d.b, a) == 0))
+            return true;
+    return false;
+}
 
 // MATCHED BY DISPLAY NAME, NOT BY PARAMETER ID, and the difference is the whole
 // reason this function has a comment. Across a FORMAT WRAPPER the ids are not
@@ -354,14 +408,18 @@ int main (int argc, char** argv)
 
     if (argc < 2)
     {
-        std::printf ("usage: AnabasisChannelProbe <bundle> [--format vst3|au] [--verbose]\n");
+        std::printf ("usage: AnabasisChannelProbe <bundle> [--format vst3|au] [--verbose]"
+                     " [--assert-discriminating]\n");
         return 2;
     }
     const juce::String path (argv[1]);
+    bool assertDiscriminating = false;
     juce::String wanted ("vst3");
     for (int i = 2; i < argc; ++i)
         if (juce::String (argv[i]) == "--format" && i + 1 < argc)
             wanted = juce::String (argv[++i]).toLowerCase();
+        else if (juce::String (argv[i]) == "--assert-discriminating")
+            assertDiscriminating = true;
 
     juce::AudioPluginFormatManager fm;
     fm.addFormat (std::make_unique<juce::VST3PluginFormat>());
@@ -403,6 +461,8 @@ int main (int argc, char** argv)
    #endif
 
     int failures = 0;
+    struct Row { const char* name; double sr; int block; double l, r; };
+    std::vector<Row> rows;
     // Two rates and two block sizes: the field report is not tied to either, and
     // a per-channel state that only breaks at one buffer size would otherwise be
     // invisible. 512 @ 48k is the reference; 64 @ 44.1k stresses the smallest
@@ -436,7 +496,51 @@ int main (int argc, char** argv)
                              r.nonFinite ? "  NON-FINITE" : "",
                              lost ? "  CHANNEL LOST" : (skewed ? "  >6 dB APART" : ""));
                 std::fflush (stdout);
+                rows.push_back ({ c.name, sr, blockSize, r.rmsL, r.rmsR });
             }
+
+    // ---- THE DISCRIMINATION CHECK ----------------------------------------
+    // Grouped by (rate, block size) because those are the axes the plug-in is
+    // ALLOWED to be invariant under -- block-size invariance is a property this
+    // chain should have, not one to demand a difference from. What must
+    // discriminate is the CONFIGURATION axis: two different parameter tuples
+    // that produce the same output are the same experiment run twice.
+    {
+        int collapses = 0, undeclared = 0, compared = 0;
+        for (size_t i = 0; i < rows.size(); ++i)
+            for (size_t j = i + 1; j < rows.size(); ++j)
+            {
+                if (! juce::exactlyEqual (rows[i].sr, rows[j].sr)
+                 || rows[i].block != rows[j].block) continue;
+                if (std::strcmp (rows[i].name, rows[j].name) == 0) continue;
+                ++compared;
+                // EXACT equality, not a tolerance. Two configurations that differ
+                // by a smoother's last increment are still distinct experiments;
+                // what this is looking for is the collapse, where a parameter did
+                // not land at all and the two rows are bit-for-bit the same run.
+                if (! juce::exactlyEqual (rows[i].l, rows[j].l)
+                 || ! juce::exactlyEqual (rows[i].r, rows[j].r)) continue;
+                ++collapses;
+                const bool declared = collapseIsDeclared (rows[i].name, rows[j].name);
+                if (! declared) ++undeclared;
+                std::printf ("  %s COLLAPSE at %5.0f Hz / %4d: '%s' == '%s' (L=%.9f R=%.9f)\n",
+                             declared ? "declared" : "UNDECLARED",
+                             rows[i].sr, rows[i].block, rows[i].name, rows[j].name,
+                             rows[i].l, rows[i].r);
+            }
+        std::printf ("  discrimination: %d configuration pair(s) compared, %d collapsed "
+                     "(%d undeclared)\n", compared, collapses, undeclared);
+        if (assertDiscriminating && undeclared > 0)
+        {
+            std::printf ("PROBE REFUSES TO REPORT A BASELINE: %d configuration pair(s) produce "
+                         "IDENTICAL output and are not declared. A twin-build comparison over a "
+                         "collapsed scenario set proves nothing -- the two builds would agree "
+                         "because the rows agree with each other. Fix the scenario (a parameter "
+                         "that did not land, a value that is an identity) or declare the pair in "
+                         "kDeclaredCollapses with the measured reason.\n", undeclared);
+            return 3;
+        }
+    }
 
     instance->releaseResources();
     instance.reset();

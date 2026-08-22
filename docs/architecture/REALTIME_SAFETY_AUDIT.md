@@ -67,9 +67,27 @@ on the audio thread.
 
 ## Gaps — inspected, not machine-verified
 
-- **No sanitizer/RT-checker run**: this audit is inspection, not instrumentation. A
-  malloc-interposition run (e.g. an RT-safety checker under the DSP suite) would upgrade the
-  allocation claims from Verified-by-inspection to machine-verified; tracked for P6's gate.
+- ~~**No sanitizer/RT-checker run**~~ — **CLOSED at 0.2.0 (ADR-0029).** This entry asked for "a
+  malloc-interposition run (e.g. an RT-safety checker under the DSP suite)" and tracked it "for
+  P6's gate"; P6 closed without it and the request stood for four versions. `tests/AllocationGuard.h`
+  is that instrument: replaceable `operator new`/`delete` plus glibc malloc interposition, armed
+  only around `AnabasisEngine::process` and compiled into `AnabasisTests`.
+  **The allocation claims in this document are therefore machine-verified rather than
+  inspected**, over 2,040 armed `process()` calls across 80 configurations (both channel counts ×
+  all five oversample factors × both phase modes × four parameter sets, plus a mid-stream
+  oversample rewire driven without a re-prepare): **0 allocations, both counters proved live in
+  the same run.** For scale, the same guard reports `new=205 malloc=1313` for a single
+  `prepare (48000, 256, 2)` — which is what the audit means when it says allocation is confined
+  there.
+  Two things this does NOT close, stated so they are not read as closed: the guard sees only the
+  code the suite executes (`scripts/check-realtime.py` reads the rest, and the gcov figure for
+  that gap is in its header), and it counts ALLOCATION only — locks and blocking calls are
+  RealtimeSanitizer's half, which is Clang/Linux+macOS only.
+- **RealtimeSanitizer has not yet run in this repository.** The `realtime` job and the
+  `ANABASIS_NONBLOCKING` annotation land with 0.2.0, but the pinned Clang that carries the RTSan
+  runtime is a CI-side toolchain; the first green `realtime` run is **owed** and is recorded here
+  rather than assumed. The allocation half is covered meanwhile by the guard above on every
+  platform including the one RTSan can never reach.
 - **Host callback threading** is a host contract (KI-003): the audit covers our side of each
   boundary only.
 - The **GUI/message-thread half** (editor paint, MacroEngine timer) is out of scope here — it has

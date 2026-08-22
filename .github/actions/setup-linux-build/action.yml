@@ -1,0 +1,106 @@
+# ============================================================================
+#  Anabasis -- Linux build-dependency setup, as ONE composite action.
+#
+#  WHY THIS EXISTS. Four jobs in `build.yml` open with the same moves: make the
+#  scripts executable, run `setup-linux.sh`, then install ccache behind a
+#  fallback that must NOT fail the job. Three of the four also need the pinned
+#  Clang (ADR-0031) and differ from the fourth by a single line -- so the ccache
+#  block was about to be written out four times, comment included.
+#
+#  That is not merely repetitive, it is a correctness hazard, and this round
+#  produced the worked example before the copies existed: the ccache fallback is
+#  a POLICY ("an optimization, never a requirement"), and a policy written out
+#  four times is a policy that can hold in three places. The same round that
+#  adds this action adds a compiler pin to exactly three of the four jobs, which
+#  is precisely the shape of edit that gets applied to the wrong number of
+#  copies.
+#
+#  WHAT IT DELIBERATELY DOES NOT ABSORB. The per-job ccache LINEAGE (the
+#  `actions/cache` key) stays in `build.yml`, because it is the part that is
+#  genuinely different in every job and whose reasoning is about that job:
+#  which compiler produced the objects, which build directory, and which other
+#  job it may or may not share entries with. Folding those into an input would
+#  turn seven readable explanations into one parameter nobody can read.
+#
+#  NOT A DEPENDENCY. A `./`-prefixed local action is this repository, and
+#  Dependabot ignores it by design (`.github/dependabot.yml` says so for
+#  `release.yml`'s local `uses:` for the same reason). It needs `checkout` to
+#  have run, which every caller already does as its first step.
+# ============================================================================
+name: Set up the Linux build environment
+description: >-
+  Installs this project's Linux build dependencies, optionally a pinned Clang
+  and extra apt packages, and ccache behind a non-fatal fallback that publishes
+  ANABASIS_COMPILER_LAUNCHER.
+
+inputs:
+  clang-version:
+    description: >-
+      Pinned Clang major to install from apt.llvm.org (compiler + lld +
+      libclang-rt). Empty means the job does not use Clang. FAIL-CLOSED when
+      set: the compiler is the job, unlike ccache below.
+    required: false
+    default: ""
+  extra-packages:
+    description: >-
+      Additional apt packages, space-separated (e.g. `valgrind`, `g++-13`).
+      FAIL-CLOSED for the same reason: a job asks for these because it cannot
+      do its work without them.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install build dependencies
+      shell: bash
+      # THE INPUTS ARRIVE AS ENVIRONMENT, NOT AS SCRIPT TEXT. `${{ }}` is
+      # substituted into the `run:` body BEFORE bash ever sees it, so an input
+      # interpolated there is source code and no amount of quoting inside the
+      # script can make it an argument. Every caller today passes a literal or a
+      # workflow `env` constant, so nothing is exploitable at this commit -- but
+      # the seven inline blocks this action replaced had no parameters at all,
+      # and the contract this file now publishes accepts arbitrary text for a
+      # position that executes. Binding them here and reading `$CLANG_VERSION` /
+      # `$EXTRA_PACKAGES` below makes the values DATA, which is the property the
+      # interface should have rather than one its callers happen to supply.
+      env:
+        CLANG_VERSION: ${{ inputs.clang-version }}
+        EXTRA_PACKAGES: ${{ inputs.extra-packages }}
+      run: |
+        set -euo pipefail
+        chmod +x scripts/*.sh
+        ./scripts/setup-linux.sh
+
+        if [ -n "$CLANG_VERSION" ]; then
+          ./scripts/setup-llvm-apt.sh "$CLANG_VERSION"
+        fi
+
+        if [ -n "$EXTRA_PACKAGES" ]; then
+          # Unquoted ON PURPOSE, and it is the one place that stays unquoted: the
+          # input is a space-separated package LIST and word-splitting is how it
+          # becomes several arguments. Unquoted here splits a VALUE into words;
+          # interpolated into the script it would have been parsed as shell.
+          # shellcheck disable=SC2086
+          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+          $SUDO apt-get install -y $EXTRA_PACKAGES
+        fi
+
+        # ccache is an OPTIMIZATION, never a requirement -- see the
+        # compiler-cache block above the jobs in build.yml. If it cannot be
+        # installed the job builds without a launcher: slower, never different.
+        # This is the ONE copy of that rule; it used to be seven.
+        # `$SUDO`, not a literal `sudo`, even though every caller today is a
+        # normal `ubuntu-latest` runner where `sudo` exists. A container-based
+        # job runs as root and may ship no `sudo` at all, and there a literal
+        # `sudo` is not a permission error but a MISSING COMMAND -- so this `if`
+        # would take its else branch and the job would silently build with no
+        # compiler cache, the graceful degradation firing for a reason that has
+        # nothing to do with ccache being unavailable.
+        SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+        if $SUDO apt-get install -y ccache && ccache --version; then
+          echo "ANABASIS_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+        else
+          echo "::warning::ccache unavailable -- building without the compiler cache"
+          echo "ANABASIS_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
+        fi
