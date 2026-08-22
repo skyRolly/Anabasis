@@ -53,7 +53,14 @@ concurrency:
 # ---------------------------------------------------------------------------
 # THE CLANG MAJOR IS PINNED, and for the same one-place reason (ADR-0031, 0.2.0).
 #
-# `linux-clang` gates on ZERO first-party warnings. Which diagnostics Clang
+# SINCE 0.2.1 IT ALSO BUILDS THE SHIPPED LINUX BINARY (ADR-0032). Until then the
+# pin governed diagnostics and sanitizers while the artifact users install was
+# produced by whatever `g++` the runner image happened to carry -- so the one
+# property nothing pinned was the codegen of the thing that ships. The pin now
+# reaches the artifact, and GCC moved to where a compatibility compiler belongs:
+# `linux-lto-tests`.
+#
+# `linux` gates on ZERO first-party warnings. Which diagnostics Clang
 # emits is a property of the COMPILER VERSION -- `-Wshadow-field`,
 # `-Wsign-conversion`, `-Wmissing-prototypes` and `-Wunused-but-set-variable`
 # have all moved between majors -- so an unpinned `clang` means the bar that
@@ -74,14 +81,41 @@ concurrency:
 # "Compiler and toolchain versions" rule 1) and needs an ADR.
 #
 # DELIBERATELY NOT PAIRED WITH A WARNING BASELINE FILE. The sibling carries
-# `clang-warning-baseline.txt`, a debt list of accepted first-party warnings;
-# this repository gates on zero instead, which is the stricter contract, and the
-# 0.2.0 migration audit rejected importing that file for exactly that reason.
-# If the pin ever surfaces diagnostics, they get FIXED.
+# `clang-warning-baseline.txt` and `gcc-warning-baseline.txt`, debt lists of
+# accepted first-party warnings; this repository gates BOTH compilers on zero
+# instead, which is the stricter contract, and the 0.2.0 migration audit rejected
+# importing those files for exactly that reason. If a pin ever surfaces
+# diagnostics, they get FIXED. Measured before the gate was written, not after:
+# clang-22.1.8 and g++-14.2.0 each emit zero first-party warnings on this tree.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE GCC MAJOR IS PINNED TOO, for the same reason and with a different answer
+# to "from where" (ADR-0033, 0.2.1).
+#
+# GCC is the COMPATIBILITY compiler here, not the shipping one: `linux-lto-tests`
+# is its only job. A second major toolchain is worth keeping precisely because it
+# disagrees -- it accepts and rejects different code, and it warns about
+# different things -- and that value is only real while WHICH GCC is a fact of
+# this file rather than of a runner image.
+#
+# FROM apt, NOT FROM A CONTAINER, and this is the one place the sibling's answer
+# is deliberately not copied. It pins `gcc:16` through a container image because
+# its own comment records that no apt source ships a released g++-16 -- only
+# trunk snapshots, which are the "newest, not stable" that a toolchain pin exists
+# to refuse. That reasoning is about GCC 16 specifically and does not transfer to
+# a major that IS packaged: `g++-14` is 14.2.0 in Noble's own archive, so the
+# composite action's existing `extra-packages` input installs it with no new
+# input, no image tag floating on a major, and no second dependency-installation
+# path to keep in agreement (which is also why the sibling's `dependency-profile`
+# split stays NOT NEEDED here -- it exists to serve a containerised job).
+#
+# Moving this major is a Build System change under the Architecture Review Gate,
+# exactly like the Clang one.
 # ---------------------------------------------------------------------------
 env:
   ANABASIS_PLUGINVAL_STRICTNESS: 10
   ANABASIS_CLANG_VERSION: 22
+  ANABASIS_GCC_VERSION: 14
 
 # Every push builds the FULL set of formats on all three desktop OSes so beta
 # testers can install on any platform:
@@ -205,26 +239,38 @@ jobs:
             echo "::notice::No CMakeLists.txt (pre-P1 scaffold) -- the merge-result build is skipped."
           fi
 
+      # THE PINNED CLANG, because this job's whole purpose is to answer "does the
+      # merge build" about the tree the merge button produces -- and since 0.2.1
+      # the compiler that answers it for `main` is clang-22 (ADR-0032). A
+      # merge-check on a different compiler from the one that will build the
+      # merge result is a check of a tree nobody ships.
       - name: Install build dependencies
         if: steps.preflight.outputs.ready == 'true'
         uses: ./.github/actions/setup-linux-build
+        with:
+          clang-version: ${{ env.ANABASIS_CLANG_VERSION }}
 
-      # Shares the `linux` job's GCC cache lineage on purpose: this job compiles
-      # the same sources with the same compiler in the same configuration, so the
-      # entries are interchangeable and a merge-check is nearly free after the
-      # push build of either parent has populated it.
+      # Shares the `linux` job's lineage on purpose: this job compiles the same
+      # sources with the same compiler in the same configuration, so the entries
+      # are interchangeable and a merge-check is nearly free after the push build
+      # of either parent has populated it. That sharing is why the two moved to
+      # Clang together -- one of them left behind would have kept a second full
+      # lineage alive inside the same cache budget, and the two would evict each
+      # other.
       - name: Restore the compiler cache
         if: steps.preflight.outputs.ready == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ccache
-          key: ccache-ubuntu-gcc-release-${{ github.run_id }}
-          restore-keys: ccache-ubuntu-gcc-release-
+          key: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-
 
       - name: Configure
         if: steps.preflight.outputs.ready == 'true'
         run: >
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
+          -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
           -DANABASIS_BUILD_STANDALONE=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
@@ -311,7 +357,7 @@ jobs:
       # before the lints rather than after.
       #
       # The portability lint's `--compile-canary` is NOT this and does not
-      # replace it: that step lives in `linux-clang` because it needs the pinned
+      # replace it: that step lives in `linux` because it needs the pinned
       # JUCE on disk, and it answers "does the dependency still HAVE the
       # hazard?". This answers "does the CHECKER still find it?" -- a question
       # about ~200 lines of hand-written lexing in that file, and the half that
@@ -442,8 +488,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # THE PINNED CLANG BUILDS THE SHIPPED BYTES (ADR-0032, 0.2.1).
+      # `setup-llvm-apt.sh` verifies the apt.llvm.org signing key by identity and
+      # installs `clang-<n>`, `lld-<n>` and `libclang-rt-<n>-dev` together, so the
+      # linker that resolves the LTO archive is version-matched to the compiler by
+      # construction -- which is the property CMakeLists.txt's `-fuse-ld=lld`
+      # block depends on, and which the plugin's `juce_recommended_lto_flags`
+      # link needs on this platform.
       - name: Install build dependencies
         uses: ./.github/actions/setup-linux-build
+        with:
+          clang-version: ${{ env.ANABASIS_CLANG_VERSION }}
 
       # THE COMPILER CACHE (0.2.0). Every Linux job here previously fetched and
       # compiled JUCE from scratch on every push -- four full builds of a
@@ -462,12 +517,21 @@ jobs:
       # produced the objects, and which build directory. `github.run_id` in the
       # key makes every run write a fresh entry; `restore-keys` is what makes it
       # read the previous one.
+      #
+      # THE MAJOR IS IN THE KEY. `CCACHE_COMPILERCHECK` already makes a different
+      # compiler MISS rather than collide, so this is about eviction and not
+      # correctness: a lineage shared between two compilers holds two full sets
+      # of objects in one budget and the two evict each other. Spelling the major
+      # here means changing the pin starts a clean lineage instead of thrashing
+      # the old one. This lineage is shared with `merge-check` -- same compiler,
+      # same configuration -- and, since 0.2.1, it is the one the deleted
+      # `linux-clang` job used to own.
       - name: Restore the compiler cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ccache
-          key: ccache-ubuntu-gcc-release-${{ github.run_id }}
-          restore-keys: ccache-ubuntu-gcc-release-
+          key: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-
 
       - name: Configure
         # ANABASIS_BUILD_BENCH is ON here and nowhere else. The bench stays OFF
@@ -492,14 +556,42 @@ jobs:
         #     produces are exactly the ones that must not be quoted.
         run: >
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
+          -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
           -DANABASIS_BUILD_BENCH=ON -DANABASIS_BUILD_PROBE=ON
           -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
+      # ABSORBED FROM THE DELETED `linux-clang` JOB (0.2.1). The canary belongs
+      # where the pinned JUCE is already on disk and the pinned Clang is already
+      # installed, which is this job now. It asserts that the hazard `source-lint`
+      # guards is still REAL for the pinned revision -- the deduced form must
+      # compile and the explicit form must not -- so a JUCE bump that changes the
+      # SIMDRegister overload set fails here instead of silently turning the lint
+      # into a no-op (INC-003).
+      - name: Portability compile canary (pinned JUCE still has the hazard)
+        run: >
+          python3 scripts/check-portability.py --compile-canary build/_deps/juce-src/modules
+          --cxx clang++-${{ env.ANABASIS_CLANG_VERSION }}
+
+      # PROVE THE GATE IS LIVE BEFORE TRUSTING ITS SILENCE -- the same move
+      # `check-docs.py --self-test` and the canary above make, for the same
+      # reason: a checker that has stopped matching anything is indistinguishable
+      # from a clean tree. Run BEFORE the build so a broken classifier fails in
+      # seconds rather than after the full compile.
+      - name: Warning-gate self-test (the classifier still classifies)
+        run: python3 scripts/check-clang-warnings.py --self-test
+
+      # THE LOG IS KEPT because this job now carries the first-party warning gate
+      # the deleted `linux-clang` used to run in a second, near-identical Release
+      # build. The gate itself runs LATE, after the artifact uploads -- see that
+      # step for why.
       - name: Build (VST3 + Standalone + tests + bench)
         id: build
-        run: cmake --build build --config Release
+        run: |
+          set -o pipefail
+          cmake --build build --config Release 2>&1 | tee clang-build.log
 
       # A cache hit changes where the .o files came from, never what they
       # contain, so the link is fed identical input. Note what the strip step
@@ -574,7 +666,7 @@ jobs:
       # 255 on purpose rather than an arbitrary byte: 0xFF fills a float buffer
       # with NaN, so an uninitialised READ of audio state fails an assertion
       # instead of passing on a plausible-looking value. glibc-only, which is
-      # why it is set here and on `linux-clang` and NOT on the macOS job, where
+      # why it is set here and in `linux-lto-tests` and NOT on the macOS job, where
       # libmalloc ignores it and the variable would only read as coverage that
       # does not exist. valgrind in `sanitizers` answers the same question more
       # thoroughly and far more slowly; this is the cheap one, on every push.
@@ -594,6 +686,25 @@ jobs:
       # it, and its oracle is the field report's own question: is there audio on
       # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
       # a channel was actually lost. Different codes on purpose.
+      # ---- THE TWO REPRODUCTIONS, AND WHY THEY ARE HERE ---------------------
+      #
+      # ABSORBED FROM `linux-clang` (0.2.1), and the absorption is the point.
+      # INC-004 was undefined behaviour in the engine's channel loop that ONLY
+      # Clang, and only at `-flto`, acted on -- so every non-LTO artefact (both
+      # suites, the sanitizer builds, valgrind) was green for five months while
+      # the bundle a user installs dropped a channel. That is why these two
+      # instruments were pointed at a Clang build in the first place. Until this
+      # round the Clang build they were pointed at was a SECOND one that was
+      # thrown away; now it is the build that ships.
+      #
+      # Engine first, bundle second, and the order is the diagnosis: the repro
+      # drives `AnabasisEngine` with no wrapper, no format and no host, so a
+      # failure there says the defect is in the DSP core; a repro that passes
+      # while the probe fails says it is not.
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
       - name: Channel probe (hosts the built VST3)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # xvfb because the macro scenario opens the editor, exactly as
@@ -756,159 +867,30 @@ jobs:
             "dist/Anabasis-Linux/Anabasis.vst3/Contents/x86_64-linux/Anabasis.so" \
             "dist/Anabasis-Linux/Anabasis"
 
-  # -------------------------------------------------------------------------
-  # Linux + Clang, and the first-party warning gate.
-  #
-  # PURPOSE, stated narrowly so it is not oversold: AppleClang applies a warning
-  # set GCC does not (-Wshorten-64-to-32, -Wconditional-uninitialized,
-  # -Wsign-conversion, -Wcast-align, -Wshift-sign-overflow,
-  # -Wzero-as-null-pointer-constant, ... -- juce_recommended_warning_flags picks
-  # by compiler ID). Every one of those diagnostics used to reach us only from
-  # the macOS runner, several minutes into a universal build, or not at all when
-  # that job was red for an unrelated reason. Running Clang here surfaces them
-  # in the fast lane instead.
-  #
-  # It does NOT catch the typedef-divergence class -- see `source-lint`. Two
-  # different gaps, two different guards; conflating them is how the second one
-  # gets dropped.
-  #
-  # Builds ONLY the two test targets: they compile the entire first-party tree
-  # (ANABASIS_PLUGIN_SOURCES is shared with AnabasisStateTests by construction --
-  # ADR-0008), so coverage is complete while the LTO'd plugin link, the
-  # standalone and the packaging are skipped.
-  #
-  # The gate is FIRST-PARTY warnings only, matched by path. -Werror is not used
-  # and cannot be yet: JUCE's own module sources are compiled into our targets,
-  # so a blanket -Werror would gate on a dependency's warnings and get switched
-  # off at the first JUCE bump. Filtering by path gates exactly what we own.
-  # -------------------------------------------------------------------------
-  linux-clang:
-    needs: preflight
-    if: needs.preflight.outputs.ready == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # THE PINNED MAJOR, not the image's default -- see the env block for why
-      # the warning gate in this job is meaningless without it.
-      - name: Install build dependencies
-        uses: ./.github/actions/setup-linux-build
-        with:
-          clang-version: ${{ env.ANABASIS_CLANG_VERSION }}
-
-      # THE COMPILER CACHE (0.2.0). Every Linux job here previously fetched and
-      # compiled JUCE from scratch on every push -- four full builds of a
-      # dependency that changes only when its pinned SHA does. ccache is keyed on
-      # preprocessed source and the compiler's identity, so a JUCE bump or a
-      # compiler pin change invalidates it correctly by construction.
+      # THE FIRST-PARTY WARNING GATE, ABSORBED FROM `linux-clang` (0.2.1) AND
+      # RUN LAST, after the uploads, for the same reason the ABI assertion above
+      # is: a DIAGNOSTIC finding must not withhold the beta artifact whose
+      # behavioural gates all passed. It still fails the job.
       #
-      # AN OPTIMIZATION, NEVER A REQUIREMENT. The composite action publishes an
-      # EMPTY `ANABASIS_COMPILER_LAUNCHER` if ccache cannot be installed, and the
-      # configure step below passes it through unset -- slower, never different.
-      # A cache hit changes where the .o files came from, never what they
-      # contain.
+      # Classification is STRUCTURAL rather than textual: every diagnostic's path
+      # is resolved (absolute as-is, relative against the build directory the
+      # compiler ran in) and then asked whether it lands under `src/`, `tests/` or
+      # `tools/` without passing through a `_deps` component. The previous form
+      # was an anchored `grep` on the absolute spelling -- which did match, and CI
+      # has the receipts (run 31449400277's `linux-clang` failed on
+      # `tools/channel_probe.cpp`) -- but it could only ever match ONE spelling of
+      # a path the build system is free to change, with no signal if that stopped
+      # being the spelling. `scripts/check-clang-warnings.py` carries the full
+      # reasoning.
       #
-      # THE LINEAGE IS PER JOB and stays here rather than in the action, because
-      # it is the part that is genuinely different in each: which compiler
-      # produced the objects, and which build directory. `github.run_id` in the
-      # key makes every run write a fresh entry; `restore-keys` is what makes it
-      # read the previous one.
-      - name: Restore the compiler cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ccache
-          key: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-${{ github.run_id }}
-          restore-keys: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-
-
-
-      - name: Configure (Clang)
-        run: >
-          cmake -B build-clang -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
-          -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
-          -DANABASIS_BUILD_STANDALONE=OFF
-          -DANABASIS_BUILD_PROBE=ON
-          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
-          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
-          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
-
-      # The canary belongs HERE rather than in source-lint: it needs the pinned
-      # JUCE on disk, which this job has already fetched. It asserts that the
-      # hazard source-lint guards is still real for the pinned revision -- the
-      # deduced form must compile and the explicit form must not. A JUCE bump
-      # that changes the SIMDRegister overload set fails this step instead of
-      # silently turning the lint into a no-op.
-      - name: Portability compile canary (pinned JUCE still has the hazard)
-        run: >
-          python3 scripts/check-portability.py --compile-canary build-clang/_deps/juce-src/modules
-          --cxx clang++-${{ env.ANABASIS_CLANG_VERSION }}
-
-      # PROVE THE GATE IS LIVE BEFORE TRUSTING ITS SILENCE. This is the same
-      # move `check-docs.py --self-test` and `check-portability.py
-      # --compile-canary` make, and for the same reason: a checker that has
-      # stopped matching anything is indistinguishable from a clean tree. The
-      # self-test feeds the classifier every path spelling this build could
-      # produce — the absolute form CMake's Ninja generator emits today, the
-      # `../src/…` form a relative-path generator would, and the vendored shapes
-      # that must never count — and fails the job if any is misclassified.
-      - name: Warning-gate self-test (the classifier still classifies)
-        run: python3 scripts/check-clang-warnings.py --self-test
-
-      - name: Build tests AND the plugin (Clang), gating on first-party warnings
-        id: build
-        run: |
-          set -o pipefail
-          cmake --build build-clang --target AnabasisTests AnabasisStateTests AnabasisChannelProbe Anabasis_VST3 AnabasisEngineRepro 2>&1 | tee clang-build.log
-          # The classification is STRUCTURAL, not textual: every diagnostic's
-          # path is resolved (absolute as-is, relative against the build dir the
-          # compiler ran in) and then asked whether the real path lands under
-          # src/, tests/ or tools/ without passing through a `_deps` component.
-          # The previous form was an anchored `grep` on the absolute spelling —
-          # which does match here, and CI has the receipts (run 31449400277's
-          # linux-clang failed on tools/channel_probe.cpp) — but it could only
-          # ever match ONE spelling of a path the build system is free to
-          # change, with no signal if that ever stopped being the spelling.
-          # `scripts/check-clang-warnings.py` carries the reasoning in full.
-          python3 scripts/check-clang-warnings.py \
-            --log clang-build.log \
-            --root "${GITHUB_WORKSPACE}" \
-            --build-dir "${GITHUB_WORKSPACE}/build-clang"
-
-      - name: Self-tests (DSP + state, Clang build)
-        id: tests
-        env:
-          MALLOC_PERTURB_: 255      # see the `linux` job's self-test step
-        run: |
-          ./build-clang/AnabasisTests_artefacts/Release/AnabasisTests
-          ./build-clang/AnabasisStateTests_artefacts/Release/AnabasisStateTests
-
-      # ---- THE GATE KI-009 NEEDED, and the reason it is on the CLANG job. ---
-      #
-      # The build step above includes `Anabasis_VST3` deliberately, and that one
-      # word is the whole lesson of INC-004. By ADR-0008 the two console targets
-      # do NOT link `juce_recommended_lto_flags`; the plugin does. KI-009 was
-      # undefined behaviour in the engine's channel loop that only Clang, and
-      # only at -flto, acted on — so every non-LTO artefact (both suites, the
-      # sanitizer builds, valgrind, the GCC plugin) was green for five months
-      # while the bundle a user installs dropped a channel. "Clang compiles the
-      # tests" was never the question; "Clang compiles the PRODUCT, with the
-      # product's flags" is, and it costs a few minutes on the cheapest runner.
-      #
-      # Engine first, bundle second, and the order is the diagnosis: the repro
-      # drives `AnabasisEngine` with no wrapper, no format and no host, so a
-      # failure there says the defect is in the DSP core; a repro that passes
-      # while the probe fails says it is not.
-      - name: Engine reproduction (no wrapper, no format, no host)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./build-clang/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
-
-      - name: Channel probe against the Clang-built bundle
+      # ZERO, not a baseline: see the compiler-pin block above the jobs.
+      - name: Gate first-party Clang warnings
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: >
-          ./build-clang/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
-          build-clang/Anabasis_artefacts/Release/VST3/Anabasis.vst3 --format vst3
-          --assert-discriminating
+          python3 scripts/check-clang-warnings.py
+          --log clang-build.log
+          --root "${{ github.workspace }}"
+          --build-dir "${{ github.workspace }}/build"
 
   # -------------------------------------------------------------------------
   # Sanitizers (Linux). The point of this job is to catch, ON LINUX, defects
@@ -1031,7 +1013,7 @@ jobs:
       #
       # Nothing is lost by standing the guard down here. memcheck answers a
       # different question (uninitialised reads), the allocation counters are
-      # asserted in the `linux`/`linux-clang` builds where they are live, and
+      # asserted in the `linux` and `linux-lto-tests` builds where they are live, and
       # `selfCheck()` DISCLOSES that both halves are compiled out so the suite
       # skips its allocation assertions with a note rather than passing a
       # vacuous zero. memcheck leaves no compile-time marker to detect, which is
@@ -1056,6 +1038,181 @@ jobs:
               --error-exitcode=1 --error-limit=no --num-callers=25"
           $VG ./build-vg/AnabasisTests_artefacts/Release/AnabasisTests
           $VG ./build-vg/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
+  # -------------------------------------------------------------------------
+  # LTO VALIDATION (Linux) -- the suites run against SHIPPED-CLASS CODEGEN, and
+  # the second major toolchain keeps a job. ADR-0033; audit item A2-32, deferred
+  # at 0.2.0 on CI cost and implemented here once that constraint was withdrawn.
+  #
+  # WHAT IT CATCHES THAT NOTHING ELSE HERE DOES, stated as the incident rather
+  # than as a principle. INC-004 (KI-009) was undefined behaviour in the engine's
+  # channel loop that only Clang, and only at `-flto`, acted on. By ADR-0008 the
+  # two console suites do NOT link `juce_recommended_lto_flags`; the plugin does.
+  # So for five months the 1,174 assertions, the sanitizer builds and valgrind
+  # were all green against non-LTO objects while the bundle a user installs
+  # dropped a channel. `linux` closes half of that -- it now builds and hosts the
+  # LTO'd plugin -- and this job closes the other half: the ASSERTIONS, run
+  # against the optimization class that ships.
+  #
+  # TWO ARMS, AND THE SECOND IS THIS PRODUCT'S OWN REASON. The sibling's lane has
+  # one GCC arm, because for it the question is "does the other toolchain still
+  # compile and pass". Anabasis needs that too -- after ADR-0032 this is the only
+  # job that builds with a GCC this repository CHOSE (the `sanitizers` job's
+  # unsanitized `build-vg` copy still uses the image's default `g++`, unpinned
+  # and incidental to the memcheck run) -- but a GCC-only lane would not have
+  # reproduced INC-004's configuration, which is the incident this lane is named
+  # after. So:
+  #
+  #     clang -> clang-22 -flto : do the assertions hold against the SHIPPED
+  #                               optimization class? (INC-004's configuration)
+  #     gcc   -> g++-14  -flto : does the tree still compile and pass whole-
+  #                               program under the OTHER major toolchain?
+  #
+  # `fail-fast: false`, because the two arms answer different questions and a
+  # red Clang arm must not hide a GCC result (or the reverse).
+  #
+  # THE TWO TARGETS ARE THE WHOLE FIRST-PARTY SURFACE, which is what makes this
+  # the right job to carry a warning gate rather than a job of its own:
+  # `AnabasisStateTests` compiles ${ANABASIS_PLUGIN_SOURCES} (every `src/*.cpp`
+  # outside `dsp/`) and both targets compile `src/dsp/*.cpp` through the
+  # `AnabasisDSP` INTERFACE library, so between them every first-party
+  # translation unit is built here already. The gate costs one `tee` and one
+  # python invocation, not a runner.
+  #
+  # `ANABASIS_BUILD_STANDALONE=OFF`: the plugin and the standalone are built,
+  # LTO'd, staged and validated in `linux`. Re-linking them here would buy a
+  # second copy of a gate that already exists, at the price of the slowest link
+  # in the tree.
+  #
+  # THE BENCH IS NOT BUILT HERE, and that is a real difference from the sibling,
+  # whose LTO lane carries it. `linux` already compiles `AnabasisBench`
+  # (`ANABASIS_BUILD_BENCH=ON`), which is the anti-rot cover the sibling's lane
+  # provides for its own -- and it now does so under the pinned Clang with the
+  # shipped LTO flags, which is a strictly better place for it than a
+  # compatibility lane. Duplicating it here would compile it twice per push to
+  # answer the same question.
+  # -------------------------------------------------------------------------
+  linux-lto-tests:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [clang, gcc]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ONE ACTION, TWO ARMS. `clang-version` installs the pinned Clang from
+      # apt.llvm.org (with the version-matched `lld` the LTO link needs);
+      # `extra-packages` installs the pinned GCC from the distribution archive.
+      # Each arm passes the empty string for the other input, which the action
+      # treats as "not needed" -- so no container and no second dependency path.
+      - name: Install build dependencies
+        uses: ./.github/actions/setup-linux-build
+        with:
+          clang-version: ${{ matrix.toolchain == 'clang' && env.ANABASIS_CLANG_VERSION || '' }}
+          extra-packages: ${{ matrix.toolchain == 'gcc' && format('gcc-{0} g++-{0}', env.ANABASIS_GCC_VERSION) || '' }}
+
+      # ASSERTED BEFORE THE BUILD, so the log carries the version the run was
+      # made with and a wrong compiler fails in seconds rather than at the end of
+      # a warning gate. The MAJOR only: a patch move (14.2 -> 14.3, 22.1.8 ->
+      # 22.1.9) must pass, and a major that is not the pin must fail. This is
+      # what makes "the pin" a property of the run rather than of this file's
+      # intentions.
+      - name: Resolve and assert the pinned compiler
+        id: cc
+        shell: bash
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          set -eu
+          if [ "$TOOLCHAIN" = "clang" ]; then
+            CC="clang-${ANABASIS_CLANG_VERSION}"; CXX="clang++-${ANABASIS_CLANG_VERSION}"
+            WANT="${ANABASIS_CLANG_VERSION}"
+          else
+            CC="gcc-${ANABASIS_GCC_VERSION}";     CXX="g++-${ANABASIS_GCC_VERSION}"
+            WANT="${ANABASIS_GCC_VERSION}"
+          fi
+          "$CXX" --version | head -1
+          GOT="$("$CXX" -dumpversion)"
+          if [ "${GOT%%.*}" != "$WANT" ]; then
+            echo "::error::$CXX reports ${GOT}; the pin declares major ${WANT}"
+            exit 1
+          fi
+          {
+            echo "cc=$CC"
+            echo "cxx=$CXX"
+            echo "tag=${TOOLCHAIN}${WANT}"
+          } >> "$GITHUB_OUTPUT"
+
+      # ITS OWN LINEAGE, PER ARM. `-flto` objects are not native objects -- GIMPLE
+      # bytecode under GCC, LLVM bitcode under Clang -- so they share no entries
+      # with the `linux` job's, and a lineage shared with it would only have the
+      # two evict each other inside one budget. The tag carries the major for the
+      # same reason `linux`'s key does: changing a pin starts a clean lineage.
+      - name: Restore the compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-${{ steps.cc.outputs.tag }}-lto-${{ github.run_id }}
+          restore-keys: ccache-ubuntu-${{ steps.cc.outputs.tag }}-lto-
+
+      # `-flto` ON THE COMPILE AND ON THE LINK. Both are required and they are
+      # not the same switch: the compile flag emits bytecode instead of machine
+      # code, and the link flag is what runs the optimiser over the whole program
+      # afterwards. A build with only the first links a pile of bytecode through
+      # the plugin path and is not the configuration this job is named after.
+      - name: Configure (-flto on the test suites)
+        run: >
+          cmake -B build-lto -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=${{ steps.cc.outputs.cc }}
+          -DCMAKE_CXX_COMPILER=${{ steps.cc.outputs.cxx }}
+          -DCMAKE_C_FLAGS=-flto
+          -DCMAKE_CXX_FLAGS=-flto
+          -DCMAKE_EXE_LINKER_FLAGS=-flto
+          -DANABASIS_BUILD_STANDALONE=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }}
+          -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Warning-gate self-test (the classifier still classifies)
+        run: python3 scripts/check-clang-warnings.py --self-test
+
+      # THE GATE RUNS OVER BOTH ARMS, and the script's name is the only thing
+      # about it that is Clang-specific: it matches the `path:line:col: warning:`
+      # shape both compilers emit and classifies by RESOLVED PATH, so it gates
+      # GCC's log exactly as it gates Clang's. For the Clang arm this is close to
+      # a duplicate of `linux`'s gate (same compiler, same sources; `-flto`
+      # changes codegen, not front-end diagnostics) and it is kept anyway because
+      # it costs a `tee`. For the GCC arm it is the ONLY warning gate this
+      # repository has: measured at g++-14.2.0, this tree emits zero first-party
+      # warnings, so the contract is zero here too -- no baseline file, matching
+      # the Clang side and deliberately unlike the sibling's two debt lists.
+      - name: Build the suites (LTO), gating on first-party warnings
+        id: build
+        run: |
+          set -o pipefail
+          cmake --build build-lto --target AnabasisTests AnabasisStateTests 2>&1 | tee lto-build.log
+          python3 scripts/check-clang-warnings.py \
+            --log lto-build.log \
+            --root "${GITHUB_WORKSPACE}" \
+            --build-dir "${GITHUB_WORKSPACE}/build-lto"
+
+      # THE POINT OF THE JOB. Same assertions, different codegen: whatever the
+      # optimiser is entitled to do across translation units, it has to leave
+      # every one of them true.
+      - name: Self-tests against LTO codegen
+        env:
+          MALLOC_PERTURB_: 255      # see the `linux` job's self-test step
+        run: |
+          ./build-lto/AnabasisTests_artefacts/Release/AnabasisTests
+          ./build-lto/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
+      - name: Compiler cache statistics
+        if: ${{ !cancelled() && env.ANABASIS_COMPILER_LAUNCHER != '' }}
+        run: ccache --show-stats --verbose || true
 
   # -------------------------------------------------------------------------
   # RealtimeSanitizer (ADR-0029) -- the FIRST mechanical detector this repository

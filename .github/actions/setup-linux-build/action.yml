@@ -1,11 +1,13 @@
 # ============================================================================
 #  Anabasis -- Linux build-dependency setup, as ONE composite action.
 #
-#  WHY THIS EXISTS. Four jobs in `build.yml` open with the same moves: make the
+#  WHY THIS EXISTS. Five jobs in `build.yml` open with the same moves: make the
 #  scripts executable, run `setup-linux.sh`, then install ccache behind a
-#  fallback that must NOT fail the job. Three of the four also need the pinned
-#  Clang (ADR-0031) and differ from the fourth by a single line -- so the ccache
-#  block was about to be written out four times, comment included.
+#  fallback that must NOT fail the job. Since 0.2.1 every one of them needs a
+#  PINNED compiler -- four the pinned Clang (ADR-0031/0032), and
+#  `linux-lto-tests`' GCC arm the pinned g++ through `extra-packages`
+#  (ADR-0033) -- so the ccache block was about to be written out five times,
+#  comment included.
 #
 #  That is not merely repetitive, it is a correctness hazard, and this round
 #  produced the worked example before the copies existed: the ccache fallback is
@@ -13,7 +15,8 @@
 #  four times is a policy that can hold in three places. The same round that
 #  adds this action adds a compiler pin to exactly three of the four jobs, which
 #  is precisely the shape of edit that gets applied to the wrong number of
-#  copies.
+#  copies. (0.2.1 then moved the fourth and added a fifth, which is the same
+#  lesson arriving a second time.)
 #
 #  WHAT IT DELIBERATELY DOES NOT ABSORB. The per-job ccache LINEAGE (the
 #  `actions/cache` key) stays in `build.yml`, because it is the part that is
@@ -21,6 +24,14 @@
 #  which compiler produced the objects, which build directory, and which other
 #  job it may or may not share entries with. Folding those into an input would
 #  turn seven readable explanations into one parameter nobody can read.
+#
+#  NOR THE CONTAINER QUESTION. The sibling's equivalent action carries a
+#  `dependency-profile` input, because its GCC lane runs inside a `gcc:16`
+#  container where `build-essential` would install a distribution compiler over
+#  the top of the pinned one. This repository's GCC lane pins a major that IS
+#  packaged (`g++-14`, Noble's own archive), so it is an ordinary runner job and
+#  `extra-packages` is the whole of what it needs -- there is no second
+#  dependency-installation path here, and so nothing for a profile to select.
 #
 #  NOT A DEPENDENCY. A `./`-prefixed local action is this repository, and
 #  Dependabot ignores it by design (`.github/dependabot.yml` says so for
@@ -43,7 +54,8 @@ inputs:
     default: ""
   extra-packages:
     description: >-
-      Additional apt packages, space-separated (e.g. `valgrind`, `g++-13`).
+      Additional apt packages, space-separated (e.g. `valgrind`, or the pinned
+      `gcc-<n> g++-<n>` pair `linux-lto-tests`' GCC arm builds with).
       FAIL-CLOSED for the same reason: a job asks for these because it cannot
       do its work without them.
     required: false

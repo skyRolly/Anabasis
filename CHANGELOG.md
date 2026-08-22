@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Seven such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Eight such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,41 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.1] — 2026-08-22
+
+**The sibling-alignment round: the Linux binary you install is now a Clang build, and the test
+suites are finally run against the optimization class that ships.** No DSP algorithm changed, no
+parameter was added, renamed or removed, no serialization schema, threading model or reported
+latency moved, and the frozen parameter-registry snapshot needed no re-freeze. The patch bump is
+for one user-visible fact — **which compiler produces the Linux artifact** — and the measured
+consequence of that change is that the declared ABI floor is unchanged, so a system that could load
+0.2.0 can load this. Investigation and measurements:
+[`worklogs/2026-08-22-lto-lane-and-linux-toolchain-alignment.md`](worklogs/2026-08-22-lto-lane-and-linux-toolchain-alignment.md).
+
+### Changed
+
+- **The shipped Linux VST3 and Standalone are built by the pinned Clang**, not by whatever `g++`
+  the CI image carried
+  ([ADR-0032](docs/architecture/design-decisions/ADR-0032-linux-release-toolchain.md)). ADR-0031
+  pinned the compiler that *gated diagnostics*; nothing pinned the one that produced the binary, so
+  a runner-image bump could change the shipped codegen with no commit in this repository. The same
+  move points the two instruments written for INC-004 — the bare-engine reproduction and the
+  channel probe that HOSTS the bundle — at the build that ships rather than at a second Clang build
+  that was discarded. **The ABI floor was re-measured on the new artifact and is unchanged**
+  (GLIBC 2.38 / GLIBCXX 3.4.31 / CXXABI 1.3.9), so no supported system moves.
+  Evidence: ADR-0032 §Evidence; `.github/workflows/build.yml`. [Verified]
+
+### Added
+
+- **`linux-lto-tests`: both suites are built with `-flto` and re-run against that codegen**, on the
+  pinned Clang and on a pinned GCC
+  ([ADR-0033](docs/architecture/design-decisions/ADR-0033-lto-validation-lane.md)). By ADR-0008 the
+  suites do not link the LTO flags the plugin does — which is exactly the configuration INC-004
+  needed in order to stay hidden behind five months of green console gates. The Clang arm closes
+  that gap; the GCC arm keeps the second major toolchain compiling this tree on every push now that
+  it no longer builds the artifact. Both arms gate first-party warnings at zero.
+  Evidence: ADR-0033 §Evidence; `.github/workflows/build.yml`. [Verified]
 
 ## [0.2.0] — 2026-08-22
 

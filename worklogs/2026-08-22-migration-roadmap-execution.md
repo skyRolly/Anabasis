@@ -271,6 +271,11 @@ the probe refuses.
 
 ## Phase 6 — the three investigations, and what they measured
 
+> **SUPERSEDED SAME DAY by round A3 (0.2.1).** "Not in this round" lasted one round: the owner's
+> next brief withdrew the cost premise this deferral rests on, and `linux-lto-tests` is implemented
+> in [`2026-08-22-lto-lane-and-linux-toolchain-alignment.md`](2026-08-22-lto-lane-and-linux-toolchain-alignment.md)
+> with two arms rather than one. The measurement below stands; only its conclusion moved.
+
 **A2-32, the LTO test lane: ADOPT, but not in this round.** Built both suites with `clang-22 -flto`
 and ran them: **301 + 873, 0 failures**, identical to the non-LTO build. So it finds nothing today
 and its value is preventive — it is the configuration INC-004 required to manifest, and the existing
@@ -287,7 +292,10 @@ therefore add input DIVERSITY over branch combinations rather than reach, on top
 already carries explicit corrupt-state and legacy-migration tests. Re-evaluate if a state-parsing
 defect is ever reported from the field, or if that function's line coverage falls.
 
-**A2-34, `setup-linux.sh` dependency profiles: NOT NEEDED, now for a measured reason.** The profile
+**A2-34, `setup-linux.sh` dependency profiles: NOT NEEDED, now for a measured reason.** *(Re-checked
+by round A3 and unchanged: A2-32 did land as an ordinary runner job, because `g++-14` is packaged in
+Noble's archive and needs no container — so the prediction below held and the split still has
+nothing to serve.)* The profile
 split exists to serve a containerised job. A2-32's verdict does not require a container — the lane
 would be an ordinary runner job with the pinned Clang and `-flto` — so there is nothing for the split
 to serve. The composite action was written without the input for that reason.

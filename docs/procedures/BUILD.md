@@ -19,9 +19,17 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
   change it is an ADR and a commit rather than a flag.
 - **The Linux Clang jobs use a PINNED major** ([ADR-0031](../architecture/design-decisions/ADR-0031-clang-toolchain-pin.md)),
   installed by `scripts/setup-llvm-apt.sh <major>`; the value is `ANABASIS_CLANG_VERSION` in
-  `.github/workflows/build.yml`. An ordinary local build needs no such thing — the pin matters
-  for the zero-first-party-warning gate and for RealtimeSanitizer, both of which
-  `scripts/preflight.sh` reports as skipped-with-a-note when the pinned compiler is absent.
+  `.github/workflows/build.yml`. **Since 0.2.1 that major also builds the shipped Linux artifact**
+  ([ADR-0032](../architecture/design-decisions/ADR-0032-linux-release-toolchain.md)) — what a user
+  installs on Linux is a clang-22 build, and `lld` (installed beside the compiler) is what links its
+  LTO. An ordinary local build still needs none of this: the pin matters for the
+  zero-first-party-warning gate, for RealtimeSanitizer and for reproducing the shipped codegen, and
+  `scripts/preflight.sh` reports the first two as skipped-with-a-note when the pinned compiler is
+  absent.
+- **GCC is the compatibility compiler, and its major is pinned too** — `ANABASIS_GCC_VERSION` in the
+  same file, installed from the distribution archive. It builds the two test suites with `-flto` in
+  `linux-lto-tests` ([ADR-0033](../architecture/design-decisions/ADR-0033-lto-validation-lane.md)),
+  which is where "the tree still compiles under the other major toolchain" is checked.
 - **JUCE 9.0.1** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
   commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`) — or pointed at a local checkout.
   OQ-001 pinned the sibling product's revision; **ADR-0028 (2026-08-16) moved this repository to
@@ -59,6 +67,17 @@ minimal container rather than in CI.
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 
+# ...or exactly what CI ships on Linux (ADR-0032): the pinned Clang, with lld
+# linking the LTO. Use this when a result has to match the shipped artifact —
+# reproducing a codegen-dependent fault, or re-measuring the ABI floor. The
+# major is READ from the one place that holds it rather than pasted here, for
+# the reason the pluginval strictness is (see CI_CD.md): a literal in a document
+# outlives the pin it was copied from.
+CLANG=$(sed -n 's/^  ANABASIS_CLANG_VERSION: *//p' .github/workflows/build.yml)
+scripts/setup-llvm-apt.sh "$CLANG"
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER="clang-$CLANG" -DCMAKE_CXX_COMPILER="clang++-$CLANG"
+
 # ...or the convenience wrapper (prints the produced .vst3 path):
 scripts/build.sh            # scripts/build.sh [Release|Debug]
 ```
@@ -67,7 +86,10 @@ scripts/build.sh            # scripts/build.sh [Release|Debug]
 
 | Option | Default | Effect |
 |---|---|---|
-| `ANABASIS_CXX_STANDARD` | 20 | Which C++ standard the tree compiles at. **20** is the ADR-0008 baseline and the only value anything ships from; **23** exists solely so the OQ-006 canary can ask "does tomorrow's baseline still compile?". Any other value refuses at configure. **Set the standard through this option, never through `-DCMAKE_CXX_STANDARD`** — the project assigns `CMAKE_CXX_STANDARD` unconditionally, so a direct override is shadowed and ignored *silently*. It is a cache entry, so a tree configured at 23 stays at 23 until it is reset or reconfigured fresh |
+| ~~`ANABASIS_CXX_STANDARD`~~ | — | **Removed at 0.2.0** ([ADR-0030](../architecture/design-decisions/ADR-0030-cxx23-language-standard.md)). The baseline moved to C++23 and the seam went with the canary that was its only caller. The standard is now a hard `set()` in `CMakeLists.txt`; `-DCMAKE_CXX_STANDARD=20` is shadowed and ignored *silently*, which is why changing it is an Architecture Review Gate item rather than a flag |
+| `ANABASIS_BUILD_BENCH` | OFF | Build `AnabasisBench` (DESIGN §9). ON in the `linux` CI job and nowhere else, so the harness cannot rot unnoticed; never RUN in CI, because a shared runner's numbers are exactly the ones `PERFORMANCE_BUDGET.md` forbids quoting |
+| `ANABASIS_BUILD_PROBE` | OFF | Build `AnabasisChannelProbe` (which HOSTS the built bundle) and `AnabasisEngineRepro` (the same stimulus with no wrapper, format or host) |
+| `ANABASIS_NO_LTO` | OFF | Drop `juce_recommended_lto_flags` from every target. **Bisection only** — the shipped binary always carries them |
 | `ANABASIS_BUILD_TESTS` | ON | Build the `AnabasisTests` + `AnabasisStateTests` console apps |
 | `ANABASIS_BUILD_STANDALONE` | ON | Add the Standalone target (debugging convenience) |
 | `ANABASIS_JUCE_PATH` | "" | Use a local JUCE checkout instead of fetching |
