@@ -21,9 +21,12 @@
 //                    const EngineParameters& p) noexcept ANABASIS_NONBLOCKING;
 //
 //  WHY THE GUARD IS `__has_cpp_attribute` AND NOT A COMPILER-VERSION TEST.
-//  Three of this project's four shipped toolchains are not the pinned Clang:
-//  GCC builds the shipped Linux binary, MSVC the Windows one, AppleClang the
-//  macOS one. `__has_cpp_attribute` is the C++20-mandated feature test, so
+//  Most of the toolchains that compile this header are not the pinned Clang:
+//  MSVC builds the shipped Windows binary, AppleClang the macOS one, and GCC
+//  compiles the whole tree in `linux-lto-tests`. (The pinned Clang builds the
+//  shipped LINUX binary itself since ADR-0032, 0.2.1; until then GCC did, which
+//  is what this paragraph went on saying long after it stopped being true.)
+//  `__has_cpp_attribute` is the C++20-mandated feature test, so
 //  each of them answers for itself instead of this header guessing from a
 //  version number. GCC 13 accepts the guarded macro and warns
 //  `-Wattributes: scoped attribute directive ignored` on the RAW spelling,

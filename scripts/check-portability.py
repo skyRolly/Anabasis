@@ -811,7 +811,9 @@ def main() -> int:
     # PROVE THE CHECKER IS LIVE BEFORE TRUSTING ITS SILENCE (TESTING_POLICY rule
     # 4). The compile canary answers a DIFFERENT question -- "does the pinned
     # JUCE still have the hazard?" -- and needs JUCE on disk, which is why it
-    # runs in `linux-clang`. This one asks "does the CHECKER still find it?" and
+    # runs in `linux` (it was absorbed from the deleted `linux-clang` at 0.2.1,
+    # into the job that already has the pinned JUCE and the pinned Clang on
+    # disk). This one asks "does the CHECKER still find it?" and
     # needs nothing but Python, so it runs in `source-lint` immediately before
     # the lint it vouches for.
     ap.add_argument("--self-test", action="store_true",
