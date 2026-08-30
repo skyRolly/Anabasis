@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Thirteen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Fourteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,65 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.7] — 2026-08-30
+
+**LLVM 23.1.0 is released; what `apt.llvm.org` ships for major 23 is not — so the Clang pin HOLDS
+at 22 and the install learns to tell the difference (ADR-0037).** The directive behind this round
+asked for the newest stable released toolchain *and* forbade release candidates; those turned out
+to be different instructions. Investigating which one applied is the round.
+No DSP algorithm, parameter, serialization schema, threading model or reported latency change; no
+first-party C++ or JUCE source file touched. Full measurement trail:
+[`worklogs/2026-08-30-llvm-23-toolchain-upgrade.md`](worklogs/2026-08-30-llvm-23-toolchain-upgrade.md).
+
+### Fixed
+- **A release-candidate compiler could pass every check in this repository, and did.**
+  `apt.llvm.org`'s noble suite builds `clang-23` from `release/23.x` commit `55feb0a3b6b7`, which
+  sits after the `llvmorg-23.1.0-rc3` tag and before the release commit and still carries
+  `LLVM_VERSION_SUFFIX -rc3`. Debian's packaging drops that suffix, so `clang-23 --version`,
+  `__clang_version__` and the dpkg version **all** report a clean `23.1.0`. Installed and measured,
+  it cleared the warning gate, both suites, ASan+UBSan, the LTO lane and RealtimeSanitizer — because
+  every one of those checks is major-only. `scripts/setup-llvm-apt.sh` now reads the upstream commit
+  out of the installed package's own version string and asserts it **is** the commit
+  `llvmorg-<version>` points at, fail-closed, with one `git ls-remote` and no clone.
+  Evidence: the assertion accepts `1:22.1.8~++…+ca7933e47d3a` (`llvmorg-22.1.8^{}` =
+  `ca7933e47d3a3451…`) and refuses `1:23.1.0~++…+55feb0a3b6b7` (`llvmorg-23.1.0^{}` =
+  `ea7d852a70e8…`); `./scripts/setup-llvm-apt.sh 23` exits 1 naming both commits. [Verified]
+- **`setup-llvm-apt.sh` cited `apt.llvm.org/llvm.sh`'s `CURRENT_LLVM_STABLE` as evidence of what
+  upstream had released.** That variable read `22` on a day when 23.1.0 was released *and*
+  packaged — so the citation, left standing, argued for never upgrading. The header now names
+  `releases.llvm.org` / `llvm.org` as the release record, and the tag as what settles it.
+  [Verified]
+- **The pinned-compiler comment block claimed a warning baseline measured on `g++-14.2.0`**, two
+  majors behind the GCC pinned since 0.2.2. It now reads `clang-22.1.8 and g++-16.2.0`. [Verified]
+
+### Changed
+- **ADR-0031's "upstream stable" is sharpened to "the newest major this distribution's package
+  source ships as a RELEASE".** The ambiguity between that and "the newest release" is precisely
+  what let an RC through. Its sibling-parity clause is demoted to a consequence: Anamorph also pins
+  22, but this round deliberately does not lean on that — had 23 shipped as a release, this
+  repository would have moved alone and recorded the divergence. [Verified]
+
+### Unchanged, and checked rather than assumed
+- **The Clang pin stays at major 22**, which apt builds from its release tag `llvmorg-22.1.8`
+  exactly — the contrast that shows the packaging scheme is sound and only major 23's suite is
+  behind. **23 was exercised end to end** — on the build apt ships (`55feb0a3b6b7`, branch state shortly
+  before the release commit, so evidence the tree is ready for 23 rather than a measurement of
+  23.1.0): warning gate zero first-party warnings (426 vendored, ungated), suites **301 + 873**,
+  ASan+UBSan **300 + 873** under `halt_on_error=1` with zero special-case-list diagnostics, the
+  `-flto` lane **301 + 873** linked by `Ubuntu LLD 23.1.0`, and RealtimeSanitizer's full DSP suite
+  **296, 0 failures** with its canary still aborting at exit 43. Re-run those against the real
+  release when the suite rebuilds, then the bump is one line. [Verified]
+- **GCC stays at major 16.** `gcc.gnu.org` lists 16.2 as newest released with 17.0 still in
+  development, and Docker Hub's `library/gcc` publishes `16.2.0` with no 17 tag — so
+  `ANABASIS_GCC_VERSION: 16` is already the newest stable major, and its floating `gcc:16`
+  container already collected 16.1 → 16.2 with no commit here. [Verified]
+- **CMake, Ninja and ccache carry no version pin to move** — runner-image and distribution
+  supplied, already printed in CI by the composite action, and covered by the Architecture Review
+  Gate's rule 2 (a version the image supplies can only be detected and recorded, not gated).
+  pluginval remains deliberately unpinned, as `DEPENDENCY_POLICY.md` records. GitHub Action refs
+  are SHA-pinned and owned by Dependabot, which bumped `github/codeql-action` to v4.37.8 mid-round;
+  v4.37.9 (26 Aug 2026) is one patch further and is left to the same mechanism. [Verified]
 
 ## [0.2.6] — 2026-08-30
 
