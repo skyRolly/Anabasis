@@ -255,12 +255,14 @@ and never blocks the customer pipeline. Windows purges all debug material from t
 validates it, and only then retains each shipped image's linker PDB into a separate debug
 artifact — see the checkpoint rule below for why that order matters.
 
-> **Known asymmetry: only Linux validates the shipped bytes.** Because macOS and Windows strip
-> (and, on macOS, sign) *after* pluginval, a defect introduced **by stripping or signing** would
-> ship unvalidated there. "Uniform and blocking" above describes the pluginval **gate** — same
-> strictness, same two modes ×3, failing the job on every platform — not which bytes it sees.
-> Whether to reorder is `docs/OPEN_QUESTIONS.md` **OQ-012**, deliberately deferred to P6 when
-> there is a binary to measure rather than a guess to make.
+> **Asymmetry, narrowed at 0.2.6: Linux AND macOS validate the shipped bytes; Windows does not
+> yet.** Linux strips before pluginval; macOS, since the 0.2.6 parity round, packages — dsymutil,
+> `strip -x`, ad-hoc codesign — *before* pluginval and points all four gates at `dist/` via
+> `ANABASIS_PLUGINVAL_BUNDLE` (OQ-012's macOS half, resolved in the direction the sibling proved).
+> On Windows the public copy is still produced after validation, so a defect introduced by the
+> Windows staging purge would ship unvalidated there; that remaining half stays
+> `docs/OPEN_QUESTIONS.md` **OQ-012**. "Uniform and blocking" above describes the pluginval
+> **gate** — same strictness, same two modes ×3, failing the job on every platform.
 
 **pluginval** runs deterministic ×3, then randomise ×3. **Both** steps carry the **same** explicit
 guard — neither relies on implicit skipping — so a **deterministic** failure never *skips* the
@@ -346,6 +348,24 @@ OQ-006 carries the same supersession.
 | **`merge-check` moved to the same compiler** | A merge-check on a different compiler from the one that will build the merge result is a check of a tree nobody ships; it also shares `linux`'s ccache lineage, and two lineages in one budget evict each other. |
 | **`linux-lto-clang` + `linux-lto-tests`, two jobs** (ADR-0033, split by ADR-0034) | The suites do not link the LTO flags the plugin does, so every assertion was made against non-LTO objects — the configuration INC-004 needed in order to stay hidden. `linux-lto-clang` runs them against the shipped optimization class; `linux-lto-tests` keeps the second major toolchain compiling this tree on every push, in its container. They are separate jobs because `container:` is a per-job key. |
 | **The pinned GCC** | `ANABASIS_GCC_VERSION` in `build.yml`, asserted against `g++ -dumpversion` inside `container: gcc:16` — the image supplies the compiler, so the workflow's job is to CHECK the major rather than to install it (ADR-0034; it came from the distribution archive while the pin was 14). Pinned for the same reason the Clang major is: a compatibility compiler is only a compatibility statement while WHICH compiler is a fact of this file rather than of a runner image. **Measured at 16.2.0: zero first-party warnings across all 13 translation units in the two suites** — see the 0.2.3 row below. |
+
+## What 0.2.6 changed in the pipeline — parity audit round 2
+
+The sibling's CI surface is byte-identical to the 0.2.2 audit's baseline, so this round's
+adoptions are what that audit missed plus corrections to Anabasis's own drift since. Full table
+and verdicts: `worklogs/2026-08-30-parity-audit-round-2.md`, ADR-0036.
+
+| Change | Why |
+| --- | --- |
+| **`MALLOC_PERTURB_` 255 → 1** (`linux`, both LTO lanes, new on `merge-check`) | glibc fills FRESH allocations with the complement of the byte; 255 wrote the benign `0x00` the variable exists to defeat. Measured in both directions this round. |
+| **Build number scoped to `src/gui/PluginEditor.cpp`** | The run-varying `PUBLIC` define made ~101 TUs guaranteed direct-mode ccache misses every run (0.2.4's measurement). Now a source-file property — 2 of 103 compile commands carry it. |
+| **macOS pluginval validates `dist/`** | Packaging (dsymutil → `strip -x` → codesign) runs before validation; all four gates read the shipped bytes via `ANABASIS_PLUGINVAL_BUNDLE`; the AU is installed from `dist/`. OQ-012's macOS half resolved; Windows half open. |
+| **`tests_x86_64` gates macOS uploads** | A failing Intel slice previously reddened the job while the universal artifacts uploaded anyway. |
+| **MSVC assert last** | A toolset off the 14.x series now fails the run after its evidence exists, not before. |
+| **ccache zero+print, 8/8** | Four jobs zeroed nothing (stats were lineage-cumulative); `sanitizers`/`realtime` cached with no stats step at all. |
+| **`macos-intel`: thin assert + randomise arms** | The "native Intel" label is now asserted with `lipo`, and randomise runs on Intel codegen — a value space the universal job's arms (arm64) never reach. |
+| **GCC lane: 3 more diagnostics at zero** | `-Wduplicated-cond -Wduplicated-branches -Wlogical-op`, measured clean first-party (4 vendored hits) before adoption. |
+| **PE guard +26 · Windows no-cache rationale · AU cleanup** | Truncation bound covers the Magic read; decision recorded so it stops reading as omission; the registry-installed AU no longer outlives the job. |
 
 ## What 0.2.3 changed in the pipeline — the GCC 16 warning gate, measured
 

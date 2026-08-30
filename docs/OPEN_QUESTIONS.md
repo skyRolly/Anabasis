@@ -80,7 +80,21 @@ inferred from Anamorph.
 
 ---
 
-## OQ-012 — Should macOS/Windows validate the stripped, signed bytes? · `Open (decide at P6)`
+## OQ-012 — Should macOS/Windows validate the stripped, signed bytes? · `macOS half RESOLVED 2026-08-30 (0.2.6, sibling parity); Windows half Open`
+
+> **macOS: resolved YES, by adopting the sibling's proven arrangement rather than by the P6
+> measurement this entry deferred to.** Anamorph reordered its macOS job so packaging — `dsymutil`,
+> `strip -x`, ad-hoc codesign — completes **before** pluginval, and pointed the gates at the
+> `dist/` copies through its `*_PLUGINVAL_BUNDLE` mechanism; Anabasis's `run-pluginval.sh` already
+> carried the identical mechanism, unused. The 0.2.6 parity round adopted the whole shape:
+> `Package macOS plugins` now runs after the Rosetta self-test, both VST3 gates read
+> `dist/Anabasis-macOS/Anabasis.vst3`, and the AU is installed into the AudioComponent registry
+> **from `dist/`**, so all four macOS pluginval gates validate the stripped, signed bytes a user
+> receives. The codesign-last constraint this entry worried about is preserved: the packaging step
+> completes, seal included, before validation begins. **The Windows half stays open** — its public
+> copy is still produced after validation — and is now the entry's remaining subject.
+
+Original entry, kept for the record:
 
 **Question.** Only the **Linux** job validates what users actually receive: its strip step runs
 before pluginval. On macOS `strip -x` + ad-hoc codesign run in the packaging step *after*

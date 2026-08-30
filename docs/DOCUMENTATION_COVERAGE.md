@@ -6,7 +6,20 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.5 (2026-08-22)** — the arm64 symbolication round.
+**Last updated:** for **0.2.6 (2026-08-30)** — parity audit round 2.
+
+**Scope of the 0.2.6 round.** One ADR Accepted (**0036**, parity audit round 2), amending ADR-0034;
+OQ-012's macOS half resolved; `DEPENDENCY_POLICY.md` records the sibling's JUCE pin re-converging at
+9.0.1. Nine adoptions from the sibling, two of them measured fixes (`MALLOC_PERTURB_` 255→1;
+`ANABASIS_BUILD_NUMBER` scoped to its single reader), the rest CI structure (macOS validates `dist/`
+bytes, Rosetta gates uploads, MSVC assert last, ccache zero+print 8/8, macos-intel thin assert +
+randomise arms, three GCC diagnostics at zero, PE guard +26, AU cleanup, Windows no-cache rationale).
+No DSP algorithm change, no parameter added/renamed/removed, no schema, threading or latency change;
+outside `.github/` and docs the only touched file is `CMakeLists.txt` (build-number scoping, output
+bytes identical). `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **New ADR** (`ADR_INDEX.md`,
+ADR-0036), **Build-system change** (`CI_CD.md`, `CMakeLists.txt`), **Policy change**
+(`DEPENDENCY_POLICY.md`), **Open question resolved** (`OPEN_QUESTIONS.md` OQ-012), **Ship a
+version** (`CHANGELOG.md`, `HANDOVER.md`).
 
 **Scope of the 0.2.5 round.** One ADR Accepted (**0035**, macOS symbolication is a per-ARCHITECTURE
 contract), amending ADR-0034's macOS bullets. The shipped universal bundle's arm64 slice had no DWARF while

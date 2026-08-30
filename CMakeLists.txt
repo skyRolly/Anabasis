@@ -17,7 +17,7 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
 
-project(Anabasis VERSION 0.2.5 LANGUAGES C CXX)
+project(Anabasis VERSION 0.2.6 LANGUAGES C CXX)
 
 # THE BASELINE IS C++23 (ADR-0030, 0.2.0), superseding ADR-0008 decision B5's
 # C++20 and closing OQ-006. What used to sit here was a cache seam
@@ -324,9 +324,30 @@ set(ANABASIS_PLUGIN_SOURCES
 target_sources(Anabasis PRIVATE ${ANABASIS_PLUGIN_SOURCES})
 target_include_directories(Anabasis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# THE BUILD NUMBER IS ATTACHED TO THE ONE TRANSLATION UNIT THAT READS IT, not
+# to the targets (0.2.6, family parity -- the sibling carries the identical
+# arrangement with its own measurement). It is the only definition in this
+# file whose VALUE changes on every CI run -- build.yml passes
+# ${{ github.run_number }} -- and as a target-wide PUBLIC definition it sat on
+# the command line of every translation unit in the plugin and the state
+# suite, JUCE included. ccache's direct mode hashes the command line, so all
+# of those TUs were guaranteed direct-mode misses on every run: the 0.2.4
+# ccache round measured exactly that shape on the macOS universal lane -- 58
+# direct vs 116 preprocessed hits, the direct hits concentrated in
+# AnabasisTests, the one target that never carried the define. Scoped to the
+# single reader, everything else direct-hits and two objects recompile.
+#
+# src/gui/PluginEditor.cpp already carries `#ifndef ANABASIS_BUILD_NUMBER ->
+# "0"` (:116-117), so this is the same value through a narrower door, not a
+# new contract. Source-file properties are directory-scoped; both consumers --
+# the plugin target and AnabasisStateTests -- compile the file from this
+# directory, so both still see the real number. Nothing else reads it:
+# `grep -rn ANABASIS_BUILD_NUMBER src/` matches PluginEditor.cpp alone.
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/gui/PluginEditor.cpp
+    PROPERTIES COMPILE_DEFINITIONS ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}")
+
 target_compile_definitions(Anabasis PUBLIC
     ANABASIS_VERSION_STRING="${PROJECT_VERSION}"
-    ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}"
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
@@ -382,7 +403,10 @@ if(ANABASIS_BUILD_TESTS)
     target_include_directories(AnabasisStateTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(AnabasisStateTests PUBLIC
         ANABASIS_VERSION_STRING="${PROJECT_VERSION}"
-        ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}"
+        # ANABASIS_BUILD_NUMBER is attached to src/gui/PluginEditor.cpp as a
+        # source-file property instead -- see the set_source_files_properties()
+        # call and its reasoning above the plugin target. This target compiles
+        # ${ANABASIS_PLUGIN_SOURCES}, so it still receives it there.
         ANABASIS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0

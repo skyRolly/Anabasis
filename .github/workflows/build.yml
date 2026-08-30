@@ -150,15 +150,17 @@ env:
 # separate *-debug artifact (split .debug / PDB / dSYM) for crash symbolication,
 # and ships STRIPPED public binaries.
 #
-# ASYMMETRY, stated rather than glossed: ONLY LINUX validates the shipped bytes.
-# Its strip step runs BEFORE pluginval, so the gate sees exactly what users get.
-# On macOS `strip -x` + ad-hoc codesign happen in the packaging step AFTER
-# pluginval, and on Windows the public copy is produced after validation too --
-# so on those two platforms a defect introduced BY stripping or signing would
-# ship unvalidated. Reordering them is not free (macOS must codesign last, or the
-# seal breaks), so it is a real design question to settle at P6 when there is a
-# binary to measure against, not something to guess at now. Recorded in
-# docs/procedures/CI_CD.md and docs/OPEN_QUESTIONS.md (OQ-012).
+# LINUX AND macOS VALIDATE THE SHIPPED BYTES; Windows still does not. Linux's
+# strip step runs BEFORE pluginval, so its gate sees exactly what users get.
+# On macOS, SINCE 0.2.6 (sibling parity; OQ-012's macOS half, resolved in the
+# direction the sibling proved), packaging -- dsymutil, `strip -x`, ad-hoc
+# codesign -- runs BEFORE pluginval and the gates point at dist/, so a defect
+# introduced BY stripping or signing fails the release gate instead of
+# shipping. The codesign-last constraint is preserved because the whole
+# packaging step, seal included, completes before validation begins. On
+# Windows the public copy is still produced after validation; that half of
+# OQ-012 stays open. Recorded in docs/procedures/CI_CD.md and
+# docs/OPEN_QUESTIONS.md (OQ-012).
 #
 # On macOS the dSYM capture is BEST-EFFORT: under Release+LTO the DWARF needed
 # for dSYM reconstruction may no longer exist at packaging time, in which case
@@ -286,6 +288,7 @@ jobs:
       - name: Configure
         if: steps.preflight.outputs.ready == 'true'
         run: >
+          ccache --zero-stats || true &&
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
           -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
@@ -300,6 +303,8 @@ jobs:
 
       - name: DSP + state self-tests
         if: steps.preflight.outputs.ready == 'true'
+        env:
+          MALLOC_PERTURB_: 1        # see the `linux` job's self-test step
         run: |
           ./build/AnabasisTests_artefacts/Release/AnabasisTests
           ./build/AnabasisStateTests_artefacts/Release/AnabasisStateTests
@@ -581,6 +586,7 @@ jobs:
         #     deliberately not a CI job, because the numbers a shared runner
         #     produces are exactly the ones that must not be quoted.
         run: >
+          ccache --zero-stats || true &&
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
           -DCMAKE_CXX_COMPILER=clang++-${{ env.ANABASIS_CLANG_VERSION }}
@@ -683,24 +689,34 @@ jobs:
           # upload fail a SECOND time on if-no-files-found, burying the real error.
           echo "debug_artifacts=true" >> "$GITHUB_OUTPUT"
 
-      # MALLOC_PERTURB_ FILLS FRESH HEAP WITH A NON-ZERO PATTERN and freed heap
-      # with its complement. It is here because of KI-009: Linux hands back
-      # zero-filled pages and macOS does not, so a read-before-write is benign
-      # here and poisonous there — the symptom is platform-specific while the
-      # DEFECT is not. This makes the Linux run behave like the hostile
-      # allocator for free: no rebuild, no instrumentation, no slowdown.
+      # MALLOC_PERTURB_ MAKES THE ALLOCATOR HOSTILE, and the byte is 1 because
+      # 255 was MEASURED to be a no-op on the half that matters. glibc fills
+      # FRESH allocations with `perturb_byte ^ 0xff` and only FREED blocks with
+      # the byte itself (malloc/malloc.c, alloc_perturb/free_perturb) — so the
+      # previous value here, 255, filled every fresh buffer with 0x00: exactly
+      # the benign zero pattern this variable is set to defeat, and
+      # indistinguishable from not setting it at all. Verified on this round by
+      # direct measurement (fresh reads under 255 return 0x00000000, float 0.0;
+      # under 1 they return 0xFEFEFEFE, -1.69e38 — loud and wrong-signed). The
+      # sibling reached the same conclusion by its own sweep, which also found
+      # NO value of this variable can produce NaN/Inf/denormal fills: fresh is
+      # always byte-repeated `v ^ 0xff`, and 0xFF-per-byte is unreachable there.
+      # The earlier comment's "0xFF fills a float buffer with NaN" claim was
+      # true only of reads from FREED memory, not the uninitialised-fresh reads
+      # KI-009 implicates.
       #
-      # 255 on purpose rather than an arbitrary byte: 0xFF fills a float buffer
-      # with NaN, so an uninitialised READ of audio state fails an assertion
-      # instead of passing on a plausible-looking value. glibc-only, which is
-      # why it is set here and in `linux-lto-tests` and NOT on the macOS job, where
-      # libmalloc ignores it and the variable would only read as coverage that
-      # does not exist. valgrind in `sanitizers` answers the same question more
-      # thoroughly and far more slowly; this is the cheap one, on every push.
+      # It is here because of KI-009: Linux hands back zero-filled pages and
+      # macOS does not, so a read-before-write is benign here and poisonous
+      # there — the symptom is platform-specific while the DEFECT is not.
+      # glibc-only, which is why it is set here and in the LTO lanes and NOT on
+      # the macOS jobs, where libmalloc ignores it and the variable would only
+      # read as coverage that does not exist. valgrind in `sanitizers` answers
+      # the same question more thoroughly and far more slowly; this is the
+      # cheap one, on every push.
       - name: Self-tests (DSP + state)
         id: tests
         env:
-          MALLOC_PERTURB_: 255
+          MALLOC_PERTURB_: 1
         run: ./scripts/run-tests.sh
 
       # ---- THE TWO REPRODUCTIONS, AND WHY THEY ARE HERE ---------------------
@@ -999,9 +1015,10 @@ jobs:
   # pointed it at the DSP suite alone, which aimed the detector away from the
   # span KI-009 implicates.
   #
-  # detect_leaks=0: JUCE's singletons are torn down at exit in ways LeakSanitizer
-  # reports and this job is not a leak gate. halt_on_error=1 on UBSan so the
-  # first violation fails the job rather than scrolling past.
+  # detect_leaks=1 since 0.2.2 -- the old claim here that JUCE's singletons
+  # would be reported at exit was retired by measurement (nothing is reported;
+  # the step comment below carries the evidence). halt_on_error=1 on UBSan so
+  # the first violation fails the job rather than scrolling past.
   # -------------------------------------------------------------------------
   sanitizers:
     needs: preflight
@@ -1056,6 +1073,7 @@ jobs:
 
       - name: Configure (Clang, ASan + UBSan)
         run: >
+          ccache --zero-stats || true &&
           cmake -B build-san -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
@@ -1144,6 +1162,13 @@ jobs:
               --error-exitcode=1 --error-limit=no --num-callers=25"
           $VG ./build-vg/AnabasisTests_artefacts/Release/AnabasisTests
           $VG ./build-vg/AnabasisStateTests_artefacts/Release/AnabasisStateTests
+
+      # Restored at every run and reported at none — that was this job's cache
+      # until this round: the counters could say anything and nobody would see
+      # them. Read-only, `|| true`, after the last build that could move them.
+      - name: Compiler cache statistics
+        if: ${{ !cancelled() && env.ANABASIS_COMPILER_LAUNCHER != '' }}
+        run: ccache --show-stats --verbose || true
 
   # -------------------------------------------------------------------------
   # -------------------------------------------------------------------------
@@ -1242,7 +1267,7 @@ jobs:
             -DCMAKE_C_COMPILER=gcc \
             -DCMAKE_CXX_COMPILER=g++ \
             -DCMAKE_C_FLAGS="-flto" \
-            -DCMAKE_CXX_FLAGS="-flto" \
+            -DCMAKE_CXX_FLAGS="-flto -Wduplicated-cond -Wduplicated-branches -Wlogical-op" \
             -DCMAKE_EXE_LINKER_FLAGS="-flto" \
             -DANABASIS_BUILD_STANDALONE=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=${{ env.ANABASIS_COMPILER_LAUNCHER }} \
@@ -1264,7 +1289,17 @@ jobs:
       # the `path:line:col: warning:` shape both compilers emit and classifies by
       # RESOLVED PATH. This is the only warning gate GCC gets, and it gates at
       # ZERO with no baseline file -- deliberately unlike the sibling's debt
-      # list, and the stricter contract (see the compiler-pin block).
+      # list, and the stricter contract (see the compiler-pin block). The three
+      # GCC-only diagnostics on the configure line above (-Wduplicated-cond,
+      # -Wduplicated-branches, -Wlogical-op) are the sibling's gated extras,
+      # adopted at 0.2.6 under this zero contract rather than its baseline one:
+      # measured over both suites before adoption, they fire 4 times, all in
+      # vendored JUCE (juce_NamedPipe_posix.cpp, -Wlogical-op on the
+      # EAGAIN/EWOULDBLOCK idiom) and never in first-party code, so the gate
+      # stays at zero while this lane now sees every diagnostic the sibling's
+      # does. -Wshadow and -Wmisleading-indentation, the other two in the
+      # sibling's set, already reach this build through JUCE's warning flags
+      # and -Wall respectively.
       - name: Build the suites (LTO), gating on first-party warnings
         run: |
           set -o pipefail
@@ -1277,7 +1312,7 @@ jobs:
 
       - name: Self-tests against LTO codegen
         env:
-          MALLOC_PERTURB_: 255      # see the `linux` job's self-test step
+          MALLOC_PERTURB_: 1        # see the `linux` job's self-test step
         run: |
           ./build-lto/AnabasisTests_artefacts/Release/AnabasisTests
           ./build-lto/AnabasisStateTests_artefacts/Release/AnabasisStateTests
@@ -1382,7 +1417,7 @@ jobs:
       # every one of them true.
       - name: Self-tests against LTO codegen
         env:
-          MALLOC_PERTURB_: 255      # see the `linux` job's self-test step
+          MALLOC_PERTURB_: 1        # see the `linux` job's self-test step
         run: |
           ./build-lto/AnabasisTests_artefacts/Release/AnabasisTests
           ./build-lto/AnabasisStateTests_artefacts/Release/AnabasisStateTests
@@ -1526,6 +1561,7 @@ jobs:
 
       - name: Configure (Clang, RealtimeSanitizer)
         run: >
+          ccache --zero-stats || true &&
           cmake -B build-rt -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DCMAKE_C_COMPILER=clang-${{ env.ANABASIS_CLANG_VERSION }}
@@ -1546,6 +1582,13 @@ jobs:
       - name: DSP self-tests under RealtimeSanitizer
         run: ./build-rt/AnabasisTests_artefacts/RelWithDebInfo/AnabasisTests
 
+      # Restored at every run and reported at none — that was this job's cache
+      # until this round: the counters could say anything and nobody would see
+      # them. Read-only, `|| true`, after the last build that could move them.
+      - name: Compiler cache statistics
+        if: ${{ !cancelled() && env.ANABASIS_COMPILER_LAUNCHER != '' }}
+        run: ccache --show-stats --verbose || true
+
   windows:
     needs: preflight
     if: needs.preflight.outputs.ready == 'true'
@@ -1555,62 +1598,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Default Visual Studio generator (multi-config); MSVC is auto-detected.
+      #
+      # DELIBERATELY UNCACHED (recorded at 0.2.6 so decision stops reading as
+      # omission; the sibling documents the same choice): ccache supports MSVC
+      # only with /Z7-embedded debug info, and this job ships /Zi-style PDBs as
+      # the *-debug artifact -- caching would mean changing the debug-info
+      # format of the shipped symbols to speed up the one platform that is not
+      # the run's critical path.
       - name: Configure
         id: configure
         run: cmake -B build -DANABASIS_BUILD_PROBE=ON -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
-      # RECORD THE TOOLCHAIN THAT BUILT THE SHIPPED WINDOWS BYTES (0.2.2).
-      # `windows-latest` floats and MSVC is auto-detected, so until this step
-      # nothing in the run said which toolset it resolved to -- a released .vst3
-      # could be built by a compiler no artifact names. Linux pins its compiler
-      # (ADR-0032) and macOS records its slices; this is the Windows half of the
-      # same property, and it is a RECORD plus one narrow assertion rather than a
-      # pin, because MSVC cannot be installed the way apt.llvm.org's Clang can.
-      #
-      # WHAT IS ASSERTED is deliberately narrow: the ABI SERIES (`14.x`), which
-      # is what decides which Visual C++ redistributable a user needs. Patch and
-      # minor moves inside 14.x are ABI-compatible by Microsoft's own contract
-      # and pass silently; a move off 14.x is a compatibility claim this
-      # repository has to re-take, so it fails.
-      - name: Record + assert the MSVC toolset
-        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $cache = 'build/CMakeCache.txt'
-
-          # Two cache keys are tried because which of them carries a full path is
-          # a property of the GENERATOR, not of this project, and the VS
-          # generator is the one CMake documents least precisely here. Whichever
-          # yields a `...\VC\Tools\MSVC\<version>\...` component wins.
-          $version = $null
-          foreach ($key in 'CMAKE_CXX_COMPILER:FILEPATH', 'CMAKE_LINKER:FILEPATH') {
-            $hit = (Select-String -Path $cache -Pattern ('^' + [regex]::Escape($key)) | Select-Object -First 1)
-            if ($null -ne $hit -and $hit.Line -match 'MSVC[\\/]+([0-9]+(\.[0-9]+)+)') {
-              $version = $Matches[1]
-              break
-            }
-          }
-
-          if ($null -eq $version) {
-            # A WARNING, NOT A FAILURE. This step reports and asserts; it does not
-            # build or validate anything a user receives, and reddening the
-            # Windows release gate because a cache key moved would be a footnote
-            # deciding whether a release ships. The message names what to read.
-            Write-Host "::warning::Could not read an MSVC toolset version from $cache (looked at CMAKE_CXX_COMPILER and CMAKE_LINKER). The Windows toolchain is unrecorded for this run."
-            Select-String -Path $cache -Pattern 'CMAKE_(CXX_COMPILER|LINKER):FILEPATH='
-            exit 0
-          }
-
-          $series = $version.Split('.')[0]
-          Write-Host "MSVC toolset $version (ABI series $series.x)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "MSVC toolset ``$version`` (ABI series ``$series.x``)"
-
-          if ($series -ne '14') {
-            Write-Host "::error::MSVC ABI series moved from 14.x to $series.x, which changes the Visual C++ redistributable users need. Confirm the new requirement, update COMPATIBILITY_MATRIX.md, and raise this assertion in the same change."
-            exit 1
-          }
-
+      # Gated implicitly on configure via default success() chaining.
       - name: Build (VST3 + Standalone + tests)
         id: build
         run: cmake --build build --config Release
@@ -1764,9 +1763,16 @@ jobs:
             # produce -- and the operator gets a stack trace where a one-line cause
             # was intended. Diagnostics quality, not correctness: these images come
             # from MSVC in this same job.
+            #
+            # +26, not +24 (0.2.6, sibling parity): the bound must cover the
+            # LARGEST read below, and that is the optional header's Magic at
+            # peOffset+24..25 -- 4 bytes of PE signature, 20 of COFF file
+            # header, then 2 of Magic. At exactly +24 or +25 the old bound
+            # admitted the file and the Magic read threw the raw .NET
+            # IndexOutOfRangeException this guard exists to replace.
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-            if ($peOffset -lt 0 -or ($peOffset + 24) -gt $bytes.Length) {
-              Write-Error "$ImagePath : e_lfanew ($peOffset) points outside the file ($($bytes.Length) bytes) -- image is truncated or malformed"
+            if ($peOffset -lt 0 -or ($peOffset + 26) -gt $bytes.Length) {
+              Write-Error "$ImagePath : e_lfanew ($peOffset) points outside the file, or leaves fewer than 26 bytes (PE signature + COFF header + optional-header Magic) of $($bytes.Length) -- image is truncated or malformed"
             }
             if ($bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45) {
               Write-Error "$ImagePath is not a valid PE image (missing PE signature)"
@@ -1972,6 +1978,67 @@ jobs:
           name: Anabasis-Windows-debug
           path: dist/Anabasis-Windows-debug
           if-no-files-found: error
+
+      # RECORD THE TOOLCHAIN THAT BUILT THE SHIPPED WINDOWS BYTES (0.2.2).
+      # `windows-latest` floats and MSVC is auto-detected, so until this step
+      # nothing in the run said which toolset it resolved to -- a released .vst3
+      # could be built by a compiler no artifact names. Linux pins its compiler
+      # (ADR-0032) and macOS records its slices; this is the Windows half of the
+      # same property, and it is a RECORD plus one narrow assertion rather than a
+      # pin, because MSVC cannot be installed the way apt.llvm.org's Clang can.
+      #
+      # WHAT IS ASSERTED is deliberately narrow: the ABI SERIES (`14.x`), which
+      # is what decides which Visual C++ redistributable a user needs. Patch and
+      # minor moves inside 14.x are ABI-compatible by Microsoft's own contract
+      # and pass silently; a move off 14.x is a compatibility claim this
+      # repository has to re-take, so it fails.
+      #
+      # LAST STEP OF THE JOB, and the position is the point (0.2.6, adopted from
+      # the sibling, whose comment documents moving it off the pre-build slot
+      # this job used to give it): placed right after Configure, a toolset that
+      # drifted off the 14.x series failed the job BEFORE the build, tests,
+      # pluginval and uploads ran, so the one run that detects an image-moved
+      # compiler produced no artifacts and no test evidence to judge the move
+      # by. Here the whole job's evidence exists first; the assertion still
+      # fails the run.
+      - name: Record + assert the MSVC toolset
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cache = 'build/CMakeCache.txt'
+
+          # Two cache keys are tried because which of them carries a full path is
+          # a property of the GENERATOR, not of this project, and the VS
+          # generator is the one CMake documents least precisely here. Whichever
+          # yields a `...\VC\Tools\MSVC\<version>\...` component wins.
+          $version = $null
+          foreach ($key in 'CMAKE_CXX_COMPILER:FILEPATH', 'CMAKE_LINKER:FILEPATH') {
+            $hit = (Select-String -Path $cache -Pattern ('^' + [regex]::Escape($key)) | Select-Object -First 1)
+            if ($null -ne $hit -and $hit.Line -match 'MSVC[\\/]+([0-9]+(\.[0-9]+)+)') {
+              $version = $Matches[1]
+              break
+            }
+          }
+
+          if ($null -eq $version) {
+            # A WARNING, NOT A FAILURE. This step reports and asserts; it does not
+            # build or validate anything a user receives, and reddening the
+            # Windows release gate because a cache key moved would be a footnote
+            # deciding whether a release ships. The message names what to read.
+            Write-Host "::warning::Could not read an MSVC toolset version from $cache (looked at CMAKE_CXX_COMPILER and CMAKE_LINKER). The Windows toolchain is unrecorded for this run."
+            Select-String -Path $cache -Pattern 'CMAKE_(CXX_COMPILER|LINKER):FILEPATH='
+            exit 0
+          }
+
+          $series = $version.Split('.')[0]
+          Write-Host "MSVC toolset $version (ABI series $series.x)"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "MSVC toolset ``$version`` (ABI series ``$series.x``)"
+
+          if ($series -ne '14') {
+            Write-Host "::error::MSVC ABI series moved from 14.x to $series.x, which changes the Visual C++ redistributable users need. Confirm the new requirement, update COMPATIBILITY_MATRIX.md, and raise this assertion in the same change."
+            exit 1
+          }
 
   macos:
     needs: preflight
@@ -2197,7 +2264,11 @@ jobs:
       # workflow keeps having to relearn. It is a warning rather than an error
       # only because Rosetta's presence is the IMAGE's property, not the
       # product's, and a green product should not go red for it.
+      # `id` so the customer uploads can NAME this result (0.2.6, sibling
+      # parity): before, a failing x86_64 slice reddened the job while the
+      # universal artifacts it ships in uploaded anyway.
       - name: Self-tests, x86_64 slice under Rosetta
+        id: tests_x86_64
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
@@ -2206,132 +2277,12 @@ jobs:
           fi
           ANABASIS_TEST_RUNNER="arch -x86_64" ./scripts/run-tests.sh
 
-      - name: pluginval (deterministic x3 -- release gate)
-        # Explicit condition rather than relying on "no `if:`, so it self-skips".
-        # Both pluginval steps carry the SAME condition, naming exactly what must have
-        # succeeded for the binary to be in the state we intend to validate. The
-        # implicit self-skip made the two modes behave differently after an earlier
-        # failure -- the opposite of "both modes report independently".
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
-
-      - name: pluginval (randomise x3 -- release gate)
-        # Same condition as the deterministic step above -- deliberately NOT
-        # `!cancelled()` alone. Two different things are being separated:
-        #   * a DETERMINISTIC pluginval failure must never skip randomise (that is what
-        #     `!cancelled()` buys, and it still holds);
-        #   * an earlier PIPELINE failure must skip BOTH, because nothing worth
-        #     validating exists.
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise vst3
-
-      # THE AU IS VALIDATED TOO, and only here -- it is the one format that
-      # exists on exactly one platform. Until 2026-08-10 the release gate ran
-      # against the VST3 alone on all three OSes, so the AU shipped to Logic
-      # users having passed no automated validation at all. KI-009 is reported
-      # in AU *and* VST3, which is what made the omission worth closing rather
-      # than noting: the format the report names was the ungated one.
-      #
-      # Same strictness (the env block above is still the only copy), same two
-      # modes, same 3 consecutive passes -- an AU that only passes sometimes is
-      # not a passing AU. Gated on the BUILD like every other validation step,
-      # never on the VST3 steps: a VST3 failure must not hide the AU's result.
-      # INSTALL THE AU BEFORE VALIDATING IT, deliberately, and not as belt-and-braces.
-      # macOS resolves Audio Units through the AudioComponent registry
-      # (`AudioComponentFindNext`, which is what JUCE's AudioUnitPluginFormat calls),
-      # and the registry only knows about bundles under a Components directory. A
-      # freshly built .component sitting in the build tree can therefore report ZERO
-      # plugin types however correct it is — which would make this gate red for an
-      # environmental reason, or (worse, if pluginval ever treats "no types" as
-      # nothing to do) green without validating anything. Installing first removes
-      # the question instead of depending on the answer.
-      #
-      # `killall AudioComponentRegistrar` forces the registry to re-scan rather than
-      # serve a cached list; it is `|| true` because the daemon may simply not be
-      # running yet on a fresh runner, which is not a failure. The copy itself is
-      # NOT `|| true`.
-      - name: Install the AU so the AudioComponent registry can find it
-        id: au_install
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: |
-          set -e
-          DEST="$HOME/Library/Audio/Plug-Ins/Components"
-          mkdir -p "$DEST"
-          rm -rf "$DEST/Anabasis.component"
-          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
-          ls -d "$DEST/Anabasis.component"
-
-      - name: pluginval AU (deterministic x3 -- release gate)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
-        env:
-          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
-
-      - name: pluginval AU (randomise x3 -- release gate)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
-        env:
-          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
-        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise au
-
-      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
-      # installs rather than a rebuild of its sources. `AnabasisStateTests`
-      # drives the real processBlock, but compiled into a console app: no LTO
-      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
-      # one architecture. The probe LOADS the built bundle through
-      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
-      # output is the shipped code path including whatever the optimiser did to
-      # it, and its oracle is the field report's own question: is there audio on
-      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
-      # a channel was actually lost. Different codes on purpose.
-      #
-      # FOUR RUNS on macOS: both formats x both slices. The report names AU and
-      # VST3 alike, and the x86_64 slice ships in the same universal binary while
-      # being executed by nothing until this workflow started running it -- so
-      # "macOS is green" previously meant one of the four.
-      # One second, and it separates "the DSP core is wrong" from "the wrapper
-      # is wrong" before the probe below reports at all — the distinction that
-      # took KI-009 nine rounds to establish by inference.
-      - name: Engine reproduction (no wrapper, no format, no host)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
-
-      # TWO STEPS, NOT ONE, and the split is the same principle the pluginval
-      # steps above already state: neither format may hide the other's result.
-      # Combined, this step had to be gated on `au_install`, so an AU copy that
-      # failed for its own reasons -- no AU built, an unwritable Components
-      # directory -- suppressed the VST3 probe as well, and the run reported
-      # nothing about a format that was sitting there ready to be tested. The
-      # VST3 half is gated on the BUILD; the AU half on the INSTALL it genuinely
-      # needs.
-      - name: Channel probe -- VST3, both slices
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: |
-          set -e
-          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
-          VST3=build/Anabasis_artefacts/Release/VST3/Anabasis.vst3
-          echo "== arm64 / VST3 =="; "$PROBE" "$VST3" --format vst3
-          if arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "== x86_64 / VST3 =="; arch -x86_64 "$PROBE" "$VST3" --format vst3
-          else
-            echo "::warning::Rosetta 2 unavailable -- the x86_64 VST3 slice was probed by nothing this run"
-          fi
-
-      - name: Channel probe -- AU, both slices
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
-        run: |
-          set -e
-          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
-          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
-          echo "== arm64 / AU   =="; "$PROBE" "$AU" --format au
-          if arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU" --format au
-          else
-            echo "::warning::Rosetta 2 unavailable -- the x86_64 AU slice was probed by nothing this run"
-          fi
-
-
+      # PACKAGING RUNS BEFORE PLUGINVAL SINCE 0.2.6 (sibling parity; closes
+      # the OQ-012 asymmetry this file used to record): the release gate now
+      # validates the bytes in dist/ -- stripped, ad-hoc signed, the copy a
+      # user receives -- instead of the pre-strip build-tree bundle. Linux
+      # already validated post-strip; macOS was the platform whose shipped
+      # bytes passed no gate.
       # Order matters -- 1) dsymutil captures a universal dSYM per bundle (the
       # only crash-symbolication source once stripped), 2) strip -x removes local
       # symbols, 3) codesign LAST (stripping after signing would invalidate the
@@ -2501,6 +2452,149 @@ jobs:
       # installer is: `packaging/macos/build-pkg.sh` copies the three bundles
       # into component roots and self-checks the result (identifiers,
       # customise-allowed, all three components pre-selected).
+
+      - name: pluginval (deterministic x3 -- release gate)
+        # Explicit condition rather than relying on "no `if:`, so it self-skips".
+        # Both pluginval steps carry the SAME condition, naming exactly what must have
+        # succeeded for the binary to be in the state we intend to validate. The
+        # implicit self-skip made the two modes behave differently after an earlier
+        # failure -- the opposite of "both modes report independently".
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: dist/Anabasis-macOS/Anabasis.vst3
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
+
+      - name: pluginval (randomise x3 -- release gate)
+        # Same condition as the deterministic step above -- deliberately NOT
+        # `!cancelled()` alone. Two different things are being separated:
+        #   * a DETERMINISTIC pluginval failure must never skip randomise (that is what
+        #     `!cancelled()` buys, and it still holds);
+        #   * an earlier PIPELINE failure must skip BOTH, because nothing worth
+        #     validating exists.
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: dist/Anabasis-macOS/Anabasis.vst3
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise vst3
+
+      # THE AU IS VALIDATED TOO, and only here -- it is the one format that
+      # exists on exactly one platform. Until 2026-08-10 the release gate ran
+      # against the VST3 alone on all three OSes, so the AU shipped to Logic
+      # users having passed no automated validation at all. KI-009 is reported
+      # in AU *and* VST3, which is what made the omission worth closing rather
+      # than noting: the format the report names was the ungated one.
+      #
+      # Same strictness (the env block above is still the only copy), same two
+      # modes, same 3 consecutive passes -- an AU that only passes sometimes is
+      # not a passing AU. Gated on the BUILD like every other validation step,
+      # never on the VST3 steps: a VST3 failure must not hide the AU's result.
+      # INSTALL THE AU BEFORE VALIDATING IT, deliberately, and not as belt-and-braces.
+      # macOS resolves Audio Units through the AudioComponent registry
+      # (`AudioComponentFindNext`, which is what JUCE's AudioUnitPluginFormat calls),
+      # and the registry only knows about bundles under a Components directory. A
+      # freshly built .component sitting in the build tree can therefore report ZERO
+      # plugin types however correct it is — which would make this gate red for an
+      # environmental reason, or (worse, if pluginval ever treats "no types" as
+      # nothing to do) green without validating anything. Installing first removes
+      # the question instead of depending on the answer.
+      #
+      # `killall AudioComponentRegistrar` forces the registry to re-scan rather than
+      # serve a cached list; it is `|| true` because the daemon may simply not be
+      # running yet on a fresh runner, which is not a failure. The copy itself is
+      # NOT `|| true`.
+      - name: Install the AU so the AudioComponent registry can find it
+        id: au_install
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          set -e
+          DEST="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$DEST"
+          rm -rf "$DEST/Anabasis.component"
+          # From dist/ since 0.2.6: the registry-installed copy is the SHIPPED
+          # bytes (stripped, signed), so the AU gates below validate what a
+          # user's Logic loads, not the pre-strip build-tree bundle.
+          cp -R dist/Anabasis-macOS/Anabasis.component "$DEST/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "bundle=$DEST/Anabasis.component" >> "$GITHUB_OUTPUT"
+          ls -d "$DEST/Anabasis.component"
+
+      - name: pluginval AU (deterministic x3 -- release gate)
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
+
+      - name: pluginval AU (randomise x3 -- release gate)
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise au
+
+      # THE KI-009 PROBE -- the only step here that tests the artefact a USER
+      # installs rather than a rebuild of its sources. `AnabasisStateTests`
+      # drives the real processBlock, but compiled into a console app: no LTO
+      # (ADR-0008 keeps the flags target on the plugin alone), no format wrapper,
+      # one architecture. The probe LOADS the built bundle through
+      # juce_audio_processors, so host -> wrapper -> processBlock -> engine ->
+      # output is the shipped code path including whatever the optimiser did to
+      # it, and its oracle is the field report's own question: is there audio on
+      # BOTH channels. Exit 2 = could not load/configure (environment); exit 1 =
+      # a channel was actually lost. Different codes on purpose.
+      #
+      # FOUR RUNS on macOS: both formats x both slices. The report names AU and
+      # VST3 alike, and the x86_64 slice ships in the same universal binary while
+      # being executed by nothing until this workflow started running it -- so
+      # "macOS is green" previously meant one of the four.
+      # One second, and it separates "the DSP core is wrong" from "the wrapper
+      # is wrong" before the probe below reports at all — the distinction that
+      # took KI-009 nine rounds to establish by inference.
+      - name: Engine reproduction (no wrapper, no format, no host)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./build/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro
+
+      # TWO STEPS, NOT ONE, and the split is the same principle the pluginval
+      # steps above already state: neither format may hide the other's result.
+      # Combined, this step had to be gated on `au_install`, so an AU copy that
+      # failed for its own reasons -- no AU built, an unwritable Components
+      # directory -- suppressed the VST3 probe as well, and the run reported
+      # nothing about a format that was sitting there ready to be tested. The
+      # VST3 half is gated on the BUILD; the AU half on the INSTALL it genuinely
+      # needs.
+      - name: Channel probe -- VST3, both slices
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          VST3=build/Anabasis_artefacts/Release/VST3/Anabasis.vst3
+          echo "== arm64 / VST3 =="; "$PROBE" "$VST3" --format vst3
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "== x86_64 / VST3 =="; arch -x86_64 "$PROBE" "$VST3" --format vst3
+          else
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 VST3 slice was probed by nothing this run"
+          fi
+
+      - name: Channel probe -- AU, both slices
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        run: |
+          set -e
+          PROBE=./build/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe
+          AU="$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
+          echo "== arm64 / AU   =="; "$PROBE" "$AU" --format au
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "== x86_64 / AU   =="; arch -x86_64 "$PROBE" "$AU" --format au
+          else
+            echo "::warning::Rosetta 2 unavailable -- the x86_64 AU slice was probed by nothing this run"
+          fi
+
+
+      # The AU was installed into ~/Library so the AudioComponent registry
+      # could resolve it for validation; remove it once the last consumer has
+      # run (0.2.6, sibling parity). TESTING.md tells a human reproducing a
+      # failure locally to install it themselves -- a leftover component on a
+      # reused runner is one more way for a later run to validate stale bytes.
+      - name: Remove the AU installed for validation
+        if: ${{ !cancelled() && steps.au_install.outcome == 'success' }}
+        run: rm -rf "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
+
       - name: Package macOS installer (.pkg)
         id: package_macos
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.package.outcome == 'success' }}
@@ -2512,15 +2606,26 @@ jobs:
           packaging/macos/build-pkg.sh dist/Anabasis-macOS "$VERSION" "dist/Anabasis-${VERSION}-macOS.pkg"
 
       - name: Upload macOS installer
-        if: ${{ !cancelled() && steps.package_macos.outcome == 'success' }}
+        if: >-
+          ${{ !cancelled()
+              && steps.tests_x86_64.outcome == 'success'
+              && steps.package_macos.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-macOS-installer
           path: dist/Anabasis-*-macOS.pkg
           if-no-files-found: error
 
+      # BOTH slices gate the customer artifacts (0.2.6, sibling parity): the
+      # x86_64 half of the universal binary is executed by exactly one step,
+      # and an artifact whose Intel half failed its behavioural run must not
+      # ship because the arm64 half passed.
       - name: Upload macOS plugins (VST3 + AU + Standalone)
-        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.package.outcome == 'success' }}
+        if: >-
+          ${{ !cancelled()
+              && steps.tests.outcome == 'success'
+              && steps.tests_x86_64.outcome == 'success'
+              && steps.package.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Anabasis-macOS
@@ -2683,6 +2788,29 @@ jobs:
         if: ${{ !cancelled() && env.ANABASIS_COMPILER_LAUNCHER != '' }}
         run: ccache --show-stats --verbose || true
 
+      # THE ARTIFACT UNDER TEST REALLY IS THIN x86_64 (0.2.6, sibling parity).
+      # The configure line requests one architecture, but nothing below here
+      # re-checks that the bundles actually came out thin -- and a folded YAML
+      # scalar swallowing the -DCMAKE_OSX_ARCHITECTURES argument is an accident
+      # this file has already had once with a different flag. Every result this
+      # job reports is labelled "native Intel"; this is what entitles it to the
+      # label. pluginval below gates on it.
+      - name: Assert the built bundles are thin x86_64
+        id: thin
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          for B in \
+            build/Anabasis_artefacts/Release/VST3/Anabasis.vst3/Contents/MacOS/Anabasis \
+            build/Anabasis_artefacts/Release/AU/Anabasis.component/Contents/MacOS/Anabasis; do
+            ARCHES="$(lipo -archs "$B")"
+            echo "$B: $ARCHES"
+            if [ "$ARCHES" != "x86_64" ]; then
+              echo "::error::$B is not a thin x86_64 binary (found: $ARCHES) -- this job's results would be mislabelled as Intel coverage"
+              exit 1
+            fi
+          done
+
       - name: Self-tests (DSP + state), native Intel
         run: |
           chmod +x scripts/*.sh
@@ -2724,11 +2852,31 @@ jobs:
             "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component" --format au
 
       - name: pluginval VST3 (deterministic x3), native Intel
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.thin.outcome == 'success' }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic vst3
 
+      # RANDOMISE ON INTEL TOO (0.2.6, sibling parity -- its stated reason
+      # holds here unchanged): fresh-seed parameter values pushed through
+      # Intel codegen on an Intel FPU is an (architecture x value) space no
+      # other job reaches. The universal job's randomise arms execute arm64;
+      # its Rosetta step runs the deterministic suites only.
+      - name: pluginval VST3 (randomise x3), native Intel
+        if: ${{ !cancelled() && steps.thin.outcome == 'success' }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise vst3
+
       - name: pluginval AU (deterministic x3), native Intel
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.thin.outcome == 'success' && steps.au_install.outcome == 'success' }}
         env:
           ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
         run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} deterministic au
+
+      - name: pluginval AU (randomise x3), native Intel
+        if: ${{ !cancelled() && steps.thin.outcome == 'success' && steps.au_install.outcome == 'success' }}
+        env:
+          ANABASIS_PLUGINVAL_BUNDLE: ${{ steps.au_install.outputs.bundle }}
+        run: ./scripts/run-pluginval.sh ${{ env.ANABASIS_PLUGINVAL_STRICTNESS }} randomise au
+
+      # See the universal job's copy of this step for the reasoning.
+      - name: Remove the AU installed for validation
+        if: ${{ !cancelled() && steps.au_install.outcome == 'success' }}
+        run: rm -rf "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"

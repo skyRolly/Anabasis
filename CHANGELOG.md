@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Twelve such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Thirteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,71 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.2.6] — 2026-08-30
+
+**Parity audit round 2 (ADR-0036): the sibling's CI surface is byte-identical to the last audit's
+baseline, so this round's mismatches are what that audit missed plus what 0.2.3–0.2.5 changed
+here.** Nine adoptions, each verified before landing; the kept-different list re-affirmed item by
+item. No DSP algorithm, parameter, serialization schema, threading model or reported latency
+change; no sanitizer, compiler or optimization flag on any shipped artifact moved. Full 200-row
+audit: [`worklogs/2026-08-30-parity-audit-round-2.md`](worklogs/2026-08-30-parity-audit-round-2.md).
+
+### Fixed
+- **`MALLOC_PERTURB_` was set to a measured no-op.** glibc fills *fresh* allocations with the
+  complement of the byte, so the previous `255` wrote `0x00` into every never-written buffer —
+  the exact benign pattern the variable exists to defeat. Now `1` (fresh = `0xFE`, −1.69e38,
+  loud), matching the sibling's measured choice, on `linux`, both LTO lanes, and now
+  `merge-check` too. The old comment's NaN claim described freed-block reads, not fresh ones.
+  Evidence: fill bytes measured in both directions; both suites pass under the new value. [Verified]
+- **`ANABASIS_BUILD_NUMBER` no longer perturbs 101 translation units per run.** The run-varying
+  `PUBLIC` define became a source-file property on its only reader, `src/gui/PluginEditor.cpp` —
+  the fix the 0.2.4 ccache round measured and deferred, now landed with family precedent (the
+  sibling scopes its build number identically, on an 84.4%-of-compile-time measurement).
+  Evidence: `compile_commands.json` — 2 of 103 commands carry the define; suites 301 + 873, 0
+  failures. [Verified]
+- **The Windows PE truncation guard covers the Magic read** (+24 → +26); at exactly +24/+25 the
+  old bound admitted the file and the parser threw a raw `IndexOutOfRangeException` instead of
+  the diagnosable error the guard exists for. [Verified]
+
+### Changed
+- **macOS validates the shipped bytes** — OQ-012's macOS half resolved by adopting the sibling's
+  arrangement: packaging (dsymutil → `strip -x` → ad-hoc codesign) runs before pluginval, all
+  four macOS gates read `dist/` via `ANABASIS_PLUGINVAL_BUNDLE`, and the AU is registry-installed
+  from `dist/`. A defect introduced by stripping or signing now fails the release gate instead of
+  shipping. The Windows half of OQ-012 stays open. [Verified structurally; CI's next run is the
+  behavioural measurement]
+- **The x86_64 Rosetta self-test gates the macOS customer uploads** (`id: tests_x86_64`); a
+  failing Intel slice no longer ships inside a green-looking universal artifact. [Verified]
+- **The MSVC toolset assert is the windows job's last step**, so a toolset that leaves the 14.x
+  ABI series fails the run *after* its build/test/upload evidence exists rather than destroying
+  it. [Verified]
+- **ccache observability is complete (8/8 cached jobs)**: per-run `--zero-stats` added to the four
+  jobs whose printed stats were lineage-cumulative, and stats steps added to `sanitizers` and
+  `realtime`, which cached with no reporting at all. [Verified]
+- **`macos-intel` earns its "native Intel" label**: a thin-slice `lipo` assertion now gates
+  pluginval, and the randomise arms run for both formats (fresh-seed values through Intel codegen
+  on an Intel FPU — a space the universal job's arms, which execute arm64, never reach).
+  [Verified structurally]
+- **The GCC lane gates three more diagnostics at zero**: `-Wduplicated-cond`,
+  `-Wduplicated-branches`, `-Wlogical-op` — the sibling's gated extras our default flags never
+  enabled. Measured before adoption: 4 vendored hits, 0 first-party.
+  Evidence: both suites built with the flags, gate exit 0. [Verified]
+- **Both macOS jobs remove the registry-installed AU** after its last consumer; the Windows job
+  records why it is uncached (/Zi-PDB artifact vs ccache's /Z7-only MSVC support). [Verified]
+
+### Notes
+- **The JUCE pins have re-converged.** The sibling's `main` now pins the same 9.0.1 commit
+  `e18f7f5`, lifting the suspension ADR-0028 recorded; `DEPENDENCY_POLICY.md` carries the update.
+- **Kept different, re-affirmed**: the zero-warning contract, the excluded sanitizer sub-check,
+  no fuzz job, `preflight`, no `TESTS_NO_FTZ`, the measured CXXABI floor, `linux-lto-clang`, the
+  repro/probe instruments, the 0.2.5 dSYM gates, the 0.2.3 package set, Windows GUI-inclusive
+  pluginval — each with its rationale in ADR-0036.
+- **Recorded about the sibling** (read-only from here): its container lane's `libfreetype6-dev`
+  cannot resolve on Debian trixie; its universal build still has the shared-`lto.o` collision and
+  the aggregate dSYM checks that cannot see it.
 
 ---
 
