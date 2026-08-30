@@ -26,13 +26,15 @@
 #
 #  FAIL-CLOSED, unlike the ccache install beside it. ccache is an optimization
 #  the jobs fall back from with a `::warning::`; the pinned Clang IS the job.
-#  `linux-clang` runs the FIRST-PARTY WARNING GATE with it -- and that gate
-#  fails on ANY first-party warning, so the compiler is what defines the bar it
-#  is measured against; `sanitizers` links `libclang-rt-<major>`; `realtime`
-#  needs the RTSan runtime from the same package, which Ubuntu's own archives do
-#  not ship at all for this major. A partial install must stop the job, never
-#  let it quietly proceed with the image's default `clang`. So: `set -e`, every
-#  step checked, and `clang-<major> --version` asserted at the end. If
+#  `linux` BUILDS THE SHIPPED ARTIFACT with it (ADR-0032) and runs the
+#  FIRST-PARTY WARNING GATE -- which fails on ANY first-party warning, so the
+#  compiler is what defines the bar it is measured against -- and links the
+#  plugin under `-flto` with the matching `lld-<major>`; `sanitizers` links
+#  `libclang-rt-<major>`; `realtime` needs the RTSan runtime from the same
+#  package, which Ubuntu's own archives do not ship at all for this major. A
+#  partial install must stop the job, never let it quietly proceed with the
+#  image's default `clang`. So: `set -e`, every step checked, and
+#  `clang-<major> --version` asserted at the end. If
 #  apt.llvm.org is unreachable the job fails saying so, which is the honest
 #  outcome -- falling back to a different compiler would change the warning
 #  surface and read as a project problem instead.
@@ -147,7 +149,7 @@ $SUDO apt-get update -y -o Acquire::Retries=3 \
 # link a sanitizer runtime, but installing the same set from one code path is
 # worth more than the few seconds it saves elsewhere: two divergent package
 # lists is how one job ends up with a toolchain the other does not have.
-# `lld-${MAJOR}` is not optional for the Clang leg -- `CMakeLists.txt` selects
+# `lld-${MAJOR}` is not optional for the release build -- `CMakeLists.txt` selects
 # lld for Clang-on-Linux as a CORRECTNESS requirement (it carries the full
 # reasoning at the `-fuse-ld=lld` block), and the Clang build links the plugin
 # under `-flto`, which needs lld to resolve archive members the single GNU ld

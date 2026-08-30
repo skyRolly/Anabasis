@@ -1,0 +1,29 @@
+# UBSan instrumentation ignorelist -- ONE sub-check, in ONE tree.
+#
+# WHY IT EXISTS. The `sanitizers` job enables `implicit-conversion` on both the C
+# and C++ flags. That flag instruments EVERY translation unit the build compiles,
+# and this build compiles JUCE from source -- including the vendored third-party
+# code inside it (HarfBuzz, FreeType glue, zlib, png, flac). Those libraries use
+# narrowing assignment as ordinary idiom.
+#
+# THE SCOPE IS THE POINT, and it is as small as the mechanism allows:
+#
+#   * ONE SUB-CHECK. The `[implicit-conversion]` section header limits the rule
+#     below to that sanitizer. ASan, the rest of `undefined`, `vptr`,
+#     `float-divide-by-zero`, `unsigned-shift-base`, `local-bounds` and
+#     `nullability` still instrument the vendored tree in full.
+#   * ONE TREE. `juce-src` is where FetchContent puts the dependency
+#     (`<build-dir>/_deps/juce-src`) and where `ANABASIS_JUCE_PATH` points a local
+#     checkout. No first-party path contains it, so no `src/`, `tests/` or
+#     `tools/` file can be exempted by accident.
+#
+# `TESTING_POLICY`'s sanitizer rule -- do not weaken the entire suite because one
+# third-party path is noisy -- is what this file implements, rather than the two
+# alternatives that were available: dropping `implicit-conversion` from the flag
+# set (which weakens every TU, first-party included) or not constructing the
+# editor under sanitizers (which removes the coverage that test exists for).
+#
+# Adopted from the sibling product under ADR-0009 during the 0.2.2 CI parity
+# round; the pattern is path-based and carries nothing product-specific.
+[implicit-conversion]
+src:*juce-src/*

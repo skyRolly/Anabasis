@@ -52,12 +52,13 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 | **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |
 | **source-lint** | `ubuntu-latest` | nothing — runs `scripts/check-portability.py`, then `scripts/check-citations.py --check` against a computed base revision. Checked out with `fetch-depth: 0`, because the second needs history rather than a single commit (seconds) | n/a |
 | **macos-intel** | `macos-15-intel` (**native x86_64**) | thin x86_64 VST3 + AU + Standalone (+ tests + probe) | deterministic ×3, VST3 **and** AU — **blocking** |
-| **linux-lto-tests** | `ubuntu-latest`, matrix × 2: **pinned Clang** and **pinned GCC** (ADR-0033) | the two test targets with `-flto` on the compile AND the link, then both suites run against that codegen; each arm asserts its compiler's major before building and gates first-party warnings at zero | n/a |
+| **linux-lto-tests** | `ubuntu-latest`, **inside `container: gcc:16`** (ADR-0034) | the two test targets with `-flto` on the compile AND the link, under the **pinned GCC**, then both suites run against that codegen; asserts the container's major before building and gates first-party warnings at zero. Installs the `headless` dependency profile, because `build-essential` would put a distribution GCC over the pinned one | n/a |
+| **linux-lto-clang** | `ubuntu-latest`, **pinned Clang** (ADR-0033) | the same two targets under `-flto` with the **shipped optimization class** — INC-004's configuration, which a GCC-only lane cannot reproduce. Separate job rather than a matrix arm because `container:` is a per-job key | n/a |
 | **AnabasisChannelProbe** (a step in `linux`, `windows`, `macos`, `macos-intel`) | — | the only check that HOSTS the built bundle instead of recompiling its sources: LTO'd, wrapped, and on macOS run for **both formats × both slices** | n/a |
 | **AnabasisEngineRepro** (a step in `linux`, `macos`, `macos-intel`) | — | the same stimulus with NO wrapper, format or host, so a failure names the DSP core directly instead of leaving "engine or wrapper?" to be inferred | n/a |
 | **sanitizers** | `ubuntu-latest` (Clang) | the two test targets under ASan + UBSan, plus a plain build for valgrind memcheck over **both** suites | n/a |
 
-**Why four Linux jobs and not one.** They answer four different questions and only one of them
+**Why five Linux jobs and not one.** They answer five different questions and only one of them
 is "does it build here".
 
 * `source-lint` guards two classes NO build of any kind can see, which is why it is a separate job
@@ -121,15 +122,25 @@ is "does it build here".
   green checks. **Since ADR-0032 this is also the job that SHIPS**, so the configuration those
   gates read and the configuration a user installs are now the same bytes rather than two builds
   argued to be equivalent.
-* `linux-lto-tests` closes the other half of that gap and keeps the second toolchain alive
-  (ADR-0033). The suites do not link the LTO flags the plugin does, so every assertion this
+* **`linux-lto-clang` and `linux-lto-tests` are two jobs, not one lane with two arms** (ADR-0033,
+  split by ADR-0034). Between them they close the other half of that gap and keep the second
+  toolchain alive. The suites do not link the LTO flags the plugin does, so every assertion this
   repository makes used to be made against non-LTO objects — the configuration INC-004 needed in
-  order to *not* manifest. Its `clang` arm runs them against the shipped optimization class and its
-  `gcc` arm is, since ADR-0032, the only place a GCC this repository CHOSE compiles this tree —
-  the image's GCC still builds the unsanitized `build-vg` copy in `sanitizers`, but that compiler is
-  incidental to a memcheck run and its version is the runner's. Its two targets
-  between them build every first-party translation unit, which is why the GCC arm is a compatibility
-  guarantee about the source rather than only about a sample of it.
+  order to *not* manifest.
+  * `linux-lto-clang` runs them against the **shipped optimization class** — the pinned Clang at
+    `-flto`, INC-004's own configuration. This job has no counterpart in the sibling product, and
+    that is deliberate: a GCC-only lane cannot reproduce the incident this one is named after.
+  * `linux-lto-tests` runs them under the **pinned GCC, inside `container: gcc:16`**, which is
+    since ADR-0032 the only place a GCC this repository CHOSE compiles this tree — the image's GCC
+    still builds the unsanitized `build-vg` copy in `sanitizers`, but that compiler is incidental to
+    a memcheck run and its version is the runner's. It installs the `headless` dependency profile,
+    because `build-essential` inside that container would put a distribution GCC over the pinned one.
+  * **Why two jobs rather than a matrix:** `container:` is a per-job key, so one containerised arm
+    and one bare arm cannot share a `strategy.matrix`. Two jobs are also two independent results — a
+    red Clang result cannot hide a GCC one.
+  * Each builds the same two targets, which between them compile every first-party translation unit
+    — which is why the GCC job is a compatibility guarantee about the source rather than about a
+    sample of it.
 * `sanitizers` catches, on Linux, defects that only MANIFEST elsewhere: memory this OS hands back
   zero-filled is arbitrary on macOS, so an uninitialised read is benign here and poisonous there
   while the defect itself is platform-independent.
@@ -244,12 +255,14 @@ and never blocks the customer pipeline. Windows purges all debug material from t
 validates it, and only then retains each shipped image's linker PDB into a separate debug
 artifact — see the checkpoint rule below for why that order matters.
 
-> **Known asymmetry: only Linux validates the shipped bytes.** Because macOS and Windows strip
-> (and, on macOS, sign) *after* pluginval, a defect introduced **by stripping or signing** would
-> ship unvalidated there. "Uniform and blocking" above describes the pluginval **gate** — same
-> strictness, same two modes ×3, failing the job on every platform — not which bytes it sees.
-> Whether to reorder is `docs/OPEN_QUESTIONS.md` **OQ-012**, deliberately deferred to P6 when
-> there is a binary to measure rather than a guess to make.
+> **Asymmetry, narrowed at 0.2.6: Linux AND macOS validate the shipped bytes; Windows does not
+> yet.** Linux strips before pluginval; macOS, since the 0.2.6 parity round, packages — dsymutil,
+> `strip -x`, ad-hoc codesign — *before* pluginval and points all four gates at `dist/` via
+> `ANABASIS_PLUGINVAL_BUNDLE` (OQ-012's macOS half, resolved in the direction the sibling proved).
+> On Windows the public copy is still produced after validation, so a defect introduced by the
+> Windows staging purge would ship unvalidated there; that remaining half stays
+> `docs/OPEN_QUESTIONS.md` **OQ-012**. "Uniform and blocking" above describes the pluginval
+> **gate** — same strictness, same two modes ×3, failing the job on every platform.
 
 **pluginval** runs deterministic ×3, then randomise ×3. **Both** steps carry the **same** explicit
 guard — neither relies on implicit skipping — so a **deterministic** failure never *skips* the
@@ -320,9 +333,9 @@ OQ-006 carries the same supersession.
 | **`merge-check`** | The ONLY job that runs on a same-repo pull request. Every other job is skipped there because the push trigger already built that SHA — the TIP, not the merge — so `refs/pull/N/merge`, the tree the merge button produces, was never compiled. Build and self-tests only: what a moved base breaks is compilation and behaviour, and both are platform-independent. |
 | **`realtime`** | RealtimeSanitizer over the DSP suite (ADR-0029), in its own job because the Clang driver refuses to combine `-fsanitize=realtime` with the `sanitizers` job's set. A liveness canary runs first and the job fails if it does NOT abort. Also carries the compile-only `-Wfunction-effects` gate over the JUCE-free leaf layer, compiled twice so a dead diagnostic cannot pass. |
 | **The pinned Clang** | `ANABASIS_CLANG_VERSION` in `build.yml` is the single authority; `scripts/setup-llvm-apt.sh` installs it fail-closed. Four jobs use it, and since ADR-0032 one of them SHIPS with it. Without it the zero-first-party-warning gate has no stable reference point and the RTSan runtime does not exist (ADR-0031). |
-| **The composite action + ccache** | `./.github/actions/setup-linux-build` carries the setup and the "ccache is an optimization, never a requirement" fallback ONCE for five jobs; the per-job cache lineage stays in the workflow because that is the part that differs. **The macOS jobs are deliberately not cached** — `dsymutil` walks the debug map back to the object files, which is the one place object provenance is observable. |
+| **The composite action + ccache** | `./.github/actions/setup-linux-build` carries the setup and the "ccache is an optimization, never a requirement" fallback ONCE for five jobs; the per-job cache lineage stays in the workflow because that is the part that differs. **The macOS jobs are cached too** (0.2.2, measured 0.2.4) — this row said they were "deliberately not cached" on the `dsymutil` argument long after 0.2.2 refuted it and cached them, contradicting two other rows in this same file. |
 | **The Linux ABI floor** | `scripts/check-linux-abi.py` on the STRIPPED bytes, last in the `linux` job so a compatibility finding never withholds an artifact whose behavioural gates passed. |
-| **macOS symbolication as a contract** | `-Wl,-object_path_lto` keeps the object `dsymutil` needs; two assertions — LTO ran and its objects were retained, and a UUID-matched dSYM was captured — turn a best-effort capture into a gate. Both run after the uploads. |
+| **macOS symbolication as a contract** | `-Wl,-object_path_lto` keeps the object `dsymutil` needs; two assertions — LTO ran and its objects were retained, and a UUID-matched dSYM was captured — turn a best-effort capture into a gate. Both run after the uploads. **Both were architecture-blind until 0.2.5** (ADR-0035): the retention check tested only `COUNT -eq 0`, and the dSYM check counted DWARF compile units across the whole fat file, so a bundle whose arm64 slice had no DWARF at all passed both and reported success. Retention now gates on every shipped architecture having a retained LTO object, and the dSYM check counts compile units **per slice**. |
 | **Self-tests beside their checks** | `TESTING_POLICY.md` rule 5. Five checkers ship `--self-test` and each runs in the job that uses it, ahead of the use. |
 
 ## What 0.2.1 changed in the pipeline
@@ -333,8 +346,74 @@ OQ-006 carries the same supersession.
 | **`linux-clang` deleted** | Its three own steps — the portability compile canary, the warning-gate self-test + gate, and the engine reproduction — moved into `linux`. What is gone is a second full Release compile of the same tree, not a check. |
 | **The warning gate runs last, after the uploads** | A DIAGNOSTIC finding must not withhold a beta artifact whose behavioural gates passed. It still fails the job. Same rule the ABI assertion follows. |
 | **`merge-check` moved to the same compiler** | A merge-check on a different compiler from the one that will build the merge result is a check of a tree nobody ships; it also shares `linux`'s ccache lineage, and two lineages in one budget evict each other. |
-| **`linux-lto-tests`, two arms** (ADR-0033) | The suites do not link the LTO flags the plugin does, so every assertion was made against non-LTO objects — the configuration INC-004 needed in order to stay hidden. The `clang` arm runs them against the shipped optimization class; the `gcc` arm keeps the second major toolchain compiling this tree on every push. |
-| **The pinned GCC** | `ANABASIS_GCC_VERSION` in `build.yml`, installed from the distribution archive through the composite action's `extra-packages`. Pinned for the same reason the Clang major is: a compatibility compiler is only a compatibility statement while WHICH compiler is a fact of this file rather than of a runner image. |
+| **`linux-lto-clang` + `linux-lto-tests`, two jobs** (ADR-0033, split by ADR-0034) | The suites do not link the LTO flags the plugin does, so every assertion was made against non-LTO objects — the configuration INC-004 needed in order to stay hidden. `linux-lto-clang` runs them against the shipped optimization class; `linux-lto-tests` keeps the second major toolchain compiling this tree on every push, in its container. They are separate jobs because `container:` is a per-job key. |
+| **The pinned GCC** | `ANABASIS_GCC_VERSION` in `build.yml`, asserted against `g++ -dumpversion` inside `container: gcc:16` — the image supplies the compiler, so the workflow's job is to CHECK the major rather than to install it (ADR-0034; it came from the distribution archive while the pin was 14). Pinned for the same reason the Clang major is: a compatibility compiler is only a compatibility statement while WHICH compiler is a fact of this file rather than of a runner image. **Measured at 16.2.0: zero first-party warnings across all 13 translation units in the two suites** — see the 0.2.3 row below. |
+
+## What 0.2.6 changed in the pipeline — parity audit round 2
+
+The sibling's CI surface is byte-identical to the 0.2.2 audit's baseline, so this round's
+adoptions are what that audit missed plus corrections to Anabasis's own drift since. Full table
+and verdicts: `worklogs/2026-08-30-parity-audit-round-2.md`, ADR-0036.
+
+| Change | Why |
+| --- | --- |
+| **`MALLOC_PERTURB_` 255 → 1** (`linux`, both LTO lanes, new on `merge-check`) | glibc fills FRESH allocations with the complement of the byte; 255 wrote the benign `0x00` the variable exists to defeat. Measured in both directions this round. |
+| **Build number scoped to `src/gui/PluginEditor.cpp`** | The run-varying `PUBLIC` define made ~101 TUs guaranteed direct-mode ccache misses every run (0.2.4's measurement). Now a source-file property — 2 of 103 compile commands carry it. |
+| **macOS pluginval validates `dist/`** | Packaging (dsymutil → `strip -x` → codesign) runs before validation; all four gates read the shipped bytes via `ANABASIS_PLUGINVAL_BUNDLE`; the AU is installed from `dist/`. OQ-012's macOS half resolved; Windows half open. |
+| **`tests_x86_64` gates macOS uploads** | A failing Intel slice previously reddened the job while the universal artifacts uploaded anyway. |
+| **MSVC assert last** | A toolset off the 14.x series now fails the run after its evidence exists, not before. |
+| **ccache zero+print, 8/8** | Four jobs zeroed nothing (stats were lineage-cumulative); `sanitizers`/`realtime` cached with no stats step at all. |
+| **`macos-intel`: thin assert + randomise arms** | The "native Intel" label is now asserted with `lipo`, and randomise runs on Intel codegen — a value space the universal job's arms (arm64) never reach. |
+| **GCC lane: 3 more diagnostics at zero** | `-Wduplicated-cond -Wduplicated-branches -Wlogical-op`, measured clean first-party (4 vendored hits) before adoption. |
+| **PE guard +26 · Windows no-cache rationale · AU cleanup** | Truncation bound covers the Magic read; decision recorded so it stops reading as omission; the registry-installed AU no longer outlives the job. |
+
+## What 0.2.3 changed in the pipeline — the GCC 16 warning gate, measured
+
+0.2.2 shipped the `gcc:16` container lane without ever having run it — this environment has no
+container runtime, and the ADR said so. The first push measured it, and the measurement is the
+point of this row.
+
+| Change | Why |
+| --- | --- |
+| **`libxi-dev` added to `CORE_PACKAGES`, on BOTH profiles** | The lane died in three JUCE translation units at `fatal error: X11/extensions/XInput2.h: No such file or directory`. JUCE 9.0.1 defaults `JUCE_USE_XINPUT` to 1, so `juce_gui_basics.h:393` includes that header unconditionally in practice, and it belongs to `libxi-dev` — a package the list never named. It reached `full` transitively, via `libgtk-3-dev`'s `Depends: libxi-dev`, which is why no runner and no developer machine ever noticed; `headless` drops the gtk/webkit pair on purpose and dropped the X-input headers with it. |
+| **The gate's failure message no longer says "Clang"** | Three lanes feed `check-clang-warnings.py` and two of them are GCC. `--compiler` is now passed by each caller (`clang++-22`, `g++-16`, `clang++-22`), defaulting to a neutral `the compiler` rather than to the wrong one. Attribution only, no change to what the gate accepts or rejects. |
+| **Three self-test cases for driver-level warnings** | Every GCC LTO link emits `lto-wrapper: warning: using serial compilation of N LTRANS jobs`. It carries no source location, so it is correctly not a diagnostic this gate can attribute — and now that is pinned rather than incidental, alongside the `cc1plus:` and `ld:` forms. 15 → 18 cases. |
+
+**The warning finding, stated plainly: GCC 16 introduced no new diagnostics in this tree.** Run
+32565784751 compiled all **13 first-party translation units** of the two suites under g++ **16.2.0**
+at `-O3 -flto -std=c++23` with the full `juce_recommended_warning_flags` set, and none emitted a
+warning. The zero-warning policy holds at 16 exactly as it held at 14.2.0, so nothing about the gate
+was weakened — the lane's failure was a missing header, not a diagnostic. That run aborted before the
+**LTO link**, where `-Wodr` and `-Wlto-type-mismatch` fire; **run 32568563583 closed that cell**
+(0.2.4). The fixed lane succeeded end to end, both links ran, the gate printed `no first-party
+warnings`, and the only two `warning:` lines in the whole job were the `lto-wrapper` LTRANS notices
+the 0.2.3 self-test had just pinned as non-diagnostics. Both suites passed against that codegen:
+301 + 873, 0 failures. **GCC 16.2.0 is clean through compile and link.**
+
+**The methodological finding is the one worth carrying forward.** 0.2.2 verified that every package
+name *resolves* on trixie and on noble. Whether the declared set is *sufficient* is a different
+question, and it was never asked. The check that asks it: enumerate the system headers the vendored
+tree includes, map each to its owning package with `dpkg -S`, and diff against the declared list.
+Against JUCE 9.0.1 that is fifteen headers over eight packages, and `libxi-dev` was the only
+omission.
+
+## What 0.2.2 changed in the pipeline — the parity audit
+
+Every row here came from reading the sibling's tree, not from memory of the previous round. The full
+table, including the areas that were **already** equivalent, is in
+`worklogs/2026-08-22-ci-toolchain-parity-audit.md`.
+
+| Change | Why |
+|---|---|
+| **GCC 14 → 16, in `container: gcc:16`** (ADR-0034) | No apt source ships a *released* g++-16, so pinning 14 was choosing the version to fit the acquisition method. The image is the only package-managed route to a released 16. `dependency-profile: headless` comes with it — `build-essential` inside that container would un-pin the lane. |
+| **The LTO lane is two jobs** | `container:` is a per-job key, so one containerised arm and one bare arm cannot share a matrix. `linux-lto-tests` is GCC; `linux-lto-clang` is the Clang arm ADR-0033 added for INC-004. |
+| **ccache: `CCACHE_DIR`, `CCACHE_MAXSIZE`, `CCACHE_COMPILERCHECK=content`** | None of the three were set, so the cache ran on defaults: unbounded in practice, `mtime` compiler identity (which can serve an object built by a different compiler that shares a timestamp — defeating the pin), and a home-relative path that is wrong inside a container. |
+| **The macOS jobs are cached** | See the artifact-safety note above; it is also the run's critical path (18m43s, the longest job in the matrix). **Measured on the universal build, not assumed** (0.2.4): ccache 4.13.6 reports `Cacheable calls: 182 / 182 (100.0%)` — it declines none of the two-`-arch` compilations — and hits go 14.29% cold → 95.60% warm. Quote the phase, not the step total: the **compile phase** — the only part ccache acts on — falls **501s → 46–86s across two warm runs (415–455s, 83–91%)**. The step *total* says 261–398s (41–63%), a far wider spread, because it also carries an LTO link that drifted 130s → 187s → 284s between runs on a phase ccache never sees. |
+| **Sanitizers: six more sub-checks, `detect_leaks=1`, a 64 MB stack** | Measured, not transcribed — including the one sub-check deliberately left out and why (ADR-0034 §4). |
+| **The MSVC toolset is recorded, its ABI series asserted** | `windows-latest` floats and MSVC is auto-detected, so a shipped `.vst3` was built by a toolset no artifact named. A record plus one narrow assertion, not a pin — MSVC cannot be installed the way apt.llvm.org's Clang can. |
+| **`timeout-minutes` on every job** | Without it a hung job burns the 6-hour default. |
+| **Toolchain versions printed** | The composite action prints cmake, ninja, the default `c++` and `ld` once per Linux job; macOS prints ninja and cmake; the LTO lanes assert and print their compiler; `setup-llvm-apt.sh` already asserted the Clang major. What the review gate cannot pin, it requires to be detected and recorded. |
+| **`ca-certificates` + `python3` named explicitly** | Preinstalled on a runner, not promised in a container — and every checker in `scripts/` is Python. |
 
 ## Reproducing CI locally
 
@@ -394,6 +473,18 @@ These are the rules, not incidental details — each blocks a specific way a bad
 - Customer uploads are gated on the self-tests **and** on the public copy having been assembled,
   purged and validated — never `if: always()`. An unstripped or unvalidated binary cannot reach the
   public artifact.
+- **The macOS jobs are cached** (0.2.2), and the universal build's cache is **measured** (0.2.4).
+  The claim that `dsymutil`'s debug-map walk made caching unsafe was refuted rather than outvoted: a
+  cached object is a real `.o` at the path the linker recorded, so the walk reads the same files
+  either way. The second objection — that ccache historically REFUSED compilations carrying more
+  than one `-arch`, which is exactly what `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` produces — was
+  settled by reading the runner's own statistics rather than the sibling's: ccache **4.13.6** reports
+  `Cacheable calls: 182 / 182 (100.0%)` with no `Uncacheable` bucket at all, over three consecutive
+  runs. Hit rate goes **14.29% cold → 95.60% warm** with the object count unchanged at 182 — only
+  `.ccache` is restored, never `build/`, so ninja issues all 182 invocations every time and the drop
+  is cache hits rather than an incremental build. On timing, quote the phase rather than the step
+  total: the **compile phase** — the only part ccache acts on — falls **501s → 46–86s across two warm runs (415–455s, 83–91%)**. The step *total* says 261–398s (41–63%), a far wider spread, because it also carries an LTO link that drifted 130s → 187s → 284s between runs on a phase ccache never sees. The `lipo` slice assertion is the backstop against a thin object
+  reaching a universal artifact.
 - **On Linux the gate also names the two instruments that read the shipped bundle** (0.2.1):
   `AnabasisEngineRepro` and `AnabasisChannelProbe --assert-discriminating`. Before ADR-0032 they ran
   in `linux-clang` against a build that was thrown away, so their outcome could not sensibly gate an

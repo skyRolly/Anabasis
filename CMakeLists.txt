@@ -17,7 +17,7 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
 
-project(Anabasis VERSION 0.2.1 LANGUAGES C CXX)
+project(Anabasis VERSION 0.2.6 LANGUAGES C CXX)
 
 # THE BASELINE IS C++23 (ADR-0030, 0.2.0), superseding ADR-0008 decision B5's
 # C++20 and closing OQ-006. What used to sit here was a cache seam
@@ -146,22 +146,71 @@ else()
         #  directory below is non-empty (so LTO really ran) and that a
         #  UUID-matched dSYM with compile units came out (so the fix worked).
         #
-        #  IT MUST BE A DIRECTORY, not a file. A universal build runs the linker
-        #  once per architecture; a single file path would have the second slice
-        #  overwrite the first, leaving one slice's OSO pointing at the other
-        #  slice's object. Given a directory, ld64 generates a unique name per
-        #  link invocation, so the two slices -- and the three format targets
-        #  that link separately -- coexist.
+        #  ONE PATH PER (TARGET, ARCHITECTURE) -- and the previous revision of
+        #  this comment had the reason exactly backwards, which is why arm64
+        #  shipped without symbols for four releases (ADR-0035). It read:
         #
-        #  The directory is created at CONFIGURE time because ld64 does not
-        #  create it: a missing path makes the link FAIL rather than silently
-        #  fall back, which is the failure direction to want if this is ever
-        #  edited carelessly.
+        #     "IT MUST BE A DIRECTORY, not a file. [...] Given a directory,
+        #      ld64 generates a unique name per link invocation, so the two
+        #      slices -- and the three format targets that link separately --
+        #      coexist."
+        #
+        #  ld64 does no such thing. From its own source, `ld/parsers/
+        #  lto_file.cpp` in the full-LTO path:
+        #
+        #     if ( stat(object_path.c_str(), &statBuffer) == 0
+        #          && S_ISDIR(statBuffer.st_mode) )
+        #         object_path += "/lto.o";
+        #
+        #  A directory gets the FIXED name `lto.o` appended -- no architecture
+        #  in it, no target in it. So every link wrote the same file. A
+        #  universal build links ONCE PER ARCHITECTURE (the driver runs `ld`
+        #  per `-arch` then `lipo`s), and several targets here link with LTO,
+        #  so one build performed six links into one path and five of them were
+        #  overwritten. The survivor was one target's x86_64 object: `dsymutil`
+        #  then reported `(arm64) [...] No object file for requested
+        #  architecture` for every bundle, and `could not find symbol` for the
+        #  x86_64 slices of the two bundles that were not the survivor.
+        #
+        #  A FILE path is what actually gives uniqueness, because the same
+        #  branch above uses a non-directory path verbatim. `$<TARGET_PROPERTY:
+        #  NAME>` separates the targets and `-Xarch_<arch>` separates the
+        #  slices, so each link owns its own object and none can clobber
+        #  another.
+        #
+        #  THREE THINGS THIS FORM DEPENDS ON, each load-bearing:
+        #    * `-Xarch_<arch>` forwards exactly ONE following token, and clang
+        #      errors on more (`err_drv_invalid_Xarch_argument_with_args`).
+        #      That is why the linker argument is the single comma-joined
+        #      `-Wl,-object_path_lto,<path>` rather than `-Xlinker` pairs.
+        #    * `SHELL:` is REQUIRED. `target_link_options` de-duplicates and
+        #      recombines otherwise, which would split the `-Xarch_` from the
+        #      argument it governs and silently re-create the collision.
+        #    * Full LTO, not ThinLTO. ThinLTO's branch in the same file MKDIRs
+        #      its argument and names members `<n>.o` -- still target- and
+        #      arch-agnostic. Switching to `-flto=thin` reintroduces this bug;
+        #      the CI assertion on architecture coverage is what would catch it.
+        #
+        #  The parent directory is created at CONFIGURE time; the object files
+        #  inside it are named, not created, so ld64 writes each one itself.
         set(ANABASIS_LTO_OBJECT_DIR "${CMAKE_BINARY_DIR}/lto-objects")
         file(MAKE_DIRECTORY "${ANABASIS_LTO_OBJECT_DIR}")
+        set(ANABASIS_LTO_LINK_OPTS "")
+        if(CMAKE_OSX_ARCHITECTURES)
+            foreach(_anabasis_arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+                list(APPEND ANABASIS_LTO_LINK_OPTS
+                    "SHELL:-Xarch_${_anabasis_arch} -Wl,-object_path_lto,${ANABASIS_LTO_OBJECT_DIR}/$<TARGET_PROPERTY:NAME>-${_anabasis_arch}.o")
+            endforeach()
+        else()
+            # No explicit architecture list: one link, so the target name alone
+            # is unique and `-Xarch_` would name an architecture that may not
+            # be built.
+            list(APPEND ANABASIS_LTO_LINK_OPTS
+                "-Wl,-object_path_lto,${ANABASIS_LTO_OBJECT_DIR}/$<TARGET_PROPERTY:NAME>.o")
+        endif()
         target_link_options(AnabasisHardening INTERFACE
             -Wl,-dead_strip
-            "-Wl,-object_path_lto,${ANABASIS_LTO_OBJECT_DIR}")
+            ${ANABASIS_LTO_LINK_OPTS})
     else()
         target_link_options(AnabasisHardening INTERFACE
             -Wl,--gc-sections -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
@@ -275,9 +324,30 @@ set(ANABASIS_PLUGIN_SOURCES
 target_sources(Anabasis PRIVATE ${ANABASIS_PLUGIN_SOURCES})
 target_include_directories(Anabasis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# THE BUILD NUMBER IS ATTACHED TO THE ONE TRANSLATION UNIT THAT READS IT, not
+# to the targets (0.2.6, family parity -- the sibling carries the identical
+# arrangement with its own measurement). It is the only definition in this
+# file whose VALUE changes on every CI run -- build.yml passes
+# ${{ github.run_number }} -- and as a target-wide PUBLIC definition it sat on
+# the command line of every translation unit in the plugin and the state
+# suite, JUCE included. ccache's direct mode hashes the command line, so all
+# of those TUs were guaranteed direct-mode misses on every run: the 0.2.4
+# ccache round measured exactly that shape on the macOS universal lane -- 58
+# direct vs 116 preprocessed hits, the direct hits concentrated in
+# AnabasisTests, the one target that never carried the define. Scoped to the
+# single reader, everything else direct-hits and two objects recompile.
+#
+# src/gui/PluginEditor.cpp already carries `#ifndef ANABASIS_BUILD_NUMBER ->
+# "0"` (:116-117), so this is the same value through a narrower door, not a
+# new contract. Source-file properties are directory-scoped; both consumers --
+# the plugin target and AnabasisStateTests -- compile the file from this
+# directory, so both still see the real number. Nothing else reads it:
+# `grep -rn ANABASIS_BUILD_NUMBER src/` matches PluginEditor.cpp alone.
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/gui/PluginEditor.cpp
+    PROPERTIES COMPILE_DEFINITIONS ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}")
+
 target_compile_definitions(Anabasis PUBLIC
     ANABASIS_VERSION_STRING="${PROJECT_VERSION}"
-    ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}"
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
@@ -333,7 +403,10 @@ if(ANABASIS_BUILD_TESTS)
     target_include_directories(AnabasisStateTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(AnabasisStateTests PUBLIC
         ANABASIS_VERSION_STRING="${PROJECT_VERSION}"
-        ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}"
+        # ANABASIS_BUILD_NUMBER is attached to src/gui/PluginEditor.cpp as a
+        # source-file property instead -- see the set_source_files_properties()
+        # call and its reasoning above the plugin target. This target compiles
+        # ${ANABASIS_PLUGIN_SOURCES}, so it still receives it there.
         ANABASIS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0

@@ -82,6 +82,13 @@ run without a major blocking them.
   state or wrapper behaviour can differ between the products for this reason; the nine that did
   change are GUI, platform-native, file-format and web-view surfaces. ADR-0028 tabulates each with
   its diff size and why it is or is not reachable here, and carries the re-convergence obligation.
+  **RE-CONVERGED, 2026-08-30 (observed during the 0.2.6 parity audit):** Anamorph's `main`
+  (`fd78c3b`) now pins the **same** tag — `ANAMORPH_JUCE_VERSION "9.0.1"`, commit
+  `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`, its `CMakeLists.txt:52-53` — so the suspension above
+  is lifted: both products again sit on one JUCE commit, a JUCE-attributable behaviour difference
+  between them is again impossible by construction, and the shared-audit and transferable-audition
+  properties hold. The obligation ADR-0028 carried is discharged by the sibling's own move; the
+  family rule stands for the next bump.
 - **C++23 is the baseline since ADR-0030 (0.2.0), and modules are still not used** — they remain a
   build-system liability in plugin projects, which is the half of ADR-0008 decision B5 that ADR-0030
   did NOT supersede. The **library** rule is unchanged and still binds: a C++23 library feature

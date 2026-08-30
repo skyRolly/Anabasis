@@ -6,7 +6,68 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.1 (2026-08-22)** — the sibling-alignment round.
+**Last updated:** for **0.2.6 (2026-08-30)** — parity audit round 2.
+
+**Scope of the 0.2.6 round.** One ADR Accepted (**0036**, parity audit round 2), amending ADR-0034;
+OQ-012's macOS half resolved; `DEPENDENCY_POLICY.md` records the sibling's JUCE pin re-converging at
+9.0.1. Nine adoptions from the sibling, two of them measured fixes (`MALLOC_PERTURB_` 255→1;
+`ANABASIS_BUILD_NUMBER` scoped to its single reader), the rest CI structure (macOS validates `dist/`
+bytes, Rosetta gates uploads, MSVC assert last, ccache zero+print 8/8, macos-intel thin assert +
+randomise arms, three GCC diagnostics at zero, PE guard +26, AU cleanup, Windows no-cache rationale).
+No DSP algorithm change, no parameter added/renamed/removed, no schema, threading or latency change;
+outside `.github/` and docs the only touched file is `CMakeLists.txt` (build-number scoping, output
+bytes identical). `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **New ADR** (`ADR_INDEX.md`,
+ADR-0036), **Build-system change** (`CI_CD.md`, `CMakeLists.txt`), **Policy change**
+(`DEPENDENCY_POLICY.md`), **Open question resolved** (`OPEN_QUESTIONS.md` OQ-012), **Ship a
+version** (`CHANGELOG.md`, `HANDOVER.md`).
+
+**Scope of the 0.2.5 round.** One ADR Accepted (**0035**, macOS symbolication is a per-ARCHITECTURE
+contract), amending ADR-0034's macOS bullets. The shipped universal bundle's arm64 slice had no DWARF while
+three checks reported success; the cause was several LTO links sharing one `-object_path_lto` destination,
+and the code comment explaining why that was safe was inverted with respect to ld64's own source. Fixed with
+per-(target, architecture) object paths; both gates now work per slice. Also corrected: a sanitizer sub-check
+count that said six and named five, in four places. No DSP algorithm change, no parameter added/renamed/
+removed, no schema, threading or latency change, **and no first-party C++ source file was touched**; the
+frozen registry snapshot is untouched. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **New ADR**
+(`ADR_INDEX.md`, ADR-0035), **Build-system change** (`CI_CD.md`, `CMakeLists.txt`), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`).
+
+**Scope of the 0.2.4 round.** No new ADR; **ADR-0034 amended** twice — with the measured macOS universal-build
+cache result (ccache 4.13.6, `Cacheable calls: 182 / 182`, 630.6s cold → 233.5s warm) replacing an imported
+justification, and with the GCC 16 LTO **link** phase now measured at 16 rather than 14. One read-only
+observability step added (`macos-intel` compiler-cache statistics); no build configuration changed. Two stale
+claims corrected: the changelog's entry count, and a `CI_CD.md` row asserting the macOS jobs were not cached.
+One finding filed for the owner rather than fixed: the arm64 slice of the shipped macOS bundle carries no
+dSYM. No DSP algorithm change, no parameter added/renamed/removed, no schema, threading or latency change,
+**and no first-party source file was touched**; the frozen registry snapshot is untouched.
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **Build-system change** (`CI_CD.md`), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`).
+
+**Scope of the 0.2.3 round.** No new ADR; **ADR-0034 amended** with the measured GCC 16.2.0 warning
+baseline and with the package-sufficiency finding the container lane's first run exposed. The lane failed
+on a missing header (`X11/extensions/XInput2.h`, owned by `libxi-dev`, previously reaching the `full`
+profile only as a transitive dependency of `libgtk-3-dev`), not on a diagnostic: **GCC 16 introduced no new
+warnings in this tree**, so the gate was strengthened rather than relaxed — `--compiler` stops a GCC lane's
+findings being attributed to Clang, and three self-test cases pin the driver-level `lto-wrapper:` /
+`cc1plus:` / `ld:` forms as non-diagnostics (15 → 18). No DSP algorithm change, no parameter
+added/renamed/removed, no schema, threading or latency change, **and no first-party source file was
+touched**; the frozen registry snapshot is untouched. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged:
+**Build-system change** (`CI_CD.md`, `REPOSITORY_MAP.md`), **New/changed test** (the gate's self-test) and
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`).
+
+**Scope of the 0.2.2 round.** One ADR Accepted (**0034**, CI/toolchain parity), amending ADR-0033.
+An audit of the sibling's build pipeline area by area found twelve mismatches in the configuration
+*around* the toolchain — the action pins, runner images, triggers, permissions, C++ standard and the
+whole Clang install path were already equivalent. No DSP algorithm change, no parameter
+added/renamed/removed, no schema, threading or latency change, **and no first-party source file was
+touched**; the frozen registry snapshot is untouched. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows
+engaged: **New ADR** (`ADR_INDEX.md`, ADR-0034, ADR-0033's amendment), **Build-system change**
+(`CI_CD.md`, `BUILD.md`, `REPOSITORY_MAP.md`), **Policy change** (`TESTING_POLICY.md` — the
+Level-1b/1c rows), **New/changed test** (this file: the sanitizer set the suites now pass) and
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`). One new file in `scripts/`:
+`ubsan-ignorelist.txt`.
+
+**Below is the 0.2.1 record, kept as written.**
 
 **Scope of the 0.2.1 round.** Two ADRs Accepted (**0032** the Linux release toolchain — Clang ships,
 GCC becomes the pinned compatibility compiler and `linux-clang` is deleted; **0033** the
@@ -6146,7 +6207,7 @@ landed — the staleness the same date's audit entry reports.)
 | root — legal | `NOTICE`, `THIRD_PARTY_LICENSES.md` | **Factual attribution half Present (2026-08-05)** — produced against the actually-pinned JUCE tree per `RELEASE_POLICY.md`'s own prescription: inventory from JUCE's `LICENSE.md` plus a compiled-TU walk, compiled-in status from `nm` probes on this build's per-TU objects (the LTO'd image hides them), exclusions from their gates plus symbol absence. **Delivery changed in 0.1.1** (**ADR-0021**, `RELEASE_POLICY.md` §Third-party attribution): both ship as version-named release-page assets — `Anabasis-<version>-NOTICE.txt` and `Anabasis-<version>-THIRD_PARTY_LICENSES.md` — and are no longer copied into the zips, the `.pkg` or the Inno payload, because the release page is the one carrier every distribution route passes through and a loose unversioned copy cannot be told apart from another build's once extracted. The **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) stays absent — waits on OQ-002 and owner wording, never invented (C8) |
 | root — internal/testing | `SUPPORT.md` (**landed 0.1.1**), `.github/ISSUE_TEMPLATE/` | The class's rule is "restates the legal class, never diverges from it" — and Anabasis has no approved licence, EULA or privacy document to restate (OQ-002 / OQ-009 open). `SUPPORT.md` states that as its own §1 and confines itself to what the repository can evidence: the reporting channel, what a usable report contains, and that terms come from the owner rather than from it. Deliberately SHORTER than the sibling's, which restates documents that exist there |
 | .github | workflows/{build,codeql,msvc,dependency-review,release}.yml, actions/setup-linux-build/action.yml, dependabot.yml, ISSUE_TEMPLATE/{bug_report,config}.yml (**`cxx23-canary.yml` deleted at 0.2.0**, ADR-0030 — the baseline it was waiting for arrived) | Present — **`release.yml` landed in 0.1.1** (**ADR-0021**: tag-triggered validate → build → draft-release, publishing left a human action). The OQ-007 deferral this row quoted is **superseded 2026-08-07** for the pipeline-and-installers half; only signing/notarization stays deferred |
-| scripts | setup-linux, setup-llvm-apt, build, preflight, run-tests, run-pluginval.{sh,ps1}, and the six checkers each carrying its own `--self-test`: check-docs, check-portability, check-citations, check-realtime, check-clang-warnings, check-linux-abi | Present — the checker set landed at 0.2.0 (`TESTING_POLICY.md` rule 5: a lint without a self-test is not a gate) |
+| scripts | setup-linux (`full`/`headless` profiles), setup-llvm-apt, build, preflight, run-tests, run-pluginval.{sh,ps1}, `ubsan-ignorelist.txt`, and the six checkers each carrying its own `--self-test`: check-docs, check-portability, check-citations, check-realtime, check-clang-warnings, check-linux-abi | Present — the checker set landed at 0.2.0 (`TESTING_POLICY.md` rule 5: a lint without a self-test is not a gate) |
 
 ## Known coverage gaps / TODOs
 

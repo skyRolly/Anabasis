@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Eight such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Thirteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,301 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.6] — 2026-08-30
+
+**Parity audit round 2 (ADR-0036): the sibling's CI surface is byte-identical to the last audit's
+baseline, so this round's mismatches are what that audit missed plus what 0.2.3–0.2.5 changed
+here.** Nine adoptions, each verified before landing; the kept-different list re-affirmed item by
+item. No DSP algorithm, parameter, serialization schema, threading model or reported latency
+change; no sanitizer, compiler or optimization flag on any shipped artifact moved. Full 200-row
+audit: [`worklogs/2026-08-30-parity-audit-round-2.md`](worklogs/2026-08-30-parity-audit-round-2.md).
+
+### Fixed
+- **`MALLOC_PERTURB_` was set to a measured no-op.** glibc fills *fresh* allocations with the
+  complement of the byte, so the previous `255` wrote `0x00` into every never-written buffer —
+  the exact benign pattern the variable exists to defeat. Now `1` (fresh = `0xFE`, −1.69e38,
+  loud), matching the sibling's measured choice, on `linux`, both LTO lanes, and now
+  `merge-check` too. The old comment's NaN claim described freed-block reads, not fresh ones.
+  Evidence: fill bytes measured in both directions; both suites pass under the new value. [Verified]
+- **`ANABASIS_BUILD_NUMBER` no longer perturbs 101 translation units per run.** The run-varying
+  `PUBLIC` define became a source-file property on its only reader, `src/gui/PluginEditor.cpp` —
+  the fix the 0.2.4 ccache round measured and deferred, now landed with family precedent (the
+  sibling scopes its build number identically, on an 84.4%-of-compile-time measurement).
+  Evidence: `compile_commands.json` — 2 of 103 commands carry the define; suites 301 + 873, 0
+  failures. [Verified]
+- **The Windows PE truncation guard covers the Magic read** (+24 → +26); at exactly +24/+25 the
+  old bound admitted the file and the parser threw a raw `IndexOutOfRangeException` instead of
+  the diagnosable error the guard exists for. [Verified]
+
+### Changed
+- **macOS validates the shipped bytes** — OQ-012's macOS half resolved by adopting the sibling's
+  arrangement: packaging (dsymutil → `strip -x` → ad-hoc codesign) runs before pluginval, all
+  four macOS gates read `dist/` via `ANABASIS_PLUGINVAL_BUNDLE`, and the AU is registry-installed
+  from `dist/`. A defect introduced by stripping or signing now fails the release gate instead of
+  shipping. The Windows half of OQ-012 stays open. [Verified structurally; CI's next run is the
+  behavioural measurement]
+- **The x86_64 Rosetta self-test gates the macOS customer uploads** (`id: tests_x86_64`); a
+  failing Intel slice no longer ships inside a green-looking universal artifact. [Verified]
+- **The MSVC toolset assert is the windows job's last step**, so a toolset that leaves the 14.x
+  ABI series fails the run *after* its build/test/upload evidence exists rather than destroying
+  it. [Verified]
+- **ccache observability is complete (8/8 cached jobs)**: per-run `--zero-stats` added to the four
+  jobs whose printed stats were lineage-cumulative, and stats steps added to `sanitizers` and
+  `realtime`, which cached with no reporting at all. [Verified]
+- **`macos-intel` earns its "native Intel" label**: a thin-slice `lipo` assertion now gates
+  pluginval, and the randomise arms run for both formats (fresh-seed values through Intel codegen
+  on an Intel FPU — a space the universal job's arms, which execute arm64, never reach).
+  [Verified structurally]
+- **The GCC lane gates three more diagnostics at zero**: `-Wduplicated-cond`,
+  `-Wduplicated-branches`, `-Wlogical-op` — the sibling's gated extras our default flags never
+  enabled. Measured before adoption: 4 vendored hits, 0 first-party.
+  Evidence: both suites built with the flags, gate exit 0. [Verified]
+- **Both macOS jobs remove the registry-installed AU** after its last consumer; the Windows job
+  records why it is uncached (/Zi-PDB artifact vs ccache's /Z7-only MSVC support). [Verified]
+
+### Notes
+- **The JUCE pins have re-converged.** The sibling's `main` now pins the same 9.0.1 commit
+  `e18f7f5`, lifting the suspension ADR-0028 recorded; `DEPENDENCY_POLICY.md` carries the update.
+- **Kept different, re-affirmed**: the zero-warning contract, the excluded sanitizer sub-check,
+  no fuzz job, `preflight`, no `TESTS_NO_FTZ`, the measured CXXABI floor, `linux-lto-clang`, the
+  repro/probe instruments, the 0.2.5 dSYM gates, the 0.2.3 package set, Windows GUI-inclusive
+  pluginval — each with its rationale in ADR-0036.
+- **Recorded about the sibling** (read-only from here): its container lane's `libfreetype6-dev`
+  cannot resolve on Debian trixie; its universal build still has the shared-`lto.o` collision and
+  the aggregate dSYM checks that cannot see it.
+
+---
+
+## [0.2.5] — 2026-08-22
+
+**The arm64 slice of the shipped macOS bundle had no debug symbols, and three checks said it did.**
+Every macOS run emitted `warning: no debug symbols in executable (-arch arm64)` for VST3, AU and
+Standalone while the job reported a validated dSYM. On Apple Silicon — the population most likely to
+hand a developer an OS crash log — the bundle was not symbolicatable. No DSP algorithm changed, no
+parameter was added, renamed or removed, no serialization schema, threading model or reported
+latency moved, and **no first-party C++ source file was touched**. Analysis, citations and
+verification: [`worklogs/2026-08-22-macos-arm64-dsym.md`](worklogs/2026-08-22-macos-arm64-dsym.md),
+[ADR-0035](docs/architecture/design-decisions/ADR-0035-macos-per-architecture-symbolication.md).
+
+### Fixed
+- **Each `(target, architecture)` now gets its own retained LTO object.** A universal build links
+  once per architecture and several targets link with LTO, so one build performed six links — all
+  naming the same `-Wl,-object_path_lto` destination, five of them overwritten. The surviving object
+  was one target's x86_64 codegen, so every bundle's arm64 debug map pointed at a file with no arm64
+  slice, and the two non-surviving bundles' x86_64 maps pointed at another target's symbols. The
+  `CMakeLists.txt` comment asserting a directory made ld64 generate unique names had it backwards:
+  ld64 appends the fixed name `lto.o` to a directory (`ld/parsers/lto_file.cpp`), while a
+  non-directory path is used verbatim — which is the branch that actually gives uniqueness.
+  `$<TARGET_PROPERTY:NAME>` now separates targets and `-Xarch_<arch>` separates slices.
+  Evidence: generated link lines show **6 distinct object paths** for 3 targets × 2 architectures
+  where 1 exists today; single-arch and no-arch shapes degrade to one per target. [Verified]
+- **The sanitizer comment claimed six UBSan sub-checks and named five.** The flags carry five beyond
+  `address,undefined` — `vptr`, `float-divide-by-zero`, `implicit-conversion`, `local-bounds`,
+  `nullability` (the C flags carry four; `vptr` is C++-only). A leftover from the sibling's set
+  before `unsigned-shift-base` was dropped. Corrected in all **four** places it appeared: `build.yml`
+  twice, ADR-0034 §Consequences, the ADR index row and the 0.2.2 worklog. No flag changed.
+  Evidence: `.github/workflows/build.yml` `-fsanitize=` lines. [Verified]
+
+### Changed
+- **The macOS symbolication gates are per architecture slice.** Both were blind in the same way. A
+  fat dSYM lists a UUID for every slice whether or not that slice carries DWARF, so the UUID-set
+  match passed; and compile units were counted across the whole fat file, so 39 from x86_64 plus 0
+  from arm64 cleared `-eq 0` and printed "validated dSYM captured (UUID-matched, 39 compile units)".
+  The retention assertion tested only `COUNT -eq 0` and read 1 where its own comment expects one per
+  (target × slice). Now: compile units are counted per slice with `dwarfdump --arch <A>`, and
+  retention gates on every shipped architecture having a retained LTO object — coverage rather than
+  a count, because a count tracks the target list and was not the property that broke. The success
+  line reports per-slice counts instead of a sum.
+  Evidence: gate logic exercised over six cases against stub `lipo`/`dwarfdump` — arm64-empty and
+  x86_64-empty both discard where the aggregate logic kept; single-arch keeps, so `macos-intel` is
+  unaffected. [Verified]
+
+### Notes
+- **The universal build is preserved exactly** — same architectures, same `-flto`, same shipped
+  bytes. `-object_path_lto` controls only *where* ld64 writes the LTO temporary; no compiler flag,
+  optimization setting or sanitizer flag changed anywhere in this round.
+- **ld64's runtime behaviour is CI's measurement, not this machine's.** This environment is Linux
+  with no Apple linker, `lipo`, `dwarfdump` or `dsymutil`. The CMake half is verified here by
+  reading generated link lines; the effect on a real universal link is verified by the new gates on
+  the next macOS run — the posture ADR-0034 took for the `gcc:16` container lane. Xcode 15+ defaults
+  to `ld-prime`, which Apple has not open-sourced, so the `lto.o` naming is read from classic ld64
+  and corroborated by the observed single `lto.o`.
+
+---
+
+## [0.2.4] — 2026-08-22
+
+**The macOS universal build's compiler cache, measured rather than inherited.** A review asked
+whether ccache really caches an `arm64;x86_64` build — older ccache refused compilations carrying
+more than one `-arch` — and whether the CI saving claimed for it was this repository's number or the
+sibling's. Both questions are now answered from this repository's own logs. No DSP algorithm
+changed, no parameter was added, renamed or removed, no serialization schema, threading model or
+reported latency moved, and **no first-party source file was touched**. Measurements:
+[`worklogs/2026-08-22-macos-ccache-validation.md`](worklogs/2026-08-22-macos-ccache-validation.md).
+
+### Fixed
+- **The changelog's own entry count said nine while listing ten.** 0.2.2 and 0.2.3 each added an
+  entry; the count word advanced once. Cross-checked against the `## [0.x.y]` headings rather than
+  the parenthetical beside it.
+  Evidence: `CHANGELOG.md`. [Verified]
+- **`docs/procedures/CI_CD.md` still asserted the macOS jobs were "deliberately not cached"** in one
+  row while two other rows in the same file said they were cached — stale since 0.2.2 enabled them.
+  Evidence: `docs/procedures/CI_CD.md`. [Verified]
+
+### Added
+- **`macos-intel` reports compiler-cache statistics.** It is the single-arch control — it differs
+  from `macos` in exactly one variable — yet it restored a cache and never said what the cache did.
+  The step is read-only and `|| true`; it reports, it cannot fail the job. **Added, not yet run**,
+  so it has produced no measurement so far; it is also not load-bearing, since the decisive control
+  is cold-vs-warm on the universal lane itself.
+  Evidence: `.github/workflows/build.yml` (verified as an edit, not as an observation). [Verified]
+
+### Changed
+- **The macOS caching rationale now quotes figures measured here.** The workflow comment, ADR-0034
+  and `CI_CD.md` justified caching with "the sibling measured the equivalent job at 29m44s, 16m40s
+  of it building". Measured locally, `macos` is genuinely the run's critical path at **18m43s** —
+  but **12m34s (67%)** is the four pluginval passes and only **3m53s (20.7%)** is the build step
+  ccache acts on, so 16m40s overstates this repository's build step about fourfold. The decision is
+  unchanged; the magnitude argument is now local.
+  Evidence: `.github/workflows/build.yml`, ADR-0034, `docs/procedures/CI_CD.md`. [Verified]
+
+### Notes
+- **ccache does cache the universal build, completely.** `macos-latest` installs ccache **4.13.6**,
+  and across three consecutive runs the job reports `Cacheable calls: 182 / 182 (100.0%)` with **no
+  `Uncacheable` bucket in any log**. Hits go **14.29% cold → 95.60% warm** at an unchanged object
+  count of 182 — only `.ccache` is restored, never `build/`, so ninja issues all 182 invocations
+  every run and the drop is cache hits, not an incremental build. On timing, the honest figure is
+  the **compile phase**, which is all ccache acts on: **501s cold → 46–86s across two warm runs
+  (415–455s, 83–91%)**. The step *total* spans 261–398s (41–63%) only because it also carries an
+  LTO link that drifted 130s → 187s → 284s on a phase ccache never sees. The review's concern was historically correct and is version-bound: ccache 3.2.5
+  bailed out with "More than one -arch compiler option is unsupported"; 3.3 added fat-binary support
+  and 3.3.1 corrected direct-mode arch discrimination, nine years before the version in use.
+  Evidence: runs 32563814120 / 32565784751 / 32568563583; ccache `ccache.c` v3.2.5 and `NEWS.adoc`;
+  reproduced locally on ccache 4.9.1 against a control that shows what a real decline looks like.
+  [Verified]
+- **What the cache does not reach:** ccache's counters stop moving ~46s into the 233.5s warm build
+  step. The remainder is the LTO link, which ccache does not cache — the saving is almost all of the
+  compile time and none of the link time. This is why the step total is the wrong number to quote:
+  across the two warm runs the uncached link alone varied by 97s.
+  Evidence: run 32565784751 (`Stats updated: 09:46:46`). [Verified]
+- **Reported, not changed — a run-varying `PUBLIC` define is costing direct-mode cache hits.**
+  `CMakeLists.txt:280` (and `:336`) put `ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}"` on the
+  target as `PUBLIC`, and CI passes the run number, so the value changes every run. ccache's direct
+  mode hashes the command line, so every translation unit carrying that define misses direct mode
+  and can only hit via preprocessed mode — which on this lane means running the preprocessor once
+  per `-arch`. It matches what the logs show: 58 direct vs 116 preprocessed hits, with the direct
+  hits concentrated in `AnabasisTests`, the one target that does not define it. The only consumer is
+  `src/gui/PluginEditor.cpp:210`. Narrowing it to that source file would leave output bytes
+  unchanged, but it is a Build System change under the Architecture Review Gate, so it is proposed
+  rather than applied.
+  Evidence: `CMakeLists.txt:74,280,336`; `src/gui/PluginEditor.cpp:116,210`; run 32565784751 stats.
+  [Verified]
+- **GCC 16 is now clean through the LTO link, not only the compile.** 0.2.3 had to record "compile
+  phase measured at 16, link phase measured at 14" because the failing lane aborted before linking.
+  Run **32568563583** — the first after the `libxi-dev` fix — completed it: `linux-lto-tests`
+  succeeded, both links ran, the gate printed `no first-party warnings`, and both suites passed
+  (301 + 873, 0 failures). The only two `warning:` lines in the job are the `lto-wrapper` LTRANS
+  notices 0.2.3 had just pinned as non-diagnostics.
+  Evidence: run 32568563583. [Verified]
+- **Reported, deliberately not fixed — the arm64 slice of the shipped macOS bundle has no dSYM.**
+  `dsymutil` emits `warning: (arm64) … No object file for requested architecture` and `warning: no
+  debug symbols in executable (-arch arm64)` for VST3, AU and Standalone, because the retained
+  `lto-objects/lto.o` holds only the x86_64 slice. The "Assert LTO ran and its objects were
+  retained" step cannot see it: it gates on `COUNT -eq 0`, and the count is 1. This is a
+  shipped-artifact symbolication contract and outside the scope of this round, so it is filed for
+  the owner rather than changed here.
+  Evidence: run 32568563583, `macos` job. [Verified]
+
+---
+
+## [0.2.3] — 2026-08-22
+
+**The GCC 16 warning gate, measured — and the missing header that stopped it being measured.** The
+`gcc:16` container lane shipped in 0.2.2 without ever having been run (ADR-0034 said so: no
+container runtime here, the first push is the measurement). It ran, and it failed — not on a
+warning but on `fatal error: X11/extensions/XInput2.h: No such file or directory`, in three JUCE
+translation units. No DSP algorithm changed, no parameter was added, renamed or removed, no
+serialization schema, threading model or reported latency moved, and **no first-party source file
+was touched**. Measurements and reasoning:
+[`worklogs/2026-08-22-gcc16-warning-gate-validation.md`](worklogs/2026-08-22-gcc16-warning-gate-validation.md).
+
+### Fixed
+- **`libxi-dev` is now an explicit dependency on both `setup-linux.sh` profiles.** JUCE 9.0.1
+  defaults `JUCE_USE_XINPUT` to 1, so `juce_gui_basics.h:393` includes `<X11/extensions/XInput2.h>`
+  unconditionally in practice; that header belongs to `libxi-dev`, which the package list never
+  named. It reached the `full` profile transitively — `libgtk-3-dev` carries `Depends: libxi-dev` —
+  which is why the Ubuntu runners and every developer machine compiled it anyway. The `headless`
+  profile drops the gtk/webkit pair deliberately (nothing here compiles webkit) and took the
+  X-input headers with it, killing the container lane at compile.
+  Evidence: run 32565784751, job `linux-lto-tests`; `dpkg -S`, and the package present in the
+  Debian trixie and Ubuntu noble archives alike. [Verified]
+
+### Changed
+- **The first-party warning gate no longer attributes its findings to Clang when GCC produced
+  them.** `check-clang-warnings.py` takes `--compiler`, and the three lanes that call it pass the
+  compiler they ran; the default is a neutral `the compiler` rather than a wrong name. What the
+  gate accepts and rejects is unchanged.
+  Evidence: `scripts/check-clang-warnings.py`, `.github/workflows/build.yml`. [Verified]
+- **Three self-test cases pin the driver-level warning forms.** Every GCC LTO link emits
+  `lto-wrapper: warning: using serial compilation of N LTRANS jobs`, which carries no source
+  location and therefore cannot be attributed to a file; that it is not treated as a diagnostic is
+  now asserted rather than incidental, alongside the `cc1plus:` and `ld:` forms. 15 → 18 cases.
+  Evidence: `python3 scripts/check-clang-warnings.py --self-test`. [Verified]
+
+### Notes
+- **GCC 16 introduced no new diagnostics in this tree, and the zero-warning policy is unchanged.**
+  All **13 first-party translation units** of the two suites compiled under **g++ 16.2.0** at
+  `-O3 -flto -std=c++23` with the full `juce_recommended_warning_flags` set and none emitted a
+  warning — the policy measured at 14.2.0 holds at 16 across two majors and a change of
+  distribution. The failing run aborted before the LTO **link**, where `-Wodr` and
+  `-Wlto-type-mismatch` fire; that phase is measured locally at GCC 14.2.0 over both suites in the
+  same `-flto` configuration and is likewise clean of first-party diagnostics.
+  Evidence: run 32565784751; ccache stderr replay verified in both directions, so the run's 43
+  cache hits do not weaken the reading. [Verified]
+
+---
+
+## [0.2.2] — 2026-08-22
+
+**The CI/toolchain parity round: an audit of the sibling's build pipeline area by area, and the
+twelve places the previous migration had moved structure without moving configuration.** No DSP
+algorithm changed, no parameter was added, renamed or removed, no serialization schema, threading
+model or reported latency moved, and **no first-party source file was touched** — the change set is
+CI, records and documentation. The patch bump is for one user-relevant fact and one contributor-
+relevant one: the sanitizer gate the shipped code passes is materially deeper, and the compatibility
+compiler moved two majors. Audit, verdicts and measurements:
+[`worklogs/2026-08-22-ci-toolchain-parity-audit.md`](worklogs/2026-08-22-ci-toolchain-parity-audit.md).
+
+### Changed
+
+- **The `sanitizers` gate deepened from `address,undefined` to seven sub-checks, with leak detection
+  on** ([ADR-0034](docs/architecture/design-decisions/ADR-0034-ci-toolchain-parity.md)). Added:
+  `vptr`, `float-divide-by-zero`, `implicit-conversion`, `local-bounds`, `nullability`, behind a
+  narrowly scoped ignorelist (one sub-check, one vendored tree). `ASAN_OPTIONS` gains
+  `detect_leaks=1` and three tightened runtime checks — the previous `detect_leaks=0` rested on an
+  assumption about JUCE's singletons that measurement retired. `unsigned-shift-base` is deliberately
+  **not** adopted: measured, it fires once, on the dither RNG's xorshift, where the wrap is the
+  algorithm and the shift is well defined. Both suites pass the new set: **300 + 873, 0 failures**.
+  Evidence: ADR-0034 §Evidence. [Verified]
+- **The compatibility compiler moved from `g++-14` (apt) to `g++-16` (the official `gcc:16`
+  container)**, with the `headless` dependency profile that a containerised toolchain requires. No
+  apt source ships a released g++-16, so 0.2.1's pin had chosen the version to fit the acquisition
+  method. The LTO lane is now two jobs, because `container:` is a per-job key.
+  Evidence: ADR-0034 §Decision; `.github/workflows/build.yml`. [Verified — except the container
+  lane itself, which no local environment here can run]
+
+### Added
+
+- **The Windows toolset is recorded and its ABI series asserted.** `windows-latest` floats and MSVC
+  is auto-detected, so until now a shipped `.vst3` could be built by a toolset no artifact named.
+  The job prints the toolset, writes it to the run summary, and fails if the ABI series leaves
+  `14.x` — which is what decides the Visual C++ redistributable a user needs.
+  Evidence: `.github/workflows/build.yml` (`windows`). [Verified]
+- **The macOS jobs are cached**, and every job gained a timeout and a printed record of the
+  toolchain it resolved. The `dsymutil` objection that had kept macOS uncached was refuted, not
+  outvoted: a cached object is a real `.o` at the path the linker recorded.
+  Evidence: ADR-0034 §3. [Verified]
 
 ## [0.2.1] — 2026-08-22
 
