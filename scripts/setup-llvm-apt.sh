@@ -9,13 +9,20 @@
 #  re-run.
 #
 #  WHY THIS EXISTS AT ALL. Ubuntu's own archives stop at clang-20 for noble
-#  (24.04), which is what `ubuntu-latest` resolves to; 21 and 22 are published
-#  for 26.04 only. The upstream STABLE release is 22.x, and apt.llvm.org is
-#  where upstream ships it for noble -- the same source `apt.llvm.org/llvm.sh`
-#  uses, whose own `CURRENT_LLVM_STABLE` reads 22. Staying on the stock archive
-#  would mean holding the warning gate and the sanitizer host two majors behind
-#  upstream because of a packaging boundary, which is a distribution fact about
-#  Ubuntu rather than a fact about this project.
+#  (24.04), which is what `ubuntu-latest` resolves to. The upstream STABLE
+#  release is 23.x, and apt.llvm.org is where upstream ships it for noble.
+#  Staying on the stock archive would mean holding the warning gate and the
+#  sanitizer host THREE majors behind upstream because of a packaging boundary,
+#  which is a distribution fact about Ubuntu rather than a fact about this
+#  project.
+#
+#  `apt.llvm.org/llvm.sh` IS NOT THE VERSION ORACLE, and this header used to cite
+#  it as one -- "the same source llvm.sh uses, whose own CURRENT_LLVM_STABLE
+#  reads 22". That variable lags the release train: on 2026-08-30, with 23.1.0
+#  released and `llvm-toolchain-noble-23` published, it still read 22. The
+#  release record is `releases.llvm.org` and `llvm.org`; llvm.sh is one consumer
+#  of the same archive, and citing a consumer's default as evidence of what
+#  upstream has released is how a pin gets talked out of a move it should make.
 #
 #  WHY NOT `llvm.sh`. That script decides the version itself from its own
 #  notion of stable, installs a broad toolchain, and can add more than one
@@ -42,8 +49,22 @@
 #  Transient network failure is absorbed rather than ignored: the key fetch and
 #  the index update both retry. A repeatable failure still fails.
 #
-#  Network domains this script needs: apt.llvm.org (suite + signing key) and the
-#  Ubuntu apt mirrors.
+#  Network domains this script needs: apt.llvm.org (suite + signing key), the
+#  Ubuntu apt mirrors, and github.com -- the last one for the RELEASE-TAG
+#  assertion at the foot of this script, which is a `git ls-remote` and clones
+#  nothing.
+#
+#  WHY A RELEASE-TAG ASSERTION EXISTS (0.2.7, ADR-0037). Every check here used to
+#  be MAJOR-only, and a major-only check cannot see the difference between a
+#  released compiler and a release-branch build that is not released yet.
+#  Measured, not hypothesised: on 2026-08-30 the noble suite for major 23 carried
+#  `1:23.1.0~++20260818083557+55feb0a3b6b7-…`, whose upstream commit sits AFTER
+#  the `llvmorg-23.1.0-rc3` tag and BEFORE the release commit, still carrying
+#  `LLVM_VERSION_SUFFIX -rc3`. Debian's packaging drops that suffix, so
+#  `clang-23 --version`, `__clang_version__` and the dpkg version ALL read a
+#  clean `23.1.0`. Nothing local distinguishes it. The one thing that does is the
+#  upstream COMMIT the package names in its own version string, compared against
+#  the commit the release tag points at -- which is what this asserts.
 #
 #  LOCALLY: if the machine already carries an apt.llvm.org source added by
 #  `llvm.sh` or by hand, apt refuses the pair with "Conflicting values set for
@@ -171,3 +192,62 @@ command -v "ld.lld-${MAJOR}" >/dev/null 2>&1 || [ -x "/usr/lib/llvm-${MAJOR}/bin
     echo "setup-llvm-apt: lld-${MAJOR} is missing; the LTO plugin link needs it" >&2
     exit 1
 }
+
+# THE RELEASE-TAG ASSERTION. See the header for the measurement that motivated it.
+#
+# The package version carries the upstream commit it was built from:
+#
+#   1:22.1.8~++20260714014902+ca7933e47d3a-1~exp1~20260714135019.80
+#     ^ upstream version              ^ upstream commit
+#
+# and `llvmorg-<version>` peels to the commit the release was cut at. A RELEASED
+# build matches; a branch build taken before (or after) the release commit does
+# not, whatever its version string says.
+#
+# `git ls-remote` is the whole network cost -- no clone, no history, one ref.
+PKG_VER="$(dpkg-query -W -f='${Version}' "clang-${MAJOR}")"
+UPSTREAM_VER="${PKG_VER#*:}"          # drop the epoch
+UPSTREAM_VER="${UPSTREAM_VER%%~*}"    # 22.1.8
+BUILT_SHA="${PKG_VER##*+}"            # ca7933e47d3a-1~exp1~...
+BUILT_SHA="${BUILT_SHA%%-*}"          # ca7933e47d3a
+
+if [ -z "$UPSTREAM_VER" ] || [ -z "$BUILT_SHA" ]; then
+    echo "setup-llvm-apt: cannot read an upstream version and commit out of '${PKG_VER}'" >&2
+    exit 1
+fi
+
+# Retried like the other network steps; a repeatable failure still fails, because
+# "could not check" and "checked and it is a release" must not look the same.
+TAG_REFS=""
+for _attempt in 1 2 3; do
+    TAG_REFS="$(git ls-remote --tags https://github.com/llvm/llvm-project \
+        "llvmorg-${UPSTREAM_VER}" "llvmorg-${UPSTREAM_VER}^{}" 2>/dev/null || true)"
+    [ -n "$TAG_REFS" ] && break
+    sleep 2
+done
+if [ -z "$TAG_REFS" ]; then
+    echo "setup-llvm-apt: could not reach github.com to resolve llvmorg-${UPSTREAM_VER}" >&2
+    echo "setup-llvm-apt: refusing to assume the installed clang-${MAJOR} is a released build" >&2
+    exit 1
+fi
+
+# Prefer the PEELED ref: an annotated tag's own object id is not the commit id,
+# and every LLVM release tag is annotated. The unpeeled line is the fallback for
+# a lightweight tag, where the two are the same thing.
+TAG_SHA="$(printf '%s\n' "$TAG_REFS" | awk '/\^\{\}$/ { print $1; found = 1 } END { if (!found) exit 1 }' \
+    || printf '%s\n' "$TAG_REFS" | awk 'NR==1 { print $1 }')"
+
+case "$TAG_SHA" in
+    "${BUILT_SHA}"*) ;;
+    *)
+        echo "setup-llvm-apt: clang-${MAJOR} is NOT a build of the ${UPSTREAM_VER} release" >&2
+        echo "setup-llvm-apt:   package built from : ${BUILT_SHA}" >&2
+        echo "setup-llvm-apt:   llvmorg-${UPSTREAM_VER} is at: ${TAG_SHA}" >&2
+        echo "setup-llvm-apt: apt.llvm.org is serving a release-BRANCH build for this major." >&2
+        echo "setup-llvm-apt: the reported version drops any -rcN suffix, so nothing local says so." >&2
+        echo "setup-llvm-apt: wait for the suite to rebuild at the tag, or pin a major that is released." >&2
+        exit 1
+        ;;
+esac
+
+echo "setup-llvm-apt: clang-${MAJOR} is the ${UPSTREAM_VER} release (built from ${BUILT_SHA})"

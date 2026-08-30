@@ -6,7 +6,23 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.6 (2026-08-30)** — parity audit round 2.
+**Last updated:** for **0.2.7 (2026-08-30)** — the LLVM 23 investigation, and the release-tag assertion it produced.
+
+**Scope of the 0.2.7 round.** One ADR Accepted (**0037**), amending ADR-0031's decision clauses 1
+and 2. The directive was to move every pinned LLVM component to 23.1.0 while refusing release
+candidates; those turned out to be different instructions, and the round is the investigation plus
+its result. **`ANABASIS_CLANG_VERSION` is unchanged at 22.** What changed is
+`scripts/setup-llvm-apt.sh`, which gained a release-tag assertion — it reads the upstream commit
+out of the installed package's version string and requires it to be the commit `llvmorg-<version>`
+points at — and the pin-rationale block in `build.yml`, which now records why 23 waits. GCC was
+audited and deliberately NOT moved (16 is the newest stable major; `gcc:16` already collected
+16.1 → 16.2 by itself). No DSP algorithm change, no parameter added/renamed/removed, no schema,
+threading or latency change, **and no first-party C++ or JUCE source file was touched** —
+`CMakeLists.txt` changes only its `project(... VERSION ...)` line.
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **New ADR** (`ADR_INDEX.md`, ADR-0037,
+ADR-0031's amendment), **Build-system change** (`build.yml`, `setup-llvm-apt.sh`), **Policy
+change** (`DEPENDENCY_POLICY.md`, the Clang row), **Ship a version** (`CHANGELOG.md`,
+`HANDOVER.md`).
 
 **Scope of the 0.2.6 round.** One ADR Accepted (**0036**, parity audit round 2), amending ADR-0034;
 OQ-012's macOS half resolved; `DEPENDENCY_POLICY.md` records the sibling's JUCE pin re-converging at

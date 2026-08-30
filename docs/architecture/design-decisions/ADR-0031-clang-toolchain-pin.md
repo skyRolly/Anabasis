@@ -6,7 +6,7 @@
 > repository pins is gated.* Taken on the owner's migration directive, which asked in as many words
 > to "align toolchain versions and dependency versions with Anamorph".
 
-**Status:** **Accepted — 2026-08-22.** Version 0.2.0. **Amended by [ADR-0032](ADR-0032-linux-release-toolchain.md) (0.2.1)**, which moved the shipped Linux build onto this pin and pinned GCC beside it; decision clauses 3 and 5 carry the amendment inline.
+**Status:** **Accepted — 2026-08-22.** Version 0.2.0. **Amended by [ADR-0032](ADR-0032-linux-release-toolchain.md) (0.2.1)**, which moved the shipped Linux build onto this pin and pinned GCC beside it; decision clauses 3 and 5 carry the amendment inline. **Amended by [ADR-0037](ADR-0037-llvm-23-toolchain-upgrade.md) (0.2.7)**, which added a RELEASE-TAG requirement to decision clause 2's fail-closed install and re-stated clause 1's *upstream stable* as *newest RELEASED build this distribution's package source ships*; the value stays `22`. Decision clauses 1 and 2 carry that amendment inline.
 
 ## Context
 
@@ -47,10 +47,19 @@ sanitizer host behind a packaging decision nobody here made.
 ## Decision
 
 1. `ANABASIS_CLANG_VERSION: 22` in `.github/workflows/build.yml`, beside
-   `ANABASIS_PLUGINVAL_STRICTNESS`, as the single authority for the major. **22 is the current
-   upstream stable and is the major the sibling product pins**, which keeps the two products'
-   diagnostics comparable — the point of sharing an engineering standard across a family.
-2. `scripts/setup-llvm-apt.sh <major>` installs exactly three packages — `clang-<major>`,
+   `ANABASIS_PLUGINVAL_STRICTNESS`, as the single authority for the major. This ADR justified `22`
+   as *"the current upstream stable"* and *"the major the sibling product pins"*.
+   **[ADR-0037](ADR-0037-llvm-23-toolchain-upgrade.md) (0.2.7) sharpened the first phrase and
+   demoted the second.** "Upstream stable" is ambiguous between *the newest release* and *the
+   newest release this distribution's package source actually ships*, and in August 2026 those
+   stopped being the same thing: LLVM 23.1.0 is released, while apt.llvm.org's noble suite builds
+   `clang-23` from a pre-release `release/23.x` commit. The clause means the second reading. The
+   sibling-parity half is now a **consequence, not a reason** — two products on one standard should
+   move together, but neither should hold a superseded major to stay matched.
+2. **Amended by ADR-0037 (0.2.7): the fail-closed install now also asserts that the package was
+   built from the RELEASE TAG's commit**, because every check in the original clause was
+   major-only and a major-only check cannot tell a released compiler from a release-branch build.
+   `scripts/setup-llvm-apt.sh <major>` installs exactly three packages — `clang-<major>`,
    `lld-<major>`, `libclang-rt-<major>-dev` — from apt.llvm.org, upstream's own channel for this
    distribution. It is **fail-closed**: the signing key is pinned **by identity** (primary
    fingerprint `6084F3CF…`, asserted to be the *only* primary key in the keyring, so a concatenated

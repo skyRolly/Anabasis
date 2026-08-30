@@ -74,19 +74,44 @@ concurrency:
 # comes from apt.llvm.org via `scripts/setup-llvm-apt.sh`, which is upstream's
 # own channel for this distribution.
 #
-# 22 is the current upstream stable major and is the version the sibling product
-# pins, which keeps the two products' Clang diagnostics comparable -- the whole
-# point of sharing an engineering standard across a product family. Moving it is
-# a Build System change under the Architecture Review Gate (see that document's
-# "Compiler and toolchain versions" rule 1) and needs an ADR.
+# 22 IS THE NEWEST RELEASE THIS DISTRIBUTION'S PACKAGE SOURCE ACTUALLY SHIPS,
+# which is not the same statement as "the newest release", and 0.2.7 is where the
+# difference stopped being invisible (ADR-0037).
+#
+# LLVM 23.1.0 IS RELEASED -- `llvmorg-23.1.0` is an annotated tag at
+# `ea7d852a70e8…`, and every gate in this repository passes on 23. What
+# apt.llvm.org publishes for noble is a DIFFERENT COMMIT: `clang-23` is built
+# from `55feb0a3b6b7`, which sits on `release/23.x` AFTER the rc3 tag and BEFORE
+# the release commit, and still carries `LLVM_VERSION_SUFFIX -rc3`. It is an
+# unreleased branch build.
+#
+# NOTHING VISIBLE SAYS SO. Debian's packaging drops the suffix, so the installed
+# compiler reports `clang version 23.1.0`, `__clang_version__` reports `23.1.0`,
+# and the dpkg version reads `1:23.1.0~++2026…`. A major-only assertion -- which
+# is what this file and `setup-llvm-apt.sh` carried until 0.2.7 -- passes on it.
+# `setup-llvm-apt.sh` now asserts the package was built from the RELEASE TAG's
+# commit, which is the only place the difference is legible.
+#
+# So the pin waits for apt.llvm.org to rebuild the noble suite at the tag, and
+# then moves with no further argument: the 23 measurements are already recorded
+# in ADR-0037. Moving it is a Build System change under the Architecture Review
+# Gate (see that document's "Compiler and toolchain versions" rule 1).
+#
+# It also still matches the sibling, which pins `ANAMORPH_CLANG_VERSION: 22` --
+# but that is now a CONSEQUENCE rather than a reason. Two products on one
+# engineering standard should move together; neither should sit on a superseded
+# major to stay matched.
 #
 # DELIBERATELY NOT PAIRED WITH A WARNING BASELINE FILE. The sibling carries
 # `clang-warning-baseline.txt` and `gcc-warning-baseline.txt`, debt lists of
 # accepted first-party warnings; this repository gates BOTH compilers on zero
 # instead, which is the stricter contract, and the 0.2.0 migration audit rejected
 # importing those files for exactly that reason. If a pin ever surfaces
-# diagnostics, they get FIXED. Measured before the gate was written, not after:
-# clang-22.1.8 and g++-14.2.0 each emit zero first-party warnings on this tree.
+# diagnostics, they get FIXED -- which is what makes a major bump a MEASUREMENT
+# rather than an edit. Measured on the pinned pair, clang-22.1.8 and g++-16.2.0:
+# each emits zero first-party warnings on this tree. The candidate major was
+# measured the same way before it was proposed -- 23.1.0 also emits zero (ADR-0037)
+# -- so when the package source catches up, the bump is a one-line change.
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # THE GCC MAJOR IS PINNED TOO, for the same reason and with a different answer
