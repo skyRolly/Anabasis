@@ -39,8 +39,9 @@ headless Linux machine, no IDE.
   Status row, re-counted from the suites' own printed output — and `docs/policies/TESTING_POLICY.md`
   for the gate, which is deliberately stated in one place).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.1** at commit `e18f7f5…`;
-  9.0.0 at `f8f8864…` until ADR-0028 moved it on 2026-08-16, and Anamorph still pins that
-  earlier revision) and the plugin identity (**`RTec` / `Anbs` /
+  9.0.0 at `f8f8864…` until ADR-0028 moved it on 2026-08-16, ahead of Anamorph — which has
+  since followed onto the same commit, so the two products are no longer split) and the
+  plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
 - **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development) and
   **the remaining entries in
@@ -72,11 +73,13 @@ headless Linux machine, no IDE.
 - **CMake ≥ 3.22**, a **C++23** compiler (GCC 13+, Clang 17+, MSVC 19.35+, AppleClang 15+ — ADR-0030), **Ninja** (recommended).
 - **JUCE 9.0.1**, fetched automatically by CMake `FetchContent` and pinned to that tag's
   **immutable commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`. OQ-001 pinned the
-  revision the sibling product Anamorph pins, so both plugins shared one framework baseline;
-  **ADR-0028 (2026-08-16) moved Anabasis to 9.0.1 and Anamorph has not moved**, so the two are
-  one patch release apart until the sibling follows. `docs/policies/DEPENDENCY_POLICY.md` carries
-  the version-lock reasoning and what the divergence costs; changing the pin is an Architecture
-  Review Gate item.
+  revision the sibling product Anamorph pins, so both plugins share one framework baseline.
+  **ADR-0028 (2026-08-16) moved Anabasis to 9.0.1 ahead of the sibling; Anamorph has since
+  followed, and as of 2026-08-30 both pin that same commit** — so a JUCE-attributable behaviour
+  difference between the two products is again impossible by construction.
+  `docs/policies/DEPENDENCY_POLICY.md` carries the version-lock reasoning, the record of the
+  divergence and its re-convergence, and what the next bump owes the family; changing the pin is
+  an Architecture Review Gate item.
 - Linux build deps install via `scripts/setup-linux.sh`. See `docs/procedures/BUILD.md`.
 
 ## Quick start (headless Linux) — active from P1 onward

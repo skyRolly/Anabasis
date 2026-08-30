@@ -275,9 +275,17 @@ namespace anabasis::testing
             // missing here. `malloc(4096)` immediately followed by `free` with
             // nothing in between is the exact shape GCC's `-fallocation-dce`
             // deletes at -O2 and above. This file is compiled at Release in the
-            // `linux` job (GCC) and in `linux-clang`, and the plugin target
-            // carries `juce_recommended_lto_flags` -- so the optimiser this
-            // probe has to survive is not a hypothetical one.
+            // `linux` job (Clang since ADR-0032) and in BOTH LTO jobs --
+            // `linux-lto-clang` under `clang -flto` and `linux-lto-tests` under
+            // `g++ -flto` in the `gcc:16` container (two jobs rather than one
+            // matrix because `container:` is a per-job key; ADR-0033 amended by
+            // ADR-0034) -- and the plugin target carries
+            // `juce_recommended_lto_flags`, so the GCC optimiser this probe has
+            // to survive is not a hypothetical one.
+            // (This read "the `linux` job (GCC) and `linux-clang`" until it was
+            // corrected -- naming a job deleted at 0.2.1 AND the wrong compiler
+            // for the one that remained. The GCC exposure it describes is real;
+            // it arrives through the LTO lane's second arm.)
             //
             // MEASURED, because the honest answer is more interesting than the
             // expected one: on g++ 13.3 at Release the pair SURVIVES without
@@ -387,8 +395,9 @@ void* operator new[] (std::size_t n, const std::nothrow_t& t) noexcept { return 
 // `juce_recommended_warning_flags` -- fires on exactly these four. Measured:
 // clang 18 at C++20 emits four such warnings; with these declarations, none.
 //
-// FIXED RATHER THAN BASELINED, deliberately. `linux-clang` fails on ANY
-// first-party warning, which is a stricter contract than the sibling's debt
+// FIXED RATHER THAN BASELINED, deliberately. `linux` fails on ANY first-party
+// warning (the gate moved there with the job at 0.2.1, from the deleted
+// `linux-clang`), which is a stricter contract than the sibling's debt
 // list and the reason its baseline FILE was not migrated (it keys on that
 // product's paths and would permit classes this gate forbids). So the shape is
 // repaired in a way that cannot depend on which Clang is installed, which is

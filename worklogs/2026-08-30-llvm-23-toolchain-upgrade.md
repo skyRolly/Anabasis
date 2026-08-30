@@ -376,22 +376,33 @@ warm after, and **no object compiled by 22 could ever be served into a 23 link.*
 property `CCACHE_COMPILERCHECK=content` would enforce anyway, arriving one layer earlier. Nothing
 here needs changing when the bump lands.
 
-## 11. Pre-existing drift found while auditing, and deliberately NOT fixed here
+## 11. Pre-existing drift found while auditing — reported, then repaired on request
 
-Reported rather than repaired — none of it is caused by or affected by this bump, and the directive
-says to make no unrelated changes:
+Five present-tense claims about a job deleted at 0.2.1, none of them caused by or affected by this
+round. They were reported rather than repaired here, on this round's directive to make no unrelated
+changes; the owner then asked for them, and they are fixed in a follow-up change that carries **no
+version bump and no CHANGELOG entry** — `CHANGELOG_POLICY.md` rule 3 excludes documentation passes,
+and a version in this repository *is* its CHANGELOG entry, so a bump would have asserted a release
+that policy says does not exist. The record lives here instead, which is what a worklog is for.
 
-| Site | Says | Reality since |
+| Site | Said | Now reads |
 |---|---|---|
-| `src/dsp/RealtimeAnnotations.h:25` | "GCC builds the shipped Linux binary" | ADR-0032 (0.2.1) — Clang does |
-| `tests/AllocationGuard.h:278` | "compiled at Release in the `linux` job (GCC) and in `linux-clang`" | `linux` is the Clang job; `linux-clang` was deleted at 0.2.1 |
-| `tests/AllocationGuard.h:390` | "`linux-clang` fails on ANY …" | same |
-| `scripts/preflight.sh:48` | "(CI: linux-clang)" | same |
-| `scripts/check-portability.py:814` | "runs in `linux-clang`" | same |
+| `src/dsp/RealtimeAnnotations.h:24` | "GCC builds the shipped Linux binary" | MSVC/AppleClang ship Windows/macOS and GCC compiles the tree in `linux-lto-tests`; the pinned Clang has shipped Linux since ADR-0032 |
+| `tests/AllocationGuard.h:278` | "compiled at Release in the `linux` job (GCC) and in `linux-clang`" | `linux` (Clang) **and both LTO jobs** — `linux-lto-clang` (`clang -flto`) and `linux-lto-tests` (`g++ -flto`, `gcc:16` container), which is where the GCC optimiser this probe must survive actually arrives |
+| `tests/AllocationGuard.h:390` | "`linux-clang` fails on ANY …" | "`linux` fails on ANY …", noting the gate moved with the job |
+| `scripts/preflight.sh:48` | "(CI: linux-clang)" | "(CI: the `linux` job)" |
+| `scripts/check-portability.py:814` | "runs in `linux-clang`" | "runs in `linux`", noting it was absorbed from the deleted job at 0.2.1 |
 
-`build.yml`'s many `linux-clang` mentions are explicitly historical ("the deleted `linux-clang`
-job", "ABSORBED FROM") and are correct as written. The five above are present-tense claims about a
-job that no longer exists.
+Each correction names what it replaced rather than quietly overwriting it, so the record of the
+0.2.1 job deletion survives in the files that were wrong about it. Verified afterwards: the only
+remaining `linux-clang` strings under `src/`, `tests/`, `tools/` and `scripts/` are explicitly
+historical — two "this read … until it was corrected" notes, one "the deleted `linux-clang`", and
+`check-clang-warnings.py`'s dated CI receipt for run 31449400277. `build.yml`'s many mentions were
+already of that kind and are untouched.
+
+**Not touched, because it is already correct:** ADR-0031 decision clause 3 names `linux-clang` and
+then carries ADR-0032's amendment inline — a dated decision plus its amendment, which is the form
+an ADR is supposed to have.
 
 ## 12. What actually changed in the tree
 
@@ -404,6 +415,7 @@ job that no longer exists.
 | `ADR-0031` | Amendment banner; clause 1's *"upstream stable"* sharpened and its sibling-parity half demoted; clause 2 gains the release-tag requirement |
 | `ADR-0037` (new), `ADR_INDEX.md` | The decision and its registry row |
 | `CHANGELOG.md`, `HANDOVER.md`, `DOCUMENTATION_COVERAGE.md` | 0.2.7 entry, status of record, coverage scope |
+| `src/dsp/RealtimeAnnotations.h`, `tests/AllocationGuard.h`, `scripts/preflight.sh`, `scripts/check-portability.py` | **Comment-only.** The five stale `linux-clang` / "GCC ships Linux" claims of §11. No code, no behaviour |
 
 **Deliberately not changed:** `docs/procedures/BUILD.md` still says a `clang-22` build, which is
 now correct rather than stale. Every ADR/worklog sentence that records a *measurement* taken on
