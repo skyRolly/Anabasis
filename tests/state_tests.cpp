@@ -6020,21 +6020,30 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
     check (GrHistoryView::windowEntries (0.0, 512) == GrHistoryView::windowEntries (48000.0, 512),
            "grWindow: an unprepared processor reads as 48 kHz, not as a divide by zero");
 
-    // THE DECIMATION GEOMETRY — FIXED SCALE, RIGHT-ANCHORED (0.1.2 item 3).
+    // THE DECIMATION GEOMETRY — FIXED SCALE, RIGHT-ANCHORED (0.1.2 item 3),
+    // SCROLLED BY THE ENTRY (0.2.8).
     // This section previously pinned the 0.1.1 stretch-to-fill, which spread
     // however many buckets existed across the whole width — so a filling ring
     // rendered zoomed and re-spaced as it grew, the startup behaviour the
     // 0.1.2 directive removes. What is pinned now:
-    //   • the pitch between adjacent buckets is a constant of (want, cols),
-    //     identical while the ring fills and after it has wrapped;
+    //   • the pitch between adjacent COMPLETED buckets is a constant of
+    //     (want, cols), identical while the ring fills and after it has
+    //     wrapped;
     //   • the newest bucket sits on the right edge in every fill state;
-    //   • a SETTLED window still spans the panel to within one truncated
-    //     bucket of the left edge (the 0.1.1 blank-strip fix's property,
-    //     carried over through `kFull` being derived from the same
-    //     want/stride pair);
+    //   • a SETTLED window spans the panel edge to edge: its oldest drawn
+    //     bucket sits ON or just OFF the left edge, never inside it, so the
+    //     segment crossing the edge is drawn exactly and clipped (0.2.8; the
+    //     0.1.1 blank-strip fix's property, carried over through `kFull`
+    //     being derived from the same want/stride pair);
     //   • a filling ring occupies only the right portion at that same pitch —
     //     the left remainder is the unmeasured region `paintHistory` draws as
-    //     ZERO data (level 0, GR 0), never as a stretched trace.
+    //     ZERO data (level 0, GR 0), never as a stretched trace;
+    //   • (0.2.8) every completed bucket moves exactly one entry-pitch —
+    //     pitch / stride — for every single entry pushed, never zero and
+    //     never a whole pitch: the owner's jitter report was the trace
+    //     standing still for `stride − 1` blocks and lurching a non-integer
+    //     pitch on the next, which the pre-0.2.8 form of `bucketX` did by
+    //     construction.
     {
         struct Case { double sr; int bs; int cols; const char* what; };
         const Case cases[] = {
@@ -6042,6 +6051,7 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             { 48000.0, 1024, 904, "Simple well, 48 kHz / 1024" },
             { 48000.0, 2048, 904, "…and a block big enough that entries are SCARCER than columns" },
             { 48000.0,  512, 604, "Advanced well, 48 kHz / 512" },
+            { 44100.0,  256, 904, "44.1 kHz / 256 — want mod stride is 2, the alignment case" },
             { 192000.0,  32, 604, "192 kHz / 32 — the window saturates at the ring clamp" },
         };
         for (const auto& c : cases)
@@ -6056,26 +6066,42 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             const auto m1 = say ("2..cols buckets");
             check (b.count >= 2 && b.count <= (int64_t) c.cols && b.kFull <= (int64_t) c.cols,
                    m1.toRawUTF8());
-            // Settled: newest on the right edge, oldest within one pitch of
-            // the left edge (exactly on it when the stride divides the window;
-            // one truncated bucket short at the other boundary phase).
+            // Settled: newest on the right edge; the oldest DRAWN vertex on
+            // or beyond the left edge (within one pitch of it) with the next
+            // vertex inside the panel, so the segment between them crosses
+            // the edge and the clip renders the crossing exactly. Under the
+            // 0.1.2–0.2.7 window bound the oldest drawn bucket had to lie
+            // wholly inside the 20 s, so it sat up to a pitch INSIDE the edge
+            // behind a flat lead-in — and once the trace scrolled by the
+            // entry, that vertex walked left for `stride` entries and jumped
+            // a pitch right as its bucket expired, a bucket-rate pop at the
+            // left edge. The bucket-aligned read window (`Buckets::window`)
+            // is what puts the oldest vertex at or past the edge instead.
             const auto m2 = say ("a settled window spans the panel at the fixed pitch");
             check (std::abs (GrHistoryView::bucketX (b, b.kHead, 0.0f, (float) c.cols)
                              - (float) (c.cols - 1)) < 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) > -1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) < pitch + 1.0e-3f,
+                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) < 1.0e-3f
+                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) > -pitch - 1.0e-3f
+                   && GrHistoryView::bucketX (b, b.kFirst + 1, 0.0f, (float) c.cols) > -1.0e-3f,
                    m2.toRawUTF8());
-            // …carrying one window of entries to within the truncation the
-            // fixed pitch imposes (never MORE time than the window).
-            const auto drawn = head - b.kFirst * b.stride;
-            const auto m3 = say ("…carrying one window of entries, no more");
-            check (drawn <= want && drawn >= want - 2 * b.stride, m3.toRawUTF8());
-            // Every drawn bucket is non-empty: the oldest lies wholly inside
-            // the window, and the newest holds entry `head - 1` by keying on
-            // `head - 1` rather than `head` (which left it empty whenever the
-            // head landed on a stride boundary).
-            const auto m4 = say ("the oldest drawn bucket is inside the window");
-            check (b.kFirst * b.stride >= head - want, m4.toRawUTF8());
+            // …reading one window of entries: the READ window is `want`
+            // rounded up to whole buckets — under a bucket more than the 20 s,
+            // never less — and it stays inside what the ring safely holds
+            // (`kSize − 1`, the `windowEntries` clamp argument).
+            const auto m3 = say ("…reading one bucket-aligned window, inside the ring");
+            check (b.window >= want && b.window - want < b.stride
+                       && b.window <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1
+                       && b.first == head - b.window,
+                   m3.toRawUTF8());
+            // Every drawn bucket has entries inside the window: the oldest is
+            // the bucket HOLDING `first` (partly expired — the paint clamps
+            // its read range to `first`) or a later one, and the newest holds
+            // entry `head - 1` by keying on `head - 1` rather than `head`
+            // (which left it empty whenever the head landed on a stride
+            // boundary).
+            const auto m4 = say ("the oldest drawn bucket holds `first` or follows it");
+            check (b.kFirst >= b.first / b.stride && (b.kFirst + 1) * b.stride > b.first,
+                   m4.toRawUTF8());
             const auto m5 = say ("…and the newest holds the newest entry");
             check (b.kHead * b.stride <= head - 1 && (b.kHead + 1) * b.stride > head - 1,
                    m5.toRawUTF8());
@@ -6088,18 +6114,184 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // behaviour this assertion exists to keep out.
             const auto q = GrHistoryView::buckets (juce::jmax ((int64_t) 2, want / 4),
                                                    want, c.cols);
+            // The pitch is read between two COMPLETED buckets (kHead − 1 and
+            // kHead − 2): since 0.2.8 the newest bucket's own segment is
+            // `fill` entry-pitches wide, one pitch only at the instant the
+            // bucket completes.
             const auto m6 = say ("a quarter-full ring draws at the settled pitch, right-anchored");
             check (q.stride == b.stride && q.kFull == b.kFull
                    && std::abs (GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
                                 - (float) (c.cols - 1)) < 1.0e-3f
+                   && std::abs ((GrHistoryView::bucketX (q, q.kHead - 1, 0.0f, (float) c.cols)
+                                 - GrHistoryView::bucketX (q, q.kHead - 2, 0.0f, (float) c.cols))
+                                - pitch) < 1.0e-3f
                    && std::abs ((GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
                                  - GrHistoryView::bucketX (q, q.kHead - 1, 0.0f, (float) c.cols))
-                                - pitch) < 1.0e-3f,
+                                - (float) q.fill * pitch / (float) q.stride) < 1.0e-3f,
                    m6.toRawUTF8());
             const auto m7 = say ("…and leaves the unmeasured left region empty, not stretched");
             check (GrHistoryView::bucketX (q, q.kFirst, 0.0f, (float) c.cols)
                        > 0.5f * (float) c.cols,
                    m7.toRawUTF8());
+
+            // SCROLLED BY THE ENTRY (0.2.8). Walk the head one entry at a time
+            // across three whole buckets of a settled window and hold the
+            // properties the jitter fix rests on at EVERY head — including
+            // the bucket boundaries, where the pre-0.2.8 form did all of its
+            // moving. Each assertion is collected over the walk and checked
+            // once, so a single bad head fails the case rather than one of
+            // three hundred near-identical lines.
+            {
+                const float perEntry = pitch / (float) b.stride;
+                bool newestOnEdge = true, completedAtPitch = true, advancesPerEntry = true,
+                     oldestOffEdge = true, neverRightward = true, phaseShifts = true,
+                     tipPinnedWhileFilling = true, tipDriftsWhenComplete = true;
+                for (int64_t h = head; h < head + 3 * b.stride; ++h)
+                {
+                    const auto now  = GrHistoryView::buckets (h,     want, c.cols);
+                    const auto next = GrHistoryView::buckets (h + 1, want, c.cols);
+                    const auto at   = [&] (const GrHistoryView::Buckets& bb, int64_t k)
+                    { return GrHistoryView::bucketX (bb, k, 0.0f, (float) c.cols); };
+
+                    newestOnEdge &= std::abs (at (now, now.kHead) - (float) (c.cols - 1)) < 1.0e-3f;
+                    // The oldest drawn vertex is on or beyond the left edge
+                    // at EVERY head and at both ends of the phase (a phase-1
+                    // frame sits it one entry-pitch further out), and the
+                    // vertex after it is inside — the crossing segment.
+                    {
+                        const auto full1 = GrHistoryView::buckets (h, want, c.cols, 1.0);
+                        oldestOffEdge &= at (now, now.kFirst) < 1.0e-3f
+                                      && at (now, now.kFirst) > -pitch - 1.0e-3f
+                                      && at (full1, full1.kFirst) < 1.0e-3f
+                                      && at (full1, full1.kFirst) > -pitch - perEntry - 1.0e-3f
+                                      && at (now, now.kFirst + 1) > -1.0e-3f;
+                    }
+                    // Every pair of COMPLETED neighbours is one pitch apart,
+                    // whatever the newest bucket's fill.
+                    for (int64_t k = now.kFirst; k + 1 < now.kHead; ++k)
+                        completedAtPitch &= std::abs ((at (now, k + 1) - at (now, k)) - pitch) < 1.0e-3f;
+                    // ONE entry moves every completed bucket by exactly one
+                    // entry-pitch — the assertion the pre-0.2.8 `bucketX`
+                    // fails at `stride − 1` of every `stride` heads (it moved
+                    // nothing) and at the remaining one (it moved a pitch).
+                    for (int64_t k = now.kFirst; k < now.kHead; ++k)
+                        if (k >= next.kFirst)
+                        {
+                            const float d = at (now, k) - at (next, k);
+                            advancesPerEntry &= std::abs (d - perEntry) < 1.0e-3f;
+                            neverRightward   &= d > -1.0e-4f;
+                        }
+                    // The frame-clock phase: a half-period frame sits every
+                    // completed vertex half an entry-pitch further left, and a
+                    // phase-1 frame lands each of them exactly where the next
+                    // entry's phase-0 frame will — continuity across the
+                    // arrival, so no vertex ever jumps or moves rightward.
+                    const auto half = GrHistoryView::buckets (h, want, c.cols, 0.5);
+                    const auto full = GrHistoryView::buckets (h, want, c.cols, 1.0);
+                    for (int64_t k = now.kFirst; k < now.kHead; ++k)
+                    {
+                        phaseShifts &= std::abs ((at (now, k) - at (half, k)) - 0.5f * perEntry) < 1.0e-3f;
+                        if (k >= next.kFirst)
+                            phaseShifts &= std::abs (at (full, k) - at (next, k)) < 1.0e-3f;
+                    }
+                    // The newest vertex holds the edge while its bucket fills
+                    // (its segment stretches instead), and drifts with the
+                    // phase only once the bucket is complete — where the next
+                    // frame's completed vertex takes over at that same x.
+                    if (now.fill < now.stride)
+                        tipPinnedWhileFilling &= std::abs (at (half, now.kHead) - (float) (c.cols - 1)) < 1.0e-3f;
+                    else
+                        tipDriftsWhenComplete &= std::abs (at (full, now.kHead) - at (next, now.kHead)) < 1.0e-3f
+                                              && std::abs ((at (now, now.kHead) - at (full, now.kHead)) - perEntry) < 1.0e-3f;
+                }
+                check (newestOnEdge,     say ("walk: the newest bucket holds the right edge at every head").toRawUTF8());
+                check (completedAtPitch, say ("walk: completed neighbours are one pitch apart at every head").toRawUTF8());
+                check (advancesPerEntry, say ("walk: ONE entry moves every completed bucket ONE entry-pitch").toRawUTF8());
+                check (neverRightward,   say ("walk: …and never moves anything rightward").toRawUTF8());
+                check (oldestOffEdge,    say ("walk: the oldest vertex sits on or beyond the left edge, the next inside").toRawUTF8());
+                check (phaseShifts,      say ("walk: the phase shifts every completed vertex and is continuous across an arrival").toRawUTF8());
+                check (tipPinnedWhileFilling, say ("walk: the newest vertex is pinned to the edge while its bucket fills").toRawUTF8());
+                check (tipDriftsWhenComplete, say ("walk: …and drifts with the phase once complete, handing over without a step").toRawUTF8());
+            }
+        }
+
+        // THE NEWEST VERTEX'S WINDOW (0.2.8). It aggregates the trailing
+        // `stride` entries, not its bucket's partial range: at a bucket start
+        // the pre-0.2.8 range held ONE entry, so the tip popped to a single
+        // block's value and then deepened — the other half of the report.
+        {
+            const int64_t stride = 3, first = 0;
+            check (GrHistoryView::tipFirst (first, 31, stride) == 28
+                       && GrHistoryView::tipFirst (first, 30, stride) == 27
+                       && GrHistoryView::tipFirst (first, 32, stride) == 29,
+                   "grTip: the newest vertex reads the trailing stride entries at every fill");
+            // head 31 is bucket 10's first entry: the bucket's own range would
+            // start at 30, one entry wide. The trailing window starts at 28.
+            check (GrHistoryView::tipFirst (first, 31, stride) < 30,
+                   "grTip: …which is NOT the newest bucket's partial range at a bucket start");
+            // The two coincide at the instant the bucket completes (head 33 =
+            // bucket 10 full: [30, 33)), which is what lets the completed
+            // value take over without a step.
+            check (GrHistoryView::tipFirst (first, 33, stride) == 30,
+                   "grTip: …and coincides with the bucket the instant it completes");
+            check (GrHistoryView::tipFirst (100, 101, stride) == 100
+                       && GrHistoryView::tipFirst (0, 1, stride) == 0,
+                   "grTip: the window never reaches before `first` — a fresh ring reads what it has");
+        }
+
+        // THE FRAME-CLOCK PHASE'S TIME BASE (0.2.8): the prepared pair, as
+        // `windowEntries`, driving a SMOOTHED head held to [head, head + 1]
+        // so a stopped transport or an over-size host block parks the trace
+        // rather than running it ahead, and an unexpected entry snaps it
+        // forward rather than letting the trace fall behind the data.
+        {
+            const double period = GrHistoryView::entryPeriod (48000.0, 512);
+            check (std::abs (period - 512.0 / 48000.0) < 1.0e-12,
+                   "grPhase: an entry spans the prepared block at the prepared rate");
+            check (std::abs (GrHistoryView::entryPeriod (0.0, 512)
+                             - GrHistoryView::entryPeriod (48000.0, 512)) < 1.0e-12
+                       && std::abs (GrHistoryView::entryPeriod (48000.0, 0)
+                                    - GrHistoryView::entryPeriod (48000.0, 1)) < 1.0e-12,
+                   "grPhase: unprepared reads as 48 kHz and a zero block as one sample, never a divide by zero");
+
+            using V = GrHistoryView;
+            const double half = 0.5 * period;      // a frame worth half an entry
+            // Steady state: the estimate advances by dt / period whether or
+            // not an entry arrived this frame — the uniform motion a 2:1
+            // entries-per-frame beat would otherwise modulate.
+            check (std::abs (V::smoothedHead (100.3, 100, half, period) - 100.8) < 1.0e-9
+                       && std::abs (V::smoothedHead (100.8, 101, half, period) - 101.3) < 1.0e-9,
+                   "grPhase: the smoothed head advances at the nominal rate across an arrival, unbroken");
+            // Held to [head, head + 1] from both sides.
+            check (std::abs (V::smoothedHead (100.2, 103, half, period) - 103.0) < 1.0e-12,
+                   "grPhase: …snaps FORWARD to a head the estimate did not expect, never behind the data");
+            check (std::abs (V::smoothedHead (100.9, 100, half, period) - 101.0) < 1.0e-12
+                       && std::abs (V::smoothedHead (101.0, 100, 10.0 * period, period) - 101.0) < 1.0e-12,
+                   "grPhase: …and parks one entry ahead when nothing arrives — a stopped transport");
+            check (std::abs (V::smoothedHead (5000.5, 3, half, period) - 3.0) < 1.0e-12,
+                   "grPhase: a rewound head (ring reset) re-anchors at phase 0, not at the cap");
+            check (std::abs (V::smoothedHead (100.3, 100, half, 0.0) - 100.3) < 1.0e-12,
+                   "grPhase: a degenerate period advances nothing rather than dividing by zero");
+            check (std::abs (V::phaseOf (100.25, 100) - 0.25) < 1.0e-12
+                       && std::abs (V::phaseOf (101.0, 100) - 1.0) < 1.0e-12
+                       && std::abs (V::phaseOf (99.0, 100)) < 1.0e-12
+                       && std::abs (V::phaseOf (107.0, 100) - 1.0) < 1.0e-12,
+                   "grPhase: the phase is the smoothed head's fraction past the real one, clamped to [0, 1]");
+
+            // The tick's idle gate: parked only with NO new entry and the
+            // estimate at its cap; a ramp, an arrival or a rewind all draw.
+            check (V::parked (100, 100, 101.0) && V::parked (100, 100, 101.5),
+                   "grPhase: a stopped transport parks once the smoothed head reaches its cap");
+            check (! V::parked (100, 100, 100.7) && ! V::parked (101, 100, 101.0)
+                       && ! V::parked (3, 100, 101.0),
+                   "grPhase: …and a ramping estimate, a new entry or a rewound head each un-park it");
+            // The head a frame draws is the one the tick computed the phase
+            // for — never a newer live index, always the live one before the
+            // first tick or after a rewind.
+            check (V::paintHead (100, 102) == 100 && V::paintHead (100, 100) == 100,
+                   "grPhase: a frame draws the head its phase was computed for, not a newer live one");
+            check (V::paintHead (-1, 5) == 5 && V::paintHead (0, 5) == 5 && V::paintHead (100, 3) == 3,
+                   "grPhase: …and the live head before the first tick or after a rewind");
         }
 
         // A ring with a handful of entries is a short stub at the RIGHT edge

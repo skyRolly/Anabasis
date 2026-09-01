@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Fourteen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Fifteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,56 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.2.8] — 2026-09-01
+
+**One field report: the GR history scrolled in lurches.** The owner's words: *"the newly drawn
+portion of the GR history to the right of the yellow line is jittery."* The yellow line is the
+trace's own flat zero-reduction run (the only yellow in the well is the trace's accent), and the
+part to its right is the only part that CAN show horizontal motion — which is where the renderer
+had been stepping a non-integer pitch once per decimation bucket since 0.1.2. No DSP algorithm,
+parameter, serialization schema, threading-model or reported-latency change; the ring, its
+reader contract and the audio-thread push are untouched. Measurement trail:
+[`worklogs/2026-09-01-gr-history-scroll-jitter.md`](worklogs/2026-09-01-gr-history-scroll-jitter.md).
+
+### Fixed
+- **The GR history scrolls continuously instead of standing still and lurching.** Every vertex
+  of the trace and the waveform used to move only when a decimation bucket completed — once every
+  `stride` blocks — and then by a whole pitch, which is not an integer (1.447 px at 48 kHz / 512
+  on the Simple well, 1.929 px at 1024). Modelled at a 60 Hz display, 48 % of frames drew no
+  motion and the rest a 1.45 px jump, each jump landing every vertex on a new sub-pixel phase so
+  the anti-aliased stroke re-rasterised at every step; a horizontal segment is invariant under a
+  horizontal shift, which is why the flat gold zero line looked steady and everything sloped to
+  its right did not. The geometry now places each bucket by the newest ENTRY's position inside
+  its bucket, and between two entries by a head the frame clock smooths at the nominal entry rate
+  (held to within one entry of the real head — never behind the data, never more than one entry
+  ahead of it), so the trace advances `pitch / stride` per processed block and one uniform step
+  per frame: the same model gives 0 % motionless frames and a per-frame spread (σ) of 0.000 px on
+  a steady host where it was 0.72.
+  The left edge scrolls the same way: the oldest drawn point now sits on or just beyond the
+  edge with its segment clipped, where it used to sit up to a pitch inside behind a flat run and
+  jump a whole pitch outward every time a bucket expired. Bucket identity, every completed
+  bucket's value, the fixed pitch, the right anchor, the zero-data unmeasured region and the clear
+  rule are exactly as ADR-0023 item 6 decided (amended in place, dated). Evidence: this release.
+  [Verified]
+- **The newest point of the trace no longer pops at every bucket start.** It aggregated only the
+  entries its bucket had collected so far — a single block's value the frame a bucket began, then
+  deepening — so the tip flicked at bucket rate (modelled 0.99 dB mean movement between frames).
+  It now aggregates the trailing `stride` entries, the same filter length as every completed
+  bucket, coinciding with the bucket the instant it completes (0.55 dB). Evidence: this release.
+  [Verified]
+
+### Changed
+- **The view repaints while the smoothed head is still moving.** Between two entries the trace
+  now drifts on the frame clock, so up to one entry period of frames is drawn after the last
+  arrival; once the smoothed head parks one entry ahead of the real one, the pre-0.2.8 gate —
+  repaint on new data only — is back in force, so a stopped transport costs no per-vblank paints.
+  Each frame draws the history up to the entry its phase was computed for, so an entry landing
+  between the frame tick and the paint waits one frame rather than skipping ahead of the ramp.
+  The plot is clipped to its own columns, which costs the 0.7 px of stroke end-cap that used to
+  spill into the panel margin. Evidence: this release. [Verified]
 
 ---
 

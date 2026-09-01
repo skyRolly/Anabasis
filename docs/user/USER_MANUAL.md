@@ -242,7 +242,9 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   project, so it reopens on whichever you left it. The history draws at a fixed scale: a
   fresh instance grows its trace from the right edge, and the region to the left stays
   empty until twenty seconds of audio have actually been measured — nothing is estimated
-  or stretched. Pausing and resuming continues the timeline; it restarts only when the
+  or stretched. The trace scrolls continuously — it advances a fraction of a pixel with
+  every processed block rather than stepping once per bucket (since 0.2.8). Pausing and
+  resuming continues the timeline; it restarts only when the
   sample rate or block size changes. Vertically the trace hangs from the top of the graph
   and reaches the bottom at **24 dB** of reduction — the same span the COMP and LIMITER
   panels' own GR meters use, so the two read against each other directly.

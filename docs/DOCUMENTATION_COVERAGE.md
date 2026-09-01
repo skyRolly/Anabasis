@@ -6,7 +6,75 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.7 (2026-08-30)** — the LLVM 23 investigation, and the release-tag assertion it produced.
+**Last updated:** for **0.2.8 (2026-09-01)** — the GR history's scroll jitter (one owner field report).
+
+**Scope of the 0.2.8 round.** One owner report — *"the newly drawn portion of the GR history to
+the right of the yellow line is jittery"* — and one display fix. **No DSP change, no parameter
+added, renamed or removed, no schema, threading or latency change**; the ring, its reader
+contract (the epoch-guarded batch of stateless peeks) and the audio-thread push are untouched, so
+no Architecture Review Gate item and no new ADR. ADR-0023 item 6 is **amended in place, dated**,
+the ADR's own idiom (its item 3 carries a 2026-08-09 amendment the same way): the pitch and the
+right anchor it decided stand, and the amendment records that the trace now scrolls by the entry.
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **Metering (… GR history)** (`USER_MANUAL.md`,
+`CHANGELOG.md`; `DSP_ALGORITHMS.md` is named by that row and has never existed here — the standing
+gap the 0.1.6 entry below records; `TEST_REPORT.md` carries DSP accuracy figures and none moved),
+**New/changed test** (`TESTING.md`, this file; `DSP_POLICY.md`'s invariant→test map is unchanged
+— no DSP invariant), and **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s check
+count). `ADR_INDEX.md`'s ADR-0023 row names the amendment.
+
+**What was actually wrong, since a display defect leaves no other trace.** The yellow line is the
+trace's own flat zero-reduction run (the only yellow in the well is `colours::accent`, which
+strokes the trace), and the sloped part to its right is the only part on which horizontal motion
+is visible at all — a horizontal segment shifted horizontally rasterises to the same pixels.
+`GrHistoryView::bucketX` had, since 0.1.2's fixed-pitch rewrite, placed every bucket at a whole
+number of pitches from the right edge with `kHead = (head − 1) / stride`, so every vertex stood
+still for `stride − 1` blocks and then jumped one pitch — 1.447 px at 48 kHz/512 on the Simple
+well, not an integer, so each jump also re-rasterised the anti-aliased stroke. Modelled at a
+60 Hz vblank: 48 % of frames motionless, the rest a 1.45 px lurch (σ of the per-frame motion
+0.72 px). `bucketX` now places buckets by the newest entry's sub-bucket position (`Buckets::fill`)
+and, between arrivals, by a head the frame clock smooths at the nominal entry rate and holds to
+`[head, head + 1]` (`entryPeriod`, `smoothedHead`, `phaseOf`, the prepared pair `windowEntries`
+already trusts) — σ 0.000 px on a steady host, 0 % motionless, at every block size including the
+stride-1 configurations (1024 at 44.1 kHz, 2048 at 48 kHz) where per-entry motion alone changes
+nothing. The first draft of that phase — seconds since the tick that first saw the head move — was
+caught by the pre-fix review never engaging where the block rate exceeds the display rate (every
+60 Hz frame sees an entry at 48 kHz/512, so it reset every frame: a 1-or-2-entries-per-frame beat,
+σ 0.24 px); the smoothed head is the correction, and the draft is recorded in the worklog as a
+rejected alternative with its measurement.
+The newest vertex aggregates the trailing `stride` entries (`tipFirst`) instead of its bucket's
+partial range, so it no longer pops to a single block's value at every bucket start (modelled
+0.99 → 0.55 dB mean frame-to-frame). The read window is rounded up to whole buckets
+(`Buckets::window`, still inside the ring's `kSize − 1`) so the oldest drawn vertex sits on or just
+beyond the left edge and its crossing segment is clipped rather than led in flat — the pre-fix
+adversarial review found that the first draft's lead-in walked left per entry and jumped a whole
+pitch outward at every bucket expiry, the one bucket-rate discontinuity the fix had left; and each
+frame draws the head its phase was computed for (`paintHead`), closing the tick→paint mismatch the
+same review modelled. The review's one product-level finding — hosts that render ahead of real
+time deliver blocks in bursts, which a lag buffer would absorb at the cost of display latency — is
+recorded for the owner, not taken. The measurement trail, the model and the eleven rejected alternatives are in
+`worklogs/2026-09-01-gr-history-scroll-jitter.md`.
+
+**Suites: `AnabasisTests` 301 + `AnabasisStateTests` 944 = 1245 checks green** (Linux, clang-22
+and the local GCC 13.3, Release), up 71 on 0.2.7's 1174, all of them inside
+`testGrHistoryWindowNeverAsksForTheHeadSlot`: a per-entry walk across three buckets of every
+geometry case (eight collected properties, one assertion each, so a single bad head fails the
+case, over six geometry cases — a 44.1 kHz/256 case added on the review's finding that none of the five had `want mod stride ≥ 2`), the trailing tip window, the smoothed head's clamps and phase, the tick gate and the paint head. **Rebuilt against the new geometry, the
+0.2.7 tests failed exactly one of 873** — the quarter-full case at 192 kHz/32, whose head is not a
+stride boundary; the other four sat on one by coincidence, and that assertion now reads the pitch
+between two COMPLETED buckets. **Three mutants**, each killing a DISJOINT set: the 0.2.7 `bucketX`
+kills 15 (the per-entry walk in every `stride ≥ 2` case — at `stride == 1` the stepped form already
+moves one entry-pitch per entry, which is why part C exists — plus every phase assertion); the
+bucket-start tip window kills exactly the 2 `grTip` assertions that describe it and none of the
+geometry; the phase term dropped kills exactly the 10 phase assertions and NOT the per-entry walk,
+which is the evidence that the sub-entry phase and the per-entry scroll are measured separately;
+two mutants of `smoothedHead`'s clamps, each killing exactly the `grPhase` assertion that names
+the guarantee it removes; the unaligned window and the old width bound, each killing only the
+left-edge assertions; and the tick gate and paint head each killing only their own (the worklog
+has the table).
+
+---
+
+**Last updated before that:** for **0.2.7 (2026-08-30)** — the LLVM 23 investigation, and the release-tag assertion it produced.
 
 **Scope of the 0.2.7 round.** One ADR Accepted (**0037**), amending ADR-0031's decision clauses 1
 and 2. The directive was to move every pinned LLVM component to 23.1.0 while refusing release
