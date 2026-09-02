@@ -105,6 +105,23 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // makes the guarantee a property of this function rather than of the
     // platform's dispatch rules.
     macroEngine->startDraining();
+    // Seed the published channel count from the layout this processor was
+    // CONSTRUCTED with, so the editor never reads a fabricated default: a host
+    // that negotiates a layout and opens the editor before activating gets the
+    // real geometry, which is what the plain read it replaces gave. See
+    // `preparedOutputChannels()`.
+    pubOutChannels.store (getTotalNumOutputChannels(), std::memory_order_relaxed);
+}
+
+// JUCE calls this from `AudioProcessor::audioIOChanged`, on whichever thread
+// changed the layout — so the store lands on the WRITER's thread and there is
+// nothing for the editor's read to race. That is the whole reason the
+// publication lives here rather than only in `prepareToPlay`: a layout can
+// change without a re-prepare, and a re-prepare is not where the count is
+// decided.
+void AnabasisAudioProcessor::numChannelsChanged()
+{
+    pubOutChannels.store (getTotalNumOutputChannels(), std::memory_order_relaxed);
 }
 
 AnabasisAudioProcessor::~AnabasisAudioProcessor()
@@ -743,7 +760,12 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // windows coincided exactly. The latch is now retained where it was already
     // lock-free — `AdaptiveEngine`'s retained trim set, which `reset()` does not
     // clear — so no thread crossing is added to rescue it.
-    engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    // ONE read of JUCE's plain member, reused — the accessor is a plain-member
+    // read and calling it twice can straddle a reconfiguration (the rule
+    // `preparedSampleRate()` states for the same reason).
+    const int outChannels = getTotalNumOutputChannels();
+    engine.prepare (sampleRate, samplesPerBlock, outChannels);
+    pubOutChannels.store (outChannels, std::memory_order_relaxed);
     // The GR history ring survives a re-prepare at the SAME rate and block
     // size (0.1.2 item 6). Hosts re-prepare on transport start, and an
     // unconditional clear here wiped the scrolling timeline on every
@@ -772,7 +794,7 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // to everything the process has done so far. No-op unless the diagnostic
     // build defined ANABASIS_STAGE_TRACE.
     ANABASIS_TRACE_RESET();
-    ANABASIS_TRACE_CONFIGURE (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    ANABASIS_TRACE_CONFIGURE (sampleRate, samplesPerBlock, outChannels);
 }
 
 void AnabasisAudioProcessor::releaseResources()

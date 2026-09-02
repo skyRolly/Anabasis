@@ -2085,7 +2085,12 @@ void AnabasisAudioProcessorEditor::timerCallback()
         // wrapper-published deepest-channel value the GR history shares, and
         // the two lanes exist precisely to stop folding the channels. Mono
         // layouts draw one full-height lane.
-        const bool monoOut = proc.getTotalNumOutputChannels() < 2;
+        // KI-017's third read: the PUBLISHED count, not JUCE's plain member,
+        // which the host's reconfiguring thread writes while this timer reads.
+        // It also answers the right question — the geometry the per-channel
+        // atomics below were filled under, rather than the layout the host may
+        // be moving to.
+        const bool monoOut = proc.preparedOutputChannels() < 2;
         compGrMeter.setGrDb (proc.meterCompGrDbCh (0),
                              proc.meterCompGrDbCh (1), monoOut);
         limGrMeter.setGrDb (proc.meterLimGrDbCh (0),

@@ -122,6 +122,19 @@ change here is on the reading side. Measurement trail:
   keeps doing exactly what it did. **The audio thread is unaffected**: its store compiles to the same
   instructions it always did, verified against the generated code, and a build on any target where
   that would not hold now fails rather than shipping. Evidence: this release. [Verified]
+- **A spectrum reset clears the old trace as soon as any part of the reset is visible.** Clearing
+  the analyser after a sample-rate or buffer-size change waited on one of the two things the reset
+  publishes; if the display noticed the other one first it kept showing the previous spectrum and
+  then, having recorded that it was up to date, stopped looking — so the old trace could sit there
+  for as long as the machine took to get round to it. The display now acts on either signal, and
+  also clears the moment a read comes back empty, which is itself only possible after a reset.
+  Nothing else about the analyser changed. Evidence: this release. [Verified]
+- **The GR meters take their one-or-two-lane layout from a value the host cannot change under them.**
+  The editor asked the plugin for its live channel count from a timer while the host could be
+  rewriting it — undefined behaviour — and it was also the wrong question: the lanes show
+  per-channel measurements and must be drawn in the layout those measurements were taken in. The
+  count is published now, at every point the layout is actually decided. Evidence: this release.
+  [Verified]
 - **A history frame the audio thread has already overwritten is no longer drawn.** The display
   checks, after building a frame, whether the audio thread has run far enough ahead to have
   overwritten the oldest history it just read — and throws such a frame away. That check could

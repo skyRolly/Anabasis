@@ -619,7 +619,7 @@ They are acquired in **both** orders:
 
 | Order | Path |
 |---|---|
-| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:195`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:212`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
@@ -676,7 +676,7 @@ observed against this plugin (the same standing caveat as KI-003).
 listener callback.
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:195` (the M0 → M1 edge); JUCE
+- Source: `src/PluginProcessor.cpp:212` (the M0 → M1 edge); JUCE
   `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
 - Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
   stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite
@@ -1132,13 +1132,40 @@ than an API guarantee — which is a reason to keep the atomics, not to remove t
 the next round starts from the source rather than from the premise. **No ADR text is changed on the
 strength of this entry**; that is an owner call.
 
-**REMAINING, and deliberately not bundled:** `PluginEditor`'s timer callback reads
-`proc.getTotalNumOutputChannels()` — `juce::AudioProcessor::cachedTotalOuts`, another plain member
-the host's reconfiguring thread writes. Same defect class, message thread this time, and it drives
-only whether the GR meters draw one lane or two. There is no published channel count anywhere in the
-tree, so repairing it means adding a publication rather than redirecting a read, which is a larger
-change than this entry's subject and is left for a round that takes it deliberately. Recorded here
-so it is not rediscovered as new.
+**THE THIRD READ IS ALSO CLOSED NOW (round 7).** `PluginEditor`'s timer callback read
+`proc.getTotalNumOutputChannels()` — `juce::AudioProcessor::cachedTotalOuts`, written by
+`AudioProcessor::audioIOChanged` on whichever thread the host reconfigures on, with no lock in any
+wrapper. The audit could name no mechanism that serialises it against the editor's 24 Hz timer, so
+option B was unavailable: a genuine data race, not a benign transient.
+
+It could not be redirected the way the two rate reads were — the prepared pair carries rate and
+block only, and inferring mono from a per-channel meter reading zero is unsound because a stereo
+channel at rest reads zero too. So this one did need a publication, and the justification is not
+merely "the field is plain": the editor's GR lanes read the engine's PER-CHANNEL atomics and must
+draw the geometry those atomics were filled under, whereas JUCE's accessor answers a different
+question — the layout the host may be moving TO. `pubOutChannels` is one relaxed `int`, stored at
+construction, from `numChannelsChanged` (which JUCE calls from `audioIOChanged`, i.e. **on the
+writer's own thread**, so a layout change with no re-prepare is covered), and from `prepareToPlay`.
+It sits on `THREADING_POLICY`'s existing Meters → GUI row, whose writer set already includes
+`prepareToPlay` on the host thread — not a new cross-thread path, and not a gate item. Pinned by
+`ki017c`.
+
+**THE prepareToPlay PUBLICATION LAG, audited in the same round and ACCEPTED as a bounded
+transitional state.** `AnabasisEngine::prepare` rewinds both spectrum rings at the TOP of its body,
+and the prepared pair is republished only after it returns — so the window is nearly all of
+`engine.prepare` (milliseconds, the eight oversampler constructions), not the gap between two
+adjacent statements. The rewind happens on EVERY prepare, because `engine.prepare` is called
+unconditionally; only the pair's republication is gated on the pair actually changing.
+**The order is load-bearing and must not be "tidied".** Publishing the pair first would put a full
+ring of old-rate audio opposite the NEW rate for that whole window — the wrong-frequency artefact the
+rewind exists to remove, produced on every vblank rather than as a skew. The current order puts an
+EMPTY ring opposite the OLD rate, and every state a reader can reach in the window is
+self-consistent. Per reader: `GrHistoryView` has no exposure at all — it reads the pair from inside
+the same epoch bracket as the entries, so the two move together by construction; `SpectrumView`
+reads an empty ring and (since round 7) floors its trace; `CurveView` can draw the EQ response at the
+previous rate for the duration of `engine.prepare`, which is a bounded correct-but-late frame. The
+invariant, stated for the next reader: **a GR frame never maps one configuration's entries through
+another's time base, and the price is that non-ring readers may lag by one reconfiguration.**
 
 Evidence [Verified]:
 - Source: `src/gui/SpectrumView.cpp` (`paint`, the axis mapping) and `src/gui/CurveView.cpp`
@@ -1150,10 +1177,51 @@ Evidence [Verified]:
   `paintComponent`), read at the pinned 9.0.1
 - Worklog: `worklogs/2026-09-02-ki015-scopebuffer-payload.md`
 
-### KI-018 — A spectrum reset can leave the previous trace on screen for one or more ticks (2026-09-02)
+### KI-018 — A spectrum reset can leave the previous trace on screen for one or more ticks (2026-09-02) — **REPAIRED except for one corner, round 7**
+
+> **⟳ RETAINED AND NARROWED, not closed.** Round 7 repaired the case this entry describes and, in
+> doing so, found that **both halves of the bound written below are wrong**. The corrections matter
+> more than the patch:
+>
+> * **The window is not "one atomic's visibility latency, sub-microsecond in practice".** The
+>   dominant case is an ordinary INTERLEAVING, not a visibility one: the host thread is preemptible
+>   between `reset()`'s two stores, and every reader tick inside that window saw the rewind without
+>   the announcement. Worst case is therefore a scheduling quantum — tens of milliseconds under load
+>   — not a store drain. (The typical case does remain store visibility; it is the worst case that
+>   was mis-stated.) And `[atomics.order]`'s "reasonable amount of time" is a *should*, so even the
+>   typical bound is "finite, not normatively guaranteed".
+> * **The artefact was SMALLER than stated, in the other direction.** "Drawn against the new rate's
+>   bin mapping" is true only after the prepared pair republishes, which happens later still (see
+>   the prepareToPlay note in KI-017) and only when the rate actually changed. Throughout the
+>   interleaving window the pair the view reads is the OLD one, so the held trace is drawn at the
+>   rate it was captured at — self-consistent, and bit-for-bit the frozen-analyser behaviour KI-007
+>   item 6 already ships deliberately.
+> * **"The repairs are larger than the defect" was true of the two repairs this entry considered and
+>   false of the one it never considered.** No synchronisation change was needed. The reader already
+>   loads BOTH facets every tick — `resetGeneration()` and `writeCount()` — and simply keyed its
+>   decision on one of them. `SpectrumView::resetObserved` now takes both, and `analyse` floors the
+>   trace when `readLatest` hands back zero frames (which is equivalent to "the index I acquired was
+>   0", reachable only from construction or a reset). Message-thread only: no new atomic, no new
+>   ordering, nothing on the audio path, `ScopeBuffer` untouched.
+> * **The packed-word recommendation below is withdrawn.** Packing (generation, index) into one
+>   64-bit atomic forces the frame counter below 64 bits; at 32 it wraps in ~25 hours at 48 kHz and
+>   would then FABRICATE a reset, and `writeCount()`'s monotone `uint64_t` total is a published
+>   contract with tests on it. A 128-bit atomic is not reliably lock-free and would be stored by
+>   `pushBlock` on the audio thread. If the corner below is ever taken, it needs a fresh design pass,
+>   not this entry's suggestion.
+> * **A trap, named so nobody tries it:** swapping `reset()`'s two stores so the generation is
+>   bumped first INVERTS the skew and destroys the invariant that already held — a reader acquiring
+>   the new generation could then read a pre-reset index.
+>
+> **WHAT REMAINS, and it is why this entry is retained.** One corner survives: a reset whose refill
+> reaches EXACTLY the previously observed count while the generation bump is still invisible. Then
+> the count term is silent (equal, not lower), the generation term is silent, the idle test matches,
+> and the tick does nothing. It is the equal-count case in a new place — the same shape 0.2.7 and
+> round 2 each met — and no test pins it, because it cannot be staged deterministically.
 
 **Severity:** Low
-**Status:** Investigated and **proven bounded — not a broken invariant, deliberately not repaired**
+**Status:** **Repaired round 7 except the equal-count corner above; retained and narrowed.**
+(Originally: investigated and proven bounded, deliberately not repaired.)
 **Affects:** every platform; the spectrum overlay only.
 
 Raised as a review finding that a reset overlapping `readLatest` lets "the previous spectrum survive

@@ -96,7 +96,28 @@ void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
 {
     const int got = ring.readLatest (scratchL.data(), scratchR.data(), kSize);
     if (got <= 0)
+    {
+        // A ZERO-LENGTH READ IS ITSELF A RESET ANNOUNCEMENT (round 7), and this
+        // is the one place the rewind is observable through the load that
+        // actually drives the display. `readLatest` clamps to
+        // `min (acquired index, kSize)`, so `got == 0` is EQUIVALENT to "the
+        // index I acquired was 0" — reachable only from construction or from
+        // `reset()`. The caller's `resetObserved` cannot see this case when the
+        // reset lands between its own `writeCount()` load and this one: the
+        // count it compared was the pre-reset value, so it stayed silent while
+        // this read came back empty. Flooring here is what stops the reader
+        // holding two mutually inconsistent facts and acting on neither.
+        //
+        // No guard is needed and none is wanted. The construction arm reaches
+        // this branch with `smoothedDb` already at the floor, so the fill is a
+        // no-op there; and this is NOT the "should an idle analyser decay?"
+        // question (`KNOWN_ISSUES` KI-007 item 6), which stays exactly as it
+        // was: an idle ring returns a FULL window of stale frames and never
+        // reaches this branch at all, and the idle case early-returns in `tick`
+        // before `analyse` is called.
+        std::fill (smoothedDb.begin(), smoothedDb.end(), -120.0f);
         return;
+    }
 
     std::fill (fftData.begin(), fftData.end(), 0.0f);
     const int off = kSize - got;                          // zero-pad a short read
@@ -133,8 +154,10 @@ void SpectrumView::tick (double dt)
     // remove. The reader owns its smoothed copy, so the reader must drop it;
     // the ring cannot do it from the other side.
     //
-    // This used to key on `writeCount()` going BACKWARDS, and that predicate is
-    // weaker than the guarantee the comment claimed. It holds only while the
+    // This used to key on `writeCount()` going BACKWARDS *alone*, and that
+    // predicate is weaker than the guarantee the comment claimed. (Round 7
+    // re-admitted it as a SECOND sufficient condition beside the generation —
+    // see `resetObserved`. What follows is why it cannot be the only one.) It holds only while the
     // observed count is still below the one the last tick stored: let the
     // producer republish past that value between two ticks — one tick delayed
     // past ~1 s of audio, a suspended message thread, a debugger stop — and the
@@ -175,8 +198,13 @@ void SpectrumView::tick (double dt)
         && gi0 == shownInGen && go0 == shownOutGen)
         return;                                           // idle: nothing new
 
-    const bool resetIn  = gi0 != shownInGen;
-    const bool resetOut = go0 != shownOutGen;
+    // Both facets, both rings — see `resetObserved`. Before round 7 this keyed
+    // on the generation ALONE, so a reader that had already observed the index
+    // rewind but not yet the generation bump held the previous spectrum on
+    // screen and, having committed `shownInCount = 0`, then satisfied the idle
+    // test below on every subsequent tick and stopped looking.
+    const bool resetIn  = resetObserved (gi0, shownInGen,  ci, shownInCount);
+    const bool resetOut = resetObserved (go0, shownOutGen, co, shownOutCount);
 
     // Only on the reset EDGE, deliberately. This is not the "should an idle
     // analyser decay to the floor?" question — that is the early return above,

@@ -141,6 +141,17 @@ public:
     // compares against its own copy has no such window: any reset between two
     // observations changes it, however far the index has since travelled.
     //
+    // WHAT THAT RETIREMENT DID AND DID NOT SAY (clarified round 7, because the
+    // wording above reads as "the count is useless" and it is not). The
+    // argument is an INSUFFICIENCY one: the count alone can MISS a reset. It is
+    // not a soundness argument, and the converse still holds — a count strictly
+    // BELOW one the same reader previously observed is PROOF of a reset, since
+    // this index only ever decreases here. `SpectrumView::resetObserved`
+    // therefore takes the count as a SECOND SUFFICIENT condition beside the
+    // generation, which fires earlier when a reader observes this rewind before
+    // the bump below. The generation remains the complete detector; the count is
+    // never a replacement for it.
+    //
     // Published AFTER the rewind, with release, so a reader that has ACQUIRED
     // the new generation cannot then read the pre-reset index. The opposite
     // skew (new index, old generation) is possible and is why the reader

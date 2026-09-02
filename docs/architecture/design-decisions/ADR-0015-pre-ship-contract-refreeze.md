@@ -250,7 +250,7 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
 - `src/PluginParameters.cpp:303` — `ceiling`, default −0.1, mode-aware value text
 - `src/PluginParameters.cpp:377` — `truePeakMode`, default off
 - `src/PluginParameters.h:93` — `CeilingUnitSource` (the unit source and its fallback)
-- `src/PluginProcessor.h:111` · `src/PluginProcessor.cpp:25-26` — the holder's placement and wiring
+- `src/PluginProcessor.h:115` · `src/PluginProcessor.cpp:25-26` — the holder's placement and wiring
 - `src/InternalState.h` — `setDefaults()` (nine `int_*` properties; `tpMeterOn` false), and
   `replaceFrom`'s defaults-first overlay (item 4's migration)
 - `src/dsp/EngineParameters.h:79` — the POD's `ceilingDbTp`/`truePeakMode` seeds

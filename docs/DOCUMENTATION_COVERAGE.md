@@ -150,8 +150,46 @@ read from the paint path. The third read — `PluginEditor`'s channel count — 
 equivalent and stays open. `GrHistoryBuffer::prepared()`'s contract comment was amended in the same
 diff, because the fix adds callers that legitimately read it outside the epoch bracket.
 
-**Suites after all four review rounds, the KI-015 follow-up and round 6: `AnabasisTests` 307 +
-`AnabasisStateTests` 1006 = 1313**, one
+**Round 7 closed the last review finding and both concurrency follow-ups, and its most useful output
+is a set of corrections to what round 6 recorded.** (1) **The stale-spectrum residual is FIXED.** The
+round was asked to separate two invariants: "no pre-reset audio committed as post-reset data"
+(established, untouched) from "no pre-reset VISUAL result displayed after the reset is observable"
+(this round's subject, and it did not hold). A reset is TWO stores and the reader already loads BOTH
+facets every tick — it simply keyed its decision on one, so a reader that saw the rewind before the
+bump held the previous spectrum and, having committed a zero count, then matched the idle test
+forever after. **The residual was a choice, not an inherent floor**, which is what unseated KI-018's
+"the repairs are larger than the defect": true of the two repairs it considered, false of the one it
+never considered. The fix is message-thread only — a pure static `SpectrumView::resetObserved` taking
+both facets, plus a floor when `readLatest` returns zero frames — with no new atomic, no ordering
+change and `ScopeBuffer` untouched. **Both halves of KI-018's stated bound were wrong** and are
+corrected in the entry: the dominant window is an ordinary interleaving (worst case a scheduling
+quantum, not a store drain), and the artefact was SMALLER than claimed, because the prepared pair is
+still the old one throughout, so the held trace is self-consistent rather than mapped through a new
+rate. KI-018's own packed-word recommendation is **withdrawn** (it forces the frame counter below 64
+bits and would fabricate a reset on wrap), and a trap is named: swapping `reset()`'s two stores
+inverts the skew and destroys the invariant that already held. KI-018 is **retained and narrowed** to
+one corner — a refill reaching exactly the previous count with the bump still invisible — which no
+test pins, and the entry says so. `analyse`'s floor ships under the **ADR-0025 exception** with its
+four required disclosures rather than a claim of compliance. (2) **KI-017's third read is FIXED.**
+The editor's timer read JUCE's plain `cachedTotalOuts`, written by `audioIOChanged` on the host's
+threads with no lock in any wrapper — a genuine race with no mechanism to prove it safe. It could not
+be redirected onto the prepared pair, so it needed a publication; the justification is not "the field
+is plain" but that the GR lanes must draw the geometry their per-channel atomics were filled under,
+which is a different question from the layout the host is moving to. One relaxed `int`, stored at
+construction, from `numChannelsChanged` (**which JUCE calls on the writer's own thread**) and from
+`prepareToPlay`, on `THREADING_POLICY`'s existing Meters → GUI row — not a new path. Drift reported
+and corrected on the way: a comment claiming `isBusesLayoutSupported` "pins 2×2" stopped being true
+at 0.1.2. (3) **The prepareToPlay publication lag is ACCEPTED as a bounded transitional state.** The
+window is nearly all of `engine.prepare`, not the gap between two statements, and the rewind happens
+on every prepare while only the pair's republication is gated — both corrections to round 6's text.
+**The order is load-bearing**: publishing the pair first would put a full ring of old-rate audio
+opposite the new rate on every vblank of the window. `GrHistoryView` has no exposure because it reads
+the pair from inside the same epoch bracket as the entries — the round's own first draft said it
+"reads nothing `engine.prepare` writes", which is false and is corrected. **ADR-0011's fourth
+amendment is ACCEPTED and its gate CLEARED.**
+
+**Suites after all four review rounds, the KI-015 follow-up and rounds 6–7: `AnabasisTests` 307 +
+`AnabasisStateTests` 1017 = 1324**, one
 new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 59 checks) pinning invariants
 rather than an absence of races — which index a frame may read, which value pairs it may draw, which
 states it may park on, that the validation path is built on synchronised publication state, that a

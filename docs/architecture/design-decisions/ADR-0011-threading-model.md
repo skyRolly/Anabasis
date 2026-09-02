@@ -292,11 +292,14 @@ no atomics and no possibility of interleaving with a user gesture.
   > the residual is not benign in the way "one-frame artefact" suggests: the frame is **accepted and
   > drawn carrying entries the producer already overwrote**, not dropped.
   >
-  > ⚠️ **RAISED AT THE ARCHITECTURE REVIEW GATE AND HELD — NOT SELF-RULED.** It adds a new atomic
-  > ordering on the audio path (`ARCHITECTURE_REVIEW_GATE.md`'s "Thread Model change" row) and it
-  > supersedes a paragraph inside a block the owner has already accepted, which `AI_AGENT_POLICY.md`
-  > makes a Hard Stop on DETECTION, whatever the agent thinks of the severity. The owner's ruling is
-  > owed; the action is the same either way — flag, hold, do not merge on a green build.
+  > ✅ **ACCEPTED BY THE OWNER 2026-09-02 — THE ARCHITECTURE REVIEW GATE IS CLEARED.** How it
+  > arrived stays in the record. It adds a new atomic ordering on the audio path
+  > (`ARCHITECTURE_REVIEW_GATE.md`'s "Thread Model change" row) and it supersedes a paragraph inside
+  > a block the owner had already accepted, which `AI_AGENT_POLICY.md` makes a Hard Stop on
+  > DETECTION whatever the agent thinks of the severity — so it was raised, flagged in the pull
+  > request, and held rather than self-ruled. The owner has now ruled: the amendment is accepted as
+  > written, superseding the second amendment's closing paragraph, and the approval is not an
+  > instruction to revert the fence. Nothing further is pending on this record.
   >
   > **The defect.** `push` stored its payload relaxed and then released the INDEX. A release store
   > orders what precedes it, never what follows, so push #P's payload stores could become visible to

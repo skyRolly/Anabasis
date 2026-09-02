@@ -4642,6 +4642,64 @@ static void testARewoundSpectrumRingDropsThePreviousTrace()
     view.tick (0.05);
     check (*std::max_element (inDb.begin(), inDb.end()) < before - 30.0f,
            "spectrumReset: a reset is caught even when the count never goes backwards");
+
+    // -- resetObserved (round 7). A `ScopeBuffer` reset is TWO stores — the
+    //    index rewind, then the generation bump — and a reader can observe
+    //    either first. Keying on the generation ALONE left a reader that had
+    //    seen the rewind but not the bump holding the previous spectrum on
+    //    screen, and (having committed `shownInCount = 0`) satisfying the idle
+    //    test on every tick after that, so it stopped looking. The rule now
+    //    takes both facets. The truth table is the discriminator: a race
+    //    cannot be staged, but the DECISION can be pinned, which is why the
+    //    rule is a pure static (`docs/procedures/TESTING.md`).
+    {
+        using V = SpectrumView;
+        check (! V::resetObserved (7, 7, 100, 100),
+               "resetObserved: a steady tick is not a reset");
+        check (! V::resetObserved (7, 7, 900, 100),
+               "resetObserved: a FORWARD count is not a reset");
+        check (V::resetObserved (8, 7, 900, 100),
+               "resetObserved: the generation still catches a reset the count ran past (0.2.7's finding, re-pinned)");
+        check (V::resetObserved (7, 7, 40, 100),
+               "resetObserved: a BACKWARDS count is a reset even when the generation bump is not visible yet");
+        check (! V::resetObserved (0, 0, 0, 0),
+               "resetObserved: the first tick, against the initial shown count, is not a reset");
+        check (! V::resetObserved (0, 0, 5000000, 0),
+               "resetObserved: a view attached to an already-running processor is not a reset");
+        // Rows 1 and 5 are what fail a `<=`/`<` mis-transcription — NOT row 2,
+        // which is false under both spellings. Row 4 is the revert mutant's
+        // grave: the pre-round-7 rule (`gen != shownGen`) answers false there
+        // and passes every other row.
+    }
+
+    // -- ki017c (round 7). THE OUTPUT CHANNEL COUNT IS PUBLISHED. The editor's
+    //    timer read `getTotalNumOutputChannels()`, which returns JUCE's plain
+    //    `cachedTotalOuts` — written by `AudioProcessor::audioIOChanged` on
+    //    whichever thread the host reconfigures on. The publication happens on
+    //    that same writer's thread (`numChannelsChanged`, which JUCE calls from
+    //    `audioIOChanged`) plus at construction and at prepare, so the editor's
+    //    read cannot race it. These assertions do not compile against the old
+    //    code, which has no such accessor — the same blunt kill `grSync` and
+    //    `specSync` carry.
+    {
+        AnabasisAudioProcessor p2;
+        check (p2.preparedOutputChannels() == p2.getTotalNumOutputChannels()
+                   && p2.preparedOutputChannels() >= 1,
+               "ki017c: the count is seeded at construction, not left at a fabricated default");
+        p2.setPlayConfigDetails (1, 1, 48000.0, 512);
+        check (p2.preparedOutputChannels() == 1,
+               "ki017c: a layout change with NO re-prepare still republishes — JUCE calls numChannelsChanged from audioIOChanged");
+        p2.prepareToPlay (48000.0, 512);
+        check (p2.preparedOutputChannels() == 1,
+               "ki017c: …and a prepare publishes the count the engine was prepared with");
+        p2.setPlayConfigDetails (2, 2, 48000.0, 512);
+        p2.prepareToPlay (48000.0, 512);
+        check (p2.preparedOutputChannels() == 2,
+               "ki017c: back to stereo, through both publication points");
+        check (decltype (p2.preparedOutputChannels()) (0) == 0
+                   && std::atomic<int>::is_always_lock_free,
+               "ki017c: the published count is a lock-free atomic — the editor's read never takes a lock");
+    }
 }
 
 // The graph-well views are interactive over their corner mode chips and INERT

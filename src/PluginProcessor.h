@@ -51,6 +51,10 @@ public:
 
     // -- AudioProcessor -----------------------------------------------------
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    // JUCE calls this from `audioIOChanged`, i.e. ON THE THREAD THAT WRITES the
+    // bus layout — which is what makes it the race-free place to publish the
+    // channel count for the editor. See `preparedOutputChannels()`.
+    void numChannelsChanged() override;
     // Empty in every shipping configuration. It has a body in the .cpp only so
     // that the ANABASIS_STAGE_TRACE diagnostic build has somewhere to print
     // from — a call the host makes AFTER processing stops, which is the one
@@ -558,6 +562,27 @@ public:
     // ONCE into a local, because a `x() > 0.0 ? x() : fallback` spelling reads
     // the atomic twice and can mix two configurations in one expression.
     double preparedSampleRate() const noexcept { return grHistoryRing.prepared().rate; }
+
+    // THE OUTPUT CHANNEL COUNT, PUBLISHED (KI-017's third read, round 7). The
+    // editor's timer used `getTotalNumOutputChannels()`, which returns JUCE's
+    // plain `cachedTotalOuts` — written by `AudioProcessor::audioIOChanged` on
+    // the host's reconfiguring thread, with no lock in any wrapper (the VST3
+    // wrapper's own comment records hosts calling `setBusArrangements` inside
+    // the `prepareToPlay` call stack). A plain read there is a data race.
+    //
+    // It also answered a slightly different question than the caller wanted.
+    // The GR lanes read the engine's PER-CHANNEL atomics and must draw the
+    // geometry those atomics were filled under; the host's live bus count is
+    // the geometry the host is moving TO. Publishing at the two moments the
+    // engine's own channel count is decided — construction and every
+    // `numChannelsChanged` — makes the published value answer the caller's
+    // question and removes the race in the same move. Relaxed: it orders
+    // nothing, carries no payload, and a one-tick-stale lane count draws the
+    // geometry it would have drawn a frame earlier. This sits on
+    // `THREADING_POLICY`'s existing Meters → GUI row, whose writer set already
+    // includes `prepareToPlay` on the host thread; it is not a new path.
+    int preparedOutputChannels() const noexcept
+    { return pubOutChannels.load (std::memory_order_relaxed); }
     const anabasis::ScopeBuffer& spectrumInRing()  const noexcept { return engine.spectrumInRing(); }
     const anabasis::ScopeBuffer& spectrumOutRing() const noexcept { return engine.spectrumOutRing(); }
 
@@ -636,6 +661,10 @@ private:
     // to `requestMeterReset`'s contract rather than to the rolling windows.
     float dbTpMaxHold = -144.0f, samplePeakMaxHold = -144.0f;
     std::atomic<bool> meterResetPending { false };
+    // See `preparedOutputChannels()`. Seeded in the constructor and restored
+    // by `numChannelsChanged`, both of which run on whichever thread owns the
+    // layout at that moment — never concurrently with themselves.
+    std::atomic<int>   pubOutChannels { 2 };
     std::atomic<float> pubLufsM { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsS { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsI { anabasis::LoudnessMeter::kSilentLufs },
