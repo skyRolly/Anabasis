@@ -57,18 +57,45 @@ void GrHistoryView::visibilityChanged()
 void GrHistoryView::tick (double dt)
 {
     const auto& ring = processor.grHistory();
-    const auto head = ring.available();
-    // PARKED: no new entry and the smoothed head already sits one whole
-    // entry ahead of it (`smoothedHead`'s cap), so nothing this frame could
-    // draw differs from the last one — the pre-0.2.8 idle gate, repaint on
-    // new data only, is back in force. A stopped transport therefore costs
-    // at most one entry period of extra frames after its last block, never
-    // a paint per vblank.
-    if (parked (head, shownHead, smoothHead))
+    // The epoch is sampled BEFORE the index, so a clear that lands between the
+    // two is attributed to the newer epoch and re-anchors on the next tick
+    // rather than being missed: the tick's job here is only to decide whether
+    // the history is the same history, and "not sure" must mean "not parked".
+    const auto epoch = ring.resetEpoch();
+    const auto head  = ring.available();
+    const auto shown = shownHead.load (std::memory_order_relaxed);
+    // PARKED: the same history, no new entry, and the smoothed head already
+    // one whole entry ahead of it (`smoothedHead`'s cap) — so nothing this
+    // frame could draw differs from the last one and the pre-0.2.8 idle gate,
+    // repaint on new data only, is back in force. A stopped transport costs
+    // at most one entry period of extra frames after its last block, never a
+    // paint per vblank. The EPOCH is what makes "the same history" mean the
+    // contents rather than the count; see `parked`.
+    if (parked (head, shown, smoothHead.load (std::memory_order_relaxed), epoch, shownEpoch))
         return;
-    smoothHead = smoothedHead (smoothHead, head, dt,
-                               entryPeriod (processor.getSampleRate(), processor.getBlockSize()));
-    shownHead  = head;
+
+    // A CLEAR RESTARTS THE TIMELINE, so the phase restarts with it: the ring
+    // rewinds its write index to 0, and carrying the old sub-entry offset
+    // across that would draw the first frames of the new history one
+    // entry-pitch out. This is the same re-anchor `smoothedHead` performs for
+    // a rewound head, reached here by the epoch instead — which is the only
+    // way to see it when the refill has already returned the count to where
+    // it was.
+    const double smoothed = smoothedHead (smoothHead.load (std::memory_order_relaxed), head, dt,
+                                          entryPeriod (processor.getSampleRate(),
+                                                       processor.getBlockSize()),
+                                          epoch != shownEpoch);
+
+    // Publish for the painting thread. `smoothHead` FIRST so a paint landing
+    // between the two stores pairs a fresh phase with the older head, which
+    // `frameFor` resolves to `min (smoothHead, head + 1)` — the frame this
+    // tick is about to draw, never one beyond it. The reverse order would let
+    // a frame pair the new head with the previous phase, which is legal too
+    // (also non-decreasing); the order is fixed here so the reasoning has one
+    // case rather than two.
+    smoothHead.store (smoothed, std::memory_order_relaxed);
+    shownHead.store (head, std::memory_order_relaxed);
+    shownEpoch = epoch;
     repaint();
 }
 
@@ -103,9 +130,18 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     const auto epoch0 = ring.resetEpoch();
     if ((epoch0 & 1u) != 0u)
         return;                                     // clear in flight: skip the frame
-    // The head the TICK computed the phase for, where it is safe to draw
-    // (`paintHead`): the live index is read for the rewind check only.
-    const int64_t head = paintHead (shownHead, ring.available());
+
+    // The LIVE write index — where the producer is now — and the frame the
+    // two published scalars describe. The live index has two jobs and they
+    // are different: `frameFor` uses it to decide whether the tick's head is
+    // still usable (`paintHead`), and `readFloor` uses it to bound which
+    // slots this batch may touch. Reading it ONCE keeps both answers derived
+    // from the same observation.
+    const int64_t live  = ring.available();
+    const auto    frame = frameFor (shownHead.load (std::memory_order_relaxed),
+                                    smoothHead.load (std::memory_order_relaxed),
+                                    live);
+    const int64_t head  = frame.head;
 
     // The clamp lives in `windowEntries` (header) so it is testable without a
     // graphics context; `kSize - 1` and the reason for it are stated there.
@@ -153,12 +189,19 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // ~0.5–1 px every frame instead of standing still for two and lurching
     // a whole pitch on the third. The `phase` half is why this frame reads
     // `smoothHead`, which `tick` advances.
-    const double phase = phaseOf (smoothHead, head);
-    const auto nb = buckets (head, want, cols, phase);
-    // The READ window is `nb.window` / `nb.first` — bucket-aligned, ring-safe
-    // by the `kSize − 1` cap, both argued in `buckets`. Every peek below
-    // goes through `e0 = max (first, …)`.
-    const int64_t first = nb.first;
+    const auto nb = buckets (head, want, cols, frame.phase);
+
+    // The read window is `nb.window` / `nb.first` — bucket-aligned, argued in
+    // `buckets` — held ABOVE the ring floor the producer's live position
+    // imposes (`readFloor`, the 0.2.8 review's finding 1). The floor binds
+    // only when the window is saturated AND the drawn head is stale, and it
+    // moves no geometry: `bucketX` and `kFirst` never see it, only which
+    // entries the oldest bucket aggregates.
+    const int64_t first = juce::jmax (nb.first, readFloor (live));
+    if (first >= head)
+        return;                                     // the producer has lapped everything this
+                                                    // frame could draw; blank is the honest
+                                                    // answer and the next tick re-derives
     juce::Path wave, gr;
     bool started = false;
     float lastX = area.getX(), lastWy = 0.0f, lastGy = 0.0f;
@@ -236,9 +279,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         // filter length as every completed vertex, coinciding with the bucket
         // the instant it completes, so the tip no longer pops to a single
         // block's value at every bucket start.
-        const int64_t e0 = k == nb.kHead ? tipFirst (first, head, nb.stride)
-                                         : juce::jmax (first, k * nb.stride);
-        const int64_t e1 = juce::jmin (head, (k + 1) * nb.stride);
+        const auto [e0, e1] = bucketReads (nb, k, first, head);
         if (e0 >= e1)
             continue;                               // unreachable by construction (see the
                                                     // header); kept because an empty bucket
@@ -291,8 +332,13 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         lastGy = gy;
     }
 
-    // The batch raced a reset: throw the frame away, the next tick re-derives.
-    if (ring.resetEpoch() != epoch0)
+    // THE BATCH LOST A RACE — either half of the reader contract (banner).
+    // A moved epoch means a clear ran through it; a producer that has advanced
+    // past this batch's floor means the audio thread has lapped the oldest
+    // slots the batch peeked, so those values may have been overwritten while
+    // they were read. Both discard the frame and let the next tick re-derive;
+    // one dropped frame is the seqlock bargain the ring's own header states.
+    if (ring.resetEpoch() != epoch0 || first < readFloor (ring.available()))
         return;
     if (! started)
         return;

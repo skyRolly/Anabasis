@@ -6278,12 +6278,14 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                        && std::abs (V::phaseOf (107.0, 100) - 1.0) < 1.0e-12,
                    "grPhase: the phase is the smoothed head's fraction past the real one, clamped to [0, 1]");
 
-            // The tick's idle gate: parked only with NO new entry and the
-            // estimate at its cap; a ramp, an arrival or a rewind all draw.
-            check (V::parked (100, 100, 101.0) && V::parked (100, 100, 101.5),
+            // The tick's idle gate: parked only with the SAME history, no new
+            // entry and the estimate at its cap; a ramp, an arrival, a rewind
+            // or a clear all draw. The epoch half is pinned in
+            // `testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`.
+            check (V::parked (100, 100, 101.0, 4, 4) && V::parked (100, 100, 101.5, 4, 4),
                    "grPhase: a stopped transport parks once the smoothed head reaches its cap");
-            check (! V::parked (100, 100, 100.7) && ! V::parked (101, 100, 101.0)
-                       && ! V::parked (3, 100, 101.0),
+            check (! V::parked (100, 100, 100.7, 4, 4) && ! V::parked (101, 100, 101.0, 4, 4)
+                       && ! V::parked (3, 100, 101.0, 4, 4),
                    "grPhase: …and a ramping estimate, a new entry or a rewound head each un-park it");
             // The head a frame draws is the one the tick computed the phase
             // for — never a newer live index, always the live one before the
@@ -6404,6 +6406,281 @@ static void testGrHistoryAndTheMeterLanesShareOneReductionSpan()
     check (firstAccent > 0
                && std::abs (((float) firstAccent - wellX) / wellW - 0.5f) < 0.03f,
            "grMeter: half the shared span fills half the lane — the history and the meter agree by construction");
+}
+
+// ---------------------------------------------------------------------------
+// 0.2.8 REVIEW — the three reader/publisher findings, which are correctness
+// rather than appearance and so are pinned apart from the geometry above.
+//
+//  1. RING SAFETY. `paintHead` deliberately draws the head the TICK saw, so
+//     the producer may already have moved past it. The read window was
+//     derived from that stale head, which spent the ring's one-slot margin on
+//     the staleness: at a SATURATED window one block arriving between the
+//     tick's read and the paint's read put the oldest peek exactly on the
+//     slot the audio thread was filling. `readFloor` measures the margin
+//     against the LIVE index instead.
+//  2. PUBLICATION. `shownHead` and `smoothHead` are written by the tick on
+//     the message thread and read by the paint on whichever thread paints —
+//     the GL render thread on macOS/Windows. As plain scalars that was a data
+//     race; they are relaxed atomics now, and `frameFor` is the argument that
+//     reading them as two independent scalars is safe by VALUE.
+//  3. RESET IDENTITY. The entry count is not the identity of the contents: a
+//     clear followed by a refill to the same count presented the tick with
+//     `head == shownHead` over entirely new data, and the gate parked on it.
+//
+// Every assertion here is deterministic and single-threaded — a race cannot be
+// staged reproducibly, so what is pinned is the INVARIANT that makes the race
+// impossible (which index a frame may read, which value pairs it may draw,
+// which states it may park on) rather than an observed absence of one.
+static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
+{
+    using V    = GrHistoryView;
+    using Ring = anabasis::GrHistoryBuffer;
+    const int64_t kMaskI = (int64_t) Ring::kMask;
+    const int64_t kLap   = (int64_t) Ring::kSize;
+
+    // -- 1a. The invariant, swept. The bound every peek must satisfy is
+    //        `live - n <= kSize - 1`: `push` fills slot `live & kMask` and
+    //        publishes afterwards, so an index a full lap or more behind the
+    //        live one aliases the slot being written. Swept over a saturated
+    //        configuration at several heads (including stride boundaries and
+    //        the fills either side) and every staleness a frame can carry.
+    {
+        const int    cols = 604;                       // the Advanced well
+        const auto   want = V::windowEntries (192000.0, 32);
+        check (want == (int64_t) Ring::kSize - 1,
+               "grRace: (premise) 192 kHz / 32 saturates the read window — the only case with no spare slot");
+
+        bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false;
+        int64_t worstUnfixed = 0;
+        for (const int64_t settled : { want * 3, want * 3 + 1, want * 3 + 6, want * 3 + 7, want * 5 + 4 })
+            for (int64_t behind = 0; behind <= 8; ++behind)
+            {
+                const int64_t drawn = settled;             // what the tick published
+                const int64_t live  = settled + behind;    // where the producer is now
+                const auto nb = V::buckets (drawn, want, cols, 0.5);
+
+                // The PRE-FIX window, kept here as the thing that must fail:
+                // this is the expression the review found, and a regression
+                // that restored it would make the next line false.
+                unfixedRaces |= (live - nb.first > (int64_t) Ring::kSize - 1);
+                worstUnfixed = juce::jmax (worstUnfixed, live - nb.first);
+
+                const int64_t first = juce::jmax (nb.first, V::readFloor (live));
+                floorHolds &= (live - first <= (int64_t) Ring::kSize - 1);
+                if (first >= drawn)
+                    continue;                              // the paint blanks the frame here
+                for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
+                {
+                    const auto r = V::bucketReads (nb, k, first, drawn);
+                    for (int64_t n = r.e0; n < r.e1; ++n)
+                    {
+                        everyReadInside &= (live - n < kLap);
+                        slotClear       &= ((n & kMaskI) != (live & kMaskI));
+                    }
+                }
+            }
+        check (unfixedRaces && worstUnfixed == (int64_t) Ring::kSize - 1 + 8,
+               "grRace: (premise) the pre-fix window DID reach a full lap behind the producer — one stale block was enough");
+        check (floorHolds,
+               "grRace: the read floor holds the oldest index inside one lap of the LIVE write index");
+        check (everyReadInside,
+               "grRace: …so every entry a frame peeks is inside that lap, at every staleness and every head");
+        check (slotClear,
+               "grRace: …and none of them aliases the slot the audio thread is filling right now");
+    }
+
+    // -- 1b. The same invariant against the REAL ring, so the bound is read
+    //        from the buffer's own kSize/kMask rather than restated here.
+    {
+        Ring ring;
+        for (int64_t i = 0; i < kLap + 250; ++i)
+            ring.push (-2.0f, 0.25f);                  // saturated: the ring has wrapped
+        const int64_t live    = ring.available();
+        const int64_t writing = live & kMaskI;         // the slot `push` fills next
+        const int     cols    = 604;
+        const auto    want    = V::windowEntries (192000.0, 32);
+
+        bool touchesWriteSlot = false;
+        int64_t reads = 0, oldest = live;
+        const int64_t drawn = live - 1;                // ONE block arrived between the two reads
+        const auto nb = V::buckets (drawn, want, cols, 0.0);
+        const int64_t first = juce::jmax (nb.first, V::readFloor (live));
+        for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
+        {
+            const auto r = V::bucketReads (nb, k, first, drawn);
+            for (int64_t n = r.e0; n < r.e1; ++n)
+            {
+                touchesWriteSlot |= ((n & kMaskI) == writing);
+                oldest = juce::jmin (oldest, n);
+                ++reads;
+            }
+        }
+        check (reads > kLap / 2 && ! touchesWriteSlot,
+               "grRace: a saturated real ring, one block stale, reads most of the buffer and never the write slot");
+        check ((drawn - nb.first) == want && oldest == V::readFloor (live) && oldest > nb.first,
+               "grRace: …and the clamp is what does it — the unclamped window starts one entry lower, on that slot");
+
+        // The degenerate end of the same rule: a producer that has lapped
+        // everything the frame would draw leaves nothing safe, and the paint
+        // blanks rather than reading overwritten slots.
+        check (V::readFloor (live + kLap) >= drawn,
+               "grRace: a producer that has lapped the drawn head leaves no readable entry — the frame blanks");
+    }
+
+    // -- 1c. NON-REGRESSION: the floor binds only when the window is saturated
+    //        AND the drawn head is stale. Everywhere else `first` is exactly
+    //        what it was, so no geometry and no read range moved.
+    {
+        struct Case { double sr; int bs; int cols; };
+        bool neverBinds = true, bindsWhenSaturatedAndStale = false;
+        for (const auto& c : { Case { 48000.0, 512, 904 }, Case { 48000.0, 1024, 904 },
+                               Case { 44100.0, 256, 904 }, Case { 48000.0, 2048, 904 },
+                               Case { 48000.0, 512, 604 }, Case { 192000.0, 32, 604 } })
+        {
+            const auto want = V::windowEntries (c.sr, c.bs);
+            const bool saturated = want == (int64_t) Ring::kSize - 1;
+            for (int64_t behind = 0; behind <= 3; ++behind)
+            {
+                const int64_t drawn = want * 3 + 5, live = drawn + behind;
+                const auto nb = V::buckets (drawn, want, c.cols, 0.25);
+                const bool binds = V::readFloor (live) > nb.first;
+                if (binds) bindsWhenSaturatedAndStale = true;
+                else       continue;
+                neverBinds &= (saturated && behind > 0);
+            }
+        }
+        check (neverBinds,
+               "grRace: the floor never binds except on a saturated window with a stale head — every other case draws what it drew");
+        check (bindsWhenSaturatedAndStale,
+               "grRace: …and it does bind there, so the sweep above is not vacuous");
+    }
+
+    // -- 2. PUBLICATION. The two scalars are read from the painting thread as
+    //       separate relaxed atomics, so a frame can pair either one's newer
+    //       value with the other's older one. What makes that safe is not
+    //       synchronisation but the VALUES: `frameFor` resolves any pairing to
+    //       `min (smoothHead, head + 1)`, which lies between two frames the
+    //       ramp itself produces, so the trace never jumps and never moves
+    //       rightward. Pinned across a realistic publication sequence — 1.5625
+    //       entries of smoothing per frame against 1 or 2 arriving entries,
+    //       the 48 kHz / 512 case on a 60 Hz display.
+    {
+        check (std::atomic<int64_t>::is_always_lock_free && std::atomic<double>::is_always_lock_free,
+               "grPair: the painting thread's reads are lock-free — the header asserts the same at compile time");
+
+        std::vector<std::pair<int64_t, double>> published;
+        {
+            int64_t head = 400;
+            double  smooth = 400.0;
+            for (int f = 0; f < 64; ++f)
+            {
+                head  += (f % 3 == 0) ? 2 : 1;                       // the 1-or-2 beat
+                smooth = V::smoothedHead (smooth, head, 1.0 / 60.0, 512.0 / 48000.0);
+                published.emplace_back (head, smooth);
+            }
+        }
+        const auto pos = [] (int64_t h, double sm)
+        {
+            const auto f = V::frameFor (h, sm, h);                   // live == h: the tick's own frame
+            return (double) f.head + f.phase;
+        };
+        bool inRange = true, monotoneCross = true, neverRightward = true;
+        for (size_t i = 0; i + 1 < published.size(); ++i)
+        {
+            const auto [h0, s0] = published[i];
+            const auto [h1, s1] = published[i + 1];
+            // Every pairing a torn read can produce, in both crossing orders.
+            const double a = pos (h0, s0), b = pos (h0, s1), c = pos (h1, s0), d = pos (h1, s1);
+            inRange       &= (a >= (double) h0 && a <= (double) h0 + 1.0
+                              && d >= (double) h1 && d <= (double) h1 + 1.0);
+            monotoneCross &= (a <= b + 1.0e-12 && b <= d + 1.0e-12
+                              && a <= c + 1.0e-12 && c <= d + 1.0e-12);
+            neverRightward &= (juce::jmin (b, c) >= a - 1.0e-12);
+        }
+        check (inRange,
+               "grPair: a frame's position is always within one entry of the head it draws");
+        check (monotoneCross,
+               "grPair: every stale/fresh pairing of the two published scalars lies between the two frames the ramp produces");
+        check (neverRightward,
+               "grPair: …so a torn read draws a frame the display was about to draw, never one it has already passed");
+        // The pairing that matters most: a paint landing between the two
+        // stores sees the NEW phase with the OLD head, which must resolve to
+        // the frame this tick is drawing and not one beyond it.
+        check (std::abs (pos (500, 501.4) - 501.0) < 1.0e-12 && std::abs (pos (501, 501.4) - 501.4) < 1.0e-12,
+               "grPair: a phase that has run past the old head caps at that head's own next frame");
+    }
+
+    // -- 3. RESET IDENTITY. The count cannot say whether the history is the
+    //       same history; the ring's epoch can, and already exists for the
+    //       paint's batch guard.
+    {
+        check (V::parked (250, 250, 251.0, 6, 6),
+               "grReset: (premise) an idle frame over the same history parks, as it always did");
+        check (! V::parked (250, 250, 251.0, 8, 6) && ! V::parked (250, 250, 251.0, 7, 6),
+               "grReset: the SAME entry count over a new epoch does NOT park — a clear is observable at equal count");
+        check (V::parked (250, 250, 251.0, 6, 6) && ! V::parked (250, 250, 250.4, 6, 6),
+               "grReset: …and the epoch does not disturb the ordinary gate — a ramping estimate still draws");
+        // The other half: the clear re-anchors the phase, which the index
+        // alone cannot ask for once the refill has restored the count.
+        const double period = V::entryPeriod (48000.0, 512);
+        check (std::abs (V::smoothedHead (250.9, 250, 0.5 * period, period, true) - 250.0) < 1.0e-12,
+               "grReset: a cleared history re-anchors the phase at 0 even though the head did not visibly rewind");
+        check (std::abs (V::smoothedHead (250.9, 250, 0.5 * period, period, false) - 251.0) < 1.0e-12,
+               "grReset: …and an ordinary frame at the same head and phase is untouched by that rule");
+
+        // The count really is ambiguous, measured on the real ring rather than
+        // argued: fill it, clear it, refill to exactly the same count.
+        Ring ring;
+        for (int i = 0; i < 250; ++i) ring.push (-1.0f, 0.5f);
+        const auto countBefore = ring.available();
+        const auto epochBefore = ring.resetEpoch();
+        ring.reset();
+        for (int i = 0; i < 250; ++i) ring.push (-9.0f, 0.9f);
+        check (ring.available() == countBefore && ring.resetEpoch() == epochBefore + 2,
+               "grReset: a clear plus a refill to the same count is INDISTINGUISHABLE by count and plain by epoch");
+        check (! V::parked (ring.available(), countBefore, (double) countBefore + 1.0,
+                            ring.resetEpoch(), epochBefore),
+               "grReset: …so the gate that would have parked on it repaints instead");
+        // …and the new contents are what a frame would now read, so the stale
+        // geometry cannot survive the repaint.
+        check (ring.peek (0).grDb < -5.0f && ring.peek (249).grDb < -5.0f,
+               "grReset: the refilled entries are the NEW ones — nothing of the old history is still readable");
+    }
+
+    // -- 4. The real paint path, through the atomics, on a populated ring:
+    //       it draws, and it draws the same thing twice from the same state.
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 400; ++b)
+        {
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                for (int i = 0; i < buf.getNumSamples(); ++i)
+                    buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (b * 512 + i)));
+            proc.processBlock (buf, midi);
+        }
+        check (proc.grHistory().available() == 400, "grPaint: (premise) the ring carries a history to draw");
+
+        GrHistoryView view (proc);
+        view.setBounds (0, 0, 300, 120);
+        const auto a = view.createComponentSnapshot (view.getLocalBounds(), false);
+        const auto b = view.createComponentSnapshot (view.getLocalBounds(), false);
+        int differing = 0, drawn = 0;
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+            {
+                const auto pa = a.getPixelAt (x, y);
+                if (pa != b.getPixelAt (x, y)) ++differing;
+                if (pa.getRed() > 128 && pa.getGreen() > 100) ++drawn;   // the accent trace
+            }
+        check (drawn > 100,
+               "grPaint: the paint path reads the published state and draws the trace");
+        check (differing == 0,
+               "grPaint: …and two frames from one state are identical — the reads are of settled values, not of a moving target");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7598,6 +7875,7 @@ int main (int argc, char** argv)
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
+        testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();

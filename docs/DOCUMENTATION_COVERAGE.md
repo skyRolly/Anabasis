@@ -6,7 +6,33 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.8 (2026-09-01)** — the GR history's scroll jitter (one owner field report).
+**Last updated:** for **0.2.8 (2026-09-01, review round 2026-09-02)** — the GR history's scroll
+jitter (one owner field report), and the three reader/publisher defects a second review found in
+the fix.
+
+**Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
+them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).
+(1) The frame derived the ring's one-slot safety margin from the head the TICK observed, which the
+audio thread may have moved past — at a saturated window one intervening block put the oldest peek
+on the slot being written. The margin is measured against the LIVE index now (`readFloor`), the
+read set is a pure `bucketReads`, and the batch re-checks the bound afterwards as it already
+re-checks the epoch. (2) `shownHead` and `smoothHead` were plain scalars written by the message
+thread and read by the GL render thread on macOS/Windows — a data race. Now relaxed
+`std::atomic`s, `static_assert`ed lock-free, and safe as a PAIR by value rather than by snapshot
+(`frameFor`). **That widens ADR-0027's Message → Painting row, so it is a gated Thread Model change
+and is filed as ADR-0038 `Proposed` — the Architecture Review Gate is NOT cleared.** (3) The idle
+gate keyed on the entry COUNT, so a clear that refilled to the same count parked on new data and
+kept the old trace; gate and phase re-anchor key on the ring's reset epoch now. Nothing on the audio
+thread changed — the ring's producer, published index and clear are byte-identical, and every fix is
+on the reading side. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged beyond the round below:
+**Threading / cross-thread path** (`THREAD_MODEL.md`, `THREADING_POLICY.md`, **ADR-0038**) and
+**New/changed test** (`TESTING.md`, this file).
+
+**Suites after the review round: `AnabasisTests` 301 + `AnabasisStateTests` 970 = 1271**, one new
+test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 26 checks) pinning invariants rather
+than an absence of races — which index a frame may read, which value pairs it may draw, which states
+it may park on. Five further mutants, each killing a disjoint set: the pre-fix read window 7, the
+read clamp dropped 4, the count-only gate 2, the phase re-anchor 1, the phase's upper clamp 2.
 
 **Scope of the 0.2.8 round.** One owner report — *"the newly drawn portion of the GR history to
 the right of the yellow line is jittery"* — and one display fix. **No DSP change, no parameter

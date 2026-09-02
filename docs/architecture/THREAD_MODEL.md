@@ -99,6 +99,20 @@ sanitizer-reportable one on exactly the two platforms where the context attaches
 is therefore `std::atomic<int>`, read `memory_order_relaxed`: the value guards nothing but itself,
 and a frame that reads a one-tick-stale count draws the border it would have drawn a frame earlier.
 
+**0.2.8 added the second such read, in `GrHistoryView`, and it arrived the same way — as plain
+scalars, found by review rather than in the field** ([ADR-0038](design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
+**Proposed; the gate is not cleared**). The continuous scroll needs a sub-entry phase, so the
+frame-clock tick publishes `shownHead` (the ring index it last observed, and the head the frame
+draws) and `smoothHead` (that head advanced at the nominal entry rate) on the message thread, and
+`paintHistory` reads both. Both are `std::atomic`, relaxed, `static_assert`ed lock-free. What is new
+against ADR-0027 is that there are TWO of them and the painting thread may pair either one's newer
+value with the other's older one: that is safe because every such pairing resolves to
+`min (smoothHead, head + 1)` — a position between two frames the ramp itself produces — so the
+paint needs no consistency, only the two values (`GrHistoryView::frameFor`). The RING's own
+reader contract is unchanged and is a separate thing entirely: the display scalars carry no ring
+data, and the ring is still read by stateless `peek`s under its epoch guard — now bounded below by
+`readFloor` as well, so a batch cannot reach the slot the audio thread is filling.
+
 The same wiring has a LIFETIME half, fixed in the same place: the editor's destructor used to clear
 `lnf.isPopupMenuOnScreen` (a `std::function`) before `glContext.detach()`, mutating a callable a live
 render thread could still invoke. `detach()` joins that thread, so it now runs FIRST and both hook

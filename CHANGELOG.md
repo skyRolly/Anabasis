@@ -51,9 +51,14 @@ read as data, so the sample heading immediately below is not mistaken for struct
 portion of the GR history to the right of the yellow line is jittery."* The yellow line is the
 trace's own flat zero-reduction run (the only yellow in the well is the trace's accent), and the
 part to its right is the only part that CAN show horizontal motion — which is where the renderer
-had been stepping a non-integer pitch once per decimation bucket since 0.1.2. No DSP algorithm,
-parameter, serialization schema, threading-model or reported-latency change; the ring, its
-reader contract and the audio-thread push are untouched. Measurement trail:
+had been stepping a non-integer pitch once per decimation bucket since 0.1.2. A second review
+round then found three correctness defects in that fix — two of them races — and they are repaired
+in the same version; the last of them widens a threading decision and is **filed for architecture
+review rather than approved**
+([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
+`Proposed`). No DSP algorithm, parameter, serialization schema or reported-latency change, and
+nothing on the audio thread moved: the ring's producer, its published index and its clear are
+byte-identical, and every change here is on the reading side. Measurement trail:
 [`worklogs/2026-09-01-gr-history-scroll-jitter.md`](worklogs/2026-09-01-gr-history-scroll-jitter.md).
 
 ### Fixed
@@ -82,6 +87,26 @@ reader contract and the audio-thread push are untouched. Measurement trail:
   It now aggregates the trailing `stride` entries, the same filter length as every completed
   bucket, coinciding with the bucket the instant it completes (0.55 dB). Evidence: this release.
   [Verified]
+- **A cleared history is drawn immediately, even when it refills to exactly the same length.**
+  The renderer decided "nothing has changed" from the number of blocks it held, so a sample-rate or
+  buffer-size change that cleared the history and then refilled it to the same count left the OLD
+  trace on screen — one frame while audio keeps playing, and indefinitely if the transport stops
+  there, which is exactly when a host re-prepares. It now keys on the history's identity rather than
+  its length, and the scroll phase restarts with the timeline. Evidence: this release. [Verified]
+- **The oldest end of the trace can no longer read a block the audio thread is overwriting.**
+  At the shortest buffer sizes the drawn window spans the whole history buffer, leaving one block of
+  margin between the oldest point drawn and the block being written. Drawing a frame from the
+  position the display last observed spent that margin on the delay, so a single block arriving
+  between the two put the oldest read exactly on the block being written. The margin is measured
+  against the live write position now, and a frame that loses the race anyway is dropped rather than
+  drawn from overwritten data. Evidence: this release. [Verified]
+- **The scroll state is published across the render-thread boundary properly.** On macOS and
+  Windows the editor composites on a GPU render thread, which read the two scroll values while the
+  frame clock wrote them — a data race, and undefined behaviour, whatever the compiled code happened
+  to do. They are atomic now; the display behaviour is unchanged. **This widens the threading
+  decision ADR-0027 took and is filed for architecture review, not approved**
+  ([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
+  `Proposed`). Evidence: this release. [Verified]
 
 ### Changed
 - **The view repaints while the smoothed head is still moving.** Between two entries the trace

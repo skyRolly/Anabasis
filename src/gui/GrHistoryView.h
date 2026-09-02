@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <atomic>
 #include "LookAndFeel.h"
 #include "FrameClock.h"
 #include "../dsp/GrHistoryBuffer.h"
@@ -21,15 +22,33 @@ class AnabasisAudioProcessor;
 //  hit-area discipline: interactive over the pill ONLY, inert everywhere
 //  else, so clicks over the trace pass through.
 //
-//  Reader contract (THREAD_MODEL, decided at the P5 opening): stateless
-//  `peek`s against `available()`, and the RESET EPOCH sampled before and
-//  after every batch — odd or moved means the batch raced a host-thread
-//  clear and the frame is discarded (the reader re-derives from the fresh
-//  index next tick; no ring DATA is cached across an epoch change). The one
-//  value the view does carry between ticks since 0.2.8 is `smoothHead`, a
-//  display-side estimate and not ring data: it is re-anchored on any rewind
-//  and clamped to within one entry of the live head, so a stale value costs
-//  at most one entry-pitch for one frame (`smoothedHead`).
+//  Reader contract (THREAD_MODEL, decided at the P5 opening), in two halves
+//  because a frame can lose a race in two different ways:
+//
+//   * RESET. The epoch is sampled before and after every batch — odd or
+//     moved means the batch raced a host-thread clear and the frame is
+//     discarded (the reader re-derives from the fresh index next tick; no
+//     ring DATA is cached across an epoch change).
+//   * WRAPAROUND. `push` writes the slot and THEN publishes the index, so
+//     when a reader sees `available() == L` the audio thread may be mid-write
+//     on slot `L & kMask`. A peek of index `n` touches that same slot when
+//     `L − n ≥ kSize`, so every read must satisfy `L − n ≤ kSize − 1`
+//     (`readFloor`) — measured against the LIVE index, not against the head
+//     the frame draws. `available()` is re-read after the batch and the frame
+//     discarded if the producer has since advanced past that bound, which is
+//     the epoch guard's discipline applied to the other failure mode.
+//
+//  The values the view carries between ticks since 0.2.8 are `shownHead` and
+//  `smoothHead` — display-side estimates, never ring data. `smoothHead` is
+//  re-anchored on any rewind and clamped to within one entry of the live
+//  head, so a stale value costs at most one entry-pitch for one frame
+//  (`smoothedHead`). Both are PUBLISHED by `tick` on the message thread and
+//  READ by `paintHistory` on whichever thread paints — the message thread on
+//  Linux, the GL render thread on macOS/Windows (THREAD_MODEL "Which context
+//  paints"). That is THREADING_POLICY's Message → Painting row (ADR-0027):
+//  relaxed atomic scalars, read-only from the painting side, ordering no
+//  other memory. They are read as a PAIR, and the pairing is safe by value
+//  rather than by synchronisation — see `frameFor`.
 //
 //  Time base: one ring entry spans one HOST block (the recorded caveat), so
 //  the window is mapped through the CURRENT prepared block size — an
@@ -325,10 +344,20 @@ public:
     // engaged and the display still stepped by whichever of 1 or 2 entries
     // the frame happened to catch (the review's finding; the worklog has
     // the numbers).
-    static double smoothedHead (double previous, int64_t head, double dt, double period) noexcept
+    //
+    // `cleared` is the SAME re-anchor reached the other way (0.2.8 review,
+    // finding 3). A clear rewinds the ring's write index, and the `previous >
+    // hi` branch catches that — but only while the count is still below where
+    // it was. A refill that has already returned the count to its old value
+    // presents a head that has not visibly rewound at all, and carrying the
+    // old sub-entry offset across it would draw the new history's first
+    // frames one entry-pitch out. The epoch is what sees that case, so the
+    // caller passes it in rather than this function guessing from the index.
+    static double smoothedHead (double previous, int64_t head, double dt, double period,
+                                bool cleared = false) noexcept
     {
         const double lo = (double) head, hi = lo + 1.0;
-        if (previous > hi)
+        if (cleared || previous > hi)
             return lo;
         return juce::jlimit (lo, hi, period > 0.0 ? previous + dt / period : previous);
     }
@@ -340,14 +369,28 @@ public:
         return juce::jlimit (0.0, 1.0, smoothHead - (double) head);
     }
 
-    // The tick's idle gate: no new entry AND the smoothed head already at its
-    // cap, so nothing this frame could draw differs from the last one — the
-    // pre-0.2.8 rule, repaint on new data only, back in force after at most
-    // one entry period of extra frames. A rewound head is "new" here and so
-    // un-parks. Pure for the reason every other rule in this header is.
-    static bool parked (int64_t head, int64_t shownHead, double smoothHead) noexcept
+    // The tick's idle gate: the history is the SAME history, no new entry has
+    // arrived, and the smoothed head already sits at its cap — so nothing this
+    // frame could draw differs from the last one, and the pre-0.2.8 rule
+    // (repaint on new data only) is back in force after at most one entry
+    // period of extra frames. A rewound head is "new" here and so un-parks.
+    //
+    // THE EPOCH IS PART OF THE IDENTITY (0.2.8 review, finding 3), because the
+    // entry COUNT is not. `GrHistoryBuffer::reset()` rewinds the write index to
+    // 0, so a clear followed by a refill to exactly the previous count presents
+    // the tick with `head == shownHead` over completely different contents —
+    // and the count-only gate parked on it and kept the old geometry on screen.
+    // One frame if the transport keeps running (the next block makes the heads
+    // differ), indefinitely if it stops right there, which is precisely when a
+    // re-prepare happens. The ring already publishes the identity this needs:
+    // `resetEpoch()` is bumped twice per clear, so any change — odd or even,
+    // clear in flight or finished — means the contents are new. Ordinary
+    // non-reset frames are unaffected: the epoch is constant across them, so
+    // the gate is exactly the count rule it was.
+    static bool parked (int64_t head, int64_t shownHead, double smoothHead,
+                        uint32_t epoch, uint32_t shownEpoch) noexcept
     {
-        return head == shownHead && smoothHead >= (double) head + 1.0;
+        return epoch == shownEpoch && head == shownHead && smoothHead >= (double) head + 1.0;
     }
 
     // Which head a frame draws: the one the tick computed the phase FOR, not
@@ -364,6 +407,76 @@ public:
         return (shownHead > 0 && shownHead <= live) ? shownHead : live;
     }
 
+    // What one frame draws, from the two published scalars and the live write
+    // index. It exists as a pure function because the two scalars are read
+    // from the painting thread as SEPARATE relaxed atomics, so a frame may
+    // pair a fresh `shownHead` with a stale `smoothHead` or the reverse, and
+    // the claim that every such pairing is legal is a claim about VALUES that
+    // a test can pin — the alternative being a consistent snapshot, i.e. a
+    // new cross-thread mechanism for a display estimate that needs none.
+    //
+    // Why every pairing is legal: the trace's absolute position is
+    // `−(head + phase)` entry-pitches from a fixed origin, `phase` is
+    // `clamp (smoothHead − head, 0, 1)`, and `smoothHead ≥ head` holds for
+    // every published pair (`smoothedHead`'s lower clamp) and therefore for
+    // any CROSS pairing too, since both scalars only ever increase between
+    // publications. So `head + phase` is `min (smoothHead, head + 1)` — a
+    // value between two frames the ramp itself produces, never beyond them,
+    // and non-decreasing across any sequence of pairings: the frame drawn
+    // from a torn pair is a frame the display was about to draw anyway, and
+    // no vertex ever moves rightward. A REWIND breaks the monotonicity, and
+    // there the epoch guard discards the frame outright.
+    struct Frame
+    {
+        int64_t head;    // the head this frame draws
+        double  phase;   // 0 … 1 into the next entry's period
+    };
+
+    static Frame frameFor (int64_t shownHead, double smoothHead, int64_t live) noexcept
+    {
+        const int64_t h = paintHead (shownHead, live);
+        return { h, phaseOf (smoothHead, h) };
+    }
+
+    // The oldest ring index a frame may read, given the producer's live write
+    // index. `push` fills slot `live & kMask` and publishes afterwards, so the
+    // reader must stay strictly inside one full lap of it: `live − n ≤
+    // kSize − 1` for every peeked `n` (the ring's own `peek` comment argues
+    // the same bound for the un-stale case, and `windowEntries` clamps to it).
+    //
+    // It takes the LIVE index rather than the head the frame draws, and that
+    // is the whole fix (0.2.8 review, finding 1). `paintHead` deliberately
+    // draws the head the TICK saw, which the audio thread may already have
+    // moved past; deriving the floor from that stale head spent the one-slot
+    // margin on the staleness, so at a SATURATED window (`window == kSize−1`,
+    // reachable at 192 kHz/32 where ~100 blocks land per frame) a single
+    // block arriving between the tick's read and the paint's read put the
+    // oldest peek exactly on the slot the audio thread was filling. Clamping
+    // `first` up to this floor costs nothing in every other case — the floor
+    // is below `first` unless the window is saturated AND the head is stale —
+    // and it moves no geometry: `bucketX` and `kFirst` never see it, only
+    // which entries the oldest bucket aggregates.
+    static int64_t readFloor (int64_t live) noexcept
+    {
+        return live - (int64_t) (anabasis::GrHistoryBuffer::kSize - 1);
+    }
+
+    // The entry range bucket `k` aggregates: the trailing `stride` entries
+    // for the newest (`tipFirst`), the bucket's own span for every other,
+    // both clamped to the frame's oldest readable index. Half-open, and
+    // `e0 >= e1` means the bucket has nothing safe to read and is skipped.
+    // Pure and public for the reason the geometry statics are: the read set
+    // is where the ring-safety invariant lives, and an invariant reachable
+    // only from `paint` is one no test can pin.
+    struct Reads { int64_t e0, e1; };
+
+    static Reads bucketReads (const Buckets& b, int64_t k, int64_t first, int64_t head) noexcept
+    {
+        return { k >= b.kHead ? tipFirst (first, head, b.stride)
+                              : juce::jmax (first, k * b.stride),
+                 juce::jmin (head, (k + 1) * b.stride) };
+    }
+
 private:
     // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
     // agree about it — the rule `SpectrumView::chipHitArea` states.
@@ -376,8 +489,32 @@ private:
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;
-    int64_t shownHead  = -1;   // repaint gate: new entries arrived
-    double  smoothHead = 0.0;  // `smoothedHead`: the head advanced at the nominal rate
+
+    // PUBLISHED by `tick` (message thread), READ by `paintHistory` (the thread
+    // that paints — the message thread on Linux, the GL render thread on
+    // macOS/Windows). Plain scalars here were a data race and therefore
+    // undefined behaviour on those two platforms, whatever the generated code
+    // happened to do (0.2.8 review, finding 2): the fix is THREADING_POLICY's
+    // Message → Painting row as ADR-0027 defines it — relaxed atomics, written
+    // on one thread, read-only on the painting side, ordering no other memory
+    // and carrying no handshake. `memory_order_relaxed` is the whole
+    // requirement: a one-frame-stale read draws a frame the ramp itself
+    // produces (`frameFor`), so there is nothing for an acquire to order.
+    //
+    // The `static_assert` is not decoration. A platform where these are not
+    // lock-free would put a lock in the paint path, which is a different
+    // decision from the one taken here and must fail the build rather than
+    // ship quietly.
+    static_assert (std::atomic<int64_t>::is_always_lock_free
+                       && std::atomic<double>::is_always_lock_free,
+                   "the painting thread reads these without blocking, or not at all");
+    std::atomic<int64_t> shownHead  { -1 };   // repaint gate: new entries arrived
+    std::atomic<double>  smoothHead { 0.0 };  // `smoothedHead`: the head advanced at the nominal rate
+
+    // Message thread ONLY — the tick's memory of which history it last drew
+    // (`parked`). The painting side samples the ring's epoch itself, for its
+    // own batch guard, and never reads this.
+    uint32_t shownEpoch = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GrHistoryView)
 };

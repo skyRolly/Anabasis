@@ -422,3 +422,167 @@ bucket, not the tip. The "smoothed head" column advances `smooth += frame_dt / b
 and clamps it to `[head, head + 1]`, exactly `GrHistoryView::smoothedHead`. The model's `buckets`
 is the first draft's — `first = head − want`, `kFirst` one bucket later on both bounds than the
 shipped aligned-window form — which again changes no §3 number: the tracked bucket is mid-panel.)
+
+## 9 — The second review round: three reader/publisher defects in the fix (2026-09-02)
+
+The fix of §4 was reviewed again after it was pushed, and the round found three defects in it. All
+three are correctness rather than appearance, two of them races, and all three are repaired here.
+The geometry of §4 is unchanged: nothing in this section moves a vertex.
+
+### 9.1 — The frame's read window could reach the slot the audio thread was filling
+
+**The finding.** `paintHead` (§4 C) deliberately draws the head the TICK observed, which the audio
+thread may already have moved past. The read window was then derived from that stale head — and so
+was the ring's safety margin. At a saturated window that margin is exactly one slot, so spending it
+on the staleness let a single block arriving between the two reads put the oldest peek on the slot
+the producer was writing.
+
+**The producer/consumer sequence, in order.** `GrHistoryBuffer::push` (audio thread) writes
+`entries[i & kMask]` and THEN release-stores `i + 1`. So a reader that acquire-loads
+`available() == L` knows entries `0 … L−1` are complete, and knows the producer is now inside the
+write of slot `L & kMask`. A peek of index `n` touches that slot when `n ≡ L (mod kSize)`, and since
+the reader only ever reads below the head, the first such `n` is `L − kSize`. **The invariant is
+therefore `L − n ≤ kSize − 1` for every peeked `n`, measured against `L`.**
+
+Pre-0.2.8 that held by construction: `head` WAS `L`, `first = L − want`, and `windowEntries` clamps
+`want` to `kSize − 1`, so `L − first ≤ kSize − 1` — the ring header's "the clamp is `kSize − 1`, not
+`kSize`" argument, exactly. At 0.2.8 `head = shownHead = L − Δ` and `first = head − window`, so
+`L − first = Δ + window`; with `window == kSize − 1` **any Δ ≥ 1 breaks it.** The window saturates
+at 192 kHz/32 (`want == kSize − 1 == 4095`), where ~100 blocks land per 60 Hz frame, so Δ ≥ 1
+between the tick's read and the paint's read is the normal case there, not a corner.
+
+What the reader would then get is a non-atomic read of a two-float `Entry` the producer is writing:
+a data race by the letter of the model, and in practice a torn or half-new value at the oldest end
+of the trace.
+
+**The fix.** `readFloor (live) = live − (kSize − 1)`, and `paintHistory` clamps its oldest readable
+index up to it: `first = max (nb.first, readFloor (live))`, with `live` read ONCE so both the
+staleness question (`paintHead`) and the safety question are answered from one observation. The
+floor binds only when the window is saturated AND the drawn head is stale — everywhere else it is
+below `nb.first` — and it moves NO geometry: `bucketX` and `kFirst` never see it, only which entries
+the oldest bucket aggregates. The reads themselves went into a pure `bucketReads`, so the read set
+is testable rather than reachable only from `paint`.
+
+**The batch-duration half, fixed with it.** The clamp is sound *at the instant `live` was read*; a
+long batch can be overtaken. That is the same failure mode, so it gets the same treatment the epoch
+already has: `available()` is re-read after the batch and the frame discarded if the producer has
+advanced past this batch's floor. One dropped frame, which is the seqlock bargain the ring's own
+header states. And if the producer has lapped everything the frame would draw (`first >= head`), the
+paint blanks rather than reading overwritten slots.
+
+**Rejected:** shrinking `windowEntries` by a staleness margin (changes the window semantics for
+every configuration to fix one); dropping `paintHead` and drawing the live head (re-opens the
+tick→paint step the ramp exists to remove, §4 C); making the batch atomic against the producer
+(that is a lock on the audio thread, which `REALTIME_AUDIO_POLICY` forbids outright).
+
+### 9.2 — `shownHead` and `smoothHead` crossed the painting boundary as plain scalars
+
+**The finding.** `tick` runs on the message thread; `paintHistory` runs on whichever thread paints,
+which `THREAD_MODEL.md` §"Which context paints" settles for this tree: the GL render thread on
+macOS and Windows, the message thread on Linux. Two plain scalars written by one and read by the
+other are a data race and therefore undefined behaviour — the same defect class ADR-0027 recorded
+for `presetMenusOpen`, in the same editor, found the same way.
+
+**The fix, and why this shape.** Both are `std::atomic`, `memory_order_relaxed`, written only by
+the tick and read only by the paint, with a `static_assert` on lock-freedom so a target where that
+does not hold fails the build instead of putting a lock in the paint path. The substantive question
+is not the atomicity but the PAIR: ADR-0027 clause 4 permits one scalar and sends "two values seen
+consistently" back to the gate. These two do not need consistency, and that is an argument about
+values: `smoothHead ≥ head` for every published pair (`smoothedHead`'s lower clamp) and both scalars
+only increase between publications, so `frameFor` resolves ANY pairing to `min (smoothHead,
+head + 1)` — a position between two frames the ramp itself produces. A torn read draws a frame the
+display was about to draw; nothing jumps and nothing moves rightward. `grPair` pins that over every
+cross pairing of a 64-frame publication sequence.
+
+**Rejected:** a seqlock or `std::atomic<struct>` snapshot (16 bytes, not lock-free on the supported
+targets — a lock in the paint path by another name, and it buys a guarantee this estimate does not
+need); encoding both in one `double` (not recoverable — `smoothHead == head` and
+`smoothHead == head + 1` are both exact integers meaning opposite things); a lock (ADR-0027's
+reason, unchanged); single-thread ownership (there is no single painting thread — GL thread,
+message thread, and `createComponentSnapshot` all paint).
+
+**This is a gated change and it is NOT cleared.** It widens ADR-0027's Message → Painting row, so
+it is filed as **[ADR-0038, `Proposed`]**, with `THREADING_POLICY.md` and `THREAD_MODEL.md` updated
+to name the second site and its status. The code ships with the ADR unratified deliberately: the
+path already existed unsynchronised, so shipping the synchronisation is strictly better than
+shipping the race while the gate is answered. ADR-0027's banner is the precedent — *"a rule can be
+quoted accurately and still not be applied"* — and the difference this time is that the round is
+flagging it instead of asserting "no threading change".
+
+**The rest of the state path, inspected rather than assumed.** `shownEpoch` is read and written only
+by `tick` (the paint samples the ring's epoch itself) — plain, and stays plain, because a member
+joins the atomic set when the painting thread reads it, not because a neighbour is atomic.
+`FrameClock`'s state (`attachment`, `emaDelta`, `countdown`, …) is touched only in the vblank
+callback and in `start`/`stop`, all message thread; the paint never reads it. **One item is
+knowingly left:** `paintHistory` reads `processor.getSampleRate()` and `getBlockSize()`, which are
+plain `AudioProcessor` members written on the host thread at `prepareToPlay` — the same class of
+race, but JUCE-owned, present in every view in this tree since P5, and not this round's to fix; a
+wrong read there costs a display-width approximation the header's time-base caveat already covers.
+Recorded as known, not repaired, because repairing it means snapshotting the prepared pair for every
+view — a broad refactor this review explicitly excludes.
+
+### 9.3 — A clear that refilled to the same count was invisible to the idle gate
+
+**The finding.** `parked` keyed on the entry COUNT. `GrHistoryBuffer::reset()` rewinds the write
+index to 0, so a clear followed by a refill to exactly the previous count presents the tick with
+`head == shownHead` over entirely different contents; the gate parked, and the old geometry stayed
+on screen. One frame while audio keeps flowing (the next block makes the heads differ) — and
+INDEFINITELY if the transport stops there, which is precisely the moment a host re-prepares.
+
+**The fix.** The count is not the identity of the contents; the ring already publishes one. The
+reset epoch — bumped twice per clear, and already read by the paint for its batch guard — joins
+`parked`, and the tick remembers it in `shownEpoch`. Any change, odd or even, means new contents.
+Ordinary frames are untouched: across them the epoch is constant, so the gate is exactly the count
+rule it was. The same epoch also re-anchors the phase (`smoothedHead`'s `cleared` argument): a clear
+restarts the timeline, and carrying the old sub-entry offset across it would draw the new history's
+first frames one entry-pitch out. `smoothedHead`'s existing `previous > hi` rewind branch cannot see
+this case — that is the whole point of the finding, the head has not visibly rewound — so the caller
+passes the fact in rather than the function guessing from the index.
+
+**Rejected:** special-casing "count unchanged but suspicious" (the review asked for an identity
+mechanism rather than a count heuristic, and it is right — any count rule is a guess); comparing a
+sampled entry (a heuristic with false negatives, and it reads ring data to answer a question the
+ring already answers).
+
+### 9.4 — Verification
+
+Suites: **`AnabasisTests` 301 + `AnabasisStateTests` 970 = 1271**, 0 failures, clang-22.1.8 and the
+local g++ 13.3, Release. The round adds one test,
+`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` (26 checks). It pins INVARIANTS rather than
+an observed absence of a race, which is the only honest thing a deterministic single-threaded suite
+can do about a race: which index a frame may read, which value pairs it may draw, which states it
+may park on.
+
+| Mutant (one site each, `GrHistoryView.h`) | Kills |
+|---|---|
+| **nofloor** — `readFloor` never binds (the pre-fix window) | 7, all `grRace`: the floor bound, every-read-inside-one-lap, the write-slot assertion, both real-ring assertions, the lapped-producer bound, and the "not vacuous" check |
+| **noreadclamp** — `bucketReads` drops the `first` clamp on completed buckets | 4 `grRace` — the read set escapes below the floor even with the floor correct, which is why the clamp is asserted at the READ rather than only at `first` |
+| **noepoch** — `parked` ignores the epoch (the pre-fix gate) | 2 `grReset`: the equal-count clear parks, and the real-ring exercise that reproduces it |
+| **noreanchor** — `smoothedHead` ignores `cleared` | 1 `grReset`: the phase does not re-anchor on a clear the index cannot show |
+| **nophaseclamp** — `phaseOf` loses its upper clamp | 2: the phase's own range pin and `grPair`'s cap — the pairing argument rests on that clamp, so removing it breaks the pairing claim exactly where the ADR says it would |
+
+Each kill set is disjoint from the others, which is what says the three fixes are measured
+separately rather than by one over-broad assertion.
+
+Gates: zero first-party warnings under the full clang-22 gate; `check-docs` 103 files clean;
+portability 48/0; realtime 40/0; citations against `origin/main`; `git diff --check` clean.
+
+### 9.5 — Remaining risk, stated
+
+- **The batch is not atomic against the producer, by design.** `readFloor` bounds the reads at the
+  instant `live` is read and the post-batch re-check discards a frame the producer overtook, so a
+  bad read is turned into a dropped frame — but the reader still peeks non-atomically while the
+  producer runs. That is the ring's decided contract (`GrHistoryBuffer`'s header: the epoch
+  "DISCARDS such a batch instead, which is the seqlock bargain"), not something this round changed,
+  and closing it properly means either double-buffering the ring or locking the audio thread. Both
+  are out of scope and the second is forbidden outright.
+- **The prepared-pair reads named in §9.2** — `getSampleRate()` / `getBlockSize()` from the paint —
+  are a known, unrepaired instance of the same class, repo-wide and JUCE-owned.
+- **ADR-0038 is `Proposed`.** The synchronisation is in the tree and the DECISION it widens is not
+  ratified. If the review rejects the two-scalar shape, the fallback is a consistent snapshot
+  (option B in that record) — more mechanism, same visible behaviour.
+- **The races themselves are argued, never observed.** No test here stages a concurrent producer,
+  because none can do so reproducibly; what is pinned is the arithmetic that makes each race
+  impossible. A TSan lane would test the claim directly and this repository has no TSan job
+  (`sanitizers` is ASan + UBSan + valgrind, `TESTING_POLICY.md` Level 1b) — worth one, and out of
+  scope here.

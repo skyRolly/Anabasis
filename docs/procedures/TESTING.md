@@ -174,7 +174,8 @@ register instead.
 A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
 needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
 statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.6 `grY`, and since
-0.2.8 `tipFirst`, `entryPeriod`, `smoothedHead`, `phaseOf`, `parked` and `paintHead` — because an
+0.2.8 `tipFirst`, `entryPeriod`, `smoothedHead`, `phaseOf`, `parked`, `paintHead`, `frameFor`,
+`readFloor` and `bucketReads` — because an
 expression reachable only from `paint` is one no test can pin and no mutant can kill; the GR
 trace's vertical mapping under-reported reduction past 12 dB for three rounds while it sat inline,
 and its horizontal geometry stepped a non-integer pitch once per bucket for six (0.1.2 → 0.2.8)
