@@ -235,7 +235,11 @@ rule 5.
   which is a reason to keep them. **No ADR text was changed on the strength of it** — that is the
   owner's call, and the finding is recorded rather than acted on.
 
-## 9 — The gate
+## 9 — The gate — RAISED, HELD, AND CLEARED
+
+**The owner accepted the third amendment on 2026-09-02; the gate is cleared and nothing on this
+record is pending.** What follows is how it got there, kept because the process is the half worth
+keeping.
 
 ADR-0011 gains a **third** dated 2026-09-02 amendment, and it **supersedes an accepted sentence** in
 the first one ("`ScopeBuffer` … is **not** changed here … recorded as drift rather than repaired").

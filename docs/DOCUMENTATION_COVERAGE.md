@@ -107,18 +107,51 @@ no sample — the sibling's own ratified holding about `push` applied to the ide
 `pushBlock` goes from four `memcpy` call sites to zero calls and zero lock prefixes (clang-22 and
 g++ 13.3, `-O3`), costing +0.005 % of the block period at 48 kHz/512 and +0.021 % at 192 kHz — below
 `AnabasisBench`'s resolution, which is why no bench table is quoted. Recorded as **ADR-0011's third
-dated 2026-09-02 amendment, raised at the Architecture Review Gate and HELD** (it supersedes an
+dated 2026-09-02 amendment — raised at the Architecture Review Gate and held (it supersedes an
 accepted sentence in the first amendment, a Hard Stop under `AI_AGENT_POLICY.md` whatever the
-agent's own view of severity), with `THREADING_POLICY.md`, `THREAD_MODEL.md` and KI-015's closure
-synced. Two findings filed rather than fixed: **KI-016** (Anamorph carries the unrepaired shape and
+agent's own view of severity), then ACCEPTED by the owner 2026-09-02, clearing that gate** — with
+`THREADING_POLICY.md`, `THREAD_MODEL.md` and KI-015's closure synced. Two findings filed rather than fixed: **KI-016** (Anamorph carries the unrepaired shape and
 records it nowhere; accepted one-way drift under ADR-0009 item 8, now against a named instance) and
 **KI-017** (`SpectrumView`/`CurveView` read JUCE's plain prepared rate from the painting thread —
 the defect class the second amendment repaired for `GrHistoryView`), the latter also recording that
 JUCE 9.0.1 takes the MessageManager lock around `paintComponent`, which narrows ADR-0027's and
 ADR-0038's stated premise without disturbing either decision.
 
-**Suites after all four review rounds and the KI-015 follow-up: `AnabasisTests` 307 +
-`AnabasisStateTests` 1003 = 1310**, one
+**Round 6 closed two review findings, one of them by proving it was not the defect it was reported
+as.** (1) **The GR ring's lap check was validating nothing**, and it was a residual this repository
+had already written down: ADR-0011's second amendment said `push` had no release fence "so the model
+gives that lap check no formal guarantee" and called the result "a defined-behaviour one-frame
+artefact". Understated — the frame was ACCEPTED and drawn carrying entries the producer had already
+overwritten, not dropped. `push` now release-fences before its payload stores, which by
+[atomics.fences] pairs with the reader's existing acquire fence and forces the closing `available()`
+re-read to observe the lapping push; the post-check became two sequenced statements because that
+ordering is now load-bearing for the lap as well as the epoch. The proof needs BOTH halves of the
+post-check — a `clear` rewinds `writeIndex`, so the coherence step alone does not close case 2, and
+the epoch half does. Instruction-identical on x86-64, one `dmb ish` per host block on AArch64. Filed
+as ADR-0011's **fourth** dated amendment, **raised at the gate and HELD**. Its regression test is a
+new `REQUIRED_ORDER` mode in `check-realtime.py` — a memory ordering cannot be `static_assert`ed or
+observed by a deterministic suite, so the only place a test can fail on the old code is the source;
+six self-test cases, checker self-test 134 → 141. (2) **The ScopeBuffer reset finding is PROVEN
+BOUNDED, not repaired.** `reset()` stores the rewound index before bumping the generation, both
+release, so "new generation, stale index" is impossible and a pre-reset spectrum can never be
+committed as a post-reset one — the invariant the review asked for already held. What is real is the
+reverse skew: a reader can see the rewind before the announcement, `analyse` then early-returns on a
+zero-length read without touching the EMA, and the previous spectrum is drawn again until the bump
+becomes visible. Bounded by one atomic's visibility, defined, filed as **KI-018** with the
+packed-word design named as the recommended repair if it is ever taken — and the two comments that
+promised more than the code delivers were corrected rather than left standing. (3) **KI-017 is
+CLOSED, repaired**: `SpectrumView` and `CurveView` read the published prepared pair through
+`AnabasisAudioProcessor::preparedSampleRate()` instead of JUCE's plain member. The audit corrected
+the entry three times — three plain reads not two, live on every platform rather than only where the
+GL context attaches (the EQ curve is read from the editor's timer too), and the MessageManager-lock
+note is confirmed but irrelevant because the writer is the HOST thread. Not a gate item: no new
+thread, path or ordering, just two readers redirected onto an atomic already published and already
+read from the paint path. The third read — `PluginEditor`'s channel count — has no published
+equivalent and stays open. `GrHistoryBuffer::prepared()`'s contract comment was amended in the same
+diff, because the fix adds callers that legitimately read it outside the epoch bracket.
+
+**Suites after all four review rounds, the KI-015 follow-up and round 6: `AnabasisTests` 307 +
+`AnabasisStateTests` 1006 = 1313**, one
 new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 59 checks) pinning invariants
 rather than an absence of races — which index a frame may read, which value pairs it may draw, which
 states it may park on, that the validation path is built on synchronised publication state, that a

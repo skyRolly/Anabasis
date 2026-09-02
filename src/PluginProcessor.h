@@ -544,6 +544,20 @@ public:
     float meterCompGrDbCh (int ch) const noexcept { return engine.lastCompGrDbCh (ch); }
     float meterLimGrDbCh  (int ch) const noexcept { return engine.lastLimGrDbCh (ch); }
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
+
+    // THE PREPARED SAMPLE RATE, FOR ANY VIEW THAT NEEDS IT (KI-017, round 6).
+    // `juce::AudioProcessor::getSampleRate()` returns a PLAIN member that
+    // `setRateAndBufferSizeDetails` writes from whichever thread the host
+    // reconfigures on — so reading it from a view's paint or timer callback is
+    // a data race with that thread, which is the defect ADR-0011's second
+    // 2026-09-02 amendment repaired for `GrHistoryView` by making the pair ring
+    // metadata. This is that same published pair, forwarded rather than copied:
+    // ONE atomic, ONE publication discipline, no second home for the same fact.
+    // Zero before the first `prepareToPlay`, exactly as JUCE's member is, so
+    // callers keep whatever fallback they already had — and they must take it
+    // ONCE into a local, because a `x() > 0.0 ? x() : fallback` spelling reads
+    // the atomic twice and can mix two configurations in one expression.
+    double preparedSampleRate() const noexcept { return grHistoryRing.prepared().rate; }
     const anabasis::ScopeBuffer& spectrumInRing()  const noexcept { return engine.spectrumInRing(); }
     const anabasis::ScopeBuffer& spectrumOutRing() const noexcept { return engine.spectrumOutRing(); }
 

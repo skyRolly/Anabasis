@@ -1064,12 +1064,49 @@ Evidence [Verified]:
   against this repository's repaired `src/dsp/ScopeBuffer.h`
 - Related: ADR-0011's third dated 2026-09-02 amendment; ADR-0009 item 8; KI-015
 
-### KI-017 — The paint path reads JUCE's plain prepared sample rate, in two views (2026-09-02)
+### KI-017 — The paint path reads JUCE's plain prepared sample rate, in two views (2026-09-02) — **CLOSED 2026-09-02 (round 6)**
+
+> **✅ CLOSED — REPAIRED.** A focused audit confirmed a genuine data race with the HOST thread and
+> fixed it: both views now read the pair `GrHistoryBuffer` already publishes, through
+> `AnabasisAudioProcessor::preparedSampleRate()`. **Three statements in the entry below were wrong,
+> and the corrections are the part worth keeping:**
+>
+> 1. **"in two views" — there are THREE plain reads, and the third is not fixed here.**
+>    `SpectrumView::paint` and `CurveView::readInputs` are repaired; `PluginEditor`'s
+>    `getTotalNumOutputChannels()` in its timer callback reads `cachedTotalOuts`, a different plain
+>    member with no published equivalent anywhere in the tree (checked: there is no channel-count
+>    publication). Repairing it needs a new publication rather than a redirect, so it is deliberately
+>    NOT bundled — see the remaining-work note at the end of this entry.
+> 2. **"macOS and Windows only, where the OpenGL context attaches" — wrong, and this is why the
+>    MessageManager finding below does not rescue it.** `CurveView::readInputs` is reached from the
+>    editor's 24 Hz `timerCallback` as well as from `paint`, so the message thread reads it too — and
+>    the opposing writer is the HOST's reconfiguration thread, which takes no MessageManager lock in
+>    any wrapper (VST3's `preparePlugin` is reached from `setupProcessing` and `setActive` with none;
+>    VST2, AU, AUv3, AAX and LV2 are the same shape). The defect was live on **every** platform,
+>    Linux included, where no GL context attaches at all.
+> 3. **The MessageManager-lock note below is confirmed at the pinned source and is irrelevant to this
+>    entry's question.** It excludes `paint` from racing MESSAGE-thread work. It says nothing about
+>    the HOST thread, which is the writer here. It is kept because it remains true and because it
+>    narrows ADR-0027's and ADR-0038's stated premise — but it was never a reason to leave this open.
+>
+> **What the repair trades, stated rather than claimed as behaviourally identical.**
+> `prepareToPlay` prepares the engine before it prepares the GR ring, so inside that window the
+> published pair still carries the previous rate. For `SpectrumView` this is provably invisible: the
+> spectrum ring has been rewound, `readLatest` yields nothing and `analyse` returns before touching
+> the trace, so the old rate maps an already-floored display. For `CurveView` there is no ring and no
+> floor: it can draw the EQ response at the previous rate for the duration of `prepareToPlay`, where
+> before it drew at the new one. That is a **bounded correct-but-late frame traded for undefined
+> behaviour**, which is the right trade and is not a claim of identical behaviour.
+>
+> Pinned by `ki017` in the state suite: with a bare `prepareToPlay` JUCE's plain member stays 0, so
+> the old source mapped every headless frame through its 48 kHz fallback and two snapshots taken at
+> 96 kHz and 48 kHz were IDENTICAL; they differ only when the view reads the published pair. The
+> revert mutant fails exactly that assertion.
 
 **Severity:** Low
-**Status:** Confirmed from the code; **not repaired — outside the KI-015 scope, and flagged for an
-owner decision on when it is taken**
-**Affects:** macOS and Windows only, where the OpenGL context attaches. Display only.
+**Status:** **CLOSED 2026-09-02 — repaired for the two rate reads; the channel-count read remains
+open (below).** (Originally: Confirmed from the code; not repaired.)
+**Affects:** every platform — see correction 2. Display only.
 
 Found while reviewing KI-015, in the same file, and deliberately left alone: `SpectrumView::paint`
 takes `processor.getSampleRate()` to map its frequency axis, and `CurveView` does the same for its
@@ -1095,13 +1132,72 @@ than an API guarantee — which is a reason to keep the atomics, not to remove t
 the next round starts from the source rather than from the premise. **No ADR text is changed on the
 strength of this entry**; that is an owner call.
 
+**REMAINING, and deliberately not bundled:** `PluginEditor`'s timer callback reads
+`proc.getTotalNumOutputChannels()` — `juce::AudioProcessor::cachedTotalOuts`, another plain member
+the host's reconfiguring thread writes. Same defect class, message thread this time, and it drives
+only whether the GR meters draw one lane or two. There is no published channel count anywhere in the
+tree, so repairing it means adding a publication rather than redirecting a read, which is a larger
+change than this entry's subject and is left for a round that takes it deliberately. Recorded here
+so it is not rediscovered as new.
+
 Evidence [Verified]:
-- Source: `src/gui/SpectrumView.cpp` (`paint`, the axis mapping) and `src/gui/CurveView.cpp`;
-  `juce_audio_processors`' plain `currentSampleRate`/`blockSize` members
+- Source: `src/gui/SpectrumView.cpp` (`paint`, the axis mapping) and `src/gui/CurveView.cpp`
+  (`readInputs`, reached from `paint` AND the editor's timer); `src/gui/PluginEditor.cpp` (the
+  channel-count read that remains); `juce_audio_processors`' plain `currentSampleRate`/`blockSize`
+  members
 - Precedent: ADR-0011's second dated 2026-09-02 amendment (the repaired instance in `GrHistoryView`)
 - JUCE: `juce_opengl/opengl/juce_OpenGLContext.cpp` (the MessageManager lock around
   `paintComponent`), read at the pinned 9.0.1
 - Worklog: `worklogs/2026-09-02-ki015-scopebuffer-payload.md`
+
+### KI-018 — A spectrum reset can leave the previous trace on screen for one or more ticks (2026-09-02)
+
+**Severity:** Low
+**Status:** Investigated and **proven bounded — not a broken invariant, deliberately not repaired**
+**Affects:** every platform; the spectrum overlay only.
+
+Raised as a review finding that a reset overlapping `readLatest` lets "the previous spectrum survive
+until a later tick notices". Audited against the C++ memory model, and the finding is real as a
+DISPLAY residual and false as a correctness violation. Both halves matter, so both are recorded.
+
+**What is guaranteed, by construction.** `ScopeBuffer::reset()` stores the rewound index with
+`release` and THEN bumps the generation with `release`. A reader whose acquire load of the generation
+returns the new value therefore has happens-before to the rewind, and write-read coherence forces
+every subsequently sequenced load of the index — including the one inside `readLatest` — to return a
+post-reset value. "New generation, stale index" is impossible. Combined with `SpectrumView::tick`
+only ever advancing `shownInGen` in a tick that floored the EMA before `analyse` (`resetIn`) or after
+it (`gi1 != gi0`), **a pre-reset spectrum can never be committed as a post-reset one**. That is the
+invariant the review asked for, and it already held.
+
+**What is not guaranteed, and this is the real residual.** The reverse skew is permitted: a reader
+can observe the rewound INDEX while its generation load still returns the old value, because they are
+two atomics and only one direction is ordered. Then `resetIn` is false, `readLatest` yields nothing
+(the index is 0), `analyse` returns early **without touching the EMA**, and the previous spectrum is
+drawn again — verbatim, against the new rate's bin mapping. The tick can even satisfy the idle test
+outright and do nothing at all. Nothing decays it, because the EMA's decay only runs when frames
+arrive and a re-prepare normally happens with the transport stopped. It ends when the generation bump
+becomes visible to the reader's acquire load — and there is no second, independent correction path,
+because the frame COUNT was deliberately retired as a reset detector in 0.2.7.
+
+**Why it is not repaired here.** The bound is one atomic's visibility latency, which the standard
+requires to be finite and which is sub-microsecond in practice; the artefact is a stale display, not
+wrong audio and not undefined behaviour (the payload has been atomic since KI-015). The repairs that
+would remove the skew entirely are real but larger than the defect: folding the generation and the
+index into ONE atomic word (correct, and the strongest option — it makes the skew unrepresentable
+rather than detectable, at the cost of changing the ring's published word layout, `readLatest`'s
+signature and every caller), or bracketing the rewind in an odd/even seqlock like
+`GrHistoryBuffer::clear`'s. Both are a design change to a ring that is not currently wrong, so they
+belong to a round that takes them deliberately rather than to a defect report. **The packed-word
+option is the recommended one if this is ever taken.**
+
+**Workaround:** none needed; nothing audible and nothing persistent depends on it.
+
+Evidence [Verified]:
+- Source: `src/dsp/ScopeBuffer.h` (`reset`, `readLatest`), `src/gui/SpectrumView.cpp` (`tick`,
+  `analyse`'s early return) — and the two comments in those files that claimed more than the code
+  delivers were corrected in the same round rather than left standing
+- Related: ADR-0011's first and third dated 2026-09-02 amendments; KI-015
+- Worklog: `worklogs/2026-09-02-round6-concurrency.md`
 
 ## Standing note for P1 onward
 

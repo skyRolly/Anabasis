@@ -207,12 +207,15 @@ no atomics and no possibility of interleaving with a user gesture.
   > is a separate component and outside this round's scope." The scope reason stands as history; the
   > drift is now repaired, and the sentence no longer describes the tree.
   >
-  > ⚠️ **RAISED AT THE ARCHITECTURE REVIEW GATE AND HELD — NOT SELF-RULED.** This amendment
-  > supersedes an accepted sentence in an Accepted ADR, and `AI_AGENT_POLICY.md` makes "an existing
-  > Accepted ADR conflict **detected**" a Hard Stop that a green build does not clear. Whether the
-  > change is a repair under the existing SPSC-ring contract or a decision in its own right is the
-  > OWNER's ruling; the agent's job was to detect it, flag it and stop, and the action is the same
-  > either way. Nothing here is claimed as pre-cleared.
+  > ✅ **ACCEPTED BY THE OWNER 2026-09-02 — THE ARCHITECTURE REVIEW GATE IS CLEARED.** How it
+  > arrived stays in the record, because that is the half worth keeping: this amendment supersedes an
+  > accepted sentence in an Accepted ADR, and `AI_AGENT_POLICY.md` makes "an existing Accepted ADR
+  > conflict **detected**" a Hard Stop that a green build does not clear — so it was raised, flagged
+  > in the pull request, and **held** rather than self-ruled, with the agent explicitly declining to
+  > decide whether it was a repair under the existing SPSC-ring contract or a decision in its own
+  > right. The owner has now ruled: the amendment is accepted **as written below**, superseding the
+  > first amendment's "recorded as drift rather than repaired" sentence, and the approval is not an
+  > instruction to revert any part of the repair. Nothing further is pending on this record.
   >
   > **The defect.** `ScopeBuffer`'s producer wrote its payload with `std::memcpy` on the audio
   > thread and its reader read the same `float` objects with plain subscripts on the message thread.
@@ -279,6 +282,74 @@ no atomics and no possibility of interleaving with a user gesture.
   > and `CLAUDE.md` §3 makes that repository read-only from here, so no sibling change is owed. The
   > instance is recorded as **KI-016** rather than left as an undocumented difference — "accepted
   > drift" against a named instance, not against a wording.
+
+  > **Amended 2026-09-02 (round 6) — `push` release-fences, so the GR ring's LAP CHECK now has the
+  > formal guarantee the second amendment said it lacked. This SUPERSEDES that amendment's closing
+  > paragraph.** That paragraph read: "`push` has no release fence before its entry stores
+  > (deliberately — the audio thread pays nothing), so the model gives that lap check no formal
+  > guarantee; it stays … a defined-behaviour one-frame artefact rather than a race." It was an
+  > accurate statement of a residual and the round that wrote it declined to close it. Review found
+  > the residual is not benign in the way "one-frame artefact" suggests: the frame is **accepted and
+  > drawn carrying entries the producer already overwrote**, not dropped.
+  >
+  > ⚠️ **RAISED AT THE ARCHITECTURE REVIEW GATE AND HELD — NOT SELF-RULED.** It adds a new atomic
+  > ordering on the audio path (`ARCHITECTURE_REVIEW_GATE.md`'s "Thread Model change" row) and it
+  > supersedes a paragraph inside a block the owner has already accepted, which `AI_AGENT_POLICY.md`
+  > makes a Hard Stop on DETECTION, whatever the agent thinks of the severity. The owner's ruling is
+  > owed; the action is the same either way — flag, hold, do not merge on a green build.
+  >
+  > **The defect.** `push` stored its payload relaxed and then released the INDEX. A release store
+  > orders what precedes it, never what follows, so push #P's payload stores could become visible to
+  > a reader BEFORE push #(P−1)'s release store of the index. A reader whose relaxed `peek` returned
+  > push #P's value therefore had no edge forcing its closing `available()` re-read to observe P, and
+  > `GrHistoryView`'s `first < readFloor (available())` — the lap check, the whole reason `peek`'s
+  > comment says "the caller re-checks its window afterwards and throws such a frame away" — could
+  > legally return false. Classification, kept separate because the round's three registers matter:
+  > **defined but wrong data** (every conflicting access is atomic since the first amendment, so
+  > never UB), and NOT "one frame late" (the frame is drawn, not dropped).
+  >
+  > **The repair.** `push` now carries `std::atomic_thread_fence (std::memory_order_release)` before
+  > its payload stores — the same fence `clear` has carried since 0.2.8, for the same reason with
+  > `writeIndex` in place of `resetGuard`. `GrHistoryView`'s post-check became two sequenced
+  > statements rather than one `||`, because the peek → fence → re-read ordering is now load-bearing
+  > for the lap as well as the epoch and `||`'s (guaranteed) sequencing is too easy to edit away.
+  >
+  > **The proof, in both cases, because the naive one is wrong.** [atomics.fences]: the fence (A) is
+  > sequenced before the payload stores (X); the reader's peek (Y) reads X's value and is sequenced
+  > before `batchIntact`'s acquire fence (B); so A synchronises with B, and everything sequenced
+  > before A — including push #(P−1)'s `writeIndex.store (P, release)` — happens-before everything
+  > sequenced after B, which includes the `available()` re-read.
+  > *Case 1, no clear intervened:* `writeIndex`'s modification order is then increasing, so write-read
+  > coherence forces the re-read ≥ P ≥ first + kSize, hence `readFloor` > `first` and the frame is
+  > discarded.
+  > *Case 2, a clear intervened:* the naive coherence step does NOT apply — `clear` stores
+  > `writeIndex.store (0, release)`, so that modification order is not monotone in value and the
+  > re-read may legally be 0. The discard comes from the OTHER half of the same post-check: whichever
+  > store the reader's peek read from is sequenced after a release fence (`push`'s or `clear`'s), so
+  > the same pairing puts `clear`'s odd `resetGuard` increment — or its closing even one —
+  > happens-before the relaxed epoch re-read inside `batchIntact`, which therefore differs from
+  > `epoch0` and discards the frame. **Both halves of the conjunction are load-bearing and neither
+  > alone suffices**; that is why the post-check keeps both and why they are sequenced.
+  > *Either the batch read clean data, or the discard is guaranteed. There is no third case.*
+  >
+  > **A release FENCE, not release payload stores.** [atomics.fences] would also admit the latter (a
+  > release operation synchronises with an acquire fence when an operation on the same object,
+  > sequenced before that fence, reads its value — which the peek is). The fence is chosen because it
+  > is ONE barrier covering both fields rather than two release stores, and because it makes `push`
+  > and `clear` the same shape.
+  >
+  > **Cost, measured independently of the patch's own comment:** `push` compiled at `-O3` is
+  > **instruction-for-instruction identical on x86-64** — the fence emits `#MEMBARRIER`, a directive,
+  > not an instruction — and adds **exactly one `dmb ish` on AArch64**, once per HOST BLOCK, since
+  > `push` runs once per `processBlock` and never per sample.
+  >
+  > **Pinned where it can be pinned.** No deterministic suite can distinguish the two builds: the
+  > difference is a synchronises-with edge, orderings are not introspectable, and unlike the first
+  > amendment's payload change no TYPE moved. `scripts/check-realtime.py` therefore gained a second
+  > mode — `REQUIRED_ORDER` — which fails the tree when `GrHistoryBuffer::push` lacks the fence, when
+  > the fence has drifted below the payload stores, when it is the wrong fence, when it is only in a
+  > comment, and when the function has been renamed out from under the rule. Six self-test cases,
+  > both directions.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

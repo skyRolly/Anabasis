@@ -35,6 +35,20 @@
 //    clear then synchronises with the writer's release fence, the odd epoch
 //    happens-before the re-read, and the batch is discarded. This is the
 //    seqlock reader as the memory model requires it, not as x86 forgives it.
+//  - THE PRODUCER RELEASE-FENCES TOO, AND THAT IS WHAT MAKES THE LAP CHECK
+//    MEAN ANYTHING (round 6). The fence above closes the reader's half for the
+//    CLEAR, because `clear` release-fences before it writes the payload. The
+//    LAP had only half a bargain: `push` stored its payload relaxed and then
+//    released the INDEX, and a release store orders what precedes it, never
+//    what follows — so a peek could return an overwriting value while the
+//    closing `available()` re-read still returned a pre-lap index, and the
+//    frame was ACCEPTED with overwritten entries in it. Defined data, wrong
+//    data. `push` now carries the same release fence `clear` does, before its
+//    payload stores, which pairs with the reader's acquire fence by
+//    [atomics.fences] and forces the re-read to observe the lapping push.
+//    THE INVARIANT IS THEREFORE: either the batch read clean data, or the
+//    discard is guaranteed — there is no third case. It costs the audio thread
+//    zero instructions on x86-64 and one `dmb ish` per HOST BLOCK on AArch64.
 //  - THE PAYLOAD ITSELF IS ATOMIC (0.2.8 review). The index ordering above
 //    settles what a reader SEES; it does not make a read that lands on the
 //    slot the producer is writing legal. That read is exactly what this
@@ -136,10 +150,27 @@ public:
         return true;
     }
 
-    // Reader side: the pair the entries were recorded under. Relaxed loads —
-    // the caller brackets them with the epoch exactly as it brackets `peek`
-    // (`resetEpoch()` even before, `batchIntact` after), and that bracket is
-    // what makes the two loads coherent with each other AND with the entries.
+    // Reader side: the pair the entries were recorded under. Relaxed loads.
+    //
+    // TWO DISCIPLINES USE THIS, and they want different things — stated here
+    // because the single-sentence version was true of one caller and became
+    // false when the second arrived (KI-017, round 6).
+    //  * A reader that maps ENTRIES through the pair must bracket it with the
+    //    epoch exactly as it brackets `peek` (`resetEpoch()` even before,
+    //    `batchIntact` after). The bracket is what makes the two loads coherent
+    //    with each other AND with the entries, so a frame cannot map one
+    //    timeline's entries through another's time base. `GrHistoryView` does
+    //    this and must keep doing it.
+    //  * A reader that wants only "what rate is the plugin prepared at, right
+    //    now" needs no bracket, and taking one would mean nothing: there are no
+    //    entries in its question. One relaxed load of one lock-free atomic is
+    //    coherent by itself, and a caller that reads a rate one reconfiguration
+    //    stale draws one frame at the previous rate — the same class of
+    //    residual ADR-0027 clause 4 (as amended by ADR-0038) already licenses
+    //    for a single unpaired scalar on this boundary. `SpectrumView` and
+    //    `CurveView` do this, through `AnabasisAudioProcessor::preparedSampleRate`.
+    //    What they must NOT do is read it twice in one expression.
+    //
     // Zeros before the first `prepare`, which the view's `windowEntries` /
     // `entryPeriod` already read as 48 kHz.
     Prepared prepared() const noexcept
@@ -223,6 +254,40 @@ public:
     {
         const auto i = writeIndex.load (std::memory_order_relaxed);
         auto& slot = entries[(size_t) (i & (int64_t) kMask)];
+        // THE LAP CHECK'S HALF OF THE BARGAIN, AND IT IS THE PRODUCER'S.
+        // `clear` has carried this exact fence since 0.2.8, so that a payload
+        // load which witnessed the clear makes the odd epoch happen-before
+        // `batchIntact`'s re-read. The LAP is the same shape with `writeIndex`
+        // in place of `resetGuard` — and it had no fence, which is what the
+        // second 2026-09-02 amendment admitted when it said the model gave the
+        // lap check "no formal guarantee".
+        //
+        // Without the fence: a reader whose relaxed peek returned THIS push's
+        // value has no edge forcing its `available()` re-read to observe `i`.
+        // A release STORE orders accesses BEFORE itself, never after, so the
+        // payload stores below may become visible ahead of the previous push's
+        // release store of the index; the re-read may then legally return a
+        // pre-lap value, `first < readFloor (available())` is false, and the
+        // frame is ACCEPTED carrying entries the producer overwrote. Defined
+        // (the payload is atomic) but WRONG DATA — not a dropped frame.
+        //
+        // With it, by [atomics.fences]: this fence (A) is sequenced before the
+        // payload stores (X); the reader's peek (Y) reads the value X wrote
+        // and is sequenced before the acquire fence (B) in `batchIntact`; so A
+        // synchronises with B, and everything sequenced before A — including
+        // the PREVIOUS push's release store of `i` — happens-before everything
+        // sequenced after B, which the reader orders to include the
+        // `available()` re-read. Write-read coherence then forbids that re-read
+        // returning less than `i`, and `first <= i - kSize < readFloor (i)`
+        // discards the frame. EITHER THE BATCH READ CLEAN DATA OR THE DISCARD
+        // IS GUARANTEED; there is no third case.
+        //
+        // Cost, measured rather than asserted: **zero instructions on x86-64**
+        // (clang-22 `-O3` emits `#MEMBARRIER`, a compiler barrier — the
+        // previous amendment's two-`movss`-one-`movq` sequence is unchanged),
+        // and one `dmb ish` on AArch64 — once per HOST BLOCK, since `push`
+        // runs once per `processBlock` and never per sample.
+        std::atomic_thread_fence (std::memory_order_release);
         slot.grDb.store (grDb, std::memory_order_relaxed);
         slot.peak.store (peak, std::memory_order_relaxed);
         writeIndex.store (i + 1, std::memory_order_release);
@@ -247,6 +312,13 @@ public:
     // window afterwards and throws such a frame away
     // (`GrHistoryView::readFloor`, the epoch guard). Defined-then-discarded,
     // not detected-after-the-fact.
+    //
+    // THAT RE-CHECK ONLY BECAME BINDING IN ROUND 6. Until then the producer
+    // published its payload with no fence, so a peek could return an
+    // overwriting value while the re-read still saw a pre-lap index and the
+    // frame was kept. `push`'s release fence is what pairs with the reader's
+    // acquire fence and makes "throws such a frame away" a guarantee rather
+    // than an intention; see the banner and `push`.
     Entry peek (int64_t n) const noexcept
     {
         const auto& slot = entries[(size_t) (n & (int64_t) kMask)];

@@ -146,9 +146,19 @@ public:
     // skew (new index, old generation) is possible and is why the reader
     // samples the generation on BOTH sides of its batch — the same contract
     // `GrHistoryBuffer::resetEpoch()` states for the same question. It is a
-    // plain generation, NOT that class's odd/even seqlock, because there is
-    // nothing here for a reader to observe half-done: this function writes one
-    // atomic and touches no sample. THAT SENTENCE IS LOAD-BEARING TWICE OVER —
+    // plain generation, NOT that class's odd/even seqlock. **CORRECTED IN
+    // ROUND 6, because the reason given here was wrong in a way that misled a
+    // review.** It said "there is nothing here for a reader to observe
+    // half-done". There is: a reader can observe the REWOUND INDEX before the
+    // generation bump that announces it, because they are two atomics and the
+    // rewind is stored first. What that costs is bounded and is NOT a broken
+    // invariant — a reader that acquires the NEW generation is forced by the
+    // release ordering below to see the rewind or later, so it can never
+    // attribute pre-reset frames to a post-reset timeline; the reverse skew
+    // only leaves the display one or more ticks stale, until the bump becomes
+    // visible. That residual is KI-018. The TRUE half of the sentence is the
+    // one the rest of this file leans on: this function writes one
+    // atomic and touches no sample. THAT half IS LOAD-BEARING TWICE OVER —
     // it is also why this ring needs no `batchIntact`-style acquire FENCE on
     // the reader's closing check, where `GrHistoryBuffer` does: that ring's
     // clear WRITES THE PAYLOAD inside its epoch window, so a reader's payload

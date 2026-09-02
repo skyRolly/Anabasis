@@ -5911,6 +5911,43 @@ static void testTheCurveWellCachesWithoutChangingWhatItDraws()
     check (identical (first, second),
            "curveCache: a repaint with nothing moved draws exactly what it drew before");
 
+    // -- ki017 (round 6). THE VIEW'S RATE COMES FROM THE PUBLISHED PAIR, NOT
+    //    FROM `AudioProcessor::getSampleRate()`. That accessor returns a PLAIN
+    //    member which `setRateAndBufferSizeDetails` writes from whichever
+    //    thread the host reconfigures on, while this view reads it from BOTH
+    //    the paint path and the editor's 24 Hz timer — a data race with the
+    //    host thread on every platform, and the same defect class ADR-0011's
+    //    second 2026-09-02 amendment repaired for `GrHistoryView`.
+    //
+    //    The discriminator is the headless suite's own quirk, already pinned by
+    //    `grPrepared`: a bare `prepareToPlay` sets nothing in JUCE's base class,
+    //    so `getSampleRate()` stays 0 and the OLD source fell back to 48 kHz —
+    //    at EVERY rate. So the two snapshots below were IDENTICAL on the old
+    //    code (same fallback, same fingerprint, same cached path) and differ
+    //    only when the view reads the pair the ring actually publishes.
+    {
+        auto* hiG = proc.apvts.getParameter (pid::eqHighShelfGain);
+        auto* hiF = proc.apvts.getParameter (pid::eqHighShelfFreq);
+        hiG->setValueNotifyingHost (hiG->getNormalisableRange().convertTo0to1 (6.0f));
+        hiF->setValueNotifyingHost (hiF->getNormalisableRange().convertTo0to1 (12000.0f));
+
+        proc.prepareToPlay (96000.0, 512);
+        check (juce::exactlyEqual (proc.getSampleRate(), 0.0)
+                   && std::abs (proc.preparedSampleRate() - 96000.0) < 1.0e-9,
+               "ki017: (premise) JUCE's plain member is unset headlessly while the published pair carries the real rate");
+        curve.refresh();
+        const auto at96 = snapshot();
+
+        proc.prepareToPlay (48000.0, 512);
+        check (std::abs (proc.preparedSampleRate() - 48000.0) < 1.0e-9,
+               "ki017: (premise) a re-prepare republishes the pair");
+        curve.refresh();
+        const auto at48 = snapshot();
+
+        check (! identical (at96, at48),
+               "ki017: the EQ curve follows the PUBLISHED rate — reading JUCE's plain member drew both frames through the same 48 kHz fallback");
+    }
+
     // …and the cache is not stale: a parameter move plus the refresh that
     // fingerprints it must change the picture. Without this the previous check
     // is satisfied by a cache that never updates at all.

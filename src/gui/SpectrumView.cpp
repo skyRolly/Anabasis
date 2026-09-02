@@ -146,12 +146,24 @@ void SpectrumView::tick (double dt)
     // than a counter comparison. The rings now carry one too.
     //
     // Sampled on BOTH sides of the analysis batch, which is `resetEpoch()`'s
-    // documented reader contract and closes the remaining skew: the pre-batch
-    // sample catches a reset that landed since the last tick, the post-batch one
-    // catches a reset that landed DURING this tick's reads, whose frames may
-    // straddle two configurations. Either way the answer is the same — drop to
-    // the floor and re-anchor — so a straddling batch costs no display frame
-    // rather than one.
+    // documented reader contract: the pre-batch sample catches a reset that
+    // landed since the last tick, the post-batch one catches a reset that
+    // landed DURING this tick's reads, whose frames may straddle two
+    // configurations. Either way the answer is the same — drop to the floor and
+    // re-anchor.
+    //
+    // WHAT THIS DOES AND DOES NOT GUARANTEE, corrected in round 6 because the
+    // sentence here used to claim the second case outright. The post-batch load
+    // is BEST-EFFORT: it has no happens-before with the host thread's bump, so
+    // it may still return the old generation and this tick then commits the old
+    // value. What IS guaranteed is the half that matters and it is guaranteed by
+    // construction — `shownInGen` only ever advances in a tick that either
+    // floored the EMA first (`resetIn`) or floored it after (`gi1 != gi0`), and
+    // a tick that saw the new generation is forced by `reset()`'s release
+    // ordering to read a post-rewind index, so **a pre-reset spectrum can never
+    // be committed as a post-reset one**. The residual is that the display can
+    // hold the previous spectrum for one or more ticks until the bump becomes
+    // visible — bounded, defined, and filed as KI-018 rather than papered over.
     const auto gi0 = in.resetGeneration();
     const auto go0 = out.resetGeneration();
     const auto ci  = in.writeCount();
@@ -195,7 +207,12 @@ void SpectrumView::tick (double dt)
 void SpectrumView::paint (juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat().reduced (10.0f, 8.0f);
-    const double sr = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+    // KI-017: the published pair, not `getSampleRate()`'s plain member — the
+    // host's reconfiguring thread writes that one while this thread paints.
+    // Read ONCE: the old spelling called the accessor twice and could have
+    // straddled a reconfiguration inside a single ternary.
+    const double prepared = processor.preparedSampleRate();
+    const double sr = prepared > 0.0 ? prepared : 48000.0;
     const float fLo = 20.0f, fHi = 20000.0f;
     const float dbLo = -90.0f, dbHi = 0.0f;
 

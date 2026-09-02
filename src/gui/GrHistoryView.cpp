@@ -363,9 +363,19 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // they were read. Both discard the frame and let the next tick re-derive;
     // one dropped frame is the seqlock bargain the ring's own header states.
     // `batchIntact` FIRST: it carries the acquire fence that orders every
-    // peek above before either re-read, and short-circuit evaluation keeps the
-    // `available()` re-read after it.
-    if (! ring.batchIntact (epoch0) || first < readFloor (ring.available()))
+    // peek above before either re-read. Written as two SEQUENCED STATEMENTS
+    // rather than one `||`, deliberately. `||`'s left-to-right sequencing is
+    // guaranteed and the previous form was correct, but the ordering is now
+    // load-bearing for the LAP check as well as the epoch — since 0.2.8's
+    // round 6 the producer release-fences before its payload stores, and the
+    // whole guarantee is that the peeks are sequenced before this fence and
+    // the `available()` re-read after it. A future edit that reordered the
+    // operands, or hoisted the re-read for tidiness, would silently delete
+    // that guarantee and no test could see it. One always-evaluated atomic
+    // load on the paint path is the price of making the requirement visible.
+    const bool    intact = ring.batchIntact (epoch0);   // carries the acquire fence
+    const int64_t live2  = ring.available();            // sequenced after it
+    if (! intact || first < readFloor (live2))
         return;
     if (! started)
         return;

@@ -122,6 +122,23 @@ change here is on the reading side. Measurement trail:
   keeps doing exactly what it did. **The audio thread is unaffected**: its store compiles to the same
   instructions it always did, verified against the generated code, and a build on any target where
   that would not hold now fails rather than shipping. Evidence: this release. [Verified]
+- **A history frame the audio thread has already overwritten is no longer drawn.** The display
+  checks, after building a frame, whether the audio thread has run far enough ahead to have
+  overwritten the oldest history it just read — and throws such a frame away. That check could
+  silently fail: the audio thread published the history values and the position separately, so the
+  display could read overwritten values and still see an old position, conclude nothing had
+  happened, and draw them. It now publishes them in an order the check can rely on, so either the
+  frame's data is intact or the frame is dropped — there is no third case. Nothing about the picture
+  changes on a healthy machine, and the audio thread pays nothing measurable: the same instructions
+  on Intel and Apple's x86 machines, one extra ordering instruction per buffer on Apple silicon.
+  Evidence: this release. [Verified]
+- **The spectrum and EQ displays read the sample rate from a source the host cannot change under
+  them.** Both took it from a value the host rewrites during a reconfiguration while the display was
+  reading it — undefined behaviour, on every platform, and on the EQ curve from two different
+  threads. They now read the same published copy the history display has used since the previous
+  round. The only visible difference is during a reconfiguration itself, where the EQ curve may show
+  the previous rate's response for that moment instead of the new one. Evidence: this release.
+  [Verified]
 - **The spectrum analyser's captured audio is read and written atomically too.** The two capture
   rings behind the spectrum display had the same defect the history buffer did: the audio thread
   wrote their samples while the display read them, and if the audio thread got far enough ahead of a
