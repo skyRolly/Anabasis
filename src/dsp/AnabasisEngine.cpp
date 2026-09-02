@@ -1130,8 +1130,12 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // index is complete", which holds per chunk as it does per block, since the
     // payload is written before the index is released. What differs is only the
     // reader's "has anything new arrived?" cadence. Mono sources duplicate L into R via
-    // the stage loops above writing only ch 0 — harmless for a stereo-only
-    // plugin (isBusesLayoutSupported pins 2×2).
+    // the stage loops above writing only ch 0 — harmless because the tap is a
+    // display feed. DRIFT REPORTED AND CORRECTED, round 7: this used to read
+    // "harmless for a stereo-only plugin (isBusesLayoutSupported pins 2×2)",
+    // which stopped being true at 0.1.2 — mono→mono and mono→stereo are
+    // accepted too, so the output channel count is 1 or 2, and the editor's
+    // lane geometry depends on which (KI-017's third read).
     //
     // What this publication ASSUMES, stated because it is invisible from here:
     // both stage loops run the full `num` samples with no early `continue`, so

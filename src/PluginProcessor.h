@@ -51,6 +51,10 @@ public:
 
     // -- AudioProcessor -----------------------------------------------------
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    // JUCE calls this from `audioIOChanged`, i.e. ON THE THREAD THAT WRITES the
+    // bus layout — which is what makes it the race-free place to publish the
+    // channel count for the editor. See `preparedOutputChannels()`.
+    void numChannelsChanged() override;
     // Empty in every shipping configuration. It has a body in the .cpp only so
     // that the ANABASIS_STAGE_TRACE diagnostic build has somewhere to print
     // from — a call the host makes AFTER processing stops, which is the one
@@ -544,6 +548,41 @@ public:
     float meterCompGrDbCh (int ch) const noexcept { return engine.lastCompGrDbCh (ch); }
     float meterLimGrDbCh  (int ch) const noexcept { return engine.lastLimGrDbCh (ch); }
     const anabasis::GrHistoryBuffer& grHistory() const noexcept { return grHistoryRing; }
+
+    // THE PREPARED SAMPLE RATE, FOR ANY VIEW THAT NEEDS IT (KI-017, round 6).
+    // `juce::AudioProcessor::getSampleRate()` returns a PLAIN member that
+    // `setRateAndBufferSizeDetails` writes from whichever thread the host
+    // reconfigures on — so reading it from a view's paint or timer callback is
+    // a data race with that thread, which is the defect ADR-0011's second
+    // 2026-09-02 amendment repaired for `GrHistoryView` by making the pair ring
+    // metadata. This is that same published pair, forwarded rather than copied:
+    // ONE atomic, ONE publication discipline, no second home for the same fact.
+    // Zero before the first `prepareToPlay`, exactly as JUCE's member is, so
+    // callers keep whatever fallback they already had — and they must take it
+    // ONCE into a local, because a `x() > 0.0 ? x() : fallback` spelling reads
+    // the atomic twice and can mix two configurations in one expression.
+    double preparedSampleRate() const noexcept { return grHistoryRing.prepared().rate; }
+
+    // THE OUTPUT CHANNEL COUNT, PUBLISHED (KI-017's third read, round 7). The
+    // editor's timer used `getTotalNumOutputChannels()`, which returns JUCE's
+    // plain `cachedTotalOuts` — written by `AudioProcessor::audioIOChanged` on
+    // the host's reconfiguring thread, with no lock in any wrapper (the VST3
+    // wrapper's own comment records hosts calling `setBusArrangements` inside
+    // the `prepareToPlay` call stack). A plain read there is a data race.
+    //
+    // It also answered a slightly different question than the caller wanted.
+    // The GR lanes read the engine's PER-CHANNEL atomics and must draw the
+    // geometry those atomics were filled under; the host's live bus count is
+    // the geometry the host is moving TO. Publishing at the two moments the
+    // engine's own channel count is decided — construction and every
+    // `numChannelsChanged` — makes the published value answer the caller's
+    // question and removes the race in the same move. Relaxed: it orders
+    // nothing, carries no payload, and a one-tick-stale lane count draws the
+    // geometry it would have drawn a frame earlier. This sits on
+    // `THREADING_POLICY`'s existing Meters → GUI row, whose writer set already
+    // includes `prepareToPlay` on the host thread; it is not a new path.
+    int preparedOutputChannels() const noexcept
+    { return pubOutChannels.load (std::memory_order_relaxed); }
     const anabasis::ScopeBuffer& spectrumInRing()  const noexcept { return engine.spectrumInRing(); }
     const anabasis::ScopeBuffer& spectrumOutRing() const noexcept { return engine.spectrumOutRing(); }
 
@@ -613,18 +652,19 @@ private:
     // The output LUFS/TP meters live in the ENGINE (its §2.9 render tap) —
     // only the engine sees the sample before the monitor-only stages touch
     // it. The wrapper keeps the session max-hold and the publish atomics.
-    anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes
-    // The (rate, block) pair the ring's entries were recorded under — the
-    // clear-on-change gate in prepareToPlay (0.1.2 item 6: pause/resume
-    // re-prepares at the same pair keep the timeline). Host-thread only.
-    double grRingPreparedRate  = 0.0;
-    int    grRingPreparedBlock = 0;
+    anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes; owns the
+                                                  // (rate, block) it is recorded under
+                                                  // and the clear-on-change gate
     // Audio-thread session max-holds. `samplePeakMaxHold` joined `dbTpMaxHold`
     // with the stats row (ADR-0020) and is cleared by exactly the same two
     // sites, for the same reason: both are session-cumulative, so both belong
     // to `requestMeterReset`'s contract rather than to the rolling windows.
     float dbTpMaxHold = -144.0f, samplePeakMaxHold = -144.0f;
     std::atomic<bool> meterResetPending { false };
+    // See `preparedOutputChannels()`. Seeded in the constructor and restored
+    // by `numChannelsChanged`, both of which run on whichever thread owns the
+    // layout at that moment — never concurrently with themselves.
+    std::atomic<int>   pubOutChannels { 2 };
     std::atomic<float> pubLufsM { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsS { anabasis::LoudnessMeter::kSilentLufs },
                        pubLufsI { anabasis::LoudnessMeter::kSilentLufs },

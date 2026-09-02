@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Fourteen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Fifteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -42,6 +42,143 @@ read as data, so the sample heading immediately below is not mistaken for struct
 - <user-visible change>.
   Evidence: commit 6a24b82 (or PR #NN). [Verified | Partially Verified | Unverified Historical Reconstruction]
 ```
+
+---
+
+## [0.2.8] — 2026-09-01
+
+**One field report: the GR history scrolled in lurches.** The owner's words: *"the newly drawn
+portion of the GR history to the right of the yellow line is jittery."* The yellow line is the
+trace's own flat zero-reduction run (the only yellow in the well is the trace's accent), and the
+part to its right is the only part that CAN show horizontal motion — which is where the renderer
+had been stepping a non-integer pitch once per decimation bucket since 0.1.2. A second review
+round then found six correctness defects in that fix — four of them races — and they are repaired
+in the same version; one of them widens a threading decision, which went to architecture review and
+was approved
+([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
+Accepted 2026-09-02). No DSP algorithm, parameter, serialization schema or reported-latency change, and
+nothing on the audio thread moved: the ring's producer and its published index are byte-identical,
+its host-thread clear gained only the two stores of the time base it now owns, and every other
+change here is on the reading side. Measurement trail:
+[`worklogs/2026-09-01-gr-history-scroll-jitter.md`](worklogs/2026-09-01-gr-history-scroll-jitter.md).
+
+### Fixed
+- **The GR history scrolls continuously instead of standing still and lurching.** Every vertex
+  of the trace and the waveform used to move only when a decimation bucket completed — once every
+  `stride` blocks — and then by a whole pitch, which is not an integer (1.447 px at 48 kHz / 512
+  on the Simple well, 1.929 px at 1024). Modelled at a 60 Hz display, 48 % of frames drew no
+  motion and the rest a 1.45 px jump, each jump landing every vertex on a new sub-pixel phase so
+  the anti-aliased stroke re-rasterised at every step; a horizontal segment is invariant under a
+  horizontal shift, which is why the flat gold zero line looked steady and everything sloped to
+  its right did not. The geometry now places each bucket by the newest ENTRY's position inside
+  its bucket, and between two entries by a head the frame clock smooths at the nominal entry rate
+  (held to within one entry of the real head — never behind the data, never more than one entry
+  ahead of it), so the trace advances `pitch / stride` per processed block and one uniform step
+  per frame: the same model gives 0 % motionless frames and a per-frame spread (σ) of 0.000 px on
+  a steady host where it was 0.72.
+  The left edge scrolls the same way: the oldest drawn point now sits on or just beyond the
+  edge with its segment clipped, where it used to sit up to a pitch inside behind a flat run and
+  jump a whole pitch outward every time a bucket expired. Bucket identity, every completed
+  bucket's value, the fixed pitch, the right anchor, the zero-data unmeasured region and the clear
+  rule are exactly as ADR-0023 item 6 decided (amended in place, dated). Evidence: this release.
+  [Verified]
+- **The newest point of the trace no longer pops at every bucket start.** It aggregated only the
+  entries its bucket had collected so far — a single block's value the frame a bucket began, then
+  deepening — so the tip flicked at bucket rate (modelled 0.99 dB mean movement between frames).
+  It now aggregates the trailing `stride` entries, the same filter length as every completed
+  bucket, coinciding with the bucket the instant it completes (0.55 dB). Evidence: this release.
+  [Verified]
+- **A cleared history is drawn immediately, even when it refills to exactly the same length.**
+  The renderer decided "nothing has changed" from the number of blocks it held, so a sample-rate or
+  buffer-size change that cleared the history and then refilled it to the same count left the OLD
+  trace on screen — one frame while audio keeps playing, and indefinitely if the transport stops
+  there, which is exactly when a host re-prepares. It now keys on the history's identity rather than
+  its length, and the scroll phase restarts with the timeline. Evidence: this release. [Verified]
+- **The oldest end of the trace can no longer read a block the audio thread is overwriting.**
+  At the shortest buffer sizes the drawn window spans the whole history buffer, leaving one block of
+  margin between the oldest point drawn and the block being written. Drawing a frame from the
+  position the display last observed spent that margin on the delay, so a single block arriving
+  between the two put the oldest read exactly on the block being written. The margin is measured
+  against the live write position now, and a frame that loses the race anyway is dropped rather than
+  drawn from overwritten data. Evidence: this release. [Verified]
+- **The scroll state is published across the render-thread boundary properly.** On macOS and
+  Windows the editor composites on a GPU render thread, which read the two scroll values while the
+  frame clock wrote them — a data race, and undefined behaviour, whatever the compiled code happened
+  to do. They are atomic now; the display behaviour is unchanged. This widens the threading decision
+  ADR-0027 took, so it went to architecture review and was **approved**
+  ([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
+  Accepted 2026-09-02). Evidence: this release. [Verified]
+- **The first frame after the history restarts is drawn where it belongs.** A sample-rate or
+  buffer-size change clears the history and restarts its timeline; the scroll offset from *before*
+  the clear could still be applied to the first frame drawn after it, putting that frame one step
+  ahead of where the new history actually starts. The offset now travels with the identity of the
+  history it was measured in, so a restarted timeline is drawn from its beginning and ordinary
+  scrolling resumes on the very next frame. Evidence: this release. [Verified]
+- **The history buffer's stored values are read and written atomically.** The display's guards
+  already noticed when the audio thread had overtaken a frame's read of the history and threw that
+  frame away — but noticing is not enough: reading a block while the audio thread writes it was
+  undefined behaviour the moment it happened, whatever the guard did next. The stored values are
+  atomic now, so such a read is defined (each value is one of the two, never nonsense) and the guard
+  keeps doing exactly what it did. **The audio thread is unaffected**: its store compiles to the same
+  instructions it always did, verified against the generated code, and a build on any target where
+  that would not hold now fails rather than shipping. Evidence: this release. [Verified]
+- **A spectrum reset clears the old trace as soon as any part of the reset is visible.** Clearing
+  the analyser after a sample-rate or buffer-size change waited on one of the two things the reset
+  publishes; if the display noticed the other one first it kept showing the previous spectrum and
+  then, having recorded that it was up to date, stopped looking — so the old trace could sit there
+  for as long as the machine took to get round to it. The display now acts on either signal, and
+  also clears the moment a read comes back empty, which is itself only possible after a reset.
+  Nothing else about the analyser changed. Evidence: this release. [Verified]
+- **The GR meters take their one-or-two-lane layout from a value the host cannot change under them.**
+  The editor asked the plugin for its live channel count from a timer while the host could be
+  rewriting it — undefined behaviour — and it was also the wrong question: the lanes show
+  per-channel measurements and must be drawn in the layout those measurements were taken in. The
+  count is published now, at every point the layout is actually decided. Evidence: this release.
+  [Verified]
+- **A history frame the audio thread has already overwritten is no longer drawn.** The display
+  checks, after building a frame, whether the audio thread has run far enough ahead to have
+  overwritten the oldest history it just read — and throws such a frame away. That check could
+  silently fail: the audio thread published the history values and the position separately, so the
+  display could read overwritten values and still see an old position, conclude nothing had
+  happened, and draw them. It now publishes them in an order the check can rely on, so either the
+  frame's data is intact or the frame is dropped — there is no third case. Nothing about the picture
+  changes on a healthy machine, and the audio thread pays nothing measurable: the same instructions
+  on Intel and Apple's x86 machines, one extra ordering instruction per buffer on Apple silicon.
+  Evidence: this release. [Verified]
+- **The spectrum and EQ displays read the sample rate from a source the host cannot change under
+  them.** Both took it from a value the host rewrites during a reconfiguration while the display was
+  reading it — undefined behaviour, on every platform, and on the EQ curve from two different
+  threads. They now read the same published copy the history display has used since the previous
+  round. The only visible difference is during a reconfiguration itself, where the EQ curve may show
+  the previous rate's response for that moment instead of the new one. Evidence: this release.
+  [Verified]
+- **The spectrum analyser's captured audio is read and written atomically too.** The two capture
+  rings behind the spectrum display had the same defect the history buffer did: the audio thread
+  wrote their samples while the display read them, and if the audio thread got far enough ahead of a
+  display frame those were undefined reads, whatever the compiled code did. The stored samples are
+  atomic now, so such a read is defined — at worst one analyser frame mixes older and newer audio,
+  which fades out on the display's own ~120 ms smoothing. Nothing about the picture changes. **The
+  audio thread pays a measured 0.005 % of one buffer's time** for it, verified against the generated
+  code and against the timing of the capture itself, and a build on any target where that store
+  would take a lock now fails rather than shipping. Evidence: this release. [Verified]
+- **The display's time base can no longer be torn by a host reconfiguration.** The sample rate and
+  buffer size the history maps its 20-second window and scroll rate through were read from values
+  the host's thread rewrites during a reconfiguration, while the display was reading them — a data
+  race, and undefined behaviour, whatever happened to be drawn. The pair now travels with the
+  history it describes: it is published inside the same clear that restarts the history, so a frame
+  that read it while a reconfiguration ran through is discarded and the next is drawn from the
+  settled values. Under a stable configuration nothing moves — the same window and the same scroll
+  rate, verified identical from either source. Evidence: this release. [Verified]
+
+### Changed
+- **The view repaints while the smoothed head is still moving.** Between two entries the trace
+  now drifts on the frame clock, so up to one entry period of frames is drawn after the last
+  arrival; once the smoothed head parks one entry ahead of the real one, the pre-0.2.8 gate —
+  repaint on new data only — is back in force, so a stopped transport costs no per-vblank paints.
+  Each frame draws the history up to the entry its phase was computed for, so an entry landing
+  between the frame tick and the paint waits one frame rather than skipping ahead of the ramp.
+  The plot is clipped to its own columns, which costs the 0.7 px of stroke end-cap that used to
+  spill into the panel margin. Evidence: this release. [Verified]
 
 ---
 

@@ -27,7 +27,13 @@ CurveView::CurveView (AnabasisAudioProcessor& p, Mode m) : processor (p), mode (
 CurveView::Inputs CurveView::readInputs() const
 {
     Inputs in;
-    in.sampleRate = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+    // KI-017: the published pair, not `getSampleRate()`'s plain member. This
+    // one is reached from BOTH threads — `paint` and the editor's 24 Hz
+    // `timerCallback` through `refresh()` — so on Linux, where no GL context
+    // attaches, it was still a race with the host's reconfiguring thread.
+    // Read ONCE, for the reason the accessor states.
+    const double prepared = processor.preparedSampleRate();
+    in.sampleRate = prepared > 0.0 ? prepared : 48000.0;
     in.fingerprint = (juce::uint64) juce::roundToInt (in.sampleRate);
 
     auto& apvts = processor.apvts;

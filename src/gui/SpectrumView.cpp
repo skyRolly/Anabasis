@@ -96,7 +96,28 @@ void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
 {
     const int got = ring.readLatest (scratchL.data(), scratchR.data(), kSize);
     if (got <= 0)
+    {
+        // A ZERO-LENGTH READ IS ITSELF A RESET ANNOUNCEMENT (round 7), and this
+        // is the one place the rewind is observable through the load that
+        // actually drives the display. `readLatest` clamps to
+        // `min (acquired index, kSize)`, so `got == 0` is EQUIVALENT to "the
+        // index I acquired was 0" — reachable only from construction or from
+        // `reset()`. The caller's `resetObserved` cannot see this case when the
+        // reset lands between its own `writeCount()` load and this one: the
+        // count it compared was the pre-reset value, so it stayed silent while
+        // this read came back empty. Flooring here is what stops the reader
+        // holding two mutually inconsistent facts and acting on neither.
+        //
+        // No guard is needed and none is wanted. The construction arm reaches
+        // this branch with `smoothedDb` already at the floor, so the fill is a
+        // no-op there; and this is NOT the "should an idle analyser decay?"
+        // question (`KNOWN_ISSUES` KI-007 item 6), which stays exactly as it
+        // was: an idle ring returns a FULL window of stale frames and never
+        // reaches this branch at all, and the idle case early-returns in `tick`
+        // before `analyse` is called.
+        std::fill (smoothedDb.begin(), smoothedDb.end(), -120.0f);
         return;
+    }
 
     std::fill (fftData.begin(), fftData.end(), 0.0f);
     const int off = kSize - got;                          // zero-pad a short read
@@ -133,8 +154,10 @@ void SpectrumView::tick (double dt)
     // remove. The reader owns its smoothed copy, so the reader must drop it;
     // the ring cannot do it from the other side.
     //
-    // This used to key on `writeCount()` going BACKWARDS, and that predicate is
-    // weaker than the guarantee the comment claimed. It holds only while the
+    // This used to key on `writeCount()` going BACKWARDS *alone*, and that
+    // predicate is weaker than the guarantee the comment claimed. (Round 7
+    // re-admitted it as a SECOND sufficient condition beside the generation —
+    // see `resetObserved`. What follows is why it cannot be the only one.) It holds only while the
     // observed count is still below the one the last tick stored: let the
     // producer republish past that value between two ticks — one tick delayed
     // past ~1 s of audio, a suspended message thread, a debugger stop — and the
@@ -146,12 +169,47 @@ void SpectrumView::tick (double dt)
     // than a counter comparison. The rings now carry one too.
     //
     // Sampled on BOTH sides of the analysis batch, which is `resetEpoch()`'s
-    // documented reader contract and closes the remaining skew: the pre-batch
-    // sample catches a reset that landed since the last tick, the post-batch one
-    // catches a reset that landed DURING this tick's reads, whose frames may
-    // straddle two configurations. Either way the answer is the same — drop to
-    // the floor and re-anchor — so a straddling batch costs no display frame
-    // rather than one.
+    // documented reader contract: the pre-batch sample catches a reset that
+    // landed since the last tick, the post-batch one catches a reset that
+    // landed DURING this tick's reads, whose frames may straddle two
+    // configurations. Either way the answer is the same — drop to the floor and
+    // re-anchor.
+    //
+    // WHAT THIS DOES AND DOES NOT GUARANTEE. Round 6 corrected this from an
+    // outright claim to "BEST-EFFORT"; round 8 corrects it again, because
+    // best-effort UNDERSTATES it in the one case that matters and a reader of
+    // this comment could reasonably delete the post-batch re-read as decorative.
+    //
+    // FORCED, not best-effort, whenever `analyse` read a NON-ZERO post-reset
+    // index: that value came from the audio thread's release store in
+    // `pushBlock`, so it synchronises-with the acquire load in `readLatest`;
+    // the host's generation bump happens-before that push by the named premise
+    // in `ScopeBuffer`'s `reset()` (it runs from `prepare`, audio stopped);
+    // happens-before is transitive and the `gi1` load below is sequenced after
+    // the read, so write-read coherence FORCES `gi1` past the bump and the fill
+    // runs. That is the leg that catches the partial-refill MIXTURE — a tick
+    // where `resetObserved` is silent (the count has climbed back) and the
+    // zero-length floor is silent (frames were returned) — and it destroys the
+    // mixture inside the same tick, before `repaint`.
+    //
+    // BEST-EFFORT in the complementary case: if `analyse` read exactly 0, that
+    // value came from `reset()` itself and the bump is SEQUENCED AFTER it, so
+    // nothing forces `gi1`. That row is closed by the zero-length floor in
+    // `analyse`, which is therefore not redundant with this re-read: each
+    // closes what the other cannot.
+    //
+    // PER RING, and the scope is deliberate. One `prepare` resets both rings in
+    // order, so the in-ring's rewind orders nothing about the out-ring's. A tick
+    // can floor `inDb` on a zero-length read while `analyse (out, …)` folds
+    // pre-reset frames — bounded to one tick (the next tick's `co` is below
+    // `shownOutCount`, so the count term fires) and excluded on both shipped
+    // ISAs, not closed by force. KI-018 carries it.
+    //
+    // What is guaranteed unconditionally: `shownInGen` only ever advances in a
+    // tick that floored the EMA first (`resetIn`) or after (`gi1 != gi0`), and
+    // a tick that saw the new generation is forced by `reset()`'s release
+    // ordering to read a post-rewind index — so **a pre-reset spectrum can
+    // never be committed as a post-reset one**.
     const auto gi0 = in.resetGeneration();
     const auto go0 = out.resetGeneration();
     const auto ci  = in.writeCount();
@@ -163,8 +221,13 @@ void SpectrumView::tick (double dt)
         && gi0 == shownInGen && go0 == shownOutGen)
         return;                                           // idle: nothing new
 
-    const bool resetIn  = gi0 != shownInGen;
-    const bool resetOut = go0 != shownOutGen;
+    // Both facets, both rings — see `resetObserved`. Before round 7 this keyed
+    // on the generation ALONE, so a reader that had already observed the index
+    // rewind but not yet the generation bump held the previous spectrum on
+    // screen and, having committed `shownInCount = 0`, then satisfied the idle
+    // test below on every subsequent tick and stopped looking.
+    const bool resetIn  = resetObserved (gi0, shownInGen,  ci, shownInCount);
+    const bool resetOut = resetObserved (go0, shownOutGen, co, shownOutCount);
 
     // Only on the reset EDGE, deliberately. This is not the "should an idle
     // analyser decay to the floor?" question — that is the early return above,
@@ -195,7 +258,12 @@ void SpectrumView::tick (double dt)
 void SpectrumView::paint (juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat().reduced (10.0f, 8.0f);
-    const double sr = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+    // KI-017: the published pair, not `getSampleRate()`'s plain member — the
+    // host's reconfiguring thread writes that one while this thread paints.
+    // Read ONCE: the old spelling called the accessor twice and could have
+    // straddled a reconfiguration inside a single ternary.
+    const double prepared = processor.preparedSampleRate();
+    const double sr = prepared > 0.0 ? prepared : 48000.0;
     const float fLo = 20.0f, fHi = 20000.0f;
     const float dbLo = -90.0f, dbHi = 0.0f;
 

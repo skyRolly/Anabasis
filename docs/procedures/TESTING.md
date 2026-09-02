@@ -173,9 +173,16 @@ register instead.
 
 A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
 needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
-statics — `windowEntries`, `buckets`, `drawsZeroRegion` and, since 0.1.6, `grY` — because an
+statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.6 `grY`, and since
+0.2.8 `tipFirst`, `entryPeriod`, `smoothedHead`, `phaseOf`, `parked`, `paintHead`, `frameFor`,
+`readFloor` and `bucketReads`, plus the ring's own `GrHistoryBuffer::prepare`, `prepared` and
+`batchIntact` (pinned by `grPrepared`, through the ring and through the wrapper) — because an
 expression reachable only from `paint` is one no test can pin and no mutant can kill; the GR
-trace's vertical mapping under-reported reduction past 12 dB for three rounds while it sat inline.
+trace's vertical mapping under-reported reduction past 12 dB for three rounds while it sat inline,
+and its horizontal geometry stepped a non-integer pitch once per bucket for six (0.1.2 → 0.2.8)
+while the pinned property was only *where* buckets land, never *how* they move — the 0.2.8 walk in
+`testGrHistoryWindowNeverAsksForTheHeadSlot` now holds the per-entry motion at every head across
+three buckets, which is the assertion the stepped form fails.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the

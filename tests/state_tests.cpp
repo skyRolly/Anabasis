@@ -4642,6 +4642,64 @@ static void testARewoundSpectrumRingDropsThePreviousTrace()
     view.tick (0.05);
     check (*std::max_element (inDb.begin(), inDb.end()) < before - 30.0f,
            "spectrumReset: a reset is caught even when the count never goes backwards");
+
+    // -- resetObserved (round 7). A `ScopeBuffer` reset is TWO stores — the
+    //    index rewind, then the generation bump — and a reader can observe
+    //    either first. Keying on the generation ALONE left a reader that had
+    //    seen the rewind but not the bump holding the previous spectrum on
+    //    screen, and (having committed `shownInCount = 0`) satisfying the idle
+    //    test on every tick after that, so it stopped looking. The rule now
+    //    takes both facets. The truth table is the discriminator: a race
+    //    cannot be staged, but the DECISION can be pinned, which is why the
+    //    rule is a pure static (`docs/procedures/TESTING.md`).
+    {
+        using V = SpectrumView;
+        check (! V::resetObserved (7, 7, 100, 100),
+               "resetObserved: a steady tick is not a reset");
+        check (! V::resetObserved (7, 7, 900, 100),
+               "resetObserved: a FORWARD count is not a reset");
+        check (V::resetObserved (8, 7, 900, 100),
+               "resetObserved: the generation still catches a reset the count ran past (0.2.7's finding, re-pinned)");
+        check (V::resetObserved (7, 7, 40, 100),
+               "resetObserved: a BACKWARDS count is a reset even when the generation bump is not visible yet");
+        check (! V::resetObserved (0, 0, 0, 0),
+               "resetObserved: the first tick, against the initial shown count, is not a reset");
+        check (! V::resetObserved (0, 0, 5000000, 0),
+               "resetObserved: a view attached to an already-running processor is not a reset");
+        // Rows 1 and 5 are what fail a `<=`/`<` mis-transcription — NOT row 2,
+        // which is false under both spellings. Row 4 is the revert mutant's
+        // grave: the pre-round-7 rule (`gen != shownGen`) answers false there
+        // and passes every other row.
+    }
+
+    // -- ki017c (round 7). THE OUTPUT CHANNEL COUNT IS PUBLISHED. The editor's
+    //    timer read `getTotalNumOutputChannels()`, which returns JUCE's plain
+    //    `cachedTotalOuts` — written by `AudioProcessor::audioIOChanged` on
+    //    whichever thread the host reconfigures on. The publication happens on
+    //    that same writer's thread (`numChannelsChanged`, which JUCE calls from
+    //    `audioIOChanged`) plus at construction and at prepare, so the editor's
+    //    read cannot race it. These assertions do not compile against the old
+    //    code, which has no such accessor — the same blunt kill `grSync` and
+    //    `specSync` carry.
+    {
+        AnabasisAudioProcessor p2;
+        check (p2.preparedOutputChannels() == p2.getTotalNumOutputChannels()
+                   && p2.preparedOutputChannels() >= 1,
+               "ki017c: the count is seeded at construction, not left at a fabricated default");
+        p2.setPlayConfigDetails (1, 1, 48000.0, 512);
+        check (p2.preparedOutputChannels() == 1,
+               "ki017c: a layout change with NO re-prepare still republishes — JUCE calls numChannelsChanged from audioIOChanged");
+        p2.prepareToPlay (48000.0, 512);
+        check (p2.preparedOutputChannels() == 1,
+               "ki017c: …and a prepare publishes the count the engine was prepared with");
+        p2.setPlayConfigDetails (2, 2, 48000.0, 512);
+        p2.prepareToPlay (48000.0, 512);
+        check (p2.preparedOutputChannels() == 2,
+               "ki017c: back to stereo, through both publication points");
+        check (decltype (p2.preparedOutputChannels()) (0) == 0
+                   && std::atomic<int>::is_always_lock_free,
+               "ki017c: the published count is a lock-free atomic — the editor's read never takes a lock");
+    }
 }
 
 // The graph-well views are interactive over their corner mode chips and INERT
@@ -5911,6 +5969,43 @@ static void testTheCurveWellCachesWithoutChangingWhatItDraws()
     check (identical (first, second),
            "curveCache: a repaint with nothing moved draws exactly what it drew before");
 
+    // -- ki017 (round 6). THE VIEW'S RATE COMES FROM THE PUBLISHED PAIR, NOT
+    //    FROM `AudioProcessor::getSampleRate()`. That accessor returns a PLAIN
+    //    member which `setRateAndBufferSizeDetails` writes from whichever
+    //    thread the host reconfigures on, while this view reads it from BOTH
+    //    the paint path and the editor's 24 Hz timer — a data race with the
+    //    host thread on every platform, and the same defect class ADR-0011's
+    //    second 2026-09-02 amendment repaired for `GrHistoryView`.
+    //
+    //    The discriminator is the headless suite's own quirk, already pinned by
+    //    `grPrepared`: a bare `prepareToPlay` sets nothing in JUCE's base class,
+    //    so `getSampleRate()` stays 0 and the OLD source fell back to 48 kHz —
+    //    at EVERY rate. So the two snapshots below were IDENTICAL on the old
+    //    code (same fallback, same fingerprint, same cached path) and differ
+    //    only when the view reads the pair the ring actually publishes.
+    {
+        auto* hiG = proc.apvts.getParameter (pid::eqHighShelfGain);
+        auto* hiF = proc.apvts.getParameter (pid::eqHighShelfFreq);
+        hiG->setValueNotifyingHost (hiG->getNormalisableRange().convertTo0to1 (6.0f));
+        hiF->setValueNotifyingHost (hiF->getNormalisableRange().convertTo0to1 (12000.0f));
+
+        proc.prepareToPlay (96000.0, 512);
+        check (juce::exactlyEqual (proc.getSampleRate(), 0.0)
+                   && std::abs (proc.preparedSampleRate() - 96000.0) < 1.0e-9,
+               "ki017: (premise) JUCE's plain member is unset headlessly while the published pair carries the real rate");
+        curve.refresh();
+        const auto at96 = snapshot();
+
+        proc.prepareToPlay (48000.0, 512);
+        check (std::abs (proc.preparedSampleRate() - 48000.0) < 1.0e-9,
+               "ki017: (premise) a re-prepare republishes the pair");
+        curve.refresh();
+        const auto at48 = snapshot();
+
+        check (! identical (at96, at48),
+               "ki017: the EQ curve follows the PUBLISHED rate — reading JUCE's plain member drew both frames through the same 48 kHz fallback");
+    }
+
     // …and the cache is not stale: a parameter move plus the refresh that
     // fingerprints it must change the picture. Without this the previous check
     // is satisfied by a cache that never updates at all.
@@ -6020,21 +6115,30 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
     check (GrHistoryView::windowEntries (0.0, 512) == GrHistoryView::windowEntries (48000.0, 512),
            "grWindow: an unprepared processor reads as 48 kHz, not as a divide by zero");
 
-    // THE DECIMATION GEOMETRY — FIXED SCALE, RIGHT-ANCHORED (0.1.2 item 3).
+    // THE DECIMATION GEOMETRY — FIXED SCALE, RIGHT-ANCHORED (0.1.2 item 3),
+    // SCROLLED BY THE ENTRY (0.2.8).
     // This section previously pinned the 0.1.1 stretch-to-fill, which spread
     // however many buckets existed across the whole width — so a filling ring
     // rendered zoomed and re-spaced as it grew, the startup behaviour the
     // 0.1.2 directive removes. What is pinned now:
-    //   • the pitch between adjacent buckets is a constant of (want, cols),
-    //     identical while the ring fills and after it has wrapped;
+    //   • the pitch between adjacent COMPLETED buckets is a constant of
+    //     (want, cols), identical while the ring fills and after it has
+    //     wrapped;
     //   • the newest bucket sits on the right edge in every fill state;
-    //   • a SETTLED window still spans the panel to within one truncated
-    //     bucket of the left edge (the 0.1.1 blank-strip fix's property,
-    //     carried over through `kFull` being derived from the same
-    //     want/stride pair);
+    //   • a SETTLED window spans the panel edge to edge: its oldest drawn
+    //     bucket sits ON or just OFF the left edge, never inside it, so the
+    //     segment crossing the edge is drawn exactly and clipped (0.2.8; the
+    //     0.1.1 blank-strip fix's property, carried over through `kFull`
+    //     being derived from the same want/stride pair);
     //   • a filling ring occupies only the right portion at that same pitch —
     //     the left remainder is the unmeasured region `paintHistory` draws as
-    //     ZERO data (level 0, GR 0), never as a stretched trace.
+    //     ZERO data (level 0, GR 0), never as a stretched trace;
+    //   • (0.2.8) every completed bucket moves exactly one entry-pitch —
+    //     pitch / stride — for every single entry pushed, never zero and
+    //     never a whole pitch: the owner's jitter report was the trace
+    //     standing still for `stride − 1` blocks and lurching a non-integer
+    //     pitch on the next, which the pre-0.2.8 form of `bucketX` did by
+    //     construction.
     {
         struct Case { double sr; int bs; int cols; const char* what; };
         const Case cases[] = {
@@ -6042,6 +6146,7 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             { 48000.0, 1024, 904, "Simple well, 48 kHz / 1024" },
             { 48000.0, 2048, 904, "…and a block big enough that entries are SCARCER than columns" },
             { 48000.0,  512, 604, "Advanced well, 48 kHz / 512" },
+            { 44100.0,  256, 904, "44.1 kHz / 256 — want mod stride is 2, the alignment case" },
             { 192000.0,  32, 604, "192 kHz / 32 — the window saturates at the ring clamp" },
         };
         for (const auto& c : cases)
@@ -6056,26 +6161,42 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             const auto m1 = say ("2..cols buckets");
             check (b.count >= 2 && b.count <= (int64_t) c.cols && b.kFull <= (int64_t) c.cols,
                    m1.toRawUTF8());
-            // Settled: newest on the right edge, oldest within one pitch of
-            // the left edge (exactly on it when the stride divides the window;
-            // one truncated bucket short at the other boundary phase).
+            // Settled: newest on the right edge; the oldest DRAWN vertex on
+            // or beyond the left edge (within one pitch of it) with the next
+            // vertex inside the panel, so the segment between them crosses
+            // the edge and the clip renders the crossing exactly. Under the
+            // 0.1.2–0.2.7 window bound the oldest drawn bucket had to lie
+            // wholly inside the 20 s, so it sat up to a pitch INSIDE the edge
+            // behind a flat lead-in — and once the trace scrolled by the
+            // entry, that vertex walked left for `stride` entries and jumped
+            // a pitch right as its bucket expired, a bucket-rate pop at the
+            // left edge. The bucket-aligned read window (`Buckets::window`)
+            // is what puts the oldest vertex at or past the edge instead.
             const auto m2 = say ("a settled window spans the panel at the fixed pitch");
             check (std::abs (GrHistoryView::bucketX (b, b.kHead, 0.0f, (float) c.cols)
                              - (float) (c.cols - 1)) < 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) > -1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) < pitch + 1.0e-3f,
+                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) < 1.0e-3f
+                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) > -pitch - 1.0e-3f
+                   && GrHistoryView::bucketX (b, b.kFirst + 1, 0.0f, (float) c.cols) > -1.0e-3f,
                    m2.toRawUTF8());
-            // …carrying one window of entries to within the truncation the
-            // fixed pitch imposes (never MORE time than the window).
-            const auto drawn = head - b.kFirst * b.stride;
-            const auto m3 = say ("…carrying one window of entries, no more");
-            check (drawn <= want && drawn >= want - 2 * b.stride, m3.toRawUTF8());
-            // Every drawn bucket is non-empty: the oldest lies wholly inside
-            // the window, and the newest holds entry `head - 1` by keying on
-            // `head - 1` rather than `head` (which left it empty whenever the
-            // head landed on a stride boundary).
-            const auto m4 = say ("the oldest drawn bucket is inside the window");
-            check (b.kFirst * b.stride >= head - want, m4.toRawUTF8());
+            // …reading one window of entries: the READ window is `want`
+            // rounded up to whole buckets — under a bucket more than the 20 s,
+            // never less — and it stays inside what the ring safely holds
+            // (`kSize − 1`, the `windowEntries` clamp argument).
+            const auto m3 = say ("…reading one bucket-aligned window, inside the ring");
+            check (b.window >= want && b.window - want < b.stride
+                       && b.window <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1
+                       && b.first == head - b.window,
+                   m3.toRawUTF8());
+            // Every drawn bucket has entries inside the window: the oldest is
+            // the bucket HOLDING `first` (partly expired — the paint clamps
+            // its read range to `first`) or a later one, and the newest holds
+            // entry `head - 1` by keying on `head - 1` rather than `head`
+            // (which left it empty whenever the head landed on a stride
+            // boundary).
+            const auto m4 = say ("the oldest drawn bucket holds `first` or follows it");
+            check (b.kFirst >= b.first / b.stride && (b.kFirst + 1) * b.stride > b.first,
+                   m4.toRawUTF8());
             const auto m5 = say ("…and the newest holds the newest entry");
             check (b.kHead * b.stride <= head - 1 && (b.kHead + 1) * b.stride > head - 1,
                    m5.toRawUTF8());
@@ -6088,18 +6209,186 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // behaviour this assertion exists to keep out.
             const auto q = GrHistoryView::buckets (juce::jmax ((int64_t) 2, want / 4),
                                                    want, c.cols);
+            // The pitch is read between two COMPLETED buckets (kHead − 1 and
+            // kHead − 2): since 0.2.8 the newest bucket's own segment is
+            // `fill` entry-pitches wide, one pitch only at the instant the
+            // bucket completes.
             const auto m6 = say ("a quarter-full ring draws at the settled pitch, right-anchored");
             check (q.stride == b.stride && q.kFull == b.kFull
                    && std::abs (GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
                                 - (float) (c.cols - 1)) < 1.0e-3f
+                   && std::abs ((GrHistoryView::bucketX (q, q.kHead - 1, 0.0f, (float) c.cols)
+                                 - GrHistoryView::bucketX (q, q.kHead - 2, 0.0f, (float) c.cols))
+                                - pitch) < 1.0e-3f
                    && std::abs ((GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
                                  - GrHistoryView::bucketX (q, q.kHead - 1, 0.0f, (float) c.cols))
-                                - pitch) < 1.0e-3f,
+                                - (float) q.fill * pitch / (float) q.stride) < 1.0e-3f,
                    m6.toRawUTF8());
             const auto m7 = say ("…and leaves the unmeasured left region empty, not stretched");
             check (GrHistoryView::bucketX (q, q.kFirst, 0.0f, (float) c.cols)
                        > 0.5f * (float) c.cols,
                    m7.toRawUTF8());
+
+            // SCROLLED BY THE ENTRY (0.2.8). Walk the head one entry at a time
+            // across three whole buckets of a settled window and hold the
+            // properties the jitter fix rests on at EVERY head — including
+            // the bucket boundaries, where the pre-0.2.8 form did all of its
+            // moving. Each assertion is collected over the walk and checked
+            // once, so a single bad head fails the case rather than one of
+            // three hundred near-identical lines.
+            {
+                const float perEntry = pitch / (float) b.stride;
+                bool newestOnEdge = true, completedAtPitch = true, advancesPerEntry = true,
+                     oldestOffEdge = true, neverRightward = true, phaseShifts = true,
+                     tipPinnedWhileFilling = true, tipDriftsWhenComplete = true;
+                for (int64_t h = head; h < head + 3 * b.stride; ++h)
+                {
+                    const auto now  = GrHistoryView::buckets (h,     want, c.cols);
+                    const auto next = GrHistoryView::buckets (h + 1, want, c.cols);
+                    const auto at   = [&] (const GrHistoryView::Buckets& bb, int64_t k)
+                    { return GrHistoryView::bucketX (bb, k, 0.0f, (float) c.cols); };
+
+                    newestOnEdge &= std::abs (at (now, now.kHead) - (float) (c.cols - 1)) < 1.0e-3f;
+                    // The oldest drawn vertex is on or beyond the left edge
+                    // at EVERY head and at both ends of the phase (a phase-1
+                    // frame sits it one entry-pitch further out), and the
+                    // vertex after it is inside — the crossing segment.
+                    {
+                        const auto full1 = GrHistoryView::buckets (h, want, c.cols, 1.0);
+                        oldestOffEdge &= at (now, now.kFirst) < 1.0e-3f
+                                      && at (now, now.kFirst) > -pitch - 1.0e-3f
+                                      && at (full1, full1.kFirst) < 1.0e-3f
+                                      && at (full1, full1.kFirst) > -pitch - perEntry - 1.0e-3f
+                                      && at (now, now.kFirst + 1) > -1.0e-3f;
+                    }
+                    // Every pair of COMPLETED neighbours is one pitch apart,
+                    // whatever the newest bucket's fill.
+                    for (int64_t k = now.kFirst; k + 1 < now.kHead; ++k)
+                        completedAtPitch &= std::abs ((at (now, k + 1) - at (now, k)) - pitch) < 1.0e-3f;
+                    // ONE entry moves every completed bucket by exactly one
+                    // entry-pitch — the assertion the pre-0.2.8 `bucketX`
+                    // fails at `stride − 1` of every `stride` heads (it moved
+                    // nothing) and at the remaining one (it moved a pitch).
+                    for (int64_t k = now.kFirst; k < now.kHead; ++k)
+                        if (k >= next.kFirst)
+                        {
+                            const float d = at (now, k) - at (next, k);
+                            advancesPerEntry &= std::abs (d - perEntry) < 1.0e-3f;
+                            neverRightward   &= d > -1.0e-4f;
+                        }
+                    // The frame-clock phase: a half-period frame sits every
+                    // completed vertex half an entry-pitch further left, and a
+                    // phase-1 frame lands each of them exactly where the next
+                    // entry's phase-0 frame will — continuity across the
+                    // arrival, so no vertex ever jumps or moves rightward.
+                    const auto half = GrHistoryView::buckets (h, want, c.cols, 0.5);
+                    const auto full = GrHistoryView::buckets (h, want, c.cols, 1.0);
+                    for (int64_t k = now.kFirst; k < now.kHead; ++k)
+                    {
+                        phaseShifts &= std::abs ((at (now, k) - at (half, k)) - 0.5f * perEntry) < 1.0e-3f;
+                        if (k >= next.kFirst)
+                            phaseShifts &= std::abs (at (full, k) - at (next, k)) < 1.0e-3f;
+                    }
+                    // The newest vertex holds the edge while its bucket fills
+                    // (its segment stretches instead), and drifts with the
+                    // phase only once the bucket is complete — where the next
+                    // frame's completed vertex takes over at that same x.
+                    if (now.fill < now.stride)
+                        tipPinnedWhileFilling &= std::abs (at (half, now.kHead) - (float) (c.cols - 1)) < 1.0e-3f;
+                    else
+                        tipDriftsWhenComplete &= std::abs (at (full, now.kHead) - at (next, now.kHead)) < 1.0e-3f
+                                              && std::abs ((at (now, now.kHead) - at (full, now.kHead)) - perEntry) < 1.0e-3f;
+                }
+                check (newestOnEdge,     say ("walk: the newest bucket holds the right edge at every head").toRawUTF8());
+                check (completedAtPitch, say ("walk: completed neighbours are one pitch apart at every head").toRawUTF8());
+                check (advancesPerEntry, say ("walk: ONE entry moves every completed bucket ONE entry-pitch").toRawUTF8());
+                check (neverRightward,   say ("walk: …and never moves anything rightward").toRawUTF8());
+                check (oldestOffEdge,    say ("walk: the oldest vertex sits on or beyond the left edge, the next inside").toRawUTF8());
+                check (phaseShifts,      say ("walk: the phase shifts every completed vertex and is continuous across an arrival").toRawUTF8());
+                check (tipPinnedWhileFilling, say ("walk: the newest vertex is pinned to the edge while its bucket fills").toRawUTF8());
+                check (tipDriftsWhenComplete, say ("walk: …and drifts with the phase once complete, handing over without a step").toRawUTF8());
+            }
+        }
+
+        // THE NEWEST VERTEX'S WINDOW (0.2.8). It aggregates the trailing
+        // `stride` entries, not its bucket's partial range: at a bucket start
+        // the pre-0.2.8 range held ONE entry, so the tip popped to a single
+        // block's value and then deepened — the other half of the report.
+        {
+            const int64_t stride = 3, first = 0;
+            check (GrHistoryView::tipFirst (first, 31, stride) == 28
+                       && GrHistoryView::tipFirst (first, 30, stride) == 27
+                       && GrHistoryView::tipFirst (first, 32, stride) == 29,
+                   "grTip: the newest vertex reads the trailing stride entries at every fill");
+            // head 31 is bucket 10's first entry: the bucket's own range would
+            // start at 30, one entry wide. The trailing window starts at 28.
+            check (GrHistoryView::tipFirst (first, 31, stride) < 30,
+                   "grTip: …which is NOT the newest bucket's partial range at a bucket start");
+            // The two coincide at the instant the bucket completes (head 33 =
+            // bucket 10 full: [30, 33)), which is what lets the completed
+            // value take over without a step.
+            check (GrHistoryView::tipFirst (first, 33, stride) == 30,
+                   "grTip: …and coincides with the bucket the instant it completes");
+            check (GrHistoryView::tipFirst (100, 101, stride) == 100
+                       && GrHistoryView::tipFirst (0, 1, stride) == 0,
+                   "grTip: the window never reaches before `first` — a fresh ring reads what it has");
+        }
+
+        // THE FRAME-CLOCK PHASE'S TIME BASE (0.2.8): the prepared pair, as
+        // `windowEntries`, driving a SMOOTHED head held to [head, head + 1]
+        // so a stopped transport or an over-size host block parks the trace
+        // rather than running it ahead, and an unexpected entry snaps it
+        // forward rather than letting the trace fall behind the data.
+        {
+            const double period = GrHistoryView::entryPeriod (48000.0, 512);
+            check (std::abs (period - 512.0 / 48000.0) < 1.0e-12,
+                   "grPhase: an entry spans the prepared block at the prepared rate");
+            check (std::abs (GrHistoryView::entryPeriod (0.0, 512)
+                             - GrHistoryView::entryPeriod (48000.0, 512)) < 1.0e-12
+                       && std::abs (GrHistoryView::entryPeriod (48000.0, 0)
+                                    - GrHistoryView::entryPeriod (48000.0, 1)) < 1.0e-12,
+                   "grPhase: unprepared reads as 48 kHz and a zero block as one sample, never a divide by zero");
+
+            using V = GrHistoryView;
+            const double half = 0.5 * period;      // a frame worth half an entry
+            // Steady state: the estimate advances by dt / period whether or
+            // not an entry arrived this frame — the uniform motion a 2:1
+            // entries-per-frame beat would otherwise modulate.
+            check (std::abs (V::smoothedHead (100.3, 100, half, period) - 100.8) < 1.0e-9
+                       && std::abs (V::smoothedHead (100.8, 101, half, period) - 101.3) < 1.0e-9,
+                   "grPhase: the smoothed head advances at the nominal rate across an arrival, unbroken");
+            // Held to [head, head + 1] from both sides.
+            check (std::abs (V::smoothedHead (100.2, 103, half, period) - 103.0) < 1.0e-12,
+                   "grPhase: …snaps FORWARD to a head the estimate did not expect, never behind the data");
+            check (std::abs (V::smoothedHead (100.9, 100, half, period) - 101.0) < 1.0e-12
+                       && std::abs (V::smoothedHead (101.0, 100, 10.0 * period, period) - 101.0) < 1.0e-12,
+                   "grPhase: …and parks one entry ahead when nothing arrives — a stopped transport");
+            check (std::abs (V::smoothedHead (5000.5, 3, half, period) - 3.0) < 1.0e-12,
+                   "grPhase: a rewound head (ring reset) re-anchors at phase 0, not at the cap");
+            check (std::abs (V::smoothedHead (100.3, 100, half, 0.0) - 100.3) < 1.0e-12,
+                   "grPhase: a degenerate period advances nothing rather than dividing by zero");
+            check (std::abs (V::phaseOf (100.25, 100) - 0.25) < 1.0e-12
+                       && std::abs (V::phaseOf (101.0, 100) - 1.0) < 1.0e-12
+                       && std::abs (V::phaseOf (99.0, 100)) < 1.0e-12
+                       && std::abs (V::phaseOf (107.0, 100) - 1.0) < 1.0e-12,
+                   "grPhase: the phase is the smoothed head's fraction past the real one, clamped to [0, 1]");
+
+            // The tick's idle gate: parked only with the SAME history, no new
+            // entry and the estimate at its cap; a ramp, an arrival, a rewind
+            // or a clear all draw. The epoch half is pinned in
+            // `testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`.
+            check (V::parked (100, 100, 101.0, 4, 4) && V::parked (100, 100, 101.5, 4, 4),
+                   "grPhase: a stopped transport parks once the smoothed head reaches its cap");
+            check (! V::parked (100, 100, 100.7, 4, 4) && ! V::parked (101, 100, 101.0, 4, 4)
+                       && ! V::parked (3, 100, 101.0, 4, 4),
+                   "grPhase: …and a ramping estimate, a new entry or a rewound head each un-park it");
+            // The head a frame draws is the one the tick computed the phase
+            // for — never a newer live index, always the live one before the
+            // first tick or after a rewind.
+            check (V::paintHead (100, 102) == 100 && V::paintHead (100, 100) == 100,
+                   "grPhase: a frame draws the head its phase was computed for, not a newer live one");
+            check (V::paintHead (-1, 5) == 5 && V::paintHead (0, 5) == 5 && V::paintHead (100, 3) == 3,
+                   "grPhase: …and the live head before the first tick or after a rewind");
         }
 
         // A ring with a handful of entries is a short stub at the RIGHT edge
@@ -6212,6 +6501,517 @@ static void testGrHistoryAndTheMeterLanesShareOneReductionSpan()
     check (firstAccent > 0
                && std::abs (((float) firstAccent - wellX) / wellW - 0.5f) < 0.03f,
            "grMeter: half the shared span fills half the lane — the history and the meter agree by construction");
+}
+
+// ---------------------------------------------------------------------------
+// 0.2.8 REVIEW — the three reader/publisher findings, which are correctness
+// rather than appearance and so are pinned apart from the geometry above.
+//
+//  1. RING SAFETY. `paintHead` deliberately draws the head the TICK saw, so
+//     the producer may already have moved past it. The read window was
+//     derived from that stale head, which spent the ring's one-slot margin on
+//     the staleness: at a SATURATED window one block arriving between the
+//     tick's read and the paint's read put the oldest peek exactly on the
+//     slot the audio thread was filling. `readFloor` measures the margin
+//     against the LIVE index instead.
+//  2. PUBLICATION. `shownHead` and `smoothHead` are written by the tick on
+//     the message thread and read by the paint on whichever thread paints —
+//     the GL render thread on macOS/Windows. As plain scalars that was a data
+//     race; they are relaxed atomics now, and `frameFor` is the argument that
+//     reading them as two independent scalars is safe by VALUE.
+//  3. RESET IDENTITY. The entry count is not the identity of the contents: a
+//     clear followed by a refill to the same count presented the tick with
+//     `head == shownHead` over entirely new data, and the gate parked on it.
+//
+// Every assertion here is deterministic and single-threaded — a race cannot be
+// staged reproducibly, so what is pinned is the INVARIANT that makes the race
+// impossible (which index a frame may read, which value pairs it may draw,
+// which states it may park on) rather than an observed absence of one.
+static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
+{
+    using V    = GrHistoryView;
+    using Ring = anabasis::GrHistoryBuffer;
+    const int64_t kMaskI = (int64_t) Ring::kMask;
+    const int64_t kLap   = (int64_t) Ring::kSize;
+
+    // -- 1a. The invariant, swept. The bound every peek must satisfy is
+    //        `live - n <= kSize - 1`: `push` fills slot `live & kMask` and
+    //        publishes afterwards, so an index a full lap or more behind the
+    //        live one aliases the slot being written. Swept over a saturated
+    //        configuration at several heads (including stride boundaries and
+    //        the fills either side) and every staleness a frame can carry.
+    {
+        const int    cols = 604;                       // the Advanced well
+        const auto   want = V::windowEntries (192000.0, 32);
+        check (want == (int64_t) Ring::kSize - 1,
+               "grRace: (premise) 192 kHz / 32 saturates the read window — the only case with no spare slot");
+
+        bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false;
+        int64_t worstUnfixed = 0;
+        for (const int64_t settled : { want * 3, want * 3 + 1, want * 3 + 6, want * 3 + 7, want * 5 + 4 })
+            for (int64_t behind = 0; behind <= 8; ++behind)
+            {
+                const int64_t drawn = settled;             // what the tick published
+                const int64_t live  = settled + behind;    // where the producer is now
+                const auto nb = V::buckets (drawn, want, cols, 0.5);
+
+                // The PRE-FIX window, kept here as the thing that must fail:
+                // this is the expression the review found, and a regression
+                // that restored it would make the next line false.
+                unfixedRaces |= (live - nb.first > (int64_t) Ring::kSize - 1);
+                worstUnfixed = juce::jmax (worstUnfixed, live - nb.first);
+
+                const int64_t first = juce::jmax (nb.first, V::readFloor (live));
+                floorHolds &= (live - first <= (int64_t) Ring::kSize - 1);
+                if (first >= drawn)
+                    continue;                              // the paint blanks the frame here
+                for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
+                {
+                    const auto r = V::bucketReads (nb, k, first, drawn);
+                    for (int64_t n = r.e0; n < r.e1; ++n)
+                    {
+                        everyReadInside &= (live - n < kLap);
+                        slotClear       &= ((n & kMaskI) != (live & kMaskI));
+                    }
+                }
+            }
+        check (unfixedRaces && worstUnfixed == (int64_t) Ring::kSize - 1 + 8,
+               "grRace: (premise) the pre-fix window DID reach a full lap behind the producer — one stale block was enough");
+        check (floorHolds,
+               "grRace: the read floor holds the oldest index inside one lap of the LIVE write index");
+        check (everyReadInside,
+               "grRace: …so every entry a frame peeks is inside that lap, at every staleness and every head");
+        check (slotClear,
+               "grRace: …and none of them aliases the slot the audio thread is filling right now");
+    }
+
+    // -- 1b. The same invariant against the REAL ring, so the bound is read
+    //        from the buffer's own kSize/kMask rather than restated here.
+    {
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
+        for (int64_t i = 0; i < kLap + 250; ++i)
+            ring.push (-2.0f, 0.25f);                  // saturated: the ring has wrapped
+        const int64_t live    = ring.available();
+        const int64_t writing = live & kMaskI;         // the slot `push` fills next
+        const int     cols    = 604;
+        const auto    want    = V::windowEntries (192000.0, 32);
+
+        bool touchesWriteSlot = false;
+        int64_t reads = 0, oldest = live;
+        const int64_t drawn = live - 1;                // ONE block arrived between the two reads
+        const auto nb = V::buckets (drawn, want, cols, 0.0);
+        const int64_t first = juce::jmax (nb.first, V::readFloor (live));
+        for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
+        {
+            const auto r = V::bucketReads (nb, k, first, drawn);
+            for (int64_t n = r.e0; n < r.e1; ++n)
+            {
+                touchesWriteSlot |= ((n & kMaskI) == writing);
+                oldest = juce::jmin (oldest, n);
+                ++reads;
+            }
+        }
+        check (reads > kLap / 2 && ! touchesWriteSlot,
+               "grRace: a saturated real ring, one block stale, reads most of the buffer and never the write slot");
+        check ((drawn - nb.first) == want && oldest == V::readFloor (live) && oldest > nb.first,
+               "grRace: …and the clamp is what does it — the unclamped window starts one entry lower, on that slot");
+
+        // The degenerate end of the same rule: a producer that has lapped
+        // everything the frame would draw leaves nothing safe, and the paint
+        // blanks rather than reading overwritten slots.
+        check (V::readFloor (live + kLap) >= drawn,
+               "grRace: a producer that has lapped the drawn head leaves no readable entry — the frame blanks");
+    }
+
+    // -- 1c. NON-REGRESSION: the floor binds only when the window is saturated
+    //        AND the drawn head is stale. Everywhere else `first` is exactly
+    //        what it was, so no geometry and no read range moved.
+    {
+        struct Case { double sr; int bs; int cols; };
+        bool neverBinds = true, bindsWhenSaturatedAndStale = false;
+        for (const auto& c : { Case { 48000.0, 512, 904 }, Case { 48000.0, 1024, 904 },
+                               Case { 44100.0, 256, 904 }, Case { 48000.0, 2048, 904 },
+                               Case { 48000.0, 512, 604 }, Case { 192000.0, 32, 604 } })
+        {
+            const auto want = V::windowEntries (c.sr, c.bs);
+            const bool saturated = want == (int64_t) Ring::kSize - 1;
+            for (int64_t behind = 0; behind <= 3; ++behind)
+            {
+                const int64_t drawn = want * 3 + 5, live = drawn + behind;
+                const auto nb = V::buckets (drawn, want, c.cols, 0.25);
+                const bool binds = V::readFloor (live) > nb.first;
+                if (binds) bindsWhenSaturatedAndStale = true;
+                else       continue;
+                neverBinds &= (saturated && behind > 0);
+            }
+        }
+        check (neverBinds,
+               "grRace: the floor never binds except on a saturated window with a stale head — every other case draws what it drew");
+        check (bindsWhenSaturatedAndStale,
+               "grRace: …and it does bind there, so the sweep above is not vacuous");
+    }
+
+    // -- 2. PUBLICATION. The two scalars are read from the painting thread as
+    //       separate relaxed atomics, so a frame can pair either one's newer
+    //       value with the other's older one. What makes that safe is not
+    //       synchronisation but the VALUES: `frameFor` resolves any pairing to
+    //       `min (smoothHead, head + 1)`, which lies between two frames the
+    //       ramp itself produces, so the trace never jumps and never moves
+    //       rightward. Pinned across a realistic publication sequence — 1.5625
+    //       entries of smoothing per frame against 1 or 2 arriving entries,
+    //       the 48 kHz / 512 case on a 60 Hz display.
+    {
+        check (std::atomic<int64_t>::is_always_lock_free && std::atomic<double>::is_always_lock_free,
+               "grPair: the painting thread's reads are lock-free — the header asserts the same at compile time");
+
+        std::vector<std::pair<int64_t, double>> published;
+        {
+            int64_t head = 400;
+            double  smooth = 400.0;
+            for (int f = 0; f < 64; ++f)
+            {
+                head  += (f % 3 == 0) ? 2 : 1;                       // the 1-or-2 beat
+                smooth = V::smoothedHead (smooth, head, 1.0 / 60.0, 512.0 / 48000.0);
+                published.emplace_back (head, smooth);
+            }
+        }
+        const auto pos = [] (int64_t h, double sm)
+        {
+            // live == h and one settled epoch: the tick's own frame, which is
+            // where the cross-pairing question lives. The epoch's own effect
+            // is the `grResetPhase` block below.
+            const auto f = V::frameFor (h, sm, 4u, h, 4u);
+            return (double) f.head + f.phase;
+        };
+        bool inRange = true, monotoneCross = true, neverRightward = true;
+        for (size_t i = 0; i + 1 < published.size(); ++i)
+        {
+            const auto [h0, s0] = published[i];
+            const auto [h1, s1] = published[i + 1];
+            // Every pairing a torn read can produce, in both crossing orders.
+            const double a = pos (h0, s0), b = pos (h0, s1), c = pos (h1, s0), d = pos (h1, s1);
+            inRange       &= (a >= (double) h0 && a <= (double) h0 + 1.0
+                              && d >= (double) h1 && d <= (double) h1 + 1.0);
+            monotoneCross &= (a <= b + 1.0e-12 && b <= d + 1.0e-12
+                              && a <= c + 1.0e-12 && c <= d + 1.0e-12);
+            neverRightward &= (juce::jmin (b, c) >= a - 1.0e-12);
+        }
+        check (inRange,
+               "grPair: a frame's position is always within one entry of the head it draws");
+        check (monotoneCross,
+               "grPair: every stale/fresh pairing of the two published scalars lies between the two frames the ramp produces");
+        check (neverRightward,
+               "grPair: …so a torn read draws a frame the display was about to draw, never one it has already passed");
+        // The pairing that matters most: a paint landing between the two
+        // stores sees the NEW phase with the OLD head, which must resolve to
+        // the frame this tick is drawing and not one beyond it.
+        check (std::abs (pos (500, 501.4) - 501.0) < 1.0e-12 && std::abs (pos (501, 501.4) - 501.4) < 1.0e-12,
+               "grPair: a phase that has run past the old head caps at that head's own next frame");
+    }
+
+    // -- 3. RESET IDENTITY. The count cannot say whether the history is the
+    //       same history; the ring's epoch can, and already exists for the
+    //       paint's batch guard.
+    {
+        check (V::parked (250, 250, 251.0, 6, 6),
+               "grReset: (premise) an idle frame over the same history parks, as it always did");
+        check (! V::parked (250, 250, 251.0, 8, 6) && ! V::parked (250, 250, 251.0, 7, 6),
+               "grReset: the SAME entry count over a new epoch does NOT park — a clear is observable at equal count");
+        check (V::parked (250, 250, 251.0, 6, 6) && ! V::parked (250, 250, 250.4, 6, 6),
+               "grReset: …and the epoch does not disturb the ordinary gate — a ramping estimate still draws");
+        // The other half: the clear re-anchors the phase, which the index
+        // alone cannot ask for once the refill has restored the count.
+        const double period = V::entryPeriod (48000.0, 512);
+        check (std::abs (V::smoothedHead (250.9, 250, 0.5 * period, period, true) - 250.0) < 1.0e-12,
+               "grReset: a cleared history re-anchors the phase at 0 even though the head did not visibly rewind");
+        check (std::abs (V::smoothedHead (250.9, 250, 0.5 * period, period, false) - 251.0) < 1.0e-12,
+               "grReset: …and an ordinary frame at the same head and phase is untouched by that rule");
+
+        // The count really is ambiguous, measured on the real ring rather than
+        // argued: fill it, clear it, refill to exactly the same count.
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
+        for (int i = 0; i < 250; ++i) ring.push (-1.0f, 0.5f);
+        const auto countBefore = ring.available();
+        const auto epochBefore = ring.resetEpoch();
+        ring.reset();
+        for (int i = 0; i < 250; ++i) ring.push (-9.0f, 0.9f);
+        check (ring.available() == countBefore && ring.resetEpoch() == epochBefore + 2,
+               "grReset: a clear plus a refill to the same count is INDISTINGUISHABLE by count and plain by epoch");
+        check (! V::parked (ring.available(), countBefore, (double) countBefore + 1.0,
+                            ring.resetEpoch(), epochBefore),
+               "grReset: …so the gate that would have parked on it repaints instead");
+        // …and the new contents are what a frame would now read, so the stale
+        // geometry cannot survive the repaint.
+        check (ring.peek (0).grDb < -5.0f && ring.peek (249).grDb < -5.0f,
+               "grReset: the refilled entries are the NEW ones — nothing of the old history is still readable");
+    }
+
+    // -- 3b. THE VALIDATION PATH ITSELF (0.2.8 final review). The guard that
+    //        discards a raced frame was already reading synchronised state —
+    //        `resetEpoch()` and `available()` are acquire loads on atomics —
+    //        but what it was validating was not: `push` stored the pair with a
+    //        plain write and `peek` read it with a plain read, so a batch the
+    //        producer lapped was a DATA RACE, and discarding the frame
+    //        afterwards cannot unhappen undefined behaviour. The payload is
+    //        atomic now (relaxed both ways), which makes the racing read
+    //        DEFINED — each field yields one of the two values, the pair may be
+    //        mismatched — and leaves the guard's job unchanged: throw that
+    //        frame away. Detection was never the defect; what it was detecting
+    //        was.
+    {
+        using Slot = Ring::Slot;
+        check (std::is_same_v<decltype (Slot::grDb), std::atomic<float>>
+                   && std::is_same_v<decltype (Slot::peak), std::atomic<float>>,
+               "grSync: the ring's PAYLOAD is atomic — a read racing the producer is defined, not merely detected");
+        check (std::atomic<float>::is_always_lock_free,
+               "grSync: …and lock-free, so the audio thread's store stays a store and never takes a lock");
+        check (sizeof (Slot) == 2 * sizeof (float) && alignof (Slot) == alignof (float),
+               "grSync: …at the layout of the plain pair it replaced — the ring's size and the push are unchanged");
+
+        // The guard's two inputs are the ring's synchronised accessors, and
+        // they answer DIFFERENT questions: the epoch sees a host-thread clear,
+        // the index sees the producer advancing. Neither reads the payload.
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
+        for (int i = 0; i < 40; ++i)
+            ring.push (-3.0f, 0.4f);
+        const auto epoch0 = ring.resetEpoch();
+        const auto head0  = ring.available();
+        float deepest = 0.0f, loudest = 0.0f;
+        for (int64_t n = 0; n < head0; ++n)          // a batch of peeks, as `paintHistory` does
+        {
+            const auto e = ring.peek (n);
+            deepest = juce::jmin (deepest, e.grDb);
+            loudest = juce::jmax (loudest, e.peak);
+        }
+        check (head0 == 40 && (epoch0 & 1u) == 0u
+                   && std::abs (deepest + 3.0f) < 1.0e-6f && std::abs (loudest - 0.4f) < 1.0e-6f,
+               "grSync: (premise) a settled batch reads exactly the published values back through the atomic payload");
+
+        for (int i = 0; i < Ring::kSize; ++i)        // the producer laps the batch's window
+            ring.push (-9.0f, 0.9f);
+        check (ring.resetEpoch() == epoch0,
+               "grSync: a producer that advanced does not move the EPOCH — that guard answers the clear, not the lap");
+        check (V::readFloor (ring.available()) > 0,
+               "grSync: …the FLOOR re-check is what sees the lap, and it is read from `available()`");
+        check (V::readFloor (ring.available()) > head0 - (int64_t) Ring::kSize,
+               "grSync: …so a batch anchored below it is discarded — the bargain the payload's atomicity makes legal");
+
+        const auto epoch1 = ring.resetEpoch();
+        ring.reset();
+        check (ring.resetEpoch() == epoch1 + 2 && (ring.resetEpoch() & 1u) == 0u
+                   && ring.available() == 0,
+               "grSync: a clear moves the epoch by two and rewinds the index — both seen through the ring's own atomics");
+        check (std::abs (ring.peek (0).grDb) < 1.0e-12f && std::abs (ring.peek (0).peak) < 1.0e-12f,
+               "grSync: …and the cleared payload reads back through the same atomic path it was cleared through");
+    }
+
+    // -- 3c. RESET FRAMES MUST NOT INHERIT THE PRE-RESET PHASE (0.2.8 final
+    //        review). A phase only means something in the timeline it was
+    //        measured in. `GrHistoryBuffer::reset()` rewinds the write index,
+    //        so a phase published before a clear describes indices that no
+    //        longer exist — and a paint runs on its own schedule, so one can
+    //        land after the clear and before the tick that re-anchors. Reading
+    //        the stale `smoothHead` against the fresh head saturates the clamp
+    //        to a phase of exactly 1: the first fresh frame drawn one
+    //        entry-pitch out instead of anchored. `frameFor` now takes the
+    //        epoch the phase was published under and the epoch the frame is
+    //        drawing, and uses the phase only when they agree.
+    {
+        const uint32_t before = 6, after = 8;      // one clear moves the epoch by two
+        const int64_t  head   = 250;
+        const double   parkedSmooth = (double) head + 1.0;   // the pre-reset ramp, parked
+
+        // 1 — an ordinary frame in the settled timeline carries its phase.
+        const auto normal = V::frameFor (head, (double) head + 0.7, before, head, before);
+        check (normal.head == head && std::abs (normal.phase - 0.7) < 1.0e-12,
+               "grResetPhase: (premise) inside one timeline a frame draws the published phase");
+
+        // 2/3/4 — after the clear, the SAME published values must anchor the
+        // frame, whatever the refill has reached. Three fill states: the ring
+        // barely refilled, refilled past the old count, and refilled to
+        // EXACTLY the old count — the last is the one no value-based rule can
+        // catch, because `shownHead == live` and `smoothHead - head == 1` are
+        // both indistinguishable from a legitimate parked frame.
+        const auto justAfter = V::frameFor (head, parkedSmooth, before, 3, after);
+        const auto equalCount = V::frameFor (head, parkedSmooth, before, head, after);
+        const auto pastCount = V::frameFor (head, parkedSmooth, before, head + 40, after);
+        check (std::abs (justAfter.phase) < 1.0e-12 && std::abs (equalCount.phase) < 1.0e-12
+                   && std::abs (pastCount.phase) < 1.0e-12,
+               "grResetPhase: a frame after a clear anchors at phase 0 — at every refill state, including the equal count");
+        check (justAfter.head == 3 && equalCount.head == head && pastCount.head == head,
+               "grResetPhase: …and still draws the head it would have drawn, so only the phase is anchored");
+        // The pre-fix behaviour, stated as the thing that must not come back:
+        // the same values with the epoch ignored give a phase of exactly 1.
+        check (std::abs (V::phaseOf (parkedSmooth, head) - 1.0) < 1.0e-12,
+               "grResetPhase: (premise) ignoring the epoch would have drawn that frame one entry-pitch out");
+
+        // 5 — the first frame the tick publishes after the clear is anchored
+        // at 0 by `smoothedHead`'s `cleared` re-anchor, and now agrees.
+        const double reanchored = V::smoothedHead (parkedSmooth, 3, 0.5, 0.01, true);
+        const auto   fresh = V::frameFor (3, reanchored, after, 3, after);
+        check (std::abs (reanchored - 3.0) < 1.0e-12 && fresh.head == 3 && std::abs (fresh.phase) < 1.0e-12,
+               "grResetPhase: the first published frame of the new timeline is itself at phase 0");
+
+        // 6 — and ordinary smoothing resumes immediately afterwards.
+        const auto resumed = V::frameFor (5, 5.4, after, 5, after);
+        check (resumed.head == 5 && std::abs (resumed.phase - 0.4) < 1.0e-12,
+               "grResetPhase: …after which the new timeline carries its phase exactly as before");
+
+        // REPEATED clears: every superseded epoch anchors, only the live one
+        // carries a phase. Includes the ODD value a clear in flight publishes.
+        bool everyStaleAnchors = true;
+        for (const uint32_t stale : { 0u, 2u, 4u, 6u, 7u, 9u })
+            everyStaleAnchors &= std::abs (V::frameFor (head, parkedSmooth, stale, head, 10u).phase) < 1.0e-12;
+        check (everyStaleAnchors,
+               "grResetPhase: after repeated clears every superseded epoch anchors — only the live one carries a phase");
+        check (std::abs (V::frameFor (head, parkedSmooth, 10u, head, 10u).phase - 1.0) < 1.0e-12,
+               "grResetPhase: …and the live one still does, so the rule anchors resets rather than every frame");
+
+        // The ring's own epoch arithmetic is what feeds this, end to end.
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
+        for (int i = 0; i < 40; ++i) ring.push (-1.0f, 0.5f);
+        const auto live0 = ring.resetEpoch();
+        ring.reset();
+        for (int i = 0; i < 40; ++i) ring.push (-8.0f, 0.8f);
+        check (ring.resetEpoch() != live0 && ring.available() == 40,
+               "grResetPhase: (premise) a real clear plus an equal refill moves the epoch and restores the count");
+        check (std::abs (V::frameFor (40, 41.0, live0, ring.available(), ring.resetEpoch()).phase) < 1.0e-12,
+               "grResetPhase: …and a frame holding the pre-clear publication anchors against the ring's own epochs");
+    }
+
+    // -- 3d. THE PREPARED PAIR IS RING METADATA (0.2.8 final review). The
+    //        view mapped its window and its scroll rate through
+    //        `AudioProcessor::getSampleRate()` / `getBlockSize()` — plain
+    //        members the host writes from its callback thread while the
+    //        message thread ticks and the render thread paints: a data race on
+    //        exactly the values the scroll timing is derived from. The ring
+    //        now stores the pair its entries are recorded under, inside the
+    //        same epoch window as the clear that starts a timeline, so a
+    //        reader that brackets its batch with the epoch sees the pair and
+    //        the entries as ONE coherent unit — and the clear-on-change gate
+    //        moved with it, so the pair the gate compares is the pair readers
+    //        get.
+    {
+        const auto ringStorage = std::make_unique<Ring>();
+        auto& ring = *ringStorage;
+        const auto e0 = ring.resetEpoch();
+        check (ring.prepared().block == 0 && std::abs (ring.prepared().rate) < 1.0e-12,
+               "grPrepared: (premise) an unprepared ring publishes zeros, which the view already reads as 48 kHz");
+
+        // The first prepare clears (a new timeline) and stores the pair.
+        check (ring.prepare (48000.0, 512) && ring.resetEpoch() == e0 + 2,
+               "grPrepared: the first prepare is a clear, and the epoch says so");
+        check (std::abs (ring.prepared().rate - 48000.0) < 1.0e-12 && ring.prepared().block == 512,
+               "grPrepared: …and the pair readers get is the pair it was prepared with");
+
+        // The SAME pair keeps the timeline — 0.1.2 item 6, now the ring's own
+        // rule rather than the wrapper's: no clear, no epoch move, entries kept.
+        for (int i = 0; i < 20; ++i) ring.push (-2.0f, 0.5f);
+        const auto e1 = ring.resetEpoch();
+        check (! ring.prepare (48000.0, 512) && ring.resetEpoch() == e1 && ring.available() == 20,
+               "grPrepared: a re-prepare at the same pair keeps the history (pause/resume), epoch unmoved");
+
+        // A CHANGED pair clears and re-publishes; the pair moves only across
+        // an epoch move, which is the coherence a bracketed reader relies on.
+        check (ring.prepare (44100.0, 256) && ring.resetEpoch() == e1 + 2 && ring.available() == 0
+                   && std::abs (ring.prepared().rate - 44100.0) < 1.0e-12 && ring.prepared().block == 256,
+               "grPrepared: a changed pair clears the ring and publishes the new pair inside that clear");
+        check (ring.prepare (44100.0, 512) && ring.prepared().block == 512
+                   && ring.prepare (96000.0, 512) && std::abs (ring.prepared().rate - 96000.0) < 1.0e-12,
+               "grPrepared: …either half changing is a change");
+
+        // The bracket: a reader that sampled the epoch, read the pair and the
+        // entries, and closes with `batchIntact` is told the truth in both
+        // directions — intact when nothing happened, torn when a clear ran.
+        const auto eA = ring.resetEpoch();
+        const auto pairA = ring.prepared();
+        check ((eA & 1u) == 0u && ring.batchIntact (eA),
+               "grPrepared: a batch nothing interrupted closes intact");
+        ring.prepare (48000.0, 512);                         // a clear lands mid-batch
+        check (! ring.batchIntact (eA) && ring.prepared().block == 512
+                   && std::abs (pairA.rate - 96000.0) < 1.0e-12,
+               "grPrepared: …and one a clear ran through closes torn, so the pair it read is never trusted");
+
+        // Through the real wrapper: the ring's pair is what `prepareToPlay`
+        // received — the same values the view used to read back from the
+        // processor's plain members, now under the ring's epoch instead.
+        //
+        // A host calls `setRateAndBufferSizeDetails` (JUCE's plain members)
+        // and THEN `prepareToPlay`; a bare `prepareToPlay` sets nothing in the
+        // base class. That is asserted first because it is a finding in its
+        // own right: this suite has only ever called the override, so the
+        // view's old source read a block size of 0 here and mapped every
+        // headless frame through the 48 kHz / 1-sample fallback — a saturated
+        // window — while the ring's pair is the one the entries were actually
+        // recorded under.
+        const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& proc = *procStorage;
+        const auto& pr = proc.grHistory();
+        proc.prepareToPlay (48000.0, 512);
+        check (proc.getBlockSize() == 0 && pr.prepared().block == 512,
+               "grPrepared: (premise) a bare prepareToPlay leaves the processor's own members unset — the ring's pair is the real one");
+        proc.setRateAndBufferSizeDetails (48000.0, 512);    // what a host does before the callback
+        check (std::abs (pr.prepared().rate - proc.getSampleRate()) < 1.0e-12
+                   && pr.prepared().block == proc.getBlockSize() && pr.prepared().block == 512,
+               "grPrepared: under a host's sequence the ring's pair equals what the processor reports");
+        const auto ep = pr.resetEpoch();
+        proc.prepareToPlay (48000.0, 512);
+        check (pr.resetEpoch() == ep, "grPrepared: (existing rule) the wrapper's same-pair re-prepare does not clear");
+        proc.setRateAndBufferSizeDetails (44100.0, 1024);
+        proc.prepareToPlay (44100.0, 1024);
+        check (pr.resetEpoch() == ep + 2 && std::abs (pr.prepared().rate - 44100.0) < 1.0e-12
+                   && pr.prepared().block == 1024,
+               "grPrepared: …and a changed pair clears through the wrapper exactly as it did, with the pair published");
+        // What the view derives is unchanged under a stable configuration:
+        // the same two functions, fed the ring's pair instead of the plain
+        // members, give the same window and the same entry period.
+        check (GrHistoryView::windowEntries (pr.prepared().rate, pr.prepared().block)
+                   == GrHistoryView::windowEntries (proc.getSampleRate(), proc.getBlockSize())
+               && std::abs (GrHistoryView::entryPeriod (pr.prepared().rate, pr.prepared().block)
+                            - GrHistoryView::entryPeriod (proc.getSampleRate(), proc.getBlockSize())) < 1.0e-15,
+               "grPrepared: the view's window and scroll rate are identical from either source — nothing moved under a stable configuration");
+        check (std::atomic<double>::is_always_lock_free && std::atomic<int>::is_always_lock_free,
+               "grPrepared: the pair is read on the painting thread lock-free — the ring asserts the same at compile time");
+    }
+
+    // -- 4. The real paint path, through the atomics, on a populated ring:
+    //       it draws, and it draws the same thing twice from the same state.
+    {
+        const auto procStorage = std::make_unique<AnabasisAudioProcessor>();   // ~76 KB: heap
+        auto& proc = *procStorage;
+        proc.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 400; ++b)
+        {
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                for (int i = 0; i < buf.getNumSamples(); ++i)
+                    buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (b * 512 + i)));
+            proc.processBlock (buf, midi);
+        }
+        check (proc.grHistory().available() == 400, "grPaint: (premise) the ring carries a history to draw");
+
+        GrHistoryView view (proc);
+        view.setBounds (0, 0, 300, 120);
+        const auto a = view.createComponentSnapshot (view.getLocalBounds(), false);
+        const auto b = view.createComponentSnapshot (view.getLocalBounds(), false);
+        int differing = 0, drawn = 0;
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+            {
+                const auto pa = a.getPixelAt (x, y);
+                if (pa != b.getPixelAt (x, y)) ++differing;
+                if (pa.getRed() > 128 && pa.getGreen() > 100) ++drawn;   // the accent trace
+            }
+        check (drawn > 100,
+               "grPaint: the paint path reads the published state and draws the trace");
+        check (differing == 0,
+               "grPaint: …and two frames from one state are identical — the reads are of settled values, not of a moving target");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7406,6 +8206,7 @@ int main (int argc, char** argv)
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
+        testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();

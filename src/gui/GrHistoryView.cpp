@@ -54,15 +54,65 @@ void GrHistoryView::visibilityChanged()
         clock.stop();
 }
 
-void GrHistoryView::tick (double)
+void GrHistoryView::tick (double dt)
 {
     const auto& ring = processor.grHistory();
-    const auto head = ring.available();
-    if (head != shownHead)
-    {
-        shownHead = head;
-        repaint();
-    }
+    // The epoch is sampled BEFORE the index, so a clear that lands between the
+    // two is attributed to the newer epoch and re-anchors on the next tick
+    // rather than being missed: the tick's job here is only to decide whether
+    // the history is the same history, and "not sure" must mean "not parked".
+    const auto epoch    = ring.resetEpoch();
+    const auto prepared = ring.prepared();
+    const auto head     = ring.available();
+    // The pair and the head were read under `epoch`; if a clear ran through
+    // that read the pair may be half old and half new, so this tick publishes
+    // nothing and the next re-derives from a settled epoch (`batchIntact` is
+    // the fence-and-re-read the seqlock reader needs, not a second load).
+    // Before 0.2.8's final review this read `getSampleRate()`/`getBlockSize()`
+    // — `AudioProcessor`'s plain members, written by the host's callback
+    // thread while this thread ticks: a data race on exactly the values the
+    // scroll rate is derived from.
+    if ((epoch & 1u) != 0u || ! ring.batchIntact (epoch))
+        return;
+    const auto shown = shownHead.load (std::memory_order_relaxed);
+    // PARKED: the same history, no new entry, and the smoothed head already
+    // one whole entry ahead of it (`smoothedHead`'s cap) — so nothing this
+    // frame could draw differs from the last one and the pre-0.2.8 idle gate,
+    // repaint on new data only, is back in force. A stopped transport costs
+    // at most one entry period of extra frames after its last block, never a
+    // paint per vblank. The EPOCH is what makes "the same history" mean the
+    // contents rather than the count; see `parked`.
+    if (parked (head, shown, smoothHead.load (std::memory_order_relaxed), epoch, shownEpoch))
+        return;
+
+    // A CLEAR RESTARTS THE TIMELINE, so the phase restarts with it: the ring
+    // rewinds its write index to 0, and carrying the old sub-entry offset
+    // across that would draw the first frames of the new history one
+    // entry-pitch out. This is the same re-anchor `smoothedHead` performs for
+    // a rewound head, reached here by the epoch instead — which is the only
+    // way to see it when the refill has already returned the count to where
+    // it was.
+    const double smoothed = smoothedHead (smoothHead.load (std::memory_order_relaxed), head, dt,
+                                          entryPeriod (prepared.rate, prepared.block),
+                                          epoch != shownEpoch);
+
+    // Publish for the painting thread. `smoothHead` FIRST so a paint landing
+    // between the two stores pairs a fresh phase with the older head, which
+    // `frameFor` resolves to `min (smoothHead, head + 1)` — the frame this
+    // tick is about to draw, never one beyond it. The reverse order would let
+    // a frame pair the new head with the previous phase, which is legal too
+    // (also non-decreasing); the order is fixed here so the reasoning has one
+    // case rather than two.
+    smoothHead.store (smoothed, std::memory_order_relaxed);
+    shownHead.store (head, std::memory_order_relaxed);
+    // …and the epoch those two were computed under, LAST and with RELEASE, so
+    // a frame that sees it sees them (the member's comment carries the whole
+    // argument). This is what makes the phase's validity checkable rather than
+    // assumed: until this store lands, a paint after a clear reads an epoch
+    // that no longer matches the ring's and anchors at phase 0.
+    publishedEpoch.store (epoch, std::memory_order_release);
+    shownEpoch = epoch;
+    repaint();
 }
 
 void GrHistoryView::paint (juce::Graphics& g)
@@ -96,16 +146,33 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     const auto epoch0 = ring.resetEpoch();
     if ((epoch0 & 1u) != 0u)
         return;                                     // clear in flight: skip the frame
-    const int64_t head = ring.available();
+
+    // The LIVE write index — where the producer is now — and the frame the
+    // two published scalars describe. The live index has two jobs and they
+    // are different: `frameFor` uses it to decide whether the tick's head is
+    // still usable (`paintHead`), and `readFloor` uses it to bound which
+    // slots this batch may touch. Reading it ONCE keeps both answers derived
+    // from the same observation.
+    const int64_t live  = ring.available();
+    // ACQUIRE FIRST, then the two relaxed loads: the pair with `tick`'s
+    // release store is what makes a matching epoch mean "the phase published
+    // under it is visible to this frame". Reading it after them would order
+    // nothing and leave the reset defect open on weakly ordered targets.
+    const auto    pubEpoch = publishedEpoch.load (std::memory_order_acquire);
+    const auto    frame = frameFor (shownHead.load (std::memory_order_relaxed),
+                                    smoothHead.load (std::memory_order_relaxed),
+                                    pubEpoch, live, epoch0);
+    const int64_t head  = frame.head;
 
     // The clamp lives in `windowEntries` (header) so it is testable without a
     // graphics context; `kSize - 1` and the reason for it are stated there.
     // Reachable at ordinary block sizes: 20 s at 48 kHz / 64 samples is 15000
     // entries, so `want` saturates for anything up to ~234 samples per block.
-    const int64_t want  = windowEntries (processor.getSampleRate(), processor.getBlockSize());
-    const int64_t first = juce::jmax ((int64_t) 0, head - want);
-    const int64_t count = head - first;
-    if (count <= 0)
+    // The pair is the RING's (`prepared`), read under this batch's epoch like
+    // everything else the frame maps — see `tick` for what it replaced.
+    const auto    prepared = ring.prepared();
+    const int64_t want = windowEntries (prepared.rate, prepared.block);
+    if (head <= 0)
         return;
 
     auto area = getLocalBounds().toFloat().reduced (10.0f, 8.0f);
@@ -137,10 +204,44 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // `bucketX` carry that arithmetic and its argument; they live in the header
     // for the reason `windowEntries` does — a version reachable only from
     // `paint` is a version no test can pin, which is how this went unnoticed.
-    const auto nb = buckets (head, want, cols);
+    //
+    // SCROLLED ONE ENTRY AT A TIME (0.2.8, the owner's jitter report — the
+    // banner above `bucketX` carries the mechanism and the numbers). The
+    // buckets are the same; what changed is that `bucketX` now places them by
+    // the newest ENTRY's sub-bucket position and by how far the frame clock
+    // says this frame sits inside that entry's period, so the trace advances
+    // ~0.5–1 px every frame instead of standing still for two and lurching
+    // a whole pitch on the third. The `phase` half is why this frame reads
+    // `smoothHead`, which `tick` advances.
+    const auto nb = buckets (head, want, cols, frame.phase);
+
+    // The read window is `nb.window` / `nb.first` — bucket-aligned, argued in
+    // `buckets` — held ABOVE the ring floor the producer's live position
+    // imposes (`readFloor`, the 0.2.8 review's finding 1). The floor binds
+    // only when the window is saturated AND the drawn head is stale, and it
+    // moves no geometry: `bucketX` and `kFirst` never see it, only which
+    // entries the oldest bucket aggregates.
+    const int64_t first = juce::jmax (nb.first, readFloor (live));
+    if (first >= head)
+        return;                                     // the producer has lapped everything this
+                                                    // frame could draw; blank is the honest
+                                                    // answer and the next tick re-derives
     juce::Path wave, gr;
     bool started = false;
-    float lastX = area.getX();
+    float lastX = area.getX(), lastWy = 0.0f, lastGy = 0.0f;
+
+    // Clip to the plot area's COLUMNS (the rows keep their overhang: the
+    // 1.4 px stroke at zero reduction straddles `area.getY()` and must go on
+    // doing so). The oldest drawn bucket now sits ON or up to a pitch OFF the
+    // left edge (`buckets`), and drawing it there lets its segment cross the
+    // edge exactly — the alternative was the flat lead-in, which walked and
+    // jumped at bucket rate. What the clip costs is the 0.7 px of end-cap
+    // the stroke used to spill into the 10 px margin, which is the margin's,
+    // not the trace's.
+    const juce::Graphics::ScopedSaveState clipState (g);
+    g.reduceClipRegion (juce::Rectangle<float> (area.getX(), 0.0f,
+                                                area.getWidth(), (float) getHeight())
+                            .toNearestInt());
 
     // The UNMEASURED region (0.1.2 item 3): everything left of the oldest
     // bucket has no history behind it — the ring has not lived that long —
@@ -170,25 +271,39 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // for the reason `windowEntries` and `buckets` do: a rule reachable only
     // from `paint` is a rule no test can pin, which is how this defect
     // survived the round that introduced it.
+    //
+    // The paths START in this branch whatever `xFirst` is (0.2.8): the zero
+    // line runs from the left edge — or from `xFirst` itself once that has
+    // scrolled past the edge — and the loop's first vertex then drops to the
+    // measured value at the same x, so the boundary bar slides out UNDER the
+    // clip over the last frames of the fill instead of vanishing whole the
+    // frame `xFirst` crossed a half-pixel guard. The window the predicate
+    // reads is the ALIGNED one (`nb.window`), so the filling and scrolling
+    // cases agree about which frame is the changeover.
     const float zeroWy = area.getBottom() - 0.5f;       // == the wh floor below
     const float zeroGy = grY (0.0f, area.getY(), area.getHeight());   // the GR zero line
-    if (drawsZeroRegion (head, want))
+    if (drawsZeroRegion (head, nb.window))
     {
         const float xFirst = bucketX (nb, nb.kFirst, area.getX(), area.getWidth());
-        if (xFirst > area.getX() + 0.5f)
+        const float xZero  = juce::jmin (area.getX(), xFirst);
+        wave.startNewSubPath (xZero, zeroWy);
+        gr.startNewSubPath (xZero, zeroGy);
+        if (xFirst > xZero + 0.01f)
         {
-            wave.startNewSubPath (area.getX(), zeroWy);
-            gr.startNewSubPath (area.getX(), zeroGy);
             wave.lineTo (xFirst, zeroWy);
             gr.lineTo (xFirst, zeroGy);
-            started = true;
         }
+        started = true;
     }
 
     for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
     {
-        const int64_t e0 = juce::jmax (first, k * nb.stride);
-        const int64_t e1 = juce::jmin (head, (k + 1) * nb.stride);
+        // The newest vertex aggregates the TRAILING `stride` entries rather
+        // than its bucket's partial range (`tipFirst`, 0.2.8): the same
+        // filter length as every completed vertex, coinciding with the bucket
+        // the instant it completes, so the tip no longer pops to a single
+        // block's value at every bucket start.
+        const auto [e0, e1] = bucketReads (nb, k, first, head);
         if (e0 >= e1)
             continue;                               // unreachable by construction (see the
                                                     // header); kept because an empty bucket
@@ -210,13 +325,17 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         if (! started)
         {
             // A full scrolling window (the filling case starts its paths in
-            // the zero-region branch above): the sub-pitch strip left of the
-            // truncated oldest bucket holds expired history, so the oldest
-            // bucket's own values extend to the panel edge — a horizontal
-            // ≤ one-pitch lead-in that scrolls seamlessly, where the previous
-            // zero-line start drew the flashing vertical bar the banner above
-            // describes. The lie is bounded by the same one bucket of
-            // truncation ADR-0023 item 6 already accepts at this edge.
+            // the zero-region branch above). Since 0.2.8 the oldest drawn
+            // bucket sits on or beyond the left edge whenever the read window
+            // is bucket-aligned (`buckets`), so `x ≤ xEdge` here, the path
+            // simply starts at the vertex and the clip does the rest. The
+            // lead-in below — the oldest bucket's values extended flat to the
+            // edge — is now reached only by the unaligned fallback (a
+            // saturated ring whose stride does not divide `kSize − 1`, which
+            // neither of this product's plot widths produces), where it is
+            // still the 0.1.3 answer to the strip of expired history the
+            // truncated bucket leaves: bounded by the same one bucket of
+            // truncation ADR-0023 item 6 accepts at this edge.
             const float xEdge = area.getX();
             wave.startNewSubPath (juce::jmin (x, xEdge), wy);
             gr.startNewSubPath (juce::jmin (x, xEdge), gy);
@@ -232,14 +351,47 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
             wave.lineTo (x, wy);
             gr.lineTo (x, gy);
         }
-        lastX = x;
+        lastX  = x;
+        lastWy = wy;
+        lastGy = gy;
     }
 
-    // The batch raced a reset: throw the frame away, the next tick re-derives.
-    if (ring.resetEpoch() != epoch0)
+    // THE BATCH LOST A RACE — either half of the reader contract (banner).
+    // A moved epoch means a clear ran through it; a producer that has advanced
+    // past this batch's floor means the audio thread has lapped the oldest
+    // slots the batch peeked, so those values may have been overwritten while
+    // they were read. Both discard the frame and let the next tick re-derive;
+    // one dropped frame is the seqlock bargain the ring's own header states.
+    // `batchIntact` FIRST: it carries the acquire fence that orders every
+    // peek above before either re-read. Written as two SEQUENCED STATEMENTS
+    // rather than one `||`, deliberately. `||`'s left-to-right sequencing is
+    // guaranteed and the previous form was correct, but the ordering is now
+    // load-bearing for the LAP check as well as the epoch — since 0.2.8's
+    // round 6 the producer release-fences before its payload stores, and the
+    // whole guarantee is that the peeks are sequenced before this fence and
+    // the `available()` re-read after it. A future edit that reordered the
+    // operands, or hoisted the re-read for tidiness, would silently delete
+    // that guarantee and no test could see it. One always-evaluated atomic
+    // load on the paint path is the price of making the requirement visible.
+    const bool    intact = ring.batchIntact (epoch0);   // carries the acquire fence
+    const int64_t live2  = ring.available();            // sequenced after it
+    if (! intact || first < readFloor (live2))
         return;
     if (! started)
         return;
+
+    // The LEAD-OUT, mirror of the left edge's lead-in: while a completed
+    // newest bucket drifts left on its phase (`bucketX`), the strip it
+    // vacates — under one entry-pitch — holds no newer data than that vertex,
+    // so its value extends flat to the edge rather than leaving the newest
+    // pixel column empty and breathing at the block rate.
+    const float right = area.getX() + area.getWidth() - 1.0f;
+    if (lastX < right - 0.01f)
+    {
+        wave.lineTo (right, lastWy);
+        gr.lineTo (right, lastGy);
+        lastX = right;
+    }
 
     // Close the waveform's top edge down to the baseline and fill.
     juce::Path waveFill (wave);

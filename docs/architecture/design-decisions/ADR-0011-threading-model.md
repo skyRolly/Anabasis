@@ -136,6 +136,223 @@ no atomics and no possibility of interleaving with a user gesture.
   power-of-two storage, **one release-store per block** on a monotonic write index, acquire on
   the read side, reads are stateless `const` peeks that consume nothing
   (`Anamorph:src/dsp/ScopeBuffer.h:21-91` [Verified]).
+
+  > **Amended 2026-09-02 (0.2.8 review) — the ring PAYLOAD is atomic too, in `GrHistoryBuffer`.**
+  > The release/acquire index above settles what a reader SEES and is unchanged. It does not make
+  > the other case legal: a reader whose batch the producer laps reads the slot being written, and
+  > under the C++ memory model a plain read concurrent with a plain write is a data race — undefined
+  > the moment it happens, which no after-the-fact detection can undo. The ring's two guards (the
+  > reset epoch, and the reader's `readFloor` window clamp) are built to DETECT exactly that case
+  > and discard the frame, so detection was never the defect; what it was detecting was. The stored
+  > fields are `std::atomic<float>` written and read **relaxed**, so the racing read is defined —
+  > each field yields one of the two values, the pair may be mismatched — and the guards keep their
+  > job unchanged. **Measured, not assumed: the audio-thread `push` compiles to an
+  > instruction-identical sequence** (two `movss`, one `movq` publish; clang-22 `-O3`, x86-64), so
+  > the realtime contract is untouched, and a `static_assert` on `is_always_lock_free` keeps it that
+  > way. On the READER side the codegen changes and that is the point — the old build fused both
+  > floats into one 8-byte `movsd`, i.e. exactly the wide non-atomic load this amendment removes.
+  > `ScopeBuffer` is the same idiom and is **not** changed here: its reader takes 4096 of 16384
+  > frames, so the producer must advance ~12288 frames (~0.26 s at 48 kHz) mid-read to reach them —
+  > recorded as drift rather than repaired, because it is a separate component and outside this
+  > round's scope.
+
+  > **Amended 2026-09-02 (0.2.8 final review, same day) — the prepared (rate, block) pair is RING
+  > METADATA published inside the clear, and the reader closes a batch with a FENCE.**
+  > **✅ ACCEPTED BY THE OWNER 2026-09-02 — THE ARCHITECTURE REVIEW GATE IS CLEARED.** It was raised
+  > as a gate item under `ARCHITECTURE_REVIEW_GATE.md`'s "**Thread Model change** — new thread, new
+  > cross-thread path, new atomic ordering" row (the pair crosses through the ring rather than
+  > through JUCE's members; the reader's close gains an acquire fence), flagged in the pull request
+  > as something a green build does not clear, and held there until the owner answered. The approval
+  > is of the amendment exactly as written below — the pair as ring metadata inside the clear's
+  > seqlock window, `prepare` owning the clear-on-change gate, and `batchIntact` as the batch's
+  > close — and it is not an instruction to revert any of it. No further action is pending on this
+  > record. Two repairs
+  > to the contract above; neither changes the decision. **(1)** `GrHistoryView` maps its window and
+  > scroll rate through the prepared pair, and until this amendment read it from `AudioProcessor`'s
+  > plain `currentSampleRate`/`blockSize` — written by `setRateAndBufferSizeDetails` on whichever
+  > thread the host reconfigures on (the VST3 wrapper's `preparePlugin`, reached from
+  > `setupProcessing`, `setActive` and `initialize`, always BEFORE `prepareToPlay`; every other
+  > wrapper does the same), read by the tick on the message thread and by the frame on the painting
+  > thread: a data race by the letter of the model. No repo-owned snapshot covered it — the wrapper's
+  > `grRingPreparedRate/Block` were plain host-thread members that only gated the clear. The pair now
+  > lives in `GrHistoryBuffer` as two relaxed lock-free atomics (`static_assert`ed), stored by `clear`
+  > INSIDE its seqlock window — after the odd increment and its release fence, before the even release
+  > increment — so a reader that brackets a batch with the epoch reads the pair and the entries as ONE
+  > unit: a clear that ran through the batch is announced by the epoch and the frame is discarded,
+  > exactly as it already was for the entries. The clear-on-change gate moved with it
+  > (`GrHistoryBuffer::prepare`), so the pair the gate compares is the pair readers get. The audio
+  > thread is untouched: `push` is unchanged, and the two stores sit on the host thread inside a clear
+  > that already wrote 4096 slots. **(2)** The reader's CLOSE of a batch is `batchIntact`:
+  > `std::atomic_thread_fence (acquire)` and then a relaxed re-read of the epoch. The acquire LOAD it
+  > replaces orders later accesses after itself and says nothing about the relaxed loads sequenced
+  > BEFORE it, so on a weakly ordered target a batch's loads could be satisfied after the epoch
+  > re-read and a torn batch would pass as intact — on x86-64 (TSO) the hardware hid the gap, and
+  > this tree paints on Apple silicon. The fence is the reader Boehm shows correct (*"Can Seqlocks
+  > Get Along with Programming Language Memory Models?"*, MSPC 2012): a batch load that read a value
+  > stored after `clear`'s release fence makes that fence synchronise-with this one, so the odd
+  > increment happens-before the re-read and write-read coherence forbids it returning the old even
+  > value; a batch that read only pre-clear values is a consistent pre-clear snapshot. That is the
+  > C++ memory model's guarantee, not TSO's. What the fence does NOT buy, stated so nobody claims it
+  > later: the `readFloor` re-read of `available()` after a batch is ordered after the batch's loads
+  > by the same fence, but `push` has no release fence before its entry stores (deliberately — the
+  > audio thread pays nothing), so the model gives that lap check no formal guarantee; it stays what
+  > §10.3 of the worklog says it is, a defined-behaviour one-frame artefact rather than a race.
+  > Pinned by `grPrepared` (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` §3d) through
+  > the ring and through the wrapper's `prepareToPlay`; the audio-thread `push` is instruction-
+  > identical to the previous amendment's measurement because it did not change.
+
+  > **Amended 2026-09-02 (KI-015 follow-up) — the atomic-payload rule extends to `ScopeBuffer`, and
+  > this SUPERSEDES the first amendment's closing sentence.** That sentence read "`ScopeBuffer` is
+  > the same idiom and is **not** changed here … recorded as drift rather than repaired, because it
+  > is a separate component and outside this round's scope." The scope reason stands as history; the
+  > drift is now repaired, and the sentence no longer describes the tree.
+  >
+  > ✅ **ACCEPTED BY THE OWNER 2026-09-02 — THE ARCHITECTURE REVIEW GATE IS CLEARED.** How it
+  > arrived stays in the record, because that is the half worth keeping: this amendment supersedes an
+  > accepted sentence in an Accepted ADR, and `AI_AGENT_POLICY.md` makes "an existing Accepted ADR
+  > conflict **detected**" a Hard Stop that a green build does not clear — so it was raised, flagged
+  > in the pull request, and **held** rather than self-ruled, with the agent explicitly declining to
+  > decide whether it was a repair under the existing SPSC-ring contract or a decision in its own
+  > right. The owner has now ruled: the amendment is accepted **as written below**, superseding the
+  > first amendment's "recorded as drift rather than repaired" sentence, and the approval is not an
+  > instruction to revert any part of the repair. Nothing further is pending on this record.
+  >
+  > **The defect.** `ScopeBuffer`'s producer wrote its payload with `std::memcpy` on the audio
+  > thread and its reader read the same `float` objects with plain subscripts on the message thread.
+  > The release/acquire pair on the write index is sound and does exactly one job — every frame
+  > strictly below the acquired index is complete — but it is a BACKWARD edge only: nothing in
+  > `pushBlock` reads anything the reader writes, so the producer's SUBSEQUENT writes are unordered
+  > against every iteration of the reader's copy loop. When the producer laps the reader mid-copy the
+  > accesses conflict, and a plain read concurrent with a plain write is undefined the moment it
+  > happens. Same defect class as the first amendment's, in the ring that amendment named.
+  >
+  > **Why the headroom defence was not an invariant** — this is the part `KNOWN_ISSUES.md` had wrong,
+  > and the correction matters more than the fix. "4096 of 16384, so ~12288 frames (~0.26 s at
+  > 48 kHz)" fails on three independent paths. (a) It is a FRAME count, not a time: 0.064 s at
+  > 192 kHz. (b) `reset()` rewinds the head, so a reader holding a pre-reset index has a margin
+  > anywhere in [0, capacity), not `capacity − count`. (c) `n` is bounded only by the engine's
+  > `maxBlock`, which is the HOST's `samplesPerBlock` with no upper clamp — a push reaches the
+  > reader's oldest slot at n ≥ 12289 and covers its whole window at n ≥ 16384, with no reader stall
+  > at all. Those two thresholds are different and both were previously unstated. Possible by
+  > construction; no in-tree stimulus prepares more than 512, so it is unexercised here rather than
+  > known to be reachable in a shipping host.
+  >
+  > **The repair, confined to `src/dsp/ScopeBuffer.h`.** The payload element becomes a `Sample`
+  > class wrapping one `std::atomic<float>` and exposing only relaxed `store`/`load`; `pushBlock`'s
+  > two-segment `memcpy` becomes two store loops over the SAME segment arithmetic; `readLatest`'s
+  > two subscripts gain `.load()`. Nothing else moves — same slots, same bytes, same values, same
+  > single release-store publication and cadence, same reset protocol, same short-read clamp, same
+  > heap storage and `sizeof`. `SpectrumView` is not touched.
+  >
+  > **No reader-side acquire fence, and this is deliberate — it is where this ring differs from its
+  > sibling.** `GrHistoryBuffer` needed `batchIntact` because its `clear` WRITES THE PAYLOAD inside
+  > the epoch window, so a reader's payload loads are the only thing that can witness a clear.
+  > `ScopeBuffer::reset()` writes one atomic and touches no sample, so there is no clear-window store
+  > for a payload load to synchronise through, and `[atomics.fences]` gives an acquire fence nothing
+  > to attach to: the producer's payload stores are relaxed and no release fence precedes them. That
+  > is the same holding the SECOND amendment above already states for the sibling's `push`, applied
+  > to the identical producer shape, not a new claim. **Named premise it rests on:** `reset()` runs
+  > from `prepare` with audio stopped — a host-API contract, not a C++ guarantee, and the same
+  > premise the engine's reallocation of every other ring in `prepare` already depends on.
+  >
+  > **Measured, not assumed — and the first amendment's "instruction-identical" claim is explicitly
+  > NOT transferable here.** `pushBlock` compiled at `-O3` for x86-64: **4 call sites → 0**, and
+  > **0 lock-prefixed instructions**, under clang-22.1.8 and g++ 13.3 alike — the four `memcpy`
+  > calls become inline scalar stores that neither compiler vectorises, because LLVM and GCC will
+  > not vectorise atomic accesses. Cost, measured on the real workload (two rings × two channels per
+  > chunk): **+0.56 µs per 512-frame block at 48 kHz, which is +0.005 % of the block period**, and
+  > +0.021 % at 192 kHz/512, the worst ordinary cell. Against `PERFORMANCE_BUDGET.md`'s recorded
+  > 625.4 ns/sample working cell that is a relative delta under 0.2 %. It is deliberately NOT
+  > presented as an `AnabasisBench` delta: at 0.005 % of realtime the change is far below that
+  > harness's run-to-run resolution, so a bench table would report noise and call it evidence.
+  >
+  > **Two spellings are now forbidden in that header, and the record states which gate catches
+  > which, because the answer is asymmetric.** A re-introduced `memcpy` over the payload is
+  > diagnosed by GCC (`-Wclass-memaccess`, on the "no trivial copy-assignment" criterion) and the
+  > zero-first-party-warning gate makes that a red job — but **clang-22 is silent even with
+  > `-Wnontrivial-memaccess`, measured**, so the GCC lanes are the whole of the automated catch.
+  > `slot = value` on a bare `std::atomic<float>` would select the SEQ_CST `operator=` — a fenced
+  > store per sample on the audio thread that no instrument in this tree reports — and the `Sample`
+  > wrapper makes that spelling ill-formed rather than merely discouraged. Note also that
+  > `std::is_trivially_copyable` reports TRUE for such a wrapper on both libstdc++ and libc++ despite
+  > every copy and move operation being deleted, so it is not the property to lean on; the test
+  > asserts copy-constructibility and copy-assignability instead.
+  >
+  > **Anamorph keeps the unrepaired shape.** ADR-0009 item 8 makes divergence accepted and one-way,
+  > and `CLAUDE.md` §3 makes that repository read-only from here, so no sibling change is owed. The
+  > instance is recorded as **KI-016** rather than left as an undocumented difference — "accepted
+  > drift" against a named instance, not against a wording.
+
+  > **Amended 2026-09-02 (round 6) — `push` release-fences, so the GR ring's LAP CHECK now has the
+  > formal guarantee the second amendment said it lacked. This SUPERSEDES that amendment's closing
+  > paragraph.** That paragraph read: "`push` has no release fence before its entry stores
+  > (deliberately — the audio thread pays nothing), so the model gives that lap check no formal
+  > guarantee; it stays … a defined-behaviour one-frame artefact rather than a race." It was an
+  > accurate statement of a residual and the round that wrote it declined to close it. Review found
+  > the residual is not benign in the way "one-frame artefact" suggests: the frame is **accepted and
+  > drawn carrying entries the producer already overwrote**, not dropped.
+  >
+  > ✅ **ACCEPTED BY THE OWNER 2026-09-02 — THE ARCHITECTURE REVIEW GATE IS CLEARED.** How it
+  > arrived stays in the record. It adds a new atomic ordering on the audio path
+  > (`ARCHITECTURE_REVIEW_GATE.md`'s "Thread Model change" row) and it supersedes a paragraph inside
+  > a block the owner had already accepted, which `AI_AGENT_POLICY.md` makes a Hard Stop on
+  > DETECTION whatever the agent thinks of the severity — so it was raised, flagged in the pull
+  > request, and held rather than self-ruled. The owner has now ruled: the amendment is accepted as
+  > written, superseding the second amendment's closing paragraph, and the approval is not an
+  > instruction to revert the fence. Nothing further is pending on this record.
+  >
+  > **The defect.** `push` stored its payload relaxed and then released the INDEX. A release store
+  > orders what precedes it, never what follows, so push #P's payload stores could become visible to
+  > a reader BEFORE push #(P−1)'s release store of the index. A reader whose relaxed `peek` returned
+  > push #P's value therefore had no edge forcing its closing `available()` re-read to observe P, and
+  > `GrHistoryView`'s `first < readFloor (available())` — the lap check, the whole reason `peek`'s
+  > comment says "the caller re-checks its window afterwards and throws such a frame away" — could
+  > legally return false. Classification, kept separate because the round's three registers matter:
+  > **defined but wrong data** (every conflicting access is atomic since the first amendment, so
+  > never UB), and NOT "one frame late" (the frame is drawn, not dropped).
+  >
+  > **The repair.** `push` now carries `std::atomic_thread_fence (std::memory_order_release)` before
+  > its payload stores — the same fence `clear` has carried since 0.2.8, for the same reason with
+  > `writeIndex` in place of `resetGuard`. `GrHistoryView`'s post-check became two sequenced
+  > statements rather than one `||`, because the peek → fence → re-read ordering is now load-bearing
+  > for the lap as well as the epoch and `||`'s (guaranteed) sequencing is too easy to edit away.
+  >
+  > **The proof, in both cases, because the naive one is wrong.** [atomics.fences]: the fence (A) is
+  > sequenced before the payload stores (X); the reader's peek (Y) reads X's value and is sequenced
+  > before `batchIntact`'s acquire fence (B); so A synchronises with B, and everything sequenced
+  > before A — including push #(P−1)'s `writeIndex.store (P, release)` — happens-before everything
+  > sequenced after B, which includes the `available()` re-read.
+  > *Case 1, no clear intervened:* `writeIndex`'s modification order is then increasing, so write-read
+  > coherence forces the re-read ≥ P ≥ first + kSize, hence `readFloor` > `first` and the frame is
+  > discarded.
+  > *Case 2, a clear intervened:* the naive coherence step does NOT apply — `clear` stores
+  > `writeIndex.store (0, release)`, so that modification order is not monotone in value and the
+  > re-read may legally be 0. The discard comes from the OTHER half of the same post-check: whichever
+  > store the reader's peek read from is sequenced after a release fence (`push`'s or `clear`'s), so
+  > the same pairing puts `clear`'s odd `resetGuard` increment — or its closing even one —
+  > happens-before the relaxed epoch re-read inside `batchIntact`, which therefore differs from
+  > `epoch0` and discards the frame. **Both halves of the conjunction are load-bearing and neither
+  > alone suffices**; that is why the post-check keeps both and why they are sequenced.
+  > *Either the batch read clean data, or the discard is guaranteed. There is no third case.*
+  >
+  > **A release FENCE, not release payload stores.** [atomics.fences] would also admit the latter (a
+  > release operation synchronises with an acquire fence when an operation on the same object,
+  > sequenced before that fence, reads its value — which the peek is). The fence is chosen because it
+  > is ONE barrier covering both fields rather than two release stores, and because it makes `push`
+  > and `clear` the same shape.
+  >
+  > **Cost, measured independently of the patch's own comment:** `push` compiled at `-O3` is
+  > **instruction-for-instruction identical on x86-64** — the fence emits `#MEMBARRIER`, a directive,
+  > not an instruction — and adds **exactly one `dmb ish` on AArch64**, once per HOST BLOCK, since
+  > `push` runs once per `processBlock` and never per sample.
+  >
+  > **Pinned where it can be pinned.** No deterministic suite can distinguish the two builds: the
+  > difference is a synchronises-with edge, orderings are not introspectable, and unlike the first
+  > amendment's payload change no TYPE moved. `scripts/check-realtime.py` therefore gained a second
+  > mode — `REQUIRED_ORDER` — which fails the tree when `GrHistoryBuffer::push` lacks the fence, when
+  > the fence has drifted below the payload stores, when it is the wrong fence, when it is only in a
+  > comment, and when the function has been renamed out from under the rule. Six self-test cases,
+  > both directions.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

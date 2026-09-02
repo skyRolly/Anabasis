@@ -118,6 +118,51 @@ ANCHOR = re.compile(r"(\d+)(?:-(\d+))?")
 # reporting a clean run. The list going empty is the expected end state of every
 # entry here, so it must be the boring case.
 DELIBERATE_REAIMS = set([
+    # ROUND 8 (2026-09-02) — nine spellings, fifteen occurrences, and the entry
+    # exists because of a PROCESS mistake worth recording rather than a code one.
+    #
+    # Round 7 inserted 22 lines into `src/PluginProcessor.cpp` (the published
+    # channel count and `numChannelsChanged`) and then re-anchored with
+    # `--fix` at the script's DEFAULT base, `origin/main`. The gate does not
+    # compare against `origin/main` on a push: `build.yml` feeds it
+    # `github.event.before`, the branch's previous tip — "one push of drift at a
+    # time". So the re-anchor was measured against the wrong revision, the push
+    # went red, and the anchors were left naming code 22 lines above their
+    # subject: `LATENCY_MODEL.md`'s `updateLatency()` definition pointed at the
+    # silent-meter publication, its `prepareToPlay` call pointed at the new
+    # channel-count store, and ADR-0026's two SLOT rules pointed into the
+    # adaptive restore. Every anchor below was re-derived from the SYMBOL its
+    # prose names and verified by reading the line it now points at.
+    #
+    # THE DECLARATION IS NEEDED BECAUSE THE CORRECTION ITSELF READS AS DRIFT.
+    # The gate asks "did this anchor follow the text it named at the base?", and
+    # at the base the anchor named the WRONG text; following that faithfully is
+    # what the previous rounds did. Moving it onto the right text is a re-aim,
+    # which is what this list is for. Each entry is good for exactly one
+    # transition — once the base carries the corrected spelling,
+    # `whole_base == whole_cur` and `is_declared_reaim` stops matching.
+    #
+    # The local command that reproduces the gate is
+    # `check-citations.py --check --base <previous push tip>`, NOT the default.
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:873-891"),                 # updateLatency(), the definition
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:790"),                     # prepareToPlay's updateLatency() call
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:863-871"),                 # setNonRealtime
+    ("docs/architecture/LATENCY_MODEL.md",
+     "src/PluginProcessor.cpp:1922"),                    # the deliberately redundant updateLatency()
+    ("docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md",
+     "src/PluginProcessor.cpp:1823"),                    # stored.getChildWithName("ANABASIS").isValid()
+    ("docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md",
+     "src/PluginProcessor.cpp:1842"),                    # live.isValid() && liveSurfaceRestored
+    ("docs/architecture/design-decisions/ADR-0026-slot-payload-read-rules.md",
+     "src/PluginProcessor.cpp:1779"),                    # liveSurfaceRestored, the definition
+    ("src/PluginProcessor.cpp",
+     "src/PluginProcessor.cpp:1558"),                    # applyFactoryPreset's presetBaseline assignment
+    ("src/PluginProcessor.cpp",
+     "src/PluginProcessor.cpp:1628"),                    # applyPresetFile's presetBaseline assignment
+
     # 0.1.4 review round 7 — THE WHOLE ARCHITECTURE SET, and the size of this
     # list is the finding. An audit of every tracked citation in the governed
     # documents found that MOST had been aimed at the wrong code since before

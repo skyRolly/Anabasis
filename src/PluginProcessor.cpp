@@ -105,6 +105,23 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // makes the guarantee a property of this function rather than of the
     // platform's dispatch rules.
     macroEngine->startDraining();
+    // Seed the published channel count from the layout this processor was
+    // CONSTRUCTED with, so the editor never reads a fabricated default: a host
+    // that negotiates a layout and opens the editor before activating gets the
+    // real geometry, which is what the plain read it replaces gave. See
+    // `preparedOutputChannels()`.
+    pubOutChannels.store (getTotalNumOutputChannels(), std::memory_order_relaxed);
+}
+
+// JUCE calls this from `AudioProcessor::audioIOChanged`, on whichever thread
+// changed the layout — so the store lands on the WRITER's thread and there is
+// nothing for the editor's read to race. That is the whole reason the
+// publication lives here rather than only in `prepareToPlay`: a layout can
+// change without a re-prepare, and a re-prepare is not where the count is
+// decided.
+void AnabasisAudioProcessor::numChannelsChanged()
+{
+    pubOutChannels.store (getTotalNumOutputChannels(), std::memory_order_relaxed);
 }
 
 AnabasisAudioProcessor::~AnabasisAudioProcessor()
@@ -506,8 +523,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1537` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1607` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1558` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1628` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -743,7 +760,12 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // windows coincided exactly. The latch is now retained where it was already
     // lock-free — `AdaptiveEngine`'s retained trim set, which `reset()` does not
     // clear — so no thread crossing is added to rescue it.
-    engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    // ONE read of JUCE's plain member, reused — the accessor is a plain-member
+    // read and calling it twice can straddle a reconfiguration (the rule
+    // `preparedSampleRate()` states for the same reason).
+    const int outChannels = getTotalNumOutputChannels();
+    engine.prepare (sampleRate, samplesPerBlock, outChannels);
+    pubOutChannels.store (outChannels, std::memory_order_relaxed);
     // The GR history ring survives a re-prepare at the SAME rate and block
     // size (0.1.2 item 6). Hosts re-prepare on transport start, and an
     // unconditional clear here wiped the scrolling timeline on every
@@ -752,14 +774,13 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // through the PREPARED rate and size (GrHistoryView's banner), so history
     // recorded under the same pair is still drawn true; a changed pair is the
     // case the clear has always existed for (stale entries would be mapped
-    // through the wrong time base) and still clears.
-    if (! juce::exactlyEqual (grRingPreparedRate, sampleRate)
-        || grRingPreparedBlock != samplesPerBlock)
-    {
-        grHistoryRing.reset();
-        grRingPreparedRate  = sampleRate;
-        grRingPreparedBlock = samplesPerBlock;
-    }
+    // through the wrong time base) and still clears. The gate and the pair it
+    // keeps live in the ring since the 0.2.8 final review: the view used to
+    // read the time base back from `getSampleRate()`/`getBlockSize()`, which
+    // this callback's thread writes while the view's threads read — the ring
+    // publishes the pair inside the clear's own epoch window instead, so a
+    // frame maps its entries through the pair they were recorded under.
+    grHistoryRing.prepare (sampleRate, samplesPerBlock);
     dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a
@@ -773,7 +794,7 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // to everything the process has done so far. No-op unless the diagnostic
     // build defined ANABASIS_STAGE_TRACE.
     ANABASIS_TRACE_RESET();
-    ANABASIS_TRACE_CONFIGURE (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    ANABASIS_TRACE_CONFIGURE (sampleRate, samplesPerBlock, outChannels);
 }
 
 void AnabasisAudioProcessor::releaseResources()

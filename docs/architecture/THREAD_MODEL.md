@@ -31,8 +31,9 @@ it instantiates:
 | `nonRealtime` → latency predictor | `std::atomic<bool> nonRealtimeFlag`, written in `setNonRealtime()` (a host-thread callback), read by the snapshot build and the predictor | atomic mirror (same class as the row above) | `src/PluginProcessor.h` (`nonRealtimeFlag`), `src/PluginProcessor.cpp` (`setNonRealtime`/`updateLatency`/`processBlock`) |
 | Engaged lookahead window → any reader | `std::atomic<int> engagedWindow`, relaxed, written per sample on the audio thread; payload-free diagnostic (the smoothing test reads it) | Audio → GUI (staleness-hint class: monotonic display/diagnostic data) | `src/dsp/AnabasisEngine.h` (`engagedWindowSamples`; line-number cites here went stale twice — symbols only) |
 | Forced-duck request → engine | `std::atomic<bool> duckRequested`, set by the wrapper before every bulk swap (A/B, preset, session load), `exchange`-consumed at the block top | GUI → Audio (momentary / transient requests) | `src/dsp/AnabasisEngine.h` (`requestForcedDuck`), `src/PluginProcessor.cpp` (three call sites) |
+| Output CHANNEL COUNT → GUI | `pubOutChannels`, one relaxed `std::atomic<int>`, stored at construction, from `numChannelsChanged` (which JUCE calls from `audioIOChanged`, so the store lands on whichever thread changed the layout) and from `prepareToPlay`; read by the editor's timer through `preparedOutputChannels()`. It replaced a plain read of JUCE's `cachedTotalOuts` from that timer, which raced the host's reconfiguring thread (KI-017's third read, round 7). It also answers the caller's actual question — the geometry the per-channel meter atomics were filled under, not the layout the host is moving to. Same discipline and the same host-thread writer as the meter set on the row below, which is why it is that row's shape rather than a new path | Audio/host → GUI (meters row's discipline) | `src/PluginProcessor.h` (`pubOutChannels`, `preparedOutputChannels`), `src/gui/PluginEditor.cpp` (the GR lane geometry) |
 | Meters → GUI | `pubLufsM/S/I`, `pubDbTpMax`, `pubPlr` (the canonical GATED PLR — still published and still cleared with the set, though since ADR-0020's second amendment the panel's PLR row derives its own from whichever integrated figure it is showing), `pubGrDb`, and since ADR-0020 `pubPeakMaxDb`, `pubRmsDb`, `pubLufsIUngated`, `pubLra` — relaxed atomics, ONE publish per block from `processBlock`, **fed from the engine's §2.9 render tap** (the programme path before the monitor-only delta/comp stages — the buffer itself carries the listening path); plus the engine's `grMinLinear`/`engagedWindow` diagnostic atomics, its `compGrDb` per-stage figure, and since 0.1.2 (ADR-0023 item 10) the per-channel per-stage pair `compGrDbCh[2]`/`limGrDbCh[2]` — the panel meters' L/R lanes and the KI-009 field disambiguator; same relaxed one-store-per-block contract, read through `meterCompGrDbCh`/`meterLimGrDbCh`. The audio thread is the steady-state writer but NOT the only one: `publishSilentMeters()` writes the same set from `prepareToPlay` (host thread) and from `requestMeterReset()` — so from the message thread on the meter panel's click and from whichever thread the host restores on via `setStateInformation` — because a clear that waits for a block top is invisible until audio flows, and both a project open and a meter read ordinarily happen stopped. INDEPENDENT relaxed scalars (ten of them; the LIST in `publishSilentMeters` is the count, deliberately not a number repeated in prose — it was wrong within two commits the first time it was written), no ordering role, so a concurrent load-clear and end-of-block publish are last-writer-wins per scalar and the worst observable outcome is one display frame mixing pre- and post-clear values, overwritten by the next block | Audio → GUI (meters) — plus the non-audio clear writers named here | `src/PluginProcessor.cpp` (the per-block publish), `src/dsp/AnabasisEngine.h` (`outputLoudness`/`outputRms`/`lastRenderTpMax`/`lastRenderPeak`) |
-| GR/waveform history → GUI | `GrHistoryBuffer`: 4096-entry power-of-two SPSC ring, entry written FIRST, monotonic index release-stored AFTER, acquire-loaded stateless peeks on the reader side | Audio → GUI (time series, SPSC ring) | `src/dsp/GrHistoryBuffer.h` |
+| GR/waveform history → GUI | `GrHistoryBuffer`: 4096-entry power-of-two SPSC ring, entry written FIRST, monotonic index release-stored AFTER, stateless peeks on the reader side — **RELAXED loads, not acquire ones** (this row said "acquire-loaded" until round 6 and the code never did: `peek` has always been two relaxed loads, and it is the batch's epoch bracket, not the peek, that carries the ordering); since round 6 `push` also RELEASE-FENCES before its payload stores, which is what makes the reader's lap check (`first < readFloor (available())`) a guarantee rather than an intention — see ADR-0011's fourth dated 2026-09-02 amendment; since the 0.2.8 final review the ring also carries the prepared (rate, block) pair its entries are recorded under — stored by `clear` inside the reset epoch's odd window, read relaxed under the same epoch bracket (`prepared()`) — and a reader closes its batch with `batchIntact` (acquire fence, then the epoch re-read) | Audio → GUI (time series, SPSC ring) | `src/dsp/GrHistoryBuffer.h` |
 | Learn start/stop → engine | ONE atomic word `learnCmd` (none / start / commit / commitThenStart), **release**-stored by the writer and `exchange`-consumed with **acquire** at the block top. The writer COMPOSES on its own thread — a start landing on an unconsumed commit becomes one commitThenStart — because ordering information exists only there; two flags with a fixed consumption order silently discarded both commands when a stop and a start fell in the same block. It was a code+flag staged record until 2026-08-02: publishing a two-store record let a consumer whose `exchange` fell between the stores run the new code and leave the writer to re-raise the flag behind it, delivering the same command twice — a repeated commitThenStart commits a pass one block old. A two-bit payload has nothing to stage, so the code IS the flag | GUI → Audio (**single lock-free scalar**; ADR-0012 §Known limits still governs the composing writer) | `src/dsp/AnabasisEngine.h` (`requestLearnStart/Stop`), `src/dsp/AnabasisEngine.cpp` (block top) |
 | Learned-target restore → engine | ONE staged record: `pendingLearned` (the learned/never-learned discriminator) + `pendingRefOnset`/`pendingRefTilt` stored relaxed FIRST, then the single `adaptivePending` flag **release**-stored; the block top `exchange`s it with **acquire**, so a block that sees the flag reads that call's whole record, never a torn one, and the LAST restore staged before the block is the one that lands. Two flags with a fixed consumption order could not express last-writer-wins — an un-learned session loaded after a learned one inherited the learned references | GUI → Audio (**bounded staged record**, ADR-0012) | `src/dsp/AnabasisEngine.h` (`restoreLearnedTargets`), `src/dsp/AnabasisEngine.cpp` (block top) |
 | Learned state → `getStateInformation` | `AdaptiveEngine::learned` atomic: refs published FIRST, flag **release**-stored; `hasLearned()` **acquire**-loads, so a saver that sees `true` reads the refs that store ordered before it | Audio → GUI (published state read as a unit — the ADR-0012 contract mirrored) | `src/dsp/AdaptiveEngine.h` (`commitLearn`/`hasLearned`), `src/PluginProcessor.cpp` (`getStateInformation`) |
@@ -99,6 +100,40 @@ sanitizer-reportable one on exactly the two platforms where the context attaches
 is therefore `std::atomic<int>`, read `memory_order_relaxed`: the value guards nothing but itself,
 and a frame that reads a one-tick-stale count draws the border it would have drawn a frame earlier.
 
+**0.2.8 added the second such read, in `GrHistoryView`, and it arrived the same way — as plain
+scalars, found by review rather than in the field** ([ADR-0038](design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
+**Accepted 2026-09-02; the gate is cleared**). The continuous scroll needs a sub-entry phase, so the
+frame-clock tick publishes `shownHead` (the ring index it last observed, and the head the frame
+draws) and `smoothHead` (that head advanced at the nominal entry rate) on the message thread, and
+`paintHistory` reads both. Both are `std::atomic`, relaxed, `static_assert`ed lock-free, and a third — `publishedEpoch` — says
+which ring timeline they belong to, stored `release` last and loaded `acquire` first (ADR-0038
+clause 7). That epoch is the boundary's only ordered access and it exists because a phase means
+nothing outside the timeline it was measured in: `GrHistoryBuffer::reset()` rewinds the write index,
+so a paint landing between a clear and the next tick would otherwise apply the pre-reset offset to
+the first frame of the new history. What is new
+against ADR-0027 is that there are TWO estimates and the painting thread may pair either one's newer
+value with the other's older one: that is safe because every such pairing resolves to
+`min (smoothHead, head + 1)` — a position between two frames the ramp itself produces — so the
+paint needs no consistency, only the two values (`GrHistoryView::frameFor`). The RING's own
+reader contract is unchanged and is a separate thing entirely: the display scalars carry no ring
+data, and the ring is still read by stateless `peek`s under its epoch guard — now bounded below by
+`readFloor` as well, so a batch cannot reach the slot the audio thread is filling. The TIME BASE
+the frame maps through — the prepared (rate, block) pair — is the ring's too since the final
+review: `GrHistoryBuffer::prepared()`, published inside the clear and read under the batch's epoch,
+replacing `AudioProcessor::getSampleRate()`/`getBlockSize()`, whose plain members the host's
+reconfiguring thread writes (`setRateAndBufferSizeDetails`, before `prepareToPlay`) while the tick
+and the paint read them. The batch's close is `batchIntact`, an acquire FENCE and a re-read, for
+the reason ADR-0011's second 2026-09-02 amendment gives.
+
+**The ring's own payload became atomic in the same round, and for a different reason** (ADR-0011,
+amended 2026-09-02). The guards above — the epoch, and `readFloor` — are built to notice that a
+batch was overtaken and throw the frame away, and both read synchronised state (`resetEpoch()` and
+`available()` are acquire loads). What they were validating was not: `push` stored the pair with a
+plain write and `peek` read it with a plain read, so an overtaken batch was a data race, undefined
+the moment it happened, and discarding the frame afterwards could not undo it. The fields are
+`std::atomic<float>` now, relaxed both ways — the racing read is DEFINED, the guards' job is
+unchanged, and the audio-thread store compiles to the same instructions it did.
+
 The same wiring has a LIFETIME half, fixed in the same place: the editor's destructor used to clear
 `lnf.isPopupMenuOnScreen` (a `std::function`) before `glContext.detach()`, mutating a callable a live
 render thread could still invoke. `detach()` joins that thread, so it now runs FIRST and both hook
@@ -161,7 +196,7 @@ above records a nuance without amending the ring rule.
 - **Spectrum capture rings — IMPLEMENTED (P5, 2026-08-02)**: two `anabasis::ScopeBuffer`
   instances in the engine (post-input-gain and post-chain/render taps), each filled into
   preallocated scratch during stages A/E and published with ONE release-store per processed
-  chunk — the SPSC ring row, same discipline as `GrHistoryBuffer`. The FFT runs GUI-side
+  chunk — the SPSC ring row, same discipline as `GrHistoryBuffer` INCLUDING the atomic payload since the KI-015 follow-up (ADR-0011 amended a third time, 2026-09-02): the element is a `Sample` wrapper over one relaxed `std::atomic<float>`, the producer stores per sample instead of `memcpy`ing, and the ring takes no reader-side acquire fence because its `reset()` touches no sample. The FFT runs GUI-side
   (`SpectrumView`), reading stateless `readLatest` peeks; nothing on the audio thread windows,
   transforms or allocates. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
   tap-content equality).
@@ -175,7 +210,26 @@ above records a nuance without amending the ring rule.
   bin mapping. `SpectrumView` samples the generation on **both sides** of its analysis batch, the
   same reader contract `GrHistoryBuffer::resetEpoch()` states; it is a plain generation rather than
   that class's odd/even seqlock because `ScopeBuffer::reset()` writes one atomic and touches no
-  sample, so there is nothing for a reader to observe half-done.
+  sample. **CORRECTED, round 8:** this sentence used to end "so there is nothing for a reader to
+  observe half-done", which `src/dsp/ScopeBuffer.h` itself retracted in round 6 as "wrong in a way
+  that misled a review". There IS something to observe half-done — the index rewind is visible
+  independently of the generation bump that announces it. What follows from the no-payload half is
+  narrower and is what the ring actually relies on: there is no clear-window PAYLOAD store, so a
+  reader's payload loads cannot synchronise through one and an acquire fence would have nothing to
+  attach to. The reader takes both facets instead (`SpectrumView::resetObserved`), and the residual
+  is KI-018.
+  **THE NAMED PREMISE THIS RING'S READER CONTRACT RESTS ON, written here because it is
+  invisible from the reader's side:** `reset()` runs from `AnabasisEngine::prepare` with audio
+  stopped, and those are its only two call sites. That premise is what makes the host's
+  generation bump happen-before the audio thread's next `pushBlock`, which in turn FORCES the
+  reader's post-batch generation re-read past the bump whenever its batch read a non-zero
+  post-reset index — the leg that closes the partial-refill mixture inside one tick. The
+  complementary leg, an exactly-zero read, is closed by `analyse`'s floor instead, because
+  there the bump is sequenced AFTER the store the reader acquired and nothing forces it.
+  Both legs are PER RING: one `prepare` resets both in order, so the first ring's rewind
+  orders nothing about the second's. **Adding a `reset()` call site outside `prepare`, or
+  reordering/splitting the two calls, or adding a third spectrum ring, breaks these arguments
+  and reopens KI-018.**
   `testARewoundSpectrumRingDropsThePreviousTrace` covers both edges, including the
   count-never-dips case the old predicate could not see.
 - **Command atomics — the meter-hold reset is now IMPLEMENTED (P5, 2026-08-02)**, joining the
@@ -205,12 +259,15 @@ above records a nuance without amending the ring rule.
 - **GrHistoryBuffer reset epoch — the reader contract, decided here as promised (P5,
   2026-08-02)**: the write index is monotonic BETWEEN resets and MAY REWIND across one;
   `reset()` brackets its host-thread bulk clear with two `release` increments of a
-  `resetGuard` epoch (odd = clear in flight), and a reader samples `resetEpoch()` before and
-  after a batch of `peek`s — odd or changed means the batch raced a reset and is discarded,
+  `resetGuard` epoch (odd = clear in flight), and a reader samples `resetEpoch()` before a batch
+  of `peek`s and closes it with `batchIntact` — an acquire fence, then the re-read; an acquire LOAD
+  alone does not order the batch's relaxed loads before it on weakly ordered targets — where odd or
+  changed means the batch raced a reset and is discarded,
   and the reader re-anchors its cursor to the fresh `available()`, dropping at worst one
   display frame on an event (re-prepare) that already blanks the programme. Readers never
   cache `available()` across an epoch change; within one epoch the SPSC row's contract is
-  unchanged. Guarded by `testGrRingResetEpoch`.
+  unchanged. The prepared (rate, block) pair is stored inside the same window since the 0.2.8
+  final review (`prepare`/`prepared`). Guarded by `testGrRingResetEpoch` and `grPrepared`.
 - **Frozen trim vector transport — IMPLEMENTED (2026-08-02, ADR-0014)**: the Hard Stop this
   bullet carried is lifted. ADR-0012 settled the transport (the staged-record row fits a
   four-scalar vector); ADR-0014 took the injection decision and the edge is now the frozen-trim

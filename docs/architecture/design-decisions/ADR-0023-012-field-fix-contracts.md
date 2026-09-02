@@ -100,6 +100,25 @@ by construction rather than by stimulus luck.
    count), the unmeasured region drawn as zero data, and the ring cleared at `prepareToPlay`
    only when the (rate, block) pair actually changed — a transport-start re-prepare keeps the
    timeline.
+
+   > **Amended 2026-09-01 (0.2.8), the owner's jitter report.** The pitch is unchanged; what
+   > moved is the PHASE, and the anchor is restated. The 0.1.2 form placed every bucket at a
+   > whole number of pitches from the edge, so the trace stood still for `stride − 1` blocks and
+   > jumped one non-integer pitch on the next (modelled at 60 Hz, 48 kHz/512: 48 % of frames
+   > with no motion, the rest a 1.45 px lurch), re-rasterising the anti-aliased stroke at every
+   > step — the jitter. Since 0.2.8 `bucketX` places buckets by the newest ENTRY's sub-bucket
+   > position and, between arrivals, by a head smoothed at the nominal entry rate and held to
+   > `[head, head + 1]`, so the trace advances `pitch / stride` per entry and one uniform step
+   > per frame. The trace still reaches the right edge; the newest VERTEX may sit under one
+   > entry-pitch inside it while its completed bucket waits on the phase, a flat lead-out holding
+   > the edge, and it aggregates the trailing `stride` entries rather than its bucket's partial
+   > range. At the left edge the read window is rounded up to whole buckets so the oldest drawn
+   > vertex sits on or just beyond the edge and the crossing segment is drawn exactly — the
+   > "one bucket of truncation" this item accepted is now at most `stride − 1` entries of
+   > off-panel history, read and never shown. Bucket identity, every completed bucket's value,
+   > the zero-data region and the clear rule are exactly as decided above.
+   > `worklogs/2026-09-01-gr-history-scroll-jitter.md` carries the measurements and the review.
+
 7. **Graph-well switch:** the GR|SPEC pill moves to the bottom-left (the least informative
    corner in both modes; the old top-right sat on the newest GR data), GR is the left segment
    and the default mode (`int_spectrumOn` default flips to `false` — a default change only,

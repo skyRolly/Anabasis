@@ -92,9 +92,14 @@ SCAN_DIRS = ["src"]
 # regex is never scanned, so a second list could only drift out of agreement with
 # the first.
 AUDIO_FN = re.compile(r"\b(process|processBlock|processChunk|processFrame|processSample|"
-                      r"pushBlock|finishBlock|publishSilentMeters|publishTrims|publishRefs|"
+                      r"push|pushBlock|finishBlock|publishSilentMeters|publishTrims|publishRefs|"
                       r"reset|resetState|resetWindow|resetEpoch|resetGeneration|"
                       r"resetMeterHolds|resetIntegrated)\b")
+# `push` was added for the GR ring's producer (round 6): it runs once per host
+# block from `processBlock` and is the subject of the REQUIRED_ORDER rule below.
+# It cannot collide with `pushBlock` -- `\bpush\b` needs a word boundary that
+# `pushBlock` does not provide -- and `GrHistoryBuffer::push` is the only
+# definition of that name under `src/`.
 
 # BOTH SPELLINGS OF "MEMBER OF", which is what the growth rules key on. They
 # match an ACCESS OPERATOR followed by a forbidden operation rather than a
@@ -713,6 +718,69 @@ def reachable_bodies(clean: str):
                 queue.append((f"{label} -> {callee}", callee, cs, ce))
 
 
+# ---------------------------------------------------------------------------
+#  REQUIRED ORDER: the second mode, and the reason it exists.
+# ---------------------------------------------------------------------------
+#  Everything above answers "is a forbidden operation present?".  This answers
+#  "is a REQUIRED one present, and in the right place?", and it exists because
+#  of a class of defect no other instrument in this repository can see.
+#
+#  A memory-ordering guarantee is a relationship between two operations, not a
+#  value.  It cannot be `static_assert`ed (orderings are not introspectable),
+#  it cannot be observed by a deterministic suite (the difference shows up only
+#  as a real inter-thread race on a weakly ordered machine), and it survives
+#  every runtime tier this project owns.  So when TESTING_POLICY rule 1 asks for
+#  a regression test that fails on the old code, the only honest place to put it
+#  is the source.
+#
+#  The entry below is round 6's.  `GrHistoryBuffer::push` must release-fence
+#  BEFORE its payload stores: by [atomics.fences] that fence is what lets a
+#  reader's acquire fence in `batchIntact` attach to a peek that read a lapping
+#  push, which in turn forces the reader's `available()` re-read to observe the
+#  lap.  Without it `GrHistoryView`'s `first < readFloor (available())` check
+#  validates nothing and an overtaken frame is drawn.  Deleting the fence is a
+#  one-line edit that changes no behaviour any test can see -- which is exactly
+#  what this rule is for.
+#
+#  (path suffix, function, first pattern, second pattern, why)
+REQUIRED_ORDER = [
+    ("src/dsp/GrHistoryBuffer.h", "push",
+     re.compile(r"atomic_thread_fence\s*\(\s*std::memory_order_release\s*\)"),
+     re.compile(r"\bgrDb\s*\.\s*store\b"),
+     "GrHistoryBuffer::push must release-fence BEFORE its payload stores "
+     "([atomics.fences]): without it the reader's lap check validates nothing "
+     "and an overtaken frame is accepted"),
+]
+
+
+def scan_required(text: str, path: str):
+    """Return a list of (path, line, function, message) for unmet order rules."""
+    rules = [r for r in REQUIRED_ORDER if path.replace("\\", "/").endswith(r[0])]
+    if not rules:
+        return []
+    clean = strip_comments_and_strings(text)
+    findings = []
+    for suffix, fn, first, second, why in rules:
+        seen = False
+        for name, start, end in reachable_bodies(clean):
+            if name != fn:
+                continue
+            seen = True
+            segment = clean[start:end]
+            base_line = clean.count("\n", 0, start) + 1
+            a_hit = first.search(segment)
+            b_hit = second.search(segment)
+            if a_hit is None or (b_hit is not None and b_hit.start() < a_hit.start()):
+                findings.append((path, base_line, fn, why))
+        if not seen:
+            # A rule whose function has been renamed or removed is a SILENT
+            # rule, which is the failure mode this whole file exists to avoid.
+            findings.append((path, 1, fn,
+                             why + " -- and the function was not found at all, so this "
+                                   "rule is no longer checking anything"))
+    return findings
+
+
 def scan_text(text: str, path: str):
     """Return a list of (path, line, function, violation-class, source-line)."""
     clean = strip_comments_and_strings(text)
@@ -730,22 +798,29 @@ def scan_text(text: str, path: str):
 
 
 def scan_repo() -> int:
-    findings, scanned = [], 0
+    findings, unmet, scanned = [], [], 0
     for d in SCAN_DIRS:
         for p in sorted((ROOT / d).rglob("*")):
             if p.suffix not in (".cpp", ".h"):
                 continue
             scanned += 1
-            findings += scan_text(p.read_text(encoding="utf-8"),
-                                  str(p.relative_to(ROOT)))
+            text = p.read_text(encoding="utf-8")
+            rel = str(p.relative_to(ROOT))
+            findings += scan_text(text, rel)
+            unmet += scan_required(text, rel)
     for path, line, fn, label, src in findings:
         print(f"{path}:{line}: {label} inside audio-path `{fn}`\n    {src}",
               file=sys.stderr)
-    if findings:
+    for path, line, fn, why in unmet:
+        print(f"{path}:{line}: required ordering not met in `{fn}`\n    {why}",
+              file=sys.stderr)
+    if findings or unmet:
         print(f"check-realtime: {len(findings)} violation(s) of "
-              f"REALTIME_AUDIO_POLICY in {scanned} scanned file(s)", file=sys.stderr)
+              f"REALTIME_AUDIO_POLICY and {len(unmet)} unmet ordering "
+              f"requirement(s) in {scanned} scanned file(s)", file=sys.stderr)
         return 1
-    print(f"check-realtime: {scanned} file(s) scanned, 0 violation(s).")
+    print(f"check-realtime: {scanned} file(s) scanned, 0 violation(s), "
+          f"{len(REQUIRED_ORDER)} ordering requirement(s) met.")
     return 0
 
 
@@ -1051,9 +1126,66 @@ MUST_STAY_SILENT = [
 ]
 
 
+# ---------------------------------------------------------------------------
+#  REQUIRED_ORDER self-test cases, both directions. The rule's whole value is
+#  that it fires on a one-line deletion no runtime tier can see, so its own
+#  sensitivity has to be demonstrated rather than assumed (TESTING_POLICY rule 4).
+#  Each case is a synthetic `push` body in a file whose path ends with the rule's
+#  suffix; the third element says whether the rule must fire.
+ORDER_CASES = [
+    ("the shipped shape: fence, then the payload stores", False,
+     "void Ring::push (float g, float p) noexcept {\n"
+     "  const auto i = writeIndex.load (std::memory_order_relaxed);\n"
+     "  auto& slot = entries[i & kMask];\n"
+     "  std::atomic_thread_fence (std::memory_order_release);\n"
+     "  slot.grDb.store (g, std::memory_order_relaxed);\n"
+     "  slot.peak.store (p, std::memory_order_relaxed);\n"
+     "  writeIndex.store (i + 1, std::memory_order_release); }"),
+    ("the pre-round-6 shape: no fence at all", True,
+     "void Ring::push (float g, float p) noexcept {\n"
+     "  const auto i = writeIndex.load (std::memory_order_relaxed);\n"
+     "  auto& slot = entries[i & kMask];\n"
+     "  slot.grDb.store (g, std::memory_order_relaxed);\n"
+     "  slot.peak.store (p, std::memory_order_relaxed);\n"
+     "  writeIndex.store (i + 1, std::memory_order_release); }"),
+    ("a fence that has drifted BELOW the payload stores buys nothing", True,
+     "void Ring::push (float g, float p) noexcept {\n"
+     "  const auto i = writeIndex.load (std::memory_order_relaxed);\n"
+     "  auto& slot = entries[i & kMask];\n"
+     "  slot.grDb.store (g, std::memory_order_relaxed);\n"
+     "  std::atomic_thread_fence (std::memory_order_release);\n"
+     "  slot.peak.store (p, std::memory_order_relaxed);\n"
+     "  writeIndex.store (i + 1, std::memory_order_release); }"),
+    ("an ACQUIRE fence is not the one the rule asks for", True,
+     "void Ring::push (float g, float p) noexcept {\n"
+     "  std::atomic_thread_fence (std::memory_order_acquire);\n"
+     "  slot.grDb.store (g, std::memory_order_relaxed); }"),
+    ("a fence named only in a comment does not count", True,
+     "void Ring::push (float g, float p) noexcept {\n"
+     "  // std::atomic_thread_fence (std::memory_order_release);\n"
+     "  slot.grDb.store (g, std::memory_order_relaxed); }"),
+    ("the function renamed away makes the rule fire, not go quiet", True,
+     "void Ring::publish (float g, float p) noexcept {\n"
+     "  std::atomic_thread_fence (std::memory_order_release);\n"
+     "  slot.grDb.store (g, std::memory_order_relaxed); }"),
+]
+
+
 def self_test() -> int:
     failures = 0
     total = 0
+    for label, must_fire, src in ORDER_CASES:
+        total += 1
+        fired = bool(scan_required(src, "src/dsp/GrHistoryBuffer.h"))
+        if fired != must_fire:
+            print(f"self-test FAIL (required order, expected "
+                  f"{'fire' if must_fire else 'silence'}): {label}", file=sys.stderr)
+            failures += 1
+    # A rule aimed at a path no file matches would also be silent forever.
+    total += 1
+    if scan_required(ORDER_CASES[1][2], "src/dsp/SomeOtherRing.h"):
+        print("self-test FAIL: the rule fired on a file it does not govern", file=sys.stderr)
+        failures += 1
     for label, src in MUST_FIRE:
         total += 1
         if not scan_text(src, "synthetic.cpp"):

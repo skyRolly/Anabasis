@@ -61,6 +61,19 @@ Two facts about when this arrived, because they are not the same:
    path WRITES, or anything requiring the painting thread to see two values consistently is a new
    path again and returns to this gate.
 
+   > **Amended 2026-09-02 by [ADR-0038](ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md)
+   > (Accepted), which came back to this gate exactly as this clause instructs and was approved.**
+   > The clause did its job and its text stands; what moves is the boundary it draws. "ONE scalar"
+   > becomes **scalars whose every stale/fresh pairing is a frame the writer was itself about to
+   > produce** — a property to demonstrate, not a count to check. `GrHistoryView` publishes two
+   > (`shownHead`, `smoothHead`) and satisfies it: `smoothHead ≥ head` for every published pair and
+   > both only increase, so any pairing resolves to `min (smoothHead, head + 1)`, between two frames
+   > the ramp itself produces. The rest of this clause is UNCHANGED and is not reinterpreted: a
+   > payload, a paint-path WRITE, and a pair that genuinely needs to be seen consistently each
+   > remain a new path returning to this gate — the second of those is what the new wording turns
+   > on, since a pair whose cross-pairings are illegal frames *does* need consistency. Nothing about
+   > `presetMenusOpen` or clauses 1–3 changes.
+
 ## Why this shape rather than the alternatives
 
 - **Keep it a plain `int`.** Rejected: it is a data race by the letter of the memory model and

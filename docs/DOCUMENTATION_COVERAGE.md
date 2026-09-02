@@ -6,7 +6,312 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.7 (2026-08-30)** — the LLVM 23 investigation, and the release-tag assertion it produced.
+**Last updated:** for **0.2.8 (2026-09-01, review rounds 2026-09-02)** — the GR history's scroll
+jitter (one owner field report), the three reader/publisher defects a second review found in the
+fix, and the two the third and fourth rounds added (the ring's plain payload; the host
+reconfiguration race on the display's time base).
+
+**Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
+them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).
+(1) The frame derived the ring's one-slot safety margin from the head the TICK observed, which the
+audio thread may have moved past — at a saturated window one intervening block put the oldest peek
+on the slot being written. The margin is measured against the LIVE index now (`readFloor`), the
+read set is a pure `bucketReads`, and the batch re-checks the bound afterwards as it already
+re-checks the epoch. (2) `shownHead` and `smoothHead` were plain scalars written by the message
+thread and read by the GL render thread on macOS/Windows — a data race. Now relaxed
+`std::atomic`s, `static_assert`ed lock-free, and safe as a PAIR by value rather than by snapshot
+(`frameFor`). **That widens ADR-0027's Message → Painting row, so it is a gated Thread Model change
+and is filed as ADR-0038 `Proposed` — the Architecture Review Gate is NOT cleared.** (3) The idle
+gate keyed on the entry COUNT, so a clear that refilled to the same count parked on new data and
+kept the old trace; gate and phase re-anchor key on the ring's reset epoch now. Nothing on the audio
+thread changed — the ring's producer, published index and clear are byte-identical, and every fix is
+on the reading side. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged beyond the round below:
+**Threading / cross-thread path** (`THREAD_MODEL.md`, `THREADING_POLICY.md`, **ADR-0038** and
+**ADR-0011**'s dated amendment) and **New/changed test** (`TESTING.md`, this file).
+
+**A final review round (2026-09-02) found the fourth and last defect and closed the gate item.**
+The guards that discard a raced frame read synchronised state — `resetEpoch()` and `available()` are
+acquire loads — but what they VALIDATED did not: `GrHistoryBuffer` stored and read its payload with
+plain accesses, so a batch the producer lapped was a data race, undefined the moment it happened and
+beyond the reach of any after-the-fact discard. Fixing the post-check expression would have been the
+false fix; the payload is `std::atomic<float>` now, relaxed both ways, so the racing read is DEFINED
+and the guards keep their job. **The audio thread pays nothing, measured:** `push` compiles to an
+instruction-identical sequence (clang-22 `-O3`, x86-64), while the reader's codegen changes exactly
+as it should — the plain version fused both floats into one 8-byte `movsd`, the atomic version emits
+two `movss` loads the compiler may not merge. `is_always_lock_free` is `static_assert`ed so a target
+that would put a lock in `push` fails the build. Recorded as a dated amendment to **ADR-0011**'s
+time-series bullet, with `THREADING_POLICY.md` and `THREAD_MODEL.md` updated; `ScopeBuffer` shares
+the idiom with ~0.26 s of headroom and is reported as drift, not repaired (this round's scope
+excluded it). **ADR-0038 is now Accepted (2026-09-02)** on the owner's approval, and **ADR-0027
+clause 4 is amended in place**: its boundary moves from "ONE scalar" to "scalars whose every
+stale/fresh pairing is a frame the writer was itself about to produce" — a property to demonstrate,
+not a count — with its other exclusions untouched.
+
+**A final finding closed the round: a published display estimate must carry the IDENTITY of the
+state it describes.** `smoothHead` is an absolute ring index whose fractional part is the phase, and
+`GrHistoryBuffer::reset()` rewinds that index — so a paint landing between a clear and the next tick
+read the pre-clear value against the fresh head, saturating `phaseOf`'s clamp to exactly 1 and
+drawing the first frame of the new history one entry-pitch out. No value-based rule can separate the
+two timelines: once the refill passes the old count, `shownHead <= live` (no `paintHead` fallback)
+and `smoothHead - head == 1` (a legitimate parked value) are both indistinguishable from an ordinary
+frame — the same "the count is not the identity" shape as the equal-count gate above, and both wrong
+answers are kept as mutants. `publishedEpoch` is stored `release` last by the tick and loaded
+`acquire` first by the paint, and `frameFor` uses the phase only when it matches the epoch the frame
+is drawing. The invariant: **a frame that sees epoch E also sees the phase published under E.**
+`shownHead` and `smoothHead` keep their representation and relaxed accesses, so ADR-0038 clause 3's
+pairing argument survives verbatim — a draft that packed `(epoch, phase)` into one relaxed word was
+rejected on measurement, since `head + phase` is not monotone in `phase` alone and a torn read could
+move the trace RIGHTWARD by up to one entry-pitch, regressing that accepted claim. ADR-0038 gains
+**clause 7** and a dated amendment to clause 2; `THREADING_POLICY.md` and `THREAD_MODEL.md` name the
+boundary's one ordered access. `ScopeBuffer` is filed as **KI-015** rather than repaired.
+
+**A fourth round found the last race: the display's TIME BASE was read from state the host rewrites.**
+`GrHistoryView` mapped its 20 s window and its scroll rate through `AudioProcessor::getSampleRate()`
+/`getBlockSize()` — plain members that `setRateAndBufferSizeDetails` writes on whichever thread the
+host reconfigures on (the VST3 wrapper's `preparePlugin`, before `prepareToPlay`) while the tick
+reads them on the message thread and the frame on the painting thread. No repo-owned snapshot
+covered it: the wrapper's `grRingPreparedRate/Block` were plain host-thread members that only gated
+the clear. The pair is `GrHistoryBuffer` metadata now — two relaxed, `static_assert`ed lock-free
+atomics stored by `clear` inside the reset epoch's odd window, read by `prepared()` under the same
+bracket as the entries, with the clear-on-change gate moved into `GrHistoryBuffer::prepare` so the
+pair the gate compares is the pair readers get. The bracket's CLOSE became `batchIntact`: an acquire
+FENCE, then a relaxed epoch re-read — Boehm's seqlock reader (MSPC 2012), whose correctness is the C++
+model's on weakly ordered targets, where the acquire LOAD it replaces left the batch's earlier relaxed
+loads unordered against it and TSO alone had been hiding the gap. Recorded as ADR-0011's second dated
+amendment of the day — **accepted by the owner 2026-09-02, clearing that Architecture Review Gate
+item** — with `THREADING_POLICY.md`, `THREAD_MODEL.md`, `TESTING.md` and KI-015 (now
+stating the PR-#27 exclusion, the race class and the headroom explicitly) synced. The same round
+returned the GCC 16 LTO lane to zero first-party warnings — six `-Wfloat-equal` exact comparisons
+against `0.0` in the new test, now `std::abs (…) < 1.0e-12` like the surrounding checks — and answered
+the MSVC PREfast C6262 finding on that test (379,228 bytes of summed locals) by moving its four 32 KB
+rings and one 76 KB processor to the heap: measured under clang `-fstack-usage -fno-inline`, the
+function's frame fell from 76,632 to 936 bytes; PREfast itself runs only in the Windows lane.
+
+**A separate follow-up closed KI-015: the spectrum rings' payload.** The two `ScopeBuffer` instances
+carried the same defect the GR ring did until 0.2.8 — the audio thread wrote the payload with
+`memcpy`, the message thread read it with plain subscripts, and the release/acquire index is a
+BACKWARD edge that cannot order the producer's subsequent writes against the reader's copy loop. A
+focused adversarial review (six lenses, three adversarial stances, a completeness critic) rejected
+both "close it as race-free" and "defer to a larger redesign". The severity assessment in KI-015 was
+right and its ARGUMENT was not: "4096 of 16384, ~0.26 s at 48 kHz" is a frame count rather than a
+time (0.064 s at 192 kHz), `reset()` rewinds the head so a pre-reset reader's margin is anywhere in
+[0, capacity), and `maxBlock` is the host's `samplesPerBlock` with no upper clamp — one push reaches
+the reader's oldest slot at n >= 12289 and covers its whole window at n >= 16384, needing no reader
+stall at all (possible by construction; unexercised here, since no in-tree stimulus prepares more
+than 512). The payload element is now a `Sample` wrapper over one relaxed `std::atomic<float>`
+exposing only relaxed accessors, which makes the SEQ_CST `operator=` spelling ill-formed; the change
+is confined to `src/dsp/ScopeBuffer.h` and `SpectrumView` is untouched. **No reader-side acquire
+fence**, because unlike `GrHistoryBuffer::clear` this ring's `reset()` writes one atomic and touches
+no sample — the sibling's own ratified holding about `push` applied to the identical producer shape.
+**Measured, and the GR round's "instruction-identical" claim explicitly does not transfer:**
+`pushBlock` goes from four `memcpy` call sites to zero calls and zero lock prefixes (clang-22 and
+g++ 13.3, `-O3`), costing +0.005 % of the block period at 48 kHz/512 and +0.021 % at 192 kHz — below
+`AnabasisBench`'s resolution, which is why no bench table is quoted. Recorded as **ADR-0011's third
+dated 2026-09-02 amendment — raised at the Architecture Review Gate and held (it supersedes an
+accepted sentence in the first amendment, a Hard Stop under `AI_AGENT_POLICY.md` whatever the
+agent's own view of severity), then ACCEPTED by the owner 2026-09-02, clearing that gate** — with
+`THREADING_POLICY.md`, `THREAD_MODEL.md` and KI-015's closure synced. Two findings filed rather than fixed: **KI-016** (Anamorph carries the unrepaired shape and
+records it nowhere; accepted one-way drift under ADR-0009 item 8, now against a named instance) and
+**KI-017** (`SpectrumView`/`CurveView` read JUCE's plain prepared rate from the painting thread —
+the defect class the second amendment repaired for `GrHistoryView`), the latter also recording that
+JUCE 9.0.1 takes the MessageManager lock around `paintComponent`, which narrows ADR-0027's and
+ADR-0038's stated premise without disturbing either decision.
+
+**Round 6 closed two review findings, one of them by proving it was not the defect it was reported
+as.** (1) **The GR ring's lap check was validating nothing**, and it was a residual this repository
+had already written down: ADR-0011's second amendment said `push` had no release fence "so the model
+gives that lap check no formal guarantee" and called the result "a defined-behaviour one-frame
+artefact". Understated — the frame was ACCEPTED and drawn carrying entries the producer had already
+overwritten, not dropped. `push` now release-fences before its payload stores, which by
+[atomics.fences] pairs with the reader's existing acquire fence and forces the closing `available()`
+re-read to observe the lapping push; the post-check became two sequenced statements because that
+ordering is now load-bearing for the lap as well as the epoch. The proof needs BOTH halves of the
+post-check — a `clear` rewinds `writeIndex`, so the coherence step alone does not close case 2, and
+the epoch half does. Instruction-identical on x86-64, one `dmb ish` per host block on AArch64. Filed
+as ADR-0011's **fourth** dated amendment, **raised at the gate and HELD**. Its regression test is a
+new `REQUIRED_ORDER` mode in `check-realtime.py` — a memory ordering cannot be `static_assert`ed or
+observed by a deterministic suite, so the only place a test can fail on the old code is the source;
+six self-test cases, checker self-test 134 → 141. (2) **The ScopeBuffer reset finding is PROVEN
+BOUNDED, not repaired.** `reset()` stores the rewound index before bumping the generation, both
+release, so "new generation, stale index" is impossible and a pre-reset spectrum can never be
+committed as a post-reset one — the invariant the review asked for already held. What is real is the
+reverse skew: a reader can see the rewind before the announcement, `analyse` then early-returns on a
+zero-length read without touching the EMA, and the previous spectrum is drawn again until the bump
+becomes visible. Bounded by one atomic's visibility, defined, filed as **KI-018** with the
+packed-word design named as the recommended repair if it is ever taken — and the two comments that
+promised more than the code delivers were corrected rather than left standing. (3) **KI-017 is
+CLOSED, repaired**: `SpectrumView` and `CurveView` read the published prepared pair through
+`AnabasisAudioProcessor::preparedSampleRate()` instead of JUCE's plain member. The audit corrected
+the entry three times — three plain reads not two, live on every platform rather than only where the
+GL context attaches (the EQ curve is read from the editor's timer too), and the MessageManager-lock
+note is confirmed but irrelevant because the writer is the HOST thread. Not a gate item: no new
+thread, path or ordering, just two readers redirected onto an atomic already published and already
+read from the paint path. The third read — `PluginEditor`'s channel count — has no published
+equivalent and stays open. `GrHistoryBuffer::prepared()`'s contract comment was amended in the same
+diff, because the fix adds callers that legitimately read it outside the epoch bracket.
+
+**Round 7 closed the last review finding and both concurrency follow-ups, and its most useful output
+is a set of corrections to what round 6 recorded.** (1) **The stale-spectrum residual is FIXED.** The
+round was asked to separate two invariants: "no pre-reset audio committed as post-reset data"
+(established, untouched) from "no pre-reset VISUAL result displayed after the reset is observable"
+(this round's subject, and it did not hold). A reset is TWO stores and the reader already loads BOTH
+facets every tick — it simply keyed its decision on one, so a reader that saw the rewind before the
+bump held the previous spectrum and, having committed a zero count, then matched the idle test
+forever after. **The residual was a choice, not an inherent floor**, which is what unseated KI-018's
+"the repairs are larger than the defect": true of the two repairs it considered, false of the one it
+never considered. The fix is message-thread only — a pure static `SpectrumView::resetObserved` taking
+both facets, plus a floor when `readLatest` returns zero frames — with no new atomic, no ordering
+change and `ScopeBuffer` untouched. **Both halves of KI-018's stated bound were wrong** and are
+corrected in the entry: the dominant window is an ordinary interleaving (worst case a scheduling
+quantum, not a store drain), and the artefact was SMALLER than claimed, because the prepared pair is
+still the old one throughout, so the held trace is self-consistent rather than mapped through a new
+rate. KI-018's own packed-word recommendation is **withdrawn** (it forces the frame counter below 64
+bits and would fabricate a reset on wrap), and a trap is named: swapping `reset()`'s two stores
+inverts the skew and destroys the invariant that already held. KI-018 is **retained and narrowed** to
+one corner — a refill reaching exactly the previous count with the bump still invisible — which no
+test pins, and the entry says so. `analyse`'s floor ships under the **ADR-0025 exception** with its
+four required disclosures rather than a claim of compliance. (2) **KI-017's third read is FIXED.**
+The editor's timer read JUCE's plain `cachedTotalOuts`, written by `audioIOChanged` on the host's
+threads with no lock in any wrapper — a genuine race with no mechanism to prove it safe. It could not
+be redirected onto the prepared pair, so it needed a publication; the justification is not "the field
+is plain" but that the GR lanes must draw the geometry their per-channel atomics were filled under,
+which is a different question from the layout the host is moving to. One relaxed `int`, stored at
+construction, from `numChannelsChanged` (**which JUCE calls on the writer's own thread**) and from
+`prepareToPlay`, on `THREADING_POLICY`'s existing Meters → GUI row — not a new path. Drift reported
+and corrected on the way: a comment claiming `isBusesLayoutSupported` "pins 2×2" stopped being true
+at 0.1.2. (3) **The prepareToPlay publication lag is ACCEPTED as a bounded transitional state.** The
+window is nearly all of `engine.prepare`, not the gap between two statements, and the rewind happens
+on every prepare while only the pair's republication is gated — both corrections to round 6's text.
+**The order is load-bearing**: publishing the pair first would put a full ring of old-rate audio
+opposite the new rate on every vblank of the window. `GrHistoryView` has no exposure because it reads
+the pair from inside the same epoch bracket as the entries — the round's own first draft said it
+"reads nothing `engine.prepare` writes", which is false and is corrected. **ADR-0011's fourth
+amendment is ACCEPTED and its gate CLEARED.**
+
+**Round 8 was a closure round: no code behaviour changed, and its output is three record
+corrections.** (1) **The ScopeBuffer stale-spectrum review finding is CLOSED as FIXED**, audited
+against the shipped code rather than against the previous round's report. Its anchor was also wrong —
+`ScopeBuffer.h:177` is a line inside the acquire-fence rationale, not inside `reset()` — which is one
+reason it kept regenerating. (2) **Round 7's completeness argument was incomplete and is corrected in
+its own worklog.** It enumerated two mechanisms as though they tiled the interleaving space; there is
+a THIRD leg, and it is the one that closes the partial-refill MIXTURE row (the count has climbed back
+so `resetObserved` is silent, frames were returned so the zero-length floor is silent). That row is
+closed inside the same tick by FORCE: the acquired non-zero index came from `pushBlock`'s release
+store, the generation bump happens-before that push by the named prepare-with-audio-stopped premise,
+and transitivity plus write-read coherence force the post-batch generation re-read past the bump. The
+complementary zero-read row is closed only by round 7's floor, so the two legs are not redundant.
+**And the completeness is PER RING** — one `prepare` resets both in order, so the first ring's rewind
+orders nothing about the second's; that cross-ring row is bounded and ISA-excluded rather than
+forced, and saying so is the point, since claiming "three legs tile the space" would have been the
+fourth time this project shipped documentation claiming more than the code delivers. (3) **KI-018 is
+RE-SCOPED AND RE-BOUNDED**: its "scheduling quantum, tens of ms" worst case does NOT apply to the
+surviving corner — that window came from the host being preempted between `reset()`'s two stores, and
+during it `write` stays 0 so every tick floors, which is precisely the case round 7 repaired. The
+corner's window is pure store-propagation latency, its four preconditions include two that pull
+against each other, and it is excluded in practice on both shipped ISAs (a narrowing observation
+about hardware, explicitly not the basis of the disposition). Its "the count term is silent (equal,
+not lower)" framing is also corrected: the value carries ZERO BITS of evidence rather than evidence
+ignored. The reading of invariant 2 in force is now stated as PER RING. `SpectrumView`'s post-batch
+comment is corrected from "BEST-EFFORT" — an understatement that invited deleting a load-bearing
+line — and `THREAD_MODEL.md` now carries the named premise and the two edits that must reopen the
+entry. Also corrected: two shipped sentences that contradicted the code (`THREAD_MODEL.md`'s
+"nothing for a reader to observe half-done", which `ScopeBuffer.h` had already retracted, and
+KNOWN_ISSUES's claim that `analyse` returns early without touching the EMA).
+
+**Suites after all four review rounds, the KI-015 follow-up and rounds 6–8: `AnabasisTests` 307 +
+`AnabasisStateTests` 1017 = 1324**, one
+new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 59 checks) pinning invariants
+rather than an absence of races — which index a frame may read, which value pairs it may draw, which
+states it may park on, that the validation path is built on synchronised publication state, that a
+restarted timeline is drawn from its beginning, and that the prepared pair is published inside the
+clear and read under the epoch, through the ring and through the wrapper's `prepareToPlay` (which
+also records a finding: a bare `prepareToPlay` sets nothing in JUCE's base class, so the old source
+read a block size of 0 in every headless test). Eleven further mutants, each killed. The first eight
+by disjoint sets: the pre-fix read window 7, the read clamp dropped 4, the count-only gate 2, the
+phase re-anchor 1, the phase's upper clamp 2, the non-atomic payload 1, the epoch ignored 3, the
+reset inferred from the head 3. This round's three: the clear-on-change gate dropped 6 (2 of them in
+the pre-existing `grEpoch`), the pair left unpublished by the clear 12 (a superset — the gate then
+never matches, and every pair-reading check sees zeros), and the batch close blind to the epoch
+exactly 1 — the torn-close check and no other, which is what says that check carries that fact
+alone. The fence itself has no mutant: its absence is a hardware reordering no single-threaded
+suite can stage, which is the argument for the fence being made in writing (ADR-0011). The KI-015
+follow-up adds six `specSync` checks and two more mutants, each killing exactly one: the payload
+reverted to a plain-float struct 1, and the `n > capacity` branch keeping the OLDEST frames 1 —
+that branch being a coverage hole that PREDATES the fix, since nothing in the tree had ever executed
+it. Two mutants there have no automated killer and the record says so: a re-introduced `memcpy` over
+the payload is caught by GCC's `-Wclass-memaccess` under the zero-warning gate but **clang-22 is
+silent even with `-Wnontrivial-memaccess`, measured**, so the GCC lanes are the whole of that catch;
+and `std::is_trivially_copyable` reports TRUE for the wrapper on both libstdc++ and libc++ despite
+every copy and move operation being deleted, which is why the test asserts copy-constructibility and
+copy-assignability instead.
+
+**Scope of the 0.2.8 round.** One owner report — *"the newly drawn portion of the GR history to
+the right of the yellow line is jittery"* — and one display fix. **No DSP change, no parameter
+added, renamed or removed, no schema, threading or latency change**; the ring, its reader
+contract (the epoch-guarded batch of stateless peeks) and the audio-thread push are untouched, so
+no Architecture Review Gate item and no new ADR. ADR-0023 item 6 is **amended in place, dated**,
+the ADR's own idiom (its item 3 carries a 2026-08-09 amendment the same way): the pitch and the
+right anchor it decided stand, and the amendment records that the trace now scrolls by the entry.
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **Metering (… GR history)** (`USER_MANUAL.md`,
+`CHANGELOG.md`; `DSP_ALGORITHMS.md` is named by that row and has never existed here — the standing
+gap the 0.1.6 entry below records; `TEST_REPORT.md` carries DSP accuracy figures and none moved),
+**New/changed test** (`TESTING.md`, this file; `DSP_POLICY.md`'s invariant→test map is unchanged
+— no DSP invariant), and **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s check
+count). `ADR_INDEX.md`'s ADR-0023 row names the amendment.
+
+**What was actually wrong, since a display defect leaves no other trace.** The yellow line is the
+trace's own flat zero-reduction run (the only yellow in the well is `colours::accent`, which
+strokes the trace), and the sloped part to its right is the only part on which horizontal motion
+is visible at all — a horizontal segment shifted horizontally rasterises to the same pixels.
+`GrHistoryView::bucketX` had, since 0.1.2's fixed-pitch rewrite, placed every bucket at a whole
+number of pitches from the right edge with `kHead = (head − 1) / stride`, so every vertex stood
+still for `stride − 1` blocks and then jumped one pitch — 1.447 px at 48 kHz/512 on the Simple
+well, not an integer, so each jump also re-rasterised the anti-aliased stroke. Modelled at a
+60 Hz vblank: 48 % of frames motionless, the rest a 1.45 px lurch (σ of the per-frame motion
+0.72 px). `bucketX` now places buckets by the newest entry's sub-bucket position (`Buckets::fill`)
+and, between arrivals, by a head the frame clock smooths at the nominal entry rate and holds to
+`[head, head + 1]` (`entryPeriod`, `smoothedHead`, `phaseOf`, the prepared pair `windowEntries`
+already trusts) — σ 0.000 px on a steady host, 0 % motionless, at every block size including the
+stride-1 configurations (1024 at 44.1 kHz, 2048 at 48 kHz) where per-entry motion alone changes
+nothing. The first draft of that phase — seconds since the tick that first saw the head move — was
+caught by the pre-fix review never engaging where the block rate exceeds the display rate (every
+60 Hz frame sees an entry at 48 kHz/512, so it reset every frame: a 1-or-2-entries-per-frame beat,
+σ 0.24 px); the smoothed head is the correction, and the draft is recorded in the worklog as a
+rejected alternative with its measurement.
+The newest vertex aggregates the trailing `stride` entries (`tipFirst`) instead of its bucket's
+partial range, so it no longer pops to a single block's value at every bucket start (modelled
+0.99 → 0.55 dB mean frame-to-frame). The read window is rounded up to whole buckets
+(`Buckets::window`, still inside the ring's `kSize − 1`) so the oldest drawn vertex sits on or just
+beyond the left edge and its crossing segment is clipped rather than led in flat — the pre-fix
+adversarial review found that the first draft's lead-in walked left per entry and jumped a whole
+pitch outward at every bucket expiry, the one bucket-rate discontinuity the fix had left; and each
+frame draws the head its phase was computed for (`paintHead`), closing the tick→paint mismatch the
+same review modelled. The review's one product-level finding — hosts that render ahead of real
+time deliver blocks in bursts, which a lag buffer would absorb at the cost of display latency — is
+recorded for the owner, not taken. The measurement trail, the model and the eleven rejected alternatives are in
+`worklogs/2026-09-01-gr-history-scroll-jitter.md`.
+
+**Suites: `AnabasisTests` 301 + `AnabasisStateTests` 944 = 1245 checks green** (Linux, clang-22
+and the local GCC 13.3, Release), up 71 on 0.2.7's 1174, all of them inside
+`testGrHistoryWindowNeverAsksForTheHeadSlot`: a per-entry walk across three buckets of every
+geometry case (eight collected properties, one assertion each, so a single bad head fails the
+case, over six geometry cases — a 44.1 kHz/256 case added on the review's finding that none of the five had `want mod stride ≥ 2`), the trailing tip window, the smoothed head's clamps and phase, the tick gate and the paint head. **Rebuilt against the new geometry, the
+0.2.7 tests failed exactly one of 873** — the quarter-full case at 192 kHz/32, whose head is not a
+stride boundary; the other four sat on one by coincidence, and that assertion now reads the pitch
+between two COMPLETED buckets. **Three mutants**, each killing a DISJOINT set: the 0.2.7 `bucketX`
+kills 15 (the per-entry walk in every `stride ≥ 2` case — at `stride == 1` the stepped form already
+moves one entry-pitch per entry, which is why part C exists — plus every phase assertion); the
+bucket-start tip window kills exactly the 2 `grTip` assertions that describe it and none of the
+geometry; the phase term dropped kills exactly the 10 phase assertions and NOT the per-entry walk,
+which is the evidence that the sub-entry phase and the per-entry scroll are measured separately;
+two mutants of `smoothedHead`'s clamps, each killing exactly the `grPhase` assertion that names
+the guarantee it removes; the unaligned window and the old width bound, each killing only the
+left-edge assertions; and the tick gate and paint head each killing only their own (the worklog
+has the table).
+
+---
+
+**Last updated before that:** for **0.2.7 (2026-08-30)** — the LLVM 23 investigation, and the release-tag assertion it produced.
 
 **Scope of the 0.2.7 round.** One ADR Accepted (**0037**), amending ADR-0031's decision clauses 1
 and 2. The directive was to move every pinned LLVM component to 23.1.0 while refusing release

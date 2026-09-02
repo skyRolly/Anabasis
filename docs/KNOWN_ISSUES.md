@@ -619,7 +619,7 @@ They are acquired in **both** orders:
 
 | Order | Path |
 |---|---|
-| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:195`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:212`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
@@ -676,7 +676,7 @@ observed against this plugin (the same standing caveat as KI-003).
 listener callback.
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:195` (the M0 → M1 edge); JUCE
+- Source: `src/PluginProcessor.cpp:212` (the M0 → M1 edge); JUCE
   `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
 - Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
   stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite
@@ -962,6 +962,367 @@ Evidence [Partially Verified]:
 - Source: `src/gui/PluginEditor.h` (`saveNameEditor`)
 - Test:   none — platform input behaviour, not reachable from the suites
 - Commit: this one
+
+### KI-015 — `ScopeBuffer`'s payload is read and written non-atomically, as `GrHistoryBuffer`'s was until 0.2.8 (2026-09-02) — **CLOSED 2026-09-02**
+
+> **✅ CLOSED — REPAIRED, not downgraded.** A focused adversarial review of this entry (six
+> independent lenses, three adversarial stances and a completeness critic) confirmed a real data
+> race and rejected both "close it as race-free" and "defer it to a larger redesign": the fix needs
+> no architectural change, is confined to `src/dsp/ScopeBuffer.h`, and leaves `SpectrumView`
+> untouched. The payload element is now a `Sample` wrapper over one relaxed `std::atomic<float>`
+> (ADR-0011's third dated 2026-09-02 amendment, **raised at the Architecture Review Gate and held
+> for the owner's ruling**, since it supersedes an accepted sentence). Pinned by `specSync` in the
+> DSP suite.
+>
+> **THREE STATEMENTS IN THE ORIGINAL ENTRY BELOW ARE WRONG, and the corrections outlived the fix:**
+>
+> 1. *"`ScopeBuffer` has no reset epoch to bracket a batch with"* — **half false, and the true half
+>    is load-bearing.** `resetGeneration()` exists with a documented before/after contract and
+>    `SpectrumView::tick` brackets its batch with it on both sides. What `ScopeBuffer` does not have
+>    is an odd/even epoch around a payload-writing clear — and that distinction is exactly why this
+>    ring needs NO reader-side acquire fence where `GrHistoryBuffer` did: its `reset()` writes one
+>    atomic and touches no sample.
+> 2. *"its bulk `memcpy` needs its own design pass rather than a transliteration"* — **overstated.**
+>    Only the PRODUCER half is a `memcpy`; the racing reader half was already a per-element scalar
+>    loop. The repair turns four `memcpy`s into two store loops over the same segment arithmetic.
+> 3. *"the headroom is 4096 of 16384, so ~12288 frames (~0.26 s at 48 kHz)"* — **not an invariant,
+>    and this was the entry's whole severity argument.** It is a FRAME count, not a time (0.064 s at
+>    192 kHz); `reset()` rewinds the head, leaving a reader that holds a pre-reset index a margin
+>    anywhere in [0, capacity); and `maxBlock` is the host's `samplesPerBlock` with no upper clamp,
+>    so a single push reaches the reader's oldest slot at n ≥ 12289 and covers its whole window at
+>    n ≥ 16384 — two different thresholds, both previously unstated, neither needing a reader stall.
+>    Stated the other way round for honesty: that is **possible by construction and unexercised
+>    here** — no in-tree stimulus prepares more than 512 frames, and what would settle it is a survey
+>    of host offline-bounce buffer maxima, which this tree cannot answer.
+>
+> The severity assessment was right — nothing user-visible ever depended on it, and the worst
+> outcome after the repair is one FFT frame mixing old and new audio, decaying on the analyser's
+> ~120 ms EMA. What the entry got wrong was treating an unquantified margin as a reason the defect
+> was not a defect. The text below is left as written, per the append-only convention.
+
+**Severity:** Low
+**Status:** **CLOSED 2026-09-02 — repaired.** (Originally: Confirmed from the code; not reproduced, and not expected to be reproducible)
+**Affects:** every platform and format; the two spectrum capture points only — the input/output
+spectrum overlay. The GR history is **not** affected: the same defect was repaired there in 0.2.8.
+
+Nothing is visible to a user. This is a correctness entry, filed so the next round starts from a
+fact rather than rediscovering it: `ScopeBuffer` publishes its frames with the same
+release/acquire index `GrHistoryBuffer` uses, but its payload is `memcpy`'d into
+`std::vector<float>` by the producer and copied out by the reader with plain accesses. If the audio
+thread laps a slow reader mid-copy, those accesses race, and a plain read concurrent with a plain
+write is undefined behaviour under the C++ memory model however benign the machine code looks.
+
+**Workaround:** none needed; nothing user-visible depends on it.
+**Cause and why it is not fixed here.** It is materially safer than the GR-history case was, and
+the headroom is the reason: the only caller asks for **4096 of 16384 frames**, so the producer must
+advance ~12288 frames — about **0.26 s at 48 kHz** — between the reader's index acquire and the end
+of its copy for the oldest frames to be overwritten. `GrHistoryBuffer` had **one slot** of margin by
+construction, which is why it was the blocker and this is not. The repair is the same shape (atomic
+payload, relaxed both ways, the audio-thread store unchanged — measured instruction-identical
+there), but `ScopeBuffer` copies in bulk with `memcpy`, so it needs its own design pass rather than
+a transliteration of the GR fix, and the 0.2.8 review scope explicitly excluded it. Recorded as a
+separate follow-up.
+
+**Intentionally excluded from the 0.2.8 review pull request (PR #27), on instruction, in every one
+of its rounds** — including the final one, whose ring change (the prepared pair stored inside the
+clear, the reader's acquire-fence close, `batchIntact`) is a `GrHistoryBuffer` repair that does not
+transfer either: `ScopeBuffer` has no reset epoch to bracket a batch with and no pair to publish,
+and its bulk `memcpy` is the thing a per-element atomic payload cannot express without the design
+pass above. The race class, for the record: **producer overwrites reader, plain payload** — the same
+class the GR ring had, with ~0.26 s of reader headroom where the GR ring had one slot. That headroom
+is why the GR fix was a blocker and this is a follow-up, and it is not a proof: a suspended message
+thread (debugger, a host batching redraws) spends it in one stop.
+
+Evidence [Verified]:
+- Source: `src/dsp/ScopeBuffer.h` (`pushBlock`'s `memcpy` pair; the reader's copy-out), against
+  `src/dsp/GrHistoryBuffer.h`'s repaired `Slot`
+- Test:   none — a race no deterministic suite can stage; the GR-history equivalent is pinned by
+  the type-level `grSync` assertions, which have no `ScopeBuffer` counterpart yet
+- Worklog: `worklogs/2026-09-01-gr-history-scroll-jitter.md` §10, §11
+
+### KI-016 — Anamorph's `ScopeBuffer` carries the defect KI-015 repaired here, and that repository is read-only (2026-09-02)
+
+**Severity:** Informational (about the SIBLING product, not this one)
+**Status:** Confirmed from the sibling's source; deliberately not repaired
+**Affects:** Anamorph only. Anabasis is unaffected — KI-015 repaired the same shape here.
+
+`Anamorph:src/dsp/ScopeBuffer.h` is the file ADR-0009 records this ring as copied from, and it still
+carries the producer `memcpy` / reader plain-subscript pair that KI-015 shows to be a data race when
+the producer laps the reader. The sibling's `docs/KNOWN_ISSUES.md` has no ScopeBuffer entry, so the
+defect ships there unrecorded.
+
+**Why nothing is done about it from here, and why this entry exists anyway.** ADR-0009 item 8 makes
+divergence between the two products **accepted and one-way** — no upstream-sync obligation, no
+backport path, drift fixed per product — and `CLAUDE.md` §3 makes Anamorph read-only from this
+repository. So no sibling change is owed and none is proposed. What ADR-0009's Consequences do
+require is that an SPSC-ring improvement be made in both products *or accepted as drift*, and
+"accepted drift" is only meaningful against a named instance. This is the name. Whether to schedule
+the sibling repair is a product-family decision for the owner, taken in Anamorph's own tree.
+
+Evidence [Verified]:
+- Source: `Anamorph:src/dsp/ScopeBuffer.h` (the `memcpy` producer and the plain-subscript reader),
+  against this repository's repaired `src/dsp/ScopeBuffer.h`
+- Related: ADR-0011's third dated 2026-09-02 amendment; ADR-0009 item 8; KI-015
+
+### KI-017 — The paint path reads JUCE's plain prepared sample rate, in two views (2026-09-02) — **CLOSED 2026-09-02 (round 6)**
+
+> **✅ CLOSED — REPAIRED.** A focused audit confirmed a genuine data race with the HOST thread and
+> fixed it: both views now read the pair `GrHistoryBuffer` already publishes, through
+> `AnabasisAudioProcessor::preparedSampleRate()`. **Three statements in the entry below were wrong,
+> and the corrections are the part worth keeping:**
+>
+> 1. **"in two views" — there are THREE plain reads, and the third is not fixed here.**
+>    `SpectrumView::paint` and `CurveView::readInputs` are repaired; `PluginEditor`'s
+>    `getTotalNumOutputChannels()` in its timer callback reads `cachedTotalOuts`, a different plain
+>    member with no published equivalent anywhere in the tree (checked: there is no channel-count
+>    publication). Repairing it needs a new publication rather than a redirect, so it is deliberately
+>    NOT bundled — see the remaining-work note at the end of this entry.
+> 2. **"macOS and Windows only, where the OpenGL context attaches" — wrong, and this is why the
+>    MessageManager finding below does not rescue it.** `CurveView::readInputs` is reached from the
+>    editor's 24 Hz `timerCallback` as well as from `paint`, so the message thread reads it too — and
+>    the opposing writer is the HOST's reconfiguration thread, which takes no MessageManager lock in
+>    any wrapper (VST3's `preparePlugin` is reached from `setupProcessing` and `setActive` with none;
+>    VST2, AU, AUv3, AAX and LV2 are the same shape). The defect was live on **every** platform,
+>    Linux included, where no GL context attaches at all.
+> 3. **The MessageManager-lock note below is confirmed at the pinned source and is irrelevant to this
+>    entry's question.** It excludes `paint` from racing MESSAGE-thread work. It says nothing about
+>    the HOST thread, which is the writer here. It is kept because it remains true and because it
+>    narrows ADR-0027's and ADR-0038's stated premise — but it was never a reason to leave this open.
+>
+> **What the repair trades, stated rather than claimed as behaviourally identical.**
+> `prepareToPlay` prepares the engine before it prepares the GR ring, so inside that window the
+> published pair still carries the previous rate. For `SpectrumView` this is provably invisible: the
+> spectrum ring has been rewound, `readLatest` yields nothing and `analyse` returns before touching
+> the trace, so the old rate maps an already-floored display. For `CurveView` there is no ring and no
+> floor: it can draw the EQ response at the previous rate for the duration of `prepareToPlay`, where
+> before it drew at the new one. That is a **bounded correct-but-late frame traded for undefined
+> behaviour**, which is the right trade and is not a claim of identical behaviour.
+>
+> Pinned by `ki017` in the state suite: with a bare `prepareToPlay` JUCE's plain member stays 0, so
+> the old source mapped every headless frame through its 48 kHz fallback and two snapshots taken at
+> 96 kHz and 48 kHz were IDENTICAL; they differ only when the view reads the published pair. The
+> revert mutant fails exactly that assertion.
+
+**Severity:** Low
+**Status:** **CLOSED 2026-09-02 — repaired for the two rate reads; the channel-count read remains
+open (below).** (Originally: Confirmed from the code; not repaired.)
+**Affects:** every platform — see correction 2. Display only.
+
+Found while reviewing KI-015, in the same file, and deliberately left alone: `SpectrumView::paint`
+takes `processor.getSampleRate()` to map its frequency axis, and `CurveView` does the same for its
+own. That is `juce::AudioProcessor`'s plain `currentSampleRate` — written by
+`setRateAndBufferSizeDetails` on whichever thread the host reconfigures on — read from the painting
+thread. It is the **identical defect class** ADR-0011's second 2026-09-02 amendment repaired for
+`GrHistoryView`, by making the prepared pair ring metadata published inside the ring's clear. Two
+instances remain; neither is in KI-015's subject, and bundling them into a payload-atomicity repair
+would have been scope creep. The visible cost if it ever bit would be one frame's axis mapped
+through a half-updated configuration, on a re-prepare that already blanks the display.
+
+**A finding that bears on how this is judged, recorded because it is not written anywhere in the
+tree.** ADR-0027 and ADR-0038 both rest on the premise that a plain read from `paint` "is a data
+race … on exactly the two platforms where the context attaches". In the pinned JUCE 9.0.1 the GL
+render thread takes the **MessageManager lock** around component painting —
+`juce_OpenGLContext.cpp` emplaces the scoped `mmLock` before `paintComponent` and releases it
+after — so a component's `paint` cannot in fact run concurrently with message-thread work, and that
+mutual exclusion is a happens-before edge neither ADR considers. Neither ADR's DECISION is disturbed:
+their atomics are correct, cost nothing, and remain the right shape for state whose writer is not
+the message thread. What is narrower than written is the stated JUSTIFICATION, for the
+component-paint path specifically, and it is an implementation detail of one JUCE version rather
+than an API guarantee — which is a reason to keep the atomics, not to remove them. Recorded here so
+the next round starts from the source rather than from the premise. **No ADR text is changed on the
+strength of this entry**; that is an owner call.
+
+**THE THIRD READ IS ALSO CLOSED NOW (round 7).** `PluginEditor`'s timer callback read
+`proc.getTotalNumOutputChannels()` — `juce::AudioProcessor::cachedTotalOuts`, written by
+`AudioProcessor::audioIOChanged` on whichever thread the host reconfigures on, with no lock in any
+wrapper. The audit could name no mechanism that serialises it against the editor's 24 Hz timer, so
+option B was unavailable: a genuine data race, not a benign transient.
+
+It could not be redirected the way the two rate reads were — the prepared pair carries rate and
+block only, and inferring mono from a per-channel meter reading zero is unsound because a stereo
+channel at rest reads zero too. So this one did need a publication, and the justification is not
+merely "the field is plain": the editor's GR lanes read the engine's PER-CHANNEL atomics and must
+draw the geometry those atomics were filled under, whereas JUCE's accessor answers a different
+question — the layout the host may be moving TO. `pubOutChannels` is one relaxed `int`, stored at
+construction, from `numChannelsChanged` (which JUCE calls from `audioIOChanged`, i.e. **on the
+writer's own thread**, so a layout change with no re-prepare is covered), and from `prepareToPlay`.
+It sits on `THREADING_POLICY`'s existing Meters → GUI row, whose writer set already includes
+`prepareToPlay` on the host thread — not a new cross-thread path, and not a gate item. Pinned by
+`ki017c`.
+
+**THE prepareToPlay PUBLICATION LAG, audited in the same round and ACCEPTED as a bounded
+transitional state.** `AnabasisEngine::prepare` rewinds both spectrum rings at the TOP of its body,
+and the prepared pair is republished only after it returns — so the window is nearly all of
+`engine.prepare` (milliseconds, the eight oversampler constructions), not the gap between two
+adjacent statements. The rewind happens on EVERY prepare, because `engine.prepare` is called
+unconditionally; only the pair's republication is gated on the pair actually changing.
+**The order is load-bearing and must not be "tidied".** Publishing the pair first would put a full
+ring of old-rate audio opposite the NEW rate for that whole window — the wrong-frequency artefact the
+rewind exists to remove, produced on every vblank rather than as a skew. The current order puts an
+EMPTY ring opposite the OLD rate, and every state a reader can reach in the window is
+self-consistent. Per reader: `GrHistoryView` has no exposure at all — it reads the pair from inside
+the same epoch bracket as the entries, so the two move together by construction; `SpectrumView`
+reads an empty ring and (since round 7) floors its trace; `CurveView` can draw the EQ response at the
+previous rate for the duration of `engine.prepare`, which is a bounded correct-but-late frame. The
+invariant, stated for the next reader: **a GR frame never maps one configuration's entries through
+another's time base, and the price is that non-ring readers may lag by one reconfiguration.**
+
+Evidence [Verified]:
+- Source: `src/gui/SpectrumView.cpp` (`paint`, the axis mapping) and `src/gui/CurveView.cpp`
+  (`readInputs`, reached from `paint` AND the editor's timer); `src/gui/PluginEditor.cpp` (the
+  channel-count read that remains); `juce_audio_processors`' plain `currentSampleRate`/`blockSize`
+  members
+- Precedent: ADR-0011's second dated 2026-09-02 amendment (the repaired instance in `GrHistoryView`)
+- JUCE: `juce_opengl/opengl/juce_OpenGLContext.cpp` (the MessageManager lock around
+  `paintComponent`), read at the pinned 9.0.1
+- Worklog: `worklogs/2026-09-02-ki015-scopebuffer-payload.md`
+
+### KI-018 — A spectrum reset can leave the previous trace on screen for one or more ticks (2026-09-02) — **REPAIRED except for one corner, round 7**
+
+> **⟳ RETAINED AND NARROWED, not closed.** Round 7 repaired the case this entry describes and, in
+> doing so, found that **both halves of the bound written below are wrong**. The corrections matter
+> more than the patch:
+>
+> * **The window is not "one atomic's visibility latency, sub-microsecond in practice".** The
+>   dominant case is an ordinary INTERLEAVING, not a visibility one: the host thread is preemptible
+>   between `reset()`'s two stores, and every reader tick inside that window saw the rewind without
+>   the announcement. Worst case is therefore a scheduling quantum — tens of milliseconds under load
+>   — not a store drain. (The typical case does remain store visibility; it is the worst case that
+>   was mis-stated.) And `[atomics.order]`'s "reasonable amount of time" is a *should*, so even the
+>   typical bound is "finite, not normatively guaranteed".
+> * **The artefact was SMALLER than stated, in the other direction.** "Drawn against the new rate's
+>   bin mapping" is true only after the prepared pair republishes, which happens later still (see
+>   the prepareToPlay note in KI-017) and only when the rate actually changed. Throughout the
+>   interleaving window the pair the view reads is the OLD one, so the held trace is drawn at the
+>   rate it was captured at — self-consistent, and bit-for-bit the frozen-analyser behaviour KI-007
+>   item 6 already ships deliberately.
+> * **"The repairs are larger than the defect" was true of the two repairs this entry considered and
+>   false of the one it never considered.** No synchronisation change was needed. The reader already
+>   loads BOTH facets every tick — `resetGeneration()` and `writeCount()` — and simply keyed its
+>   decision on one of them. `SpectrumView::resetObserved` now takes both, and `analyse` floors the
+>   trace when `readLatest` hands back zero frames (which is equivalent to "the index I acquired was
+>   0", reachable only from construction or a reset). Message-thread only: no new atomic, no new
+>   ordering, nothing on the audio path, `ScopeBuffer` untouched.
+> * **The packed-word recommendation below is withdrawn.** Packing (generation, index) into one
+>   64-bit atomic forces the frame counter below 64 bits; at 32 it wraps in ~25 hours at 48 kHz and
+>   would then FABRICATE a reset, and `writeCount()`'s monotone `uint64_t` total is a published
+>   contract with tests on it. A 128-bit atomic is not reliably lock-free and would be stored by
+>   `pushBlock` on the audio thread. If the corner below is ever taken, it needs a fresh design pass,
+>   not this entry's suggestion.
+> * **A trap, named so nobody tries it:** swapping `reset()`'s two stores so the generation is
+>   bumped first INVERTS the skew and destroys the invariant that already held — a reader acquiring
+>   the new generation could then read a pre-reset index.
+>
+> **WHAT REMAINS — RE-SCOPED AND RE-BOUNDED IN ROUND 8, because two of this entry's own quantitative
+> claims were wrong as applied to the corner.**
+>
+> **The interleaving.** The reader commits `shownInGen = G`, `shownInCount = C > 0` at tick T.
+> `reset()` runs. At tick T+1 the reader loads `gi0 == G` (the bump not yet visible) and `ci == C` —
+> the post-reset refill having landed on exactly C. `resetObserved (G, G, C, C)` is false, the idle
+> test matches on all four equalities, and the tick does nothing.
+>
+> **The observable effect.** The previous trace is held. With both rings in the corner the tick
+> early-returns and the trace is held verbatim. There is also a CROSS-RING variant, found in round 8
+> and not previously written down: one `prepare` resets both rings in order, so the in-ring's rewind
+> orders nothing about the out-ring's — a tick can floor `inDb` on a zero-length read while
+> `analyse (out, …)` folds pre-reset frames into `outDb`, painting a floored input trace beside an
+> intact pre-reset output one. Both variants are **correct-but-one-frame-late**, not wrong data:
+> nothing incorrect is committed, and the fall-through commit is idempotent.
+>
+> **Why it is bounded — and the correction that matters most.** The "worst case is a scheduling
+> quantum, tens of milliseconds" bound stated above **does not apply to this corner**, and leaving it
+> to stand overstated the residual by orders of magnitude. That bound came from the host being
+> preemptible BETWEEN `reset()`'s two stores. But `reset()` runs from `prepare` with audio stopped,
+> so throughout any such preemption `write` stays at 0, the refill cannot run, and every reader tick
+> sees a count below `shownInCount`, fires the count term and floors the trace. **The preemption
+> window is exactly the case round 7 repaired; it cannot produce this corner**, whose refill by
+> definition happens after `prepare` has returned. The corner's window is pure store-propagation
+> latency. Four things must hold at once, and the last two pull against each other: `C > 0`; the
+> refill lands on exactly C; no reader tick during the refill (any such tick floors); and the
+> generation still stale on a load issued at least a block period after a release RMW that already
+> retired. On the two shipped ISAs — x86-64, and AArch64, which is other-multi-copy-atomic — those
+> last two are in practice contradictory. **That is a narrowing observation about real hardware, not
+> the basis of the disposition**, and it must be re-derived if the target set ever widens to a
+> non-multi-copy-atomic ISA.
+>
+> **Why it is not a stale-data correctness failure.** Invariant 1 is untouched: no payload is read on
+> the early-return path, and on the fall-through path `readLatest`'s acquired index is post-reset.
+> Invariant 2 — *no pre-reset visual result may remain displayed after the reset becomes
+> OBSERVABLE* — has a false antecedent here, and the second correction is about that word. Saying
+> "the count term is silent (equal, not lower)" reads as though the reader holds evidence and
+> discards it. It does not: the value C it loads is BIT-IDENTICAL to what the ring published before
+> the reset, so that load carries **zero bits of evidence**, as do the stale generation and a
+> non-empty `readLatest`. All facets are silent. **The reading in force is PER RING** — each trace is
+> drawn from its own EMA — which is what makes the cross-ring variant a residual rather than a
+> violation; the stronger per-display, real-time reading is not the contract and cannot be, since
+> under it every reset violates invariant 2 for one tick period and the invariant would describe no
+> achievable design for a polled reader.
+>
+> **Why it cannot persist and cannot lose a reset.** The idle early-return precedes the commit, so
+> `shownInGen` stays at the pre-reset value and the reader is still comparing against it. Transport
+> running: the count moves past equality and the generation term floors. Transport stopped: the
+> count never moves, and the idle test fails on the generation alone — which is precisely why the
+> generations are in that test. `shownInGen` advances only in a tick that floored before or after
+> `analyse`; there is no third path. This is the structural difference from the pre-round-7 defect,
+> where the reader committed a zero count and then satisfied the idle test for ever.
+>
+> **No test is owed**, and not because it is hard: rule 1 binds bug FIXES, and this is a documented
+> non-defect. Its precondition is the one `ScopeBuffer` structurally refuses to offer, since there is
+> no way to rewind without publishing — deliberately, because that coupling IS invariant 1.
+>
+> **TWO EDITS MUST REOPEN THIS ENTRY:** a `ScopeBuffer::reset()` call site outside `prepare` (which
+> would make the preemption window refillable and restore the wider bound), and reordering,
+> splitting or interleaving the two `reset()` calls — or adding a third spectrum ring — which changes
+> which rewind carries the happens-before edge and so changes the cross-ring analysis.
+
+**Severity:** Low
+**Status:** **Repaired round 7 except the equal-count corner above; retained and narrowed.**
+(Originally: investigated and proven bounded, deliberately not repaired.)
+**Affects:** every platform; the spectrum overlay only.
+
+Raised as a review finding that a reset overlapping `readLatest` lets "the previous spectrum survive
+until a later tick notices". Audited against the C++ memory model, and the finding is real as a
+DISPLAY residual and false as a correctness violation. Both halves matter, so both are recorded.
+
+**What is guaranteed, by construction.** `ScopeBuffer::reset()` stores the rewound index with
+`release` and THEN bumps the generation with `release`. A reader whose acquire load of the generation
+returns the new value therefore has happens-before to the rewind, and write-read coherence forces
+every subsequently sequenced load of the index — including the one inside `readLatest` — to return a
+post-reset value. "New generation, stale index" is impossible. Combined with `SpectrumView::tick`
+only ever advancing `shownInGen` in a tick that floored the EMA before `analyse` (`resetIn`) or after
+it (`gi1 != gi0`), **a pre-reset spectrum can never be committed as a post-reset one**. That is the
+invariant the review asked for, and it already held.
+
+**What is not guaranteed, and this is the real residual.** The reverse skew is permitted: a reader
+can observe the rewound INDEX while its generation load still returns the old value, because they are
+two atomics and only one direction is ordered. Then `resetIn` is false, `readLatest` yields nothing
+(the index is 0), `analyse` returned early **without touching the EMA** — it FLOORS the trace there
+since round 7, which is half of what closed this — and the previous spectrum was
+drawn again — verbatim, against the new rate's bin mapping. The tick can even satisfy the idle test
+outright and do nothing at all. Nothing decays it, because the EMA's decay only runs when frames
+arrive and a re-prepare normally happens with the transport stopped. It ends when the generation bump
+becomes visible to the reader's acquire load — and there is no second, independent correction path,
+because the frame COUNT was deliberately retired as a reset detector in 0.2.7.
+
+**Why it is not repaired here.** The bound is one atomic's visibility latency, which the standard
+requires to be finite and which is sub-microsecond in practice; the artefact is a stale display, not
+wrong audio and not undefined behaviour (the payload has been atomic since KI-015). The repairs that
+would remove the skew entirely are real but larger than the defect: folding the generation and the
+index into ONE atomic word (correct, and the strongest option — it makes the skew unrepresentable
+rather than detectable, at the cost of changing the ring's published word layout, `readLatest`'s
+signature and every caller), or bracketing the rewind in an odd/even seqlock like
+`GrHistoryBuffer::clear`'s. Both are a design change to a ring that is not currently wrong, so they
+belong to a round that takes them deliberately rather than to a defect report. **The packed-word
+option is the recommended one if this is ever taken.**
+
+**Workaround:** none needed; nothing audible and nothing persistent depends on it.
+
+Evidence [Verified]:
+- Source: `src/dsp/ScopeBuffer.h` (`reset`, `readLatest`), `src/gui/SpectrumView.cpp` (`tick`,
+  `analyse`'s early return) — and the two comments in those files that claimed more than the code
+  delivers were corrected in the same round rather than left standing
+- Related: ADR-0011's first and third dated 2026-09-02 amendments; KI-015
+- Worklog: `worklogs/2026-09-02-round6-concurrency.md`
 
 ## Standing note for P1 onward
 
