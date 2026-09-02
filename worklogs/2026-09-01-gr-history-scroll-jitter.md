@@ -586,3 +586,119 @@ portability 48/0; realtime 40/0; citations against `origin/main`; `git diff --ch
   impossible. A TSan lane would test the claim directly and this repository has no TSan job
   (`sanitizers` is ASan + UBSan + valgrind, `TESTING_POLICY.md` Level 1b) — worth one, and out of
   scope here.
+
+## 10 — The final review round: the post-check was validating a data race (2026-09-02)
+
+One finding, and the fix is not where the finding points — which is the part worth recording.
+
+**The finding**, against `GrHistoryView.cpp`'s post-check: *"When audio advances or reset clears
+during painting, `resetEpoch()` and `available()` rechecks follow concurrent non-atomic reads.
+Discarding the frame cannot undo undefined behavior."*
+
+**Where the UB actually was.** The two validation reads were ALREADY race-free:
+`resetEpoch()` is `resetGuard.load (acquire)` and `available()` is `writeIndex.load (acquire)`,
+both on `std::atomic`. Nothing in the post-check expression needed changing, and changing it would
+have been the "false fix" the review warned about — an atomic-looking check in front of data that
+stays non-atomic. The race was in the payload:
+
+```cpp
+entries[(size_t) (i & (int64_t) kMask)] = { grDb, peak };   // push: plain store
+return entries[(size_t) (n & (int64_t) kMask)];             // peek: plain read
+```
+
+`readFloor` (§9.1) keeps a batch inside one lap of the producer **as of the instant `live` is
+read**; a batch the producer laps mid-flight still reaches those slots, and the post-check exists
+precisely to notice that and drop the frame. So the guards were designed around a case that, in
+plain C++, is undefined the moment it occurs. Detection was never the defect; what it was detecting
+was.
+
+**The fix.** `GrHistoryBuffer::Slot` holds `std::atomic<float> grDb, peak`, written and read
+**relaxed**; `Entry` stays a plain value pair, so no caller changes. Relaxed is exactly right and
+not a shortcut: the release-store of the write index still orders both payload stores before the
+index a reader acquires, so *"a reader that sees index N sees entry N−1 complete"* holds unchanged —
+what the atomics add is the OTHER case, where the read is now defined (each field yields one of the
+two values; the pair may be mismatched) instead of undefined. The guards keep their job: such a
+frame is still discarded. **Defined-then-discarded, rather than detected-after-the-fact.**
+
+**The audio thread pays nothing, measured rather than asserted.** Compiling a minimal TU against
+both headers (clang-22.1.8, `-O3`, x86-64, the state target's own include set):
+
+```
+audio_push:  movq 32768(%rdi),%rax · movl %eax,%ecx · andl $4095,%ecx
+             movss %xmm0,(%rdi,%rcx,8) · movss %xmm1,4(%rdi,%rcx,8)
+             incq %rax · movq %rax,32768(%rdi) · retq          ← IDENTICAL, plain vs atomic
+```
+
+The **reader's** codegen does change, and that is the evidence the fix is real rather than
+cosmetic: the plain version fused both floats into a single 8-byte `movsd` — one wide non-atomic
+load of the pair, exactly the access the finding names — where the atomic version emits two
+separate 4-byte `movss` loads that the compiler may no longer merge. `static_assert
+(std::atomic<float>::is_always_lock_free)` is what keeps the audio side honest: a target without
+lock-free float atomics would put a LOCK in `push`, which `REALTIME_AUDIO_POLICY` forbids outright,
+and it must fail the build rather than ship.
+
+**Adjacent state, inspected rather than patched blindly.** `writeIndex` and `resetGuard` are atomic
+and were already correct — no change. `reset()`'s bulk clear became relaxed atomic stores for the
+same reason (a reader may be peeking those very slots while it runs, which is what the epoch
+announces); its release fence still orders the odd epoch value before every one of them, so the
+seqlock argument in that function is unchanged. Nothing else in the ring touches the payload.
+
+**Rejected:** re-reading the epoch/index more often, or adding a pre-check (both leave the payload
+plain — the false fix); a seqlock retry loop over the payload (the reader would spin on the audio
+thread's progress and the ring already answers this with a dropped frame); double-buffering
+(explicitly out of scope, and it would move a 32 KB copy onto some thread); anything blocking on
+the audio path (`REALTIME_AUDIO_POLICY`, and the whole point of the SPSC design).
+
+**Drift reported, not repaired.** `ScopeBuffer` (the two spectrum taps) shares the idiom —
+`memcpy` into `std::vector<float>` under the same release/acquire index — and so shares the class
+of defect. It is materially safer: its reader takes 4096 of 16384 frames, so the producer must
+advance ~12288 frames (~0.26 s at 48 kHz) mid-read to reach them, and the header already argues
+that headroom. It is a separate component, outside this review's scope, and this round's
+instruction was explicitly not to widen into it. Recorded here so the next round starts from a fact
+rather than a rediscovery.
+
+### 10.1 — Verification
+
+Suites: **`AnabasisTests` 301 + `AnabasisStateTests` 979 = 1280**, 0 failures, clang-22.1.8 and the
+local g++ 13.3, Release. The round adds a `grSync` section to
+`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`: the payload's TYPE (both fields
+`std::atomic<float>`, lock-free, at the layout of the pair they replaced), the round-trip through
+that path, and the two guard inputs answering different questions — the epoch does NOT move when
+the producer merely advances, and `readFloor (available())` is what sees the lap. It pins that the
+validation is built on synchronised publication state rather than that a stale frame is discarded,
+which is what the review asked for.
+
+One mutant, `plainpayload` (the pre-fix non-atomic ring, `Slot` retained so the suite still
+compiles): kills exactly one assertion — *"the ring's PAYLOAD is atomic"* — and nothing else, which
+is the honest result. The remaining `grSync` checks are about the guards and the round trip, and
+those behaved correctly before this fix too; they are there to keep the validation path honest, not
+to detect this mutant.
+
+Gates: zero first-party warnings under the full clang-22 gate; `check-docs` 103 files clean;
+portability 48/0; realtime 40/0; citations 54 against `origin/main`; `git diff --check` clean.
+
+### 10.2 — ADR-0038 accepted
+
+The owner approved the Message → Painting widening (§9.2). ADR-0038 moves `Proposed` → **Accepted
+2026-09-02**, its banner rewritten as a ratification record in ADR-0027's own idiom, and **ADR-0027
+clause 4 is amended in place, dated**: its text stands and the boundary it draws moves from "ONE
+scalar" to *"scalars whose every stale/fresh pairing is a frame the writer was itself about to
+produce"*. That is a property to demonstrate rather than a count to check — strictly harder to
+satisfy than "two are allowed now", and it leaves the clause's other exclusions (a payload, a
+paint-path write, a pair that genuinely needs consistency) untouched and unreinterpreted. Nothing
+about `presetMenusOpen` changes.
+
+### 10.3 — Remaining risk after this round
+
+- **The batch is still not atomic against the producer**, by design and unchanged: `readFloor`
+  bounds the reads at the instant `live` is read, the post-check turns a lost race into a dropped
+  frame, and the payload's atomicity is what makes the interval between them defined. This is the
+  ring's decided seqlock bargain, now legal rather than merely intended.
+- **A raced frame can still be MISMATCHED before it is discarded** — `grDb` from one entry, `peak`
+  from the next. That is inherent in per-field atomics without a per-entry seqlock, it is bounded to
+  frames the guard then throws away, and the alternative costs the audio thread a sequence counter
+  per block for a display artefact nobody can see.
+- **`ScopeBuffer` carries the same class of defect** with ~0.26 s of headroom (above).
+- **The races remain argued, not observed.** No test stages a concurrent producer; what is pinned is
+  the arithmetic and the types that make each race impossible or defined. A TSan lane would test the
+  claims directly and this repository has none — noted, and deliberately not added here.

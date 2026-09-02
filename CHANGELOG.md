@@ -52,11 +52,11 @@ portion of the GR history to the right of the yellow line is jittery."* The yell
 trace's own flat zero-reduction run (the only yellow in the well is the trace's accent), and the
 part to its right is the only part that CAN show horizontal motion — which is where the renderer
 had been stepping a non-integer pitch once per decimation bucket since 0.1.2. A second review
-round then found three correctness defects in that fix — two of them races — and they are repaired
-in the same version; the last of them widens a threading decision and is **filed for architecture
-review rather than approved**
+round then found four correctness defects in that fix — three of them races — and they are repaired
+in the same version; one of them widens a threading decision, which went to architecture review and
+was approved
 ([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
-`Proposed`). No DSP algorithm, parameter, serialization schema or reported-latency change, and
+Accepted 2026-09-02). No DSP algorithm, parameter, serialization schema or reported-latency change, and
 nothing on the audio thread moved: the ring's producer, its published index and its clear are
 byte-identical, and every change here is on the reading side. Measurement trail:
 [`worklogs/2026-09-01-gr-history-scroll-jitter.md`](worklogs/2026-09-01-gr-history-scroll-jitter.md).
@@ -103,10 +103,18 @@ byte-identical, and every change here is on the reading side. Measurement trail:
 - **The scroll state is published across the render-thread boundary properly.** On macOS and
   Windows the editor composites on a GPU render thread, which read the two scroll values while the
   frame clock wrote them — a data race, and undefined behaviour, whatever the compiled code happened
-  to do. They are atomic now; the display behaviour is unchanged. **This widens the threading
-  decision ADR-0027 took and is filed for architecture review, not approved**
+  to do. They are atomic now; the display behaviour is unchanged. This widens the threading decision
+  ADR-0027 took, so it went to architecture review and was **approved**
   ([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
-  `Proposed`). Evidence: this release. [Verified]
+  Accepted 2026-09-02). Evidence: this release. [Verified]
+- **The history buffer's stored values are read and written atomically.** The display's guards
+  already noticed when the audio thread had overtaken a frame's read of the history and threw that
+  frame away — but noticing is not enough: reading a block while the audio thread writes it was
+  undefined behaviour the moment it happened, whatever the guard did next. The stored values are
+  atomic now, so such a read is defined (each value is one of the two, never nonsense) and the guard
+  keeps doing exactly what it did. **The audio thread is unaffected**: its store compiles to the same
+  instructions it always did, verified against the generated code, and a build on any target where
+  that would not hold now fails rather than shipping. Evidence: this release. [Verified]
 
 ### Changed
 - **The view repaints while the smoothed head is still moving.** Between two entries the trace

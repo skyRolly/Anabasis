@@ -15,7 +15,23 @@
 //    complete;
 //  - reads are stateless `const` peeks that consume nothing — any number of
 //    message-thread/GL-paint read sites stay safe (THREADING_POLICY's ring
-//    rule and its OpenGL nuance).
+//    rule and its OpenGL nuance);
+//  - THE PAYLOAD ITSELF IS ATOMIC (0.2.8 review). The index ordering above
+//    settles what a reader SEES; it does not make a read that lands on the
+//    slot the producer is writing legal. That read is exactly what this
+//    ring's two guards — the reset epoch and the reader's window clamp —
+//    are designed to DETECT and discard, and detection is the wrong tool for
+//    the job: under the C++ memory model a plain read concurrent with a plain
+//    write is a data race and therefore undefined behaviour the moment it
+//    happens, and discarding the frame afterwards cannot unhappen it. The
+//    stored fields are `std::atomic<float>`, written and read RELAXED, so the
+//    racing case is defined — each field yields one of the two values, the
+//    pair may be mismatched — and the guards keep their job, which is to
+//    throw such a frame away. Relaxed adds no fence and no instruction on the
+//    supported targets: the audio-thread store is the same store it was, and
+//    the `static_assert` below is what keeps that true (a non-lock-free
+//    `std::atomic<float>` would put a LOCK in `push`, which
+//    `REALTIME_AUDIO_POLICY` forbids outright — it must fail the build).
 //
 //  Entry = per-block gain reduction (dB, ≤ 0) + the block's waveform peak
 //  (post-chain, linear). At 512-sample blocks a 4096-entry ring holds ~43 s
@@ -29,11 +45,28 @@ namespace anabasis
 class GrHistoryBuffer
 {
 public:
+    // What a reader gets: a plain value pair, assembled from the atomic slot
+    // below. Kept plain deliberately — callers copy it, compare it and store
+    // it in local aggregates, and none of that wants atomics.
     struct Entry
     {
         float grDb  = 0.0f;
         float peak  = 0.0f;
     };
+
+    // What the ring STORES. Public so the property the banner argues can be
+    // asserted by a test rather than trusted from a comment: the payload is
+    // atomic, and it is lock-free.
+    struct Slot
+    {
+        std::atomic<float> grDb { 0.0f };
+        std::atomic<float> peak { 0.0f };
+    };
+
+    static_assert (std::atomic<float>::is_always_lock_free,
+                   "the audio thread stores these; a locking atomic here would be a lock on the "
+                   "audio path (REALTIME_AUDIO_POLICY), so a target without lock-free float "
+                   "atomics must fail the build rather than ship one");
 
     static constexpr int kSize = 4096;            // power of two
     static constexpr int kMask = kSize - 1;
@@ -76,8 +109,16 @@ public:
         // arriving after the writes it is meant to announce.
         resetGuard.fetch_add (1, std::memory_order_relaxed);   // odd: clearing
         std::atomic_thread_fence (std::memory_order_release);
+        // RELAXED stores, for the banner's reason: a reader may be peeking
+        // these very slots while this loop runs — that is the race the epoch
+        // exists to announce — and the accesses on both sides have to be
+        // atomic for the announcement to be about defined behaviour. The
+        // fence above still orders the odd value before every one of them.
         for (auto& e : entries)
-            e = {};
+        {
+            e.grDb.store (0.0f, std::memory_order_relaxed);
+            e.peak.store (0.0f, std::memory_order_relaxed);
+        }
         writeIndex.store (0, std::memory_order_release);
         resetGuard.fetch_add (1, std::memory_order_release);   // even: stable
     }
@@ -88,11 +129,19 @@ public:
     { return resetGuard.load (std::memory_order_acquire); }
 
     // Audio thread, once per block. The entry is written FIRST, the index
-    // release-stored AFTER — that ordering is the whole synchronisation.
+    // release-stored AFTER — that ordering is the whole synchronisation, and
+    // it is unchanged by the fields being atomic: the release store still
+    // orders both relaxed payload stores before the index a reader acquires,
+    // so "a reader that sees index N sees entry N−1 complete" holds exactly
+    // as it did. What the atomics add is the OTHER case — a reader that lands
+    // on this slot while this function is inside it — which the banner argues
+    // and the reader's guards discard.
     void push (float grDb, float peak) noexcept
     {
         const auto i = writeIndex.load (std::memory_order_relaxed);
-        entries[(size_t) (i & (int64_t) kMask)] = { grDb, peak };
+        auto& slot = entries[(size_t) (i & (int64_t) kMask)];
+        slot.grDb.store (grDb, std::memory_order_relaxed);
+        slot.peak.store (peak, std::memory_order_relaxed);
         writeIndex.store (i + 1, std::memory_order_release);
     }
 
@@ -106,11 +155,24 @@ public:
     // kSize` aliases the slot `push` is filling at this instant (it writes the
     // slot, THEN publishes head + 1). A reader that asks for the full capacity
     // therefore reads a half-written entry as its oldest one.
+    //
+    // The clamp is the reader's side of the bargain and it is not the whole
+    // of it: a batch long enough for the producer to lap it reaches these
+    // slots anyway, whatever window it started from. So the loads are
+    // RELAXED ATOMIC rather than plain — the racing read is defined, each
+    // field yielding one of the two values — and the caller re-checks its
+    // window afterwards and throws such a frame away
+    // (`GrHistoryView::readFloor`, the epoch guard). Defined-then-discarded,
+    // not detected-after-the-fact.
     Entry peek (int64_t n) const noexcept
-    { return entries[(size_t) (n & (int64_t) kMask)]; }
+    {
+        const auto& slot = entries[(size_t) (n & (int64_t) kMask)];
+        return { slot.grDb.load (std::memory_order_relaxed),
+                 slot.peak.load (std::memory_order_relaxed) };
+    }
 
 private:
-    Entry entries[kSize] = {};
+    Slot entries[kSize];
     std::atomic<int64_t>  writeIndex { 0 };
     std::atomic<uint32_t> resetGuard { 0 };
 

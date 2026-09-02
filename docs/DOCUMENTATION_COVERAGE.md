@@ -25,14 +25,33 @@ gate keyed on the entry COUNT, so a clear that refilled to the same count parked
 kept the old trace; gate and phase re-anchor key on the ring's reset epoch now. Nothing on the audio
 thread changed — the ring's producer, published index and clear are byte-identical, and every fix is
 on the reading side. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged beyond the round below:
-**Threading / cross-thread path** (`THREAD_MODEL.md`, `THREADING_POLICY.md`, **ADR-0038**) and
-**New/changed test** (`TESTING.md`, this file).
+**Threading / cross-thread path** (`THREAD_MODEL.md`, `THREADING_POLICY.md`, **ADR-0038** and
+**ADR-0011**'s dated amendment) and **New/changed test** (`TESTING.md`, this file).
 
-**Suites after the review round: `AnabasisTests` 301 + `AnabasisStateTests` 970 = 1271**, one new
-test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 26 checks) pinning invariants rather
+**A final review round (2026-09-02) found the fourth and last defect and closed the gate item.**
+The guards that discard a raced frame read synchronised state — `resetEpoch()` and `available()` are
+acquire loads — but what they VALIDATED did not: `GrHistoryBuffer` stored and read its payload with
+plain accesses, so a batch the producer lapped was a data race, undefined the moment it happened and
+beyond the reach of any after-the-fact discard. Fixing the post-check expression would have been the
+false fix; the payload is `std::atomic<float>` now, relaxed both ways, so the racing read is DEFINED
+and the guards keep their job. **The audio thread pays nothing, measured:** `push` compiles to an
+instruction-identical sequence (clang-22 `-O3`, x86-64), while the reader's codegen changes exactly
+as it should — the plain version fused both floats into one 8-byte `movsd`, the atomic version emits
+two `movss` loads the compiler may not merge. `is_always_lock_free` is `static_assert`ed so a target
+that would put a lock in `push` fails the build. Recorded as a dated amendment to **ADR-0011**'s
+time-series bullet, with `THREADING_POLICY.md` and `THREAD_MODEL.md` updated; `ScopeBuffer` shares
+the idiom with ~0.26 s of headroom and is reported as drift, not repaired (this round's scope
+excluded it). **ADR-0038 is now Accepted (2026-09-02)** on the owner's approval, and **ADR-0027
+clause 4 is amended in place**: its boundary moves from "ONE scalar" to "scalars whose every
+stale/fresh pairing is a frame the writer was itself about to produce" — a property to demonstrate,
+not a count — with its other exclusions untouched.
+
+**Suites after both review rounds: `AnabasisTests` 301 + `AnabasisStateTests` 979 = 1280**, one new
+test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 35 checks) pinning invariants rather
 than an absence of races — which index a frame may read, which value pairs it may draw, which states
-it may park on. Five further mutants, each killing a disjoint set: the pre-fix read window 7, the
-read clamp dropped 4, the count-only gate 2, the phase re-anchor 1, the phase's upper clamp 2.
+it may park on, and that the validation path is built on synchronised publication state. Six further
+mutants, each killing a disjoint set: the pre-fix read window 7, the read clamp dropped 4, the
+count-only gate 2, the phase re-anchor 1, the phase's upper clamp 2, the non-atomic payload 1.
 
 **Scope of the 0.2.8 round.** One owner report — *"the newly drawn portion of the GR history to
 the right of the yellow line is jittery"* — and one display fix. **No DSP change, no parameter

@@ -136,6 +136,25 @@ no atomics and no possibility of interleaving with a user gesture.
   power-of-two storage, **one release-store per block** on a monotonic write index, acquire on
   the read side, reads are stateless `const` peeks that consume nothing
   (`Anamorph:src/dsp/ScopeBuffer.h:21-91` [Verified]).
+
+  > **Amended 2026-09-02 (0.2.8 review) — the ring PAYLOAD is atomic too, in `GrHistoryBuffer`.**
+  > The release/acquire index above settles what a reader SEES and is unchanged. It does not make
+  > the other case legal: a reader whose batch the producer laps reads the slot being written, and
+  > under the C++ memory model a plain read concurrent with a plain write is a data race — undefined
+  > the moment it happens, which no after-the-fact detection can undo. The ring's two guards (the
+  > reset epoch, and the reader's `readFloor` window clamp) are built to DETECT exactly that case
+  > and discard the frame, so detection was never the defect; what it was detecting was. The stored
+  > fields are `std::atomic<float>` written and read **relaxed**, so the racing read is defined —
+  > each field yields one of the two values, the pair may be mismatched — and the guards keep their
+  > job unchanged. **Measured, not assumed: the audio-thread `push` compiles to an
+  > instruction-identical sequence** (two `movss`, one `movq` publish; clang-22 `-O3`, x86-64), so
+  > the realtime contract is untouched, and a `static_assert` on `is_always_lock_free` keeps it that
+  > way. On the READER side the codegen changes and that is the point — the old build fused both
+  > floats into one 8-byte `movsd`, i.e. exactly the wide non-atomic load this amendment removes.
+  > `ScopeBuffer` is the same idiom and is **not** changed here: its reader takes 4096 of 16384
+  > frames, so the producer must advance ~12288 frames (~0.26 s at 48 kHz) mid-read to reach them —
+  > recorded as drift rather than repaired, because it is a separate component and outside this
+  > round's scope.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

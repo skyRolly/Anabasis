@@ -6648,6 +6648,65 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                "grReset: the refilled entries are the NEW ones — nothing of the old history is still readable");
     }
 
+    // -- 3b. THE VALIDATION PATH ITSELF (0.2.8 final review). The guard that
+    //        discards a raced frame was already reading synchronised state —
+    //        `resetEpoch()` and `available()` are acquire loads on atomics —
+    //        but what it was validating was not: `push` stored the pair with a
+    //        plain write and `peek` read it with a plain read, so a batch the
+    //        producer lapped was a DATA RACE, and discarding the frame
+    //        afterwards cannot unhappen undefined behaviour. The payload is
+    //        atomic now (relaxed both ways), which makes the racing read
+    //        DEFINED — each field yields one of the two values, the pair may be
+    //        mismatched — and leaves the guard's job unchanged: throw that
+    //        frame away. Detection was never the defect; what it was detecting
+    //        was.
+    {
+        using Slot = Ring::Slot;
+        check (std::is_same_v<decltype (Slot::grDb), std::atomic<float>>
+                   && std::is_same_v<decltype (Slot::peak), std::atomic<float>>,
+               "grSync: the ring's PAYLOAD is atomic — a read racing the producer is defined, not merely detected");
+        check (std::atomic<float>::is_always_lock_free,
+               "grSync: …and lock-free, so the audio thread's store stays a store and never takes a lock");
+        check (sizeof (Slot) == 2 * sizeof (float) && alignof (Slot) == alignof (float),
+               "grSync: …at the layout of the plain pair it replaced — the ring's size and the push are unchanged");
+
+        // The guard's two inputs are the ring's synchronised accessors, and
+        // they answer DIFFERENT questions: the epoch sees a host-thread clear,
+        // the index sees the producer advancing. Neither reads the payload.
+        Ring ring;
+        for (int i = 0; i < 40; ++i)
+            ring.push (-3.0f, 0.4f);
+        const auto epoch0 = ring.resetEpoch();
+        const auto head0  = ring.available();
+        float deepest = 0.0f, loudest = 0.0f;
+        for (int64_t n = 0; n < head0; ++n)          // a batch of peeks, as `paintHistory` does
+        {
+            const auto e = ring.peek (n);
+            deepest = juce::jmin (deepest, e.grDb);
+            loudest = juce::jmax (loudest, e.peak);
+        }
+        check (head0 == 40 && (epoch0 & 1u) == 0u
+                   && std::abs (deepest + 3.0f) < 1.0e-6f && std::abs (loudest - 0.4f) < 1.0e-6f,
+               "grSync: (premise) a settled batch reads exactly the published values back through the atomic payload");
+
+        for (int i = 0; i < Ring::kSize; ++i)        // the producer laps the batch's window
+            ring.push (-9.0f, 0.9f);
+        check (ring.resetEpoch() == epoch0,
+               "grSync: a producer that advanced does not move the EPOCH — that guard answers the clear, not the lap");
+        check (V::readFloor (ring.available()) > 0,
+               "grSync: …the FLOOR re-check is what sees the lap, and it is read from `available()`");
+        check (V::readFloor (ring.available()) > head0 - (int64_t) Ring::kSize,
+               "grSync: …so a batch anchored below it is discarded — the bargain the payload's atomicity makes legal");
+
+        const auto epoch1 = ring.resetEpoch();
+        ring.reset();
+        check (ring.resetEpoch() == epoch1 + 2 && (ring.resetEpoch() & 1u) == 0u
+                   && ring.available() == 0,
+               "grSync: a clear moves the epoch by two and rewinds the index — both seen through the ring's own atomics");
+        check (std::abs (ring.peek (0).grDb) < 1.0e-12f && std::abs (ring.peek (0).peak) < 1.0e-12f,
+               "grSync: …and the cleared payload reads back through the same atomic path it was cleared through");
+    }
+
     // -- 4. The real paint path, through the atomics, on a populated ring:
     //       it draws, and it draws the same thing twice from the same state.
     {

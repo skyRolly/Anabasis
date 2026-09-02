@@ -1,26 +1,29 @@
 # ADR-0038 — The GR history publishes two display scalars to the painting thread, and they are safe by value rather than by snapshot
 
-> **⚠️ PROPOSED — THE ARCHITECTURE REVIEW GATE IS **NOT** CLEARED.** `ARCHITECTURE_REVIEW_GATE.md`
-> lists "**Thread Model change** — new thread, new cross-thread path, new atomic ordering
-> (`THREAD_MODEL.md`)"; `CLAUDE.md` repeats "threading-model change" in its hard-stop list; and
-> [ADR-0027](ADR-0027-painting-thread-reads-editor-bookkeeping.md) decision clause 4 states that the
+> **✅ RATIFIED — THE ARCHITECTURE REVIEW GATE IS CLEARED (2026-09-02).** The owner approved this
+> decision on review of the shipped synchronisation. How it arrived stays in the record, because
+> that is the half worth keeping: `ARCHITECTURE_REVIEW_GATE.md` lists "**Thread Model change** — new
+> thread, new cross-thread path, new atomic ordering (`THREAD_MODEL.md`)"; `CLAUDE.md` repeats
+> "threading-model change" in its hard-stop list; and
+> [ADR-0027](ADR-0027-painting-thread-reads-editor-bookkeeping.md) decision clause 4 stated that the
 > Message → Painting row "permits ONE scalar" and that anything "requiring the painting thread to
 > see two values consistently is a new path again and returns to this gate". This record widens that
-> permission to a second site carrying two scalars, so it needs the owner's sign-off exactly as
-> ADR-0027 did. **A green build does not clear it.**
+> permission to a second site carrying two scalars — so it was filed `Proposed`, flagged in the pull
+> request as a gate item a green build does not clear, and held there until the owner answered.
 >
-> It is filed as `Proposed` **with the code in the tree** deliberately, and the reason is that the
-> alternative is worse rather than safer: the path already exists at 0.2.8 as an UNSYNCHRONISED
-> read — plain `int64_t` and `double` written on the message thread and read from the GL render
-> thread — which is undefined behaviour on macOS and Windows. Shipping the synchronisation is
-> strictly better than shipping the race while the gate is answered. ADR-0027's own banner is the
-> precedent and the warning: *"A rule can be quoted accurately and still not be applied."* This
-> round found the race in review rather than in the field, and is flagging it rather than asserting
-> "no threading change" in a pull request.
+> It was filed `Proposed` **with the code already in the tree**, deliberately: the path existed at
+> 0.2.8 as an UNSYNCHRONISED read — plain `int64_t` and `double` written on the message thread and
+> read from the GL render thread — which is undefined behaviour on macOS and Windows. Shipping the
+> synchronisation was strictly better than shipping the race while the gate was answered. ADR-0027's
+> own banner is the precedent and the warning — *"A rule can be quoted accurately and still not be
+> applied"* — and the difference this time is that the round flagged it instead of asserting "no
+> threading change" in a pull request.
 
-**Status:** **Proposed — 2026-09-02.** Awaiting Architecture Review. Not covered by the standing
-blanket approval for the post-v0.1.0 rounds (ADR-0027 established that a gated thread-model item is
-outside it).
+**Status:** **Accepted — 2026-09-02**, on the owner's explicit approval of this record. It was NOT
+covered by the standing blanket approval for the post-v0.1.0 rounds (ADR-0027 established that a
+gated thread-model item is outside it). The approval is of the design recorded below — two relaxed
+atomics, no consistency mechanism, safe by value — and explicitly *not* an instruction to revert the
+synchronisation in order to preserve the older wording of the gate.
 
 ## Context
 
@@ -120,8 +123,15 @@ a snapshot struct, a lock) is a materially larger change than two atomics.
   asked to cover it.
 - Nothing on the audio thread changed. The ring's producer, its release/acquire index and its reset
   seqlock are byte-identical; this record concerns the reader's own bookkeeping only.
-- Until the gate is cleared this ADR is `Proposed`, and `ADR_INDEX.md` says so. An Accepted ADR
-  outranks `DESIGN.md`; a Proposed one outranks nothing and is a request for a decision.
+- **ADR-0027 clause 4 is amended, not reinterpreted.** Its text stands unchanged with a dated
+  amendment naming this record: the boundary it draws moves from "ONE scalar" to "scalars whose
+  every stale/fresh pairing is a frame the writer was itself about to produce", and everything else
+  it excludes — a payload, a paint-path WRITE, a pair that genuinely needs consistency — is excluded
+  exactly as before. Nothing about `presetMenusOpen` changes.
+- **The permission is the property, not the count.** A future site that wants three scalars is
+  admitted by the same test (are all cross-pairings legal frames?) and a future site that wants two
+  scalars which must agree is not admitted at all. That is deliberately harder to satisfy than a
+  numeric limit and deliberately easier to check.
 
 ## Related code
 

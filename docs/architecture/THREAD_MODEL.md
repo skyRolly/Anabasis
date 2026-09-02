@@ -101,7 +101,7 @@ and a frame that reads a one-tick-stale count draws the border it would have dra
 
 **0.2.8 added the second such read, in `GrHistoryView`, and it arrived the same way — as plain
 scalars, found by review rather than in the field** ([ADR-0038](design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
-**Proposed; the gate is not cleared**). The continuous scroll needs a sub-entry phase, so the
+**Accepted 2026-09-02; the gate is cleared**). The continuous scroll needs a sub-entry phase, so the
 frame-clock tick publishes `shownHead` (the ring index it last observed, and the head the frame
 draws) and `smoothHead` (that head advanced at the nominal entry rate) on the message thread, and
 `paintHistory` reads both. Both are `std::atomic`, relaxed, `static_assert`ed lock-free. What is new
@@ -112,6 +112,15 @@ paint needs no consistency, only the two values (`GrHistoryView::frameFor`). The
 reader contract is unchanged and is a separate thing entirely: the display scalars carry no ring
 data, and the ring is still read by stateless `peek`s under its epoch guard — now bounded below by
 `readFloor` as well, so a batch cannot reach the slot the audio thread is filling.
+
+**The ring's own payload became atomic in the same round, and for a different reason** (ADR-0011,
+amended 2026-09-02). The guards above — the epoch, and `readFloor` — are built to notice that a
+batch was overtaken and throw the frame away, and both read synchronised state (`resetEpoch()` and
+`available()` are acquire loads). What they were validating was not: `push` stored the pair with a
+plain write and `peek` read it with a plain read, so an overtaken batch was a data race, undefined
+the moment it happened, and discarding the frame afterwards could not undo it. The fields are
+`std::atomic<float>` now, relaxed both ways — the racing read is DEFINED, the guards' job is
+unchanged, and the audio-thread store compiles to the same instructions it did.
 
 The same wiring has a LIFETIME half, fixed in the same place: the editor's destructor used to clear
 `lnf.isPopupMenuOnScreen` (a `std::function`) before `glContext.detach()`, mutating a callable a live
