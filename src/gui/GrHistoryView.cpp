@@ -61,8 +61,19 @@ void GrHistoryView::tick (double dt)
     // two is attributed to the newer epoch and re-anchors on the next tick
     // rather than being missed: the tick's job here is only to decide whether
     // the history is the same history, and "not sure" must mean "not parked".
-    const auto epoch = ring.resetEpoch();
-    const auto head  = ring.available();
+    const auto epoch    = ring.resetEpoch();
+    const auto prepared = ring.prepared();
+    const auto head     = ring.available();
+    // The pair and the head were read under `epoch`; if a clear ran through
+    // that read the pair may be half old and half new, so this tick publishes
+    // nothing and the next re-derives from a settled epoch (`batchIntact` is
+    // the fence-and-re-read the seqlock reader needs, not a second load).
+    // Before 0.2.8's final review this read `getSampleRate()`/`getBlockSize()`
+    // — `AudioProcessor`'s plain members, written by the host's callback
+    // thread while this thread ticks: a data race on exactly the values the
+    // scroll rate is derived from.
+    if ((epoch & 1u) != 0u || ! ring.batchIntact (epoch))
+        return;
     const auto shown = shownHead.load (std::memory_order_relaxed);
     // PARKED: the same history, no new entry, and the smoothed head already
     // one whole entry ahead of it (`smoothedHead`'s cap) — so nothing this
@@ -82,8 +93,7 @@ void GrHistoryView::tick (double dt)
     // way to see it when the refill has already returned the count to where
     // it was.
     const double smoothed = smoothedHead (smoothHead.load (std::memory_order_relaxed), head, dt,
-                                          entryPeriod (processor.getSampleRate(),
-                                                       processor.getBlockSize()),
+                                          entryPeriod (prepared.rate, prepared.block),
                                           epoch != shownEpoch);
 
     // Publish for the painting thread. `smoothHead` FIRST so a paint landing
@@ -158,7 +168,10 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // graphics context; `kSize - 1` and the reason for it are stated there.
     // Reachable at ordinary block sizes: 20 s at 48 kHz / 64 samples is 15000
     // entries, so `want` saturates for anything up to ~234 samples per block.
-    const int64_t want = windowEntries (processor.getSampleRate(), processor.getBlockSize());
+    // The pair is the RING's (`prepared`), read under this batch's epoch like
+    // everything else the frame maps — see `tick` for what it replaced.
+    const auto    prepared = ring.prepared();
+    const int64_t want = windowEntries (prepared.rate, prepared.block);
     if (head <= 0)
         return;
 
@@ -349,7 +362,10 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // slots the batch peeked, so those values may have been overwritten while
     // they were read. Both discard the frame and let the next tick re-derive;
     // one dropped frame is the seqlock bargain the ring's own header states.
-    if (ring.resetEpoch() != epoch0 || first < readFloor (ring.available()))
+    // `batchIntact` FIRST: it carries the acquire fence that orders every
+    // peek above before either re-read, and short-circuit evaluation keeps the
+    // `available()` re-read after it.
+    if (! ring.batchIntact (epoch0) || first < readFloor (ring.available()))
         return;
     if (! started)
         return;

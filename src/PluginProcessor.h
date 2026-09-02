@@ -613,12 +613,9 @@ private:
     // The output LUFS/TP meters live in the ENGINE (its §2.9 render tap) —
     // only the engine sees the sample before the monitor-only stages touch
     // it. The wrapper keeps the session max-hold and the publish atomics.
-    anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes
-    // The (rate, block) pair the ring's entries were recorded under — the
-    // clear-on-change gate in prepareToPlay (0.1.2 item 6: pause/resume
-    // re-prepares at the same pair keep the timeline). Host-thread only.
-    double grRingPreparedRate  = 0.0;
-    int    grRingPreparedBlock = 0;
+    anabasis::GrHistoryBuffer   grHistoryRing;    // SPSC, audio writes; owns the
+                                                  // (rate, block) it is recorded under
+                                                  // and the clear-on-change gate
     // Audio-thread session max-holds. `samplePeakMaxHold` joined `dbTpMaxHold`
     // with the stats row (ADR-0020) and is cleared by exactly the same two
     // sites, for the same reason: both are session-cumulative, so both belong

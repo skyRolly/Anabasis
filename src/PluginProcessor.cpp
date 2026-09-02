@@ -506,8 +506,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1537` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1607` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1536` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1606` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -752,14 +752,13 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // through the PREPARED rate and size (GrHistoryView's banner), so history
     // recorded under the same pair is still drawn true; a changed pair is the
     // case the clear has always existed for (stale entries would be mapped
-    // through the wrong time base) and still clears.
-    if (! juce::exactlyEqual (grRingPreparedRate, sampleRate)
-        || grRingPreparedBlock != samplesPerBlock)
-    {
-        grHistoryRing.reset();
-        grRingPreparedRate  = sampleRate;
-        grRingPreparedBlock = samplesPerBlock;
-    }
+    // through the wrong time base) and still clears. The gate and the pair it
+    // keeps live in the ring since the 0.2.8 final review: the view used to
+    // read the time base back from `getSampleRate()`/`getBlockSize()`, which
+    // this callback's thread writes while the view's threads read — the ring
+    // publishes the pair inside the clear's own epoch window instead, so a
+    // frame maps its entries through the pair they were recorded under.
+    grHistoryRing.prepare (sampleRate, samplesPerBlock);
     dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a

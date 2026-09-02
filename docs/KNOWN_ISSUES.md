@@ -988,6 +988,16 @@ there), but `ScopeBuffer` copies in bulk with `memcpy`, so it needs its own desi
 a transliteration of the GR fix, and the 0.2.8 review scope explicitly excluded it. Recorded as a
 separate follow-up.
 
+**Intentionally excluded from the 0.2.8 review pull request (PR #27), on instruction, in every one
+of its rounds** — including the final one, whose ring change (the prepared pair stored inside the
+clear, the reader's acquire-fence close, `batchIntact`) is a `GrHistoryBuffer` repair that does not
+transfer either: `ScopeBuffer` has no reset epoch to bracket a batch with and no pair to publish,
+and its bulk `memcpy` is the thing a per-element atomic payload cannot express without the design
+pass above. The race class, for the record: **producer overwrites reader, plain payload** — the same
+class the GR ring had, with ~0.26 s of reader headroom where the GR ring had one slot. That headroom
+is why the GR fix was a blocker and this is a follow-up, and it is not a proof: a suspended message
+thread (debugger, a host batching redraws) spends it in one stop.
+
 Evidence [Verified]:
 - Source: `src/dsp/ScopeBuffer.h` (`pushBlock`'s `memcpy` pair; the reader's copy-out), against
   `src/dsp/GrHistoryBuffer.h`'s repaired `Slot`

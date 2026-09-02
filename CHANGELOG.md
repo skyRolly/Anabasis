@@ -52,13 +52,14 @@ portion of the GR history to the right of the yellow line is jittery."* The yell
 trace's own flat zero-reduction run (the only yellow in the well is the trace's accent), and the
 part to its right is the only part that CAN show horizontal motion — which is where the renderer
 had been stepping a non-integer pitch once per decimation bucket since 0.1.2. A second review
-round then found five correctness defects in that fix — three of them races — and they are repaired
+round then found six correctness defects in that fix — four of them races — and they are repaired
 in the same version; one of them widens a threading decision, which went to architecture review and
 was approved
 ([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
 Accepted 2026-09-02). No DSP algorithm, parameter, serialization schema or reported-latency change, and
-nothing on the audio thread moved: the ring's producer, its published index and its clear are
-byte-identical, and every change here is on the reading side. Measurement trail:
+nothing on the audio thread moved: the ring's producer and its published index are byte-identical,
+its host-thread clear gained only the two stores of the time base it now owns, and every other
+change here is on the reading side. Measurement trail:
 [`worklogs/2026-09-01-gr-history-scroll-jitter.md`](worklogs/2026-09-01-gr-history-scroll-jitter.md).
 
 ### Fixed
@@ -121,6 +122,14 @@ byte-identical, and every change here is on the reading side. Measurement trail:
   keeps doing exactly what it did. **The audio thread is unaffected**: its store compiles to the same
   instructions it always did, verified against the generated code, and a build on any target where
   that would not hold now fails rather than shipping. Evidence: this release. [Verified]
+- **The display's time base can no longer be torn by a host reconfiguration.** The sample rate and
+  buffer size the history maps its 20-second window and scroll rate through were read from values
+  the host's thread rewrites during a reconfiguration, while the display was reading them — a data
+  race, and undefined behaviour, whatever happened to be drawn. The pair now travels with the
+  history it describes: it is published inside the same clear that restarts the history, so a frame
+  that read it while a reconfiguration ran through is discarded and the next is drawn from the
+  settled values. Under a stable configuration nothing moves — the same window and the same scroll
+  rate, verified identical from either source. Evidence: this release. [Verified]
 
 ### Changed
 - **The view repaints while the smoothed head is still moving.** Between two entries the trace

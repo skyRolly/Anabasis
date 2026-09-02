@@ -6,9 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.8 (2026-09-01, review round 2026-09-02)** — the GR history's scroll
-jitter (one owner field report), and the three reader/publisher defects a second review found in
-the fix.
+**Last updated:** for **0.2.8 (2026-09-01, review rounds 2026-09-02)** — the GR history's scroll
+jitter (one owner field report), the three reader/publisher defects a second review found in the
+fix, and the two the third and fourth rounds added (the ring's plain payload; the host
+reconfiguration race on the display's time base).
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).
@@ -64,14 +65,43 @@ move the trace RIGHTWARD by up to one entry-pitch, regressing that accepted clai
 **clause 7** and a dated amendment to clause 2; `THREADING_POLICY.md` and `THREAD_MODEL.md` name the
 boundary's one ordered access. `ScopeBuffer` is filed as **KI-015** rather than repaired.
 
-**Suites after all three review rounds: `AnabasisTests` 301 + `AnabasisStateTests` 989 = 1290**, one
-new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 45 checks) pinning invariants
+**A fourth round found the last race: the display's TIME BASE was read from state the host rewrites.**
+`GrHistoryView` mapped its 20 s window and its scroll rate through `AudioProcessor::getSampleRate()`
+/`getBlockSize()` — plain members that `setRateAndBufferSizeDetails` writes on whichever thread the
+host reconfigures on (the VST3 wrapper's `preparePlugin`, before `prepareToPlay`) while the tick
+reads them on the message thread and the frame on the painting thread. No repo-owned snapshot
+covered it: the wrapper's `grRingPreparedRate/Block` were plain host-thread members that only gated
+the clear. The pair is `GrHistoryBuffer` metadata now — two relaxed, `static_assert`ed lock-free
+atomics stored by `clear` inside the reset epoch's odd window, read by `prepared()` under the same
+bracket as the entries, with the clear-on-change gate moved into `GrHistoryBuffer::prepare` so the
+pair the gate compares is the pair readers get. The bracket's CLOSE became `batchIntact`: an acquire
+FENCE, then a relaxed epoch re-read — Boehm's seqlock reader (MSPC 2012), whose correctness is the C++
+model's on weakly ordered targets, where the acquire LOAD it replaces left the batch's earlier relaxed
+loads unordered against it and TSO alone had been hiding the gap. Recorded as ADR-0011's second dated
+amendment of the day, with `THREADING_POLICY.md`, `THREAD_MODEL.md`, `TESTING.md` and KI-015 (now
+stating the PR-#27 exclusion, the race class and the headroom explicitly) synced. The same round
+returned the GCC 16 LTO lane to zero first-party warnings — six `-Wfloat-equal` exact comparisons
+against `0.0` in the new test, now `std::abs (…) < 1.0e-12` like the surrounding checks — and answered
+the MSVC PREfast C6262 finding on that test (379,228 bytes of summed locals) by moving its four 32 KB
+rings and one 76 KB processor to the heap: measured under clang `-fstack-usage -fno-inline`, the
+function's frame fell from 76,632 to 936 bytes; PREfast itself runs only in the Windows lane.
+
+**Suites after all four review rounds: `AnabasisTests` 301 + `AnabasisStateTests` 1003 = 1304**, one
+new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 59 checks) pinning invariants
 rather than an absence of races — which index a frame may read, which value pairs it may draw, which
-states it may park on, that the validation path is built on synchronised publication state, and that
-a restarted timeline is drawn from its beginning. Eight further mutants, each killing a disjoint
-set: the pre-fix read window 7, the read clamp dropped 4, the count-only gate 2, the phase re-anchor
-1, the phase's upper clamp 2, the non-atomic payload 1, the epoch ignored 3, the reset inferred from
-the head 3.
+states it may park on, that the validation path is built on synchronised publication state, that a
+restarted timeline is drawn from its beginning, and that the prepared pair is published inside the
+clear and read under the epoch, through the ring and through the wrapper's `prepareToPlay` (which
+also records a finding: a bare `prepareToPlay` sets nothing in JUCE's base class, so the old source
+read a block size of 0 in every headless test). Eleven further mutants, each killed. The first eight
+by disjoint sets: the pre-fix read window 7, the read clamp dropped 4, the count-only gate 2, the
+phase re-anchor 1, the phase's upper clamp 2, the non-atomic payload 1, the epoch ignored 3, the
+reset inferred from the head 3. This round's three: the clear-on-change gate dropped 6 (2 of them in
+the pre-existing `grEpoch`), the pair left unpublished by the clear 12 (a superset — the gate then
+never matches, and every pair-reading check sees zeros), and the batch close blind to the epoch
+exactly 1 — the torn-close check and no other, which is what says that check carries that fact
+alone. The fence itself has no mutant: its absence is a hardware reordering no single-threaded
+suite can stage, which is the argument for the fence being made in writing (ADR-0011).
 
 **Scope of the 0.2.8 round.** One owner report — *"the newly drawn portion of the GR history to
 the right of the yellow line is jittery"* — and one display fix. **No DSP change, no parameter

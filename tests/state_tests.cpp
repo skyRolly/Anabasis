@@ -6493,7 +6493,8 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
     // -- 1b. The same invariant against the REAL ring, so the bound is read
     //        from the buffer's own kSize/kMask rather than restated here.
     {
-        Ring ring;
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
         for (int64_t i = 0; i < kLap + 250; ++i)
             ring.push (-2.0f, 0.25f);                  // saturated: the ring has wrapped
         const int64_t live    = ring.available();
@@ -6634,7 +6635,8 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
 
         // The count really is ambiguous, measured on the real ring rather than
         // argued: fill it, clear it, refill to exactly the same count.
-        Ring ring;
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
         for (int i = 0; i < 250; ++i) ring.push (-1.0f, 0.5f);
         const auto countBefore = ring.available();
         const auto epochBefore = ring.resetEpoch();
@@ -6676,7 +6678,8 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         // The guard's two inputs are the ring's synchronised accessors, and
         // they answer DIFFERENT questions: the epoch sees a host-thread clear,
         // the index sees the producer advancing. Neither reads the payload.
-        Ring ring;
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
         for (int i = 0; i < 40; ++i)
             ring.push (-3.0f, 0.4f);
         const auto epoch0 = ring.resetEpoch();
@@ -6740,7 +6743,8 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         const auto justAfter = V::frameFor (head, parkedSmooth, before, 3, after);
         const auto equalCount = V::frameFor (head, parkedSmooth, before, head, after);
         const auto pastCount = V::frameFor (head, parkedSmooth, before, head + 40, after);
-        check (justAfter.phase == 0.0 && equalCount.phase == 0.0 && pastCount.phase == 0.0,
+        check (std::abs (justAfter.phase) < 1.0e-12 && std::abs (equalCount.phase) < 1.0e-12
+                   && std::abs (pastCount.phase) < 1.0e-12,
                "grResetPhase: a frame after a clear anchors at phase 0 — at every refill state, including the equal count");
         check (justAfter.head == 3 && equalCount.head == head && pastCount.head == head,
                "grResetPhase: …and still draws the head it would have drawn, so only the phase is anchored");
@@ -6753,7 +6757,7 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         // at 0 by `smoothedHead`'s `cleared` re-anchor, and now agrees.
         const double reanchored = V::smoothedHead (parkedSmooth, 3, 0.5, 0.01, true);
         const auto   fresh = V::frameFor (3, reanchored, after, 3, after);
-        check (std::abs (reanchored - 3.0) < 1.0e-12 && fresh.head == 3 && fresh.phase == 0.0,
+        check (std::abs (reanchored - 3.0) < 1.0e-12 && fresh.head == 3 && std::abs (fresh.phase) < 1.0e-12,
                "grResetPhase: the first published frame of the new timeline is itself at phase 0");
 
         // 6 — and ordinary smoothing resumes immediately afterwards.
@@ -6765,28 +6769,125 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         // carries a phase. Includes the ODD value a clear in flight publishes.
         bool everyStaleAnchors = true;
         for (const uint32_t stale : { 0u, 2u, 4u, 6u, 7u, 9u })
-            everyStaleAnchors &= V::frameFor (head, parkedSmooth, stale, head, 10u).phase == 0.0;
+            everyStaleAnchors &= std::abs (V::frameFor (head, parkedSmooth, stale, head, 10u).phase) < 1.0e-12;
         check (everyStaleAnchors,
                "grResetPhase: after repeated clears every superseded epoch anchors — only the live one carries a phase");
         check (std::abs (V::frameFor (head, parkedSmooth, 10u, head, 10u).phase - 1.0) < 1.0e-12,
                "grResetPhase: …and the live one still does, so the rule anchors resets rather than every frame");
 
         // The ring's own epoch arithmetic is what feeds this, end to end.
-        Ring ring;
+        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        auto& ring = *ringStorage;
         for (int i = 0; i < 40; ++i) ring.push (-1.0f, 0.5f);
         const auto live0 = ring.resetEpoch();
         ring.reset();
         for (int i = 0; i < 40; ++i) ring.push (-8.0f, 0.8f);
         check (ring.resetEpoch() != live0 && ring.available() == 40,
                "grResetPhase: (premise) a real clear plus an equal refill moves the epoch and restores the count");
-        check (V::frameFor (40, 41.0, live0, ring.available(), ring.resetEpoch()).phase == 0.0,
+        check (std::abs (V::frameFor (40, 41.0, live0, ring.available(), ring.resetEpoch()).phase) < 1.0e-12,
                "grResetPhase: …and a frame holding the pre-clear publication anchors against the ring's own epochs");
+    }
+
+    // -- 3d. THE PREPARED PAIR IS RING METADATA (0.2.8 final review). The
+    //        view mapped its window and its scroll rate through
+    //        `AudioProcessor::getSampleRate()` / `getBlockSize()` — plain
+    //        members the host writes from its callback thread while the
+    //        message thread ticks and the render thread paints: a data race on
+    //        exactly the values the scroll timing is derived from. The ring
+    //        now stores the pair its entries are recorded under, inside the
+    //        same epoch window as the clear that starts a timeline, so a
+    //        reader that brackets its batch with the epoch sees the pair and
+    //        the entries as ONE coherent unit — and the clear-on-change gate
+    //        moved with it, so the pair the gate compares is the pair readers
+    //        get.
+    {
+        const auto ringStorage = std::make_unique<Ring>();
+        auto& ring = *ringStorage;
+        const auto e0 = ring.resetEpoch();
+        check (ring.prepared().block == 0 && std::abs (ring.prepared().rate) < 1.0e-12,
+               "grPrepared: (premise) an unprepared ring publishes zeros, which the view already reads as 48 kHz");
+
+        // The first prepare clears (a new timeline) and stores the pair.
+        check (ring.prepare (48000.0, 512) && ring.resetEpoch() == e0 + 2,
+               "grPrepared: the first prepare is a clear, and the epoch says so");
+        check (std::abs (ring.prepared().rate - 48000.0) < 1.0e-12 && ring.prepared().block == 512,
+               "grPrepared: …and the pair readers get is the pair it was prepared with");
+
+        // The SAME pair keeps the timeline — 0.1.2 item 6, now the ring's own
+        // rule rather than the wrapper's: no clear, no epoch move, entries kept.
+        for (int i = 0; i < 20; ++i) ring.push (-2.0f, 0.5f);
+        const auto e1 = ring.resetEpoch();
+        check (! ring.prepare (48000.0, 512) && ring.resetEpoch() == e1 && ring.available() == 20,
+               "grPrepared: a re-prepare at the same pair keeps the history (pause/resume), epoch unmoved");
+
+        // A CHANGED pair clears and re-publishes; the pair moves only across
+        // an epoch move, which is the coherence a bracketed reader relies on.
+        check (ring.prepare (44100.0, 256) && ring.resetEpoch() == e1 + 2 && ring.available() == 0
+                   && std::abs (ring.prepared().rate - 44100.0) < 1.0e-12 && ring.prepared().block == 256,
+               "grPrepared: a changed pair clears the ring and publishes the new pair inside that clear");
+        check (ring.prepare (44100.0, 512) && ring.prepared().block == 512
+                   && ring.prepare (96000.0, 512) && std::abs (ring.prepared().rate - 96000.0) < 1.0e-12,
+               "grPrepared: …either half changing is a change");
+
+        // The bracket: a reader that sampled the epoch, read the pair and the
+        // entries, and closes with `batchIntact` is told the truth in both
+        // directions — intact when nothing happened, torn when a clear ran.
+        const auto eA = ring.resetEpoch();
+        const auto pairA = ring.prepared();
+        check ((eA & 1u) == 0u && ring.batchIntact (eA),
+               "grPrepared: a batch nothing interrupted closes intact");
+        ring.prepare (48000.0, 512);                         // a clear lands mid-batch
+        check (! ring.batchIntact (eA) && ring.prepared().block == 512
+                   && std::abs (pairA.rate - 96000.0) < 1.0e-12,
+               "grPrepared: …and one a clear ran through closes torn, so the pair it read is never trusted");
+
+        // Through the real wrapper: the ring's pair is what `prepareToPlay`
+        // received — the same values the view used to read back from the
+        // processor's plain members, now under the ring's epoch instead.
+        //
+        // A host calls `setRateAndBufferSizeDetails` (JUCE's plain members)
+        // and THEN `prepareToPlay`; a bare `prepareToPlay` sets nothing in the
+        // base class. That is asserted first because it is a finding in its
+        // own right: this suite has only ever called the override, so the
+        // view's old source read a block size of 0 here and mapped every
+        // headless frame through the 48 kHz / 1-sample fallback — a saturated
+        // window — while the ring's pair is the one the entries were actually
+        // recorded under.
+        const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& proc = *procStorage;
+        const auto& pr = proc.grHistory();
+        proc.prepareToPlay (48000.0, 512);
+        check (proc.getBlockSize() == 0 && pr.prepared().block == 512,
+               "grPrepared: (premise) a bare prepareToPlay leaves the processor's own members unset — the ring's pair is the real one");
+        proc.setRateAndBufferSizeDetails (48000.0, 512);    // what a host does before the callback
+        check (std::abs (pr.prepared().rate - proc.getSampleRate()) < 1.0e-12
+                   && pr.prepared().block == proc.getBlockSize() && pr.prepared().block == 512,
+               "grPrepared: under a host's sequence the ring's pair equals what the processor reports");
+        const auto ep = pr.resetEpoch();
+        proc.prepareToPlay (48000.0, 512);
+        check (pr.resetEpoch() == ep, "grPrepared: (existing rule) the wrapper's same-pair re-prepare does not clear");
+        proc.setRateAndBufferSizeDetails (44100.0, 1024);
+        proc.prepareToPlay (44100.0, 1024);
+        check (pr.resetEpoch() == ep + 2 && std::abs (pr.prepared().rate - 44100.0) < 1.0e-12
+                   && pr.prepared().block == 1024,
+               "grPrepared: …and a changed pair clears through the wrapper exactly as it did, with the pair published");
+        // What the view derives is unchanged under a stable configuration:
+        // the same two functions, fed the ring's pair instead of the plain
+        // members, give the same window and the same entry period.
+        check (GrHistoryView::windowEntries (pr.prepared().rate, pr.prepared().block)
+                   == GrHistoryView::windowEntries (proc.getSampleRate(), proc.getBlockSize())
+               && std::abs (GrHistoryView::entryPeriod (pr.prepared().rate, pr.prepared().block)
+                            - GrHistoryView::entryPeriod (proc.getSampleRate(), proc.getBlockSize())) < 1.0e-15,
+               "grPrepared: the view's window and scroll rate are identical from either source — nothing moved under a stable configuration");
+        check (std::atomic<double>::is_always_lock_free && std::atomic<int>::is_always_lock_free,
+               "grPrepared: the pair is read on the painting thread lock-free — the ring asserts the same at compile time");
     }
 
     // -- 4. The real paint path, through the atomics, on a populated ring:
     //       it draws, and it draws the same thing twice from the same state.
     {
-        AnabasisAudioProcessor proc;
+        const auto procStorage = std::make_unique<AnabasisAudioProcessor>();   // ~76 KB: heap
+        auto& proc = *procStorage;
         proc.prepareToPlay (48000.0, 512);
         juce::MidiBuffer midi;
         juce::AudioBuffer<float> buf (2, 512);

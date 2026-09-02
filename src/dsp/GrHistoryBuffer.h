@@ -16,6 +16,25 @@
 //  - reads are stateless `const` peeks that consume nothing — any number of
 //    message-thread/GL-paint read sites stay safe (THREADING_POLICY's ring
 //    rule and its OpenGL nuance);
+//  - THE PREPARED PAIR IS RING METADATA (0.2.8 final review). One entry spans
+//    one host block, so the entries only mean anything mapped through the
+//    (rate, block) they were recorded under — and that pair lives HERE, stored
+//    inside the same clear that starts a new timeline, rather than being read
+//    back from `AudioProcessor`'s plain `getSampleRate()`/`getBlockSize()`,
+//    which the host writes from its own callback thread while the message
+//    thread ticks and the render thread paints. Readers take it with
+//    `prepared()` inside the same epoch bracket as the entries, so the pair a
+//    frame maps through is the pair its entries were recorded under, and the
+//    two cannot be seen torn against each other.
+//  - THE READER'S CLOSING CHECK IS A FENCE, NOT JUST A LOAD (`batchIntact`).
+//    An acquire LOAD of the epoch keeps later accesses after it; it does not
+//    keep the batch's earlier relaxed loads BEFORE it, so on a weakly ordered
+//    target a data load could be satisfied after the epoch was re-read and a
+//    torn batch pass as intact. `atomic_thread_fence (acquire)` before the
+//    re-read is the missing half: a data load that saw a value from inside a
+//    clear then synchronises with the writer's release fence, the odd epoch
+//    happens-before the re-read, and the batch is discarded. This is the
+//    seqlock reader as the memory model requires it, not as x86 forgives it.
 //  - THE PAYLOAD ITSELF IS ATOMIC (0.2.8 review). The index ordering above
 //    settles what a reader SEES; it does not make a read that lands on the
 //    slot the producer is writing legal. That read is exactly what this
@@ -68,6 +87,13 @@ public:
                    "audio path (REALTIME_AUDIO_POLICY), so a target without lock-free float "
                    "atomics must fail the build rather than ship one");
 
+    // The (rate, block) pair the entries are recorded under — see `prepare`.
+    struct Prepared
+    {
+        double rate  = 0.0;
+        int    block = 0;
+    };
+
     static constexpr int kSize = 4096;            // power of two
     static constexpr int kMask = kSize - 1;
 
@@ -88,6 +114,56 @@ public:
     // epoch change; within one epoch the existing SPSC contract is unchanged.
     void reset() noexcept
     {
+        clear (preparedRate.load (std::memory_order_relaxed),
+               preparedBlock.load (std::memory_order_relaxed));
+    }
+
+    // Host thread (`prepareToPlay`). The clear-on-change gate that lived in the
+    // wrapper until the 0.2.8 final review, moved here so the pair it compares
+    // is the pair the ring PUBLISHES: a re-prepare at the same (rate, block)
+    // keeps the timeline (0.1.2 item 6 — hosts re-prepare on transport start,
+    // and the display must continue rather than restart), and a changed pair
+    // clears the ring AND stores the new pair inside that clear's epoch
+    // window, so no reader can pair new entries with the old time base or the
+    // reverse. Returns whether it cleared. Single writer, its own previous
+    // stores, so the comparison reads are relaxed.
+    bool prepare (double rate, int block) noexcept
+    {
+        if (juce::exactlyEqual (preparedRate.load (std::memory_order_relaxed), rate)
+            && preparedBlock.load (std::memory_order_relaxed) == block)
+            return false;
+        clear (rate, block);
+        return true;
+    }
+
+    // Reader side: the pair the entries were recorded under. Relaxed loads —
+    // the caller brackets them with the epoch exactly as it brackets `peek`
+    // (`resetEpoch()` even before, `batchIntact` after), and that bracket is
+    // what makes the two loads coherent with each other AND with the entries.
+    // Zeros before the first `prepare`, which the view's `windowEntries` /
+    // `entryPeriod` already read as 48 kHz.
+    Prepared prepared() const noexcept
+    {
+        return { preparedRate.load (std::memory_order_relaxed),
+                 preparedBlock.load (std::memory_order_relaxed) };
+    }
+
+    // Reader side, the CLOSE of a batch: did the epoch hold across it? The
+    // acquire FENCE is the point (banner): it orders every relaxed load the
+    // batch made before the epoch re-read, so a load that saw a value from
+    // inside a clear synchronises with the writer's release fence and the odd
+    // epoch is what this returns. Boehm, "Can Seqlocks Get Along with
+    // Programming Language Memory Models?" (MSPC 2012) — this is the reader
+    // that paper shows to be correct; an acquire load alone is not.
+    bool batchIntact (uint32_t epoch0) const noexcept
+    {
+        std::atomic_thread_fence (std::memory_order_acquire);
+        return resetGuard.load (std::memory_order_relaxed) == epoch0;
+    }
+
+private:
+    void clear (double rate, int block) noexcept
+    {
         // ORDERING, stated as what the barrier actually gives rather than as
         // what a release STORE would give. The opening needs the odd value
         // visible BEFORE the clear; a release store orders earlier accesses
@@ -100,13 +176,13 @@ public:
         // The closing increment is a release STORE, and there the direction is
         // right: it orders the clear before the even value.
         //
-        // What this does NOT claim: the entry reads on the reader side are
-        // plain, non-atomic reads of a struct the writer may be clearing, so a
-        // racing batch can observe a torn value. Nothing here prevents that —
-        // the epoch re-check DISCARDS such a batch instead, which is the
-        // seqlock bargain and the reason `resetEpoch()` must be sampled on
-        // both sides of a batch. The barrier's job is only to keep "odd" from
-        // arriving after the writes it is meant to announce.
+        // What this does NOT claim: a racing batch can still observe a torn
+        // VALUE (the stores below are atomic, so the read is defined, but the
+        // pair may be half old, half cleared). Nothing here prevents that —
+        // the reader's epoch bracket DISCARDS such a batch instead, which is
+        // the seqlock bargain and the reason `resetEpoch()` is sampled before
+        // a batch and `batchIntact` after it. The barrier's job is only to
+        // keep "odd" from arriving after the writes it is meant to announce.
         resetGuard.fetch_add (1, std::memory_order_relaxed);   // odd: clearing
         std::atomic_thread_fence (std::memory_order_release);
         // RELAXED stores, for the banner's reason: a reader may be peeking
@@ -119,12 +195,19 @@ public:
             e.grDb.store (0.0f, std::memory_order_relaxed);
             e.peak.store (0.0f, std::memory_order_relaxed);
         }
+        // The pair the NEW timeline is recorded under, inside the same window
+        // as the entries it governs — that is what lets a reader treat the two
+        // as one coherent unit under one epoch.
+        preparedRate.store (rate, std::memory_order_relaxed);
+        preparedBlock.store (block, std::memory_order_relaxed);
         writeIndex.store (0, std::memory_order_release);
         resetGuard.fetch_add (1, std::memory_order_release);   // even: stable
     }
 
-    // Reader side of the contract above. Even = stable; sample before and
-    // after a batch of peeks, discard the batch if it moved or was odd.
+public:
+    // Reader side of the contract above. Even = stable; sample before a batch
+    // of peeks, and close the batch with `batchIntact` — which is the fence
+    // plus the re-read, and not this load again.
     uint32_t resetEpoch() const noexcept
     { return resetGuard.load (std::memory_order_acquire); }
 
@@ -175,6 +258,13 @@ private:
     Slot entries[kSize];
     std::atomic<int64_t>  writeIndex { 0 };
     std::atomic<uint32_t> resetGuard { 0 };
+    // Host-thread written inside `clear`'s epoch window, read by the painting
+    // and message threads under the epoch bracket. Lock-free or the build
+    // fails, for the same reason as the payload's assertion above.
+    static_assert (std::atomic<double>::is_always_lock_free && std::atomic<int>::is_always_lock_free,
+                   "the prepared pair is read on the painting thread without blocking, or not at all");
+    std::atomic<double>   preparedRate  { 0.0 };
+    std::atomic<int>      preparedBlock { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GrHistoryBuffer)
 };

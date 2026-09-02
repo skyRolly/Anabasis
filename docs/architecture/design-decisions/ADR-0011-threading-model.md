@@ -155,6 +155,42 @@ no atomics and no possibility of interleaving with a user gesture.
   > frames, so the producer must advance ~12288 frames (~0.26 s at 48 kHz) mid-read to reach them —
   > recorded as drift rather than repaired, because it is a separate component and outside this
   > round's scope.
+
+  > **Amended 2026-09-02 (0.2.8 final review, same day) — the prepared (rate, block) pair is RING
+  > METADATA published inside the clear, and the reader closes a batch with a FENCE.** Two repairs
+  > to the contract above; neither changes the decision. **(1)** `GrHistoryView` maps its window and
+  > scroll rate through the prepared pair, and until this amendment read it from `AudioProcessor`'s
+  > plain `currentSampleRate`/`blockSize` — written by `setRateAndBufferSizeDetails` on whichever
+  > thread the host reconfigures on (the VST3 wrapper's `preparePlugin`, reached from
+  > `setupProcessing`, `setActive` and `initialize`, always BEFORE `prepareToPlay`; every other
+  > wrapper does the same), read by the tick on the message thread and by the frame on the painting
+  > thread: a data race by the letter of the model. No repo-owned snapshot covered it — the wrapper's
+  > `grRingPreparedRate/Block` were plain host-thread members that only gated the clear. The pair now
+  > lives in `GrHistoryBuffer` as two relaxed lock-free atomics (`static_assert`ed), stored by `clear`
+  > INSIDE its seqlock window — after the odd increment and its release fence, before the even release
+  > increment — so a reader that brackets a batch with the epoch reads the pair and the entries as ONE
+  > unit: a clear that ran through the batch is announced by the epoch and the frame is discarded,
+  > exactly as it already was for the entries. The clear-on-change gate moved with it
+  > (`GrHistoryBuffer::prepare`), so the pair the gate compares is the pair readers get. The audio
+  > thread is untouched: `push` is unchanged, and the two stores sit on the host thread inside a clear
+  > that already wrote 4096 slots. **(2)** The reader's CLOSE of a batch is `batchIntact`:
+  > `std::atomic_thread_fence (acquire)` and then a relaxed re-read of the epoch. The acquire LOAD it
+  > replaces orders later accesses after itself and says nothing about the relaxed loads sequenced
+  > BEFORE it, so on a weakly ordered target a batch's loads could be satisfied after the epoch
+  > re-read and a torn batch would pass as intact — on x86-64 (TSO) the hardware hid the gap, and
+  > this tree paints on Apple silicon. The fence is the reader Boehm shows correct (*"Can Seqlocks
+  > Get Along with Programming Language Memory Models?"*, MSPC 2012): a batch load that read a value
+  > stored after `clear`'s release fence makes that fence synchronise-with this one, so the odd
+  > increment happens-before the re-read and write-read coherence forbids it returning the old even
+  > value; a batch that read only pre-clear values is a consistent pre-clear snapshot. That is the
+  > C++ memory model's guarantee, not TSO's. What the fence does NOT buy, stated so nobody claims it
+  > later: the `readFloor` re-read of `available()` after a batch is ordered after the batch's loads
+  > by the same fence, but `push` has no release fence before its entry stores (deliberately — the
+  > audio thread pays nothing), so the model gives that lap check no formal guarantee; it stays what
+  > §10.3 of the worklog says it is, a defined-behaviour one-frame artefact rather than a race.
+  > Pinned by `grPrepared` (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` §3d) through
+  > the ring and through the wrapper's `prepareToPlay`; the audio-thread `push` is instruction-
+  > identical to the previous amendment's measurement because it did not change.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

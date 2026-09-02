@@ -62,9 +62,13 @@ class AnabasisAudioProcessor;
 //  rather than by synchronisation — see `frameFor`.
 //
 //  Time base: one ring entry spans one HOST block (the recorded caveat), so
-//  the window is mapped through the CURRENT prepared block size — an
+//  the window is mapped through the prepared (rate, block) pair — an
 //  approximation that drifts only when the host's delivered blocks differ
-//  from its prepared size, and only in display width, never in data. Since
+//  from its prepared size, and only in display width, never in data. The pair
+//  is the RING's (`GrHistoryBuffer::prepared`, stored inside the clear that
+//  starts a timeline and read under the same epoch bracket as the entries),
+//  not `AudioProcessor`'s: those members are plain, the host writes them from
+//  its callback thread, and this view reads on two others. Since
 //  0.2.8 the same prepared pair also paces the SMOOTHED HEAD the trace's
 //  sub-entry phase is read from (`entryPeriod`, `smoothedHead`, `phaseOf`),
 //  held to within one entry of the real head — so a host whose cadence

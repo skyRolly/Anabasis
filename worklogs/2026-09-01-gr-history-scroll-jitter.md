@@ -803,3 +803,194 @@ design pass rather than a transliteration of the GR fix.
 - **The epoch is 32 bits and moves by 2 per clear**, so it wraps after 2^31 sample-rate or
   buffer-size changes. A wrap could only collide if a publication survived exactly that many clears
   unread, which requires the tick never to run in between.
+
+## 12 — The host reconfiguration race: the display's time base is ring metadata (2026-09-02)
+
+The review after `6b1fb60` raised the last cross-thread read the scroll fix had left plain, and two
+lane findings against the new test. All three are repaired here; the ScopeBuffer follow-up stays
+KI-015 on instruction.
+
+### 12.1 — Root cause
+
+`GrHistoryView::tick` derived the entry period — the scroll rate — from
+`processor.getSampleRate()` and `processor.getBlockSize()`, and `paintHistory` derived the window
+(`windowEntries`) from the same two calls. Those are `juce::AudioProcessor`'s **plain**
+`currentSampleRate` and `blockSize` (`juce_AudioProcessor.h`), written by
+`setRateAndBufferSizeDetails`, and the wrapper calls that on **whichever thread the host
+reconfigures on**, before `prepareToPlay`: in the VST3 wrapper `preparePlugin` does it, reached from
+`initialize`, `setActive` and `setupProcessing`; the AU, AAX, LV2, VST2 and Standalone wrappers each
+do the same. The tick reads them on the message thread and the frame on the painting thread. That is
+a data race by the letter of the model on every platform, and it is on exactly the values the scroll
+timing and the read window are computed from — a torn `(rate, block)` pair maps the window through
+one configuration and the phase through another.
+
+Who owned what, read off the tree before the fix:
+
+- JUCE's pair: host-thread writer, plain, read by anyone. No repo-owned copy of it existed on the
+  reading side.
+- The wrapper's `grRingPreparedRate` / `grRingPreparedBlock` (`PluginProcessor.h`): plain, written
+  and read only by `prepareToPlay`, i.e. host-thread only; they gated the clear (0.1.2 item 6: a
+  re-prepare at the same pair keeps the history) and nothing else read them. Correct as far as they
+  went, and no use to the display.
+- The ring's `resetGuard` epoch and `writeIndex`: the only synchronised state on the path, and the
+  bracket every other ring read already used.
+
+So the view was reading the one copy of the pair that had no publication discipline while standing
+next to the mechanism built for exactly that.
+
+### 12.2 — The fix, and why it is correct under the C++ memory model rather than under TSO
+
+**The pair is ring metadata.** `GrHistoryBuffer` gains `std::atomic<double> preparedRate` and
+`std::atomic<int> preparedBlock` (both `static_assert`ed `is_always_lock_free`, matching the
+payload's assertion), a `struct Prepared { double rate; int block; }`, and:
+
+- `bool prepare (double rate, int block)` — host thread. The clear-on-change gate moved here from
+  the wrapper, byte-for-byte in meaning: same pair → return `false`, nothing cleared, epoch unmoved;
+  changed pair → `clear (rate, block)`, return `true`. The comparison reads its own previous stores
+  on the single writer thread, so they are relaxed, and the `double` half compares with
+  `juce::exactlyEqual` (a re-prepare at the same rate must not clear — an epsilon there would be a
+  behaviour change).
+- `Prepared prepared() const` — reader side, two relaxed loads. The caller brackets them with the
+  epoch exactly as it brackets `peek`.
+- `clear (rate, block)` stores the pair **inside the seqlock window**: after the odd increment and
+  its release fence, after the 4096 payload stores, before the `writeIndex` release store and the
+  even release increment. `reset()` is `clear` at the current pair, unchanged in effect.
+
+The wrapper's two plain members are gone; `prepareToPlay` calls `grHistoryRing.prepare (sampleRate,
+samplesPerBlock)`. The audio thread is untouched — `push` did not change, so the previous
+amendment's instruction-identity measurement stands without re-measuring.
+
+**Why a bracketed reader gets a coherent pair-plus-entries.** Reader: `e0 = resetEpoch()`
+(acquire) → relaxed loads of the pair and the entries → `batchIntact (e0)`. Writer (`clear`):
+`resetGuard.fetch_add (relaxed)` (odd) → `fence (release)` → relaxed stores (payload, pair) →
+`writeIndex.store (release)` → `resetGuard.fetch_add (release)` (even).
+
+- If `e0` is the even value AFTER a clear, the acquire load synchronises with the closing release
+  increment and every store of that clear happens-before the batch: the batch reads the new pair
+  and new entries, or later pushes.
+- If `e0` is the even value BEFORE a clear that then runs concurrently, any batch load that reads a
+  value stored **after the writer's release fence** (a cleared slot, either half of the new pair)
+  makes that release fence synchronise-with the reader's acquire fence in `batchIntact`
+  (fence–fence synchronisation, [atomics.fences]). The odd increment, sequenced before the writer's
+  fence, then happens-before the reader's epoch re-read, and write–read coherence forbids that
+  re-read returning the old even value: `batchIntact` is `false`, the frame is dropped. A batch none
+  of whose loads read a post-fence value is a consistent pre-clear snapshot. This is the reader Boehm
+  shows correct in *"Can Seqlocks Get Along with Programming Language Memory Models?"* (MSPC 2012),
+  and it is the C++ model's guarantee — nothing in it depends on x86's store order.
+
+**Why the CLOSE had to become a fence.** The previous close was `ring.resetEpoch() == epoch0`, an
+acquire **load**. An acquire load orders accesses sequenced *after* it; it says nothing about the
+relaxed loads sequenced *before* it. On a weakly ordered target those loads may be satisfied after
+the epoch re-read — the hardware form of the same statement is that ARMv8 permits load–load
+reordering without a barrier — so a batch could read a cleared slot after having read the old even
+epoch and still pass as intact. TSO forbids that reordering, which is why x86-64 hid it and why the
+proof obligation is explicitly "not merely x86". `batchIntact` = `atomic_thread_fence (acquire)` +
+relaxed re-read is the reader form the paper gives, and it is now the close of both batches (the
+tick's, which reads the pair and `available()`; the frame's, which reads everything). In the frame
+it runs FIRST in the post-check, so the `available()` re-read for `readFloor` is sequenced after the
+fence too.
+
+**What the fence does not buy, stated so it is not claimed later.** The `readFloor` lap re-check
+compares `first` against a fresh `available()`. `push` has no release fence before its entry stores
+— deliberately, the audio thread pays nothing — so the model gives no synchronises-with edge from a
+reader's entry load to the producer's index store, and the re-check remains what §10.3 called it: a
+one-frame, defined-behaviour artefact on the oldest bucket, not a race. The fence removes the
+hardware reordering hole in that re-check without turning it into a proof.
+
+**Alternatives rejected.** Making JUCE's pair atomic is not ours to do (it is JUCE's class).
+Turning the wrapper's `grRingPreparedRate/Block` into atomics would have been a second copy of the
+pair with a second publication discipline, read under no epoch — a torn pair would still have been
+possible between a `prepare` and a frame. A `std::atomic<Prepared>` (16 bytes) is not lock-free on
+the supported targets. A mutex is out on both threads. The ring already had the exact mechanism
+(one writer, a seqlock bracket, a reader that discards on tear) and the pair belongs to the timeline
+the clear starts, so it went where the timeline lives.
+
+**Architecture Review Gate.** This is a Thread Model change in the letter of
+`ARCHITECTURE_REVIEW_GATE.md` — a cross-thread path (the pair now crosses through the ring rather
+than through JUCE's members) and a new ordering (the reader's fence). It is recorded as ADR-0011's
+second dated amendment of 2026-09-02, the same treatment as round 3's atomic payload: a repair to a
+decided contract, not a new decision, and flagged in the pull request as a gate item a green build
+does not clear. The audio-thread half of ADR-0011 is not touched.
+
+### 12.3 — A finding on the way: a bare `prepareToPlay` sets nothing in JUCE
+
+The first draft of `grPrepared` asserted that after `proc.prepareToPlay (48000.0, 512)` the ring's
+pair equalled `getSampleRate()`/`getBlockSize()`, and it failed: `getBlockSize()` was 0. A host
+calls `setRateAndBufferSizeDetails` and THEN the callback; the callback alone sets nothing in the
+base class. This suite has only ever called the override — so under the old source **every headless
+GR test mapped its window through the 48 kHz / 1-sample fallback** (`windowEntries (0, 0)`), a
+saturated window, while the ring's entries were recorded at 512. The test now asserts that premise
+first (`proc.getBlockSize() == 0 && ring.prepared().block == 512`), then calls
+`setRateAndBufferSizeDetails` as a host would and asserts equality, then a same-pair re-prepare
+(no clear) and a changed pair (clear + publish), and finally that `windowEntries` and `entryPeriod`
+are identical from either source — the "nothing moved under a stable configuration" claim,
+measured rather than asserted.
+
+### 12.4 — `linux-lto-tests`: six `-Wfloat-equal` sites
+
+`-Wfloat-equal` is in JUCE's recommended warning set for GCC and not for Clang
+(`JUCEHelperTargets.cmake`), which is why the clang gate passed and the `gcc:16` LTO lane failed.
+The six sites were all in the round-4 `grResetPhase` block — `x.phase == 0.0` — three on one line
+(6743) and one each at 6756, 6768 and 6782. Each is now `std::abs (x.phase) < 1.0e-12`, the
+tolerance the surrounding checks already use. No gate, flag or exclusion changed. The lane's
+container cannot be run on this machine (no docker daemon; the local GCC is 13.3), so the
+reproduction is g++ 13.3 with the lane's flags (`-flto -Wduplicated-cond -Wduplicated-branches
+-Wlogical-op`) and its checker invocation (`--compiler g++`): first-party warnings 6 → **0**, with
+both suites green from the LTO'd binaries. `grep -c 'float-equal'` on that log: 0.
+
+### 12.5 — PREfast C6262 at `state_tests.cpp:6435`
+
+Line 6435 is `testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` in every revision of the pull
+request, so the warning is this test's. MSVC's C6262 sums a function's block-scoped locals without
+the slot sharing clang and GCC perform, and the function held four `GrHistoryBuffer` fixtures
+(32,800 bytes each) and one `AnabasisAudioProcessor` (75,688) in sibling blocks. All five are
+`std::make_unique`'d now, with a reference alias so every assertion reads as before; semantics and
+coverage are unchanged. PREfast runs only in the Windows lane, so the measurement here is clang's
+`-fstack-usage -fno-inline` (per-function frames, no inlining into `main`): this function
+**76,632 → 936 bytes**. The remaining locals are the `unique_ptr`s, a `juce::AudioBuffer` (heap
+data), a `GrHistoryView` (360 bytes) and scalars, so the summed figure any analyser reports is now
+well under C6262's 16 KB threshold. One number is worth recording so it is not chased later: the
+file's largest frame under clang is 379,048 bytes at `testLearnCommitAndAdaptiveRoundTrip` (five
+processors on the stack), pre-existing and untouched — it is not what PREfast cited, which was this
+function by line, and the near-coincidence with 379,228 is arithmetic (clang's frame for one
+function, MSVC's summed locals for another).
+
+### 12.6 — Verification
+
+Suites: **`AnabasisTests` 301 + `AnabasisStateTests` 1003 = 1304**, 0 failures, from three builds —
+clang-22.1.8 Release (full warning gate, zero first-party warnings, checker self-test 18 cases),
+g++ 13.3 Release (zero first-party, four vendored), and g++ 13.3 `-flto` with the LTO lane's flags
+(zero first-party). `grPrepared` adds 14 checks. Gates: `check-docs` 103 clean (self-test 67);
+portability 48/0 (120); realtime 40/0 (134); citations re-anchored against `origin/main` (37);
+`check-linux-abi` self-test 19; `git diff --check` clean.
+
+| Mutant | Kills |
+|---|---|
+| **prepgate** — `prepare` never compares, always clears | 6: `grEpoch`'s same-pair-keeps-history and epoch-moves-by-2 (the pre-existing test, which is what says the moved gate is still covered) and 4 `grPrepared` |
+| **pairunpublished** — `clear` stores no pair | 12: the 6 above (the gate then never matches) plus every `grPrepared` check that reads the pair, including "identical from either source" |
+| **intactblind** — `batchIntact` returns `true` without the re-read | exactly 1: the torn-close check, and no other |
+
+The fence has no mutant: dropping it is a hardware reordering no deterministic suite can stage, which
+is why its correctness is argued in writing (§12.2, ADR-0011) rather than pinned.
+
+### 12.7 — `ScopeBuffer`, again left alone
+
+Excluded from this pull request on instruction across every round; KI-015 now says so in those
+words, names the race class (producer overwrites reader, plain payload), the headroom (~0.26 s at
+48 kHz), and why this round's ring change does not transfer — no reset epoch to bracket with, no pair
+to publish, and a bulk `memcpy` that a per-element atomic payload cannot express without its own
+design pass.
+
+### 12.8 — Remaining risk after this round
+
+- **§10.3 and §11.3 stand**, with one item narrowed: the `readFloor` re-check is now ordered after
+  the batch's loads by the fence, but the model still gives it no synchronises-with edge from
+  `push` (§12.2's last paragraph).
+- **The prepared pair before the first `prepare` is (0, 0)**, which `windowEntries`/`entryPeriod`
+  already map to 48 kHz / 1 sample — the same fallback the view used when JUCE's members were unset.
+  Harmless and unchanged; noted because the headless suite used to live there without knowing it.
+- **A host that reconfigures without calling `prepareToPlay`** (the VST3 wrapper's
+  `CallPrepareToPlay::no` paths on `initialize` and `setupProcessing`) leaves the ring's pair at the
+  last prepare. The ring's pair is the one its entries were recorded under, which is the value the
+  display should map through; JUCE's members may disagree until the next `prepareToPlay`, and
+  nothing reads them any more.
