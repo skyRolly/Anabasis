@@ -139,7 +139,7 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
    (`src/PluginParameters.h:93`): the layout is a free function with no processor to ask, so the
    processor owns the holder, **declares it before `apvts`** so the layout's capture of its
    address happens after it is constructed (`src/PluginProcessor.h`), and points it at
-   `truePeakMode`'s raw atomic once the APVTS exists (`src/PluginProcessor.cpp:25-26`). An unwired
+   `truePeakMode`'s raw atomic once the APVTS exists (`src/PluginProcessor.cpp:27-28`). An unwired
    holder falls back to `" dB"` — the **weaker** claim, which is the safe direction for a
    guarantee. The suffix is display-only: `dbFrom` parses the leading float, so `getValueForText`
    is indifferent to which spelling it is handed, and neither the registry snapshot (ID · name ·
@@ -250,7 +250,7 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
 - `src/PluginParameters.cpp:303` — `ceiling`, default −0.1, mode-aware value text
 - `src/PluginParameters.cpp:377` — `truePeakMode`, default off
 - `src/PluginParameters.h:93` — `CeilingUnitSource` (the unit source and its fallback)
-- `src/PluginProcessor.h:115` · `src/PluginProcessor.cpp:25-26` — the holder's placement and wiring
+- `src/PluginProcessor.h:115` · `src/PluginProcessor.cpp:27-28` — the holder's placement and wiring
 - `src/InternalState.h` — `setDefaults()` (nine `int_*` properties; `tpMeterOn` false), and
   `replaceFrom`'s defaults-first overlay (item 4's migration)
 - `src/dsp/EngineParameters.h:79` — the POD's `ceilingDbTp`/`truePeakMode` seeds

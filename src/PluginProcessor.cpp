@@ -3,6 +3,8 @@
 #include "dsp/Latency.h"
 #include "dsp/StageTrace.h"
 
+#include <cmath>   // std::isfinite — the deserialization read rule below
+
 namespace
 {
     constexpr int kSchemaVersion = 1;   // ADR-0007: explicit from day one
@@ -523,8 +525,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1558` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1628` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1581` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1651` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -1284,8 +1286,29 @@ void AnabasisAudioProcessor::reassertFromRaw (const juce::ValueTree& apvtsTree)
         const auto node = apvtsTree.getChild (i);
         if (! node.hasType ("PARAM") || ! node.hasProperty ("raw"))
             continue;
+        // A `raw` THAT CANNOT BE USED IS A `raw` THAT IS NOT THERE. The registry's
+        // §1.1 fallback for an absent attribute is the `value` one, which
+        // `adoptParamsTree` has already installed through `replaceState` two
+        // calls up, so declining the overlay IS the read rule rather than a new
+        // one — the same shape, and the same reasoning, as
+        // `AdaptiveEngine::setLearnedTargets`.
+        //
+        // IT HAS TO BE A FINITE TEST AND NOT A TIGHTER CLAMP. Every clamp in the
+        // chain below this line is comparison-based, and every comparison
+        // against a NaN is false, so a NaN is not clamped by any of them: not
+        // `juce::jlimit` here, not `NormalisableRange::snapToLegalValue` on the
+        // preset path, and not Steinberg's own `Parameter::setNormalized`
+        // (VST3_SDK/public.sdk/source/vst/vstparameters.cpp:62-71). Nothing
+        // downstream rejects it either, so a NaN admitted here reaches the host
+        // through `performEdit` and is written back by the next save. JUCE's
+        // string reader returns a quiet NaN for the literal "nan"
+        // (juce_CharacterFunctions.h:254-265), which is all a hand-edited or
+        // half-written document needs to carry.
+        const float raw = (float) (double) node.getProperty ("raw");
+        if (! std::isfinite (raw))
+            continue;
         if (auto* p = apvts.getParameter (node.getProperty ("id").toString()))
-            p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, (float) (double) node.getProperty ("raw")));
+            p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, raw));
     }
 }
 

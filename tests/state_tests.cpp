@@ -15,6 +15,7 @@
 #include "../src/gui/CurveView.h"
 #include "../src/gui/SpectrumView.h"
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <thread>
 
@@ -165,6 +166,100 @@ static void testCorruptAndForeignState()
     juce::MemoryBlock after;
     proc.getStateInformation (after);
     check (before == after, "robustness: corrupt/foreign state is a no-op, defaults intact");
+}
+
+// THE THIRD CORRUPTION CASE, AND THE ONE THAT GOT THROUGH. The two above are
+// rejected before anything is read: random bytes fail `getXmlFromBinary`, and
+// another plugin's root fails the type test. Neither ever reaches a parameter.
+// This one is a document that is OURS — right root, right schema, every id
+// resolving — carrying numbers that are out of domain. Nothing structural
+// declines it, so the numbers themselves have to be declined.
+//
+// WHY A NaN AND NOT MERELY AN OUT-OF-RANGE NUMBER. Every clamp on both read
+// paths is comparison-based, and every comparison against a NaN is false, so a
+// NaN is the one value none of them stops: `juce::jlimit` on the session path,
+// `NormalisableRange::snapToLegalValue` on the preset path, and — this is why
+// the guard has to live here rather than being left to the wrapper —
+// Steinberg's own `Parameter::setNormalized`
+// (VST3_SDK/public.sdk/source/vst/vstparameters.cpp:62-71), which is the last
+// thing the value passes before `performEdit` hands it to the host. Infinities
+// ARE clamped correctly by all three; the infinities in this document are here
+// to pin that, so a later reader does not widen the guard past what it is for.
+//
+// Against the code before the fix this reports 50 poisoned parameters on the
+// session path and 15 on the preset one, with 31 readouts printing "nan" and a
+// re-save writing all 50 back — the corruption was self-propagating through the
+// session file, which is what made it worth a guard rather than a note.
+static void testAWellFormedDocumentCannotCarryAnUnusableNumber()
+{
+    AnabasisAudioProcessor proc;
+
+    juce::MemoryBlock clean;
+    proc.getStateInformation (clean);
+    const auto xml = juce::AudioProcessor::getXmlFromBinary (clean.getData(), (int) clean.getSize());
+    check (xml != nullptr, "unusable: (premise) the fixture's own state decodes");
+
+    int crafted = 0;
+    if (auto* an = xml->getChildByName ("ANABASIS"))
+        for (auto* n : an->getChildIterator())
+            if (n->hasTagName ("PARAM"))
+            {
+                n->setAttribute ("raw", (crafted % 3 == 0) ? "nan"
+                                      : (crafted % 3 == 1) ? "inf" : "-inf");
+                ++crafted;
+            }
+    check (crafted > 0, "unusable: (premise) the crafted document carries PARAM nodes at all");
+
+    juce::MemoryBlock hostile;
+    juce::AudioProcessor::copyXmlToBinary (*xml, hostile);
+    proc.setStateInformation (hostile.getData(), (int) hostile.getSize());
+
+    int badValue = 0, badText = 0;
+    for (auto* p : proc.getParameters())
+    {
+        if (! std::isfinite (p->getValue()))
+            ++badValue;
+        if (p->getText (p->getValue(), 32).containsIgnoreCase ("nan"))
+            ++badText;
+    }
+    check (badValue == 0,
+           "unusable: a session document's unusable `raw` never reaches a parameter");
+    check (badText == 0,
+           "unusable: ...so no readout the host or the editor prints can read \"nan\"");
+
+    juce::MemoryBlock resaved;
+    proc.getStateInformation (resaved);
+    const auto back = juce::AudioProcessor::getXmlFromBinary (resaved.getData(), (int) resaved.getSize());
+    int propagated = 0;
+    if (back != nullptr)
+        if (auto* an = back->getChildByName ("ANABASIS"))
+            for (auto* n : an->getChildIterator())
+                if (n->hasTagName ("PARAM")
+                    && (n->getStringAttribute ("raw").containsIgnoreCase ("nan")
+                     || n->getStringAttribute ("value").containsIgnoreCase ("nan")))
+                    ++propagated;
+    check (propagated == 0,
+           "unusable: ...and the next save cannot write one back into the session file");
+
+    // The preset path reads `value` and snaps it, so it needs the same rule for
+    // the same reason -- and a .anabasis file is the more widely shared of the two.
+    juce::XmlElement preset ("AnabasisPreset");
+    for (auto* p : proc.getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            auto* n = preset.createNewChildElement ("PARAM");
+            n->setAttribute ("id", rp->paramID);
+            n->setAttribute ("value", "nan");
+        }
+    juce::StringArray mask;
+    proc.getPresetManager().applyPreset (preset, mask);
+
+    int badAfterPreset = 0;
+    for (auto* p : proc.getParameters())
+        if (! std::isfinite (p->getValue()))
+            ++badAfterPreset;
+    check (badAfterPreset == 0,
+           "unusable: a preset's unusable `value` never reaches a parameter either");
 }
 
 // ---------------------------------------------------------------------------
@@ -8150,6 +8245,7 @@ int main (int argc, char** argv)
     {
         testStateRoundTrip();
         testCorruptAndForeignState();
+        testAWellFormedDocumentCannotCarryAnUnusableNumber();
         testMacroDefaultIsFixedPoint();
         testAbSlotsAndTiers();
         testMacroRestoreDoesNotClobber();

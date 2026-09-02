@@ -619,7 +619,7 @@ They are acquired in **both** orders:
 
 | Order | Path |
 |---|---|
-| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:212`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:214`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
@@ -676,7 +676,7 @@ observed against this plugin (the same standing caveat as KI-003).
 listener callback.
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:212` (the M0 → M1 edge); JUCE
+- Source: `src/PluginProcessor.cpp:214` (the M0 → M1 edge); JUCE
   `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
 - Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
   stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite

@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Fifteen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Sixteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,34 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.9] — 2026-09-02
+
+**A session or preset file can no longer put a control into a state it cannot get out of.** Found by
+a security-and-quality audit of the repository's Code Scanning surface, not by a scanner: no analyzer
+reports it, because the code looks like it already clamps. It does not. Every clamp the value meets
+is comparison-based — `juce::jlimit` on the session path, `NormalisableRange::snapToLegalValue` on
+the preset path, and Steinberg's own `Parameter::setNormalized` last of all — and **every comparison
+against a NaN is false**, so a NaN passes all three untouched. JUCE's number reader returns one for
+the literal `nan`, which is all a hand-edited or half-written document needs to carry. Measured on
+the code before the fix: a crafted session document left **all 50 parameters** holding an unusable
+value, **31 readouts printing "nan"**, and the next save wrote every one of them back — so the damage
+propagated with the file. A crafted `.anabasis` preset reached 15. Infinities were always clamped
+correctly and still are; NaN was the only value that got through. No schema field is added, removed
+or re-meant: an unusable `raw` now takes the same fallback the registry already gives an ABSENT one,
+which is the read rule `AdaptiveEngine`'s trims and learned targets have applied since ADR-0014.
+Audio was never affected — the engine's own hygiene absorbed it, verified across 140 blocks in five
+configurations — so nothing about how the plugin sounds changes here. Measurement trail:
+[`worklogs/2026-09-02-code-scanning-audit.md`](worklogs/2026-09-02-code-scanning-audit.md).
+
+### Fixed
+- A corrupt, truncated or hand-edited session file can no longer leave a parameter unusable: a
+  non-finite `raw` is declined and the `value` attribute is used instead, exactly as when `raw` is
+  absent. Affected every parameter, every readout that prints one, and every subsequent save.
+  Evidence: PR #28. [Verified]
+- The same for `.anabasis` preset files, which are the more widely shared of the two formats: a
+  non-finite `value` is skipped like an unrecognised parameter id, leaving the control where it was.
+  Evidence: PR #28. [Verified]
 
 ## [0.2.8] — 2026-09-01
 
