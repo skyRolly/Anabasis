@@ -104,8 +104,13 @@ scalars, found by review rather than in the field** ([ADR-0038](design-decisions
 **Accepted 2026-09-02; the gate is cleared**). The continuous scroll needs a sub-entry phase, so the
 frame-clock tick publishes `shownHead` (the ring index it last observed, and the head the frame
 draws) and `smoothHead` (that head advanced at the nominal entry rate) on the message thread, and
-`paintHistory` reads both. Both are `std::atomic`, relaxed, `static_assert`ed lock-free. What is new
-against ADR-0027 is that there are TWO of them and the painting thread may pair either one's newer
+`paintHistory` reads both. Both are `std::atomic`, relaxed, `static_assert`ed lock-free, and a third — `publishedEpoch` — says
+which ring timeline they belong to, stored `release` last and loaded `acquire` first (ADR-0038
+clause 7). That epoch is the boundary's only ordered access and it exists because a phase means
+nothing outside the timeline it was measured in: `GrHistoryBuffer::reset()` rewinds the write index,
+so a paint landing between a clear and the next tick would otherwise apply the pre-reset offset to
+the first frame of the new history. What is new
+against ADR-0027 is that there are TWO estimates and the painting thread may pair either one's newer
 value with the other's older one: that is safe because every such pairing resolves to
 `min (smoothHead, head + 1)` — a position between two frames the ramp itself produces — so the
 paint needs no consistency, only the two values (`GrHistoryView::frameFor`). The RING's own

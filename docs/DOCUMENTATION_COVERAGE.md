@@ -46,12 +46,32 @@ clause 4 is amended in place**: its boundary moves from "ONE scalar" to "scalars
 stale/fresh pairing is a frame the writer was itself about to produce" — a property to demonstrate,
 not a count — with its other exclusions untouched.
 
-**Suites after both review rounds: `AnabasisTests` 301 + `AnabasisStateTests` 979 = 1280**, one new
-test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 35 checks) pinning invariants rather
-than an absence of races — which index a frame may read, which value pairs it may draw, which states
-it may park on, and that the validation path is built on synchronised publication state. Six further
-mutants, each killing a disjoint set: the pre-fix read window 7, the read clamp dropped 4, the
-count-only gate 2, the phase re-anchor 1, the phase's upper clamp 2, the non-atomic payload 1.
+**A final finding closed the round: a published display estimate must carry the IDENTITY of the
+state it describes.** `smoothHead` is an absolute ring index whose fractional part is the phase, and
+`GrHistoryBuffer::reset()` rewinds that index — so a paint landing between a clear and the next tick
+read the pre-clear value against the fresh head, saturating `phaseOf`'s clamp to exactly 1 and
+drawing the first frame of the new history one entry-pitch out. No value-based rule can separate the
+two timelines: once the refill passes the old count, `shownHead <= live` (no `paintHead` fallback)
+and `smoothHead - head == 1` (a legitimate parked value) are both indistinguishable from an ordinary
+frame — the same "the count is not the identity" shape as the equal-count gate above, and both wrong
+answers are kept as mutants. `publishedEpoch` is stored `release` last by the tick and loaded
+`acquire` first by the paint, and `frameFor` uses the phase only when it matches the epoch the frame
+is drawing. The invariant: **a frame that sees epoch E also sees the phase published under E.**
+`shownHead` and `smoothHead` keep their representation and relaxed accesses, so ADR-0038 clause 3's
+pairing argument survives verbatim — a draft that packed `(epoch, phase)` into one relaxed word was
+rejected on measurement, since `head + phase` is not monotone in `phase` alone and a torn read could
+move the trace RIGHTWARD by up to one entry-pitch, regressing that accepted claim. ADR-0038 gains
+**clause 7** and a dated amendment to clause 2; `THREADING_POLICY.md` and `THREAD_MODEL.md` name the
+boundary's one ordered access. `ScopeBuffer` is filed as **KI-015** rather than repaired.
+
+**Suites after all three review rounds: `AnabasisTests` 301 + `AnabasisStateTests` 989 = 1290**, one
+new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 45 checks) pinning invariants
+rather than an absence of races — which index a frame may read, which value pairs it may draw, which
+states it may park on, that the validation path is built on synchronised publication state, and that
+a restarted timeline is drawn from its beginning. Eight further mutants, each killing a disjoint
+set: the pre-fix read window 7, the read clamp dropped 4, the count-only gate 2, the phase re-anchor
+1, the phase's upper clamp 2, the non-atomic payload 1, the epoch ignored 3, the reset inferred from
+the head 3.
 
 **Scope of the 0.2.8 round.** One owner report — *"the newly drawn portion of the GR history to
 the right of the yellow line is jittery"* — and one display fix. **No DSP change, no parameter

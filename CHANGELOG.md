@@ -52,7 +52,7 @@ portion of the GR history to the right of the yellow line is jittery."* The yell
 trace's own flat zero-reduction run (the only yellow in the well is the trace's accent), and the
 part to its right is the only part that CAN show horizontal motion — which is where the renderer
 had been stepping a non-integer pitch once per decimation bucket since 0.1.2. A second review
-round then found four correctness defects in that fix — three of them races — and they are repaired
+round then found five correctness defects in that fix — three of them races — and they are repaired
 in the same version; one of them widens a threading decision, which went to architecture review and
 was approved
 ([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
@@ -107,6 +107,12 @@ byte-identical, and every change here is on the reading side. Measurement trail:
   ADR-0027 took, so it went to architecture review and was **approved**
   ([ADR-0038](docs/architecture/design-decisions/ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md),
   Accepted 2026-09-02). Evidence: this release. [Verified]
+- **The first frame after the history restarts is drawn where it belongs.** A sample-rate or
+  buffer-size change clears the history and restarts its timeline; the scroll offset from *before*
+  the clear could still be applied to the first frame drawn after it, putting that frame one step
+  ahead of where the new history actually starts. The offset now travels with the identity of the
+  history it was measured in, so a restarted timeline is drawn from its beginning and ordinary
+  scrolling resumes on the very next frame. Evidence: this release. [Verified]
 - **The history buffer's stored values are read and written atomically.** The display's guards
   already noticed when the audio thread had overtaken a frame's read of the history and threw that
   frame away — but noticing is not enough: reading a block while the audio thread writes it was

@@ -85,6 +85,17 @@ a snapshot struct, a lock) is a materially larger change than two atomics.
 2. **`memory_order_relaxed` on every access**, for ADR-0027 clause 2's reason unchanged: neither
    value orders any other memory, publishes no payload, and is not a handshake. They are display
    estimates; the ring's own release/acquire index is what orders the DATA, and it is untouched.
+
+   > **Amended 2026-09-02, same round, before any tag — see clause 7.** The two scalars above are
+   > still relaxed and their representation is unchanged. What this clause did not anticipate is
+   > that their VALIDITY is not self-evident: a phase means nothing outside the timeline it was
+   > measured in, and a clear rewinds that timeline. The epoch that answers it
+   > (`publishedEpoch`) is the one access on this boundary that carries ordering — `release` on the
+   > store, `acquire` on the load — and it orders exactly those two publications and nothing else.
+   > Relaxed would have been sufficient on a TSO target and NOT on a weakly ordered one, where the
+   > epoch could become visible before the phase it announces; the ordering is what makes "the
+   > epoch matches" a statement about a value the frame can actually read.
+
 3. **The pair is safe by VALUE, not by consistency, and that is the load-bearing claim.** A frame
    may read either scalar's newer value with the other's older one. `GrHistoryView::frameFor`
    resolves any pairing to a position of `min (smoothHead, head + 1)` entry-pitches, because
@@ -103,8 +114,26 @@ a snapshot struct, a lock) is a materially larger change than two atomics.
    side samples the ring's epoch itself, for its own batch guard, and never reads this member. A
    member is added to the atomic set when the painting thread reads it, not because a neighbour is
    atomic.
-6. **This row is still not a licence to widen.** ADR-0027 clause 4 stands with its boundary moved,
-   not removed: the painting side may read scalars that are relaxed, read-only, payload-free, and
+7. **A published display estimate carries the identity of the state it describes** (added
+   2026-09-02, the round's last finding). `shownHead` and `smoothHead` are indices into a ring that
+   `GrHistoryBuffer::reset()` rewinds, so after a clear a published phase describes indices that no
+   longer exist. A paint runs on its own schedule and can land in the window between the clear and
+   the next tick; reading the stale `smoothHead` against the fresh head saturates
+   `phaseOf`'s clamp to exactly 1 and draws the first frame of the new history one entry-pitch out.
+   `frameFor` therefore takes the epoch the phase was published under and the epoch the frame is
+   drawing, and uses the phase only when they agree — anchoring at phase 0 otherwise.
+
+   **The count cannot stand in for the identity, and this is the case that proves it:** once the
+   refill passes the old count, `shownHead <= live` (so `paintHead` no longer falls back) and
+   `smoothHead - head == 1` (a legitimate parked value), and a stale publication is numerically
+   indistinguishable from a current one. Both a head-fallback heuristic and an out-of-range test on
+   `smoothHead - head` pass that case; only the epoch separates the timelines. Pinned by
+   `grResetPhase`, and mutation-verified against **both** wrong answers — ignoring the epoch, and
+   inferring the reset from the head — each of which fails the same three assertions.
+
+8. **This row is still not a licence to widen.** ADR-0027 clause 4 stands with its boundary moved,
+   not removed: the painting side may read scalars that are relaxed (bar the identity of clause 7,
+   whose ordering is what makes the others checkable), read-only, payload-free, and
    whose every stale/fresh pairing is a frame the writer was itself about to produce. Anything the
    paint path WRITES, anything carrying a payload, and any pair whose cross-pairings are **not**
    legal frames is a new path again and returns to this gate.
@@ -145,5 +174,6 @@ Evidence [Verified]:
 - Source: the files above at 0.2.8
 - Test: `testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` §2 (`grPair`) — the pairing
   property across every cross pairing of a 64-frame publication sequence, plus the lock-free
-  assertion mirroring the header's `static_assert`
+  assertion mirroring the header's `static_assert`; §3c (`grResetPhase`) — clause 7, over every
+  refill state including the equal count, repeated clears, and a clear-in-flight odd epoch
 - Worklog: `worklogs/2026-09-01-gr-history-scroll-jitter.md` §9

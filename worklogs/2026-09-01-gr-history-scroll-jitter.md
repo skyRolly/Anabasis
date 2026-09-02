@@ -702,3 +702,104 @@ about `presetMenusOpen` changes.
 - **The races remain argued, not observed.** No test stages a concurrent producer; what is pinned is
   the arithmetic and the types that make each race impossible or defined. A TSan lane would test the
   claims directly and this repository has none — noted, and deliberately not added here.
+
+## 11 — The reset phase: a display estimate must carry the identity of the state it describes (2026-09-02)
+
+The round's last finding, against `frameFor`: *"After a history reset, `frameFor` can combine the
+new head with the pre-reset smoothed value because the atomics are independent. The first fresh
+frame starts one entry ahead instead of at phase zero."*
+
+**What actually caused it.** `smoothHead` is published as an ABSOLUTE ring index whose fractional
+part is the phase. `GrHistoryBuffer::reset()` rewinds the write index to 0, so after a clear that
+index describes entries that no longer exist — and nothing published with it said which timeline it
+belonged to. Two windows produced the defect, and the first is the common one:
+
+1. **A paint between the clear and the next tick.** The paint runs on its own schedule (the GL
+   render thread on macOS/Windows; any `repaint` on Linux), so it can land after `reset()` and
+   before the tick that re-anchors. It then reads the pre-clear `smoothHead` — say 251.0 — against a
+   fresh head of 3, and `phaseOf` computes `clamp (251.0 − 3, 0, 1)` = **exactly 1.0**. Not a small
+   error: the clamp saturates, so the first frame of the new history is drawn a full entry-pitch
+   ahead of where it starts.
+2. **The cross-pairing the finding names.** Even after the tick republishes, two independent relaxed
+   atomics can be observed in either order on a weakly ordered target, so a frame could pair the new
+   head with the pre-reset phase.
+
+**Why no value-based rule can fix it — the case that decides the design.** The obvious cheap fixes
+both work until the refill passes the old count, and then both fail:
+
+| Candidate rule | Fails because |
+|---|---|
+| Anchor when `paintHead` fell back (`shownHead > live`) | Once the refill reaches the old count, `shownHead <= live` and no fallback occurs — the rule sees an ordinary frame |
+| Anchor when `smoothHead − head ∉ [0, 1]` | The parked value is `head + 1` exactly, so a stale publication lands on `1.0`, which is a **legitimate** phase |
+
+At the equal count both rules see a valid parked frame over entirely new data. That is the same
+shape as §9.3's finding — the count is not the identity of the contents — and it is why the review's
+instruction to prefer an epoch/identity mechanism over count inference is the correct one. Both wrong
+answers are kept as mutants, and both fail the same three assertions.
+
+**The fix, and its invariant.** A published display estimate carries the identity of the state it
+describes. `publishedEpoch` (the ring's reset epoch) is stored by the tick **last, with `release`**,
+and read by the paint **first, with `acquire`**; `frameFor` takes it and the epoch the frame is
+drawing, and uses the phase only when they agree, anchoring at phase 0 otherwise.
+
+The invariant in one line: **a frame that sees epoch E also sees the phase published under E.** The
+release/acquire pair is what makes that true rather than hoped for — relaxed would have sufficed on
+a TSO target and not on a weakly ordered one, where the epoch could become visible before the phase
+it announces, which is window 2 reintroduced through the back door. It is the only ordered access on
+this boundary; it orders those two publications and nothing else, no payload crosses, and the audio
+thread is not involved.
+
+**What was deliberately NOT changed.** `shownHead` and `smoothHead` keep their representation and
+their relaxed accesses, so ADR-0038 clause 3's pairing argument survives verbatim. That mattered
+more than it looks: an earlier draft of this fix published `(epoch, phase)` packed in one relaxed
+word, which removes the ordering question entirely — and was **rejected on measurement**, because
+`pos = head + phase` is not monotone in `phase` alone. With the phase published as a phase, a torn
+read pairing head *i* with phase *i+1* can move the trace RIGHTWARD by up to one entry-pitch
+(worked example: `h=100, φ=0.9 → 100.9` then `h=100, φ=0.4 → 100.4`), and no store order removes it
+because the other order overshoots instead. The absolute form's `min (smoothHead, head + 1)` is
+monotone in BOTH arguments independently, which is exactly why clause 3 holds — so the fix keeps the
+absolute pair and pays for the epoch with one release/acquire rather than paying for the epoch with
+a regression to the accepted no-rightward-motion claim.
+
+**Also rejected:** a seqlock or snapshot over the three values (ADR-0038 option B, unchanged — it
+buys consistency this estimate does not need); making `shownEpoch` atomic and relaxed (window 2 stays
+open on ARM); encoding the epoch in `shownHead`'s spare bits (truncates the head, and 2^32 entries is
+~8 days of continuous audio at 192 kHz/32 — a real if remote limit, taken for nothing).
+
+### 11.1 — Verification
+
+Suites: **`AnabasisTests` 301 + `AnabasisStateTests` 989 = 1290**, 0 failures, clang-22.1.8 and the
+local g++ 13.3, Release. The round adds a `grResetPhase` block covering the review's six points in
+order — an ordinary frame carries its phase; a clear occurs; the epoch moves; the same published
+values anchor at phase 0 **at every refill state including the equal count**; the tick's first fresh
+publication is itself at phase 0 (`smoothedHead`'s `cleared` re-anchor); and the very next frame
+carries its phase again — plus repeated clears (every superseded epoch anchors, including the odd
+value a clear in flight publishes, while the live one still carries its phase) and the same result
+driven from a real `GrHistoryBuffer`'s own epoch arithmetic.
+
+| Mutant | Kills |
+|---|---|
+| **noepochphase** — `frameFor` ignores both epochs (the pre-fix behaviour) | 3 `grResetPhase`: the anchor at every refill state, the repeated-clear sweep, and the real-ring case |
+| **countinference** — anchor only when `paintHead` fell back (`h != shownHead`) | the same 3 — the plausible wrong fix fails exactly where the equal-count case predicted |
+
+Gates: zero first-party warnings under the full clang-22 gate; `check-docs` 103 files clean;
+portability 48/0; realtime 40/0; citations against `origin/main`; `git diff --check` clean.
+
+### 11.2 — `ScopeBuffer` left alone, on instruction, and filed
+
+§10 reported it as drift. This round's scope excluded it explicitly, so it is now **KI-015** — a
+confirmed correctness entry with the headroom measured (4096 of 16384 frames, so ~12288 frames or
+~0.26 s at 48 kHz must pass mid-copy), the reason it is not the blocker `GrHistoryBuffer` was (one
+slot of margin there, by construction), and the note that its `memcpy` bulk copy needs its own
+design pass rather than a transliteration of the GR fix.
+
+### 11.3 — Remaining risk after this round
+
+- **Everything in §10.3 still stands** and is unchanged by this fix.
+- **`publishedEpoch` starts at 0 and the ring's epoch starts at 0**, so before the first tick they
+  match and a frame would use the published phase. That phase is `phaseOf (0.0, live)` = 0 for any
+  live head, so the frame is anchored anyway — harmless, and noted because it is a coincidence of
+  the initial values rather than a property of the rule.
+- **The epoch is 32 bits and moves by 2 per clear**, so it wraps after 2^31 sample-rate or
+  buffer-size changes. A wrap could only collide if a publication survived exactly that many clears
+  unread, which requires the tick never to run in between.

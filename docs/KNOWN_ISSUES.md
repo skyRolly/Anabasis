@@ -963,6 +963,38 @@ Evidence [Partially Verified]:
 - Test:   none — platform input behaviour, not reachable from the suites
 - Commit: this one
 
+### KI-015 — `ScopeBuffer`'s payload is read and written non-atomically, as `GrHistoryBuffer`'s was until 0.2.8 (2026-09-02)
+
+**Severity:** Low
+**Status:** Confirmed (from the code; not reproduced, and not expected to be reproducible)
+**Affects:** every platform and format; the two spectrum capture points only — the input/output
+spectrum overlay. The GR history is **not** affected: the same defect was repaired there in 0.2.8.
+
+Nothing is visible to a user. This is a correctness entry, filed so the next round starts from a
+fact rather than rediscovering it: `ScopeBuffer` publishes its frames with the same
+release/acquire index `GrHistoryBuffer` uses, but its payload is `memcpy`'d into
+`std::vector<float>` by the producer and copied out by the reader with plain accesses. If the audio
+thread laps a slow reader mid-copy, those accesses race, and a plain read concurrent with a plain
+write is undefined behaviour under the C++ memory model however benign the machine code looks.
+
+**Workaround:** none needed; nothing user-visible depends on it.
+**Cause and why it is not fixed here.** It is materially safer than the GR-history case was, and
+the headroom is the reason: the only caller asks for **4096 of 16384 frames**, so the producer must
+advance ~12288 frames — about **0.26 s at 48 kHz** — between the reader's index acquire and the end
+of its copy for the oldest frames to be overwritten. `GrHistoryBuffer` had **one slot** of margin by
+construction, which is why it was the blocker and this is not. The repair is the same shape (atomic
+payload, relaxed both ways, the audio-thread store unchanged — measured instruction-identical
+there), but `ScopeBuffer` copies in bulk with `memcpy`, so it needs its own design pass rather than
+a transliteration of the GR fix, and the 0.2.8 review scope explicitly excluded it. Recorded as a
+separate follow-up.
+
+Evidence [Verified]:
+- Source: `src/dsp/ScopeBuffer.h` (`pushBlock`'s `memcpy` pair; the reader's copy-out), against
+  `src/dsp/GrHistoryBuffer.h`'s repaired `Slot`
+- Test:   none — a race no deterministic suite can stage; the GR-history equivalent is pinned by
+  the type-level `grSync` assertions, which have no `ScopeBuffer` counterpart yet
+- Worklog: `worklogs/2026-09-01-gr-history-scroll-jitter.md` §10, §11
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

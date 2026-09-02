@@ -6582,7 +6582,10 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         }
         const auto pos = [] (int64_t h, double sm)
         {
-            const auto f = V::frameFor (h, sm, h);                   // live == h: the tick's own frame
+            // live == h and one settled epoch: the tick's own frame, which is
+            // where the cross-pairing question lives. The epoch's own effect
+            // is the `grResetPhase` block below.
+            const auto f = V::frameFor (h, sm, 4u, h, 4u);
             return (double) f.head + f.phase;
         };
         bool inRange = true, monotoneCross = true, neverRightward = true;
@@ -6705,6 +6708,79 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                "grSync: a clear moves the epoch by two and rewinds the index — both seen through the ring's own atomics");
         check (std::abs (ring.peek (0).grDb) < 1.0e-12f && std::abs (ring.peek (0).peak) < 1.0e-12f,
                "grSync: …and the cleared payload reads back through the same atomic path it was cleared through");
+    }
+
+    // -- 3c. RESET FRAMES MUST NOT INHERIT THE PRE-RESET PHASE (0.2.8 final
+    //        review). A phase only means something in the timeline it was
+    //        measured in. `GrHistoryBuffer::reset()` rewinds the write index,
+    //        so a phase published before a clear describes indices that no
+    //        longer exist — and a paint runs on its own schedule, so one can
+    //        land after the clear and before the tick that re-anchors. Reading
+    //        the stale `smoothHead` against the fresh head saturates the clamp
+    //        to a phase of exactly 1: the first fresh frame drawn one
+    //        entry-pitch out instead of anchored. `frameFor` now takes the
+    //        epoch the phase was published under and the epoch the frame is
+    //        drawing, and uses the phase only when they agree.
+    {
+        const uint32_t before = 6, after = 8;      // one clear moves the epoch by two
+        const int64_t  head   = 250;
+        const double   parkedSmooth = (double) head + 1.0;   // the pre-reset ramp, parked
+
+        // 1 — an ordinary frame in the settled timeline carries its phase.
+        const auto normal = V::frameFor (head, (double) head + 0.7, before, head, before);
+        check (normal.head == head && std::abs (normal.phase - 0.7) < 1.0e-12,
+               "grResetPhase: (premise) inside one timeline a frame draws the published phase");
+
+        // 2/3/4 — after the clear, the SAME published values must anchor the
+        // frame, whatever the refill has reached. Three fill states: the ring
+        // barely refilled, refilled past the old count, and refilled to
+        // EXACTLY the old count — the last is the one no value-based rule can
+        // catch, because `shownHead == live` and `smoothHead - head == 1` are
+        // both indistinguishable from a legitimate parked frame.
+        const auto justAfter = V::frameFor (head, parkedSmooth, before, 3, after);
+        const auto equalCount = V::frameFor (head, parkedSmooth, before, head, after);
+        const auto pastCount = V::frameFor (head, parkedSmooth, before, head + 40, after);
+        check (justAfter.phase == 0.0 && equalCount.phase == 0.0 && pastCount.phase == 0.0,
+               "grResetPhase: a frame after a clear anchors at phase 0 — at every refill state, including the equal count");
+        check (justAfter.head == 3 && equalCount.head == head && pastCount.head == head,
+               "grResetPhase: …and still draws the head it would have drawn, so only the phase is anchored");
+        // The pre-fix behaviour, stated as the thing that must not come back:
+        // the same values with the epoch ignored give a phase of exactly 1.
+        check (std::abs (V::phaseOf (parkedSmooth, head) - 1.0) < 1.0e-12,
+               "grResetPhase: (premise) ignoring the epoch would have drawn that frame one entry-pitch out");
+
+        // 5 — the first frame the tick publishes after the clear is anchored
+        // at 0 by `smoothedHead`'s `cleared` re-anchor, and now agrees.
+        const double reanchored = V::smoothedHead (parkedSmooth, 3, 0.5, 0.01, true);
+        const auto   fresh = V::frameFor (3, reanchored, after, 3, after);
+        check (std::abs (reanchored - 3.0) < 1.0e-12 && fresh.head == 3 && fresh.phase == 0.0,
+               "grResetPhase: the first published frame of the new timeline is itself at phase 0");
+
+        // 6 — and ordinary smoothing resumes immediately afterwards.
+        const auto resumed = V::frameFor (5, 5.4, after, 5, after);
+        check (resumed.head == 5 && std::abs (resumed.phase - 0.4) < 1.0e-12,
+               "grResetPhase: …after which the new timeline carries its phase exactly as before");
+
+        // REPEATED clears: every superseded epoch anchors, only the live one
+        // carries a phase. Includes the ODD value a clear in flight publishes.
+        bool everyStaleAnchors = true;
+        for (const uint32_t stale : { 0u, 2u, 4u, 6u, 7u, 9u })
+            everyStaleAnchors &= V::frameFor (head, parkedSmooth, stale, head, 10u).phase == 0.0;
+        check (everyStaleAnchors,
+               "grResetPhase: after repeated clears every superseded epoch anchors — only the live one carries a phase");
+        check (std::abs (V::frameFor (head, parkedSmooth, 10u, head, 10u).phase - 1.0) < 1.0e-12,
+               "grResetPhase: …and the live one still does, so the rule anchors resets rather than every frame");
+
+        // The ring's own epoch arithmetic is what feeds this, end to end.
+        Ring ring;
+        for (int i = 0; i < 40; ++i) ring.push (-1.0f, 0.5f);
+        const auto live0 = ring.resetEpoch();
+        ring.reset();
+        for (int i = 0; i < 40; ++i) ring.push (-8.0f, 0.8f);
+        check (ring.resetEpoch() != live0 && ring.available() == 40,
+               "grResetPhase: (premise) a real clear plus an equal refill moves the epoch and restores the count");
+        check (V::frameFor (40, 41.0, live0, ring.available(), ring.resetEpoch()).phase == 0.0,
+               "grResetPhase: …and a frame holding the pre-clear publication anchors against the ring's own epochs");
     }
 
     // -- 4. The real paint path, through the atomics, on a populated ring:

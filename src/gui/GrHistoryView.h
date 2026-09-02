@@ -38,6 +38,17 @@ class AnabasisAudioProcessor;
 //     discarded if the producer has since advanced past that bound, which is
 //     the epoch guard's discipline applied to the other failure mode.
 //
+//  A PHASE ONLY MEANS SOMETHING IN THE TIMELINE IT WAS MEASURED IN, so the
+//  epoch it was published under is published with it (`publishedEpoch`,
+//  release; read acquire before the two scalars). `GrHistoryBuffer::reset()`
+//  rewinds the write index, so a phase from before a clear describes indices
+//  that no longer exist — and a paint landing after the clear but before the
+//  next tick would otherwise pair the fresh head with that stale value and
+//  draw the first frame of the new history one entry-pitch out. The epoch is
+//  what a frame checks; `frameFor` anchors at phase 0 whenever it does not
+//  match, and the release/acquire pair is what makes "matches" mean the phase
+//  published under it is the one this frame can see.
+//
 //  The values the view carries between ticks since 0.2.8 are `shownHead` and
 //  `smoothHead` — display-side estimates, never ring data. `smoothHead` is
 //  re-anchored on any rewind and clamped to within one entry of the live
@@ -432,10 +443,26 @@ public:
         double  phase;   // 0 … 1 into the next entry's period
     };
 
-    static Frame frameFor (int64_t shownHead, double smoothHead, int64_t live) noexcept
+    // `publishedEpoch` is the ring epoch the phase was computed under and
+    // `liveEpoch` the one this frame is drawing. They differ exactly when a
+    // clear has happened that the tick has not published for yet — the window
+    // between `GrHistoryBuffer::reset()` and the next tick, which a paint can
+    // fall into on its own schedule — and there the published phase belongs to
+    // ring indices that no longer exist. A restarted timeline restarts at
+    // phase 0, so that is what a frame draws until the tick republishes.
+    //
+    // The COUNT cannot stand in for the epoch here, and that is why this takes
+    // one: after a clear the ring refills from 0, so `smoothHead - head` is
+    // large and saturates the clamp to a phase of exactly 1 — one entry-pitch
+    // out, which is the defect — and once the refill has passed the old count
+    // (`shownHead <= live`, so `paintHead` no longer falls back) a stale
+    // `smoothHead` is numerically indistinguishable from a current one. Only
+    // the identity separates them.
+    static Frame frameFor (int64_t shownHead, double smoothHead, uint32_t publishedEpoch,
+                           int64_t live, uint32_t liveEpoch) noexcept
     {
         const int64_t h = paintHead (shownHead, live);
-        return { h, phaseOf (smoothHead, h) };
+        return { h, publishedEpoch == liveEpoch ? phaseOf (smoothHead, h) : 0.0 };
     }
 
     // The oldest ring index a frame may read, given the producer's live write
@@ -506,14 +533,29 @@ private:
     // decision from the one taken here and must fail the build rather than
     // ship quietly.
     static_assert (std::atomic<int64_t>::is_always_lock_free
-                       && std::atomic<double>::is_always_lock_free,
+                       && std::atomic<double>::is_always_lock_free
+                       && std::atomic<uint32_t>::is_always_lock_free,
                    "the painting thread reads these without blocking, or not at all");
     std::atomic<int64_t> shownHead  { -1 };   // repaint gate: new entries arrived
     std::atomic<double>  smoothHead { 0.0 };  // `smoothedHead`: the head advanced at the nominal rate
 
+    // THE VALIDITY OF THE OTHER TWO, and the one access on this boundary that
+    // is not relaxed. `tick` stores it LAST with `release`; `paintHistory`
+    // loads it FIRST with `acquire`. That pair is the invariant the reset fix
+    // rests on: a frame that sees this epoch also sees the `smoothHead` and
+    // `shownHead` published under it, so "the epoch matches" is a statement
+    // about the phase this frame can actually read rather than about a value
+    // that may still be in flight. A relaxed store here would be enough on a
+    // TSO target and NOT on a weakly ordered one, where the epoch could become
+    // visible before the phase it announces and hand a fresh frame the stale
+    // pre-reset offset — the exact defect this exists to close, reintroduced
+    // through the back door. It orders those two publications and nothing
+    // else; no payload crosses, and the audio thread is not involved.
+    std::atomic<uint32_t> publishedEpoch { 0 };
+
     // Message thread ONLY — the tick's memory of which history it last drew
-    // (`parked`). The painting side samples the ring's epoch itself, for its
-    // own batch guard, and never reads this.
+    // (`parked`). The painting side takes its epoch from the ring and from
+    // `publishedEpoch`, and never reads this (ADR-0038 clause 5).
     uint32_t shownEpoch = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GrHistoryView)

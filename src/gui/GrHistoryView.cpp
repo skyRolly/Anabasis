@@ -95,6 +95,12 @@ void GrHistoryView::tick (double dt)
     // case rather than two.
     smoothHead.store (smoothed, std::memory_order_relaxed);
     shownHead.store (head, std::memory_order_relaxed);
+    // …and the epoch those two were computed under, LAST and with RELEASE, so
+    // a frame that sees it sees them (the member's comment carries the whole
+    // argument). This is what makes the phase's validity checkable rather than
+    // assumed: until this store lands, a paint after a clear reads an epoch
+    // that no longer matches the ring's and anchors at phase 0.
+    publishedEpoch.store (epoch, std::memory_order_release);
     shownEpoch = epoch;
     repaint();
 }
@@ -138,9 +144,14 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // slots this batch may touch. Reading it ONCE keeps both answers derived
     // from the same observation.
     const int64_t live  = ring.available();
+    // ACQUIRE FIRST, then the two relaxed loads: the pair with `tick`'s
+    // release store is what makes a matching epoch mean "the phase published
+    // under it is visible to this frame". Reading it after them would order
+    // nothing and leave the reset defect open on weakly ordered targets.
+    const auto    pubEpoch = publishedEpoch.load (std::memory_order_acquire);
     const auto    frame = frameFor (shownHead.load (std::memory_order_relaxed),
                                     smoothHead.load (std::memory_order_relaxed),
-                                    live);
+                                    pubEpoch, live, epoch0);
     const int64_t head  = frame.head;
 
     // The clamp lives in `windowEntries` (header) so it is testable without a
