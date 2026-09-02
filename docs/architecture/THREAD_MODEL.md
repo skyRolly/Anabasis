@@ -210,7 +210,26 @@ above records a nuance without amending the ring rule.
   bin mapping. `SpectrumView` samples the generation on **both sides** of its analysis batch, the
   same reader contract `GrHistoryBuffer::resetEpoch()` states; it is a plain generation rather than
   that class's odd/even seqlock because `ScopeBuffer::reset()` writes one atomic and touches no
-  sample, so there is nothing for a reader to observe half-done.
+  sample. **CORRECTED, round 8:** this sentence used to end "so there is nothing for a reader to
+  observe half-done", which `src/dsp/ScopeBuffer.h` itself retracted in round 6 as "wrong in a way
+  that misled a review". There IS something to observe half-done — the index rewind is visible
+  independently of the generation bump that announces it. What follows from the no-payload half is
+  narrower and is what the ring actually relies on: there is no clear-window PAYLOAD store, so a
+  reader's payload loads cannot synchronise through one and an acquire fence would have nothing to
+  attach to. The reader takes both facets instead (`SpectrumView::resetObserved`), and the residual
+  is KI-018.
+  **THE NAMED PREMISE THIS RING'S READER CONTRACT RESTS ON, written here because it is
+  invisible from the reader's side:** `reset()` runs from `AnabasisEngine::prepare` with audio
+  stopped, and those are its only two call sites. That premise is what makes the host's
+  generation bump happen-before the audio thread's next `pushBlock`, which in turn FORCES the
+  reader's post-batch generation re-read past the bump whenever its batch read a non-zero
+  post-reset index — the leg that closes the partial-refill mixture inside one tick. The
+  complementary leg, an exactly-zero read, is closed by `analyse`'s floor instead, because
+  there the bump is sequenced AFTER the store the reader acquired and nothing forces it.
+  Both legs are PER RING: one `prepare` resets both in order, so the first ring's rewind
+  orders nothing about the second's. **Adding a `reset()` call site outside `prepare`, or
+  reordering/splitting the two calls, or adding a third spectrum ring, breaks these arguments
+  and reopens KI-018.**
   `testARewoundSpectrumRingDropsThePreviousTrace` covers both edges, including the
   count-never-dips case the old predicate could not see.
 - **Command atomics — the meter-hold reset is now IMPLEMENTED (P5, 2026-08-02)**, joining the

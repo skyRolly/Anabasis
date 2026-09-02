@@ -523,8 +523,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1536` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1606` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1558` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1628` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`

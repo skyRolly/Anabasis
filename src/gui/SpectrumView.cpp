@@ -175,18 +175,41 @@ void SpectrumView::tick (double dt)
     // configurations. Either way the answer is the same — drop to the floor and
     // re-anchor.
     //
-    // WHAT THIS DOES AND DOES NOT GUARANTEE, corrected in round 6 because the
-    // sentence here used to claim the second case outright. The post-batch load
-    // is BEST-EFFORT: it has no happens-before with the host thread's bump, so
-    // it may still return the old generation and this tick then commits the old
-    // value. What IS guaranteed is the half that matters and it is guaranteed by
-    // construction — `shownInGen` only ever advances in a tick that either
-    // floored the EMA first (`resetIn`) or floored it after (`gi1 != gi0`), and
+    // WHAT THIS DOES AND DOES NOT GUARANTEE. Round 6 corrected this from an
+    // outright claim to "BEST-EFFORT"; round 8 corrects it again, because
+    // best-effort UNDERSTATES it in the one case that matters and a reader of
+    // this comment could reasonably delete the post-batch re-read as decorative.
+    //
+    // FORCED, not best-effort, whenever `analyse` read a NON-ZERO post-reset
+    // index: that value came from the audio thread's release store in
+    // `pushBlock`, so it synchronises-with the acquire load in `readLatest`;
+    // the host's generation bump happens-before that push by the named premise
+    // in `ScopeBuffer`'s `reset()` (it runs from `prepare`, audio stopped);
+    // happens-before is transitive and the `gi1` load below is sequenced after
+    // the read, so write-read coherence FORCES `gi1` past the bump and the fill
+    // runs. That is the leg that catches the partial-refill MIXTURE — a tick
+    // where `resetObserved` is silent (the count has climbed back) and the
+    // zero-length floor is silent (frames were returned) — and it destroys the
+    // mixture inside the same tick, before `repaint`.
+    //
+    // BEST-EFFORT in the complementary case: if `analyse` read exactly 0, that
+    // value came from `reset()` itself and the bump is SEQUENCED AFTER it, so
+    // nothing forces `gi1`. That row is closed by the zero-length floor in
+    // `analyse`, which is therefore not redundant with this re-read: each
+    // closes what the other cannot.
+    //
+    // PER RING, and the scope is deliberate. One `prepare` resets both rings in
+    // order, so the in-ring's rewind orders nothing about the out-ring's. A tick
+    // can floor `inDb` on a zero-length read while `analyse (out, …)` folds
+    // pre-reset frames — bounded to one tick (the next tick's `co` is below
+    // `shownOutCount`, so the count term fires) and excluded on both shipped
+    // ISAs, not closed by force. KI-018 carries it.
+    //
+    // What is guaranteed unconditionally: `shownInGen` only ever advances in a
+    // tick that floored the EMA first (`resetIn`) or after (`gi1 != gi0`), and
     // a tick that saw the new generation is forced by `reset()`'s release
-    // ordering to read a post-rewind index, so **a pre-reset spectrum can never
-    // be committed as a post-reset one**. The residual is that the display can
-    // hold the previous spectrum for one or more ticks until the bump becomes
-    // visible — bounded, defined, and filed as KI-018 rather than papered over.
+    // ordering to read a post-rewind index — so **a pre-reset spectrum can
+    // never be committed as a post-reset one**.
     const auto gi0 = in.resetGeneration();
     const auto go0 = out.resetGeneration();
     const auto ci  = in.writeCount();

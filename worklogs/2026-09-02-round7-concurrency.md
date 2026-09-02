@@ -67,6 +67,36 @@ is only earlier-firing evidence. The added term is monotone: it can only flip `r
 so every existing behaviour is preserved. The comments in `ScopeBuffer.h` and `SpectrumView.cpp`
 that read as "the count is useless" now say which half of that is true.
 
+> **CORRECTED IN ROUND 8 — THIS SECTION'S COMPLETENESS ARGUMENT WAS INCOMPLETE.** What follows
+> below enumerates two mechanisms and reads as though they tile the interleaving space. They do not.
+> There is a **third leg**, and it is the one that closes the partial-refill MIXTURE row:
+>
+> * **The row the two mechanisms miss.** `shownInCount = C > 0`, a pre-reset peak in the EMA, the
+>   reset runs, audio restarts, and the refill reaches `k` with `C <= k`. The reader loads a stale
+>   `gi0` and `ci == k`, so `resetObserved (G, G, k, C)` is FALSE — no pre-fill. `readLatest` then
+>   acquires `k > 0`, so the zero-length floor does not fire either. Post-reset magnitudes are folded
+>   through the instant-attack assignment onto an intact pre-reset EMA. **Both shipped mechanisms are
+>   silent**, and the sub-case enumerated below covers only the empty read.
+> * **It is closed one line later, by force.** The acquired `k` came from `pushBlock`'s release
+>   store, which synchronises-with `readLatest`'s acquire load. The host's `resetGen` bump
+>   happens-before that push by the named premise (`reset()` runs from `prepare`, audio stopped —
+>   already load-bearing for the engine's reallocation of the spectrum scratch against the audio
+>   thread). Happens-before is transitive and `gi1` is sequenced after the read, so **write-read
+>   coherence forces `gi1` past the bump** and the post-batch fill destroys the mixture inside the
+>   same tick, before `repaint`. Not luck.
+> * **The two legs are complementary, not redundant.** If `readLatest` acquires exactly 0, that value
+>   came from `reset()` itself and the bump is SEQUENCED AFTER it, so nothing forces `gi1`; that row
+>   is closed only by the zero-length floor. Deleting either leg reopens a live defect that no test
+>   would catch.
+> * **AND THE COMPLETENESS IS PER RING, which this section also did not say.** One `prepare` resets
+>   both rings in order, so the in-ring's rewind orders nothing about the out-ring's. A tick can
+>   floor `inDb` on a zero-length read while `analyse (out, …)` folds pre-reset frames into `outDb`
+>   and the out generation stays stale — a pre-reset output trace beside a floored input one, for one
+>   tick. That row is **not** closed by force: it is bounded (the next tick's `co` is below
+>   `shownOutCount`, so the count term fires) and excluded on both shipped ISAs. KI-018 carries it.
+>   Saying so is the point: this project has shipped documentation claiming more than the code
+>   delivers three times, and asserting "three legs tile the space" would have been the fourth.
+
 **Why BOTH changes ship — neither subsumes the other.** The floor misses the partial-refill tick
 (`0 < w << shownCount`): `got > 0`, so post-reset magnitudes are folded into a pre-reset EMA through
 the attack assignment — a MIXTURE of two configurations, arguably worse than a freeze — and only the

@@ -188,7 +188,37 @@ the pair from inside the same epoch bracket as the entries — the round's own f
 "reads nothing `engine.prepare` writes", which is false and is corrected. **ADR-0011's fourth
 amendment is ACCEPTED and its gate CLEARED.**
 
-**Suites after all four review rounds, the KI-015 follow-up and rounds 6–7: `AnabasisTests` 307 +
+**Round 8 was a closure round: no code behaviour changed, and its output is three record
+corrections.** (1) **The ScopeBuffer stale-spectrum review finding is CLOSED as FIXED**, audited
+against the shipped code rather than against the previous round's report. Its anchor was also wrong —
+`ScopeBuffer.h:177` is a line inside the acquire-fence rationale, not inside `reset()` — which is one
+reason it kept regenerating. (2) **Round 7's completeness argument was incomplete and is corrected in
+its own worklog.** It enumerated two mechanisms as though they tiled the interleaving space; there is
+a THIRD leg, and it is the one that closes the partial-refill MIXTURE row (the count has climbed back
+so `resetObserved` is silent, frames were returned so the zero-length floor is silent). That row is
+closed inside the same tick by FORCE: the acquired non-zero index came from `pushBlock`'s release
+store, the generation bump happens-before that push by the named prepare-with-audio-stopped premise,
+and transitivity plus write-read coherence force the post-batch generation re-read past the bump. The
+complementary zero-read row is closed only by round 7's floor, so the two legs are not redundant.
+**And the completeness is PER RING** — one `prepare` resets both in order, so the first ring's rewind
+orders nothing about the second's; that cross-ring row is bounded and ISA-excluded rather than
+forced, and saying so is the point, since claiming "three legs tile the space" would have been the
+fourth time this project shipped documentation claiming more than the code delivers. (3) **KI-018 is
+RE-SCOPED AND RE-BOUNDED**: its "scheduling quantum, tens of ms" worst case does NOT apply to the
+surviving corner — that window came from the host being preempted between `reset()`'s two stores, and
+during it `write` stays 0 so every tick floors, which is precisely the case round 7 repaired. The
+corner's window is pure store-propagation latency, its four preconditions include two that pull
+against each other, and it is excluded in practice on both shipped ISAs (a narrowing observation
+about hardware, explicitly not the basis of the disposition). Its "the count term is silent (equal,
+not lower)" framing is also corrected: the value carries ZERO BITS of evidence rather than evidence
+ignored. The reading of invariant 2 in force is now stated as PER RING. `SpectrumView`'s post-batch
+comment is corrected from "BEST-EFFORT" — an understatement that invited deleting a load-bearing
+line — and `THREAD_MODEL.md` now carries the named premise and the two edits that must reopen the
+entry. Also corrected: two shipped sentences that contradicted the code (`THREAD_MODEL.md`'s
+"nothing for a reader to observe half-done", which `ScopeBuffer.h` had already retracted, and
+KNOWN_ISSUES's claim that `analyse` returns early without touching the EMA).
+
+**Suites after all four review rounds, the KI-015 follow-up and rounds 6–8: `AnabasisTests` 307 +
 `AnabasisStateTests` 1017 = 1324**, one
 new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 59 checks) pinning invariants
 rather than an absence of races — which index a frame may read, which value pairs it may draw, which

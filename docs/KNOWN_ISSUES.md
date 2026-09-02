@@ -1213,11 +1213,67 @@ Evidence [Verified]:
 >   bumped first INVERTS the skew and destroys the invariant that already held — a reader acquiring
 >   the new generation could then read a pre-reset index.
 >
-> **WHAT REMAINS, and it is why this entry is retained.** One corner survives: a reset whose refill
-> reaches EXACTLY the previously observed count while the generation bump is still invisible. Then
-> the count term is silent (equal, not lower), the generation term is silent, the idle test matches,
-> and the tick does nothing. It is the equal-count case in a new place — the same shape 0.2.7 and
-> round 2 each met — and no test pins it, because it cannot be staged deterministically.
+> **WHAT REMAINS — RE-SCOPED AND RE-BOUNDED IN ROUND 8, because two of this entry's own quantitative
+> claims were wrong as applied to the corner.**
+>
+> **The interleaving.** The reader commits `shownInGen = G`, `shownInCount = C > 0` at tick T.
+> `reset()` runs. At tick T+1 the reader loads `gi0 == G` (the bump not yet visible) and `ci == C` —
+> the post-reset refill having landed on exactly C. `resetObserved (G, G, C, C)` is false, the idle
+> test matches on all four equalities, and the tick does nothing.
+>
+> **The observable effect.** The previous trace is held. With both rings in the corner the tick
+> early-returns and the trace is held verbatim. There is also a CROSS-RING variant, found in round 8
+> and not previously written down: one `prepare` resets both rings in order, so the in-ring's rewind
+> orders nothing about the out-ring's — a tick can floor `inDb` on a zero-length read while
+> `analyse (out, …)` folds pre-reset frames into `outDb`, painting a floored input trace beside an
+> intact pre-reset output one. Both variants are **correct-but-one-frame-late**, not wrong data:
+> nothing incorrect is committed, and the fall-through commit is idempotent.
+>
+> **Why it is bounded — and the correction that matters most.** The "worst case is a scheduling
+> quantum, tens of milliseconds" bound stated above **does not apply to this corner**, and leaving it
+> to stand overstated the residual by orders of magnitude. That bound came from the host being
+> preemptible BETWEEN `reset()`'s two stores. But `reset()` runs from `prepare` with audio stopped,
+> so throughout any such preemption `write` stays at 0, the refill cannot run, and every reader tick
+> sees a count below `shownInCount`, fires the count term and floors the trace. **The preemption
+> window is exactly the case round 7 repaired; it cannot produce this corner**, whose refill by
+> definition happens after `prepare` has returned. The corner's window is pure store-propagation
+> latency. Four things must hold at once, and the last two pull against each other: `C > 0`; the
+> refill lands on exactly C; no reader tick during the refill (any such tick floors); and the
+> generation still stale on a load issued at least a block period after a release RMW that already
+> retired. On the two shipped ISAs — x86-64, and AArch64, which is other-multi-copy-atomic — those
+> last two are in practice contradictory. **That is a narrowing observation about real hardware, not
+> the basis of the disposition**, and it must be re-derived if the target set ever widens to a
+> non-multi-copy-atomic ISA.
+>
+> **Why it is not a stale-data correctness failure.** Invariant 1 is untouched: no payload is read on
+> the early-return path, and on the fall-through path `readLatest`'s acquired index is post-reset.
+> Invariant 2 — *no pre-reset visual result may remain displayed after the reset becomes
+> OBSERVABLE* — has a false antecedent here, and the second correction is about that word. Saying
+> "the count term is silent (equal, not lower)" reads as though the reader holds evidence and
+> discards it. It does not: the value C it loads is BIT-IDENTICAL to what the ring published before
+> the reset, so that load carries **zero bits of evidence**, as do the stale generation and a
+> non-empty `readLatest`. All facets are silent. **The reading in force is PER RING** — each trace is
+> drawn from its own EMA — which is what makes the cross-ring variant a residual rather than a
+> violation; the stronger per-display, real-time reading is not the contract and cannot be, since
+> under it every reset violates invariant 2 for one tick period and the invariant would describe no
+> achievable design for a polled reader.
+>
+> **Why it cannot persist and cannot lose a reset.** The idle early-return precedes the commit, so
+> `shownInGen` stays at the pre-reset value and the reader is still comparing against it. Transport
+> running: the count moves past equality and the generation term floors. Transport stopped: the
+> count never moves, and the idle test fails on the generation alone — which is precisely why the
+> generations are in that test. `shownInGen` advances only in a tick that floored before or after
+> `analyse`; there is no third path. This is the structural difference from the pre-round-7 defect,
+> where the reader committed a zero count and then satisfied the idle test for ever.
+>
+> **No test is owed**, and not because it is hard: rule 1 binds bug FIXES, and this is a documented
+> non-defect. Its precondition is the one `ScopeBuffer` structurally refuses to offer, since there is
+> no way to rewind without publishing — deliberately, because that coupling IS invariant 1.
+>
+> **TWO EDITS MUST REOPEN THIS ENTRY:** a `ScopeBuffer::reset()` call site outside `prepare` (which
+> would make the preemption window refillable and restore the wider bound), and reordering,
+> splitting or interleaving the two `reset()` calls — or adding a third spectrum ring — which changes
+> which rewind carries the happens-before edge and so changes the cross-ring analysis.
 
 **Severity:** Low
 **Status:** **Repaired round 7 except the equal-count corner above; retained and narrowed.**
@@ -1240,7 +1296,8 @@ invariant the review asked for, and it already held.
 **What is not guaranteed, and this is the real residual.** The reverse skew is permitted: a reader
 can observe the rewound INDEX while its generation load still returns the old value, because they are
 two atomics and only one direction is ordered. Then `resetIn` is false, `readLatest` yields nothing
-(the index is 0), `analyse` returns early **without touching the EMA**, and the previous spectrum is
+(the index is 0), `analyse` returned early **without touching the EMA** — it FLOORS the trace there
+since round 7, which is half of what closed this — and the previous spectrum was
 drawn again — verbatim, against the new rate's bin mapping. The tick can even satisfy the idle test
 outright and do nothing at all. Nothing decays it, because the EMA's decay only runs when frames
 arrive and a re-prepare normally happens with the transport stopped. It ends when the generation bump
