@@ -195,7 +195,7 @@ above records a nuance without amending the ring rule.
 - **Spectrum capture rings — IMPLEMENTED (P5, 2026-08-02)**: two `anabasis::ScopeBuffer`
   instances in the engine (post-input-gain and post-chain/render taps), each filled into
   preallocated scratch during stages A/E and published with ONE release-store per processed
-  chunk — the SPSC ring row, same discipline as `GrHistoryBuffer`. The FFT runs GUI-side
+  chunk — the SPSC ring row, same discipline as `GrHistoryBuffer` INCLUDING the atomic payload since the KI-015 follow-up (ADR-0011 amended a third time, 2026-09-02): the element is a `Sample` wrapper over one relaxed `std::atomic<float>`, the producer stores per sample instead of `memcpy`ing, and the ring takes no reader-side acquire fence because its `reset()` touches no sample. The FFT runs GUI-side
   (`SpectrumView`), reading stateless `readLatest` peeks; nothing on the audio thread windows,
   transforms or allocates. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
   tap-content equality).

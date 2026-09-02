@@ -19,6 +19,8 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <type_traits>
+#include <memory>
 
 static int failures = 0;
 static int checks   = 0;
@@ -3973,6 +3975,69 @@ static void testSpectrumRingsCarryTheTaps()
         if (! juce::exactlyEqual (l[(size_t) n], v)) { exact = false; break; }
     }
     check (exact, "spectrum: tap 1 is the post-input-gain signal, untouched");
+
+    // -- specSync (KI-015, 2026-09-02). THE PAYLOAD IS ATOMIC. The ring's
+    //    release/acquire index settles what a reader SEES and is a BACKWARD
+    //    edge only, so once the producer laps a reader mid-copy the two touch
+    //    the same floats with nothing ordering them — and until this round
+    //    both accesses were plain, which is a data race and undefined the
+    //    moment it happens, not merely improbable. A race cannot be staged
+    //    deterministically, so what is pinned is the TYPE that makes it
+    //    defined, exactly as `grSync` pins the sibling ring's: these
+    //    assertions do not COMPILE against the unrepaired header, because it
+    //    has no `Sample` at all.
+    {
+        using Ring = anabasis::ScopeBuffer;
+        check (! std::is_copy_constructible_v<Ring::Sample> && ! std::is_copy_assignable_v<Ring::Sample>,
+               "specSync: the ring's PAYLOAD is not a plain float — a read racing the producer is defined, not merely rare");
+        // NOT asserted, and the reason is a measurement: `is_trivially_copyable`
+        // reports TRUE for this type on both libstdc++ and libc++ even though
+        // every copy and move operation is deleted, so it cannot separate the
+        // wrapper from a plain float. GCC's `-Wclass-memaccess` fires on a
+        // different criterion — "no trivial copy-assignment" — which is why a
+        // re-introduced `memcpy` is still a red job on the GCC lanes.
+        check (! std::is_assignable_v<Ring::Sample&, float>,
+               "specSync: …and it cannot be written with `=`, which on a bare atomic would be a SEQ_CST store per sample on the audio thread");
+        check (std::atomic<float>::is_always_lock_free,
+               "specSync: …and it is lock-free, so the audio thread's store stays a store and never takes a lock");
+        check (sizeof (Ring::Sample) == sizeof (float) && alignof (Ring::Sample) == alignof (float),
+               "specSync: …at the layout of the plain float it replaced — the ring's heap footprint is unchanged");
+
+        // The repair moved no audio: same slots, same values, same order, and
+        // the publication is still one release store carrying the whole push.
+        const auto ringStorage = std::make_unique<Ring>();      // 128 KB: heap, not stack
+        auto& ring = *ringStorage;
+        std::vector<float> src ((size_t) 300), dl ((size_t) 300), dr ((size_t) 300);
+        for (int i = 0; i < 300; ++i)
+            src[(size_t) i] = 0.001f * (float) i - 0.1f;
+        ring.pushBlock (src.data(), src.data(), 300);
+        bool roundTrip = ring.writeCount() == 300
+                         && ring.readLatest (dl.data(), dr.data(), 300) == 300;
+        for (int i = 0; i < 300 && roundTrip; ++i)
+            roundTrip = juce::exactlyEqual (dl[(size_t) i], src[(size_t) i])
+                        && juce::exactlyEqual (dr[(size_t) i], src[(size_t) i]);
+        check (roundTrip,
+               "specSync: (premise) a settled batch reads exactly the published values back through the atomic payload");
+
+        // THE `n > capacity` BRANCH, which nothing in this tree had ever
+        // executed — and this round turns it into a scalar loop, so it is
+        // pinned now rather than left to a host that renders in one buffer.
+        // A push longer than the ring keeps the NEWEST `capacity` frames and
+        // still advances the index by the WHOLE block.
+        const auto bigStorage = std::make_unique<Ring>();
+        auto& big = *bigStorage;
+        const int over = Ring::capacity + 777;
+        std::vector<float> ramp ((size_t) over), ol ((size_t) Ring::capacity), orr ((size_t) Ring::capacity);
+        for (int i = 0; i < over; ++i)
+            ramp[(size_t) i] = (float) i;
+        big.pushBlock (ramp.data(), ramp.data(), over);
+        const int got = big.readLatest (ol.data(), orr.data(), Ring::capacity);
+        bool newest = big.writeCount() == (uint64_t) over && got == Ring::capacity;
+        for (int i = 0; i < Ring::capacity && newest; ++i)
+            newest = juce::exactlyEqual (ol[(size_t) i], ramp[(size_t) (over - Ring::capacity + i)]);
+        check (newest,
+               "specSync: a push longer than the ring keeps the newest capacity frames and still advances the index by the whole block");
+    }
 }
 
 // ---------------------------------------------------------------------------

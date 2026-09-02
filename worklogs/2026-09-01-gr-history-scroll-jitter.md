@@ -905,7 +905,10 @@ the supported targets. A mutex is out on both threads. The ring already had the 
 (one writer, a seqlock bracket, a reader that discards on tear) and the pair belongs to the timeline
 the clear starts, so it went where the timeline lives.
 
-**Architecture Review Gate.** This is a Thread Model change in the letter of
+**Architecture Review Gate — RAISED AND CLEARED.** The owner **accepted this amendment on
+2026-09-02**, after the round was pushed and reported; the gate is cleared and nothing on this record
+is pending. What follows is why it went to the gate at all, kept because that is the half worth
+keeping. This is a Thread Model change in the letter of
 `ARCHITECTURE_REVIEW_GATE.md` — a cross-thread path (the pair now crosses through the ring rather
 than through JUCE's members) and a new ordering (the reader's fence). It is recorded as ADR-0011's
 second dated amendment of 2026-09-02, the same treatment as round 3's atomic payload: a repair to a

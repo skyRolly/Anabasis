@@ -963,10 +963,45 @@ Evidence [Partially Verified]:
 - Test:   none — platform input behaviour, not reachable from the suites
 - Commit: this one
 
-### KI-015 — `ScopeBuffer`'s payload is read and written non-atomically, as `GrHistoryBuffer`'s was until 0.2.8 (2026-09-02)
+### KI-015 — `ScopeBuffer`'s payload is read and written non-atomically, as `GrHistoryBuffer`'s was until 0.2.8 (2026-09-02) — **CLOSED 2026-09-02**
+
+> **✅ CLOSED — REPAIRED, not downgraded.** A focused adversarial review of this entry (six
+> independent lenses, three adversarial stances and a completeness critic) confirmed a real data
+> race and rejected both "close it as race-free" and "defer it to a larger redesign": the fix needs
+> no architectural change, is confined to `src/dsp/ScopeBuffer.h`, and leaves `SpectrumView`
+> untouched. The payload element is now a `Sample` wrapper over one relaxed `std::atomic<float>`
+> (ADR-0011's third dated 2026-09-02 amendment, **raised at the Architecture Review Gate and held
+> for the owner's ruling**, since it supersedes an accepted sentence). Pinned by `specSync` in the
+> DSP suite.
+>
+> **THREE STATEMENTS IN THE ORIGINAL ENTRY BELOW ARE WRONG, and the corrections outlived the fix:**
+>
+> 1. *"`ScopeBuffer` has no reset epoch to bracket a batch with"* — **half false, and the true half
+>    is load-bearing.** `resetGeneration()` exists with a documented before/after contract and
+>    `SpectrumView::tick` brackets its batch with it on both sides. What `ScopeBuffer` does not have
+>    is an odd/even epoch around a payload-writing clear — and that distinction is exactly why this
+>    ring needs NO reader-side acquire fence where `GrHistoryBuffer` did: its `reset()` writes one
+>    atomic and touches no sample.
+> 2. *"its bulk `memcpy` needs its own design pass rather than a transliteration"* — **overstated.**
+>    Only the PRODUCER half is a `memcpy`; the racing reader half was already a per-element scalar
+>    loop. The repair turns four `memcpy`s into two store loops over the same segment arithmetic.
+> 3. *"the headroom is 4096 of 16384, so ~12288 frames (~0.26 s at 48 kHz)"* — **not an invariant,
+>    and this was the entry's whole severity argument.** It is a FRAME count, not a time (0.064 s at
+>    192 kHz); `reset()` rewinds the head, leaving a reader that holds a pre-reset index a margin
+>    anywhere in [0, capacity); and `maxBlock` is the host's `samplesPerBlock` with no upper clamp,
+>    so a single push reaches the reader's oldest slot at n ≥ 12289 and covers its whole window at
+>    n ≥ 16384 — two different thresholds, both previously unstated, neither needing a reader stall.
+>    Stated the other way round for honesty: that is **possible by construction and unexercised
+>    here** — no in-tree stimulus prepares more than 512 frames, and what would settle it is a survey
+>    of host offline-bounce buffer maxima, which this tree cannot answer.
+>
+> The severity assessment was right — nothing user-visible ever depended on it, and the worst
+> outcome after the repair is one FFT frame mixing old and new audio, decaying on the analyser's
+> ~120 ms EMA. What the entry got wrong was treating an unquantified margin as a reason the defect
+> was not a defect. The text below is left as written, per the append-only convention.
 
 **Severity:** Low
-**Status:** Confirmed (from the code; not reproduced, and not expected to be reproducible)
+**Status:** **CLOSED 2026-09-02 — repaired.** (Originally: Confirmed from the code; not reproduced, and not expected to be reproducible)
 **Affects:** every platform and format; the two spectrum capture points only — the input/output
 spectrum overlay. The GR history is **not** affected: the same defect was repaired there in 0.2.8.
 
@@ -1004,6 +1039,69 @@ Evidence [Verified]:
 - Test:   none — a race no deterministic suite can stage; the GR-history equivalent is pinned by
   the type-level `grSync` assertions, which have no `ScopeBuffer` counterpart yet
 - Worklog: `worklogs/2026-09-01-gr-history-scroll-jitter.md` §10, §11
+
+### KI-016 — Anamorph's `ScopeBuffer` carries the defect KI-015 repaired here, and that repository is read-only (2026-09-02)
+
+**Severity:** Informational (about the SIBLING product, not this one)
+**Status:** Confirmed from the sibling's source; deliberately not repaired
+**Affects:** Anamorph only. Anabasis is unaffected — KI-015 repaired the same shape here.
+
+`Anamorph:src/dsp/ScopeBuffer.h` is the file ADR-0009 records this ring as copied from, and it still
+carries the producer `memcpy` / reader plain-subscript pair that KI-015 shows to be a data race when
+the producer laps the reader. The sibling's `docs/KNOWN_ISSUES.md` has no ScopeBuffer entry, so the
+defect ships there unrecorded.
+
+**Why nothing is done about it from here, and why this entry exists anyway.** ADR-0009 item 8 makes
+divergence between the two products **accepted and one-way** — no upstream-sync obligation, no
+backport path, drift fixed per product — and `CLAUDE.md` §3 makes Anamorph read-only from this
+repository. So no sibling change is owed and none is proposed. What ADR-0009's Consequences do
+require is that an SPSC-ring improvement be made in both products *or accepted as drift*, and
+"accepted drift" is only meaningful against a named instance. This is the name. Whether to schedule
+the sibling repair is a product-family decision for the owner, taken in Anamorph's own tree.
+
+Evidence [Verified]:
+- Source: `Anamorph:src/dsp/ScopeBuffer.h` (the `memcpy` producer and the plain-subscript reader),
+  against this repository's repaired `src/dsp/ScopeBuffer.h`
+- Related: ADR-0011's third dated 2026-09-02 amendment; ADR-0009 item 8; KI-015
+
+### KI-017 — The paint path reads JUCE's plain prepared sample rate, in two views (2026-09-02)
+
+**Severity:** Low
+**Status:** Confirmed from the code; **not repaired — outside the KI-015 scope, and flagged for an
+owner decision on when it is taken**
+**Affects:** macOS and Windows only, where the OpenGL context attaches. Display only.
+
+Found while reviewing KI-015, in the same file, and deliberately left alone: `SpectrumView::paint`
+takes `processor.getSampleRate()` to map its frequency axis, and `CurveView` does the same for its
+own. That is `juce::AudioProcessor`'s plain `currentSampleRate` — written by
+`setRateAndBufferSizeDetails` on whichever thread the host reconfigures on — read from the painting
+thread. It is the **identical defect class** ADR-0011's second 2026-09-02 amendment repaired for
+`GrHistoryView`, by making the prepared pair ring metadata published inside the ring's clear. Two
+instances remain; neither is in KI-015's subject, and bundling them into a payload-atomicity repair
+would have been scope creep. The visible cost if it ever bit would be one frame's axis mapped
+through a half-updated configuration, on a re-prepare that already blanks the display.
+
+**A finding that bears on how this is judged, recorded because it is not written anywhere in the
+tree.** ADR-0027 and ADR-0038 both rest on the premise that a plain read from `paint` "is a data
+race … on exactly the two platforms where the context attaches". In the pinned JUCE 9.0.1 the GL
+render thread takes the **MessageManager lock** around component painting —
+`juce_OpenGLContext.cpp` emplaces the scoped `mmLock` before `paintComponent` and releases it
+after — so a component's `paint` cannot in fact run concurrently with message-thread work, and that
+mutual exclusion is a happens-before edge neither ADR considers. Neither ADR's DECISION is disturbed:
+their atomics are correct, cost nothing, and remain the right shape for state whose writer is not
+the message thread. What is narrower than written is the stated JUSTIFICATION, for the
+component-paint path specifically, and it is an implementation detail of one JUCE version rather
+than an API guarantee — which is a reason to keep the atomics, not to remove them. Recorded here so
+the next round starts from the source rather than from the premise. **No ADR text is changed on the
+strength of this entry**; that is an owner call.
+
+Evidence [Verified]:
+- Source: `src/gui/SpectrumView.cpp` (`paint`, the axis mapping) and `src/gui/CurveView.cpp`;
+  `juce_audio_processors`' plain `currentSampleRate`/`blockSize` members
+- Precedent: ADR-0011's second dated 2026-09-02 amendment (the repaired instance in `GrHistoryView`)
+- JUCE: `juce_opengl/opengl/juce_OpenGLContext.cpp` (the MessageManager lock around
+  `paintComponent`), read at the pinned 9.0.1
+- Worklog: `worklogs/2026-09-02-ki015-scopebuffer-payload.md`
 
 ## Standing note for P1 onward
 

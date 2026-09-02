@@ -157,7 +157,16 @@ no atomics and no possibility of interleaving with a user gesture.
   > round's scope.
 
   > **Amended 2026-09-02 (0.2.8 final review, same day) — the prepared (rate, block) pair is RING
-  > METADATA published inside the clear, and the reader closes a batch with a FENCE.** Two repairs
+  > METADATA published inside the clear, and the reader closes a batch with a FENCE.**
+  > **✅ ACCEPTED BY THE OWNER 2026-09-02 — THE ARCHITECTURE REVIEW GATE IS CLEARED.** It was raised
+  > as a gate item under `ARCHITECTURE_REVIEW_GATE.md`'s "**Thread Model change** — new thread, new
+  > cross-thread path, new atomic ordering" row (the pair crosses through the ring rather than
+  > through JUCE's members; the reader's close gains an acquire fence), flagged in the pull request
+  > as something a green build does not clear, and held there until the owner answered. The approval
+  > is of the amendment exactly as written below — the pair as ring metadata inside the clear's
+  > seqlock window, `prepare` owning the clear-on-change gate, and `batchIntact` as the batch's
+  > close — and it is not an instruction to revert any of it. No further action is pending on this
+  > record. Two repairs
   > to the contract above; neither changes the decision. **(1)** `GrHistoryView` maps its window and
   > scroll rate through the prepared pair, and until this amendment read it from `AudioProcessor`'s
   > plain `currentSampleRate`/`blockSize` — written by `setRateAndBufferSizeDetails` on whichever
@@ -191,6 +200,85 @@ no atomics and no possibility of interleaving with a user gesture.
   > Pinned by `grPrepared` (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` §3d) through
   > the ring and through the wrapper's `prepareToPlay`; the audio-thread `push` is instruction-
   > identical to the previous amendment's measurement because it did not change.
+
+  > **Amended 2026-09-02 (KI-015 follow-up) — the atomic-payload rule extends to `ScopeBuffer`, and
+  > this SUPERSEDES the first amendment's closing sentence.** That sentence read "`ScopeBuffer` is
+  > the same idiom and is **not** changed here … recorded as drift rather than repaired, because it
+  > is a separate component and outside this round's scope." The scope reason stands as history; the
+  > drift is now repaired, and the sentence no longer describes the tree.
+  >
+  > ⚠️ **RAISED AT THE ARCHITECTURE REVIEW GATE AND HELD — NOT SELF-RULED.** This amendment
+  > supersedes an accepted sentence in an Accepted ADR, and `AI_AGENT_POLICY.md` makes "an existing
+  > Accepted ADR conflict **detected**" a Hard Stop that a green build does not clear. Whether the
+  > change is a repair under the existing SPSC-ring contract or a decision in its own right is the
+  > OWNER's ruling; the agent's job was to detect it, flag it and stop, and the action is the same
+  > either way. Nothing here is claimed as pre-cleared.
+  >
+  > **The defect.** `ScopeBuffer`'s producer wrote its payload with `std::memcpy` on the audio
+  > thread and its reader read the same `float` objects with plain subscripts on the message thread.
+  > The release/acquire pair on the write index is sound and does exactly one job — every frame
+  > strictly below the acquired index is complete — but it is a BACKWARD edge only: nothing in
+  > `pushBlock` reads anything the reader writes, so the producer's SUBSEQUENT writes are unordered
+  > against every iteration of the reader's copy loop. When the producer laps the reader mid-copy the
+  > accesses conflict, and a plain read concurrent with a plain write is undefined the moment it
+  > happens. Same defect class as the first amendment's, in the ring that amendment named.
+  >
+  > **Why the headroom defence was not an invariant** — this is the part `KNOWN_ISSUES.md` had wrong,
+  > and the correction matters more than the fix. "4096 of 16384, so ~12288 frames (~0.26 s at
+  > 48 kHz)" fails on three independent paths. (a) It is a FRAME count, not a time: 0.064 s at
+  > 192 kHz. (b) `reset()` rewinds the head, so a reader holding a pre-reset index has a margin
+  > anywhere in [0, capacity), not `capacity − count`. (c) `n` is bounded only by the engine's
+  > `maxBlock`, which is the HOST's `samplesPerBlock` with no upper clamp — a push reaches the
+  > reader's oldest slot at n ≥ 12289 and covers its whole window at n ≥ 16384, with no reader stall
+  > at all. Those two thresholds are different and both were previously unstated. Possible by
+  > construction; no in-tree stimulus prepares more than 512, so it is unexercised here rather than
+  > known to be reachable in a shipping host.
+  >
+  > **The repair, confined to `src/dsp/ScopeBuffer.h`.** The payload element becomes a `Sample`
+  > class wrapping one `std::atomic<float>` and exposing only relaxed `store`/`load`; `pushBlock`'s
+  > two-segment `memcpy` becomes two store loops over the SAME segment arithmetic; `readLatest`'s
+  > two subscripts gain `.load()`. Nothing else moves — same slots, same bytes, same values, same
+  > single release-store publication and cadence, same reset protocol, same short-read clamp, same
+  > heap storage and `sizeof`. `SpectrumView` is not touched.
+  >
+  > **No reader-side acquire fence, and this is deliberate — it is where this ring differs from its
+  > sibling.** `GrHistoryBuffer` needed `batchIntact` because its `clear` WRITES THE PAYLOAD inside
+  > the epoch window, so a reader's payload loads are the only thing that can witness a clear.
+  > `ScopeBuffer::reset()` writes one atomic and touches no sample, so there is no clear-window store
+  > for a payload load to synchronise through, and `[atomics.fences]` gives an acquire fence nothing
+  > to attach to: the producer's payload stores are relaxed and no release fence precedes them. That
+  > is the same holding the SECOND amendment above already states for the sibling's `push`, applied
+  > to the identical producer shape, not a new claim. **Named premise it rests on:** `reset()` runs
+  > from `prepare` with audio stopped — a host-API contract, not a C++ guarantee, and the same
+  > premise the engine's reallocation of every other ring in `prepare` already depends on.
+  >
+  > **Measured, not assumed — and the first amendment's "instruction-identical" claim is explicitly
+  > NOT transferable here.** `pushBlock` compiled at `-O3` for x86-64: **4 call sites → 0**, and
+  > **0 lock-prefixed instructions**, under clang-22.1.8 and g++ 13.3 alike — the four `memcpy`
+  > calls become inline scalar stores that neither compiler vectorises, because LLVM and GCC will
+  > not vectorise atomic accesses. Cost, measured on the real workload (two rings × two channels per
+  > chunk): **+0.56 µs per 512-frame block at 48 kHz, which is +0.005 % of the block period**, and
+  > +0.021 % at 192 kHz/512, the worst ordinary cell. Against `PERFORMANCE_BUDGET.md`'s recorded
+  > 625.4 ns/sample working cell that is a relative delta under 0.2 %. It is deliberately NOT
+  > presented as an `AnabasisBench` delta: at 0.005 % of realtime the change is far below that
+  > harness's run-to-run resolution, so a bench table would report noise and call it evidence.
+  >
+  > **Two spellings are now forbidden in that header, and the record states which gate catches
+  > which, because the answer is asymmetric.** A re-introduced `memcpy` over the payload is
+  > diagnosed by GCC (`-Wclass-memaccess`, on the "no trivial copy-assignment" criterion) and the
+  > zero-first-party-warning gate makes that a red job — but **clang-22 is silent even with
+  > `-Wnontrivial-memaccess`, measured**, so the GCC lanes are the whole of the automated catch.
+  > `slot = value` on a bare `std::atomic<float>` would select the SEQ_CST `operator=` — a fenced
+  > store per sample on the audio thread that no instrument in this tree reports — and the `Sample`
+  > wrapper makes that spelling ill-formed rather than merely discouraged. Note also that
+  > `std::is_trivially_copyable` reports TRUE for such a wrapper on both libstdc++ and libc++ despite
+  > every copy and move operation being deleted, so it is not the property to lean on; the test
+  > asserts copy-constructibility and copy-assignability instead.
+  >
+  > **Anamorph keeps the unrepaired shape.** ADR-0009 item 8 makes divergence accepted and one-way,
+  > and `CLAUDE.md` §3 makes that repository read-only from here, so no sibling change is owed. The
+  > instance is recorded as **KI-016** rather than left as an undocumented difference — "accepted
+  > drift" against a named instance, not against a wording.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

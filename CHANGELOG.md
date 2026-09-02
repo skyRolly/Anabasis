@@ -122,6 +122,15 @@ change here is on the reading side. Measurement trail:
   keeps doing exactly what it did. **The audio thread is unaffected**: its store compiles to the same
   instructions it always did, verified against the generated code, and a build on any target where
   that would not hold now fails rather than shipping. Evidence: this release. [Verified]
+- **The spectrum analyser's captured audio is read and written atomically too.** The two capture
+  rings behind the spectrum display had the same defect the history buffer did: the audio thread
+  wrote their samples while the display read them, and if the audio thread got far enough ahead of a
+  display frame those were undefined reads, whatever the compiled code did. The stored samples are
+  atomic now, so such a read is defined — at worst one analyser frame mixes older and newer audio,
+  which fades out on the display's own ~120 ms smoothing. Nothing about the picture changes. **The
+  audio thread pays a measured 0.005 % of one buffer's time** for it, verified against the generated
+  code and against the timing of the capture itself, and a build on any target where that store
+  would take a lock now fails rather than shipping. Evidence: this release. [Verified]
 - **The display's time base can no longer be torn by a host reconfiguration.** The sample rate and
   buffer size the history maps its 20-second window and scroll rate through were read from values
   the host's thread rewrites during a reconfiguration, while the display was reading them — a data

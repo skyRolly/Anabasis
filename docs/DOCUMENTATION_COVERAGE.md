@@ -78,7 +78,8 @@ pair the gate compares is the pair readers get. The bracket's CLOSE became `batc
 FENCE, then a relaxed epoch re-read — Boehm's seqlock reader (MSPC 2012), whose correctness is the C++
 model's on weakly ordered targets, where the acquire LOAD it replaces left the batch's earlier relaxed
 loads unordered against it and TSO alone had been hiding the gap. Recorded as ADR-0011's second dated
-amendment of the day, with `THREADING_POLICY.md`, `THREAD_MODEL.md`, `TESTING.md` and KI-015 (now
+amendment of the day — **accepted by the owner 2026-09-02, clearing that Architecture Review Gate
+item** — with `THREADING_POLICY.md`, `THREAD_MODEL.md`, `TESTING.md` and KI-015 (now
 stating the PR-#27 exclusion, the race class and the headroom explicitly) synced. The same round
 returned the GCC 16 LTO lane to zero first-party warnings — six `-Wfloat-equal` exact comparisons
 against `0.0` in the new test, now `std::abs (…) < 1.0e-12` like the surrounding checks — and answered
@@ -86,7 +87,38 @@ the MSVC PREfast C6262 finding on that test (379,228 bytes of summed locals) by 
 rings and one 76 KB processor to the heap: measured under clang `-fstack-usage -fno-inline`, the
 function's frame fell from 76,632 to 936 bytes; PREfast itself runs only in the Windows lane.
 
-**Suites after all four review rounds: `AnabasisTests` 301 + `AnabasisStateTests` 1003 = 1304**, one
+**A separate follow-up closed KI-015: the spectrum rings' payload.** The two `ScopeBuffer` instances
+carried the same defect the GR ring did until 0.2.8 — the audio thread wrote the payload with
+`memcpy`, the message thread read it with plain subscripts, and the release/acquire index is a
+BACKWARD edge that cannot order the producer's subsequent writes against the reader's copy loop. A
+focused adversarial review (six lenses, three adversarial stances, a completeness critic) rejected
+both "close it as race-free" and "defer to a larger redesign". The severity assessment in KI-015 was
+right and its ARGUMENT was not: "4096 of 16384, ~0.26 s at 48 kHz" is a frame count rather than a
+time (0.064 s at 192 kHz), `reset()` rewinds the head so a pre-reset reader's margin is anywhere in
+[0, capacity), and `maxBlock` is the host's `samplesPerBlock` with no upper clamp — one push reaches
+the reader's oldest slot at n >= 12289 and covers its whole window at n >= 16384, needing no reader
+stall at all (possible by construction; unexercised here, since no in-tree stimulus prepares more
+than 512). The payload element is now a `Sample` wrapper over one relaxed `std::atomic<float>`
+exposing only relaxed accessors, which makes the SEQ_CST `operator=` spelling ill-formed; the change
+is confined to `src/dsp/ScopeBuffer.h` and `SpectrumView` is untouched. **No reader-side acquire
+fence**, because unlike `GrHistoryBuffer::clear` this ring's `reset()` writes one atomic and touches
+no sample — the sibling's own ratified holding about `push` applied to the identical producer shape.
+**Measured, and the GR round's "instruction-identical" claim explicitly does not transfer:**
+`pushBlock` goes from four `memcpy` call sites to zero calls and zero lock prefixes (clang-22 and
+g++ 13.3, `-O3`), costing +0.005 % of the block period at 48 kHz/512 and +0.021 % at 192 kHz — below
+`AnabasisBench`'s resolution, which is why no bench table is quoted. Recorded as **ADR-0011's third
+dated 2026-09-02 amendment, raised at the Architecture Review Gate and HELD** (it supersedes an
+accepted sentence in the first amendment, a Hard Stop under `AI_AGENT_POLICY.md` whatever the
+agent's own view of severity), with `THREADING_POLICY.md`, `THREAD_MODEL.md` and KI-015's closure
+synced. Two findings filed rather than fixed: **KI-016** (Anamorph carries the unrepaired shape and
+records it nowhere; accepted one-way drift under ADR-0009 item 8, now against a named instance) and
+**KI-017** (`SpectrumView`/`CurveView` read JUCE's plain prepared rate from the painting thread —
+the defect class the second amendment repaired for `GrHistoryView`), the latter also recording that
+JUCE 9.0.1 takes the MessageManager lock around `paintComponent`, which narrows ADR-0027's and
+ADR-0038's stated premise without disturbing either decision.
+
+**Suites after all four review rounds and the KI-015 follow-up: `AnabasisTests` 307 +
+`AnabasisStateTests` 1003 = 1310**, one
 new test (`testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset`, 59 checks) pinning invariants
 rather than an absence of races — which index a frame may read, which value pairs it may draw, which
 states it may park on, that the validation path is built on synchronised publication state, that a
@@ -101,7 +133,16 @@ the pre-existing `grEpoch`), the pair left unpublished by the clear 12 (a supers
 never matches, and every pair-reading check sees zeros), and the batch close blind to the epoch
 exactly 1 — the torn-close check and no other, which is what says that check carries that fact
 alone. The fence itself has no mutant: its absence is a hardware reordering no single-threaded
-suite can stage, which is the argument for the fence being made in writing (ADR-0011).
+suite can stage, which is the argument for the fence being made in writing (ADR-0011). The KI-015
+follow-up adds six `specSync` checks and two more mutants, each killing exactly one: the payload
+reverted to a plain-float struct 1, and the `n > capacity` branch keeping the OLDEST frames 1 —
+that branch being a coverage hole that PREDATES the fix, since nothing in the tree had ever executed
+it. Two mutants there have no automated killer and the record says so: a re-introduced `memcpy` over
+the payload is caught by GCC's `-Wclass-memaccess` under the zero-warning gate but **clang-22 is
+silent even with `-Wnontrivial-memaccess`, measured**, so the GCC lanes are the whole of that catch;
+and `std::is_trivially_copyable` reports TRUE for the wrapper on both libstdc++ and libc++ despite
+every copy and move operation being deleted, which is why the test asserts copy-constructibility and
+copy-assignability instead.
 
 **Scope of the 0.2.8 round.** One owner report — *"the newly drawn portion of the GR history to
 the right of the yellow line is jittery"* — and one display fix. **No DSP change, no parameter
