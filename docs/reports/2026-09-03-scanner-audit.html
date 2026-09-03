@@ -76,7 +76,7 @@ footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:v
 
 <h1>Scanner Finding Audit</h1>
 <p class="sub">Anabasis · raw-SARIF audit of CodeQL and Microsoft C++ Code Analysis (PREfast)<br>
-Commit <code>fce94b3</code> (<code>main</code>) · audit dated 2026-09-03 · <strong>status: audit complete, fix implemented, verification in progress</strong></p>
+Commit <code>fce94b3</code> (<code>main</code>) · audit dated 2026-09-03 · <strong>status: COMPLETE — audit closed, fix implemented and scanner-confirmed</strong></p>
 
 <div class="note">
 This report is the <strong>live state</strong> of the audit, not a retrospective. The checklist and the
@@ -91,7 +91,7 @@ register are updated as work lands. Its companion worklog is
   <div class="stat"><div class="n">152</div><div class="l">First-party</div></div>
   <div class="stat"><div class="n">5</div><div class="l">Root-cause groups</div></div>
   <div class="stat"><div class="n">1</div><div class="l">Production findings</div></div>
-  <div class="stat"><div class="n">1</div><div class="l">Fixed</div></div>
+  <div class="stat"><div class="n">1</div><div class="l">Fixed &amp; confirmed</div></div>
   <div class="stat"><div class="n">51</div><div class="l">Third-party</div></div>
 </div>
 
@@ -99,7 +99,7 @@ register are updated as work lands. Its companion worklog is
 <table>
 <thead><tr><th>Disposition</th><th>Groups</th><th>Raw findings</th><th>Notes</th></tr></thead>
 <tbody>
-<tr><td><span class="tag t-fix">FIXED</span></td><td>1 (G1)</td><td>1</td><td>Production. Bound made locally provable.</td></tr>
+<tr><td><span class="tag t-fix">FIXED</span></td><td>1 (G1)</td><td>1</td><td>Production. Bound made locally provable. <strong>Scanner-confirmed cleared.</strong></td></tr>
 <tr><td><span class="tag t-fp">FALSE POSITIVE</span></td><td>1 (G3)</td><td>9</td><td>Analyzer models <code>dynamic_cast</code> as identity.</td></tr>
 <tr><td><span class="tag t-acc">TEST-ONLY ACCEPTABLE</span></td><td>1 (G2)</td><td>133</td><td>Stack fixtures. Monitored, not churned.</td></tr>
 <tr><td><span class="tag t-def">DEFER — SHOULD FIX</span></td><td>1 (G4)</td><td>4</td><td>SAL annotation mismatch. Needs MSVC iteration.</td></tr>
@@ -133,8 +133,8 @@ declared 58 rules and reported <code>executionSuccessful: true</code>.
 <li class="done"><strong>Phase 4 — Roadmap placed.</strong> One item per root cause; no redundant per-finding tasks.</li>
 <li class="done"><strong>Phase 5 — actionable fix implemented.</strong> G1 (<code>C6385</code>) fixed in <code>src/dsp/AnabasisEngine.cpp</code>.</li>
 <li class="done"><strong>Phases 6 / 7 — report and worklog live in-repo.</strong></li>
-<li class="wip"><strong>Phase 8 — verification.</strong> Local suites and gates all green; scanner re-run pending CI.</li>
-<li class="todo"><strong>Scanner re-run confirms G1 cleared</strong> and introduces no new finding. Requires a CI round on the pushed branch.</li>
+<li class="done"><strong>Phase 8 — verification complete.</strong> Local suites and gates green; PREfast re-run confirms the fix.</li>
+<li class="done"><strong>Scanner re-run confirmed G1 cleared</strong> with no new finding introduced.</li>
 </ul>
 </div>
 
@@ -175,7 +175,7 @@ silently with every future edit to the call graph.</td></tr>
 carries a comment forbidding its removal as “redundant”: it is the term that makes the access provably in bounds.
 This fix applies the same rule to the lower bound.</td></tr>
 <tr><th>Blocker</th><td>None.</td></tr>
-<tr><th>Status</th><td>Fixed; awaiting scanner re-run to confirm the diagnostic clears.</td></tr>
+<tr><th>Status</th><td><strong>CLOSED — scanner-confirmed.</strong> PREfast run <code>33801797950</code> (<code>a7112c4</code>): 153 → 152 results, the delta being exactly this finding. No new finding introduced. <code>src/</code> now reports 0.</td></tr>
 </tbody>
 </table></div>
 </div>
@@ -386,11 +386,13 @@ SARIF and makes no claim about alert-store state.</p>
 <li class="done"><code>check-docs</code> 109 clean · <code>check-citations</code> 54 anchors · <code>check-portability</code> 48/0 · <code>check-realtime</code> 40 files, 1 of 1 verified.</li>
 <li class="done"><strong>All six gate self-tests pass</strong> — docs 67, citations 37, portability 120, realtime 145, linux-abi 19, clang-warnings 18.</li>
 <li class="done"><code>git diff --check</code> clean; diff reviewed — the production change is <strong>+2 / −1 lines</strong>, no unrelated modification.</li>
-<li class="todo"><strong>Scanner re-run</strong> on the pushed commit: confirm <code>C6385</code> clears and no new finding appears. <em>G1 stays “fixed pending scanner confirmation” until this reports.</em></li>
+<li class="done"><strong>Scanner re-run confirms the fix.</strong> PREfast run <code>33801797950</code> on <code>a7112c4</code>: <strong>153 → 152 results, delta exactly −1</strong>. The one resolved finding is <code>C6385 src/dsp/AnabasisEngine.cpp:882</code>; <strong>zero new findings</strong>; the <code>src/</code> surface now carries <strong>0</strong> results.</li>
 <li class="na"><strong>Not run here:</strong> macOS, Windows, MSVC <code>/analyze</code> locally, pluginval, ASan/UBSan — CI’s lanes.</li>
 </ul>
-<p class="note" style="margin-bottom:0">No finding is marked fixed on reasoning alone. G1 is marked
-<em>fixed pending scanner confirmation</em> until a PREfast run on the new commit reports it gone.</p>
+<p class="note" style="margin-bottom:0">No finding was marked fixed on reasoning alone, and G1 is now closed on
+evidence rather than argument: the before/after SARIF diff over the same analyzer shows a delta of exactly one result,
+and that result is the finding. The production scanner surface is clean — a statement this report can make only because
+the raw SARIF was retrieved and compared, not because a dashboard said so.</p>
 </div>
 
 <h2>Evidence</h2>

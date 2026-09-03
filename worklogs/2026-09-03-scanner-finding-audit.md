@@ -194,10 +194,20 @@ Local, on this commit, after the G1 fix:
 1345 matches `HANDOVER.md`'s recorded figure exactly, which is the non-regression statement: the fix
 changes no behaviour, and the suites agree.
 
-**Pending, and G1 is not claimed closed without it:** a PREfast run on the pushed commit must report
-`C6385` gone. The fix is a *local provability* change, so only the analyzer can confirm it landed —
-the tests cannot see it, because there was never a reachable defect for them to catch. Recorded as
-`fixed pending scanner confirmation` until that run reports.
+**Scanner confirmation — G1 is closed on evidence.** PREfast run `33801797950` on `a7112c4`,
+diffed against the audited run at `fce94b3` over the same analyzer:
+
+| | before | after |
+|---|---|---|
+| total results | 153 | **152** |
+| resolved | — | exactly one: `C6385 src/dsp/AnabasisEngine.cpp:882` |
+| newly introduced | — | **none** |
+| `src/` surface | 1 | **0** |
+
+The delta is exactly the finding and nothing else, which is the statement worth having: the fix
+landed, and it did not trade one diagnostic for another. This is also the only way G1 could be
+confirmed — it is a local-provability change, so the suites cannot see it, there having been no
+reachable defect for them to catch.
 
 **Not run here:** macOS, Windows, MSVC `/analyze` locally, CodeQL locally, pluginval, ASan/UBSan —
 all CI lanes.
