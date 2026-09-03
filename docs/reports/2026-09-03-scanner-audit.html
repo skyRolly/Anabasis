@@ -157,6 +157,37 @@ closed — nothing below reopens G1, G2, G3, T1 or T2, and no new evidence was f
 </ul>
 </div>
 
+<h3>Round 3 — audit-record consistency closure</h3>
+<div class="panel">
+<p>Two review findings, both about the audit <em>records</em> rather than the audit. No source, test, scanner or CI
+change. Every completed disposition stands unchanged.</p>
+<ul class="ck">
+<li class="done"><strong>Coverage record synchronised.</strong> Round 2 changed two audit records without updating
+<code>DOCUMENTATION_COVERAGE.md</code>, which the audit obligation requires of every documentation-affecting change.
+Entries added for rounds 2 and 3; nothing else backfilled.</li>
+<li class="done"><strong>Verification levels separated.</strong> The worklog asserted G4 “Windows-CI-verified” in a
+section written <em>before</em> the run. The compression was the defect — it ran together four things of which only the
+last is evidence: local (a no-op off MSVC by construction), Windows CI execution (proves the annotation is well-formed,
+not that the diagnostic stopped firing), <strong>PREfast scanner confirmation</strong> (the raw SARIF — the only level
+that settles it, the <code>_Success_</code> clause having been derived rather than looked up), and the standing limit
+that confirmation is confirmation on <em>one</em> toolset.</li>
+<li class="done"><strong>Four self-contradictions in this report, corrected.</strong> A seven-lens sweep found them, all
+introduced by updating one part of this document when G4/G5 closed and not the others: “Open decisions” still calling G4
+deferred; the Roadmap preamble still promising an open verification claim at the top; G4’s cost row still naming the
+<em>rejected</em> fix and calling verification pending; and R1/R2 filed in two Roadmap buckets at once.</li>
+<li class="done"><strong>Stale row in <code>HANDOVER.md</code> — found, reported and corrected.</strong> Its Test Status
+row claimed “Five checkers now ship <code>--self-test</code>” while <em>listing six</em>, with
+<code>check-realtime 90</code> and <code>check-clang-warnings 15</code>. Both had been stale for two versions (0.2.10 grew
+the realtime self-test; <code>CI_CD.md</code> already records clang-warnings 15 → 18). Corrected from a measured run of
+all six on this commit — <strong>67 / 37 / 120 / 145 / 19 / 18</strong>. Not this round’s doing, and recorded here rather
+than changed quietly: policy C6 objects to <em>silent</em> correction, not to correction.</li>
+</ul>
+<p class="note" style="margin-bottom:0"><strong>Worth keeping.</strong> A live document updated in place accumulates
+exactly this class of defect, because the parts that need changing are the ones that do not mention the thing that
+changed. Asking “what does this document now contradict?” finds them; re-reading what you just edited does not — which is
+also how the two residues fixed at the end of this round survived their first pass.</p>
+</div>
+
 <h3>Review finding register</h3>
 
 <div class="panel">

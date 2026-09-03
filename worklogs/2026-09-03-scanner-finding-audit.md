@@ -460,3 +460,17 @@ diff is `docs/` and `worklogs/` only.
 Every completed disposition stands unchanged — G1, G4, G5 fixed and scanner-confirmed; G2 monitored;
 G3 and the two review findings recorded disproofs; T1/T2 third-party; CodeQL clean on both languages.
 **Zero actionable first-party findings remain**, and the records now agree with each other on that.
+
+## C7. The sweep also caught two residues in this round's own output
+
+Worth recording, because they are the same defect class as §C3 and they survived a first pass. The
+synthesis pass re-read the four files after the corrections and found (a) the worklog claiming the
+`HANDOVER.md` drift was recorded "here **and in the final report**" while the report carried no
+round-3 record at all, and (b) this round's `DOCUMENTATION_COVERAGE.md` entry still describing the
+round as *one wording fix* after it had grown to six, and not listing `HANDOVER.md` among the records
+it engaged. Both fixed: the report now carries the round-3 closure section, and the coverage entry
+matches the round it describes.
+
+The pattern is exact. Each was written when it was true, then the round grew past it. That is the
+whole lesson of §C3 recurring inside the fix for §C3 — which is the argument for sweeping a document
+set against itself at the END of a round rather than trusting that each edit was complete when made.

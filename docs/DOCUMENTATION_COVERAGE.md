@@ -114,14 +114,29 @@ after, which is the evidence for that claim rather than an assertion of it.
 **Audit-record consistency closure, round 3 (2026-09-03).** Round 2 changed two audit records and did
 not update this file, which the audit obligation requires of *every* documentation-affecting change —
 the entry above is that correction, and it is the whole of it: no unrelated history is backfilled and
-no historical obligation is invented. The same round corrected one wording defect in the worklog,
-which asserted G4 "Windows-CI-verified" in the narrative section written **before** the run happened,
-while the report at that moment still said pending. The worklog now separates the levels that claim
+no historical obligation is invented. The round then grew past that. It also corrected **four
+self-contradictions in the audit report** — "Open decisions" still calling G4 deferred, the Roadmap
+preamble still promising an open verification claim at the top, G4's cost row still naming the fix
+its own Fix row rejects, and R1/R2 filed in two Roadmap buckets at once — all found by a seven-lens
+consistency sweep, and all introduced by updating one part of a live document when G4/G5 closed and
+not the others. It corrected **one stale row in `HANDOVER.md`** (Test Status claimed "Five checkers"
+while listing six, with `check-realtime 90` and `check-clang-warnings 15`; measured now as 67 / 37 /
+120 / 145 / 19 / 18) — drift predating this round by two versions, reported in the worklog and the
+report rather than changed quietly. And it corrected **one wording defect in the worklog**, which
+asserted G4 "Windows-CI-verified" in the narrative section written **before** the run happened, while
+the report at that moment still said pending. The worklog now separates the levels that claim
 was compressing — local (a no-op off MSVC by construction), Windows CI execution (the job going
 green proves the annotation is well-formed, not that the diagnostic stopped firing), Windows PREfast
 scanner confirmation (the raw SARIF; the only level that settles it), and the standing limitation
 that confirmation is confirmation on one toolset — and defers the result to the section that reports
-it. No source, test, scanner or CI change was made in this round.
+it. Records engaged: `docs/reports/2026-09-03-scanner-audit.html`,
+`worklogs/2026-09-03-scanner-finding-audit.md`, `docs/HANDOVER.md` and this file. No source, test,
+scanner or CI change was made in this round.
+
+The round's own last two defects are recorded because they are the same class: the worklog claimed the
+`HANDOVER.md` drift was recorded "in the final report" when the report carried no round-3 record at
+all, and this entry described the round as one wording fix after it had grown to six. Both were found
+by re-reading the documents against each other rather than against memory.
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).
