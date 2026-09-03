@@ -879,7 +879,20 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // compressor is doing the work, and `min(measure, predict)` hides that
         // once the measure converges. A P5 item (the meter legend has to say
         // which reduction it is showing) rather than a defect today.
-        grMinThisCall = juce::jmin (grMinThisCall, gains[0], gains[nCh - 1]);
+        // `nCh - 1` is the LAST active channel. `process` already refuses a
+        // block with no channels -- `numChannels <= 0` returns false before any
+        // chunk runs -- so nCh >= 1 whenever this line executes. That guard
+        // lives in the CALLER, though, and PREfast analyses this function on
+        // its own: it admits nCh == 0, reads this as `gains[-1]`, and raises
+        // C6385 ("the readable size is '8' bytes, but '-4' bytes may be read")
+        // -- the only production-code finding in the scanner set. Clamping
+        // locally makes the bound provable WHERE IT IS USED, which is the same
+        // reason the `kMaxChannels` term on `nCh` above is documented as not
+        // removable-as-redundant. No behaviour change for any nCh >= 1: this is
+        // the only indexed read of `gains` outside a `ch < nCh` loop, and every
+        // such loop is already empty-safe at nCh == 0.
+        const int lastCh = juce::jmax (0, nCh - 1);
+        grMinThisCall = juce::jmin (grMinThisCall, gains[0], gains[lastCh]);
         for (int ch = 0; ch < nCh; ++ch)
             grMinThisCallCh[ch] = juce::jmin (grMinThisCallCh[ch], gains[ch]);
 

@@ -6,8 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **scanner-SARIF artifact change (2026-09-03)** — `codeql.yml` and
-`msvc.yml` now also publish their raw SARIF as Actions artifacts. Before that, for **0.2.8
+**Last updated:** for the **scanner-finding audit (2026-09-03)** — the first audit run against raw
+SARIF retrieved from the scanners themselves, and the one production finding it produced. Before
+that, the **scanner-SARIF artifact change (2026-09-03)** — `codeql.yml` and `msvc.yml` now also
+publish their raw SARIF as Actions artifacts — and **0.2.9 / 0.2.10 (2026-09-02/03)**, whose
+entries are below. Before those, for **0.2.8
 (2026-09-01, review rounds 2026-09-02)** — the GR history's scroll jitter (one owner field report),
 the three reader/publisher defects a second review found in the fix, and the two the third and
 fourth rounds added (the ring's plain payload; the host reconfiguration race on the display's time
@@ -29,10 +32,62 @@ analysis itself failed, to avoid burying the real error behind a missing-file fa
 changing, and the scanners still require exactly what they required of the code; only where their
 output is kept changed. `REPOSITORY_MAP.md` likewise: no script was added or removed.
 
-**Drift reported, not corrected (C6).** This file's "Last updated" read **0.2.8** while **0.2.9**
-and **0.2.10** had both shipped (the non-finite state-read rule and its follow-up), so the coverage
-audit had no entry for either. That gap predates the change above and is outside its scope; it is
-recorded here rather than silently backfilled, per this policy's own Enforcement clause.
+**Drift CORRECTED (2026-09-03), having been reported first.** This file's "Last updated" read
+**0.2.8** while **0.2.9** and **0.2.10** had both shipped, so the coverage audit carried no entry
+for either. The previous change recorded the gap rather than backfilling it mid-task; the two
+entries below close it now. The correction is deliberately narrow — only the two versions that
+actually shipped undocumented, reconstructed from those commits' own contents rather than
+re-derived. No unrelated history is backfilled, and no confidence level is upgraded.
+
+**What was actually missed, checked rather than assumed.** Both versions satisfied most of their
+obligations at the time: `SERIALIZATION_REGISTRY.md`, `HANDOVER.md`, `CHANGELOG.md`, the affected
+ADRs and a per-version worklog were all updated in the shipping commits. Two rows were left
+unsatisfied. (1) **New/changed test** — both added tests (`state_tests.cpp` in 0.2.9;
+`state_tests.cpp`, `dsp_tests.cpp` and `bench.cpp` in 0.2.10) and neither updated this file.
+`TESTING.md` needed no edit for them after all: its `AnabasisStateTests` section already lists
+"corrupt/foreign-state robustness" as a coverage area, which is the bucket these tests fall in.
+(2) **CI workflow** — 0.2.10 rewrote `scripts/check-realtime.py`'s gate semantics and did not update
+`TESTING.md`, whose Realtime-enforcement section still described the pre-0.2.10 behaviour. That
+section is corrected in the same change as this entry. `README.md` is NOT drift despite the
+"Ship a version" row naming it: it states in its own Project-status section that it carries a
+milestone rather than the current version, and points at `CMakeLists.txt` and `HANDOVER.md`'s
+status row for the version of record — both of which are current at 0.2.10.
+
+**0.2.9 (2026-09-02) — a stored document's unusable number is declined, not clamped.** The read
+side of the state path learned that a non-finite number in a session or preset file cannot be
+clamped into range, because every clamp on the path is comparison-based and NaN fails every
+comparison: `jlimit`, `NormalisableRange::snapToLegalValue` and Steinberg's own
+`Parameter::setNormalized` all pass a NaN straight through. `adoptParamsTree` and
+`applyOnePresetValue` decline the value instead. Rows engaged: **State serialization schema**
+(`SERIALIZATION_REGISTRY.md` §1.1, `ADR-0026`), **New/changed test** (`state_tests.cpp`'s
+`testAWellFormedDocumentCannotCarryAnUnusableNumber`; this file — supplied here), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`). Trail: `worklogs/2026-09-02-code-scanning-audit.md`.
+
+**0.2.10 (2026-09-03) — only a NaN is unusable, and the value it falls back to is read the same
+way.** Review found 0.2.9's guard wrong in both directions: too wide (`! std::isfinite` declined
+infinities, which the clamps DO handle correctly, so a session asking for a rail silently got the
+fallback) and too narrow (it guarded the `raw` overlay and left the `value` it falls back to
+unguarded, so a document with no usable `raw` and a NaN `value` still poisoned all 50 controls and
+re-saved them). Predicate narrowed to `std::isnan`; `adoptParamsTree` now also drops an unreadable
+`value`, which makes APVTS restore the parameter default through JUCE's own fallback rather than a
+new mechanism. Shipped alongside: `AnabasisEngine::prepare` rails the one route a sample rate has
+into an allocation, `AnabasisBench` stopped throwing on an empty `/proc/cpuinfo` `model name`, and
+`scripts/check-realtime.py` was made fail-closed on its own inputs. Rows engaged: **State
+serialization schema** (`SERIALIZATION_REGISTRY.md`, `ADR-0013`, `ADR-0014`, `ADR-0026`),
+**New/changed test** (`state_tests.cpp`, `dsp_tests.cpp`; this file — supplied here), **CI
+workflow** (`scripts/check-realtime.py` — `TESTING.md` supplied here), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`). Trail: `worklogs/2026-09-03-review-followup.md`.
+
+**Scanner-finding audit (2026-09-03).** First audit driven by raw SARIF pulled from the scanners'
+own Actions artifacts rather than from PR summaries or alert counts. 203 raw results across three
+analyses at `fce94b3`; 152 first-party, all from PREfast, in five root-cause groups; CodeQL
+contributed no first-party finding at all. One production finding (`C6385`,
+`src/dsp/AnabasisEngine.cpp`) is fixed — the bound was correct but provable only from the caller,
+so PREfast, which analyses each function alone, read it as `gains[-1]`. The rest are test-only and
+dispositioned in `docs/reports/2026-09-03-scanner-audit.html`, which carries the live register and
+Roadmap. Rows engaged: **New/changed test** (none added — the fix is covered by the existing
+channel battery; this file), and the audit report is a new document, so **Add / remove /
+reclassify a document** (`REPOSITORY_MAP.md`, this file's self-coverage).
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).

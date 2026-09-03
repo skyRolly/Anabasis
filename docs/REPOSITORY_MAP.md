@@ -145,6 +145,11 @@ docs/
 │                   Still planned, no date claimed: ARCHITECTURE, SIGNAL_FLOW,
 │                   DSP_GRAPH_REFERENCE, DSP_ALGORITHMS, API_REFERENCE,
 │                   STATE_SERIALIZATION
+├── reports/        dated audit records, HTML. Derived measured evidence in the TEST_REPORT.md
+│                   sense -- each is a snapshot of one analysis at one commit and is superseded by
+│                   a later run rather than edited in place. Since 2026-09-03:
+│                   2026-09-03-scanner-audit.html (the CodeQL + PREfast raw-SARIF finding
+│                   register, its dispositions and its Roadmap)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)

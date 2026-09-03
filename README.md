@@ -137,6 +137,9 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   `DESIGN.md` ranks *below* the ADRs it spawned and loses to them on any disagreement — see
   `docs/SOURCE_OF_TRUTH.md` §"Where `DESIGN.md` sits"
 - **How-to:** [`docs/procedures/`](docs/procedures/) (build, development, CI/CD, testing, release)
+- **Audit records:** [`docs/reports/`](docs/reports/) — dated, per-commit analysis snapshots;
+  currently [`2026-09-03-scanner-audit.html`](docs/reports/2026-09-03-scanner-audit.html)
+  (CodeQL + PREfast raw-SARIF findings, dispositions and Roadmap)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
   [`docs/FUTURE_RISKS.md`](docs/FUTURE_RISKS.md) · [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md)
