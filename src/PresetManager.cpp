@@ -1,6 +1,8 @@
 #include "PresetManager.h"
 #include "PluginParameters.h"
 
+#include <cmath>   // std::isfinite — the preset read rule in applyOnePresetValue
+
 bool PresetManager::savePreset (const juce::File& file, const juce::StringArray& detachMask) const
 {
     juce::XmlElement root ("AnabasisPreset");
@@ -64,6 +66,14 @@ static void applyOnePresetValue (juce::AudioProcessorValueTreeState& apvts,
         return;                                     // the shared predicate, applied on read too
     if (ceilingLocked && id == pid::ceiling)
         return;                                     // §4.2: a locked ceiling is never written
+    // The session path's read rule, applied to the preset one, and for the same
+    // reason: `snapToLegalValue` below is comparison-based, so a NaN passes
+    // through it and through `convertTo0to1` into the parameter and out to the
+    // host. A number that cannot be USED is treated exactly like the unknown id
+    // on the next line — skipped, leaving the parameter where it was. Infinities
+    // already clamp correctly; NaN is the only value that needs the test.
+    if (! std::isfinite (value))
+        return;
     if (auto* param = apvts.getParameter (id))      // unknown ids ignored
         setParamIfMoved (*param,
                          param->getNormalisableRange().convertTo0to1 (

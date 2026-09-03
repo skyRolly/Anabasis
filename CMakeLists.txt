@@ -17,7 +17,7 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
 
-project(Anabasis VERSION 0.2.8 LANGUAGES C CXX)
+project(Anabasis VERSION 0.2.9 LANGUAGES C CXX)
 
 # THE BASELINE IS C++23 (ADR-0030, 0.2.0), superseding ADR-0008 decision B5's
 # C++20 and closing OQ-006. What used to sit here was a cache seam

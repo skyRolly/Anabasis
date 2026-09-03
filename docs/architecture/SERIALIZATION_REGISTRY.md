@@ -51,10 +51,10 @@ There are **two formats**, deliberately different in fidelity (ADR-0007 option H
 ## 1. The session blob
 
 `getStateInformation` builds a `juce::ValueTree`, serialises it to XML and wraps it with
-`copyXmlToBinary` (`getStateInformation`, `src/PluginProcessor.cpp:1668-1724`). Structure, in write order:
+`copyXmlToBinary` (`getStateInformation`, `src/PluginProcessor.cpp:1691-1747`). Structure, in write order:
 
 ```
-AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, src/PluginProcessor.cpp:8)
+AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, src/PluginProcessor.cpp:10)
 ├── ANABASIS                      the APVTS tree — the LIVE parameter surface
 │   └── PARAM ×50                 id · value (denormalised) · raw (normalised double, additive)
 │                                 (×49 until 0.1.1 — ADR-0019 ADDED compStereoLink, an
@@ -79,10 +79,16 @@ AnabasisRoot                      schemaVersion = 1 (int; kSchemaVersion, src/Pl
 ### 1.1 The `raw` attribute (host-session contract)
 
 Each `PARAM` node carries APVTS's denormalised `value` **plus** an additive `raw` attribute
-holding the exact normalised position (`copyStateWithRaw`, `src/PluginProcessor.cpp:1010`;
+holding the exact normalised position (`copyStateWithRaw`, `src/PluginProcessor.cpp:1012`;
 the Anamorph ADR-0013 pattern, adopted by our ADR-0007). Restore prefers `raw` — clamped to
 [0, 1] at the boundary — and falls back to `value` when `raw` is absent
-(`reassertFromRaw`, `src/PluginProcessor.cpp:1277-1290`). This is what makes a mid-step position
+(`reassertFromRaw`, `src/PluginProcessor.cpp:1279-1313`). **A `raw` that is not finite takes that
+same absent-attribute fallback**, and the test is a finite one rather than a tighter clamp because
+a clamp cannot do it: every clamp the value would meet is comparison-based and every comparison
+against a NaN is false — `juce::jlimit` here, `NormalisableRange::snapToLegalValue` on the preset
+path (§2), and Steinberg's own `Parameter::setNormalized` last of all — so a NaN admitted at this
+boundary reaches the host through `performEdit` and is written back by the next save. Same read
+rule, and the same shape, as the trims' finite check in the tolerance table below. This is what makes a mid-step position
 on a discrete `Raw*` parameter survive a host round-trip bit-exactly.
 Pinned by: `testStateRoundTrip` (byte-identical `getState → setState → getState`),
 `testAbRawExact`, `testRawRoundTripIsIdempotent` (`tests/state_tests.cpp`).
@@ -91,7 +97,7 @@ Pinned by: `testStateRoundTrip` (byte-identical `getState → setState → getSt
 
 A slot serialises the **widened StateSet** `{params, presetName, baseline, frozenTrims,
 detachMask}` (ADR-0007) — plus, since **ADR-0022**, the preset-identity trio described below —
-via `saveSlotFromLive()` (`src/PluginProcessor.cpp:1151-1218`). Two
+via `saveSlotFromLive()` (`src/PluginProcessor.cpp:1153-1220`). Two
 properties of the shape that are rules, not accidents:
 
 - **The slot's `ANABASIS` copy carries the full surface, view-tier entries included.** The
@@ -164,7 +170,7 @@ Rules the shape encodes, each pinned by `testPresetIdentityAcrossRestore`:
 ### 1.3 `FROZEN_TRIMS` — written conditionally, by design
 
 Properties: `releaseOctaves`, `stereoLink`, `scHpfHz`, `dynTiltDb` (doubles;
-`saveSlotFromLive`, `src/PluginProcessor.cpp:1144-1147`). Three rules the shape encodes:
+`saveSlotFromLive`, `src/PluginProcessor.cpp:1146-1149`). Three rules the shape encodes:
 
 - **Freeze OFF ⇒ no child at all.** A slot that is not frozen has nothing latched; writing
   a stale vector was a live defect (it flipped the preset-dirty mark) and is now pinned
@@ -184,12 +190,12 @@ Properties: `releaseOctaves`, `stereoLink`, `scHpfHz`, `dynTiltDb` (doubles;
 
 The §5.3 macro-baseline child ADR-0007 gave a per-slot home. **No code path in this build
 originates one**: the only constructor of a `BASELINE` tree in the whole repository is the
-test that seeds one (`tests/state_tests.cpp:2171`). The wrapper *adopts* the child from an
+test that seeds one (`tests/state_tests.cpp:2266`). The wrapper *adopts* the child from an
 incoming slot or session, *carries* it through A/B, undo and saves
-(`src/PluginProcessor.cpp:1174-1175, 1412, 1855` — `saveSlotFromLive`, `applySlotToLive`,
+(`src/PluginProcessor.cpp:1176-1177, 1435, 1878` — `saveSlotFromLive`, `applySlotToLive`,
 `setStateInformation`), and *drops* it where the state it describes
 is replaced — both preset-apply paths and the defaults-based restore
-(`src/PluginProcessor.cpp:1533, 1620, 1653` — `applyFactoryPreset`, `applyPresetFile`,
+(`src/PluginProcessor.cpp:1556, 1643, 1676` — `applyFactoryPreset`, `applyPresetFile`,
 `resetSlotFieldsToDefaults`). So the child is live schema with defined
 carriage semantics and no producer — a reader must tolerate it, a writer must not invent
 one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
@@ -198,7 +204,7 @@ one. Pinned by: `testAPresetApplyDropsTheMacroBaselineOnBothPaths`.
 
 Written **only** after a Learn commit; its absence is the discriminator, so an
 instance that never learned writes no child and a loaded reference is never resurrected
-from defaults (`getStateInformation`'s ADAPTIVE block, `src/PluginProcessor.cpp:1706-1720`). While a loaded restore is staged but
+from defaults (`getStateInformation`'s ADAPTIVE block, `src/PluginProcessor.cpp:1729-1743`). While a loaded restore is staged but
 unconsumed, the staged values are authoritative for a re-save (the mirror rule); the
 residual one-save window between the consumer's `exchange` and its adoption is documented
 at the site and in ADR-0012 §Known limits, not claimed away.
@@ -266,7 +272,7 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 
 ## 2. Read rules (structural tolerance — ADR-0007 option C)
 
-`setStateInformation` (`src/PluginProcessor.cpp:1726-1923`), in order:
+`setStateInformation` (`src/PluginProcessor.cpp:1749-1946`), in order:
 
 | Input | Behaviour |
 |---|---|
@@ -276,10 +282,11 @@ Pinned by: the batched-latency, ADAPTIVE-missing-field and `uiScaleClamp` tests.
 | `schemaVersion` > 1 | **Not a rejection** — the reader falls back to shape. A future contributor adding a version gate to the read path is reversing ADR-0007 (its §Consequences says exactly this) |
 | Missing `ANABASIS` child | **Defaults**, not "keep live" — a valid root that omits the surface means the default surface. **This now defaults the ACTIVE SLOT'S FIELDS too**, and that is a widening of the rule worth stating rather than deducing from the row below: `presetName`, the ADR-0022 identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` are adopted from the active `SLOT` only when the root surface was restored, so a blob carrying a full `AB` block under a root with no `ANABASIS` loads with the DEFAULT name, identity, baseline, trims and an EMPTY detach mask, where it previously adopted all five. Deliberate, and the §5.3 detach mask is the case that has to be looked at rather than waved through: detachment is not otherwise recoverable, so dropping it loses user intent. It is dropped anyway, because the alternative loses more — a mask names parameters that are detached from the MACRO SURFACE, and the surface this restore installed came from defaults, so the mask would describe detachments from a mapping the session never had. A shape with no producer: nothing this plug-in writes omits the root `ANABASIS` while writing `AB`, so no session in the wild takes this path |
 | Missing `ANABASIS_INTERNAL` / missing fields | Defaults first, overlay what exists (§1.6) |
-| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1796`, the `hasType ("SLOT")` filter) |
-| `SLOT` present but carrying **no `ANABASIS` child** | **The whole slot resolves to defaults**, and the two slots reach that by different routes because they are not symmetric. The STORED slot is declined outright and keeps the `defaultSlot` planted by `resetSlotFieldsToDefaults()`, because `storedSlot` is a processor member that survives across restores — accepting a payload-less tree there would leave the PREVIOUS project's sound under this project's name, since `applySlotToLive` adopts parameters only when the payload is valid but adopts `presetName`, the identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally. The ACTIVE slot needs no such test for its sound (that comes from the ROOT `ANABASIS`, not from the slot's redundant copy), so instead its METADATA is adopted only when the root surface was actually restored — otherwise the surface came from defaults and the labels would describe a sound that was never installed. The consequence to read off that, because it is the shape a reviewer expects to be symmetric and is not: a blob with a valid ROOT surface whose ACTIVE slot has lost its payload still adopts that slot's name, identity, baseline, trims and mask — the metadata is gated on the root surface, never on the active slot's own `ANABASIS` child. Defensible (both halves came out of the same blob, and the sound that was installed is the one the root described), and it is why the two slots are governed by two different tests rather than one. One rule, stated per slot ([**ADR-0026**](design-decisions/ADR-0026-slot-payload-read-rules.md) — Accepted 2026-08-14, the owner cleared the gate on this semantic change): **metadata is adopted only alongside the parameters it describes** (`src/PluginProcessor.cpp:1779` the `liveSurfaceRestored` flag, `:1693` the stored-slot guard, `:1712` the active-slot gate; pinned by `testAMalformedStoredSlotCannotSplitSoundFromMetadata`) |
+| Missing / partial `AB` | `resetSlotFieldsToDefaults()` first, then overlay; `active` clamped through `anabasis::clampAbSlotIndex`; **SLOT children collected by type, never by index**, so a tolerated foreign child cannot shift both slots (`src/PluginProcessor.cpp:1819`, the `hasType ("SLOT")` filter) |
+| `SLOT` present but carrying **no `ANABASIS` child** | **The whole slot resolves to defaults**, and the two slots reach that by different routes because they are not symmetric. The STORED slot is declined outright and keeps the `defaultSlot` planted by `resetSlotFieldsToDefaults()`, because `storedSlot` is a processor member that survives across restores — accepting a payload-less tree there would leave the PREVIOUS project's sound under this project's name, since `applySlotToLive` adopts parameters only when the payload is valid but adopts `presetName`, the identity trio, `BASELINE`, `FROZEN_TRIMS` and `DETACH_MASK` unconditionally. The ACTIVE slot needs no such test for its sound (that comes from the ROOT `ANABASIS`, not from the slot's redundant copy), so instead its METADATA is adopted only when the root surface was actually restored — otherwise the surface came from defaults and the labels would describe a sound that was never installed. The consequence to read off that, because it is the shape a reviewer expects to be symmetric and is not: a blob with a valid ROOT surface whose ACTIVE slot has lost its payload still adopts that slot's name, identity, baseline, trims and mask — the metadata is gated on the root surface, never on the active slot's own `ANABASIS` child. Defensible (both halves came out of the same blob, and the sound that was installed is the one the root described), and it is why the two slots are governed by two different tests rather than one. One rule, stated per slot ([**ADR-0026**](design-decisions/ADR-0026-slot-payload-read-rules.md) — Accepted 2026-08-14, the owner cleared the gate on this semantic change): **metadata is adopted only alongside the parameters it describes** (`src/PluginProcessor.cpp:1802` the `liveSurfaceRestored` flag, `:1693` the stored-slot guard, `:1712` the active-slot gate; pinned by `testAMalformedStoredSlotCannotSplitSoundFromMetadata`) |
 | Unknown properties/children anywhere | Ignored, and **not** preserved on re-save (the writer emits the schema, not the input) |
 | Out-of-range values | Clamped at the read boundary (`raw` to [0,1]; indices through their clamps; trims per-field finite-checked in `injectTrims`; `int_uiScale` to the ladder) |
+| **Unusable (non-finite) numbers** | Declined, never clamped — a comparison-based clamp cannot reject a NaN. `raw` falls back to `value` (§1.1); a preset's `value` is skipped like an unknown id (§2); trims and the learned targets take their seed (`injectTrims` and `setLearnedTargets`, `src/dsp/AdaptiveEngine.h`). Pinned by `testAWellFormedDocumentCannotCarryAnUnusableNumber` |
 
 Every load: requests the §2.8 forced duck (a session load is the biggest bulk swap),
 bumps `historyEpoch`, clears all three gesture-state members, requests the meter reset,
