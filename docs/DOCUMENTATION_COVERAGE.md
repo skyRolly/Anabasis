@@ -6,10 +6,33 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.8 (2026-09-01, review rounds 2026-09-02)** — the GR history's scroll
-jitter (one owner field report), the three reader/publisher defects a second review found in the
-fix, and the two the third and fourth rounds added (the ring's plain payload; the host
-reconfiguration race on the display's time base).
+**Last updated:** for the **scanner-SARIF artifact change (2026-09-03)** — `codeql.yml` and
+`msvc.yml` now also publish their raw SARIF as Actions artifacts. Before that, for **0.2.8
+(2026-09-01, review rounds 2026-09-02)** — the GR history's scroll jitter (one owner field report),
+the three reader/publisher defects a second review found in the fix, and the two the third and
+fourth rounds added (the ring's plain payload; the host reconfiguration race on the display's time
+base).
+
+**Scanner-SARIF artifacts (2026-09-03).** Both Code Scanning analyzers already produced SARIF and
+already uploaded it; neither persisted it anywhere a later audit could read, because the Code
+Scanning alert and check-run annotation APIs are not reachable from every context. One
+`actions/upload-artifact` step per workflow now keeps the raw report — no analyzer, query suite,
+build mode, path filter, target, category, upload semantic or `/analyze` flag changed, and neither
+analysis runs twice. A review round then corrected the gate: the steps had inherited the default
+`success()` condition, which would discard the SARIF in exactly the case it matters most — a report
+Code Scanning REJECTS. Both now use `!cancelled()`, with conditions shaped to each workflow
+(`msvc.yml` separates produce from upload so it can gate exactly on `run-analysis`; `codeql.yml`'s
+`analyze` does both, so it gates on `outcome != 'skipped'` and softens `if-no-files-found` when the
+analysis itself failed, to avoid burying the real error behind a missing-file failure).
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: **CI workflow** (`CI_CD.md`, `TESTING.md`).
+`TESTING_POLICY.md` is deliberately NOT edited — that row is conditioned on "what a gate REQUIRES"
+changing, and the scanners still require exactly what they required of the code; only where their
+output is kept changed. `REPOSITORY_MAP.md` likewise: no script was added or removed.
+
+**Drift reported, not corrected (C6).** This file's "Last updated" read **0.2.8** while **0.2.9**
+and **0.2.10** had both shipped (the non-finite state-read rule and its follow-up), so the coverage
+audit had no entry for either. That gap predates the change above and is outside its scope; it is
+recorded here rather than silently backfilled, per this policy's own Enforcement clause.
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).
