@@ -86,6 +86,12 @@ classes sit alongside it, not inside it:
 
 No document in these three classes may be cited as evidence for a technical claim.
 
+`docs/reports/` sits **inside the developer class**, at the same rank as `TEST_REPORT.md`: dated
+audit records carrying measured evidence and its method. Each is a snapshot of one analysis at one
+named commit, so it is **superseded by a later run rather than corrected in place** -- cite one only
+together with the commit it was produced at, and prefer the newest. Where a report and current code
+disagree, the code wins and the disagreement means the report is stale, not wrong.
+
 `worklogs/` sits **outside all four classes**: session-local investigation records (measurements,
 rejected alternatives and why they were rejected). A worklog is raw evidence a *later* document
 may cite; it is never itself a policy, an architecture doc or a decision record. Finalized

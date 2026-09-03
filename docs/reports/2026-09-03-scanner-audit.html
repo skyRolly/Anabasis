@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anabasis — Scanner Finding Audit (2026-09-03)</title>
+<style>
+:root{
+  --bg:#fbfaf8; --panel:#fff; --ink:#1a1a1a; --muted:#5c5c5c; --line:#e2ded8;
+  --accent:#7a4b2a; --ok:#2f6b3d; --warn:#8a6d1f; --bad:#9b2c2c; --info:#2b5578;
+  --chip:#f2eee8;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#16151a; --panel:#1e1d23; --ink:#eceaf0; --muted:#a09daa; --line:#33313c;
+  --accent:#d9a06a; --ok:#7cc48f; --warn:#d9bd6a; --bad:#e78f8f; --info:#8fbcdd;
+  --chip:#2a2831;
+}}
+:root[data-theme="dark"]{
+  --bg:#16151a; --panel:#1e1d23; --ink:#eceaf0; --muted:#a09daa; --line:#33313c;
+  --accent:#d9a06a; --ok:#7cc48f; --warn:#d9bd6a; --bad:#e78f8f; --info:#8fbcdd;
+  --chip:#2a2831;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:1.85rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.22rem;margin:38px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+h3{font-size:1.02rem;margin:24px 0 8px;color:var(--accent)}
+.sub{color:var(--muted);margin:0 0 22px;font-size:.95rem}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.87em;
+  background:var(--chip);padding:1px 5px;border-radius:4px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:16px 0}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stat .n{font-size:1.6rem;font-weight:650;line-height:1.1}
+.stat .l{font-size:.76rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:.87rem;min-width:640px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;font-size:.76rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);
+  position:sticky;top:0;background:var(--panel)}
+tbody tr:hover{background:var(--chip)}
+.tag{display:inline-block;padding:1px 8px;border-radius:20px;font-size:.72rem;font-weight:600;white-space:nowrap}
+.t-fix{background:#e8f3ea;color:#2f6b3d}.t-fp{background:#eef1f5;color:#2b5578}
+.t-def{background:#faf3e0;color:#8a6d1f}.t-3p{background:#f0eef4;color:#5b4b7a}
+.t-acc{background:#eceff1;color:#4a5560}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .t-fix{background:#1e3a28;color:#8fd5a2}
+:root:not([data-theme="light"]) .t-fp{background:#1d2b38;color:#9ec9e6}
+:root:not([data-theme="light"]) .t-def{background:#3a3320;color:#e0c77a}
+:root:not([data-theme="light"]) .t-3p{background:#2e2840;color:#b9a6dd}
+:root:not([data-theme="light"]) .t-acc{background:#2a2d31;color:#b6bec6}}
+ul.ck{list-style:none;padding:0;margin:0}
+ul.ck li{padding:5px 0 5px 28px;position:relative;border-bottom:1px solid var(--line)}
+ul.ck li:last-child{border-bottom:0}
+ul.ck li::before{position:absolute;left:2px;top:5px;font-weight:700}
+li.done::before{content:"✓";color:var(--ok)}
+li.wip::before{content:"◐";color:var(--warn)}
+li.todo::before{content:"○";color:var(--muted)}
+li.na::before{content:"—";color:var(--muted)}
+.note{border-left:3px solid var(--accent);padding:6px 0 6px 14px;margin:12px 0;color:var(--muted)}
+.rm{counter-reset:rmi}
+.rm .item{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.rm .item:last-child{border-bottom:0}
+.rm .num{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--panel);
+  display:grid;place-items:center;font-weight:700;font-size:.8rem}
+.rm .body{flex:1 1 auto;min-width:0}
+.rm .ttl{font-weight:650}
+.when{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:.82rem}
+@media print{body{background:#fff}.panel,.stat{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Scanner Finding Audit</h1>
+<p class="sub">Anabasis · raw-SARIF audit of CodeQL and Microsoft C++ Code Analysis (PREfast)<br>
+Commit <code>fce94b3</code> (<code>main</code>) · audit dated 2026-09-03 · <strong>status: audit complete, fix implemented, verification in progress</strong></p>
+
+<div class="note">
+This report is the <strong>live state</strong> of the audit, not a retrospective. The checklist and the
+register are updated as work lands. Its companion worklog is
+<code>worklogs/2026-09-03-scanner-finding-audit.md</code>.
+</div>
+
+<h2>Executive status</h2>
+
+<div class="grid">
+  <div class="stat"><div class="n">203</div><div class="l">Raw SARIF results</div></div>
+  <div class="stat"><div class="n">152</div><div class="l">First-party</div></div>
+  <div class="stat"><div class="n">5</div><div class="l">Root-cause groups</div></div>
+  <div class="stat"><div class="n">1</div><div class="l">Production findings</div></div>
+  <div class="stat"><div class="n">1</div><div class="l">Fixed</div></div>
+  <div class="stat"><div class="n">51</div><div class="l">Third-party</div></div>
+</div>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Disposition</th><th>Groups</th><th>Raw findings</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><span class="tag t-fix">FIXED</span></td><td>1 (G1)</td><td>1</td><td>Production. Bound made locally provable.</td></tr>
+<tr><td><span class="tag t-fp">FALSE POSITIVE</span></td><td>1 (G3)</td><td>9</td><td>Analyzer models <code>dynamic_cast</code> as identity.</td></tr>
+<tr><td><span class="tag t-acc">TEST-ONLY ACCEPTABLE</span></td><td>1 (G2)</td><td>133</td><td>Stack fixtures. Monitored, not churned.</td></tr>
+<tr><td><span class="tag t-def">DEFER — SHOULD FIX</span></td><td>1 (G4)</td><td>4</td><td>SAL annotation mismatch. Needs MSVC iteration.</td></tr>
+<tr><td><span class="tag t-def">OPTIONAL</span></td><td>1 (G5)</td><td>5</td><td>Core-Guidelines <code>constexpr</code> hint.</td></tr>
+<tr><td><span class="tag t-3p">THIRD-PARTY</span></td><td>2 (T1, T2)</td><td>51</td><td>JUCE under <code>build/_deps/</code>. Out of scope by policy.</td></tr>
+<tr><td><span class="tag t-acc">ZERO-RESULT (verified)</span></td><td>1 (Z1)</td><td>0</td><td>CodeQL Actions: executed, genuinely clean.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>Blocked decisions: 0.</strong> Every group was resolvable from source, scanner evidence and existing
+policy. Nothing requires an owner, architecture or compatibility gate.</p>
+
+<div class="note">
+<strong>CodeQL produced no first-party finding of any kind.</strong> All 50 of its C/C++ results are in the
+FetchContent'd JUCE tree. This is a genuine result, not an empty scan: the run extracted
+<strong>2,071 artifacts</strong> including 42 first-party <code>src/</code> and <code>tests/</code> files,
+declared 58 rules and reported <code>executionSuccessful: true</code>.
+</div>
+
+<h2>Progress / live checklist</h2>
+<div class="panel">
+<ul class="ck">
+<li class="done"><strong>Phase 0 — current state established.</strong> Branch, policies, latest scanner runs and artifact provenance confirmed.</li>
+<li class="done"><strong>Raw SARIF retrieved</strong> for all three analyses, with SHA-256 recorded. No PR summaries or alert counts used.</li>
+<li class="done"><strong>Phase 1 — documentation drift corrected.</strong> 0.2.9 / 0.2.10 coverage entries added; <code>TESTING.md</code> realtime section de-staled.</li>
+<li class="done"><strong>Phase 2 — PREfast audit complete.</strong> 153 results triaged into 5 first-party groups + 1 third-party.</li>
+<li class="done"><strong>Phase 2 — CodeQL C/C++ audit complete.</strong> 50 results, all third-party, each location verified under <code>build/_deps/</code>.</li>
+<li class="done"><strong>Phase 2 — CodeQL Actions audit complete.</strong> Zero results, verified against invocation and artifact evidence.</li>
+<li class="done"><strong>Phase 3 — dispositions assigned.</strong> Every group carries a needs-fix and a worth-fixing decision.</li>
+<li class="done"><strong>Phase 4 — Roadmap placed.</strong> One item per root cause; no redundant per-finding tasks.</li>
+<li class="done"><strong>Phase 5 — actionable fix implemented.</strong> G1 (<code>C6385</code>) fixed in <code>src/dsp/AnabasisEngine.cpp</code>.</li>
+<li class="done"><strong>Phases 6 / 7 — report and worklog live in-repo.</strong></li>
+<li class="wip"><strong>Phase 8 — verification.</strong> Local suites and gates all green; scanner re-run pending CI.</li>
+<li class="todo"><strong>Scanner re-run confirms G1 cleared</strong> and introduces no new finding. Requires a CI round on the pushed branch.</li>
+</ul>
+</div>
+
+<h2>Finding register</h2>
+<p class="sub">Every distinct first-party group, plus the third-party and zero-result records. Duplicates are
+grouped by root cause and are <em>not</em> counted as independent defects.</p>
+
+<h3>G1 — <code>C6385</code> · production · FIXED</h3>
+<div class="panel">
+<div class="tablewrap"><table>
+<tbody>
+<tr><th>Scanner / rule</th><td>PREfast · <code>C6385</code> (reading invalid data)</td></tr>
+<tr><th>Location</th><td><code>src/dsp/AnabasisEngine.cpp:882:9</code> — 1 finding</td></tr>
+<tr><th>Message</th><td>“Reading invalid data from <code>'gains'</code>: the readable size is <code>'8'</code> bytes, but <code>'-4'</code> bytes may be read.”</td></tr>
+<tr><th>Root cause</th><td><code>grMinThisCall = jmin(grMinThisCall, gains[0], gains[nCh - 1])</code> is the only indexed read of
+<code>gains</code> outside a <code>ch &lt; nCh</code> loop. <code>gains</code> is <code>float[kMaxChannels]</code> = 8 bytes; the
+<code>-4</code> in the message is PREfast deriving <code>nCh == 0</code>, i.e. <code>gains[-1]</code>.
+<strong>The bound is real but is established in the caller:</strong> <code>process()</code> returns <code>false</code> on
+<code>numChannels &lt;= 0</code> before any chunk runs, and <code>processChunk</code> has exactly one call site, inside
+<code>process()</code> after that guard. PREfast analyses each function alone and cannot carry the precondition across.</td></tr>
+<tr><th>Affected surface</th><td>Production DSP, audio thread.</td></tr>
+<tr><th>Risk</th><td><strong>Low today, structurally fragile.</strong> No reachable defect on current code — the guard is
+unconditional. But correctness depends on a precondition ~640 lines away in another function, with nothing local
+enforcing it: a second caller for <code>processChunk</code>, or any weakening of the <code>process()</code> guard, turns
+this into a genuine out-of-bounds stack read on the audio path. It is also the <em>only</em> production finding,
+so leaving it trains reviewers to skip the production scanner surface entirely.</td></tr>
+<tr><th>Benefit of fixing</th><td>Removes the sole production finding; makes the bound provable where it is used;
+eliminates a latent regression trap.</td></tr>
+<tr><th>Cost / complexity</th><td><strong>Minimal.</strong> One clamped local. No allocation, no lock, no branch that
+survives the optimiser, no behaviour change for any <code>nCh &gt;= 1</code>. Realtime guarantees untouched.</td></tr>
+<tr><th>Needs fix?</th><td><span class="tag t-fix">SHOULD FIX</span> — false positive against today’s code, genuine as a
+maintainability and regression hazard.</td></tr>
+<tr><th>Worth fixing now?</th><td><strong>Yes.</strong> Cost is one line; risk of the fix is nil; risk of leaving it grows
+silently with every future edit to the call graph.</td></tr>
+<tr><th>Disposition</th><td><span class="tag t-fix">FIXED</span> — <code>const int lastCh = juce::jmax (0, nCh - 1);</code></td></tr>
+<tr><th>Roadmap</th><td><strong>Now — immediate.</strong> Shipped in this change.</td></tr>
+<tr><th>Precedent</th><td>The <code>kMaxChannels</code> third term on <code>nCh</code> was added for exactly this reason and
+carries a comment forbidding its removal as “redundant”: it is the term that makes the access provably in bounds.
+This fix applies the same rule to the lower bound.</td></tr>
+<tr><th>Blocker</th><td>None.</td></tr>
+<tr><th>Status</th><td>Fixed; awaiting scanner re-run to confirm the diagnostic clears.</td></tr>
+</tbody>
+</table></div>
+</div>
+
+<h3>G2 — <code>C6262</code> ×133 · tests · TEST-ONLY ACCEPTABLE</h3>
+<div class="panel">
+<div class="tablewrap"><table>
+<tbody>
+<tr><th>Scanner / rule</th><td>PREfast · <code>C6262</code> (excessive stack usage)</td></tr>
+<tr><th>Location</th><td><code>tests/state_tests.cpp</code> (84) · <code>tests/dsp_tests.cpp</code> (49)</td></tr>
+<tr><th>Root cause</th><td><strong>One cause, 133 diagnostics.</strong> Test functions construct
+<code>AnabasisAudioProcessor</code> (75,840 B) and/or <code>AnabasisEngine</code> (41,216 B) as stack fixtures.
+The counts are those objects summed per function — the clusters at ~76 K / 152 K / 228 K / 303 K / 379 K are
+1–5 processor fixtures. MSVC’s default C6262 threshold is 16 KB.</td></tr>
+<tr><th>Distribution</th><td>min 37,592 B · median 75,776 B · max 605,988 B. Over 256 KB: 10. Over 512 KB: 1.</td></tr>
+<tr><th>Risk</th><td><strong>Low, bounded, self-announcing.</strong> Tests only; never shipped. Windows default main-thread
+stack is 1 MB and the worst function is 606 KB, so it passes with ~40% headroom, and the Windows CI lane runs these
+suites green. The Linux sanitizer lane already raises <code>ulimit -s 65536</code> for the ASan redzone inflation
+(<code>build.yml</code>). The residual risk is a <em>future</em> test adding fixtures to the largest function and
+crossing 1 MB — which fails loudly in CI rather than silently.</td></tr>
+<tr><th>Benefit of fixing</th><td>Low. No correctness, security or realtime consequence. Would remove 133 diagnostics.</td></tr>
+<tr><th>Cost / complexity</th><td><strong>High and risky.</strong> Heap-allocating fixtures across 133 sites in two large,
+densely-commented suites: wide churn, real regression risk, no behavioural gain. The repository already applies the
+targeted remedy where it mattered — <code>testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset</code> puts its ring and
+processor fixtures on the heap explicitly “for MSVC PREfast’s summed-locals C6262”.</td></tr>
+<tr><th>Needs fix?</th><td><span class="tag t-acc">TEST-ONLY ACCEPTABLE</span></td></tr>
+<tr><th>Worth fixing now?</th><td><strong>No.</strong> Risk of leaving is bounded and visible; cost and regression risk of a
+133-site refactor clearly exceed it. Per-site heap conversion remains the right remedy <em>when a specific function
+approaches the limit</em>.</td></tr>
+<tr><th>Roadmap</th><td><strong>Monitor — no current action.</strong> Trigger: any function exceeding ~768 KB, or a Windows
+stack-overflow in CI. Then convert that function alone.</td></tr>
+<tr><th>Blocker</th><td>None.</td></tr>
+</tbody>
+</table></div>
+</div>
+
+<h3>G3 — <code>C28182</code> ×8 + <code>C6011</code> ×1 · tests · FALSE POSITIVE</h3>
+<div class="panel">
+<div class="tablewrap"><table>
+<tbody>
+<tr><th>Scanner / rules</th><td>PREfast · <code>C28182</code>, <code>C6011</code> (dereferencing NULL pointer)</td></tr>
+<tr><th>Location</th><td><code>tests/state_tests.cpp</code> — 9 findings across the recursive component-tree walkers
+(<code>findButtonByText</code>, <code>countSliders</code>, <code>collectTooltipless</code>,
+<code>collectUnfocusable</code> and siblings)</td></tr>
+<tr><th>Message shape</th><td>“Dereferencing NULL pointer. <code>'c'</code> contains the same NULL value as <code>'b'</code> did.”</td></tr>
+<tr><th>Root cause</th><td><strong>Analyzer modelling error.</strong> The pattern is
+<code>if (auto* b = dynamic_cast&lt;T*&gt;(c); b != nullptr &amp;&amp; …) …</code> followed by a recursive call on
+<code>*c</code>. PREfast treats <code>dynamic_cast</code> as identity, so it infers <code>b == nullptr ⟹ c == nullptr</code>
+and flags the recursion. A failed <code>dynamic_cast</code> says nothing about its operand, and
+<code>Component::getChildren()</code> never yields a null element.</td></tr>
+<tr><th>Risk</th><td><strong>None.</strong> The inference is unsound; there is no defect.</td></tr>
+<tr><th>Cost of “fixing”</th><td>Would require inserting <code>if (c == nullptr) continue;</code> guards against a condition
+JUCE cannot produce — defensive noise added to satisfy a wrong inference, in test code.</td></tr>
+<tr><th>Needs fix?</th><td><span class="tag t-fp">FALSE POSITIVE — DO NOT FIX</span></td></tr>
+<tr><th>Worth fixing now?</th><td><strong>No, and not later either.</strong> Recorded so the next audit does not re-triage it.</td></tr>
+<tr><th>Roadmap</th><td><strong>Monitor — no current action.</strong></td></tr>
+<tr><th>Blocker</th><td>None.</td></tr>
+</tbody>
+</table></div>
+</div>
+
+<h3>G4 — <code>C28252</code> ×4 · tests · SHOULD FIX, DEFERRED</h3>
+<div class="panel">
+<div class="tablewrap"><table>
+<tbody>
+<tr><th>Scanner / rule</th><td>PREfast · <code>C28252</code> (inconsistent SAL annotation)</td></tr>
+<tr><th>Location</th><td><code>tests/AllocationGuard.h</code> lines 355, 363, 503, 511</td></tr>
+<tr><th>Message</th><td>“Inconsistent annotation for <code>'new'</code>: return/function has
+<code>SAL_success(return!=0)</code> on the prior instance.”</td></tr>
+<tr><th>Root cause</th><td><strong>Genuine mismatch, not a false positive.</strong> All four sites are the
+<em>nothrow</em> <code>operator new</code> / <code>operator new[]</code> overloads, annotated
+<code>ANABASIS_GUARD_RET_MAYBENULL</code> (<code>_Ret_maybenull_ _Post_writable_byte_size_</code>). That contradicts the
+annotation the MSVC CRT already carries on its own prior declaration of the same operators. The repository’s annotation
+is arguably the semantically correct one — nothrow <code>new</code> does return null on failure — but two declarations of
+one function disagree, and PREfast is right to say so.</td></tr>
+<tr><th>Risk</th><td><strong>None at runtime.</strong> SAL is analysis-only and the macros expand to nothing off MSVC.
+Test-support header; never shipped. The cost is analytical: contradictory annotations degrade PREfast’s reasoning about
+allocation in the test suite.</td></tr>
+<tr><th>Benefit of fixing</th><td>Moderate-low: 4 diagnostics, and restored analyzer fidelity on the allocation guard —
+which is the harness the realtime no-allocation proof depends on.</td></tr>
+<tr><th>Cost / complexity</th><td><strong>Low edit, awkward verification.</strong> The likely fix is to drop the annotation
+on the nothrow overloads and let the CRT’s stand. But the exact CRT annotation cannot be read from this environment
+(no MSVC headers), so the fix is a hypothesis that only a Windows CI round can confirm — and a wrong guess is churn that
+leaves the diagnostic in place.</td></tr>
+<tr><th>Needs fix?</th><td><span class="tag t-def">SHOULD FIX</span></td></tr>
+<tr><th>Worth fixing now?</th><td><strong>Not in this change.</strong> Genuine but test-only and analysis-only, and it wants
+an MSVC iteration loop rather than a blind edit bundled into a production fix. Deliberately separated so this change’s
+diff stays reviewable.</td></tr>
+<tr><th>Roadmap</th><td><strong>Next — next engineering round.</strong> Do it as its own change, on a branch, iterating
+against the Windows PREfast run until C28252 clears.</td></tr>
+<tr><th>Blocker</th><td>None — needs Windows CI iteration, not a decision.</td></tr>
+</tbody>
+</table></div>
+</div>
+
+<h3>G5 — <code>C26498</code> ×5 · tests · OPTIONAL</h3>
+<div class="panel">
+<div class="tablewrap"><table>
+<tbody>
+<tr><th>Scanner / rule</th><td>PREfast · <code>C26498</code> (C++ Core Guidelines CON.5 — mark <code>constexpr</code>)</td></tr>
+<tr><th>Location</th><td><code>tests/dsp_tests.cpp</code> lines 4373, 4438, 4492, 4613, 4614</td></tr>
+<tr><th>Root cause</th><td>Locals initialised from <code>constexpr</code> members —
+<code>std::numeric_limits&lt;float&gt;::max()</code>, <code>quiet_NaN()</code>, <code>infinity()</code> — declared
+<code>const</code> rather than <code>constexpr</code>.</td></tr>
+<tr><th>Risk</th><td><strong>None.</strong> Stylistic; no behavioural or codegen consequence at these sites.</td></tr>
+<tr><th>Benefit / cost</th><td>Both negligible. Five one-word edits inside carefully-commented poisoning fixtures.</td></tr>
+<tr><th>Needs fix?</th><td><span class="tag t-def">OPTIONAL / NICE TO HAVE</span></td></tr>
+<tr><th>Worth fixing now?</th><td><strong>No.</strong> Genuine but not worth churning test files during a production fix.
+Fold into the G4 round, where <code>tests/</code> is already being touched and MSVC verification is already in the loop.</td></tr>
+<tr><th>Roadmap</th><td><strong>Later — opportunistic.</strong> Bundle with G4.</td></tr>
+<tr><th>Blocker</th><td>None.</td></tr>
+</tbody>
+</table></div>
+</div>
+
+<h3>T1 / T2 — third-party · OUT OF SCOPE</h3>
+<div class="panel">
+<div class="tablewrap"><table>
+<thead><tr><th>ID</th><th>Scanner</th><th>Rules</th><th>Count</th><th>Verified location</th></tr></thead>
+<tbody>
+<tr><td>T1</td><td>CodeQL C/C++</td><td><code>cpp/integer-multiplication-cast-to-long</code> (41),
+<code>cpp/alloca-in-loop</code> (7), <code>cpp/unsafe-use-of-this</code> (1),
+<code>cpp/comparison-with-wider-type</code> (1)</td><td>50</td>
+<td>All under <code>build/_deps/juce-src/</code> — libvorbis, plutovg/lunasvg, harfbuzz, FLAC, jpglib, zlib and JUCE
+modules. Verified across primary locations, related locations <em>and</em> code flows: 72 location references over 25
+files, <strong>zero</strong> outside <code>build/</code>.</td></tr>
+<tr><td>T2</td><td>PREfast</td><td><code>C26495</code> (uninitialised member)</td><td>1</td>
+<td><code>build/_deps/juce-src/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp</code></td></tr>
+</tbody>
+</table></div>
+<p><strong>Disposition: <span class="tag t-3p">THIRD-PARTY / OUT OF SCOPE</span>.</strong> <code>DEPENDENCY_POLICY.md</code>
+pins and review-gates JUCE; third-party source is not modified. <code>codeql.yml</code>’s
+<code>paths-ignore: build</code> already keeps these out of the Code Scanning <em>alerts</em> — but not out of the raw
+SARIF, which is why they appear here. They are excluded from every first-party count in this report.
+<strong>Roadmap: Monitor</strong> — they re-enter scope only via a JUCE pin bump, which is its own gated change.</p>
+</div>
+
+<h3>Z1 — CodeQL Actions · zero results, verified</h3>
+<div class="panel">
+<p>0 results is recorded as a <strong>real result</strong>, on invocation evidence rather than absence of data:
+<code>executionSuccessful: true</code>, 17 rules declared from <code>codeql/actions-queries</code> 0.6.34,
+60 artifacts extracted, <code>automationDetails.id = /language:actions/</code>. The query set covers CWE-1395
+vulnerable actions, CWE-312 secret exposure, CWE-275 workflow permissions, CWE-829 untrusted checkout and artifact
+poisoning, CWE-094 code injection and CWE-349 cache poisoning. <strong>Disposition: no action.</strong></p>
+</div>
+
+<h2>Roadmap</h2>
+<p class="sub">Ordered by the next best use of engineering effort. One item per root cause.</p>
+<div class="panel rm">
+  <div class="item"><div class="num">1</div><div class="body">
+    <div class="when">Now — immediate · <em>done in this change</em></div>
+    <div class="ttl">G1 — make the <code>gains</code> bound locally provable</div>
+    Highest value per unit effort in the set: the only production finding, one line, zero runtime cost, and it removes a
+    latent out-of-bounds trap that would otherwise be armed by any future second caller of <code>processChunk</code>.
+  </div></div>
+  <div class="item"><div class="num">2</div><div class="body">
+    <div class="when">Now — immediate · <em>done in this change</em></div>
+    <div class="ttl">Close the documentation drift (0.2.9 / 0.2.10 coverage, <code>TESTING.md</code> gate description)</div>
+    A coverage audit that silently lags two shipped versions stops being usable as an audit. Cheap to fix, and it
+    restores the record the next round reads from.
+  </div></div>
+  <div class="item"><div class="num">3</div><div class="body">
+    <div class="when">Next — next engineering round</div>
+    <div class="ttl">G4 (+ G5) — reconcile the <code>AllocationGuard.h</code> SAL annotations</div>
+    The only remaining <em>genuine</em> first-party defect class. Deserves its own change because it needs a Windows
+    PREfast iteration loop to confirm, and because the header underpins the realtime no-allocation proof — analyzer
+    fidelity there is worth more than the diagnostic count suggests. Fold G5’s five <code>constexpr</code> edits in,
+    since the same files are already open.
+  </div></div>
+  <div class="item"><div class="num">4</div><div class="body">
+    <div class="when">Monitor — no current action</div>
+    <div class="ttl">G2 — test stack usage</div>
+    Do <em>not</em> pre-emptively refactor 133 sites. Convert a single function to heap fixtures when it approaches the
+    1 MB Windows limit — the precedent already exists in
+    <code>testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset</code>. Trigger: &gt;768 KB in any one function, or a
+    Windows stack overflow in CI.
+  </div></div>
+  <div class="item"><div class="num">5</div><div class="body">
+    <div class="when">Monitor — no current action</div>
+    <div class="ttl">G3 and T1/T2 — no action by design</div>
+    G3 is an analyzer modelling error; T1/T2 are pinned third-party code. Both are recorded so the next audit
+    re-confirms rather than re-triages them.
+  </div></div>
+</div>
+
+<h2>Open decisions</h2>
+<div class="panel">
+<p><strong>None.</strong> No finding in this audit requires an owner, architecture or compatibility decision. Every
+disposition followed from source evidence, scanner evidence or existing policy:</p>
+<ul>
+<li>G1 touches no parameter ID, serialization schema, threading model, DSP signal order, reported latency or macro
+contract — it changes no behaviour at all — so <code>ARCHITECTURE_REVIEW_GATE.md</code> is not engaged.</li>
+<li>G2/G3/G5 are test-only with no contract surface.</li>
+<li>G4 is deferred for verification logistics, not for a decision.</li>
+<li>T1/T2 are settled by <code>DEPENDENCY_POLICY.md</code>.</li>
+</ul>
+<p class="note" style="margin-bottom:0"><strong>Standing limitation, not a decision:</strong> the GitHub Code Scanning
+<em>alert-store</em> state (open / fixed / dismissed) remains unavailable to this environment — the
+<code>/code-scanning/alerts</code> and check-run annotation APIs both return 403. This report is built entirely from raw
+SARIF and makes no claim about alert-store state.</p>
+</div>
+
+<h2>Verification</h2>
+<div class="panel">
+<ul class="ck" id="verif">
+<li class="done"><strong>Both suites green — 1345 checks, 0 failures</strong> (<code>AnabasisTests</code> 316 + <code>AnabasisStateTests</code> 1029). Matches <code>HANDOVER.md</code>'s recorded figure exactly, which is the non-regression statement.</li>
+<li class="done"><strong>Build</strong> <code>scripts/build.sh</code> exit 0.</li>
+<li class="done"><code>check-docs</code> 109 clean · <code>check-citations</code> 54 anchors · <code>check-portability</code> 48/0 · <code>check-realtime</code> 40 files, 1 of 1 verified.</li>
+<li class="done"><strong>All six gate self-tests pass</strong> — docs 67, citations 37, portability 120, realtime 145, linux-abi 19, clang-warnings 18.</li>
+<li class="done"><code>git diff --check</code> clean; diff reviewed — the production change is <strong>+2 / −1 lines</strong>, no unrelated modification.</li>
+<li class="todo"><strong>Scanner re-run</strong> on the pushed commit: confirm <code>C6385</code> clears and no new finding appears. <em>G1 stays “fixed pending scanner confirmation” until this reports.</em></li>
+<li class="na"><strong>Not run here:</strong> macOS, Windows, MSVC <code>/analyze</code> locally, pluginval, ASan/UBSan — CI’s lanes.</li>
+</ul>
+<p class="note" style="margin-bottom:0">No finding is marked fixed on reasoning alone. G1 is marked
+<em>fixed pending scanner confirmation</em> until a PREfast run on the new commit reports it gone.</p>
+</div>
+
+<h2>Evidence</h2>
+<div class="panel">
+<div class="tablewrap"><table>
+<thead><tr><th>Analysis</th><th>Run</th><th>Artifact</th><th>SARIF</th><th>SHA-256 of extracted file</th></tr></thead>
+<tbody>
+<tr><td>CodeQL C/C++<br><span class="when">CodeQL 2.26.4 · cpp-queries 1.8.2</span></td>
+<td><code>33798037779</code><br>#304, push, success</td>
+<td><code>codeql-sarif-c-cpp-fce94b3…</code><br>94,897 B zip</td>
+<td>2.1.0 · 1 run · 50 results<br><code>cpp.sarif</code> 1,472,493 B</td>
+<td><code>edbf41e6b990b7f7afcd03c32033b550e22a2c251e3b790e7bcee03f7efce360</code></td></tr>
+<tr><td>CodeQL Actions<br><span class="when">CodeQL 2.26.4 · actions-queries 0.6.34</span></td>
+<td><code>33798037779</code><br>#304, push, success</td>
+<td><code>codeql-sarif-actions-fce94b3…</code><br>14,634 B zip</td>
+<td>2.1.0 · 1 run · 0 results<br><code>actions.sarif</code> 147,415 B</td>
+<td><code>4e5b940c32d849b6c8d97a9061883022e90c72e2a457c702f2c5c1c4da78bd45</code></td></tr>
+<tr><td>PREfast<br><span class="when">PREfast 14.51.36256.0 (MSVC <code>/analyze</code>)</span></td>
+<td><code>33798037789</code><br>#288, push, success</td>
+<td><code>prefast-sarif-fce94b3…</code><br>7,897 B zip</td>
+<td>2.1.0 · 1 run · 153 results<br><code>results.sarif</code> 104,807 B</td>
+<td><code>3fe2fe9c28c88effbfc67c8bbd4d1047e4af178dbf15e3f10ccb86869d79d825</code></td></tr>
+</tbody>
+</table></div>
+<p><strong>Commit audited:</strong> <code>fce94b39d3f1a3eb2c8024023b5fa7670b5f9258</code> on <code>main</code>
+(merge of PR #31). <strong>Provenance:</strong> artifacts retrieved through the GitHub Actions artifact interface and
+extracted locally; no PR summary, check-run title or Code Scanning alert count contributed to any finding in this
+report. The artifacts exist because PR #31 added one <code>actions/upload-artifact</code> step per scanner workflow —
+before that, the raw SARIF was written on the runner and uploaded to Code Scanning without being persisted anywhere
+retrievable.</p>
+</div>
+
+<footer>
+Anabasis · scanner finding audit · generated 2026-09-03 · companion worklog
+<code>worklogs/2026-09-03-scanner-finding-audit.md</code><br>
+Counting rule: raw SARIF results are scanner evidence; root-cause groups are the defect unit. Third-party findings are
+never mixed into first-party counts.
+</footer>
+
+</div>
+</body>
+</html>

@@ -17,6 +17,15 @@ Three tiers, and none of them subsumes another. Run them in this order when touc
 
 1. `python3 scripts/check-realtime.py --self-test && python3 scripts/check-realtime.py` — seconds,
    no build, every platform. It reads the branches the suite never executes.
+
+   **It is fail-closed on its own inputs since 0.2.10, and the success line says so.** The gate
+   used to report "N ordering requirement(s) met" from `len(REQUIRED_ORDER)` — the number of rules
+   it was *asked* to check, not the number it *proved* — so a rule whose file had been renamed or
+   deleted passed vacuously: nothing matched, the rule was never evaluated, and the count was
+   printed anyway. It now reports "**N of M ordering requirement(s) verified**" from what was
+   actually reached, fails when a required rule goes unreached, and refuses an empty input set
+   outright (exit 2) rather than reporting "0 file(s) scanned" as success. Four of the self-test's
+   cases drive `scan_repo` against real temporary trees for exactly these paths.
 2. `scripts/run-tests.sh` — `testTheAudioPathAllocatesNothing` arms `tests/AllocationGuard.h` around
    `AnabasisEngine::process` across the configuration matrix. **Read its two `note:` lines**: they
    say how many calls were armed and which counters were live. A run that skips the assertions says
