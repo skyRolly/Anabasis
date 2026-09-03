@@ -4370,7 +4370,7 @@ static void testALearnPassThatOverflowedIsNotCommitted()
     // happen at all, and `ms = inf` passes it while `ms = NaN` would not. The
     // band energies both overflow, so `tiltDb` is inf/inf = NaN and the sum
     // takes it.
-    const float huge = 0.5f * std::numeric_limits<float>::max();
+    constexpr float huge = 0.5f * std::numeric_limits<float>::max();
     for (int n = 0; n < block; ++n) { buf.setSample (0, n, huge); buf.setSample (1, n, huge); }
     engine.process (buf, p);
 
@@ -4435,7 +4435,7 @@ static void testExtremeLevelDoesNotBreakTheMetersOrAdaptation()
         for (int b = 0; b < 60; ++b) { tone (b); engine.process (buf, p); }
         const float tiltBefore = engine.adaptive().publishedTiltDb();
 
-        const float huge = std::numeric_limits<float>::max();
+        constexpr float huge = std::numeric_limits<float>::max();
         for (int n = 0; n < block; ++n)
         {
             const float v = (n % 2 == 0) ? huge : -huge;
@@ -4489,7 +4489,7 @@ static void testExtremeLevelDoesNotBreakTheMetersOrAdaptation()
         const float lufsBefore = engine.outputLoudness().shortTermLufs();
         const float intBefore  = engine.outputLoudness().integratedLufs();
 
-        const float huge = std::numeric_limits<float>::max();
+        constexpr float huge = std::numeric_limits<float>::max();
         for (int n = 0; n < bigBlock; ++n)
         {
             big.setSample (0, n, huge);
@@ -4610,8 +4610,8 @@ static void testHostileFrozenTrimsCannotEnterTheAdaptiveState()
     anabasis::AdaptiveEngine a;
     a.prepare (48000.0, 512);
 
-    const float nan = std::numeric_limits<float>::quiet_NaN();
-    const float inf = std::numeric_limits<float>::infinity();
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float inf = std::numeric_limits<float>::infinity();
 
     // Every field poisoned differently, plus one ordinary out-of-range value so
     // the check cannot pass by rejecting the whole vector.

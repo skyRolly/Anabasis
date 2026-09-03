@@ -221,3 +221,117 @@ verification logistics, T1/T2 are settled by policy.
 Standing limitation, restated because it bounds every claim here: the Code Scanning **alert-store**
 state (open / fixed / dismissed) is unavailable from this environment. This audit is built entirely
 from raw SARIF and asserts nothing about it.
+
+---
+
+# Round 2 (2026-09-03, later) — PR review closure + the deferred G4/G5
+
+Starting state: `main` at `1c16654` (PR #32 merged). Round 1 closed as recorded above — drift
+corrected, artifact persistence in place, G1 fixed and scanner-confirmed, CodeQL first-party surface
+clean, G2/G3/T1/T2 accepted. Nothing below reopens any of them; no new evidence was found that would
+justify it.
+
+Two new review findings arrived against `src/PluginProcessor.cpp`, plus the G4/G5 Roadmap items this
+round was always going to pick up.
+
+## R1. Review finding #1 — "Adopted snapshots can miss first save" (`PluginProcessor.cpp:1199`)
+
+> *If adoption finishes after `programMailbox.take()` but before generation loads, the save selects
+> its old snapshot. It combines current sound with stale metadata.*
+
+**Disproved. No code changed.**
+
+The named machinery does not exist. `programMailbox`, `applyResolved`, `Mailbox` and `take()` have
+**zero occurrences** anywhere in `src/` or `tests/`. Line 1199 is inside a comment block, not code.
+The plugin has no program state machine at all to hold a mailbox: `getNumPrograms()` returns 1,
+`getCurrentProgram()` returns 0, and `setCurrentProgram(int)` is an empty override.
+
+Names being wrong is not by itself a disproof, so the analogous mechanism was traced. There **is** a
+staged-vs-published selection in the save path, and it is the only one: `getStateInformation`'s
+ADAPTIVE block picks between the staged mirrors and the engine's published values on
+`engine.adaptiveRestorePending()`. That is exactly the shape the finding describes, so it is the
+thing that had to be proved sound.
+
+It is sound, for two independent reasons.
+
+1. **The two actors are ordered.** The stager (`setStateInformation`) writes `stagedRefOnset`,
+   `stagedRefTilt`, `stagedAdaptiveLearned` and *then* calls `engine.restoreLearnedTargets(...)`,
+   which does `adaptivePending.store(true, release)`. The reader takes
+   `adaptivePending.load(acquire)` before reading the mirrors. The release/acquire pair publishes the
+   three stores ahead of the flag, so a reader that sees the flag up sees the values that set it —
+   on the message thread, where both live, and equally from any other thread a host might call
+   `getStateInformation` on.
+2. **The mirrors are never consumed.** The audio thread's
+   `adaptivePending.exchange(false, acquire)` clears only the *flag*. The three staged values are
+   written by the staging site alone and persist until the next `setStateInformation`. So the
+   interleaving the finding describes — the flag flipping between the two reads — resolves either
+   way to the same numbers: if `restoreStaged` reads true the mirrors hold the loaded truth, and if
+   it reads false the engine has already applied *those same values* and its published pair is that
+   truth. Sound and metadata cannot come from different generations because there is only ever one
+   generation in flight.
+
+Worth recording that the repository already reasoned about this hazard class: the comment above the
+staging site warns that a stager which sets the flag without pairing the stores would make
+`getStateInformation` "serialize the stale one", and instructs future stagers to route through that
+site or pair the stores in a helper. The invariant the finding worries about is not accidental — it
+is written down and enforced at the one place that can break it.
+
+## R2. Review finding #2 — "Newer restores can lose synchronous settings" (`PluginProcessor.cpp:1069`)
+
+> *When a second restore overlaps adoption of the first, `applyResolved` can overwrite the newer
+> oversampling atomic. Activation uses the previous setting until another adoption.*
+
+**Disproved. No code changed.**
+
+Again the named machinery is absent — no `applyResolved`, and 1069 is a comment line. And again the
+analogue exists and had to be checked: there **is** an oversampling atomic,
+`InternalState::osMirror`, read by the audio thread through `oversampleFactor()`.
+
+The finding requires a stale value to be *in flight* — something captured earlier and written later.
+There is none, by construction. `osMirror` has exactly two writer paths and both are `syncAtomics()`
+(the constructor, and `valueTreePropertyChanged` via the listener). `syncAtomics()` takes its value
+from `tree.getProperty(iid::oversample)` **at the instant it runs**; it carries no argument and no
+captured payload. A late, "older" call therefore cannot install an older value — it re-reads the
+current tree and installs the current truth. The mirror is a derived cache, not a delivered message,
+and a derived cache has no stale generation to lose.
+
+The ordering question the finding raises does not arise either: `setStateInformation` and
+`InternalState::replaceFrom` are synchronous message-thread code, and `ValueTree::setProperty`
+dispatches the listener synchronously on the same thread, so restores are serialised rather than
+overlapped. "Newer restore wins" holds because the newer restore is the one that ran last, and the
+mirror reflects whatever the tree holds when it did.
+
+**Neither finding required a compatibility, serialization or architecture gate**, since neither
+produced a change.
+
+## R3. G4 — `C28252 ×4`, and the diagnostic named its own fix
+
+The four findings correlate exactly with the four `ANABASIS_GUARD_RET_MAYBENULL` uses; the four
+`ANABASIS_GUARD_RET_NOTNULL` uses are clean. That one-to-one split is the evidence that located the
+fault in the macro rather than in any individual overload.
+
+The message says the prior instance has `SAL_success(return!=0)`. MSVC's `<vcruntime_new.h>` declares
+the nothrow operators `_Ret_maybenull_ _Success_(return != NULL) _Post_writable_byte_size_(_Size)`,
+and declares the throwing forms with no `_Success_` at all — a throwing `new` returns or throws, it
+never fails by returning. The repository's MAYBENULL macro carried `_Ret_maybenull_` and
+`_Post_writable_byte_size_` but **not** `_Success_`, so its definitions contradicted the prior
+declaration; the NOTNULL macro had nothing to contradict, which is precisely why only four of the
+eight fired.
+
+Fix: add `_Success_(return != 0)` to the MAYBENULL macro. This aligns the annotation with the CRT
+contract rather than removing one. The tempting alternative — dropping `_Ret_maybenull_` — would have
+been the wrong repair: nothrow `new` genuinely can return null, and modelling that is the one thing
+this guard exists for.
+
+Windows-CI-verified, since the CRT headers cannot be read from this environment.
+
+## R4. G5 — `C26498 ×5`
+
+Bundled into the same change, as the round-1 Roadmap said it should be: `tests/` was already open and
+the Windows verification loop was already running. Five locals initialised from `constexpr` members
+(`max()`, `quiet_NaN()`, `infinity()`) changed `const` → `constexpr`. No behavioural or codegen
+consequence; no other test touched.
+
+## R5. Verification
+
+*(updated as it completes)*

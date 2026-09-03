@@ -119,7 +119,20 @@
 #if defined(_MSC_VER)
   #include <sal.h>
   #define ANABASIS_GUARD_RET_NOTNULL(sz)   _Ret_notnull_ _Post_writable_byte_size_(sz)
-  #define ANABASIS_GUARD_RET_MAYBENULL(sz) _Ret_maybenull_ _Post_writable_byte_size_(sz)
+  // `_Success_` is NOT decoration here, it is the half the CRT already states and
+  // this macro was missing. `<vcruntime_new.h>` declares the NOTHROW operators
+  // `_Ret_maybenull_ _Success_(return != NULL) _Post_writable_byte_size_(_Size)`,
+  // and a definition that annotates the same operator differently from its prior
+  // declaration is what C28252 reports: "return/function has
+  // 'SAL_success(return!=0)' on the prior instance". The correlation is exact --
+  // the four MAYBENULL uses below were the four C28252 findings, and the four
+  // NOTNULL uses, whose CRT counterparts carry no `_Success_` (a throwing `new`
+  // returns or throws, it never fails by returning), were clean. Adding the
+  // clause ALIGNS this with the CRT contract; it does not weaken the annotation
+  // or silence the check, and dropping `_Ret_maybenull_` instead would have been
+  // the wrong repair -- nothrow `new` genuinely can return null, which is the one
+  // fact this guard exists to model.
+  #define ANABASIS_GUARD_RET_MAYBENULL(sz) _Ret_maybenull_ _Success_(return != 0) _Post_writable_byte_size_(sz)
 #else
   #define ANABASIS_GUARD_RET_NOTNULL(sz)
   #define ANABASIS_GUARD_RET_MAYBENULL(sz)
