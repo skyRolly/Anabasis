@@ -147,3 +147,25 @@ jobs:
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: "/language:${{ matrix.language }}"
+
+      # Persist the raw SARIF this analysis just produced -- IN ADDITION TO, never
+      # instead of, the Code Scanning upload performed by the step above. The Code
+      # Scanning alert and check-run annotation APIs are not reachable from every
+      # audit context; Actions artifacts are, so this keeps the scanner's own
+      # output retrievable for later review without changing what is analyzed or
+      # what is uploaded.
+      #
+      # Path: `analyze` writes <database-language>.sarif into its `output`
+      # directory, which defaults to `../results` -- i.e. ${{ runner.workspace }}/results
+      # (verified in the job log: "output: ../results" and
+      # "Post-processing sarif files: [\"/home/runner/work/Anabasis/results/cpp.sarif\"]").
+      # The filename is the DATABASE language, not the matrix language: the
+      # `c-cpp` entry yields `cpp.sarif`, the `actions` entry `actions.sarif`, so
+      # the glob avoids hard-coding that mapping. `if-no-files-found: error` fails
+      # the job loudly rather than publishing an empty artifact.
+      - name: Upload raw CodeQL SARIF
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-${{ matrix.language }}-${{ github.sha }}
+          path: ${{ runner.workspace }}/results/*.sarif
+          if-no-files-found: error
