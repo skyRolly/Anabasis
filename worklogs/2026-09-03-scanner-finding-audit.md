@@ -263,12 +263,17 @@ It is sound, for two independent reasons.
    `getStateInformation` on.
 2. **The mirrors are never consumed.** The audio thread's
    `adaptivePending.exchange(false, acquire)` clears only the *flag*. The three staged values are
-   written by the staging site alone and persist until the next `setStateInformation`. So the
-   interleaving the finding describes — the flag flipping between the two reads — resolves either
-   way to the same numbers: if `restoreStaged` reads true the mirrors hold the loaded truth, and if
-   it reads false the engine has already applied *those same values* and its published pair is that
-   truth. Sound and metadata cannot come from different generations because there is only ever one
-   generation in flight.
+   written by the staging site alone and persist until the next `setStateInformation`, so there is
+   only ever one generation in flight and the finding's "current sound with stale metadata" cannot
+   arise from two.
+
+   **Corrected in round 4 (§D2-D4).** This point originally continued: "if it reads false the engine
+   has already applied *those same values*". That step does not hold — flag down means already
+   *consumed*, which is strictly earlier than *applied*, and the two are adjacent but not atomic. A
+   save landing between them takes the published branch while it still holds pre-restore values. The
+   window is real, and it is **ADR-0012 Known limit 1** (accepted, bounded at one save's worth). R1
+   remains disproved on its own terms; the analogue is safe within a documented bound rather than
+   unconditionally.
 
 Worth recording that the repository already reasoned about this hazard class: the comment above the
 staging site warns that a stager which sets the flag without pairing the stores would make
@@ -474,3 +479,125 @@ matches the round it describes.
 The pattern is exact. Each was written when it was true, then the round grew past it. That is the
 whole lesson of §C3 recurring inside the fix for §C3 — which is the argument for sweeping a document
 set against itself at the END of a round rather than trusting that each edit was complete when made.
+
+---
+
+# Round 4 (2026-09-03) — the adaptive-restore proof, and the window it omitted
+
+## D1. The finding
+
+Against `docs/DOCUMENTATION_COVERAGE.md:98` — my own round-2 entry:
+
+> The documented `adaptiveRestorePending()` proof omits the consume-to-adoption window. A concurrent
+> save can still serialize the previous learned state.
+
+## D2. What round 2 actually claimed
+
+Two reasons were given for R1 being sound. The second was:
+
+> *Never consumed:* the audio thread's `adaptivePending.exchange(false, acquire)` clears only the
+> flag … so the interleaving resolves the same way either way — flag up ⇒ the mirrors hold the loaded
+> truth; **flag down ⇒ the engine already applied those same values**.
+
+The bolded step is the one the reviewer is challenging, and it is the step that does not hold.
+
+## D3. Implementation trace
+
+Writer, message thread (`AnabasisEngine.h:222-232`) — payload relaxed, flag release-stored last:
+
+```
+pendingRefOnset / pendingRefTilt / pendingLearned   (relaxed)
+adaptivePending.store(true, release)
+```
+
+Consumer, audio thread, block top (`AnabasisEngine.cpp:267-274`):
+
+```
+if (adaptivePending.exchange(false, acquire))     // (1) flag cleared HERE
+    adaptiveEngine.setLearnedTargets(...)         // (2) published values change HERE
+    /* or */ clearLearnedTargets()
+```
+
+Reader, message thread (`PluginProcessor.cpp:1748-1765`):
+
+```
+restoreStaged = engine.adaptiveRestorePending()   // == adaptivePending.load(acquire)
+learnedNow    = restoreStaged ? stagedAdaptiveLearned : ad.hasLearned()
+                                 ↑ mirrors          ↑ PUBLISHED values
+```
+
+**Ordering model.** (1) and (2) are adjacent but not atomic. A reader landing between them observes
+`restoreStaged == false` and therefore takes the *published* branch — which still holds the
+pre-restore values, because (2) has not run. So the save writes the previous learned state.
+
+**The window is real.** Round 2's proof was wrong on this point: "flag down" does not imply "already
+applied", it implies "already *consumed*", which is strictly earlier.
+
+## D4. But it is not a defect — it is a ratified trade
+
+`ADR-0012` (**Accepted** 2026-08-01, owner decision on OQ-015 option 1, confidence *Verified*),
+§"Known limits of the contract", limit 1, states the finding almost verbatim:
+
+> **Consume-then-adopt window.** The consumer clears the flag with `exchange` and adopts a few
+> instructions later. A writer-side read landing between the two … sees `false` while the engine
+> still holds pre-adoption values, so a save in that window serializes the older learned state — one
+> save's worth. Closing it means clearing the flag *after* adoption, which trades this for a **lost
+> update**: a record staged between adopt and clear would be erased. **The stale-read window is the
+> better trade and is the one taken.**
+
+So the window is documented, analysed, owner-decided and deliberately accepted; the alternative I
+would otherwise have proposed is the one the ADR explicitly evaluates and rejects. Bounded at one
+save's worth, on references that slew over seconds.
+
+**Disposition: documentation-only.** The code is correct as designed. The defect is in my proof,
+which claimed a stronger guarantee than the code provides — the thing §7 of the brief forbids.
+
+## D5. The sibling asymmetry, and why it is not a contradiction
+
+The frozen-trim path solves an equivalent problem *differently*: `frozenRestorePending()` is
+`frozenStageSeq != frozenAppliedSeq`, and the applied side is advanced by the audio thread **after**
+`injectTrims`, under a comment that names this exact hazard —
+
+> *Only NOW is the published vector the restored one — the writer's capture guard reads this, not the
+> block-top flag.*
+
+That is not the adaptive path being wrong by comparison; it is a different trade for a different
+window. The frozen path consumes at the block top and applies at the §2.8 **duck bottom** — ~34 ms
+later, and unbounded if no audio runs at all — so its window is enormous and had to be closed. The
+adaptive path applies a few instructions after the consume, so its window is a few instructions wide
+and the ADR takes the stale read instead.
+
+**Observation recorded, not acted on.** A stage/applied *sequence pair* — the frozen path's idiom —
+would close the adaptive window without the lost update ADR-0012 cites as its reason for accepting
+it, because an increment during application leaves the record pending rather than erasing it. ADR-0012
+evaluated only the flag-based closure. Whether the adaptive path should adopt the sibling idiom is an
+**ADR-level question**: changing it would contradict an Accepted ADR, which `CLAUDE.md` lists as a
+hard stop. Recorded here as a candidate ADR-0012 amendment rather than implemented. **No code changed
+in this round.**
+
+## D6. Resolution
+
+**Documentation-only.** The window is real and the round-2 proof was wrong about it; the code is
+correct as designed and matches its Accepted ADR. Three records carried the same overclaim and all
+three are corrected:
+
+| record | what it said | what it says now |
+|---|---|---|
+| `docs/DOCUMENTATION_COVERAGE.md` | mirrors "never consumed", no window | qualified, with a round-4 entry giving the full proof and the ADR-0012 citation |
+| `docs/reports/…-scanner-audit.html` | "flag down ⇒ the engine already applied those same values" | corrected in the R1 register row, window named and bounded |
+| `worklogs/…-scanner-finding-audit.md` §R1 | same claim | corrected, pointing at §D2-D4 |
+
+R1's own disposition is unchanged and still **disproved** — its mailbox/generation machinery does not
+exist, and the one-generation argument stands. What changes is the strength of the claim: the
+analogue is safe **within a documented bound**, not unconditionally. Stating it the stronger way was
+the defect.
+
+Proof text checked against source rather than memory: `exchange` at `AnabasisEngine.cpp:267` with the
+apply at 269-273 (adjacent, not atomic); the reader gating on it at `PluginProcessor.cpp:1748-1752`;
+ADR-0012 Accepted with the "Consume-then-adopt window" limit present; the frozen sibling advancing
+`frozenAppliedSeq` after `injectTrims` at 416-419.
+
+**Roadmap:** unchanged. No new item — the ADR-0012 amendment candidate in §D5 is an observation for a
+future round, not scheduled work, and it needs an owner decision rather than engineering time.
+
+**No production code, test, scanner or CI change in this round.**

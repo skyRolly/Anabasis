@@ -96,8 +96,9 @@ reclassify a document** (`REPOSITORY_MAP.md`, this file's self-coverage).
 produced a change: the machinery each named (`programMailbox`/`take()`, `applyResolved`) has zero
 occurrences in the tree, and the analogous mechanisms that DO exist were traced and shown sound —
 `getStateInformation`'s staged-vs-published ADAPTIVE selection is release/acquire ordered and its
-mirrors are never consumed, and `InternalState::osMirror` is a derived cache recomputed from the tree
-by its only writer, so it has no stale generation to lose. The round's actual changes were the two
+mirrors are never consumed — **within ADR-0012's recorded bound; see the round-4 correction below** —
+and `InternalState::osMirror` is a derived cache recomputed from the tree by its only writer, so it
+has no stale generation to lose. The round's actual changes were the two
 deferred scanner items: **G4** (`C28252` ×4) fixed by adding `_Success_(return != 0)` to
 `ANABASIS_GUARD_RET_MAYBENULL`, aligning it with the CRT's own nothrow declaration rather than
 removing an annotation, and **G5** (`C26498` ×5) folded in as round 1 planned. Both
@@ -137,6 +138,44 @@ The round's own last two defects are recorded because they are the same class: t
 `HANDOVER.md` drift was recorded "in the final report" when the report carried no round-3 record at
 all, and this entry described the round as one wording fix after it had grown to six. Both were found
 by re-reading the documents against each other rather than against memory.
+
+**Adaptive-restore proof completed, round 4 (2026-09-03).** A review finding against the round-2
+entry above: the `adaptiveRestorePending()` proof omitted the **consume-to-adoption window**, so a
+concurrent save can still serialize the previous learned state. Investigated from source and
+**upheld as to the window, rejected as to it being a defect**.
+
+The omitted step is real. Round 2 argued "flag down ⇒ the engine already applied those same values";
+flag down actually means already *consumed*. `adaptivePending.exchange(false, acquire)` and
+`adaptiveEngine.setLearnedTargets(...)` (`AnabasisEngine.cpp:267-274`) are adjacent but not atomic,
+so a `getStateInformation` landing between them sees `restoreStaged == false`, takes the *published*
+branch, and reads pre-restore values. The proof as written claimed a stronger guarantee than the code
+provides.
+
+It is not a correctness defect: it is **`ADR-0012` Known limit 1, the "consume-then-adopt window"**,
+which states the same scenario almost verbatim, bounds it at *one save's worth* on references that
+slew over seconds, and records why it is taken — closing it by clearing the flag after adoption
+trades a bounded stale read for an unbounded **lost update**. ADR-0012 is **Accepted** (2026-08-01,
+owner decision on OQ-015 option 1, confidence *Verified*) and ratifies precisely this learned-target
+restore. The code matches its ADR; the documentation did not match the code.
+
+Corrected in three places that carried the same overclaim: this entry, the audit report's R1 register
+row, and the worklog's §R1. **No production code changed** — under the authority order an Accepted
+ADR outranks this file, and contradicting one is a `CLAUDE.md` hard stop.
+
+Recorded as an observation for a possible future **ADR-0012 amendment**, not acted on: the sibling
+frozen-trim path closes an equivalent window with a stage/applied *sequence pair*
+(`frozenStageSeq != frozenAppliedSeq`, advanced after `injectTrims` under the comment "the writer's
+capture guard reads this, not the block-top flag"), and a sequence pair does **not** incur the lost
+update ADR-0012 gives as its reason for accepting the window, since an increment during application
+leaves the record pending rather than erasing it. ADR-0012 evaluated only the flag-based closure. The
+asymmetry is nonetheless defensible on its own terms — the frozen path applies at the §2.8 duck
+bottom, ~34 ms later and unbounded with no audio, so its window had to be closed, while the adaptive
+path's is a few instructions wide.
+
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: the **audit obligation** (this file) and the audit
+records (`docs/reports/2026-09-03-scanner-audit.html`,
+`worklogs/2026-09-03-scanner-finding-audit.md`). No **State serialization schema** row: no schema,
+contract or behaviour changed.
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).

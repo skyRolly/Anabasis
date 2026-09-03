@@ -206,10 +206,19 @@ mailbox: <code>getNumPrograms()→1</code>, <code>getCurrentProgram()→0</code>
 <code>engine.adaptiveRestorePending()</code>. It is sound for two independent reasons. <strong>(1) Ordered:</strong> the
 stager writes the three staged mirrors and <em>then</em> sets <code>adaptivePending</code> with
 <code>release</code>; the reader loads it with <code>acquire</code> before reading them, so seeing the flag implies seeing
-the values. <strong>(2) Never consumed:</strong> the audio thread’s <code>exchange(false)</code> clears only the
-<em>flag</em> — the mirrors persist until the next <code>setStateInformation</code>. So the interleaving resolves the same
-way either way: flag up ⇒ mirrors hold the loaded truth; flag down ⇒ the engine already applied <em>those same values</em>.
-There is only ever one generation in flight.</td></tr>
+the values. <strong>(2) Mirrors are never consumed:</strong> the audio thread’s <code>exchange(false)</code> clears only the
+<em>flag</em> — the mirrors persist until the next <code>setStateInformation</code>, so there is only ever one generation
+in flight and “current sound with stale metadata” cannot arise from two.
+<br><br><strong>Corrected 2026-09-03 (round 4).</strong> This row previously closed with “flag down ⇒ the engine already
+applied those same values”. That step is <strong>wrong</strong>: flag down means already <em>consumed</em>, which is
+strictly earlier than applied. <code>exchange(false)</code> and <code>setLearnedTargets</code> are adjacent but not
+atomic, so a save landing between them reads the <em>published</em> branch while it still holds pre-restore values —
+<strong>the window is real</strong>. It is not a defect: it is <strong>ADR-0012 Known limit 1</strong>, the
+“consume-then-adopt window”, stated there almost verbatim, bounded at <em>one save’s worth</em> on references that slew
+over seconds, and deliberately taken — closing it by clearing the flag after adoption would trade a bounded stale read
+for an unbounded <em>lost update</em>. Accepted 2026-08-01 on the owner’s OQ-015 decision. R1’s own claim is still
+disproved (its mailbox/generation machinery does not exist); what changes is that the analogue is safe <em>within a
+documented bound</em>, not unconditionally.</td></tr>
 <tr><th>Affected state</th><td>None.</td></tr>
 <tr><th>Risk / user impact</th><td>None. No reachable defect.</td></tr>
 <tr><th>Fix cost</th><td>N/A.</td></tr>
