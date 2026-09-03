@@ -380,3 +380,83 @@ surface is clean.
 
 Nothing was left unresolved. The two review findings are disproved with source-level evidence rather
 than deferred; G4 and G5 are scanner-confirmed rather than argued.
+
+
+---
+
+# Round 3 (2026-09-03) — audit-record consistency closure
+
+No source, test, scanner or CI change. `docs/` and `worklogs/` only.
+
+## C1. The coverage record was stale for round 2
+
+The audit obligation applies to *every* documentation-affecting change, and round 2 changed two audit
+records without touching `DOCUMENTATION_COVERAGE.md`. Added one entry for round 2 and one for this
+round. Nothing else backfilled, no historical obligation invented.
+
+The round-2 entry deliberately does **not** claim the **New/changed test** row. `AllocationGuard.h`
+and `dsp_tests.cpp` were edited, but no test was added, removed, or had its behaviour changed — a SAL
+annotation is analysis-only, and `const` → `constexpr` on locals initialised from `constexpr` members
+changes neither semantics nor codegen. The suites reporting the same 1345 checks either side is the
+evidence for that rather than an assertion of it.
+
+## C2. "Windows-CI-verified" was four claims compressed into one
+
+§R3 asserted G4 "Windows-CI-verified" in a narrative section written *before* the run, while the
+report at that moment still said pending. The compression was the defect: that phrase ran together
+local verification (a no-op off MSVC by construction), Windows CI execution (a green job proves the
+annotation is well-formed, not that the diagnostic stopped firing), PREfast scanner confirmation (the
+raw SARIF — the only level that settles it, the `_Success_` clause having been *derived* rather than
+looked up), and the standing limitation that confirmation is confirmation on **one** toolset. §R3 now
+separates them and defers the result to §R5. The report needed no change on this point; `bdd75b2` had
+already closed its side.
+
+## C3. The consistency sweep, and what it caught in my own work
+
+Seven independent lenses were run across the report, the worklog, `DOCUMENTATION_COVERAGE.md` and
+`HANDOVER.md` — statuses, counts, provenance, pending-vs-confirmed, roadmap, remaining work, handover.
+Counts and provenance came back clean. The other five converged, independently and repeatedly, on
+**four self-contradictions inside the HTML report** — all of them mine, all introduced by updating one
+part of the document when G4/G5 closed and not the others:
+
+1. **"Open decisions": *"G4 is deferred for verification logistics, not for a decision."*** Present
+   tense, in a file that declares itself the live state, three sections after the same file records
+   G4 as `CLOSED — Windows-PREfast confirmed`. Flagged by four lenses.
+2. **Roadmap preamble: *"the one open verification claim rises to the top."*** True when written;
+   false once the verification closed and G2 took the top slot. The item that now leads says in its
+   own body that *everything actionable is done*.
+3. **G4 "Cost / complexity" row** still named *"drop the annotation on the nothrow overloads"* as the
+   likely fix — the approach the Fix row four rows below explicitly rejects — and described
+   verification as an unconfirmed hypothesis awaiting CI.
+4. **R1/R2 filed in two Roadmap buckets at once**, Monitor *and* Closed, so the Roadmap did not say
+   which state it assigned them.
+
+All four corrected. The lesson is worth writing down: a live document updated in place accumulates
+exactly this class of defect, because the parts that need changing are the ones that do not mention
+the thing that changed. A sweep that asks "what does this document now contradict?" finds them;
+re-reading the parts you edited does not.
+
+## C4. Drift found in `HANDOVER.md` — reported and corrected
+
+The handover lens found the Test Status row claiming **"Five checkers now ship `--self-test`"** while
+*listing six*, with two stale figures: `check-realtime 90` and `check-clang-warnings 15`. Neither is
+this round's doing — 0.2.10 grew the realtime self-test by the four `scan_repo` cases against real
+temporary trees, and `CI_CD.md` already records the clang-warnings gate going 15 → 18 — so the row
+had been contradicting the tree for two versions.
+
+Corrected from a measured run of all six on this commit: docs 67, citations 37, portability 120,
+realtime 145, linux-abi 19, clang-warnings 18. Recorded here and in the final report rather than
+changed quietly, which is what C6 asks: drift is to be reported, and the objection is to *silent*
+correction, not to correction.
+
+## C5. Verification
+
+`check-docs` 109 clean · `check-citations` 54 anchors · `check-portability` 48/0 · `check-realtime`
+40 files, 1 of 1 verified · all six gate self-tests · HTML well-formed · `git diff --check` clean ·
+diff is `docs/` and `worklogs/` only.
+
+## C6. Closing state
+
+Every completed disposition stands unchanged — G1, G4, G5 fixed and scanner-confirmed; G2 monitored;
+G3 and the two review findings recorded disproofs; T1/T2 third-party; CodeQL clean on both languages.
+**Zero actionable first-party findings remain**, and the records now agree with each other on that.

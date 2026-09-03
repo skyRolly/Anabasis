@@ -344,10 +344,11 @@ Test-support header; never shipped. The cost is analytical: contradictory annota
 allocation in the test suite.</td></tr>
 <tr><th>Benefit of fixing</th><td>Moderate-low: 4 diagnostics, and restored analyzer fidelity on the allocation guard —
 which is the harness the realtime no-allocation proof depends on.</td></tr>
-<tr><th>Cost / complexity</th><td><strong>Low edit, awkward verification.</strong> The likely fix is to drop the annotation
-on the nothrow overloads and let the CRT’s stand. But the exact CRT annotation cannot be read from this environment
-(no MSVC headers), so the fix is a hypothesis that only a Windows CI round can confirm — and a wrong guess is churn that
-leaves the diagnostic in place.</td></tr>
+<tr><th>Cost / complexity</th><td><strong>Low edit, remote verification.</strong> One macro line. The awkwardness was
+never the edit but the proof: the CRT annotation cannot be read from this environment (no MSVC headers), so the clause had
+to be <em>derived</em> — from the diagnostic text plus the exact four-MAYBENULL / four-NOTNULL correlation — and stayed a
+hypothesis until the analyzer answered. It held on the first Windows run. <em>(This row previously named dropping the
+annotation as the likely fix; that is the approach the Fix row below rejects, and it is not what shipped.)</em></td></tr>
 <tr><th>Needs fix?</th><td><span class="tag t-fix">SHOULD FIX — DONE</span></td></tr>
 <tr><th>What located it</th><td><strong>An exact one-to-one correlation.</strong> The four findings are the four
 <code>ANABASIS_GUARD_RET_MAYBENULL</code> uses; the four <code>ANABASIS_GUARD_RET_NOTNULL</code> uses are clean. That split
@@ -428,8 +429,9 @@ poisoning, CWE-094 code injection and CWE-349 cache poisoning. <strong>Dispositi
 
 <h2>Roadmap</h2>
 <p class="sub">Re-ordered for this round by residual risk, user impact, correctness, realtime implication, regression
-risk, engineering cost and dependency — <strong>not</strong> chronologically. Settled items sink; the one open
-verification claim rises to the top.</p>
+risk, engineering cost and dependency — <strong>not</strong> chronologically. Settled items sink. With every
+verification claim now closed, what rises to the top is not work but the highest <em>residual</em> risk: a standing
+watch nobody is asked to act on today.</p>
 <div class="panel rm">
   <div class="item"><div class="num">1</div><div class="body">
     <div class="when">Monitor — no current action · <em>highest residual risk</em></div>
@@ -446,14 +448,16 @@ verification claim rises to the top.</p>
     change — so this is a dependency, not a task.
   </div></div>
   <div class="item"><div class="num">3</div><div class="body">
-    <div class="when">Monitor — no current action · <em>lowest</em></div>
+    <div class="when">Monitor — no current action · <em>lowest of the open watches</em></div>
     <div class="ttl">G3 and review findings R1 / R2 — recorded disproofs</div>
-    Nothing to do. Ranked last because the only value left in them is documentary: each is recorded with its proof so a
-    future audit or review re-confirms in minutes rather than re-triaging from scratch.
+    Nothing to do, and ranked last among the watches because the only value left in them is documentary: each is recorded
+    with its proof so a future audit or review re-confirms in minutes rather than re-triaging from scratch. They are
+    listed here rather than under Closed because a disproof is a standing answer to a question that can be asked again,
+    not a piece of finished work.
   </div></div>
   <div class="item"><div class="num">4</div><div class="body">
     <div class="when">Closed</div>
-    <div class="ttl">G1, G4, G5, the documentation drift, artifact persistence, review findings R1/R2</div>
+    <div class="ttl">G1, G4, G5, the documentation drift, artifact persistence</div>
     Rounds 1 and 2, all scanner-confirmed or source-disproved. G1 scanner-confirmed; drift corrected; the SARIF artifacts that made all of this possible are in place.
   </div></div>
 </div>
@@ -466,7 +470,7 @@ disposition followed from source evidence, scanner evidence or existing policy:<
 <li>G1 touches no parameter ID, serialization schema, threading model, DSP signal order, reported latency or macro
 contract — it changes no behaviour at all — so <code>ARCHITECTURE_REVIEW_GATE.md</code> is not engaged.</li>
 <li>G2/G3/G5 are test-only with no contract surface.</li>
-<li>G4 is deferred for verification logistics, not for a decision.</li>
+<li>G4 <em>was</em> deferred for verification logistics rather than for a decision, and is now closed — Windows-PREfast confirmed. It never needed one.</li>
 <li>T1/T2 are settled by <code>DEPENDENCY_POLICY.md</code>.</li>
 </ul>
 <p class="note" style="margin-bottom:0"><strong>Standing limitation, not a decision:</strong> the GitHub Code Scanning
