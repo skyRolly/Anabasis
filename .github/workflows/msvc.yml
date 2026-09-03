@@ -126,7 +126,16 @@ jobs:
       # analysis pass and no change to the /analyze flags that produced it.
       # `if-no-files-found: error` fails the job loudly rather than publishing an
       # empty artifact.
+      #
+      # Gated on the ANALYSIS step, not on the upload that precedes this one: a
+      # report Code Scanning rejects is exactly when the raw SARIF is most worth
+      # keeping, and the default success gate would discard it precisely then.
+      # Here the produce and upload steps are SEPARATE (unlike codeql.yml, where
+      # `analyze` does both), so the condition can be exact -- results.sarif
+      # exists if and only if `run-analysis` succeeded -- and `if-no-files-found`
+      # stays unconditionally strict.
       - name: Upload raw PREfast SARIF
+        if: ${{ !cancelled() && steps.run-analysis.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: prefast-sarif-${{ github.sha }}

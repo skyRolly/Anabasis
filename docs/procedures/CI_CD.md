@@ -7,8 +7,8 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 | Workflow | Purpose |
 |---|---|
 | `build.yml` | Build + validate on three OSes. The gate. |
-| `codeql.yml` | CodeQL analysis (`c-cpp` + `actions`). |
-| `msvc.yml` | MSVC `/analyze` → SARIF. |
+| `codeql.yml` | CodeQL analysis (`c-cpp` + `actions`). Uploads to Code Scanning **and** keeps the raw SARIF as an artifact. |
+| `msvc.yml` | MSVC `/analyze` → SARIF. Uploads to Code Scanning **and** keeps the raw SARIF as an artifact. |
 | `dependency-review.yml` | Dependency Review on PRs to `main`. |
 | ~~`cxx23-canary.yml`~~ | **Removed at 0.2.0 (ADR-0030).** C++23 is the baseline, so every job in `build.yml` compiles it on all three platforms as a blocking check and the weekly non-blocking copy became a duplicate build of the baseline. |
 | `release.yml` | Tag-triggered draft release. Not present — deferred to the first commercial release by **OQ-007** (resolved 2026-08-02), no longer a P6 item. |
@@ -508,6 +508,16 @@ These are the rules, not incidental details — each blocks a specific way a bad
   artifact, which is what it is actually protecting.
 - `!cancelled()` (rather than plain `success()`) keeps the beta artifact available when *only*
   pluginval failed, while a failed behavioural gate still blocks it.
+- **The raw scanner SARIF is kept on the same `!cancelled()` principle** — a report Code
+  Scanning REJECTS is exactly when the raw SARIF is most worth having, and a success gate would
+  discard it precisely then. The two scanners need different conditions because they are shaped
+  differently: `msvc.yml` produces and uploads in SEPARATE steps, so its artifact gates exactly on
+  `steps.run-analysis.outcome == 'success'` and keeps `if-no-files-found: error` unconditionally.
+  `codeql.yml`'s `analyze` does BOTH, so its own outcome cannot separate "no SARIF" from "SARIF
+  written, upload refused": it gates on `outcome != 'skipped'` and downgrades `if-no-files-found`
+  to `warn` when the analysis itself failed — deliberately avoiding the trap the last bullet in
+  this list describes, where a second failure on a missing file buries the real error. `warn`
+  never publishes an empty artifact; upload-artifact skips the upload when nothing matches.
 - The staging step **self-validates** what it just built — but **not equally on the three
   platforms**, and the difference is worth knowing before trusting the phrase:
 
@@ -538,6 +548,7 @@ These are the rules, not incidental details — each blocks a specific way a bad
 |---|---|
 | `codeql.yml` | `c-cpp` uses build-mode **manual**, not `none`: JUCE arrives via `FetchContent` at configure time, so a bare checkout has no framework headers and a no-build analysis would resolve almost no includes. `paths-ignore: build` keeps the fetched JUCE tree out of the alerts — it is pin-locked and review-gated, so alerts there are unactionable. Docs-only changes skip the workflow. `actions` is analysed with build-mode `none`. |
 | `msvc.yml` | A real build is **required** (juceaide generates files the plugin TUs consume). JUCE is treated as external (`ignoredIncludePaths` / `ignoredTargetPaths`). Path-filtered triggers — a full build + `/analyze` pass on a docs change is pure cost. Analyses **Release**, the shipped configuration, so it sees the `NDEBUG` state customers get. |
+| Raw SARIF artifacts | Both scanners also publish their SARIF as Actions artifacts — `codeql-sarif-<language>-<sha>` and `prefast-sarif-<sha>`. The Code Scanning alert and check-run annotation APIs are not reachable from every audit context; Actions artifacts are. The artifact is strictly richer than the dashboard for CodeQL: `paths-ignore: build` filters the fetched JUCE tree out of the ALERTS, but those results remain in the raw SARIF. Note the name carries `github.sha`, which on a `pull_request` event is the merge commit, not the head commit. |
 | `dependency-review.yml` | PRs to `main` only; `comment-summary-in-pr: on-failure` — most PRs change no manifest and an unconditional comment is noise. |
 | `dependabot.yml` | Weekly **grouped** `github-actions` bumps (one PR, one CI run per week). JUCE is **not** covered: CMake is not a Dependabot ecosystem, and a JUCE bump is deliberately a manual, review-gated Build System change. |
 
