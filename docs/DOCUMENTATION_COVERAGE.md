@@ -6,8 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **scanner-finding audit (2026-09-03)** — the first audit run against raw
-SARIF retrieved from the scanners themselves, and the one production finding it produced. Before
+**Last updated:** for the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
+findings disproved, G4/G5 fixed and scanner-confirmed, and this record synchronised with the audit
+records it covers. Before that, the **scanner-finding audit (2026-09-03)** — the first audit run
+against raw SARIF retrieved from the scanners themselves, and the one production finding it produced. Before
 that, the **scanner-SARIF artifact change (2026-09-03)** — `codeql.yml` and `msvc.yml` now also
 publish their raw SARIF as Actions artifacts — and **0.2.9 / 0.2.10 (2026-09-02/03)**, whose
 entries are below. Before those, for **0.2.8
@@ -88,6 +90,38 @@ dispositioned in `docs/reports/2026-09-03-scanner-audit.html`, which carries the
 Roadmap. Rows engaged: **New/changed test** (none added — the fix is covered by the existing
 channel battery; this file), and the audit report is a new document, so **Add / remove /
 reclassify a document** (`REPOSITORY_MAP.md`, this file's self-coverage).
+
+**Scanner-audit remediation, round 2 (2026-09-03).** Two review findings against
+`src/PluginProcessor.cpp` were investigated and **both disproved at source level**, so neither
+produced a change: the machinery each named (`programMailbox`/`take()`, `applyResolved`) has zero
+occurrences in the tree, and the analogous mechanisms that DO exist were traced and shown sound —
+`getStateInformation`'s staged-vs-published ADAPTIVE selection is release/acquire ordered and its
+mirrors are never consumed, and `InternalState::osMirror` is a derived cache recomputed from the tree
+by its only writer, so it has no stale generation to lose. The round's actual changes were the two
+deferred scanner items: **G4** (`C28252` ×4) fixed by adding `_Success_(return != 0)` to
+`ANABASIS_GUARD_RET_MAYBENULL`, aligning it with the CRT's own nothrow declaration rather than
+removing an annotation, and **G5** (`C26498` ×5) folded in as round 1 planned. Both
+**Windows-PREfast confirmed**: run `33807395028` on `b8bace4`, 152 → 143 results, `C28252` 4 → 0,
+`C26498` 5 → 0, nothing new introduced. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: the **audit
+obligation** (this file) and the audit records themselves
+(`docs/reports/2026-09-03-scanner-audit.html`, `worklogs/2026-09-03-scanner-finding-audit.md`). The
+**New/changed test** row is deliberately NOT claimed: `tests/AllocationGuard.h` and
+`tests/dsp_tests.cpp` were edited, but no test was added, removed or had its behaviour changed — a
+SAL annotation is analysis-only and `const` → `constexpr` on five locals initialised from `constexpr`
+members changes neither semantics nor codegen. The suites report the same 1345 checks before and
+after, which is the evidence for that claim rather than an assertion of it.
+
+**Audit-record consistency closure, round 3 (2026-09-03).** Round 2 changed two audit records and did
+not update this file, which the audit obligation requires of *every* documentation-affecting change —
+the entry above is that correction, and it is the whole of it: no unrelated history is backfilled and
+no historical obligation is invented. The same round corrected one wording defect in the worklog,
+which asserted G4 "Windows-CI-verified" in the narrative section written **before** the run happened,
+while the report at that moment still said pending. The worklog now separates the levels that claim
+was compressing — local (a no-op off MSVC by construction), Windows CI execution (the job going
+green proves the annotation is well-formed, not that the diagnostic stopped firing), Windows PREfast
+scanner confirmation (the raw SARIF; the only level that settles it), and the standing limitation
+that confirmation is confirmation on one toolset — and defers the result to the section that reports
+it. No source, test, scanner or CI change was made in this round.
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).

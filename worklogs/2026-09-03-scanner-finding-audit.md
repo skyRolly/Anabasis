@@ -323,7 +323,25 @@ contract rather than removing one. The tempting alternative — dropping `_Ret_m
 been the wrong repair: nothrow `new` genuinely can return null, and modelling that is the one thing
 this guard exists for.
 
-Windows-CI-verified, since the CRT headers cannot be read from this environment.
+Verification of this fix is **necessarily remote**, and the levels are worth keeping apart because
+only the last one is evidence for the claim:
+
+* **Local** — the change compiles and the suites stay green, but nothing local can see it. `_Success_`
+  is SAL, and the macros expand to nothing off MSVC, so on this machine the edit is a no-op by
+  construction.
+* **Windows CI execution** — the `msvc.yml` lane builds and runs `/analyze` on Windows. That the job
+  goes green says the annotation is well-formed, not that C28252 stopped firing.
+* **Windows PREfast scanner confirmation** — the raw SARIF for the pushed commit showing the four
+  findings gone. This is the only level that settles it, because the CRT headers cannot be read from
+  this environment: the `_Success_` clause was DERIVED from the diagnostic text plus the
+  four-MAYBENULL / four-NOTNULL correlation, so it is a hypothesis until the analyzer answers.
+* **Remaining limitation** — even confirmation is confirmation on ONE toolset. It says this MSVC's
+  CRT declares the nothrow operators the way the fix assumes; a future toolset that changed that
+  declaration would re-open the diagnostic, which is why the reasoning is recorded here rather than
+  just the edit.
+
+At the time this section was written the run had not happened, so nothing above was yet established.
+**The result is in §R5**, which reports it.
 
 ## R4. G5 — `C26498 ×5`
 
