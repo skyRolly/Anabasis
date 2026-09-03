@@ -76,7 +76,7 @@ footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:v
 
 <h1>Scanner Finding Audit</h1>
 <p class="sub">Anabasis · raw-SARIF audit of CodeQL and Microsoft C++ Code Analysis (PREfast)<br>
-Commit <code>fce94b3</code> (<code>main</code>) · audit dated 2026-09-03 · <strong>status: round 2 in progress</strong> — round 1 closed; two review findings disproved; G4/G5 fixed, awaiting Windows PREfast confirmation</p>
+Commit <code>fce94b3</code> (<code>main</code>) · audit dated 2026-09-03 · <strong>status: COMPLETE</strong> — rounds 1 and 2 closed. Every first-party group is fixed, disproved or accepted with a standing disposition; <strong>zero actionable first-party findings remain</strong>.</p>
 
 <div class="note">
 This report is the <strong>live state</strong> of the audit, not a retrospective. The checklist and the
@@ -102,8 +102,8 @@ register are updated as work lands. Its companion worklog is
 <tr><td><span class="tag t-fix">FIXED</span></td><td>1 (G1)</td><td>1</td><td>Production. Bound made locally provable. <strong>Scanner-confirmed cleared.</strong></td></tr>
 <tr><td><span class="tag t-fp">FALSE POSITIVE</span></td><td>1 (G3)</td><td>9</td><td>Analyzer models <code>dynamic_cast</code> as identity.</td></tr>
 <tr><td><span class="tag t-acc">TEST-ONLY ACCEPTABLE</span></td><td>1 (G2)</td><td>133</td><td>Stack fixtures. Monitored, not churned.</td></tr>
-<tr><td><span class="tag t-fix">FIXED (round 2)</span></td><td>1 (G4)</td><td>4</td><td>SAL annotation aligned with the CRT contract. Windows-CI verification pending.</td></tr>
-<tr><td><span class="tag t-fix">FIXED (round 2)</span></td><td>1 (G5)</td><td>5</td><td>Core-Guidelines <code>constexpr</code>. Bundled into the G4 round as planned.</td></tr>
+<tr><td><span class="tag t-fix">FIXED (round 2)</span></td><td>1 (G4)</td><td>4</td><td>SAL annotation aligned with the CRT contract. <strong>Windows-PREfast confirmed cleared.</strong></td></tr>
+<tr><td><span class="tag t-fix">FIXED (round 2)</span></td><td>1 (G5)</td><td>5</td><td>Core-Guidelines <code>constexpr</code>. <strong>Windows-PREfast confirmed cleared.</strong></td></tr>
 <tr><td><span class="tag t-3p">THIRD-PARTY</span></td><td>2 (T1, T2)</td><td>51</td><td>JUCE under <code>build/_deps/</code>. Out of scope by policy.</td></tr>
 <tr><td><span class="tag t-acc">ZERO-RESULT (verified)</span></td><td>1 (Z1)</td><td>0</td><td>CodeQL Actions: executed, genuinely clean.</td></tr>
 </tbody>
@@ -137,7 +137,7 @@ declared 58 rules and reported <code>executionSuccessful: true</code>.
 <li class="done"><strong>Round 2 — G4 fixed</strong> (SAL annotation aligned with the CRT contract).</li>
 <li class="done"><strong>Round 2 — G5 fixed</strong> (five <code>constexpr</code>), bundled into the G4 round as planned.</li>
 <li class="done"><strong>Round 2 — suites green after G4/G5:</strong> 1345 checks, 0 failures.</li>
-<li class="wip"><strong>Round 2 — Windows PREfast confirmation of G4/G5.</strong> Pending CI.</li>
+<li class="done"><strong>Round 2 — Windows PREfast confirmed G4/G5 cleared.</strong> Run <code>33807395028</code> on <code>b8bace4</code>: 152 → 143 results, the delta being exactly the nine fixed findings; <code>C28252</code> 0 remaining, <code>C26498</code> 0 remaining, nothing new introduced.</li>
 <li class="done"><strong>Phase 8 — verification complete.</strong> Local suites and gates green; PREfast re-run confirms the fix.</li>
 <li class="done"><strong>Scanner re-run confirmed G1 cleared</strong> with no new finding introduced.</li>
 </ul>
@@ -153,7 +153,7 @@ closed — nothing below reopens G1, G2, G3, T1 or T2, and no new evidence was f
 <li class="done">Two new <code>PluginProcessor.cpp</code> review findings investigated — <strong>both disproved, no code changed</strong>.</li>
 <li class="done">G4 (<code>C28252</code> ×4) fixed — the deferred Roadmap item.</li>
 <li class="done">G5 (<code>C26498</code> ×5) fixed — bundled into the G4 round, as round 1 planned.</li>
-<li class="wip">Windows PREfast verification of G4/G5 — pending CI.</li>
+<li class="done">Windows PREfast verification of G4/G5 — <strong>confirmed</strong>: 152 → 143, delta exactly −9, zero new findings.</li>
 </ul>
 </div>
 
@@ -363,8 +363,7 @@ Added it:
 <br><br>This <strong>aligns with the CRT contract rather than removing an annotation</strong>. The tempting alternative —
 dropping <code>_Ret_maybenull_</code> — would have been the wrong repair: nothrow <code>new</code> genuinely can return
 null, and modelling that is the one thing this guard exists for. PREfast is not weakened.</td></tr>
-<tr><th>Disposition</th><td><span class="tag t-fix">FIXED</span> — pending Windows PREfast confirmation, which is the
-authority here since the CRT headers cannot be read from this environment.</td></tr>
+<tr><th>Disposition</th><td><span class="tag t-fix">CLOSED — Windows-PREfast confirmed.</span> Run <code>33807395028</code> (<code>b8bace4</code>): all four <code>C28252</code> resolved, <strong>0 remaining</strong>, nothing new introduced. The hypothesis held on the first iteration.</td></tr>
 <tr><th>Roadmap</th><td><strong>Now — done in this round.</strong></td></tr>
 <tr><th>Blocker</th><td>None.</td></tr>
 </tbody>
@@ -389,8 +388,7 @@ standalone change and was not made one.</td></tr>
 <tr><th>Fix</th><td>Five locals initialised from <code>constexpr</code> members (<code>max()</code>,
 <code>quiet_NaN()</code>, <code>infinity()</code>) changed <code>const</code> → <code>constexpr</code>. No behavioural or
 codegen consequence; no other test touched.</td></tr>
-<tr><th>Disposition</th><td><span class="tag t-fix">FIXED</span> — compiles clean; 1345 checks still green. Windows
-confirmation pending with G4.</td></tr>
+<tr><th>Disposition</th><td><span class="tag t-fix">CLOSED — Windows-PREfast confirmed.</span> All five <code>C26498</code> resolved, <strong>0 remaining</strong>. 1345 checks still green.</td></tr>
 <tr><th>Roadmap</th><td><strong>Now — done in this round.</strong></td></tr>
 <tr><th>Blocker</th><td>None.</td></tr>
 </tbody>
@@ -434,37 +432,29 @@ risk, engineering cost and dependency — <strong>not</strong> chronologically. 
 verification claim rises to the top.</p>
 <div class="panel rm">
   <div class="item"><div class="num">1</div><div class="body">
-    <div class="when">Now — immediate · <em>this round, pending CI</em></div>
-    <div class="ttl">Confirm G4/G5 on the Windows PREfast lane</div>
-    The only item with an open verification claim. Everything else here is either finished or a standing watch, so the
-    single most useful next action is closing the loop that is already running: retrieve the raw SARIF for the pushed
-    commit and confirm <code>C28252</code> and <code>C26498</code> are gone with nothing new introduced. Until that
-    reports, G4 is “fixed” only in the local sense.
-  </div></div>
-  <div class="item"><div class="num">2</div><div class="body">
     <div class="when">Monitor — no current action · <em>highest residual risk</em></div>
     <div class="ttl">G2 — test stack usage, on a trigger</div>
-    Ranked above the settled items because it is the only group with a residual failure mode that can still bite: one
-    function sits at 606 KB against a 1 MB Windows stack. It is deliberately <em>not</em> scheduled work — the cost of a
-    133-site refactor exceeds the bounded risk — but it is the thing to act on first if the trigger fires (&gt;768 KB in
-    one function, or a Windows stack overflow in CI), converting that function alone.
+    <strong>Now the top of the list, because everything actionable is done.</strong> It is the only group with a residual
+    failure mode that can still bite: one function sits at 606 KB against a 1 MB Windows stack. Deliberately not scheduled
+    work — a 133-site refactor costs more than the bounded risk — but it is the first thing to act on if the trigger fires
+    (&gt;768 KB in one function, or a Windows stack overflow in CI), converting that function alone.
   </div></div>
-  <div class="item"><div class="num">3</div><div class="body">
+  <div class="item"><div class="num">2</div><div class="body">
     <div class="when">Monitor — no current action</div>
     <div class="ttl">T1 / T2 — third-party JUCE, re-entering scope only on a pin bump</div>
     51 findings that are out of scope by policy today. They become relevant at the next JUCE bump, which is its own gated
     change — so this is a dependency, not a task.
   </div></div>
-  <div class="item"><div class="num">4</div><div class="body">
+  <div class="item"><div class="num">3</div><div class="body">
     <div class="when">Monitor — no current action · <em>lowest</em></div>
     <div class="ttl">G3 and review findings R1 / R2 — recorded disproofs</div>
     Nothing to do. Ranked last because the only value left in them is documentary: each is recorded with its proof so a
     future audit or review re-confirms in minutes rather than re-triaging from scratch.
   </div></div>
-  <div class="item"><div class="num">5</div><div class="body">
+  <div class="item"><div class="num">4</div><div class="body">
     <div class="when">Closed</div>
-    <div class="ttl">G1, the documentation drift, artifact persistence</div>
-    Round 1. G1 scanner-confirmed; drift corrected; the SARIF artifacts that made all of this possible are in place.
+    <div class="ttl">G1, G4, G5, the documentation drift, artifact persistence, review findings R1/R2</div>
+    Rounds 1 and 2, all scanner-confirmed or source-disproved. G1 scanner-confirmed; drift corrected; the SARIF artifacts that made all of this possible are in place.
   </div></div>
 </div>
 

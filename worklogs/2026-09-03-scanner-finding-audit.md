@@ -334,4 +334,31 @@ consequence; no other test touched.
 
 ## R5. Verification
 
-*(updated as it completes)*
+Local, after G4/G5: build exit 0; **1345 checks green** (316 + 1029); `check-docs` 109;
+`check-citations` 54 anchors; `check-portability` 48/0; `check-realtime` 40 files, 1 of 1 verified;
+all six gate self-tests; `git diff --check` clean. Six functional lines changed, no production code.
+
+**Windows PREfast — G4 and G5 confirmed, first iteration.** Run `33807395028` on `b8bace4`, diffed
+against the round-1 end state at `a7112c4`:
+
+| | before | after |
+|---|---|---|
+| total results | 152 | **143** |
+| `C28252` | 4 | **0** |
+| `C26498` | 5 | **0** |
+| newly introduced | — | **none** |
+| `src/` surface | 0 | **0** |
+
+The delta is exactly the nine fixed findings and nothing else. No iteration loop was needed: the
+`_Success_` hypothesis was derived from the diagnostic text plus the exact four-and-four correlation,
+and it held on the first Windows run.
+
+## R6. Closing state
+
+143 PREfast results remain, and **every one carries a standing disposition**: `C6262` ×133 (G2,
+accepted, monitored on a trigger), `C28182` ×8 + `C6011` ×1 (G3, analyzer modelling error), `C26495`
+×1 (T2, third-party JUCE). **Zero actionable first-party findings remain**, and the production
+surface is clean.
+
+Nothing was left unresolved. The two review findings are disproved with source-level evidence rather
+than deferred; G4 and G5 are scanner-confirmed rather than argued.
