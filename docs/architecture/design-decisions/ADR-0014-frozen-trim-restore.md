@@ -157,7 +157,7 @@ generation pair by slot, which buys a per-slot counter to fix one window's worth
 
 - `src/dsp/AdaptiveEngine.h:161-168` — `injectTrims` (clamp + publish)
 - `src/dsp/AnabasisEngine.h:158-167` — `restoreFrozenTrims` / `frozenRestorePending` (the staged
-  record); `src/dsp/AnabasisEngine.cpp:262-278` — block-top consume; `:350` (direct-adopt)
+  record); `src/dsp/AnabasisEngine.cpp:278-294` — block-top consume; `:350` (direct-adopt)
   and `:400` (duck bottom) — the two application sites
 - `src/PluginProcessor.cpp` — the capture in `saveSlotFromLive`, the stage in `applySlotToLive`
   and in `setStateInformation`

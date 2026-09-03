@@ -51,8 +51,12 @@ including the `prepare()` allocations this tree really contains.
 """
 
 import argparse
+import contextlib
+import io
 import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -753,15 +757,34 @@ REQUIRED_ORDER = [
 ]
 
 
+def rule_key(rule) -> tuple:
+    """The identity of a REQUIRED_ORDER entry: (path suffix, function)."""
+    return (rule[0], rule[1])
+
+
+def rules_for(path: str) -> list:
+    """The REQUIRED_ORDER entries this path is governed by. Pure path test."""
+    return [r for r in REQUIRED_ORDER if path.replace("\\", "/").endswith(r[0])]
+
+
 def scan_required(text: str, path: str):
-    """Return a list of (path, line, function, message) for unmet order rules."""
-    rules = [r for r in REQUIRED_ORDER if path.replace("\\", "/").endswith(r[0])]
+    """Return (findings, verified).
+
+    `findings` is (path, line, function, message) per UNMET rule. `verified` is
+    the set of rule keys this file PROVED satisfied -- the count the gate
+    reports has to come from here rather than from `len(REQUIRED_ORDER)`, or a
+    configured-but-unreachable rule reads as a met one.
+    """
+    rules = rules_for(path)
     if not rules:
-        return []
+        return [], set()
     clean = strip_comments_and_strings(text)
     findings = []
-    for suffix, fn, first, second, why in rules:
+    verified = set()
+    for rule in rules:
+        suffix, fn, first, second, why = rule
         seen = False
+        met = True
         for name, start, end in reachable_bodies(clean):
             if name != fn:
                 continue
@@ -772,13 +795,16 @@ def scan_required(text: str, path: str):
             b_hit = second.search(segment)
             if a_hit is None or (b_hit is not None and b_hit.start() < a_hit.start()):
                 findings.append((path, base_line, fn, why))
+                met = False
+        if seen and met:
+            verified.add(rule_key(rule))
         if not seen:
             # A rule whose function has been renamed or removed is a SILENT
             # rule, which is the failure mode this whole file exists to avoid.
             findings.append((path, 1, fn,
                              why + " -- and the function was not found at all, so this "
                                    "rule is no longer checking anything"))
-    return findings
+    return findings, verified
 
 
 def scan_text(text: str, path: str):
@@ -797,30 +823,61 @@ def scan_text(text: str, path: str):
     return findings
 
 
-def scan_repo() -> int:
+def scan_repo(root: Path = ROOT) -> int:
     findings, unmet, scanned = [], [], 0
+    matched, verified = set(), set()
     for d in SCAN_DIRS:
-        for p in sorted((ROOT / d).rglob("*")):
+        for p in sorted((root / d).rglob("*")):
             if p.suffix not in (".cpp", ".h"):
                 continue
             scanned += 1
             text = p.read_text(encoding="utf-8")
-            rel = str(p.relative_to(ROOT))
+            rel = str(p.relative_to(root))
             findings += scan_text(text, rel)
-            unmet += scan_required(text, rel)
+            for r in rules_for(rel):
+                matched.add(rule_key(r))
+            u, v = scan_required(text, rel)
+            unmet += u
+            verified |= v
     for path, line, fn, label, src in findings:
         print(f"{path}:{line}: {label} inside audio-path `{fn}`\n    {src}",
               file=sys.stderr)
     for path, line, fn, why in unmet:
         print(f"{path}:{line}: required ordering not met in `{fn}`\n    {why}",
               file=sys.stderr)
-    if findings or unmet:
+
+    # FAIL CLOSED ON AN EMPTY SET. A lint that matched nothing prints the same
+    # "0 violations" a healthy tree does, which is the one output a gate must
+    # never be able to produce without having looked at anything. Every sibling
+    # checker already refuses this (check-portability returns 2 on no files,
+    # check-docs "refuses to report a clean run over an empty set"); this one
+    # was the outlier.
+    if scanned == 0:
+        print(f"check-realtime: no source files under "
+              f"{root}/{{{','.join(SCAN_DIRS)}}} -- refusing to report a clean "
+              f"run over an empty set", file=sys.stderr)
+        return 2
+
+    # ...AND ON A RULE THAT REACHED NOTHING. `scan_required` catches a rule whose
+    # FUNCTION was renamed, because it is reading the file the rule names. It
+    # cannot catch a rule whose FILE was renamed, moved or deleted: no path then
+    # matches, `scan_required` is never called for it, and the requirement was
+    # silently satisfied by absence. The count below therefore comes from what
+    # was PROVED, and a configured rule that proved nothing fails the gate.
+    unreached = [r for r in REQUIRED_ORDER if rule_key(r) not in matched]
+    for suffix, fn, _first, _second, why in unreached:
+        print(f"{suffix}: a required ordering rule names `{fn}` here, and the scan "
+              f"reached no such file -- the rule is configured and is checking "
+              f"nothing\n    {why}", file=sys.stderr)
+
+    if findings or unmet or unreached:
         print(f"check-realtime: {len(findings)} violation(s) of "
-              f"REALTIME_AUDIO_POLICY and {len(unmet)} unmet ordering "
-              f"requirement(s) in {scanned} scanned file(s)", file=sys.stderr)
+              f"REALTIME_AUDIO_POLICY, {len(unmet)} unmet and {len(unreached)} "
+              f"unreachable ordering requirement(s) in {scanned} scanned file(s)",
+              file=sys.stderr)
         return 1
     print(f"check-realtime: {scanned} file(s) scanned, 0 violation(s), "
-          f"{len(REQUIRED_ORDER)} ordering requirement(s) met.")
+          f"{len(verified)} of {len(REQUIRED_ORDER)} ordering requirement(s) verified.")
     return 0
 
 
@@ -1176,16 +1233,60 @@ def self_test() -> int:
     total = 0
     for label, must_fire, src in ORDER_CASES:
         total += 1
-        fired = bool(scan_required(src, "src/dsp/GrHistoryBuffer.h"))
+        fired = bool(scan_required(src, "src/dsp/GrHistoryBuffer.h")[0])
         if fired != must_fire:
             print(f"self-test FAIL (required order, expected "
                   f"{'fire' if must_fire else 'silence'}): {label}", file=sys.stderr)
             failures += 1
     # A rule aimed at a path no file matches would also be silent forever.
     total += 1
-    if scan_required(ORDER_CASES[1][2], "src/dsp/SomeOtherRing.h"):
+    if scan_required(ORDER_CASES[1][2], "src/dsp/SomeOtherRing.h")[0]:
         print("self-test FAIL: the rule fired on a file it does not govern", file=sys.stderr)
         failures += 1
+
+    # THE REPOSITORY-SCAN WIRING, exercised through the REAL discovery path.
+    # Everything above runs the classifier over in-memory strings. That half was
+    # never the weak one -- deliberately mutating `scan_required`, `scan_text`
+    # and the order comparison was caught by the cases above -- and the gate
+    # could still report success over a tree it had not read, because no case
+    # went through `scan_repo`. These do.
+    def scan_quietly(root: Path) -> int:
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            return scan_repo(root)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        empty = Path(tmp) / "empty"
+        (empty / "src").mkdir(parents=True)
+        total += 1
+        if scan_quietly(empty) == 0:
+            print("self-test FAIL: an empty scan root reported success", file=sys.stderr)
+            failures += 1
+
+        full = Path(tmp) / "full"
+        shutil.copytree(ROOT / "src", full / "src")
+        total += 1
+        if scan_quietly(full) != 0:
+            print("self-test FAIL: a faithful copy of src/ did not pass", file=sys.stderr)
+            failures += 1
+
+        # A required rule whose FILE is gone matches no path, so `scan_required`
+        # is never called for it and its absence used to read as compliance.
+        for tag, label, mutate in (
+            ("deleted", "the required rule's file is deleted",
+             lambda d: (d / "src" / "dsp" / "GrHistoryBuffer.h").unlink()),
+            ("renamed", "the required rule's file is renamed",
+             lambda d: (d / "src" / "dsp" / "GrHistoryBuffer.h").rename(
+                 d / "src" / "dsp" / "GrHistoryRing.h")),
+        ):
+            case = Path(tmp) / tag
+            shutil.copytree(full, case)
+            mutate(case)
+            total += 1
+            if scan_quietly(case) == 0:
+                print(f"self-test FAIL: {label}, and the gate still reported success",
+                      file=sys.stderr)
+                failures += 1
     for label, src in MUST_FIRE:
         total += 1
         if not scan_text(src, "synthetic.cpp"):

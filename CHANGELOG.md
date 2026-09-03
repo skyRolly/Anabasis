@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Sixteen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Seventeen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,31 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.10] — 2026-09-03
+
+**0.2.9's guard was too wide, and it guarded only half the door.** Review of that change found both,
+and both are fixed here. The guard tested `! std::isfinite`, which declines an infinity as well as a
+NaN — but an infinity is not an unusable number, it is an out-of-range one, and every clamp on the
+path answers it with the endpoint. So a session asking for the rail got the `value` attribute
+instead, silently, and a preset asking for one left the control where it stood. The predicate is now
+`std::isnan`, which is the value that actually needs it: NaN is the only number a comparison-based
+clamp cannot reject. Separately, 0.2.9 guarded the `raw` OVERLAY and left the `value` it falls back
+to unguarded — a document with no usable `raw` and a NaN `value` still poisoned all 50 controls and
+the next save still wrote every one of them back. That fallback is now read under the same rule.
+
+### Fixed
+- A stored ±infinity restores the control to its endpoint again, as it did before 0.2.9, on both the
+  session and the preset path. Evidence: PR #29. [Verified]
+- A session file whose `value` is unusable and which carries no usable `raw` no longer leaves the
+  control in that state, and can no longer be written back by the next save: the unreadable `value`
+  is dropped and the parameter restores to its default, which is the schema's rule for a value that
+  cannot be read. Evidence: PR #29. [Verified]
+- A negative sample rate can no longer reach a buffer allocation as a negative length and throw out
+  of `prepareToPlay`. Not reachable from a conforming host — VST3 and AU both specify the rate
+  positive — and nothing changes for any rate one can supply. Evidence: PR #29. [Verified]
+- `AnabasisBench` no longer throws on a `/proc/cpuinfo` whose `model name` field is empty, and no
+  longer misreads one that has no colon or no space after it. Evidence: PR #29. [Verified]
 
 ## [0.2.9] — 2026-09-02
 

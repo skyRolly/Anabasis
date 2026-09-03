@@ -7,7 +7,23 @@ namespace anabasis
 void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChannels)
 {
     sr           = sampleRate;
-    delaySamples = maxLookaheadSamples (sampleRate);
+    // THE THIRD HOST-SUPPLIED QUANTITY, railed like the two below it. This is
+    // the ONLY route from the sample rate into an allocation: `wetRing` and
+    // `dryRingSize` both size from `delaySamples`, and every other size here
+    // comes from `maxBlock` or `numChans`, which are already clamped. A
+    // negative rate makes `maxLookaheadSamples` negative (it is a ceil of a
+    // product with the rate), and the negative length reached `setSize` and
+    // threw `std::bad_alloc` out of `prepareToPlay` — across the wrapper's C
+    // ABI, where an exception is not a diagnostic but a crash.
+    //
+    // A RAIL, NOT A BEHAVIOUR: no conforming host can reach it (VST3's
+    // `ProcessSetup::sampleRate` and AU's `Float64` are both specified
+    // positive), and for every rate one can supply the value is already >= 0,
+    // so `jmax` returns it unchanged. Guarding the DERIVED delay rather than
+    // `sr` itself is what keeps that true — `sr` is read by the oversampler
+    // latch and the two `setRate` calls, and clamping it there would change
+    // what a rate of 0 does today for no defect that has been shown.
+    delaySamples = juce::jmax (0, maxLookaheadSamples (sampleRate));
     maxBlock     = juce::jmax (1, maxBlockSize);
     numChans     = juce::jlimit (1, kMaxChannels, numChannels);
 

@@ -66,7 +66,7 @@ it inside the trim's existing bound, never by acquiring a new bound or a new sta
 
 - `src/dsp/LookaheadLimiter.h:192-196` — `setAutoReleaseScale` (clamp + both alphas);
   `:77-78`, `:125-126` — the `prepare`/`setRate` recompute sites; `:429` — `autoScale`
-- `src/dsp/AnabasisEngine.cpp:518-520` — one `2^octaves` factor feeding both release paths
+- `src/dsp/AnabasisEngine.cpp:534-536` — one `2^octaves` factor feeding both release paths
 
 Evidence [Verified]:
 - Source: the two files above

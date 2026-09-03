@@ -67,7 +67,26 @@ namespace
         std::string line;
         while (std::getline (in, line))
             if (line.rfind ("model name", 0) == 0)
-                return line.substr (line.find (':') + 2);
+            {
+                // `find (':') + 2` assumed both a colon and a space after it.
+                // Neither is guaranteed: a field with an EMPTY value
+                // ("model name:") put `pos` one past `size` and `substr` threw
+                // `std::out_of_range`; a line with NO colon wrapped `npos`
+                // round to 1 and returned the key itself with its first
+                // character clipped; and a value with no space after the colon
+                // was dropped entirely. Take what follows the colon and trim it.
+                // A line this cannot read yields nothing and the scan moves on,
+                // which lands on the refusal `main` already implements — better
+                // than a wrong machine name, since the whole point of the field
+                // is that a number without its machine is not a measurement.
+                const auto colon = line.find (':');
+                if (colon == std::string::npos)
+                    continue;
+                const auto value = line.substr (colon + 1);
+                const auto start = value.find_first_not_of (" \t");
+                if (start != std::string::npos)
+                    return value.substr (start);
+            }
        #elif JUCE_MAC || JUCE_IOS
         // sysctl's own name for the part, which is what Apple's own tools quote.
         std::size_t len = 0;

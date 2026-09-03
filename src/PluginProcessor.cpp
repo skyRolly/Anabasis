@@ -525,8 +525,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1581` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1651` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1605` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1675` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -1035,7 +1035,24 @@ void AnabasisAudioProcessor::adoptParamsTree (const juce::ValueTree& paramsWithR
     // from the unstripped copy, which is what makes the restore raw-exact.
     auto stripped = paramsWithRaw.createCopy();
     for (int i = 0; i < stripped.getNumChildren(); ++i)
-        stripped.getChild (i).removeProperty ("raw", nullptr);
+    {
+        auto child = stripped.getChild (i);
+        child.removeProperty ("raw", nullptr);
+        // ...AND THE SAME TREATMENT FOR A `value` THAT CANNOT BE READ. 0.2.9
+        // guarded the `raw` OVERLAY and left this, the thing it overlays,
+        // unguarded: a document with no usable `raw` and a NaN `value` reached
+        // `replaceState` untouched and poisoned every control it named, which
+        // the next save then wrote back. Removing the property IS the repair
+        // rather than a special case beside it — APVTS reads
+        // `tree.getProperty (valuePropertyID, getDenormalisedDefaultValue())`,
+        // so an absent `value` restores the parameter's DEFAULT, which is
+        // exactly SERIALIZATION_REGISTRY.md's rule for a value that cannot be
+        // read. NaN only: an infinite `value` is in range terms an endpoint and
+        // `replaceState` already clamps it to one, which is the behaviour this
+        // schema has always had.
+        if (std::isnan ((double) child.getProperty ("value")))
+            child.removeProperty ("value", nullptr);
+    }
     apvts.replaceState (stripped);
     reassertFromRaw (paramsWithRaw);
 }
@@ -1293,19 +1310,26 @@ void AnabasisAudioProcessor::reassertFromRaw (const juce::ValueTree& apvtsTree)
         // one — the same shape, and the same reasoning, as
         // `AdaptiveEngine::setLearnedTargets`.
         //
-        // IT HAS TO BE A FINITE TEST AND NOT A TIGHTER CLAMP. Every clamp in the
-        // chain below this line is comparison-based, and every comparison
-        // against a NaN is false, so a NaN is not clamped by any of them: not
-        // `juce::jlimit` here, not `NormalisableRange::snapToLegalValue` on the
-        // preset path, and not Steinberg's own `Parameter::setNormalized`
-        // (VST3_SDK/public.sdk/source/vst/vstparameters.cpp:62-71). Nothing
-        // downstream rejects it either, so a NaN admitted here reaches the host
-        // through `performEdit` and is written back by the next save. JUCE's
-        // string reader returns a quiet NaN for the literal "nan"
-        // (juce_CharacterFunctions.h:254-265), which is all a hand-edited or
-        // half-written document needs to carry.
+        // NaN AND NOT MERELY NON-FINITE, and the distinction is the whole point.
+        // `jlimit` below is comparison-based and every comparison against a NaN
+        // is false, so a NaN is the one value it does not clamp — nor does
+        // `NormalisableRange::snapToLegalValue` on the preset path, nor
+        // Steinberg's own `Parameter::setNormalized`
+        // (VST3_SDK/public.sdk/source/vst/vstparameters.cpp:62-71) — and it
+        // would reach the host through `performEdit` and be written back by the
+        // next save. JUCE's string reader returns a quiet NaN for the literal
+        // "nan" (juce_CharacterFunctions.h:254-265), which is all a hand-edited
+        // or half-written document needs to carry.
+        //
+        // AN INFINITY IS NOT THAT CASE and must not be declined with it. `jlimit`
+        // DOES clamp ±inf, to 1 and to 0, which is this schema's established
+        // reading of an out-of-range normalised position — the same answer the
+        // `value` path gives an infinite denormalised one. 0.2.9 tested
+        // `! std::isfinite` and so threw the endpoint away, restoring `value`
+        // where the document asked for the endpoint. Review caught it; the
+        // narrower predicate is the fix, not the removal of the guard.
         const float raw = (float) (double) node.getProperty ("raw");
-        if (! std::isfinite (raw))
+        if (std::isnan (raw))
             continue;
         if (auto* p = apvts.getParameter (node.getProperty ("id").toString()))
             p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, raw));

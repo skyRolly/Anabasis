@@ -260,6 +260,103 @@ static void testAWellFormedDocumentCannotCarryAnUnusableNumber()
             ++badAfterPreset;
     check (badAfterPreset == 0,
            "unusable: a preset's unusable `value` never reaches a parameter either");
+
+    // -- AN INFINITY IS NOT AN UNUSABLE NUMBER -------------------------------
+    // It is an out-of-range normalised position, and this schema's answer to one
+    // has always been the endpoint: `jlimit` clamps +inf to 1 and -inf to 0, and
+    // the `value` path clamps an infinite denormalised value the same way. 0.2.9
+    // tested `! std::isfinite` and so declined the endpoint along with the NaN,
+    // restoring `value` where the document had asked for the rail.
+    //
+    // PINNED PER PARAMETER AND EXACTLY, which is the point: the block above
+    // asserts only that nothing is non-finite, and the fallback 0.2.9
+    // substituted is finite too, so no finiteness test can tell the two apart.
+    for (const char* spell : { "inf", "-inf" })
+    {
+        AnabasisAudioProcessor railed;
+        juce::MemoryBlock railClean;
+        railed.getStateInformation (railClean);
+        const auto railXml = juce::AudioProcessor::getXmlFromBinary (
+            railClean.getData(), (int) railClean.getSize());
+        if (auto* an = railXml->getChildByName ("ANABASIS"))
+            for (auto* n : an->getChildIterator())
+                if (n->hasTagName ("PARAM"))
+                    n->setAttribute ("raw", spell);
+        juce::MemoryBlock railBlob;
+        juce::AudioProcessor::copyXmlToBinary (*railXml, railBlob);
+        railed.setStateInformation (railBlob.getData(), (int) railBlob.getSize());
+
+        const float want = juce::String (spell) == "inf" ? 1.0f : 0.0f;
+        int offRail = 0;
+        for (auto* p : railed.getParameters())
+            if (! juce::exactlyEqual (p->getValue(), want))
+                ++offRail;
+        const juce::String railWhat = juce::String ("unusable: a `raw` of ") + spell
+            + " still clamps every parameter to its endpoint, as it did before 0.2.9";
+        check (offRail == 0, railWhat.toRawUTF8());
+    }
+
+    // -- THE FALLBACK ITSELF -------------------------------------------------
+    // Everything above corrupts the OVERLAY and leaves `value` finite, so none
+    // of it can see the case where the thing being fallen back TO is the
+    // unusable one. 0.2.9 guarded `raw` and left this open: with no usable
+    // overlay and a NaN `value`, all 50 controls held a NaN and the next save
+    // wrote every one of them back.
+    {
+        AnabasisAudioProcessor fellBack;
+        juce::MemoryBlock fbClean;
+        fellBack.getStateInformation (fbClean);
+        const auto fbXml = juce::AudioProcessor::getXmlFromBinary (
+            fbClean.getData(), (int) fbClean.getSize());
+        int fbCrafted = 0;
+        if (auto* an = fbXml->getChildByName ("ANABASIS"))
+            for (auto* n : an->getChildIterator())
+                if (n->hasTagName ("PARAM"))
+                {
+                    n->removeAttribute ("raw");         // no overlay to prefer...
+                    n->setAttribute ("value", "nan");   // ...and the fallback is the poison
+                    ++fbCrafted;
+                }
+        check (fbCrafted > 0,
+               "unusable: (premise) the fallback document carries PARAM nodes at all");
+
+        juce::MemoryBlock fbBlob;
+        juce::AudioProcessor::copyXmlToBinary (*fbXml, fbBlob);
+        fellBack.setStateInformation (fbBlob.getData(), (int) fbBlob.getSize());
+
+        int fbBad = 0;
+        for (auto* p : fellBack.getParameters())
+            if (! std::isfinite (p->getValue()))
+                ++fbBad;
+        check (fbBad == 0,
+               "unusable: a NaN `value` with no usable `raw` never reaches a parameter");
+
+        // ...and it resolves to the DEFAULT rather than to whatever was live,
+        // which is the registry's read rule and not merely "something finite".
+        AnabasisAudioProcessor pristine;
+        int drifted = 0;
+        for (int i = 0; i < fellBack.getParameters().size(); ++i)
+            if (! juce::exactlyEqual (fellBack.getParameters()[i]->getValue(),
+                                      pristine.getParameters()[i]->getValue()))
+                ++drifted;
+        check (drifted == 0,
+               "unusable: ...it resolves to the parameter's DEFAULT, not to whatever was live");
+
+        juce::MemoryBlock fbResaved;
+        fellBack.getStateInformation (fbResaved);
+        const auto fbBack = juce::AudioProcessor::getXmlFromBinary (
+            fbResaved.getData(), (int) fbResaved.getSize());
+        int fbPropagated = 0;
+        if (fbBack != nullptr)
+            if (auto* an = fbBack->getChildByName ("ANABASIS"))
+                for (auto* n : an->getChildIterator())
+                    if (n->hasTagName ("PARAM")
+                        && (n->getStringAttribute ("raw").containsIgnoreCase ("nan")
+                         || n->getStringAttribute ("value").containsIgnoreCase ("nan")))
+                        ++fbPropagated;
+        check (fbPropagated == 0,
+               "unusable: ...and a save after it cannot propagate the poisoned fallback");
+    }
 }
 
 // ---------------------------------------------------------------------------
