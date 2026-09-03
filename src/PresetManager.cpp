@@ -70,9 +70,12 @@ static void applyOnePresetValue (juce::AudioProcessorValueTreeState& apvts,
     // reason: `snapToLegalValue` below is comparison-based, so a NaN passes
     // through it and through `convertTo0to1` into the parameter and out to the
     // host. A number that cannot be USED is treated exactly like the unknown id
-    // on the next line — skipped, leaving the parameter where it was. Infinities
-    // already clamp correctly; NaN is the only value that needs the test.
-    if (! std::isfinite (value))
+    // on the next line — skipped, leaving the parameter where it was.
+    // NaN ONLY: `snapToLegalValue` does clamp ±inf to the range ends, and a
+    // preset asking for an endpoint gets one. 0.2.9 wrote `! std::isfinite`
+    // here, which declined the endpoint too — the comment beside it said
+    // "infinities already clamp correctly" while the code stopped them doing so.
+    if (std::isnan (value))
         return;
     if (auto* param = apvts.getParameter (id))      // unknown ids ignored
         setParamIfMoved (*param,

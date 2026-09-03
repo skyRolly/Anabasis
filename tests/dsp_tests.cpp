@@ -299,6 +299,48 @@ static void testControlsPrimedOnPrepare()
 // earlier revision primed only two of the four, so after loading a session
 // with limGain at +18 dB the first 20 ms of audio played up to 18 dB low and
 // slid up — audible at transport start and at the head of a bounce.
+// The three quantities `prepare` takes from the host: `maxBlockSize` and
+// `numChannels` have always been railed, the SAMPLE RATE was not. It is the one
+// that reaches an allocation -- `wetRing` and `dryRingSize` both size from
+// `delaySamples`, which is a ceil of a product with the rate, so a negative rate
+// made it negative and `setSize` threw out of `prepareToPlay`, across the
+// wrapper's C ABI where an exception is a crash rather than a diagnostic.
+//
+// UNREACHABLE FROM A CONFORMING HOST (VST3's `ProcessSetup::sampleRate` and AU's
+// `Float64` are both specified positive), so this pins a rail, not a behaviour:
+// the second half asserts the valid-rate arithmetic is byte-for-byte what it was.
+static void testAnInvalidSampleRateCannotSizeABuffer()
+{
+    for (const double bad : { -48000.0, -1.0e6 })
+        for (const int block : { 1, 512 })
+        {
+            anabasis::AnabasisEngine engine;
+            bool threw = false;
+            try                   { engine.prepare (bad, block, 2); }
+            catch (const std::exception&) { threw = true; }
+            check (! threw,
+                   "sampleRateRail: a negative rate cannot reach an allocation as a negative length");
+
+            juce::AudioBuffer<float> buf (2, block);
+            anabasis::EngineParameters p;
+            for (int n = 0; n < block; ++n) { buf.setSample (0, n, 0.25f); buf.setSample (1, n, 0.25f); }
+            engine.process (buf, p);
+            bool finite = true;
+            for (int ch = 0; ch < 2; ++ch)
+                for (int n = 0; n < block; ++n)
+                    if (! std::isfinite (buf.getSample (ch, n))) finite = false;
+            check (finite, "sampleRateRail: ...and the engine still renders finite audio after one");
+        }
+
+    // The rail is invisible to every rate a host can actually supply: 10 ms of
+    // allowance, unchanged, at the rates the project ships against.
+    check (anabasis::maxLookaheadSamples (44100.0) == 441
+        && anabasis::maxLookaheadSamples (48000.0) == 480
+        && anabasis::maxLookaheadSamples (96000.0) == 960
+        && anabasis::maxLookaheadSamples (192000.0) == 1920,
+           "sampleRateRail: the 10 ms allowance at valid rates is exactly what it always was");
+}
+
 static void testGainsPrimedOnPrepare()
 {
     anabasis::AnabasisEngine engine;
@@ -4961,6 +5003,7 @@ int main()
     testCeilingIsSmoothed();
     testControlsPrimedOnPrepare();
     testGainsPrimedOnPrepare();
+    testAnInvalidSampleRateCannotSizeABuffer();
     testLookaheadIsSmoothed();
     testReportedLatencyMatchesImpulse();
     testOutputNeverExceedsCeiling();

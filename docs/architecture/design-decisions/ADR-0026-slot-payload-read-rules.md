@@ -20,8 +20,8 @@ it needed a decision of its own and now has one.
 
 ## Context
 
-Two `SLOT`-reading rules changed in 0.1.4, at `src/PluginProcessor.cpp:1846` (the stored slot) and
-`src/PluginProcessor.cpp:1865` (the active slot). Both were made to close a real defect, pinned by
+Two `SLOT`-reading rules changed in 0.1.4, at `src/PluginProcessor.cpp:1870` (the stored slot) and
+`src/PluginProcessor.cpp:1889` (the active slot). Both were made to close a real defect, pinned by
 `testAMalformedStoredSlotCannotSplitSoundFromMetadata` and
 `testARootlessSurfaceDropsTheActiveSlotsMetadataToo`, and both alter how a stored session is
 INTERPRETED — which is the definition of a semantic change to the registry.
@@ -108,8 +108,8 @@ either suite moves, which is the other half of the measurement: neither decision
 anything outside the read rules it states.
 
 - **Revert both gates.** Two expressions carry the decision:
-  `stored.getChildWithName ("ANABASIS").isValid()` at `src/PluginProcessor.cpp:1846`, and
-  `live.isValid() && liveSurfaceRestored` at `src/PluginProcessor.cpp:1865`. Removing them restores
+  `stored.getChildWithName ("ANABASIS").isValid()` at `src/PluginProcessor.cpp:1870`, and
+  `live.isValid() && liveSurfaceRestored` at `src/PluginProcessor.cpp:1889`. Removing them restores
   the pre-0.1.4 reading and re-opens the split-sound-from-metadata defect;
   `testAMalformedStoredSlotCannotSplitSoundFromMetadata` and
   `testARootlessSurfaceDropsTheActiveSlotsMetadataToo` are the two tests that would then fail, and
@@ -132,11 +132,11 @@ anything outside the read rules it states.
   the test states why it stops at those three.
 
 ## Related code
-- `src/PluginProcessor.cpp:1846` (the stored-slot guard)
-- `src/PluginProcessor.cpp:1865` (the active-slot metadata gate)
-- `src/PluginProcessor.cpp:1802` (the `liveSurfaceRestored` flag both read)
+- `src/PluginProcessor.cpp:1870` (the stored-slot guard)
+- `src/PluginProcessor.cpp:1889` (the active-slot metadata gate)
+- `src/PluginProcessor.cpp:1826` (the `liveSurfaceRestored` flag both read)
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:1846`, `src/PluginProcessor.cpp:1865`
+- Source: `src/PluginProcessor.cpp:1870`, `src/PluginProcessor.cpp:1889`
 - Test:   `testAMalformedStoredSlotCannotSplitSoundFromMetadata`,
   `testARootlessSurfaceDropsTheActiveSlotsMetadataToo`
