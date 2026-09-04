@@ -76,7 +76,7 @@ footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:v
 
 <h1>Scanner Finding Audit</h1>
 <p class="sub">Anabasis · raw-SARIF audit of CodeQL and Microsoft C++ Code Analysis (PREfast)<br>
-Commit <code>fce94b3</code> (<code>main</code>) · audit dated 2026-09-03 · <strong>status: COMPLETE — audit closed, fix implemented and scanner-confirmed</strong></p>
+Commit <code>fce94b3</code> (<code>main</code>) · audit dated 2026-09-03 · <strong>status: COMPLETE</strong> — rounds 1 and 2 closed. Every first-party group is fixed, disproved or accepted with a standing disposition; <strong>zero actionable first-party findings remain</strong>.</p>
 
 <div class="note">
 This report is the <strong>live state</strong> of the audit, not a retrospective. The checklist and the
@@ -91,7 +91,7 @@ register are updated as work lands. Its companion worklog is
   <div class="stat"><div class="n">152</div><div class="l">First-party</div></div>
   <div class="stat"><div class="n">5</div><div class="l">Root-cause groups</div></div>
   <div class="stat"><div class="n">1</div><div class="l">Production findings</div></div>
-  <div class="stat"><div class="n">1</div><div class="l">Fixed &amp; confirmed</div></div>
+  <div class="stat"><div class="n">3</div><div class="l">Groups fixed</div></div>
   <div class="stat"><div class="n">51</div><div class="l">Third-party</div></div>
 </div>
 
@@ -102,8 +102,8 @@ register are updated as work lands. Its companion worklog is
 <tr><td><span class="tag t-fix">FIXED</span></td><td>1 (G1)</td><td>1</td><td>Production. Bound made locally provable. <strong>Scanner-confirmed cleared.</strong></td></tr>
 <tr><td><span class="tag t-fp">FALSE POSITIVE</span></td><td>1 (G3)</td><td>9</td><td>Analyzer models <code>dynamic_cast</code> as identity.</td></tr>
 <tr><td><span class="tag t-acc">TEST-ONLY ACCEPTABLE</span></td><td>1 (G2)</td><td>133</td><td>Stack fixtures. Monitored, not churned.</td></tr>
-<tr><td><span class="tag t-def">DEFER — SHOULD FIX</span></td><td>1 (G4)</td><td>4</td><td>SAL annotation mismatch. Needs MSVC iteration.</td></tr>
-<tr><td><span class="tag t-def">OPTIONAL</span></td><td>1 (G5)</td><td>5</td><td>Core-Guidelines <code>constexpr</code> hint.</td></tr>
+<tr><td><span class="tag t-fix">FIXED (round 2)</span></td><td>1 (G4)</td><td>4</td><td>SAL annotation aligned with the CRT contract. <strong>Windows-PREfast confirmed cleared.</strong></td></tr>
+<tr><td><span class="tag t-fix">FIXED (round 2)</span></td><td>1 (G5)</td><td>5</td><td>Core-Guidelines <code>constexpr</code>. <strong>Windows-PREfast confirmed cleared.</strong></td></tr>
 <tr><td><span class="tag t-3p">THIRD-PARTY</span></td><td>2 (T1, T2)</td><td>51</td><td>JUCE under <code>build/_deps/</code>. Out of scope by policy.</td></tr>
 <tr><td><span class="tag t-acc">ZERO-RESULT (verified)</span></td><td>1 (Z1)</td><td>0</td><td>CodeQL Actions: executed, genuinely clean.</td></tr>
 </tbody>
@@ -133,10 +133,138 @@ declared 58 rules and reported <code>executionSuccessful: true</code>.
 <li class="done"><strong>Phase 4 — Roadmap placed.</strong> One item per root cause; no redundant per-finding tasks.</li>
 <li class="done"><strong>Phase 5 — actionable fix implemented.</strong> G1 (<code>C6385</code>) fixed in <code>src/dsp/AnabasisEngine.cpp</code>.</li>
 <li class="done"><strong>Phases 6 / 7 — report and worklog live in-repo.</strong></li>
+<li class="done"><strong>Round 2 — review findings R1 and R2 investigated.</strong> Both disproved at source level; no code changed.</li>
+<li class="done"><strong>Round 2 — G4 fixed</strong> (SAL annotation aligned with the CRT contract).</li>
+<li class="done"><strong>Round 2 — G5 fixed</strong> (five <code>constexpr</code>), bundled into the G4 round as planned.</li>
+<li class="done"><strong>Round 2 — suites green after G4/G5:</strong> 1345 checks, 0 failures.</li>
+<li class="done"><strong>Round 2 — Windows PREfast confirmed G4/G5 cleared.</strong> Run <code>33807395028</code> on <code>b8bace4</code>: 152 → 143 results, the delta being exactly the nine fixed findings; <code>C28252</code> 0 remaining, <code>C26498</code> 0 remaining, nothing new introduced.</li>
 <li class="done"><strong>Phase 8 — verification complete.</strong> Local suites and gates green; PREfast re-run confirms the fix.</li>
 <li class="done"><strong>Scanner re-run confirmed G1 cleared</strong> with no new finding introduced.</li>
 </ul>
 </div>
+
+<h2>Round 2 — PR review closure (2026-09-03, later)</h2>
+<p class="sub">Starting state: <code>main</code> at <code>1c16654</code> (PR #32 merged). Everything in round 1 stays
+closed — nothing below reopens G1, G2, G3, T1 or T2, and no new evidence was found that would justify it.</p>
+
+<div class="panel">
+<strong>What changed in this round</strong>
+<ul class="ck" style="margin-top:8px">
+<li class="done">Two new <code>PluginProcessor.cpp</code> review findings investigated — <strong>both disproved, no code changed</strong>.</li>
+<li class="done">G4 (<code>C28252</code> ×4) fixed — the deferred Roadmap item.</li>
+<li class="done">G5 (<code>C26498</code> ×5) fixed — bundled into the G4 round, as round 1 planned.</li>
+<li class="done">Windows PREfast verification of G4/G5 — <strong>confirmed</strong>: 152 → 143, delta exactly −9, zero new findings.</li>
+</ul>
+</div>
+
+<h3>Round 3 — audit-record consistency closure</h3>
+<div class="panel">
+<p>Two review findings, both about the audit <em>records</em> rather than the audit. No source, test, scanner or CI
+change. Every completed disposition stands unchanged.</p>
+<ul class="ck">
+<li class="done"><strong>Coverage record synchronised.</strong> Round 2 changed two audit records without updating
+<code>DOCUMENTATION_COVERAGE.md</code>, which the audit obligation requires of every documentation-affecting change.
+Entries added for rounds 2 and 3; nothing else backfilled.</li>
+<li class="done"><strong>Verification levels separated.</strong> The worklog asserted G4 “Windows-CI-verified” in a
+section written <em>before</em> the run. The compression was the defect — it ran together four things of which only the
+last is evidence: local (a no-op off MSVC by construction), Windows CI execution (proves the annotation is well-formed,
+not that the diagnostic stopped firing), <strong>PREfast scanner confirmation</strong> (the raw SARIF — the only level
+that settles it, the <code>_Success_</code> clause having been derived rather than looked up), and the standing limit
+that confirmation is confirmation on <em>one</em> toolset.</li>
+<li class="done"><strong>Four self-contradictions in this report, corrected.</strong> A seven-lens sweep found them, all
+introduced by updating one part of this document when G4/G5 closed and not the others: “Open decisions” still calling G4
+deferred; the Roadmap preamble still promising an open verification claim at the top; G4’s cost row still naming the
+<em>rejected</em> fix and calling verification pending; and R1/R2 filed in two Roadmap buckets at once.</li>
+<li class="done"><strong>Stale row in <code>HANDOVER.md</code> — found, reported and corrected.</strong> Its Test Status
+row claimed “Five checkers now ship <code>--self-test</code>” while <em>listing six</em>, with
+<code>check-realtime 90</code> and <code>check-clang-warnings 15</code>. Both had been stale for two versions (0.2.10 grew
+the realtime self-test; <code>CI_CD.md</code> already records clang-warnings 15 → 18). Corrected from a measured run of
+all six on this commit — <strong>67 / 37 / 120 / 145 / 19 / 18</strong>. Not this round’s doing, and recorded here rather
+than changed quietly: policy C6 objects to <em>silent</em> correction, not to correction.</li>
+</ul>
+<p class="note" style="margin-bottom:0"><strong>Worth keeping.</strong> A live document updated in place accumulates
+exactly this class of defect, because the parts that need changing are the ones that do not mention the thing that
+changed. Asking “what does this document now contradict?” finds them; re-reading what you just edited does not — which is
+also how the two residues fixed at the end of this round survived their first pass.</p>
+</div>
+
+<h3>Review finding register</h3>
+
+<div class="panel">
+<div class="tablewrap"><table>
+<tbody>
+<tr><th>ID / location</th><td><strong>R1</strong> — <code>src/PluginProcessor.cpp:1199</code>, “Adopted snapshots can miss first save”</td></tr>
+<tr><th>Claim</th><td>Adoption finishing after <code>programMailbox.take()</code> but before generation loads makes the save
+select its old snapshot, combining current sound with stale metadata.</td></tr>
+<tr><th>Trigger / order</th><td>Claimed interleaving between mailbox consumption, adoption completion and generation load.</td></tr>
+<tr><th>Root cause</th><td><strong>None — the machinery does not exist.</strong> <code>programMailbox</code>,
+<code>applyResolved</code>, <code>Mailbox</code> and <code>take()</code> have <strong>zero occurrences</strong> in
+<code>src/</code> or <code>tests/</code>. Line 1199 is inside a comment block. There is no program state machine to hold a
+mailbox: <code>getNumPrograms()→1</code>, <code>getCurrentProgram()→0</code>, <code>setCurrentProgram(int)</code> empty.</td></tr>
+<tr><th>Analogue checked</th><td>Wrong names are not a disproof, so the equivalent mechanism was traced. The save path
+<em>does</em> have exactly one staged-vs-published selection: <code>getStateInformation</code>’s ADAPTIVE block choosing on
+<code>engine.adaptiveRestorePending()</code>. It is sound for two independent reasons. <strong>(1) Ordered:</strong> the
+stager writes the three staged mirrors and <em>then</em> sets <code>adaptivePending</code> with
+<code>release</code>; the reader loads it with <code>acquire</code> before reading them, so seeing the flag implies seeing
+the values. <strong>(2) Mirrors are never consumed:</strong> the audio thread’s <code>exchange(false)</code> clears only the
+<em>flag</em> — the mirrors persist until the next <code>setStateInformation</code>, so there is only ever one generation
+in flight and “current sound with stale metadata” cannot arise from two.
+<br><br><strong>Corrected 2026-09-03 (round 4).</strong> This row previously closed with “flag down ⇒ the engine already
+applied those same values”. That step is <strong>wrong</strong>: flag down means already <em>consumed</em>, which is
+strictly earlier than applied. <code>exchange(false)</code> and <code>setLearnedTargets</code> are adjacent but not
+atomic, so a save landing between them reads the <em>published</em> branch while it still holds pre-restore values —
+<strong>the window is real</strong>. It is not a defect: it is <strong>ADR-0012 Known limit 1</strong>, the
+“consume-then-adopt window”, stated there almost verbatim, bounded at <em>one save’s worth</em> on references that slew
+over seconds, and deliberately taken — closing it by clearing the flag after adoption would trade a bounded stale read
+for an unbounded <em>lost update</em>. Accepted 2026-08-01 on the owner’s OQ-015 decision. R1’s own claim is still
+disproved (its mailbox/generation machinery does not exist); what changes is that the analogue is safe <em>within a
+documented bound</em>, not unconditionally.</td></tr>
+<tr><th>Affected state</th><td>None.</td></tr>
+<tr><th>Risk / user impact</th><td>None. No reachable defect.</td></tr>
+<tr><th>Fix cost</th><td>N/A.</td></tr>
+<tr><th>Needs fix? / worth fixing?</th><td><span class="tag t-fp">NO — DISPROVED</span> · not applicable</td></tr>
+<tr><th>Disposition</th><td><strong>FALSE POSITIVE.</strong> No code changed, per the standing rule that a disproved
+finding is documented rather than “fixed”.</td></tr>
+<tr><th>Verification evidence</th><td>Repo-wide symbol search (0 hits ×4 symbols); the two lines shown to be comments;
+the program surface shown inert; the acquire/release pairing and the non-consuming
+<code>exchange</code> read from source. The repository already documents this hazard class at the staging site, warning
+that an unpaired stager would make <code>getStateInformation</code> “serialize the stale one” — the invariant is enforced,
+not accidental.</td></tr>
+</tbody>
+</table></div>
+</div>
+
+<div class="panel">
+<div class="tablewrap"><table>
+<tbody>
+<tr><th>ID / location</th><td><strong>R2</strong> — <code>src/PluginProcessor.cpp:1069</code>, “Newer restores can lose synchronous settings”</td></tr>
+<tr><th>Claim</th><td>A second restore overlapping adoption of the first lets <code>applyResolved</code> overwrite the newer
+oversampling atomic; activation uses the previous setting until another adoption.</td></tr>
+<tr><th>Trigger / order</th><td>Claimed overlap between two restores and an in-flight adoption.</td></tr>
+<tr><th>Root cause</th><td><strong>None.</strong> No <code>applyResolved</code> exists; line 1069 is a comment line.</td></tr>
+<tr><th>Analogue checked</th><td>There <em>is</em> an oversampling atomic — <code>InternalState::osMirror</code>, read by the
+audio thread via <code>oversampleFactor()</code>. The finding requires a stale value <em>in flight</em>: something captured
+earlier and written later. There is none by construction. <code>osMirror</code> has exactly two writer paths, both
+<code>syncAtomics()</code> (constructor; <code>valueTreePropertyChanged</code> via the listener), and
+<code>syncAtomics()</code> reads <code>tree.getProperty(iid::oversample)</code> <strong>at the instant it runs</strong> —
+no argument, no captured payload. A late or “older” call therefore installs the <em>current</em> value, not an old one.
+The mirror is a derived cache, not a delivered message, so it has no stale generation to lose. Ordering does not arise
+either: <code>setStateInformation</code> and <code>replaceFrom</code> are synchronous message-thread code and
+<code>ValueTree::setProperty</code> dispatches its listener synchronously on the same thread, so restores are serialised
+rather than overlapped.</td></tr>
+<tr><th>Affected state</th><td>None.</td></tr>
+<tr><th>Risk / user impact</th><td>None. No reachable defect.</td></tr>
+<tr><th>Fix cost</th><td>N/A.</td></tr>
+<tr><th>Needs fix? / worth fixing?</th><td><span class="tag t-fp">NO — DISPROVED</span> · not applicable</td></tr>
+<tr><th>Disposition</th><td><strong>FALSE POSITIVE.</strong> No code changed.</td></tr>
+<tr><th>Verification evidence</th><td>Complete writer enumeration for <code>osMirror</code> (2 paths, both derived);
+<code>syncAtomics()</code> body read from source; listener dispatch and message-thread confinement confirmed.</td></tr>
+</tbody>
+</table></div>
+</div>
+
+<div class="note">Neither finding engaged a compatibility, serialization or architecture gate — neither produced a change.
+Both are recorded here rather than merely dismissed, so a future review that raises them again starts from the proof.</div>
 
 <h2>Finding register</h2>
 <p class="sub">Every distinct first-party group, plus the third-party and zero-result records. Duplicates are
@@ -237,7 +365,7 @@ JUCE cannot produce — defensive noise added to satisfy a wrong inference, in t
 </table></div>
 </div>
 
-<h3>G4 — <code>C28252</code> ×4 · tests · SHOULD FIX, DEFERRED</h3>
+<h3>G4 — <code>C28252</code> ×4 · tests · FIXED (round 2)</h3>
 <div class="panel">
 <div class="tablewrap"><table>
 <tbody>
@@ -256,22 +384,34 @@ Test-support header; never shipped. The cost is analytical: contradictory annota
 allocation in the test suite.</td></tr>
 <tr><th>Benefit of fixing</th><td>Moderate-low: 4 diagnostics, and restored analyzer fidelity on the allocation guard —
 which is the harness the realtime no-allocation proof depends on.</td></tr>
-<tr><th>Cost / complexity</th><td><strong>Low edit, awkward verification.</strong> The likely fix is to drop the annotation
-on the nothrow overloads and let the CRT’s stand. But the exact CRT annotation cannot be read from this environment
-(no MSVC headers), so the fix is a hypothesis that only a Windows CI round can confirm — and a wrong guess is churn that
-leaves the diagnostic in place.</td></tr>
-<tr><th>Needs fix?</th><td><span class="tag t-def">SHOULD FIX</span></td></tr>
-<tr><th>Worth fixing now?</th><td><strong>Not in this change.</strong> Genuine but test-only and analysis-only, and it wants
-an MSVC iteration loop rather than a blind edit bundled into a production fix. Deliberately separated so this change’s
-diff stays reviewable.</td></tr>
-<tr><th>Roadmap</th><td><strong>Next — next engineering round.</strong> Do it as its own change, on a branch, iterating
-against the Windows PREfast run until C28252 clears.</td></tr>
-<tr><th>Blocker</th><td>None — needs Windows CI iteration, not a decision.</td></tr>
+<tr><th>Cost / complexity</th><td><strong>Low edit, remote verification.</strong> One macro line. The awkwardness was
+never the edit but the proof: the CRT annotation cannot be read from this environment (no MSVC headers), so the clause had
+to be <em>derived</em> — from the diagnostic text plus the exact four-MAYBENULL / four-NOTNULL correlation — and stayed a
+hypothesis until the analyzer answered. It held on the first Windows run. <em>(This row previously named dropping the
+annotation as the likely fix; that is the approach the Fix row below rejects, and it is not what shipped.)</em></td></tr>
+<tr><th>Needs fix?</th><td><span class="tag t-fix">SHOULD FIX — DONE</span></td></tr>
+<tr><th>What located it</th><td><strong>An exact one-to-one correlation.</strong> The four findings are the four
+<code>ANABASIS_GUARD_RET_MAYBENULL</code> uses; the four <code>ANABASIS_GUARD_RET_NOTNULL</code> uses are clean. That split
+put the fault in the macro rather than in any individual overload — and explains the count, since only half the eight
+annotated operators could contradict anything.</td></tr>
+<tr><th>Fix</th><td>The diagnostic names the missing clause itself: the prior instance has
+<code>SAL_success(return!=0)</code>. MSVC’s <code>&lt;vcruntime_new.h&gt;</code> declares the nothrow operators
+<code>_Ret_maybenull_ _Success_(return != NULL) _Post_writable_byte_size_(_Size)</code>, and declares the throwing forms
+with no <code>_Success_</code> at all — a throwing <code>new</code> returns or throws, it never fails by returning. The
+macro carried <code>_Ret_maybenull_</code> and <code>_Post_writable_byte_size_</code> but not <code>_Success_</code>.
+Added it:
+<code>#define ANABASIS_GUARD_RET_MAYBENULL(sz) _Ret_maybenull_ _Success_(return != 0) _Post_writable_byte_size_(sz)</code>
+<br><br>This <strong>aligns with the CRT contract rather than removing an annotation</strong>. The tempting alternative —
+dropping <code>_Ret_maybenull_</code> — would have been the wrong repair: nothrow <code>new</code> genuinely can return
+null, and modelling that is the one thing this guard exists for. PREfast is not weakened.</td></tr>
+<tr><th>Disposition</th><td><span class="tag t-fix">CLOSED — Windows-PREfast confirmed.</span> Run <code>33807395028</code> (<code>b8bace4</code>): all four <code>C28252</code> resolved, <strong>0 remaining</strong>, nothing new introduced. The hypothesis held on the first iteration.</td></tr>
+<tr><th>Roadmap</th><td><strong>Now — done in this round.</strong></td></tr>
+<tr><th>Blocker</th><td>None.</td></tr>
 </tbody>
 </table></div>
 </div>
 
-<h3>G5 — <code>C26498</code> ×5 · tests · OPTIONAL</h3>
+<h3>G5 — <code>C26498</code> ×5 · tests · FIXED (round 2)</h3>
 <div class="panel">
 <div class="tablewrap"><table>
 <tbody>
@@ -282,10 +422,15 @@ against the Windows PREfast run until C28252 clears.</td></tr>
 <code>const</code> rather than <code>constexpr</code>.</td></tr>
 <tr><th>Risk</th><td><strong>None.</strong> Stylistic; no behavioural or codegen consequence at these sites.</td></tr>
 <tr><th>Benefit / cost</th><td>Both negligible. Five one-word edits inside carefully-commented poisoning fixtures.</td></tr>
-<tr><th>Needs fix?</th><td><span class="tag t-def">OPTIONAL / NICE TO HAVE</span></td></tr>
-<tr><th>Worth fixing now?</th><td><strong>No.</strong> Genuine but not worth churning test files during a production fix.
-Fold into the G4 round, where <code>tests/</code> is already being touched and MSVC verification is already in the loop.</td></tr>
-<tr><th>Roadmap</th><td><strong>Later — opportunistic.</strong> Bundle with G4.</td></tr>
+<tr><th>Needs fix?</th><td><span class="tag t-fix">OPTIONAL — DONE</span></td></tr>
+<tr><th>Worth fixing now?</th><td><strong>Yes, once G4 was being done.</strong> Exactly the condition round 1 set: bundle it
+when <code>tests/</code> is already open and the Windows verification loop is already running. It was not worth a
+standalone change and was not made one.</td></tr>
+<tr><th>Fix</th><td>Five locals initialised from <code>constexpr</code> members (<code>max()</code>,
+<code>quiet_NaN()</code>, <code>infinity()</code>) changed <code>const</code> → <code>constexpr</code>. No behavioural or
+codegen consequence; no other test touched.</td></tr>
+<tr><th>Disposition</th><td><span class="tag t-fix">CLOSED — Windows-PREfast confirmed.</span> All five <code>C26498</code> resolved, <strong>0 remaining</strong>. 1345 checks still green.</td></tr>
+<tr><th>Roadmap</th><td><strong>Now — done in this round.</strong></td></tr>
 <tr><th>Blocker</th><td>None.</td></tr>
 </tbody>
 </table></div>
@@ -323,41 +468,37 @@ poisoning, CWE-094 code injection and CWE-349 cache poisoning. <strong>Dispositi
 </div>
 
 <h2>Roadmap</h2>
-<p class="sub">Ordered by the next best use of engineering effort. One item per root cause.</p>
+<p class="sub">Re-ordered for this round by residual risk, user impact, correctness, realtime implication, regression
+risk, engineering cost and dependency — <strong>not</strong> chronologically. Settled items sink. With every
+verification claim now closed, what rises to the top is not work but the highest <em>residual</em> risk: a standing
+watch nobody is asked to act on today.</p>
 <div class="panel rm">
   <div class="item"><div class="num">1</div><div class="body">
-    <div class="when">Now — immediate · <em>done in this change</em></div>
-    <div class="ttl">G1 — make the <code>gains</code> bound locally provable</div>
-    Highest value per unit effort in the set: the only production finding, one line, zero runtime cost, and it removes a
-    latent out-of-bounds trap that would otherwise be armed by any future second caller of <code>processChunk</code>.
+    <div class="when">Monitor — no current action · <em>highest residual risk</em></div>
+    <div class="ttl">G2 — test stack usage, on a trigger</div>
+    <strong>Now the top of the list, because everything actionable is done.</strong> It is the only group with a residual
+    failure mode that can still bite: one function sits at 606 KB against a 1 MB Windows stack. Deliberately not scheduled
+    work — a 133-site refactor costs more than the bounded risk — but it is the first thing to act on if the trigger fires
+    (&gt;768 KB in one function, or a Windows stack overflow in CI), converting that function alone.
   </div></div>
   <div class="item"><div class="num">2</div><div class="body">
-    <div class="when">Now — immediate · <em>done in this change</em></div>
-    <div class="ttl">Close the documentation drift (0.2.9 / 0.2.10 coverage, <code>TESTING.md</code> gate description)</div>
-    A coverage audit that silently lags two shipped versions stops being usable as an audit. Cheap to fix, and it
-    restores the record the next round reads from.
+    <div class="when">Monitor — no current action</div>
+    <div class="ttl">T1 / T2 — third-party JUCE, re-entering scope only on a pin bump</div>
+    51 findings that are out of scope by policy today. They become relevant at the next JUCE bump, which is its own gated
+    change — so this is a dependency, not a task.
   </div></div>
   <div class="item"><div class="num">3</div><div class="body">
-    <div class="when">Next — next engineering round</div>
-    <div class="ttl">G4 (+ G5) — reconcile the <code>AllocationGuard.h</code> SAL annotations</div>
-    The only remaining <em>genuine</em> first-party defect class. Deserves its own change because it needs a Windows
-    PREfast iteration loop to confirm, and because the header underpins the realtime no-allocation proof — analyzer
-    fidelity there is worth more than the diagnostic count suggests. Fold G5’s five <code>constexpr</code> edits in,
-    since the same files are already open.
+    <div class="when">Monitor — no current action · <em>lowest of the open watches</em></div>
+    <div class="ttl">G3 and review findings R1 / R2 — recorded disproofs</div>
+    Nothing to do, and ranked last among the watches because the only value left in them is documentary: each is recorded
+    with its proof so a future audit or review re-confirms in minutes rather than re-triaging from scratch. They are
+    listed here rather than under Closed because a disproof is a standing answer to a question that can be asked again,
+    not a piece of finished work.
   </div></div>
   <div class="item"><div class="num">4</div><div class="body">
-    <div class="when">Monitor — no current action</div>
-    <div class="ttl">G2 — test stack usage</div>
-    Do <em>not</em> pre-emptively refactor 133 sites. Convert a single function to heap fixtures when it approaches the
-    1 MB Windows limit — the precedent already exists in
-    <code>testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset</code>. Trigger: &gt;768 KB in any one function, or a
-    Windows stack overflow in CI.
-  </div></div>
-  <div class="item"><div class="num">5</div><div class="body">
-    <div class="when">Monitor — no current action</div>
-    <div class="ttl">G3 and T1/T2 — no action by design</div>
-    G3 is an analyzer modelling error; T1/T2 are pinned third-party code. Both are recorded so the next audit
-    re-confirms rather than re-triages them.
+    <div class="when">Closed</div>
+    <div class="ttl">G1, G4, G5, the documentation drift, artifact persistence</div>
+    Rounds 1 and 2, all scanner-confirmed or source-disproved. G1 scanner-confirmed; drift corrected; the SARIF artifacts that made all of this possible are in place.
   </div></div>
 </div>
 
@@ -369,7 +510,7 @@ disposition followed from source evidence, scanner evidence or existing policy:<
 <li>G1 touches no parameter ID, serialization schema, threading model, DSP signal order, reported latency or macro
 contract — it changes no behaviour at all — so <code>ARCHITECTURE_REVIEW_GATE.md</code> is not engaged.</li>
 <li>G2/G3/G5 are test-only with no contract surface.</li>
-<li>G4 is deferred for verification logistics, not for a decision.</li>
+<li>G4 <em>was</em> deferred for verification logistics rather than for a decision, and is now closed — Windows-PREfast confirmed. It never needed one.</li>
 <li>T1/T2 are settled by <code>DEPENDENCY_POLICY.md</code>.</li>
 </ul>
 <p class="note" style="margin-bottom:0"><strong>Standing limitation, not a decision:</strong> the GitHub Code Scanning

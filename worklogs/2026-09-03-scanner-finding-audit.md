@@ -221,3 +221,383 @@ verification logistics, T1/T2 are settled by policy.
 Standing limitation, restated because it bounds every claim here: the Code Scanning **alert-store**
 state (open / fixed / dismissed) is unavailable from this environment. This audit is built entirely
 from raw SARIF and asserts nothing about it.
+
+---
+
+# Round 2 (2026-09-03, later) — PR review closure + the deferred G4/G5
+
+Starting state: `main` at `1c16654` (PR #32 merged). Round 1 closed as recorded above — drift
+corrected, artifact persistence in place, G1 fixed and scanner-confirmed, CodeQL first-party surface
+clean, G2/G3/T1/T2 accepted. Nothing below reopens any of them; no new evidence was found that would
+justify it.
+
+Two new review findings arrived against `src/PluginProcessor.cpp`, plus the G4/G5 Roadmap items this
+round was always going to pick up.
+
+## R1. Review finding #1 — "Adopted snapshots can miss first save" (`PluginProcessor.cpp:1199`)
+
+> *If adoption finishes after `programMailbox.take()` but before generation loads, the save selects
+> its old snapshot. It combines current sound with stale metadata.*
+
+**Disproved. No code changed.**
+
+The named machinery does not exist. `programMailbox`, `applyResolved`, `Mailbox` and `take()` have
+**zero occurrences** anywhere in `src/` or `tests/`. Line 1199 is inside a comment block, not code.
+The plugin has no program state machine at all to hold a mailbox: `getNumPrograms()` returns 1,
+`getCurrentProgram()` returns 0, and `setCurrentProgram(int)` is an empty override.
+
+Names being wrong is not by itself a disproof, so the analogous mechanism was traced. There **is** a
+staged-vs-published selection in the save path, and it is the only one: `getStateInformation`'s
+ADAPTIVE block picks between the staged mirrors and the engine's published values on
+`engine.adaptiveRestorePending()`. That is exactly the shape the finding describes, so it is the
+thing that had to be proved sound.
+
+It is sound, for two independent reasons.
+
+1. **The two actors are ordered.** The stager (`setStateInformation`) writes `stagedRefOnset`,
+   `stagedRefTilt`, `stagedAdaptiveLearned` and *then* calls `engine.restoreLearnedTargets(...)`,
+   which does `adaptivePending.store(true, release)`. The reader takes
+   `adaptivePending.load(acquire)` before reading the mirrors. The release/acquire pair publishes the
+   three stores ahead of the flag, so a reader that sees the flag up sees the values that set it —
+   on the message thread, where both live, and equally from any other thread a host might call
+   `getStateInformation` on.
+2. **The mirrors are never consumed.** The audio thread's
+   `adaptivePending.exchange(false, acquire)` clears only the *flag*. The three staged values are
+   written by the staging site alone and persist until the next `setStateInformation`, so there is
+   only ever one generation in flight and the finding's "current sound with stale metadata" cannot
+   arise from two.
+
+   **Corrected in round 4 (§D2-D4).** This point originally continued: "if it reads false the engine
+   has already applied *those same values*". That step does not hold — flag down means already
+   *consumed*, which is strictly earlier than *applied*, and the two are adjacent but not atomic. A
+   save landing between them takes the published branch while it still holds pre-restore values. The
+   window is real, and it is **ADR-0012 Known limit 1** (accepted, bounded at one save's worth). R1
+   remains disproved on its own terms; the analogue is safe within a documented bound rather than
+   unconditionally.
+
+Worth recording that the repository already reasoned about this hazard class: the comment above the
+staging site warns that a stager which sets the flag without pairing the stores would make
+`getStateInformation` "serialize the stale one", and instructs future stagers to route through that
+site or pair the stores in a helper. The invariant the finding worries about is not accidental — it
+is written down and enforced at the one place that can break it.
+
+## R2. Review finding #2 — "Newer restores can lose synchronous settings" (`PluginProcessor.cpp:1069`)
+
+> *When a second restore overlaps adoption of the first, `applyResolved` can overwrite the newer
+> oversampling atomic. Activation uses the previous setting until another adoption.*
+
+**Disproved. No code changed.**
+
+Again the named machinery is absent — no `applyResolved`, and 1069 is a comment line. And again the
+analogue exists and had to be checked: there **is** an oversampling atomic,
+`InternalState::osMirror`, read by the audio thread through `oversampleFactor()`.
+
+The finding requires a stale value to be *in flight* — something captured earlier and written later.
+There is none, by construction. `osMirror` has exactly two writer paths and both are `syncAtomics()`
+(the constructor, and `valueTreePropertyChanged` via the listener). `syncAtomics()` takes its value
+from `tree.getProperty(iid::oversample)` **at the instant it runs**; it carries no argument and no
+captured payload. A late, "older" call therefore cannot install an older value — it re-reads the
+current tree and installs the current truth. The mirror is a derived cache, not a delivered message,
+and a derived cache has no stale generation to lose.
+
+The ordering question the finding raises does not arise either: `setStateInformation` and
+`InternalState::replaceFrom` are synchronous message-thread code, and `ValueTree::setProperty`
+dispatches the listener synchronously on the same thread, so restores are serialised rather than
+overlapped. "Newer restore wins" holds because the newer restore is the one that ran last, and the
+mirror reflects whatever the tree holds when it did.
+
+**Neither finding required a compatibility, serialization or architecture gate**, since neither
+produced a change.
+
+## R3. G4 — `C28252 ×4`, and the diagnostic named its own fix
+
+The four findings correlate exactly with the four `ANABASIS_GUARD_RET_MAYBENULL` uses; the four
+`ANABASIS_GUARD_RET_NOTNULL` uses are clean. That one-to-one split is the evidence that located the
+fault in the macro rather than in any individual overload.
+
+The message says the prior instance has `SAL_success(return!=0)`. MSVC's `<vcruntime_new.h>` declares
+the nothrow operators `_Ret_maybenull_ _Success_(return != NULL) _Post_writable_byte_size_(_Size)`,
+and declares the throwing forms with no `_Success_` at all — a throwing `new` returns or throws, it
+never fails by returning. The repository's MAYBENULL macro carried `_Ret_maybenull_` and
+`_Post_writable_byte_size_` but **not** `_Success_`, so its definitions contradicted the prior
+declaration; the NOTNULL macro had nothing to contradict, which is precisely why only four of the
+eight fired.
+
+Fix: add `_Success_(return != 0)` to the MAYBENULL macro. This aligns the annotation with the CRT
+contract rather than removing one. The tempting alternative — dropping `_Ret_maybenull_` — would have
+been the wrong repair: nothrow `new` genuinely can return null, and modelling that is the one thing
+this guard exists for.
+
+Verification of this fix is **necessarily remote**, and the levels are worth keeping apart because
+only the last one is evidence for the claim:
+
+* **Local** — the change compiles and the suites stay green, but nothing local can see it. `_Success_`
+  is SAL, and the macros expand to nothing off MSVC, so on this machine the edit is a no-op by
+  construction.
+* **Windows CI execution** — the `msvc.yml` lane builds and runs `/analyze` on Windows. That the job
+  goes green says the annotation is well-formed, not that C28252 stopped firing.
+* **Windows PREfast scanner confirmation** — the raw SARIF for the pushed commit showing the four
+  findings gone. This is the only level that settles it, because the CRT headers cannot be read from
+  this environment: the `_Success_` clause was DERIVED from the diagnostic text plus the
+  four-MAYBENULL / four-NOTNULL correlation, so it is a hypothesis until the analyzer answers.
+* **Remaining limitation** — even confirmation is confirmation on ONE toolset. It says this MSVC's
+  CRT declares the nothrow operators the way the fix assumes; a future toolset that changed that
+  declaration would re-open the diagnostic, which is why the reasoning is recorded here rather than
+  just the edit.
+
+At the time this section was written the run had not happened, so nothing above was yet established.
+**The result is in §R5**, which reports it.
+
+## R4. G5 — `C26498 ×5`
+
+Bundled into the same change, as the round-1 Roadmap said it should be: `tests/` was already open and
+the Windows verification loop was already running. Five locals initialised from `constexpr` members
+(`max()`, `quiet_NaN()`, `infinity()`) changed `const` → `constexpr`. No behavioural or codegen
+consequence; no other test touched.
+
+## R5. Verification
+
+Local, after G4/G5: build exit 0; **1345 checks green** (316 + 1029); `check-docs` 109;
+`check-citations` 54 anchors; `check-portability` 48/0; `check-realtime` 40 files, 1 of 1 verified;
+all six gate self-tests; `git diff --check` clean. Six functional lines changed, no production code.
+
+**Windows PREfast — G4 and G5 confirmed, first iteration.** Run `33807395028` on `b8bace4`, diffed
+against the round-1 end state at `a7112c4`:
+
+| | before | after |
+|---|---|---|
+| total results | 152 | **143** |
+| `C28252` | 4 | **0** |
+| `C26498` | 5 | **0** |
+| newly introduced | — | **none** |
+| `src/` surface | 0 | **0** |
+
+The delta is exactly the nine fixed findings and nothing else. No iteration loop was needed: the
+`_Success_` hypothesis was derived from the diagnostic text plus the exact four-and-four correlation,
+and it held on the first Windows run.
+
+## R6. Closing state
+
+143 PREfast results remain, and **every one carries a standing disposition**: `C6262` ×133 (G2,
+accepted, monitored on a trigger), `C28182` ×8 + `C6011` ×1 (G3, analyzer modelling error), `C26495`
+×1 (T2, third-party JUCE). **Zero actionable first-party findings remain**, and the production
+surface is clean.
+
+Nothing was left unresolved. The two review findings are disproved with source-level evidence rather
+than deferred; G4 and G5 are scanner-confirmed rather than argued.
+
+
+---
+
+# Round 3 (2026-09-03) — audit-record consistency closure
+
+No source, test, scanner or CI change. `docs/` and `worklogs/` only.
+
+## C1. The coverage record was stale for round 2
+
+The audit obligation applies to *every* documentation-affecting change, and round 2 changed two audit
+records without touching `DOCUMENTATION_COVERAGE.md`. Added one entry for round 2 and one for this
+round. Nothing else backfilled, no historical obligation invented.
+
+The round-2 entry deliberately does **not** claim the **New/changed test** row. `AllocationGuard.h`
+and `dsp_tests.cpp` were edited, but no test was added, removed, or had its behaviour changed — a SAL
+annotation is analysis-only, and `const` → `constexpr` on locals initialised from `constexpr` members
+changes neither semantics nor codegen. The suites reporting the same 1345 checks either side is the
+evidence for that rather than an assertion of it.
+
+## C2. "Windows-CI-verified" was four claims compressed into one
+
+§R3 asserted G4 "Windows-CI-verified" in a narrative section written *before* the run, while the
+report at that moment still said pending. The compression was the defect: that phrase ran together
+local verification (a no-op off MSVC by construction), Windows CI execution (a green job proves the
+annotation is well-formed, not that the diagnostic stopped firing), PREfast scanner confirmation (the
+raw SARIF — the only level that settles it, the `_Success_` clause having been *derived* rather than
+looked up), and the standing limitation that confirmation is confirmation on **one** toolset. §R3 now
+separates them and defers the result to §R5. The report needed no change on this point; `bdd75b2` had
+already closed its side.
+
+## C3. The consistency sweep, and what it caught in my own work
+
+Seven independent lenses were run across the report, the worklog, `DOCUMENTATION_COVERAGE.md` and
+`HANDOVER.md` — statuses, counts, provenance, pending-vs-confirmed, roadmap, remaining work, handover.
+Counts and provenance came back clean. The other five converged, independently and repeatedly, on
+**four self-contradictions inside the HTML report** — all of them mine, all introduced by updating one
+part of the document when G4/G5 closed and not the others:
+
+1. **"Open decisions": *"G4 is deferred for verification logistics, not for a decision."*** Present
+   tense, in a file that declares itself the live state, three sections after the same file records
+   G4 as `CLOSED — Windows-PREfast confirmed`. Flagged by four lenses.
+2. **Roadmap preamble: *"the one open verification claim rises to the top."*** True when written;
+   false once the verification closed and G2 took the top slot. The item that now leads says in its
+   own body that *everything actionable is done*.
+3. **G4 "Cost / complexity" row** still named *"drop the annotation on the nothrow overloads"* as the
+   likely fix — the approach the Fix row four rows below explicitly rejects — and described
+   verification as an unconfirmed hypothesis awaiting CI.
+4. **R1/R2 filed in two Roadmap buckets at once**, Monitor *and* Closed, so the Roadmap did not say
+   which state it assigned them.
+
+All four corrected. The lesson is worth writing down: a live document updated in place accumulates
+exactly this class of defect, because the parts that need changing are the ones that do not mention
+the thing that changed. A sweep that asks "what does this document now contradict?" finds them;
+re-reading the parts you edited does not.
+
+## C4. Drift found in `HANDOVER.md` — reported and corrected
+
+The handover lens found the Test Status row claiming **"Five checkers now ship `--self-test`"** while
+*listing six*, with two stale figures: `check-realtime 90` and `check-clang-warnings 15`. Neither is
+this round's doing — 0.2.10 grew the realtime self-test by the four `scan_repo` cases against real
+temporary trees, and `CI_CD.md` already records the clang-warnings gate going 15 → 18 — so the row
+had been contradicting the tree for two versions.
+
+Corrected from a measured run of all six on this commit: docs 67, citations 37, portability 120,
+realtime 145, linux-abi 19, clang-warnings 18. Recorded here and in the final report rather than
+changed quietly, which is what C6 asks: drift is to be reported, and the objection is to *silent*
+correction, not to correction.
+
+## C5. Verification
+
+`check-docs` 109 clean · `check-citations` 54 anchors · `check-portability` 48/0 · `check-realtime`
+40 files, 1 of 1 verified · all six gate self-tests · HTML well-formed · `git diff --check` clean ·
+diff is `docs/` and `worklogs/` only.
+
+## C6. Closing state
+
+Every completed disposition stands unchanged — G1, G4, G5 fixed and scanner-confirmed; G2 monitored;
+G3 and the two review findings recorded disproofs; T1/T2 third-party; CodeQL clean on both languages.
+**Zero actionable first-party findings remain**, and the records now agree with each other on that.
+
+## C7. The sweep also caught two residues in this round's own output
+
+Worth recording, because they are the same defect class as §C3 and they survived a first pass. The
+synthesis pass re-read the four files after the corrections and found (a) the worklog claiming the
+`HANDOVER.md` drift was recorded "here **and in the final report**" while the report carried no
+round-3 record at all, and (b) this round's `DOCUMENTATION_COVERAGE.md` entry still describing the
+round as *one wording fix* after it had grown to six, and not listing `HANDOVER.md` among the records
+it engaged. Both fixed: the report now carries the round-3 closure section, and the coverage entry
+matches the round it describes.
+
+The pattern is exact. Each was written when it was true, then the round grew past it. That is the
+whole lesson of §C3 recurring inside the fix for §C3 — which is the argument for sweeping a document
+set against itself at the END of a round rather than trusting that each edit was complete when made.
+
+---
+
+# Round 4 (2026-09-03) — the adaptive-restore proof, and the window it omitted
+
+## D1. The finding
+
+Against `docs/DOCUMENTATION_COVERAGE.md:98` — my own round-2 entry:
+
+> The documented `adaptiveRestorePending()` proof omits the consume-to-adoption window. A concurrent
+> save can still serialize the previous learned state.
+
+## D2. What round 2 actually claimed
+
+Two reasons were given for R1 being sound. The second was:
+
+> *Never consumed:* the audio thread's `adaptivePending.exchange(false, acquire)` clears only the
+> flag … so the interleaving resolves the same way either way — flag up ⇒ the mirrors hold the loaded
+> truth; **flag down ⇒ the engine already applied those same values**.
+
+The bolded step is the one the reviewer is challenging, and it is the step that does not hold.
+
+## D3. Implementation trace
+
+Writer, message thread (`AnabasisEngine.h:222-232`) — payload relaxed, flag release-stored last:
+
+```
+pendingRefOnset / pendingRefTilt / pendingLearned   (relaxed)
+adaptivePending.store(true, release)
+```
+
+Consumer, audio thread, block top (`AnabasisEngine.cpp:267-274`):
+
+```
+if (adaptivePending.exchange(false, acquire))     // (1) flag cleared HERE
+    adaptiveEngine.setLearnedTargets(...)         // (2) published values change HERE
+    /* or */ clearLearnedTargets()
+```
+
+Reader, message thread (`PluginProcessor.cpp:1748-1765`):
+
+```
+restoreStaged = engine.adaptiveRestorePending()   // == adaptivePending.load(acquire)
+learnedNow    = restoreStaged ? stagedAdaptiveLearned : ad.hasLearned()
+                                 ↑ mirrors          ↑ PUBLISHED values
+```
+
+**Ordering model.** (1) and (2) are adjacent but not atomic. A reader landing between them observes
+`restoreStaged == false` and therefore takes the *published* branch — which still holds the
+pre-restore values, because (2) has not run. So the save writes the previous learned state.
+
+**The window is real.** Round 2's proof was wrong on this point: "flag down" does not imply "already
+applied", it implies "already *consumed*", which is strictly earlier.
+
+## D4. But it is not a defect — it is a ratified trade
+
+`ADR-0012` (**Accepted** 2026-08-01, owner decision on OQ-015 option 1, confidence *Verified*),
+§"Known limits of the contract", limit 1, states the finding almost verbatim:
+
+> **Consume-then-adopt window.** The consumer clears the flag with `exchange` and adopts a few
+> instructions later. A writer-side read landing between the two … sees `false` while the engine
+> still holds pre-adoption values, so a save in that window serializes the older learned state — one
+> save's worth. Closing it means clearing the flag *after* adoption, which trades this for a **lost
+> update**: a record staged between adopt and clear would be erased. **The stale-read window is the
+> better trade and is the one taken.**
+
+So the window is documented, analysed, owner-decided and deliberately accepted; the alternative I
+would otherwise have proposed is the one the ADR explicitly evaluates and rejects. Bounded at one
+save's worth, on references that slew over seconds.
+
+**Disposition: documentation-only.** The code is correct as designed. The defect is in my proof,
+which claimed a stronger guarantee than the code provides — the thing §7 of the brief forbids.
+
+## D5. The sibling asymmetry, and why it is not a contradiction
+
+The frozen-trim path solves an equivalent problem *differently*: `frozenRestorePending()` is
+`frozenStageSeq != frozenAppliedSeq`, and the applied side is advanced by the audio thread **after**
+`injectTrims`, under a comment that names this exact hazard —
+
+> *Only NOW is the published vector the restored one — the writer's capture guard reads this, not the
+> block-top flag.*
+
+That is not the adaptive path being wrong by comparison; it is a different trade for a different
+window. The frozen path consumes at the block top and applies at the §2.8 **duck bottom** — ~34 ms
+later, and unbounded if no audio runs at all — so its window is enormous and had to be closed. The
+adaptive path applies a few instructions after the consume, so its window is a few instructions wide
+and the ADR takes the stale read instead.
+
+**Observation recorded, not acted on.** A stage/applied *sequence pair* — the frozen path's idiom —
+would close the adaptive window without the lost update ADR-0012 cites as its reason for accepting
+it, because an increment during application leaves the record pending rather than erasing it. ADR-0012
+evaluated only the flag-based closure. Whether the adaptive path should adopt the sibling idiom is an
+**ADR-level question**: changing it would contradict an Accepted ADR, which `CLAUDE.md` lists as a
+hard stop. Recorded here as a candidate ADR-0012 amendment rather than implemented. **No code changed
+in this round.**
+
+## D6. Resolution
+
+**Documentation-only.** The window is real and the round-2 proof was wrong about it; the code is
+correct as designed and matches its Accepted ADR. Three records carried the same overclaim and all
+three are corrected:
+
+| record | what it said | what it says now |
+|---|---|---|
+| `docs/DOCUMENTATION_COVERAGE.md` | mirrors "never consumed", no window | qualified, with a round-4 entry giving the full proof and the ADR-0012 citation |
+| `docs/reports/…-scanner-audit.html` | "flag down ⇒ the engine already applied those same values" | corrected in the R1 register row, window named and bounded |
+| `worklogs/…-scanner-finding-audit.md` §R1 | same claim | corrected, pointing at §D2-D4 |
+
+R1's own disposition is unchanged and still **disproved** — its mailbox/generation machinery does not
+exist, and the one-generation argument stands. What changes is the strength of the claim: the
+analogue is safe **within a documented bound**, not unconditionally. Stating it the stronger way was
+the defect.
+
+Proof text checked against source rather than memory: `exchange` at `AnabasisEngine.cpp:267` with the
+apply at 269-273 (adjacent, not atomic); the reader gating on it at `PluginProcessor.cpp:1748-1752`;
+ADR-0012 Accepted with the "Consume-then-adopt window" limit present; the frozen sibling advancing
+`frozenAppliedSeq` after `injectTrims` at 416-419.
+
+**Roadmap:** unchanged. No new item — the ADR-0012 amendment candidate in §D5 is an observation for a
+future round, not scheduled work, and it needs an owner decision rather than engineering time.
+
+**No production code, test, scanner or CI change in this round.**

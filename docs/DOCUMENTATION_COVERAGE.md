@@ -6,8 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **scanner-finding audit (2026-09-03)** — the first audit run against raw
-SARIF retrieved from the scanners themselves, and the one production finding it produced. Before
+**Last updated:** for the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
+findings disproved, G4/G5 fixed and scanner-confirmed, and this record synchronised with the audit
+records it covers. Before that, the **scanner-finding audit (2026-09-03)** — the first audit run
+against raw SARIF retrieved from the scanners themselves, and the one production finding it produced. Before
 that, the **scanner-SARIF artifact change (2026-09-03)** — `codeql.yml` and `msvc.yml` now also
 publish their raw SARIF as Actions artifacts — and **0.2.9 / 0.2.10 (2026-09-02/03)**, whose
 entries are below. Before those, for **0.2.8
@@ -88,6 +90,92 @@ dispositioned in `docs/reports/2026-09-03-scanner-audit.html`, which carries the
 Roadmap. Rows engaged: **New/changed test** (none added — the fix is covered by the existing
 channel battery; this file), and the audit report is a new document, so **Add / remove /
 reclassify a document** (`REPOSITORY_MAP.md`, this file's self-coverage).
+
+**Scanner-audit remediation, round 2 (2026-09-03).** Two review findings against
+`src/PluginProcessor.cpp` were investigated and **both disproved at source level**, so neither
+produced a change: the machinery each named (`programMailbox`/`take()`, `applyResolved`) has zero
+occurrences in the tree, and the analogous mechanisms that DO exist were traced and shown sound —
+`getStateInformation`'s staged-vs-published ADAPTIVE selection is release/acquire ordered and its
+mirrors are never consumed — **within ADR-0012's recorded bound; see the round-4 correction below** —
+and `InternalState::osMirror` is a derived cache recomputed from the tree by its only writer, so it
+has no stale generation to lose. The round's actual changes were the two
+deferred scanner items: **G4** (`C28252` ×4) fixed by adding `_Success_(return != 0)` to
+`ANABASIS_GUARD_RET_MAYBENULL`, aligning it with the CRT's own nothrow declaration rather than
+removing an annotation, and **G5** (`C26498` ×5) folded in as round 1 planned. Both
+**Windows-PREfast confirmed**: run `33807395028` on `b8bace4`, 152 → 143 results, `C28252` 4 → 0,
+`C26498` 5 → 0, nothing new introduced. `DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: the **audit
+obligation** (this file) and the audit records themselves
+(`docs/reports/2026-09-03-scanner-audit.html`, `worklogs/2026-09-03-scanner-finding-audit.md`). The
+**New/changed test** row is deliberately NOT claimed: `tests/AllocationGuard.h` and
+`tests/dsp_tests.cpp` were edited, but no test was added, removed or had its behaviour changed — a
+SAL annotation is analysis-only and `const` → `constexpr` on five locals initialised from `constexpr`
+members changes neither semantics nor codegen. The suites report the same 1345 checks before and
+after, which is the evidence for that claim rather than an assertion of it.
+
+**Audit-record consistency closure, round 3 (2026-09-03).** Round 2 changed two audit records and did
+not update this file, which the audit obligation requires of *every* documentation-affecting change —
+the entry above is that correction, and it is the whole of it: no unrelated history is backfilled and
+no historical obligation is invented. The round then grew past that. It also corrected **four
+self-contradictions in the audit report** — "Open decisions" still calling G4 deferred, the Roadmap
+preamble still promising an open verification claim at the top, G4's cost row still naming the fix
+its own Fix row rejects, and R1/R2 filed in two Roadmap buckets at once — all found by a seven-lens
+consistency sweep, and all introduced by updating one part of a live document when G4/G5 closed and
+not the others. It corrected **one stale row in `HANDOVER.md`** (Test Status claimed "Five checkers"
+while listing six, with `check-realtime 90` and `check-clang-warnings 15`; measured now as 67 / 37 /
+120 / 145 / 19 / 18) — drift predating this round by two versions, reported in the worklog and the
+report rather than changed quietly. And it corrected **one wording defect in the worklog**, which
+asserted G4 "Windows-CI-verified" in the narrative section written **before** the run happened, while
+the report at that moment still said pending. The worklog now separates the levels that claim
+was compressing — local (a no-op off MSVC by construction), Windows CI execution (the job going
+green proves the annotation is well-formed, not that the diagnostic stopped firing), Windows PREfast
+scanner confirmation (the raw SARIF; the only level that settles it), and the standing limitation
+that confirmation is confirmation on one toolset — and defers the result to the section that reports
+it. Records engaged: `docs/reports/2026-09-03-scanner-audit.html`,
+`worklogs/2026-09-03-scanner-finding-audit.md`, `docs/HANDOVER.md` and this file. No source, test,
+scanner or CI change was made in this round.
+
+The round's own last two defects are recorded because they are the same class: the worklog claimed the
+`HANDOVER.md` drift was recorded "in the final report" when the report carried no round-3 record at
+all, and this entry described the round as one wording fix after it had grown to six. Both were found
+by re-reading the documents against each other rather than against memory.
+
+**Adaptive-restore proof completed, round 4 (2026-09-03).** A review finding against the round-2
+entry above: the `adaptiveRestorePending()` proof omitted the **consume-to-adoption window**, so a
+concurrent save can still serialize the previous learned state. Investigated from source and
+**upheld as to the window, rejected as to it being a defect**.
+
+The omitted step is real. Round 2 argued "flag down ⇒ the engine already applied those same values";
+flag down actually means already *consumed*. `adaptivePending.exchange(false, acquire)` and
+`adaptiveEngine.setLearnedTargets(...)` (`AnabasisEngine.cpp:267-274`) are adjacent but not atomic,
+so a `getStateInformation` landing between them sees `restoreStaged == false`, takes the *published*
+branch, and reads pre-restore values. The proof as written claimed a stronger guarantee than the code
+provides.
+
+It is not a correctness defect: it is **`ADR-0012` Known limit 1, the "consume-then-adopt window"**,
+which states the same scenario almost verbatim, bounds it at *one save's worth* on references that
+slew over seconds, and records why it is taken — closing it by clearing the flag after adoption
+trades a bounded stale read for an unbounded **lost update**. ADR-0012 is **Accepted** (2026-08-01,
+owner decision on OQ-015 option 1, confidence *Verified*) and ratifies precisely this learned-target
+restore. The code matches its ADR; the documentation did not match the code.
+
+Corrected in three places that carried the same overclaim: this entry, the audit report's R1 register
+row, and the worklog's §R1. **No production code changed** — under the authority order an Accepted
+ADR outranks this file, and contradicting one is a `CLAUDE.md` hard stop.
+
+Recorded as an observation for a possible future **ADR-0012 amendment**, not acted on: the sibling
+frozen-trim path closes an equivalent window with a stage/applied *sequence pair*
+(`frozenStageSeq != frozenAppliedSeq`, advanced after `injectTrims` under the comment "the writer's
+capture guard reads this, not the block-top flag"), and a sequence pair does **not** incur the lost
+update ADR-0012 gives as its reason for accepting the window, since an increment during application
+leaves the record pending rather than erasing it. ADR-0012 evaluated only the flag-based closure. The
+asymmetry is nonetheless defensible on its own terms — the frozen path applies at the §2.8 duck
+bottom, ~34 ms later and unbounded with no audio, so its window had to be closed, while the adaptive
+path's is a few instructions wide.
+
+`DOCUMENTATION_LIFECYCLE_POLICY.md` rows engaged: the **audit obligation** (this file) and the audit
+records (`docs/reports/2026-09-03-scanner-audit.html`,
+`worklogs/2026-09-03-scanner-finding-audit.md`). No **State serialization schema** row: no schema,
+contract or behaviour changed.
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).
