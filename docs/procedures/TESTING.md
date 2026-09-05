@@ -212,15 +212,39 @@ register instead.
 A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
 needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
 statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.6 `grY`, and since
-0.2.8 `tipFirst`, `entryPeriod`, `smoothedHead`, `phaseOf`, `parked`, `paintHead`, `frameFor`,
-`readFloor` and `bucketReads`, plus the ring's own `GrHistoryBuffer::prepare`, `prepared` and
-`batchIntact` (pinned by `grPrepared`, through the ring and through the wrapper) — because an
-expression reachable only from `paint` is one no test can pin and no mutant can kill; the GR
-trace's vertical mapping under-reported reduction past 12 dB for three rounds while it sat inline,
-and its horizontal geometry stepped a non-integer pitch once per bucket for six (0.1.2 → 0.2.8)
-while the pinned property was only *where* buckets land, never *how* they move — the 0.2.8 walk in
-`testGrHistoryWindowNeverAsksForTheHeadSlot` now holds the per-entry motion at every head across
-three buckets, which is the assertion the stepped form fails.
+0.2.8 `entryPeriod`, `smoothedHead`, `phaseOf`, `parked`, `paintHead`, `frameFor`, `readFloor` and
+`bucketReads` (0.2.8's `tipFirst`, the trailing window the newest vertex read, was removed in
+0.2.11: the newest drawn bucket reads its own span like every other), since 0.2.12 `visibleRight`
+(whose sweep pins BOTH of the requirements it holds apart — the uncapped bound wherever a window
+has three or more buckets, and a non-empty clip for every window and every plot at least two
+columns wide, the property whose absence blanked the plot at a ten-second host block),
+and `firstDrawn` (the oldest bucket a frame may draw once the ring's floor is taken into account),
+and `hiddenColumns`/`leadBuckets` (the columns the boundary hides, which is how far right the frame
+is drawn, and the buckets of earlier history that shift needs on the left),
+plus the ring's own
+`GrHistoryBuffer::prepare`, `prepared` and `batchIntact` (pinned by `grPrepared`, through the ring
+and through the wrapper) — because an expression reachable only from `paint` is one no test can pin
+and no mutant can kill; the GR trace's vertical mapping under-reported reduction past 12 dB for
+three rounds while it sat inline, and its horizontal geometry stepped a non-integer pitch once per
+bucket for six (0.1.2 → 0.2.8) while the pinned property was only *where* buckets land, never *how*
+they move — the 0.2.8 walk in `testGrHistoryWindowNeverAsksForTheHeadSlot` now holds the per-entry
+motion at every head across three buckets, which is the assertion the stepped form fails, and since
+0.2.11 holds that only complete buckets are drawn, that every drawn bucket's read set is a constant
+of its index, and that a completing bucket appears at the edge as a new vertex, and since 0.2.12
+that the visible boundary sits left of the newest drawn vertex at every head and both ends of the
+phase. The properties of that view no static can carry — where the stroke's cap lands, and what a
+clip leaves on screen — are pinned through a RENDERED snapshot at every fill of the newest bucket
+(`grPaint`, 0.2.11; extended at 0.2.12 to the visible boundary: the last visible column lit on every
+fill, every column beyond it untouched on every fill), because the last plot column had been
+blinking for three rounds while every static was green, and the strip beyond the newest vertex had
+then been on screen for one more. A THIRD rendered pin was added by the 0.2.12 review
+(`testGrHistorySurvivesAHostBlockOfTenSeconds`): a clip rectangle is not a number either, and a
+boundary computed one column left of the plot blanked the whole history while every arithmetic
+static stayed green. The review's second finding needed neither a render nor the editor: a REAL
+`GrHistoryBuffer` walked past 400 heads with a pattern whose minimum sits on the first entry of
+every bucket makes a one-entry truncation move a drawn value by 11 dB, so
+`testTheOldestDrawnBucketKeepsItsValueUntilItLeaves` can assert the invariant itself — no drawn
+bucket changes value while it is drawn — rather than a pixel consequence of it.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the

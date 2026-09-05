@@ -243,7 +243,13 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   fresh instance grows its trace from the right edge, and the region to the left stays
   empty until twenty seconds of audio have actually been measured — nothing is estimated
   or stretched. The trace scrolls continuously — it advances a fraction of a pixel with
-  every processed block rather than stepping once per bucket (since 0.2.8). Pausing and
+  every processed block rather than stepping once per bucket (since 0.2.8). Each point of
+  the trace is drawn once, when every block it summarises has been processed, and is never
+  redrawn: a new point enters at the right edge as each group of blocks completes, and what
+  is already on screen only moves (since 0.2.11). The trace fills the graph edge to edge, the same
+  width the spectrum view uses: the group of blocks still being collected is held just off the
+  right-hand end rather than shown incomplete, and each completed group enters the visible trace
+  from there (since 0.2.12). Pausing and
   resuming continues the timeline; it restarts only when the
   sample rate or block size changes. Vertically the trace hangs from the top of the graph
   and reaches the bottom at **24 dB** of reduction — the same span the COMP and LIMITER

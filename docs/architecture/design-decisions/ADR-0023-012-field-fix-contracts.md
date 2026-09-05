@@ -119,6 +119,94 @@ by construction rather than by stimulus luck.
    > the zero-data region and the clear rule are exactly as decided above.
    > `worklogs/2026-09-01-gr-history-scroll-jitter.md` carries the measurements and the review.
 
+   > **Amended 2026-09-05 (0.2.11), the owner's second report and the owner's directive to fix
+   > the tip.** The sentence above beginning "the newest VERTEX may sit under one entry-pitch
+   > inside it" no longer holds: that vertex was a live estimate — a minimum over a window that
+   > slid with every block, pinned to the edge while its bucket filled, released to drift once
+   > complete — and the owner saw it revised and re-shaped after it had been drawn. A bucket is
+   > now drawn only once it is complete, at its final value, and every drawn vertex, the newest
+   > included, sits at `right − (pitch / stride) · ((head + phase) − (k + 1) · stride)`: one rigid
+   > law, no vertex pinned, no trailing window, no value revised after it is shown. The newest
+   > drawn vertex therefore lies between the anchor and one pitch inside it, and the strip beyond
+   > it is the lead-out, which now runs to the clip edge rather than to the anchor (the last plot
+   > column was blinking at bucket rate). The right anchor, the fixed pitch, the per-entry scroll,
+   > the smoothed head, the zero-data region and the clear rule are unchanged; the newest value
+   > reaches the panel up to `stride − 1` blocks later than before.
+   > `worklogs/2026-09-05-gr-history-tip.md` carries the measurements.
+
+   > **Amended 2026-09-05 (0.2.12), the owner's third report.** The sentence above ending "which
+   > now runs to the clip edge rather than to the anchor" describes a strip that is no longer
+   > shown. The lead-out is the placeholder for the bucket still collecting, and it was the one
+   > part of the trace that changed other than by scrolling — a flat stub of one to `pitch + 1`
+   > pixels (1–2.4 px at 48 kHz / 512 on the Simple well) whose height jumped once per bucket and
+   > whose left neighbour snapped from flat to sloped with it, in the
+   > level fill as much as in the GR stroke — so the plot's visible right boundary is now
+   > `floor (right − min (pitch, span / 2)) − 1` (`GrHistoryView::visibleRight`, `span` the anchor
+   > span `right − x0`): left of everything the lead-out can touch, since the newest drawn vertex
+   > satisfies `right − pitch ≤ x ≤ right` on every frame, with one further column of measured
+   > margin for the stroke join at the vertex before it, which re-shapes in the frame the newer one
+   > appears. The `span / 2` cap is not a rescue clamp: `pitch == span / 2` EXACTLY when
+   > `kFull == 3`, so it leaves every window of three or more buckets — every configuration a
+   > real-time host presents — bit-for-bit uncapped, and holds a two-bucket window's boundary where
+   > a three-bucket window would put it. It exists because `buckets` floors `kFull` at 2: a window
+   > of two entries or fewer (`want ≤ 2`, i.e. `blockSize ≥ 10 · sampleRate`, which offline renders
+   > reach) reports one pitch as the whole plot, and hiding it hid the plot — the boundary landed
+   > one column left of the left edge and the history rendered blank. At that geometry the newest
+   > vertex sweeps the whole span once per bucket, so no non-empty frame-independent boundary can
+   > exclude the lead-out and the two requirements are genuinely exclusive; showing the history
+   > wins, and the fast artefact this bound exists to hide does not exist there (one bucket per ten
+   > seconds).
+   > This is a clip and nothing else: the anchor, the rigid law, the values, the per-entry scroll,
+   > the smoothed head, the zero-data region, the clear rule and the left edge are as decided
+   > above; every column still shown is what 0.2.11 showed there; and the plot gives up
+   > `ceil (pitch) + 2` columns on the right — four for every pitch up to 2 px, which is every block
+   > up to 1024 samples at every rate from 44.1 kHz and 2048 from 48 kHz up, on either well.
+   > The 0.2.11 sentence about the last plot column blinking now applies to the last VISIBLE
+   > column, which carries the trace on every frame; the plot's own last columns are not drawn.
+   > `worklogs/2026-09-05-gr-history-tip.md` §7 carries the measurements.
+
+   > **Amended 2026-09-05 (0.2.12), the PR review's second finding.** The 0.2.8 amendment above
+   > says the read window is "rounded up to whole buckets". Its LENGTH was; its START was not.
+   > `head − window` lands mid-bucket on every head that is not a multiple of `stride`, and the
+   > paint clamped the oldest drawn bucket's read range to that index — so that bucket lost its
+   > earliest entries one at a time as the head advanced, and the value it yields, a min over its
+   > span, changed while it was still drawn. Its vertex sits off the left edge, but the segment
+   > from it to its neighbour crosses the edge, so the visible sliver re-shaped: 340 changes in
+   > 1800 frames at 48 kHz / 512 (19 % of frames), up to 1.53 dB — 5.9 px on the Simple well,
+   > 15.5 px on the Advanced — and never on any other drawn bucket, in 3.9 million readings.
+   > The window's START is now the oldest DRAWN bucket's own first entry (`Buckets::first` =
+   > `kFirst · stride`), so **every drawn bucket aggregates its complete span for its whole
+   > visible life**; `kFirst`, the pitch, the anchor, the right-edge boundary and the crossing
+   > segment are unchanged. Two consequences are recorded rather than hidden: the display reaches
+   > up to `stride − 1` entries (32 ms at 48 kHz / 512) past the nominal twenty seconds, all of it
+   > off the left edge — this item's "read and never shown" — and `kFull` is capped so those
+   > entries fit inside the ring's one safe lap, which costs a SATURATED window (`want` at
+   > `windowEntries`' clamp: blocks of about 234 samples or fewer at 48 kHz) one bucket of its
+   > twenty seconds and 0.2 % of its pitch, and costs every ordinary window nothing. A bucket the
+   > producer has lapped into is DROPPED (`GrHistoryView::firstDrawn`), never drawn from what is
+   > left of it: a bucket may leave the display because it has aged out of the ring, but it must
+   > not come back re-shaped. `worklogs/2026-09-05-gr-history-tip.md` §9 carries the measurements.
+
+   > **Amended 2026-09-05 (0.2.12), the owner's layout call.** The boundary above was taking its
+   > `ceil (pitch) + 2` columns out of the PANEL, which left the GR history four pixels narrower
+   > than the spectrum view of the same well — the two share their bounds and their
+   > `reduced (10, 8)` inset, so they should show the same width. The panel no longer pays:
+   > `paintHistory` draws its frame `hiddenColumns` further right (same WIDTH, so the same pitch —
+   > the trace is moved, not scaled), which puts the boundary on the plot's own right edge and the
+   > strip it hides outside the plot altogether. The columns that frees at the left are filled with
+   > EARLIER history at the same pitch: `buckets` covers `leadBuckets` more buckets
+   > (`ceil (hidden / pitch)`, three on the Simple well and four on the Advanced), so the window
+   > holds `lead · stride` entries more than the nominal twenty seconds — 96 ms and 168 ms, all of
+   > it inside the panel now rather than off its left edge. The right boundary's RULE, the anchor
+   > law, `bucketX`, the bucket identities and their values, the read-window alignment and the
+   > drop rule are all unchanged; `kFull` — the pitch divisor — is unchanged too, and its ring cap
+   > reserves the four buckets `leadBuckets` can ask for. Measured: the trace's painted columns go
+   > from 10…909 to 10…913 on the Simple well (10…609 → 10…613 on the Advanced), the plot area
+   > being 10…913 and 10…613; every column of the rendered frame is the previous build's frame
+   > translated by exactly those four pixels (mean difference 0.00004 px over 1.4 M column
+   > samples), and nothing is drawn beyond the plot's right edge.
+   > `worklogs/2026-09-05-gr-history-tip.md` §10 carries the measurements.
+
 7. **Graph-well switch:** the GR|SPEC pill moves to the bottom-left (the least informative
    corner in both modes; the old top-right sat on the newest GR data), GR is the left segment
    and the default mode (`int_spectrumOn` default flips to `false` — a default change only,

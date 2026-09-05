@@ -6,7 +6,14 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
+**Last updated:** for **0.2.12 (2026-09-05)** — the owner's third GR-history report, reproduced
+frame by frame on the real paint path, confirmed by the owner, and fixed by a clip and nothing else:
+the strip beyond the newest complete vertex is no longer shown; then two PR review findings on that
+fix, both reproduced on the same harness before any change — a ten-second host block blanked the
+plot, and the OLDEST drawn bucket's value changed while it was still on screen (entry below). Before that, **0.2.11
+(2026-09-05)** — the owner's second GR-history report: the newest vertex is no longer a live
+estimate, and the last plot column no longer blinks.
+Before that, the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
 findings disproved, G4/G5 fixed and scanner-confirmed, and this record synchronised with the audit
 records it covers. Before that, the **scanner-finding audit (2026-09-03)** — the first audit run
 against raw SARIF retrieved from the scanners themselves, and the one production finding it produced. Before
@@ -176,6 +183,70 @@ path's is a few instructions wide.
 records (`docs/reports/2026-09-03-scanner-audit.html`,
 `worklogs/2026-09-03-scanner-finding-audit.md`). No **State serialization schema** row: no schema,
 contract or behaviour changed.
+
+**0.2.12 (2026-09-05) — the GR history's right edge no longer shows the strip still being
+generated.** The owner's third report on the same display: a 1–2 px horizontal stub at the right
+edge of the trace and of the grey level history, exposing content still being generated. Reproduced
+on the same scratch harness (real processor, real `GrHistoryView` paint path, frame by frame) and
+the owner's reading confirmed before any change: the lead-out — the flat strip from the newest
+complete vertex to the plot edge, 1.00–2.42 px at 48 kHz / 512 — was on screen, and it is the one
+part of the trace that changes other than by scrolling (its height jumps and its left neighbour
+snaps from flat to sloped once per bucket; the stroke and the fill share the path). Fixed by
+clipping at `GrHistoryView::visibleRight` = `floor (right − min (pitch, span / 2)) − 1`, left of
+everything the lead-out can touch (the newest drawn vertex satisfies `right − pitch ≤ x ≤ right` on
+every frame), one further column of measured margin for the stroke join at the vertex before it,
+and the `span / 2` cap — added on the PR review finding that a ten-second host block blanked the
+plot, engaging only where `kFull == 2` and holding the boundary where a three-bucket window puts it.
+The review's second finding moved the READ WINDOW'S START: it was a length behind the head, so it
+fell mid-bucket and the oldest drawn bucket was read from there, losing its earliest entries one at
+a time and changing value while its segment still crossed the left edge (340 changes in 1800 frames
+at 48 kHz / 512, up to 1.53 dB; 0 after). `Buckets::first` is now the oldest drawn bucket's own
+first entry, `kFull` is capped so that alignment fits the ring, and a bucket the producer has lapped
+into is dropped rather than truncated (`GrHistoryView::firstDrawn`). The owner's layout call then
+moved the boundary's cost off the panel: `paintHistory` draws its frame `hiddenColumns` further
+right, so the boundary lands on the plot's own right edge and the GR history shows the same width as
+the spectrum view of the same well (painted columns 10…909 → 10…913 on the Simple well), with the
+freed columns filled by the `leadBuckets` extra buckets of earlier history the window now covers —
+moved, not scaled: every rendered column is the previous build's translated by exactly four pixels.
+Nothing
+else moved, and every column still shown is pixel-identical to 0.2.11 in 480 of 480 frames on every
+configuration. Validated old against new on the same frames (fill top-edge movement in the
+rightmost visible columns 0.52 → 0.07 px mean, 25 → 0.44 px max; stroke 0.24 → 0.04, 18 → 0.16; last
+visible column lit on every frame; every column beyond it background on every frame). Rows engaged:
+**Metering (GR history)** (`USER_MANUAL.md` — the trace stops short of the right-hand edge,
+supplied; `DSP_ALGORITHMS.md` and `TEST_REPORT.md` untouched, as at 0.2.11), **ADR** (ADR-0023 item
+6 amended in place, dated, on the owner's directive), **New/changed test** (`state_tests.cpp`: the
+walk's boundary pin in every geometry case, the boundary arithmetic on this view and both shipped
+wells, and the rendered `grPaint` snapshot re-pinned on both halves of the contract; `TESTING.md` —
+`visibleRight` joins the pinned statics, supplied; this file), and **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`). No **State serialization schema** row: nothing serialised changed.
+`OPEN_QUESTIONS.md` untouched (OQ-017 unchanged). Trail: `worklogs/2026-09-05-gr-history-tip.md`
+§7 (the measurement trail, the boundary sweep, the old-against-new identity check, the mutants).
+
+**0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
+complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly
+generated line can have instantaneous changes, and it also changes while it is moving."*
+Reproduced on a scratch harness driving the real processor and the real `GrHistoryView` paint path
+frame by frame, with the 0.2.7 and pre-fix 0.2.8 painters ported beside it on the same frames, and
+confirmed by the owner against the description before anything was changed. The completed trace
+was rigid, as 0.2.8 claimed; the newest vertex was a live estimate — a minimum over a trailing
+window re-evaluated on every block (`tipFirst`), pinned to the edge while its bucket filled
+(`bucketX`'s `k >= kHead` branch), released to drift and re-sprout once complete — revised 24–36
+times per second, up to 57 px on the Advanced well, and 0.2.8's "halved the tip's movement" was not
+reproduced on the real limiter (2.6 vs 2.9 px per frame; identical at stride 1). Fixed by drawing
+only complete buckets (`Buckets::kLast`) under the one rigid law every vertex already obeyed;
+`tipFirst` removed; the lead-out ends on the clip edge, which also closes the last plot column's
+blink (dark on 52 % of frames, present in both versions). Validated on the harness against both
+predecessors: revisions of a drawn vertex 0, re-sloped segments 0, ledge-to-spike collapses 0, the
+completed trace's translation unchanged, the last column lit on every frame — on every
+configuration run. Host-delivery motion (bursty or mis-sized blocks) is unchanged and filed as
+OQ-017. Rows engaged: **Metering (GR history)** (`USER_MANUAL.md` — supplied here;
+`DSP_ALGORITHMS.md` carries no display geometry and `TEST_REPORT.md` no display figure, neither
+touched), **ADR** (ADR-0023 item 6 amended in place, dated, on the owner's directive), **New/changed
+test** (`state_tests.cpp`: the walk's tip pins replaced by only-complete-drawn, values-frozen and
+appears-at-edge pins, the `grComplete` block, and a RENDERED last-column pin in `grPaint`;
+`TESTING.md` — supplied here; this file), **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`), and
+`OPEN_QUESTIONS.md` (OQ-017, new). Trail: `worklogs/2026-09-05-gr-history-tip.md`.
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).

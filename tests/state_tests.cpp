@@ -6364,25 +6364,61 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // a pitch right as its bucket expired, a bucket-rate pop at the
             // left edge. The bucket-aligned read window (`Buckets::window`)
             // is what puts the oldest vertex at or past the edge instead.
+            // The newest DRAWN bucket (`kLast`, 0.2.11) is on the edge here
+            // because every case's `want * 4` is a whole number of buckets, so
+            // the newest bucket is complete — the walk below covers the heads
+            // where it is not, and the vertex before it is drawn instead.
+            //
+            // Read in the DRAWING FRAME (0.2.12): `paintHistory` places the
+            // trace with its origin `hiddenColumns` right of the panel's, so
+            // the boundary lands on the panel's own right edge and the plot
+            // shows its full width. The frame keeps the panel's WIDTH, so the
+            // pitch is untouched and every vertex is simply that much further
+            // right; the columns that frees on the left are filled by the
+            // `leadBuckets` older buckets the window now covers, which is why
+            // the oldest drawn vertex is at or beyond the PANEL's left edge
+            // (0) rather than within a pitch of it.
+            const float sh = (float) GrHistoryView::hiddenColumns (b.kFull, c.cols);
+            const auto  atF = [&b, &c, sh] (int64_t k)
+            { return GrHistoryView::bucketX (b, k, sh, (float) c.cols); };
             const auto m2 = say ("a settled window spans the panel at the fixed pitch");
-            check (std::abs (GrHistoryView::bucketX (b, b.kHead, 0.0f, (float) c.cols)
-                             - (float) (c.cols - 1)) < 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) < 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) > -pitch - 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst + 1, 0.0f, (float) c.cols) > -1.0e-3f,
+            check (b.kLast == b.kHead
+                   && std::abs (atF (b.kLast) - (sh + (float) (c.cols - 1))) < 1.0e-3f
+                   && atF (b.kFirst) < 1.0e-3f
+                   && atF (b.kFirst) > -pitch * (float) (GrHistoryView::leadBuckets (b.kFull, c.cols) + 1) - 1.0e-3f
+                   && atF (b.kLast) - atF (b.kFirst) >= (float) (c.cols - 1) + sh - 1.0e-3f,
                    m2.toRawUTF8());
+            // …and the frame is a TRANSLATION: the same call one pixel further
+            // right returns exactly one pixel further right, at the same pitch.
+            const auto m2b = say ("the drawing frame moves the trace and does not scale it");
+            check (std::abs ((GrHistoryView::bucketX (b, b.kLast, sh + 1.0f, (float) c.cols)
+                              - GrHistoryView::bucketX (b, b.kLast, sh, (float) c.cols)) - 1.0f) < 1.0e-4f
+                   && std::abs ((atF (b.kFirst + 1) - atF (b.kFirst)) - pitch) < 1.0e-3f,
+                   m2b.toRawUTF8());
             // …reading one window of entries: the READ window is `want`
-            // rounded up to whole buckets — under a bucket more than the 20 s,
-            // never less — and it stays inside what the ring safely holds
-            // (`kSize − 1`, the `windowEntries` clamp argument).
-            const auto m3 = say ("…reading one bucket-aligned window, inside the ring");
-            check (b.window >= want && b.window - want < b.stride
-                       && b.window <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1
-                       && b.first == head - b.window,
+            // rounded to whole buckets — under a bucket more than the 20 s,
+            // and under a bucket LESS only where the ring cannot hold the
+            // rounded-up window and the alignment (`kFull`'s cap, reachable
+            // only at `windowEntries`' own clamp) — and it starts at the
+            // oldest DRAWN bucket's own first entry, at or before the
+            // window's start and inside what the ring safely holds
+            // (`kSize − 1`, the `windowEntries` clamp argument). The
+            // start-alignment is 0.2.12's review fix: `head − window` lands
+            // mid-bucket, and reading the oldest bucket from THERE let its
+            // value change while it was still drawn.
+            const auto m3 = say ("…reading one bucket-aligned window, from the oldest drawn bucket's own start, inside the ring");
+            const int64_t lead  = GrHistoryView::leadBuckets (b.kFull, c.cols);
+            const int64_t cover = b.kFull + lead;
+            check (b.window == cover * b.stride
+                       && b.window - want < (lead + 1) * b.stride && want - b.window <= b.stride
+                       && b.first == b.kFirst * b.stride
+                       && b.first <= head - b.window
+                       && head - b.first <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1,
                    m3.toRawUTF8());
             // Every drawn bucket has entries inside the window: the oldest is
-            // the bucket HOLDING `first` (partly expired — the paint clamps
-            // its read range to `first`) or a later one, and the newest holds
+            // the bucket the window's start falls in — read from its OWN
+            // start since 0.2.12's review, so nothing about it is partial —
+            // or a later one, and the newest holds
             // entry `head - 1` by keying on `head - 1` rather than `head`
             // (which left it empty whenever the head landed on a stride
             // boundary).
@@ -6401,20 +6437,19 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // behaviour this assertion exists to keep out.
             const auto q = GrHistoryView::buckets (juce::jmax ((int64_t) 2, want / 4),
                                                    want, c.cols);
-            // The pitch is read between two COMPLETED buckets (kHead − 1 and
-            // kHead − 2): since 0.2.8 the newest bucket's own segment is
-            // `fill` entry-pitches wide, one pitch only at the instant the
-            // bucket completes.
+            // The newest DRAWN bucket is the newest COMPLETE one (0.2.11): on
+            // the edge when `kHead` is complete, else `fill` entry-pitches
+            // inside it (the vertex before `kHead`, whose own bucket is still
+            // collecting and is not drawn). Adjacent drawn buckets, the newest
+            // pair included, are one pitch apart.
             const auto m6 = say ("a quarter-full ring draws at the settled pitch, right-anchored");
             check (q.stride == b.stride && q.kFull == b.kFull
-                   && std::abs (GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
-                                - (float) (c.cols - 1)) < 1.0e-3f
-                   && std::abs ((GrHistoryView::bucketX (q, q.kHead - 1, 0.0f, (float) c.cols)
-                                 - GrHistoryView::bucketX (q, q.kHead - 2, 0.0f, (float) c.cols))
-                                - pitch) < 1.0e-3f
-                   && std::abs ((GrHistoryView::bucketX (q, q.kHead, 0.0f, (float) c.cols)
-                                 - GrHistoryView::bucketX (q, q.kHead - 1, 0.0f, (float) c.cols))
-                                - (float) q.fill * pitch / (float) q.stride) < 1.0e-3f,
+                   && std::abs (GrHistoryView::bucketX (q, q.kLast, 0.0f, (float) c.cols)
+                                - ((float) (c.cols - 1)
+                                   - (q.fill == q.stride ? 0.0f : (float) q.fill * pitch / (float) q.stride))) < 1.0e-3f
+                   && std::abs ((GrHistoryView::bucketX (q, q.kLast, 0.0f, (float) c.cols)
+                                 - GrHistoryView::bucketX (q, q.kLast - 1, 0.0f, (float) c.cols))
+                                - pitch) < 1.0e-3f,
                    m6.toRawUTF8());
             const auto m7 = say ("…and leaves the unmeasured left region empty, not stretched");
             check (GrHistoryView::bucketX (q, q.kFirst, 0.0f, (float) c.cols)
@@ -6430,9 +6465,10 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // three hundred near-identical lines.
             {
                 const float perEntry = pitch / (float) b.stride;
-                bool newestOnEdge = true, completedAtPitch = true, advancesPerEntry = true,
-                     oldestOffEdge = true, neverRightward = true, phaseShifts = true,
-                     tipPinnedWhileFilling = true, tipDriftsWhenComplete = true;
+                bool onlyCompleteDrawn = true, newestWithinPitch = true, completedAtPitch = true,
+                     advancesPerEntry = true, oldestOffEdge = true, neverRightward = true,
+                     phaseShifts = true, valuesFrozen = true, appearsAtEdge = true, neverUndrawn = true,
+                     leadOutHidden = true;
                 for (int64_t h = head; h < head + 3 * b.stride; ++h)
                 {
                     const auto now  = GrHistoryView::buckets (h,     want, c.cols);
@@ -6440,90 +6476,252 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                     const auto at   = [&] (const GrHistoryView::Buckets& bb, int64_t k)
                     { return GrHistoryView::bucketX (bb, k, 0.0f, (float) c.cols); };
 
-                    newestOnEdge &= std::abs (at (now, now.kHead) - (float) (c.cols - 1)) < 1.0e-3f;
+                    // ONLY COMPLETE BUCKETS ARE DRAWN (0.2.11): the newest
+                    // drawn bucket is `kHead` exactly when `kHead` has all
+                    // its entries, else the one before; its last entry is
+                    // always at or below the head; and the count says so.
+                    onlyCompleteDrawn &= ((now.kLast == now.kHead) == (now.fill == now.stride))
+                                      && (now.kLast + 1) * now.stride <= h
+                                      && now.count == now.kLast - now.kFirst + 1
+                                      && now.count >= 1;
+                    // The newest drawn vertex sits within one pitch of the
+                    // right edge — ON it the frame its bucket completes —
+                    // and the strip beyond it is the lead-out, never a vertex.
+                    newestWithinPitch &= at (now, now.kLast) < (float) (c.cols - 1) + 1.0e-3f
+                                      && at (now, now.kLast) > (float) (c.cols - 1) - pitch - 1.0e-3f
+                                      && (now.fill != now.stride
+                                          || std::abs (at (now, now.kLast) - (float) (c.cols - 1)) < 1.0e-3f);
+                    // VALUES ARE FROZEN: EVERY drawn bucket — the oldest one
+                    // included since 0.2.12's review — reads exactly its own
+                    // span, whatever the head, so the read set is a constant
+                    // of `k` and the value it yields cannot change between
+                    // frames. The pre-0.2.11 trailing window read
+                    // `[head − stride, head)` for the newest, which moved with
+                    // every entry; the pre-review window clamped the OLDEST to
+                    // a mid-bucket window start, which shrank it one entry at
+                    // a time while its segment still crossed the left edge.
+                    for (int64_t k = now.kFirst; k <= now.kLast; ++k)
+                    {
+                        const auto r = GrHistoryView::bucketReads (now, k, now.first, h);
+                        valuesFrozen &= r.e0 == k * now.stride && r.e1 == (k + 1) * now.stride;
+                    }
+                    // A bucket completing on this entry APPEARS at the edge,
+                    // one pitch past the previous newest, as a NEW vertex; on
+                    // every other entry the newest drawn bucket is unchanged.
+                    if (next.kLast == now.kLast + 1)
+                        appearsAtEdge &= std::abs (at (next, next.kLast) - (float) (c.cols - 1)) < 1.0e-3f
+                                      && std::abs ((at (next, next.kLast) - at (next, now.kLast)) - pitch) < 1.0e-3f;
+                    else
+                        appearsAtEdge &= next.kLast == now.kLast;
                     // The oldest drawn vertex is on or beyond the left edge
                     // at EVERY head and at both ends of the phase (a phase-1
                     // frame sits it one entry-pitch further out), and the
                     // vertex after it is inside — the crossing segment.
                     {
+                        // …in the DRAWING FRAME (0.2.12), whose origin is
+                        // `hiddenColumns` right of the panel's: the oldest
+                        // drawn vertex is at or beyond the PANEL's left edge
+                        // at both ends of the phase, and the trace covers the
+                        // panel's whole width from there.
+                        const float shift = (float) GrHistoryView::hiddenColumns (now.kFull, c.cols);
+                        const auto  atS   = [&c, shift] (const GrHistoryView::Buckets& bb, int64_t k)
+                        { return GrHistoryView::bucketX (bb, k, shift, (float) c.cols); };
                         const auto full1 = GrHistoryView::buckets (h, want, c.cols, 1.0);
-                        oldestOffEdge &= at (now, now.kFirst) < 1.0e-3f
-                                      && at (now, now.kFirst) > -pitch - 1.0e-3f
-                                      && at (full1, full1.kFirst) < 1.0e-3f
-                                      && at (full1, full1.kFirst) > -pitch - perEntry - 1.0e-3f
-                                      && at (now, now.kFirst + 1) > -1.0e-3f;
+                        const float reach = pitch * (float) (GrHistoryView::leadBuckets (now.kFull, c.cols) + 1);
+                        oldestOffEdge &= atS (now, now.kFirst) < 1.0e-3f
+                                      && atS (now, now.kFirst) > -reach - 1.0e-3f
+                                      && atS (full1, full1.kFirst) < 1.0e-3f
+                                      && atS (full1, full1.kFirst) > -reach - perEntry - 1.0e-3f
+                                      && atS (now, now.kLast) >= shift + (float) (c.cols - 1) - pitch - 1.0e-3f;
                     }
-                    // Every pair of COMPLETED neighbours is one pitch apart,
-                    // whatever the newest bucket's fill.
-                    for (int64_t k = now.kFirst; k + 1 < now.kHead; ++k)
+                    // THE VISIBLE BOUNDARY (0.2.12) lies left of everything
+                    // the lead-out can touch: the newest drawn vertex sits at
+                    // or beyond `visibleRight + 1` at every head and at both
+                    // ends of the phase, so the strip beyond it — the one
+                    // part of the trace that changes other than by scrolling,
+                    // the owner's third report — is never on screen. The
+                    // bound is a constant of the window (`kFull`), not of the
+                    // head, and it leaves the plot most of its width.
+                    {
+                        const int  vr    = GrHistoryView::visibleRight (now, 0.0f, (float) c.cols);
+                        const auto full1 = GrHistoryView::buckets (h, want, c.cols, 1.0);
+                        leadOutHidden &= at (now, now.kLast) >= (float) (vr + 1) - 1.0e-3f
+                                      && at (full1, full1.kLast) >= (float) (vr + 1) - 1.0e-3f
+                                      && vr == GrHistoryView::visibleRight (next, 0.0f, (float) c.cols)
+                                      && vr == c.cols - 1 - (int) std::ceil (pitch) - 1
+                                      && vr > c.cols / 2;
+                    }
+                    // Every pair of drawn neighbours — the newest pair
+                    // included, since 0.2.11 draws no half-collected bucket —
+                    // is one pitch apart, whatever the newest bucket's fill.
+                    for (int64_t k = now.kFirst; k < now.kLast; ++k)
                         completedAtPitch &= std::abs ((at (now, k + 1) - at (now, k)) - pitch) < 1.0e-3f;
-                    // ONE entry moves every completed bucket by exactly one
+                    // ONE entry moves every drawn bucket by exactly one
                     // entry-pitch — the assertion the pre-0.2.8 `bucketX`
                     // fails at `stride − 1` of every `stride` heads (it moved
-                    // nothing) and at the remaining one (it moved a pitch).
-                    for (int64_t k = now.kFirst; k < now.kHead; ++k)
+                    // nothing) and at the remaining one (it moved a pitch) —
+                    // and a bucket once drawn is drawn on every later frame
+                    // (the pre-0.2.11 newest vertex left this loop out).
+                    for (int64_t k = now.kFirst; k <= now.kLast; ++k)
                         if (k >= next.kFirst)
                         {
+                            neverUndrawn &= k <= next.kLast;
                             const float d = at (now, k) - at (next, k);
                             advancesPerEntry &= std::abs (d - perEntry) < 1.0e-3f;
                             neverRightward   &= d > -1.0e-4f;
                         }
                     // The frame-clock phase: a half-period frame sits every
-                    // completed vertex half an entry-pitch further left, and a
+                    // drawn vertex half an entry-pitch further left, and a
                     // phase-1 frame lands each of them exactly where the next
                     // entry's phase-0 frame will — continuity across the
                     // arrival, so no vertex ever jumps or moves rightward.
+                    // The newest drawn vertex obeys the same law as the rest;
+                    // until 0.2.11 it was pinned to the edge while its bucket
+                    // filled and joined the drift only once complete.
                     const auto half = GrHistoryView::buckets (h, want, c.cols, 0.5);
                     const auto full = GrHistoryView::buckets (h, want, c.cols, 1.0);
-                    for (int64_t k = now.kFirst; k < now.kHead; ++k)
+                    for (int64_t k = now.kFirst; k <= now.kLast; ++k)
                     {
                         phaseShifts &= std::abs ((at (now, k) - at (half, k)) - 0.5f * perEntry) < 1.0e-3f;
                         if (k >= next.kFirst)
                             phaseShifts &= std::abs (at (full, k) - at (next, k)) < 1.0e-3f;
                     }
-                    // The newest vertex holds the edge while its bucket fills
-                    // (its segment stretches instead), and drifts with the
-                    // phase only once the bucket is complete — where the next
-                    // frame's completed vertex takes over at that same x.
-                    if (now.fill < now.stride)
-                        tipPinnedWhileFilling &= std::abs (at (half, now.kHead) - (float) (c.cols - 1)) < 1.0e-3f;
-                    else
-                        tipDriftsWhenComplete &= std::abs (at (full, now.kHead) - at (next, now.kHead)) < 1.0e-3f
-                                              && std::abs ((at (now, now.kHead) - at (full, now.kHead)) - perEntry) < 1.0e-3f;
                 }
-                check (newestOnEdge,     say ("walk: the newest bucket holds the right edge at every head").toRawUTF8());
-                check (completedAtPitch, say ("walk: completed neighbours are one pitch apart at every head").toRawUTF8());
-                check (advancesPerEntry, say ("walk: ONE entry moves every completed bucket ONE entry-pitch").toRawUTF8());
-                check (neverRightward,   say ("walk: …and never moves anything rightward").toRawUTF8());
-                check (oldestOffEdge,    say ("walk: the oldest vertex sits on or beyond the left edge, the next inside").toRawUTF8());
-                check (phaseShifts,      say ("walk: the phase shifts every completed vertex and is continuous across an arrival").toRawUTF8());
-                check (tipPinnedWhileFilling, say ("walk: the newest vertex is pinned to the edge while its bucket fills").toRawUTF8());
-                check (tipDriftsWhenComplete, say ("walk: …and drifts with the phase once complete, handing over without a step").toRawUTF8());
+                check (onlyCompleteDrawn, say ("walk: only complete buckets are drawn, and the count says which").toRawUTF8());
+                check (newestWithinPitch, say ("walk: the newest drawn vertex is within one pitch of the right edge, ON it when its bucket completes").toRawUTF8());
+                check (valuesFrozen,      say ("walk: every drawn bucket reads exactly its own span at every head — its value is frozen").toRawUTF8());
+                check (appearsAtEdge,     say ("walk: a completing bucket appears at the edge as a NEW vertex one pitch past the previous").toRawUTF8());
+                check (neverUndrawn,      say ("walk: a bucket once drawn stays drawn").toRawUTF8());
+                check (leadOutHidden,     say ("walk: the visible boundary sits left of the newest drawn vertex at every head and both ends of the phase — the lead-out is never on screen").toRawUTF8());
+                check (completedAtPitch,  say ("walk: drawn neighbours are one pitch apart at every head, the newest pair included").toRawUTF8());
+                check (advancesPerEntry,  say ("walk: ONE entry moves every drawn bucket ONE entry-pitch").toRawUTF8());
+                check (neverRightward,    say ("walk: …and never moves anything rightward").toRawUTF8());
+                check (oldestOffEdge,     say ("walk: the oldest vertex sits on or beyond the left edge, the next inside").toRawUTF8());
+                check (phaseShifts,       say ("walk: the phase shifts every drawn vertex, the newest included, and is continuous across an arrival").toRawUTF8());
             }
         }
 
-        // THE NEWEST VERTEX'S WINDOW (0.2.8). It aggregates the trailing
-        // `stride` entries, not its bucket's partial range: at a bucket start
-        // the pre-0.2.8 range held ONE entry, so the tip popped to a single
-        // block's value and then deepened — the other half of the report.
+        // THE BOUNDARY IS TOTAL (0.2.12 review finding). `visibleRight` hides
+        // one bucket pitch, and `buckets` FLOORS `kFull` at 2 so the division
+        // that defines the pitch is safe — so a window of two entries or fewer
+        // reports one pitch as the WHOLE plot, and hiding it hid the plot: the
+        // boundary landed one column LEFT of the left edge, `paintHistory`
+        // clamped the clip's width to zero and the history vanished. That
+        // geometry is `want <= 2`, i.e. `blockSize >= 10 * sampleRate` — a host
+        // handing over ten seconds of audio in one block, which offline
+        // renders do. The rule is now `hidden = min (pitch, span / 2)`, and
+        // what is pinned here is that the two requirements it has to hold
+        // apart are BOTH met:
+        //
+        //   • the strip stays hidden wherever it can be: for every window of
+        //     three or more buckets the boundary is bit-for-bit the uncapped
+        //     `floor (right − pitch) − 1` — the cases above are all such
+        //     windows, and this sweep says so for every `kFull` up to the
+        //     ring's clamp on both shipped plots;
+        //   • the plot is never empty: `x0 < visibleRight` for every window
+        //     and every plot at least two columns wide.
+        //
+        // The cap is the same bound one bucket further out — `pitch == span / 2`
+        // EXACTLY when `kFull == 3` — so it engages only at `kFull == 2` and
+        // holds the boundary where a three-bucket window put it, which is what
+        // makes the sequence monotone with no step at the transition. A
+        // two-bucket window is the one geometry where the strip cannot be
+        // hidden at all (the newest vertex sweeps the whole span once per
+        // bucket, so every column carries the lead-out on some frame); the
+        // rendered pin for what it does instead is
+        // `testGrHistorySurvivesAHostBlockOfTenSeconds`.
         {
-            const int64_t stride = 3, first = 0;
-            check (GrHistoryView::tipFirst (first, 31, stride) == 28
-                       && GrHistoryView::tipFirst (first, 30, stride) == 27
-                       && GrHistoryView::tipFirst (first, 32, stride) == 29,
-                   "grTip: the newest vertex reads the trailing stride entries at every fill");
-            // head 31 is bucket 10's first entry: the bucket's own range would
-            // start at 30, one entry wide. The trailing window starts at 28.
-            check (GrHistoryView::tipFirst (first, 31, stride) < 30,
-                   "grTip: …which is NOT the newest bucket's partial range at a bucket start");
-            // The two coincide at the instant the bucket completes (head 33 =
-            // bucket 10 full: [30, 33)), which is what lets the completed
-            // value take over without a step.
-            check (GrHistoryView::tipFirst (first, 33, stride) == 30,
-                   "grTip: …and coincides with the bucket the instant it completes");
-            check (GrHistoryView::tipFirst (100, 101, stride) == 100
-                       && GrHistoryView::tipFirst (0, 1, stride) == 0,
-                   "grTip: the window never reaches before `first` — a fresh ring reads what it has");
+            const int widths[] = { 904, 604 };
+            for (const int cols : widths)
+            {
+                const float span = (float) cols - 1.0f;
+                const auto  say2 = [cols] (const char* what)
+                { return juce::String ("grBoundary: ") + what + " — " + juce::String (cols) + " columns"; };
+                bool neverEmpty = true, uncappedWhereItCan = true, capIsTheThreeBucketBound = true,
+                     monotoneInThePitch = true, keepsHalfThePlot = true;
+                int  kFull2 = -1, kFull3 = -1;
+                std::vector<std::pair<float, int>> byPitch;         // (pitch, boundary) over the sweep
+                for (const int64_t want : { (int64_t) 1, (int64_t) 2, (int64_t) 3, (int64_t) 4, (int64_t) 5,
+                                            (int64_t) 6, (int64_t) 8, (int64_t) 10, (int64_t) 16, (int64_t) 32,
+                                            (int64_t) 64, (int64_t) 128, (int64_t) 256, (int64_t) 512,
+                                            (int64_t) 903, (int64_t) 904, (int64_t) 905, (int64_t) 1024,
+                                            (int64_t) 1875, (int64_t) 4095 })
+                {
+                    const auto  b     = GrHistoryView::buckets (10 * want, want, cols);
+                    const int   vr    = GrHistoryView::visibleRight (b, 10.0f, (float) cols);
+                    const float pitch = span / (float) (b.kFull - 1);
+                    neverEmpty  &= vr > 10;
+                    byPitch.push_back ({ pitch, vr });
+                    // the strip is never more than half the span, plus the margin
+                    // column and the floor the truncation costs
+                    keepsHalfThePlot &= (float) (10 + cols - 1 - vr) <= 0.5f * span + 2.0f;
+                    if (b.kFull >= 3)
+                        uncappedWhereItCan &= vr == (int) std::floor (10.0f + span - pitch) - 1;
+                    else
+                        capIsTheThreeBucketBound &= vr == (int) std::floor (10.0f + span - 0.5f * span) - 1;
+                    if (b.kFull == 2) kFull2 = vr;
+                    if (b.kFull == 3) kFull3 = vr;
+                }
+                // Monotone in the PITCH, which is the variable the rule reads —
+                // not in `want`, whose pitch is a sawtooth: `stride` steps up
+                // at `want == cols + 1` and `kFull` halves under it (0.1.1
+                // decimation, untouched here).
+                for (const auto& a : byPitch)
+                    for (const auto& b2 : byPitch)
+                        if (a.first > b2.first)
+                            monotoneInThePitch &= a.second <= b2.second;
+                check (neverEmpty,               say2 ("the boundary is always right of the left edge — no window blanks the plot").toRawUTF8());
+                check (uncappedWhereItCan,       say2 ("a window of three or more buckets keeps the uncapped floor (right − pitch) − 1, unchanged").toRawUTF8());
+                check (capIsTheThreeBucketBound, say2 ("a two-bucket window is held at the half-span bound").toRawUTF8());
+                check (kFull2 > 0 && kFull2 == kFull3,
+                       say2 ("…which is exactly where a three-bucket window puts it, so there is no step at the transition").toRawUTF8());
+                check (monotoneInThePitch,       say2 ("a wider pitch never moves the boundary right — the strip grows with the bucket and then stops").toRawUTF8());
+                check (keepsHalfThePlot,         say2 ("the strip is never wider than half the span, whatever the window").toRawUTF8());
+            }
+            // The total-function guards, for plots no layout produces but a
+            // resize or a test can: two columns is the narrowest plot with a
+            // boundary inside it, and anything narrower has none to give and
+            // clips to nothing, as every version before 0.2.12 did.
+            const auto degenerate = GrHistoryView::buckets (20, 2, 4);       // kFull == 2, the worst case
+            bool narrowNeverEmpty = true;
+            for (const float w : { 2.0f, 3.0f, 4.0f, 5.0f, 10.0f, 100.0f })
+                narrowNeverEmpty &= GrHistoryView::visibleRight (degenerate, 10.0f, w) > 10;
+            check (narrowNeverEmpty,
+                   "grBoundary: every plot at least two columns wide keeps a column, whatever the window");
+            check (GrHistoryView::visibleRight (degenerate, 10.0f, 1.0f) == 10
+                       && GrHistoryView::visibleRight (degenerate, 10.0f, 0.0f) == 10,
+                   "grBoundary: a plot narrower than two columns clips to nothing rather than to a column it does not have");
+        }
+
+        // THE NEWEST DRAWN VERTEX IS A COMPLETE BUCKET (0.2.11, the owner's
+        // second report). 0.2.8 drew the still-collecting bucket live at the
+        // edge, valued as a min over the trailing `stride` entries — a vertex
+        // revised on every block and re-shaped on every frame. Now a bucket
+        // is drawn once it has all its entries, at the value it keeps.
+        {
+            const int64_t stride = 3;
+            const auto want = GrHistoryView::windowEntries (48000.0, 512);   // stride 3 at 904 cols
+            check (GrHistoryView::buckets (31, want, 904).stride == stride,
+                   "grComplete: (premise) 48 kHz / 512 on the Simple well decimates three entries per bucket");
+            // head 31 is bucket 10's first entry: bucket 10 is not drawn, 9 is
+            // the newest; head 33 completes bucket 10 and it appears.
+            const auto b31 = GrHistoryView::buckets (31, want, 904);
+            const auto b32 = GrHistoryView::buckets (32, want, 904);
+            const auto b33 = GrHistoryView::buckets (33, want, 904);
+            check (b31.kHead == 10 && b31.kLast == 9 && b32.kLast == 9 && b33.kLast == 10,
+                   "grComplete: a bucket is drawn on the entry that completes it, and not before");
+            // …and it reads exactly its own three entries, at every later head.
+            const auto r33 = GrHistoryView::bucketReads (b33, 10, 0, 33);
+            const auto r40 = GrHistoryView::bucketReads (GrHistoryView::buckets (40, want, 904), 10, 0, 40);
+            check (r33.e0 == 30 && r33.e1 == 33 && r40.e0 == 30 && r40.e1 == 33,
+                   "grComplete: the newest drawn bucket reads its own span, and the same span on every later frame");
+            // The vertex before a collecting bucket is where its own last
+            // entry falls: `fill` entry-pitches inside the edge, never pinned.
+            const float pitch = 903.0f / (float) (b31.kFull - 1);
+            check (std::abs (GrHistoryView::bucketX (b31, 9, 0.0f, 904.0f) - (903.0f - pitch / 3.0f)) < 1.0e-3f
+                       && std::abs (GrHistoryView::bucketX (b32, 9, 0.0f, 904.0f) - (903.0f - 2.0f * pitch / 3.0f)) < 1.0e-3f
+                       && std::abs (GrHistoryView::bucketX (b33, 10, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
+                   "grComplete: the newest drawn vertex scrolls in from the edge one entry-pitch per entry; the completing bucket lands on it");
         }
 
         // THE FRAME-CLOCK PHASE'S TIME BASE (0.2.8): the prepared pair, as
@@ -6588,24 +6786,26 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
         // panel. (Under the stretch this drew from the left edge across the
         // full width.)
         const auto want  = GrHistoryView::windowEntries (48000.0, 512);
-        const auto small = GrHistoryView::buckets (12, want, 904);
-        check (small.kFirst == 0 && small.count == 11 / small.stride + 1,
+        const auto small = GrHistoryView::buckets (12, want, 904);   // 12 entries = four whole buckets
+        check (small.kFirst == 0 && small.count == 12 / small.stride && small.kLast == small.kHead,
                "grBuckets: a barely-filled ring starts at bucket 0 and draws only what it has");
-        check (std::abs (GrHistoryView::bucketX (small, small.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f
+        check (std::abs (GrHistoryView::bucketX (small, small.kLast, 0.0f, 904.0f) - 903.0f) < 1.0e-3f
                    && GrHistoryView::bucketX (small, small.kFirst, 0.0f, 904.0f) > 890.0f,
                "grBuckets: …as a stub on the right edge, at the fixed pitch");
 
-        // The DEGENERATE case: ONE bucket, reachable for the first few blocks
-        // after every reset. Right-anchoring puts it on the right edge (the
-        // stretch draw put it at the LEFT edge and needed a both-edges special
-        // case in the paint); the zero region to its left is what the paint
-        // now draws unconditionally whenever the first bucket is off the left
-        // edge, so no special case remains.
+        // The DEGENERATE case: the first blocks after a reset. Until 0.2.11
+        // ONE bucket was drawn from the very first entry, pinned to the right
+        // edge and revised as it filled; now nothing is drawn until the first
+        // bucket is complete — the zero line spans the panel meanwhile
+        // (`paintHistory` runs it to the anchor when `count == 0`) — and the
+        // bucket then appears on the right edge with its final value.
         const auto one = GrHistoryView::buckets (1, want, 904);
-        check (one.count == 1 && one.kFirst == one.kHead,
-               "grBuckets: a just-reset ring yields exactly one bucket");
-        check (std::abs (GrHistoryView::bucketX (one, one.kHead, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
-               "grBuckets: …anchored on the right edge, zero region to its left");
+        check (one.count == 0 && one.kLast == one.kFirst - 1 && one.kHead == 0,
+               "grBuckets: a just-reset ring draws NO bucket while its first one is still collecting");
+        const auto full1 = GrHistoryView::buckets (small.stride, want, 904);
+        check (full1.count == 1 && full1.kFirst == full1.kLast && full1.kLast == 0
+                   && std::abs (GrHistoryView::bucketX (full1, full1.kLast, 0.0f, 904.0f) - 903.0f) < 1.0e-3f,
+               "grBuckets: …and its first bucket appears on the right edge the entry that completes it");
 
         // THE LEFT-EDGE RULE (0.1.3 item 4). The zero region is honest only
         // while the ring is still FILLING; once a full window is scrolling,
@@ -6648,6 +6848,166 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
 // The meter's half is pinned by RENDERING one rather than by re-reading its
 // source: the claim under test is that the two readouts agree, and a test that
 // quoted the constant twice would pass with the meter dividing by anything.
+// ---------------------------------------------------------------------------
+// A HOST BLOCK OF TEN SECONDS MUST NOT BLANK THE HISTORY (0.2.12 review
+// finding). `visibleRight` hides one bucket pitch, and `buckets` floors
+// `kFull` at 2, so a window holding two entries or fewer reports one pitch as
+// the whole plot: the uncapped boundary came out one column LEFT of the plot,
+// `paintHistory` clamped the clip's width to zero, and the trace and the level
+// fill both disappeared — measured blank on 100 % of frames on the real paint
+// path at 48 kHz / 480000 and 44.1 kHz / 441000, on both wells. `want <= 2` is
+// `blockSize >= 10 * sampleRate`, which offline renders reach.
+//
+// Pinned by RENDERING, because the defect was a clip rectangle rather than a
+// number: every static the arithmetic sweep in
+// `testGrHistoryWindowNeverAsksForTheHeadSlot` pins was green through the
+// whole blank. The geometry is a function of the PREPARED pair — the ring
+// stores it, `windowEntries` reads it — and not of the buffers the host then
+// hands over, so this prepares for ten seconds and delivers short blocks:
+// the same `want`, the same `kFull`, the same boundary, the same rendered
+// frame as a real ten-second block, at none of its cost.
+// ---------------------------------------------------------------------------
+// A DRAWN BUCKET KEEPS ITS VALUE UNTIL IT LEAVES (0.2.12 review finding). The
+// display window is a LENGTH, so `head − window` lands mid-bucket on every
+// head that is not a multiple of `stride`; until this round that index was
+// `Buckets::first` and `bucketReads` clamped the OLDEST drawn bucket's span to
+// it. That bucket therefore lost its earliest entries one at a time as the
+// head advanced, and the value it yields — a min over its span — changed while
+// it was still drawn. Its vertex sits off the left edge, but the segment from
+// it to its neighbour crosses the edge, so the visible sliver re-shaped:
+// measured on the real paint path at 340 changes in 1800 frames (19 % of them)
+// at 48 kHz / 512, up to 1.53 dB, and never on any other drawn bucket.
+//
+// Pinned here on the REAL ring, with a pattern whose minimum sits on the FIRST
+// entry of every bucket: dropping that entry moves the bucket's value by 11 dB,
+// so a truncation cannot hide inside the aggregate. Every bucket drawn in two
+// different frames must yield the same value in both.
+static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
+{
+    using Ring = anabasis::GrHistoryBuffer;
+    const auto ringStorage = std::make_unique<Ring>();          // 32 KB: heap, not stack
+    auto& ring = *ringStorage;
+    const int     cols = 904;                                   // the Simple well
+    const auto    want = GrHistoryView::windowEntries (48000.0, 512);
+    const int64_t stride = GrHistoryView::buckets (want, want, cols).stride;
+    check (want == 1875 && stride == 3,
+           "grFrozen: (premise) 48 kHz / 512 on the Simple well buckets three entries at a time");
+
+    const auto value = [stride] (int64_t i) { return i % stride == 0 ? -12.0f : -1.0f; };
+    int64_t pushed = 0;
+    const auto pushOne = [&] { ring.push (value (pushed), 0.5f); ++pushed; };
+    for (int64_t i = 0; i < want + 40; ++i)
+        pushOne();                                              // the window is saturated and scrolling
+
+    std::map<int64_t, float> firstSeen;
+    bool frozen = true, seenTwice = false, spansComplete = true, oldestWasRedrawn = false,
+         windowStartsOnABucket = true;
+    int64_t readings = 0;
+    float worst = 0.0f;
+    for (int step = 0; step < 400; ++step)
+    {
+        pushOne();
+        const int64_t head = ring.available();
+        const auto    nb   = GrHistoryView::buckets (head, want, cols);
+        const int64_t kFD  = GrHistoryView::firstDrawn (nb, GrHistoryView::readFloor (head));
+        // the window's own start is the oldest drawn bucket's own start, so a
+        // caller that reads from `nb.first` — the walk above, and every frame
+        // whose ring the producer has not lapped — gets the same complete spans
+        windowStartsOnABucket &= (nb.first == nb.kFirst * nb.stride && kFD * nb.stride == nb.first);
+        for (int64_t k = kFD; k <= nb.kLast; ++k)
+        {
+            const auto r = GrHistoryView::bucketReads (nb, k, kFD * nb.stride, head);
+            spansComplete &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
+            float v = 0.0f;
+            for (int64_t e = r.e0; e < r.e1; ++e)
+                v = juce::jmin (v, ring.peek (e).grDb);
+            ++readings;
+            const auto it = firstSeen.find (k);
+            if (it == firstSeen.end())
+            {
+                firstSeen[k] = v;
+            }
+            else
+            {
+                seenTwice = true;
+                if (k == nb.kFirst) oldestWasRedrawn = true;
+                if (! juce::exactlyEqual (it->second, v)) { frozen = false; worst = juce::jmax (worst, std::abs (v - it->second)); }
+            }
+        }
+    }
+    check (seenTwice && oldestWasRedrawn && readings > 100000,
+           "grFrozen: (premise) the walk redraws every bucket many times over, the oldest one included");
+    check (windowStartsOnABucket,
+           "grFrozen: the read window starts on a bucket boundary — the oldest drawn bucket's own first entry — at every head");
+    check (spansComplete,
+           "grFrozen: every drawn bucket reads its complete span at every head");
+    check (frozen,
+           juce::String ("grFrozen: …so no drawn bucket ever changes value while it is drawn (worst seen "
+                         + juce::String (worst, 2) + " dB)").toRawUTF8());
+}
+
+static void testGrHistorySurvivesAHostBlockOfTenSeconds()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 480000);
+    proc.prepareToPlay (48000.0, 480000);
+    check (GrHistoryView::windowEntries (48000.0, 480000) == 2,
+           "grBlank: (premise) ten seconds of audio a block leaves the 20 s window holding two entries");
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int blk = 0; blk < 3; ++blk)
+    {
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+                buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (blk * 512 + i)));
+        proc.processBlock (buf, midi);
+    }
+    check (proc.grHistory().available() == 3,
+           "grBlank: (premise) the ring carries the entries the view will draw");
+
+    GrHistoryView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    const int   cols = view.getWidth() - 2 * 10;                  // paintHistory's reduced (10, 8)
+    const float span = (float) cols - 1.0f;
+    const auto  nb   = GrHistoryView::buckets (proc.grHistory().available(),
+                                               GrHistoryView::windowEntries (48000.0, 480000), cols);
+    check (nb.kFull == 2,
+           "grBlank: (premise) …and the two-entry window floors kFull at 2, one pitch spanning the whole plot");
+    const int visibleRight = GrHistoryView::visibleRight (nb, 10.0f, (float) cols);
+    check (visibleRight == (int) std::floor (10.0f + span - 0.5f * span) - 1 && visibleRight > 10,
+           "grBlank: the boundary is held at the half-span bound, inside the plot rather than left of it");
+    // …and the drawing frame carries that boundary onto the plot's right edge,
+    // as it does at every other geometry (0.2.12).
+    const float shift = (float) GrHistoryView::hiddenColumns (nb.kFull, cols);
+    check (GrHistoryView::visibleRight (nb, 10.0f + shift, (float) cols) == 10 + cols,
+           "grBlank: …and the drawing frame puts it on the plot's right edge, so the panel still shows its full width");
+
+    const auto snap = view.createComponentSnapshot (view.getLocalBounds(), false);
+    // The GR|SPEC chip is accent too and `paint` draws it OUTSIDE the history's
+    // clip (deliberately — the way back to the spectrum must survive an empty
+    // ring), so it is excluded here: counting it would have let a plot clipped
+    // to one column pass for a drawn history.
+    const auto chip = abgui::graph_switch::bounds (view.getWidth(), view.getHeight());
+    int drawn = 0, beyond = 0;
+    for (int y = 0; y < snap.getHeight(); ++y)
+        for (int x = 0; x < snap.getWidth(); ++x)
+        {
+            if (chip.contains (x, y)) continue;
+            const auto p = snap.getPixelAt (x, y);
+            if (p.getRed() > 128 && p.getGreen() > 100)           // the accent trace
+            {
+                ++drawn;
+                if (x >= 10 + cols) ++beyond;                    // nothing beyond the plot
+            }
+        }
+    check (drawn > 100,
+           "grBlank: a ten-second host block still draws the GR history — the clip keeps the plot's left half instead of collapsing to nothing");
+    check (beyond == 0,
+           "grBlank: …and still draws nothing beyond the plot's own right edge");
+}
+
 static void testGrHistoryAndTheMeterLanesShareOneReductionSpan()
 {
     const float y0 = 8.0f, h = 120.0f;
@@ -6738,7 +7098,8 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         check (want == (int64_t) Ring::kSize - 1,
                "grRace: (premise) 192 kHz / 32 saturates the read window — the only case with no spare slot");
 
-        bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false;
+        bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false,
+             spansComplete = true;
         int64_t worstUnfixed = 0;
         for (const int64_t settled : { want * 3, want * 3 + 1, want * 3 + 6, want * 3 + 7, want * 5 + 4 })
             for (int64_t behind = 0; behind <= 8; ++behind)
@@ -6753,13 +7114,19 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                 unfixedRaces |= (live - nb.first > (int64_t) Ring::kSize - 1);
                 worstUnfixed = juce::jmax (worstUnfixed, live - nb.first);
 
-                const int64_t first = juce::jmax (nb.first, V::readFloor (live));
+                // The caller `paintHistory` actually uses since 0.2.12's
+                // review: the oldest bucket the RING allows, read from that
+                // bucket's own first entry. A bucket the producer has lapped
+                // into is dropped, never drawn from what is left of it.
+                const int64_t kFD   = V::firstDrawn (nb, V::readFloor (live));
+                const int64_t first = kFD * nb.stride;
                 floorHolds &= (live - first <= (int64_t) Ring::kSize - 1);
                 if (first >= drawn)
                     continue;                              // the paint blanks the frame here
-                for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
+                for (int64_t k = kFD; k <= nb.kLast; ++k)
                 {
                     const auto r = V::bucketReads (nb, k, first, drawn);
+                    spansComplete &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
                     for (int64_t n = r.e0; n < r.e1; ++n)
                     {
                         everyReadInside &= (live - n < kLap);
@@ -6767,14 +7134,16 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                     }
                 }
             }
-        check (unfixedRaces && worstUnfixed == (int64_t) Ring::kSize - 1 + 8,
-               "grRace: (premise) the pre-fix window DID reach a full lap behind the producer — one stale block was enough");
+        check (unfixedRaces && worstUnfixed >= (int64_t) Ring::kSize,
+               "grRace: (premise) the window's own start DOES reach a full lap behind the producer — one stale block is enough");
         check (floorHolds,
                "grRace: the read floor holds the oldest index inside one lap of the LIVE write index");
         check (everyReadInside,
                "grRace: …so every entry a frame peeks is inside that lap, at every staleness and every head");
         check (slotClear,
                "grRace: …and none of them aliases the slot the audio thread is filling right now");
+        check (spansComplete,
+               "grRace: …and every bucket a stale frame still draws reads its COMPLETE span — a lapped bucket is dropped, never truncated");
     }
 
     // -- 1b. The same invariant against the REAL ring, so the bound is read
@@ -6789,14 +7158,16 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         const int     cols    = 604;
         const auto    want    = V::windowEntries (192000.0, 32);
 
-        bool touchesWriteSlot = false;
+        bool touchesWriteSlot = false, spansComplete = true;
         int64_t reads = 0, oldest = live;
         const int64_t drawn = live - 1;                // ONE block arrived between the two reads
         const auto nb = V::buckets (drawn, want, cols, 0.0);
-        const int64_t first = juce::jmax (nb.first, V::readFloor (live));
-        for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
+        const int64_t kFD   = V::firstDrawn (nb, V::readFloor (live));
+        const int64_t first = kFD * nb.stride;
+        for (int64_t k = kFD; k <= nb.kLast; ++k)
         {
             const auto r = V::bucketReads (nb, k, first, drawn);
+            spansComplete &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
             for (int64_t n = r.e0; n < r.e1; ++n)
             {
                 touchesWriteSlot |= ((n & kMaskI) == writing);
@@ -6806,8 +7177,27 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         }
         check (reads > kLap / 2 && ! touchesWriteSlot,
                "grRace: a saturated real ring, one block stale, reads most of the buffer and never the write slot");
-        check ((drawn - nb.first) == want && oldest == V::readFloor (live) && oldest > nb.first,
-               "grRace: …and the clamp is what does it — the unclamped window starts one entry lower, on that slot");
+        check (oldest >= V::readFloor (live) && oldest == nb.first && kFD == nb.kFirst && spansComplete,
+               "grRace: …and at one stale block nothing has to be dropped — the window's own start still clears the floor, and every drawn bucket reads its whole span");
+
+        // …and when the producer HAS lapped into the oldest drawn bucket, that
+        // bucket leaves rather than coming back truncated. Three more entries
+        // put the floor past the window's own start; the frame still draws the
+        // same head.
+        for (int i = 0; i < 3; ++i)
+            ring.push (-2.0f, 0.25f);
+        const int64_t live2 = ring.available();
+        const int64_t kFD2  = V::firstDrawn (nb, V::readFloor (live2));
+        bool spans2 = true; int64_t oldest2 = live2;
+        for (int64_t k = kFD2; k <= nb.kLast; ++k)
+        {
+            const auto r = V::bucketReads (nb, k, kFD2 * nb.stride, drawn);
+            spans2 &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
+            oldest2 = juce::jmin (oldest2, r.e0);
+        }
+        check (V::readFloor (live2) > nb.first && kFD2 == nb.kFirst + 1 && spans2
+                   && oldest2 >= V::readFloor (live2),
+               "grRace: …and a bucket the producer has lapped into is DROPPED, not drawn from what is left of it");
 
         // The degenerate end of the same rule: a producer that has lapped
         // everything the frame would draw leaves nothing safe, and the paint
@@ -7203,6 +7593,85 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                "grPaint: the paint path reads the published state and draws the trace");
         check (differing == 0,
                "grPaint: …and two frames from one state are identical — the reads are of settled values, not of a moving target");
+
+        // -- 5. THE VISIBLE BOUNDARY (0.2.12). The lead-out — the flat strip
+        //       from the newest complete vertex to the plot edge, standing in
+        //       for the bucket still collecting — was the owner's third
+        //       report: a stub of one to `pitch + 1` pixels at the right edge
+        //       (1–2.4 px at 48 kHz / 512 on the Simple well) whose height jumped,
+        //       and whose left neighbour snapped from flat to sloped, once per
+        //       bucket — the one region of the trace that changes other than
+        //       by scrolling, in the GR stroke and the level fill alike.
+        //       0.2.11 had run it to the clip edge so the last column would
+        //       stop blinking (dark on 52 % of frames); 0.2.12 clips at
+        //       `visibleRight` (header), left of everything the lead-out can
+        //       touch, and moves nothing else. Pinned the way the blink was —
+        //       through a RENDERED snapshot at every fill state of the newest
+        //       bucket, the only way to see a stroke's cap or a clip — on both
+        //       halves of the contract: the last VISIBLE column carries the
+        //       trace on every fill (nothing blinks at the boundary), and no
+        //       column from `visibleRight` to the plot edge carries anything
+        //       on any of them (the strip is gone, not moved). The bound's
+        //       arithmetic is pinned first, here and on both shipped wells.
+        {
+            const int     cols = view.getWidth() - 2 * 10;           // paintHistory's reduced (10, 8)
+            const int64_t want = GrHistoryView::windowEntries (48000.0, 512);
+            const auto    nb   = GrHistoryView::buckets (proc.grHistory().available(), want, cols);
+            const int     visibleRight = GrHistoryView::visibleRight (nb, 10.0f, (float) cols);
+            const float   pitch        = (float) (cols - 1) / (float) (nb.kFull - 1);
+            // floor (right − pitch) − 1 with `right` the integer anchor `x0 + cols − 1`:
+            // `ceil (pitch) + 2` columns hidden, the lead-out's start at least one
+            // whole column beyond the last visible one at both ends of the phase
+            // …and in the DRAWING FRAME (0.2.12), which is the panel's own
+            // origin plus the columns the boundary hides, that boundary is the
+            // plot's right edge itself: the trace fills the panel's full plot
+            // width and the strip the boundary hides has moved off the panel.
+            const float shift = (float) GrHistoryView::hiddenColumns (nb.kFull, cols);
+            const int   drawnRight = GrHistoryView::visibleRight (nb, 10.0f + shift, (float) cols);
+            check (visibleRight == 10 + (cols - 1) - (int) std::ceil (pitch) - 1
+                   && visibleRight == (int) std::floor (10.0f + (float) (cols - 1) - pitch) - 1
+                   && drawnRight == 10 + cols
+                   && GrHistoryView::bucketX (nb, nb.kLast, 10.0f + shift, (float) cols) >= (float) (drawnRight + 1) - 1.0e-3f
+                   && GrHistoryView::bucketX (GrHistoryView::buckets (proc.grHistory().available(), want, cols, 1.0),
+                                              nb.kLast, 10.0f + shift, (float) cols) >= (float) (drawnRight + 1) - 1.0e-3f,
+                   "grPaint: visibleRight is floor (right − pitch) − 1, it lands on the plot's right edge in the drawing frame, and the newest drawn vertex never sits left of the column after it");
+            {
+                const auto simple   = GrHistoryView::buckets (4 * want, want, 904);
+                const auto advanced = GrHistoryView::buckets (4 * want, want, 604);
+                check (GrHistoryView::visibleRight (simple,   10.0f, 904.0f) == 910
+                       && GrHistoryView::visibleRight (advanced, 10.0f, 604.0f) == 610,
+                       "grPaint: on the shipped wells at 48 kHz / 512 the boundary hides four columns — 910 of 10…913 on the Simple well, 610 of 10…613 on the Advanced");
+            }
+            bool litAtEveryFill = true, clearAtEveryFill = true;
+            for (int64_t extra = 0; extra < nb.stride; ++extra)
+            {
+                if (extra > 0)
+                {
+                    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                        for (int i = 0; i < buf.getNumSamples(); ++i)
+                            buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (extra * 512 + i)));
+                    proc.processBlock (buf, midi);
+                }
+                const auto snap = view.createComponentSnapshot (view.getLocalBounds(), false);
+                int lit = 0, spilled = 0;
+                for (int y = 0; y < snap.getHeight(); ++y)
+                {
+                    const auto p = snap.getPixelAt (10 + cols - 1, y);       // the plot's last column
+                    if (p.getRed() > 128 && p.getGreen() > 100) ++lit;
+                    // the outermost margin column is the untouched background this
+                    // snapshot paints on; every column beyond the plot must match it
+                    const auto bg = snap.getPixelAt (snap.getWidth() - 1, y);
+                    for (int x = 10 + cols; x < snap.getWidth(); ++x)
+                        if (snap.getPixelAt (x, y) != bg) ++spilled;
+                }
+                litAtEveryFill   &= lit > 0;
+                clearAtEveryFill &= spilled == 0;
+            }
+            check (litAtEveryFill,
+                   "grPaint: the trace reaches the plot's last column at every fill of the newest bucket — nothing blinks at the boundary");
+            check (clearAtEveryFill,
+                   "grPaint: …and nothing is drawn beyond the plot at any fill — the strip the boundary hides sits outside the panel, clipped");
+        }
     }
 }
 
@@ -8398,6 +8867,8 @@ int main (int argc, char** argv)
         testTheGraphWellViewsOnlyClaimTheirModeChips();
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
+        testGrHistorySurvivesAHostBlockOfTenSeconds();
+        testTheOldestDrawnBucketKeepsItsValueUntilItLeaves();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();

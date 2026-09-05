@@ -79,7 +79,19 @@ class AnabasisAudioProcessor;
 //  blocks per callback, which hosts rendering ahead of real time do — is the
 //  same case at the burst rate; the worklog measures it and records the
 //  lag-buffer design that would absorb it as a display-latency trade for
-//  the owner, not taken here.
+//  the owner, not taken here and filed as OQ-017 (0.2.11 re-measured both
+//  cases on the real paint path and left them by instruction).
+//
+//  WHAT A FRAME DRAWS (0.2.11): complete buckets only, each created once at
+//  the value it keeps and moved as one rigid body with the rest — the newest
+//  vertex is no longer a live estimate. `bucketX` carries the argument.
+//
+//  WHAT A FRAME SHOWS (0.2.12): the plot's columns left of `visibleRight`
+//  only. The strip between the newest complete vertex and the clip edge —
+//  the lead-out, plus the newest segment in the frame it appears — is the
+//  one part of the trace that changes other than by translation, and it is
+//  now clipped rather than drawn to the edge. Nothing else moved: the anchor,
+//  `bucketX` and the left edge are what they were in 0.2.11.
 // ============================================================================
 
 class GrHistoryView : public juce::Component,
@@ -135,19 +147,24 @@ public:
     // `fill` and `phase` (0.2.8) locate the newest ENTRY inside the newest
     // bucket and inside its own period: the sub-bucket position `bucketX`
     // scrolls the whole trace by, one entry at a time instead of one bucket
-    // at a time. `window` and `first` (0.2.8) are the READ window — see
-    // `buckets` for why it is bucket-aligned and how it stays ring-safe.
+    // at a time. `kLast` (0.2.11) is the newest bucket a frame DRAWS — the
+    // newest COMPLETE one. `kHead` is complete only when `fill == stride`;
+    // until then its vertex does not exist yet (see `bucketX` for why a
+    // half-collected bucket is never drawn). `window` and `first` (0.2.8) are
+    // the READ window — see `buckets` for why it is bucket-aligned and how it
+    // stays ring-safe.
     struct Buckets
     {
         int64_t stride;   // entries per bucket; ≥ 1, sized so `kFull` ≤ cols
         int64_t kFirst;   // oldest bucket drawn; see `buckets` for both bounds
         int64_t kHead;    // bucket holding entry `head - 1`, so never empty
-        int64_t count;    // buckets to draw = kHead − kFirst + 1, ≥ 1
+        int64_t kLast;    // newest bucket DRAWN: kHead if complete, else kHead − 1 (may be kFirst − 1)
+        int64_t count;    // buckets to draw = kLast − kFirst + 1, ≥ 0 (0 only before the first bucket completes)
         int64_t kFull;    // buckets one FULL window renders; fixes the pitch
-        int64_t fill;     // entries the newest bucket holds so far: 1 … stride
+        int64_t fill;     // entries the newest bucket holds so far: 1 … stride; == stride means complete
         double  phase;    // 0 … 1: how far into the newest entry's period the frame falls
-        int64_t window;   // entries a frame may read: `want` rounded UP to whole buckets, ≤ kSize − 1
-        int64_t first;    // oldest entry a frame may read: max (0, head − window)
+        int64_t window;   // the window LENGTH in entries: `want` rounded UP to whole buckets, capped to the ring
+        int64_t first;    // oldest entry a frame may read: the oldest DRAWN bucket's own first entry, `kFirst · stride`
     };
 
     // `head` = entries ever pushed (≥ 1), `want` = `windowEntries(...)`,
@@ -163,7 +180,25 @@ public:
         // only when the whole window fits in one bucket (want ≤ stride, i.e.
         // a panel around one pixel wide), where any pitch draws the same one
         // bucket at the right edge.
-        const int64_t kFull  = juce::jmax ((int64_t) 2, (want + stride - 1) / stride);
+        //
+        // …and capped so that `kFull` WHOLE buckets plus the alignment the
+        // read window needs (`stride − 1` entries, below) fit inside the
+        // ring's one safe lap: `kFull · stride + stride − 1 ≤ kSize − 1`. The
+        // cap is on `kFull` rather than on the window length because the two
+        // must agree — the panel renders `kFull` buckets at a pitch derived
+        // from `kFull`, and a window shorter than that would put the oldest
+        // DRAWN bucket a pitch inside the left edge with the flat lead-in
+        // behind it, which is the bucket-rate walk 0.2.8 removed. It binds
+        // only at a saturated window (`want` at `windowEntries`' clamp:
+        // blocks of about 234 samples or fewer at 48 kHz, 937 at 192 kHz),
+        // where it costs one bucket of the twenty seconds and 0.2 % of the
+        // pitch; every ordinary window sits far below it (1875 · 3 against
+        // 4089 at 48 kHz / 512). A panel so narrow that even two buckets
+        // overflow the ring keeps its two and leaves the ring to
+        // `firstDrawn`, which is where safety is enforced in any case.
+        const int64_t kRing  = ((int64_t) anabasis::GrHistoryBuffer::kSize - stride) / stride;
+        const int64_t kFull  = juce::jmax ((int64_t) 2,
+                                           juce::jmin ((want + stride - 1) / stride, kRing - kMaxLead));
         // THE READ WINDOW IS BUCKET-ALIGNED (0.2.8, the review's left-edge
         // finding): `want` rounded UP to `kFull` whole buckets — at most
         // `stride − 1` entries older than the 20 s, all of them off the
@@ -176,27 +211,69 @@ public:
         // bucket-rate discontinuity the fix had left on the panel. Aligned,
         // the oldest bucket the panel needs always has its last entry inside
         // the window, so the segment that crosses the edge is drawn exactly
-        // (and clipped) and the lead-in is never reached. RING SAFETY is the
-        // `kSize − 1` cap, the same argument as `windowEntries`: the loop
-        // clamps every bucket's read range to `first` (`max (first, k ·
-        // stride)`), so a partly expired oldest bucket reads only its
-        // in-window remainder and no frame peeks below `head − (kSize − 1)`.
-        // A saturated window whose `kFull · stride` would exceed the cap
-        // (neither of this product's two plot widths does) keeps the cap as
-        // its window, unaligned, and falls back to the lead-in.
-        const int64_t window = juce::jmin (kFull * stride,
-                                           (int64_t) anabasis::GrHistoryBuffer::kSize - 1);
-        const int64_t first  = juce::jmax ((int64_t) 0, head - window);
+        // (and clipped) and the lead-in is never reached.
+        //
+        // AND THE START IS ALIGNED TOO (0.2.12 review). `window` is a LENGTH,
+        // so `head − window` lands mid-bucket on every head that is not a
+        // multiple of `stride`, and until this round THAT was `first`: the
+        // loop clamped the oldest drawn bucket's read range to it
+        // (`bucketReads`), so as the head advanced that bucket lost its
+        // earliest entries one at a time and the value it yields — a min over
+        // its span — changed while the bucket was still drawn. Its vertex
+        // sits off the left edge, but the segment from it to its neighbour
+        // crosses the edge, so the visible sliver re-shaped: 340 value
+        // changes in 1800 frames at 48 kHz / 512, up to 1.53 dB (5.9 px on
+        // the Simple well, 15.5 px on the Advanced), on 19 % of frames — and
+        // never on any other drawn bucket, in 3.9 million readings. `first`
+        // is now `kFirst · stride`, the oldest DRAWN bucket's OWN first
+        // entry, so every drawn bucket aggregates its complete span for its
+        // whole visible life. `kFirst` is untouched — the same bucket, the
+        // same x, the same crossing segment — and what changes is only which
+        // entries it aggregates: its own `stride` of them, always, rather
+        // than however many the 20-second boundary happened to leave inside
+        // it. The display therefore reaches up to `stride − 1` entries
+        // (32 ms at 48 kHz / 512) past the nominal window, every one of them
+        // off the left edge: this item's "read and never shown".
+        //
+        // THE PANEL COVERS MORE BUCKETS THAN THE PITCH DIVIDES (0.2.12).
+        // `kFull` is the pitch divisor — the buckets ONE window renders — and
+        // it stays exactly what it was, so the pitch, the bucket boundaries
+        // and every value are untouched. What is new is that `paintHistory`
+        // draws its frame `hiddenColumns` further right, so the boundary lands
+        // on the plot's own right edge and the panel's leftmost columns come
+        // free; `leadBuckets` more buckets of OLDER history fill them, at the
+        // same pitch. `cover` is therefore what the window must hold and how
+        // far back `kFirst` may reach — the display shows `lead · stride`
+        // entries more than the nominal twenty seconds (96 ms at
+        // 48 kHz / 512), all of it inside the panel now rather than off its
+        // left edge.
+        //
+        // RING SAFETY, the same argument as `windowEntries`: the alignment
+        // reaches at most `stride − 1` entries below `head − window`, and
+        // `kFull`'s cap above — `kRing` less the four buckets `leadBuckets`
+        // can ask for — is exactly the room for both, so `head − first` stays
+        // inside the ring's one safe lap at every head. What a LAPPING
+        // producer can still take is `firstDrawn`'s question, not this one.
+        const int64_t cover  = juce::jmin (kFull + leadBuckets (kFull, (int) c), kRing);
+        const int64_t window = cover * stride;
+        const int64_t start  = juce::jmax ((int64_t) 0, head - window);
         // Two lower bounds on the oldest bucket, both needed: the window
-        // bound (the bucket HOLDING `first` — partly expired, its read range
-        // clamped in the loop) and the width bound (the bucket just OFF the
-        // panel's left edge, one beyond the `kFull` that fit at the fixed
-        // pitch, so its segment crosses the edge). Never past `kHead`.
-        const int64_t kFirst = juce::jmax (juce::jmin (kHead, first / stride), kHead - kFull);
+        // bound (the bucket HOLDING the window's start, whose own earlier
+        // entries the alignment above then takes in) and the width bound (the
+        // bucket just OFF the panel's left edge, one beyond the `kFull` that
+        // fit at the fixed pitch, so its segment crosses the edge). Never
+        // past `kHead`.
+        const int64_t kFirst = juce::jmax (juce::jmin (kHead, start / stride), kHead - cover);
+        const int64_t first  = kFirst * stride;
         // ≥ 1 even for the `head == 0` frame `paintHistory` never draws, so the
         // range the struct states is true of every value it can hold.
         const int64_t fill   = juce::jmax ((int64_t) 1, head - kHead * stride);
-        return { stride, kFirst, kHead, kHead - kFirst + 1, kFull, fill,
+        // The newest bucket is drawn only once it is complete (0.2.11): a
+        // frame never shows a value that a later entry could still revise.
+        // `kLast` is `kFirst − 1` and `count` 0 exactly while the very first
+        // bucket is still collecting (`head < stride`).
+        const int64_t kLast  = fill >= stride ? kHead : kHead - 1;
+        return { stride, kFirst, kHead, kLast, kLast - kFirst + 1, kFull, fill,
                  juce::jlimit (0.0, 1.0, phase), window, first };
     }
 
@@ -249,8 +326,8 @@ public:
         return y0 + height * juce::jlimit (0.0f, 1.0f, -grDb / abgui::meters::grSpanDb);
     }
 
-    // Where bucket `k` lands: anchored at the RIGHT edge (bucket `kHead` at
-    // `x0 + width − 1`) on a FIXED pitch — the width divided by the bucket
+    // Where bucket `k` lands: anchored at the RIGHT edge (the newest COMPLETE
+    // bucket at `x0 + width − 1` the instant it completes) on a FIXED pitch — the width divided by the bucket
     // count of one FULL window — so a filling ring renders at exactly the
     // scale a settled one does and new entries appear at the right while the
     // unmeasured region stays empty on the left (0.1.2 item 3; the owner
@@ -282,9 +359,7 @@ public:
     // completes draws each vertex exactly one entry-pitch past where the
     // frame before drew it. Bucket identity and every completed bucket's
     // value are untouched — the same fixed-identity decimation, moved
-    // smoothly. Adjacent COMPLETED buckets stay exactly one pitch apart; only
-    // the newest bucket's own segment grows from one entry-pitch to one pitch
-    // as it fills, and the newest vertex holds the right edge.
+    // smoothly. Adjacent buckets stay exactly one pitch apart.
     //
     // `phase` (`phaseOf`) carries the same motion INTO the newest entry's
     // period: the trace sits a further `phase` entry-pitches left, where
@@ -293,40 +368,193 @@ public:
     // frame happened to see" — 1 or 2 at 48 kHz / 512 on a 60 Hz display, a
     // 2:1 velocity beat — into one uniform step per frame, and it is the
     // only smoothing left once `stride == 1` (blocks of ~1062 samples and up
-    // at 48 kHz on the Simple well, where one block IS one bucket). The
-    // newest vertex joins that drift only while its bucket is COMPLETE and
-    // waiting for the next one; a filling bucket's vertex stays pinned to
-    // the edge. Either way no vertex ever moves rightward: the display
-    // position is `−(head + phase)` entry-pitches from a fixed origin and
-    // `head + phase` is the smoothed head, which never decreases. The strip a
-    // drifting newest vertex vacates is drawn flat at its value
-    // (`paintHistory`'s lead-out).
+    // at 48 kHz on the Simple well, where one block IS one bucket). No vertex
+    // ever moves rightward: the display position is `−(head + phase)`
+    // entry-pitches from a fixed origin and `head + phase` is the smoothed
+    // head, which never decreases.
+    //
+    // EVERY DRAWN VERTEX IS A COMPLETE BUCKET, AND EVERY ONE OBEYS THE SAME
+    // LAW (0.2.11, the owner's second report). Until 0.2.11 the newest bucket
+    // was drawn while it was still collecting: pinned to the edge, valued as
+    // a sliding minimum over the trailing `stride` entries, then released to
+    // drift once complete with a flat lead-out behind it. Every part of that
+    // was a vertex being REVISED after it had been shown — its height on
+    // every entry (measured on the real limiter at 2–5 px per frame, up to
+    // 22 px on the Simple well and 57 on the Advanced), its segment's slope
+    // on every frame as the previous vertex scrolled away from a pinned end,
+    // and its shape once more at hand-over, a flat ledge collapsing into the
+    // one-pitch spike the bucket would keep. The owner saw exactly that: the
+    // newly generated line changing instantaneously and while moving, with
+    // the completed trace gliding rigidly behind it. So the newest vertex is
+    // now created ONCE, when its bucket's last entry lands, at the value it
+    // will keep — `buckets` reports it as `kLast`, and a half-collected
+    // `kHead` is never drawn at all. A frame therefore contains only frozen
+    // values at rigid positions: the expression below is one linear function
+    // of the smoothed head for every k, equal to
+    //   right − perEntry · ((head + phase) − (k + 1) · stride),
+    // so each vertex sits where its bucket's LAST entry falls in time. The
+    // newest drawn vertex lies between `right − pitch` (a bucket has just
+    // started collecting) and `right` (one has just completed); the strip
+    // between it and the edge holds no data yet and is drawn flat at its
+    // value (`paintHistory`'s lead-out). What the display gives up is up to
+    // `stride − 1` entries of latency on the newest value — 21 ms at
+    // 48 kHz / 512 on the Simple well, 32 ms on the Advanced — which is the
+    // price of never revising a drawn vertex. For `k > kLast` the expression
+    // is still well defined (a point to the right of the anchor) and unused.
     static float bucketX (const Buckets& b, int64_t k, float x0, float width) noexcept
     {
         const float right    = x0 + (width - 1.0f);
         const float pitch    = (width - 1.0f) / (float) (b.kFull - 1);
         const float perEntry = pitch / (float) b.stride;
-        if (k >= b.kHead)
-            return right - (b.fill >= b.stride ? (float) b.phase : 0.0f) * perEntry;
         return right - (float) (b.kHead - k) * pitch
              + (float) ((double) (b.stride - b.fill) - b.phase) * perEntry;
     }
 
-    // The entry range the NEWEST vertex aggregates: the trailing `stride`
-    // entries `[max (first, head − stride), head)`, NOT the newest bucket's
-    // own partial range `[kHead·stride, head)`. Until 0.2.8 it was the
-    // latter, so at every bucket start the vertex on the right edge held the
-    // min/max of a SINGLE block and then deepened as the bucket collected the
-    // rest — a bucket-rate pop of the trace's tip (modelled in the worklog:
-    // 0.99 dB mean frame-to-frame movement, 0.55 dB with the trailing window).
-    // The trailing window is exactly as long as every completed bucket, and
-    // it COINCIDES with the newest bucket at the instant that bucket
-    // completes, so the vertex hands over to the completed value without a
-    // step. `first` is the window/ring clamp `paintHistory` derives
-    // (`max (0, head − want)`).
-    static int64_t tipFirst (int64_t first, int64_t head, int64_t stride) noexcept
+    // THE VISIBLE RIGHT BOUNDARY (0.2.12, the owner's third report): the first
+    // plot column `paintHistory` does NOT show. What 0.2.11 left on screen was
+    // the strip from the newest complete vertex to the clip edge — the
+    // lead-out, drawn flat at the last value because the bucket that belongs
+    // there is still collecting — and the owner saw exactly that: a
+    // horizontal stub at the right edge, one to `pitch + 1` pixels long
+    // (1–2.4 px at 48 kHz / 512 on the Simple well), whose height jumped, and
+    // whose left neighbour snapped from flat to sloped, once per bucket (31
+    // times a second at 48 kHz / 512 on the Simple well), in the GR stroke and the
+    // level fill alike since both run the same path. Frozen values placed
+    // rigidly do not help there: the stub IS the placeholder for a value
+    // that does not exist yet, so the only honest thing to do with it is not
+    // to show it.
+    //
+    // The bound follows from `bucketX`. With `fill ∈ [1, stride]` and
+    // `phase ∈ [0, 1]` the newest drawn vertex sits at
+    //   right − pitch ≤ x(kLast) ≤ right
+    // on every frame — the lower end only at phase 1, a parked frame — so
+    // the lead-out never starts left of `right − pitch`, and with the clip's
+    // right edge at `B = floor (right − pitch)`, the first column the
+    // lead-out can reach, no column shown ever carries it. The further `− 1`
+    // is the owner's margin for the one thing that bound does not cover: the
+    // stroke JOIN at the vertex that was newest until this frame re-shapes
+    // when its successor appears (a horizontal lead-out gives way to a sloped
+    // segment), and that vertex sits between `right − 2·pitch` and
+    // `right − pitch` — up to a frame's travel inside `B` on a 60 Hz clock
+    // (0.65 px measured at 48 kHz / 1024), further on a slower one — while a
+    // JUCE mitred join can reach four half-widths from it. The boundary sweep
+    // in the worklog shows the one column of margin taking the only
+    // configuration that registered a residual (48 kHz / 1024) to the
+    // interior's floor; it is a measured margin, not a bound, and a re-shape
+    // that did reach a shown column would be confined to the stroke's own
+    // width around one vertex, never a jump in height.
+    //
+    // ONLY the clip reads this. `right`, `pitch`, `bucketX`, the read window
+    // and the left edge are untouched, so every column that is still shown
+    // is pixel-for-pixel what 0.2.11 showed there. The strip is
+    // `ceil (pitch) + 2` columns wide — 4 for every pitch up to 2 px, which is
+    // every block up to 1024 samples at every rate from 44.1 kHz and 2048 from
+    // 48 kHz up, on either well (44.1 kHz / 2048 on the Simple well is 5;
+    // 4096-sample blocks add up to three more) — and since 0.2.12 the PANEL
+    // does not pay for it: `paintHistory` draws its frame that many columns
+    // further right, so the strip falls outside the plot and the plot shows
+    // its full width (`hiddenColumns`). The lead-out itself stays in the path,
+    // wholly behind the clip (`paintHistory` says why).
+    //
+    // That is the bound for every window of THREE OR MORE buckets, which is
+    // every configuration a real-time host presents. `buckets` floors `kFull`
+    // at 2, and a two-bucket window is the one geometry where the bound above
+    // cannot be honoured at all — the next block states the cap that answers
+    // it and what it costs.
+    // WHAT THE STRIP MAY COST (0.2.12 review): `pitch` is `span / (kFull − 1)`
+    // and `buckets` FLOORS `kFull` at 2 so the division is safe — so a window
+    // holding two entries or fewer reports one pitch as the WHOLE span, and
+    // `right − pitch` is then the left edge itself. Hiding a pitch there hid
+    // the panel: `floor (right − pitch) − 1` came out one column LEFT of the
+    // plot, the clip's width clamped to zero, and the GR history disappeared
+    // — measured blank on 100 % of frames at 48 kHz / 480000 and
+    // 44.1 kHz / 441000 on both wells. That geometry is `want ≤ 2`, which is
+    // `blockSize ≥ 10 · sampleRate`: a host delivering ten seconds of audio in
+    // one block, which offline renders do.
+    //
+    // The cap is `span / 2`, and it is not a rescue clamp — it is the same
+    // bound one bucket further out. `pitch = span / 2` EXACTLY when
+    // `kFull == 3`, so `min (pitch, span / 2)` leaves every geometry with
+    // three or more buckets bit-for-bit as it was (the shipped configurations,
+    // and every block shorter than `20 · sampleRate / 3` — 6.67 s at 48 kHz —
+    // are all far above that), and it holds the boundary of a two-bucket
+    // window where a three-bucket window would have put it: the plot's
+    // mid-point. The boundary is therefore continuous and monotone in the
+    // pitch across the whole block-size range, with no step at the two-bucket
+    // transition, which a bare "if (kFull == 2)" special case could not
+    // promise.
+    //
+    // WHAT A TWO-BUCKET WINDOW GIVES UP, stated rather than hidden: with
+    // `kFull == 2` the newest drawn vertex sweeps the ENTIRE span once per
+    // bucket (`bucketX`: `right − pitch ≤ x(kLast) ≤ right` with
+    // `pitch == span`), so every column can carry the lead-out on some frame
+    // and NO non-empty frame-independent boundary can exclude it. The two
+    // requirements — hide the strip, show the history — are then genuinely
+    // exclusive, and showing the history wins: a blank panel reports nothing
+    // at all, and the fast right-edge artefact this bound exists to hide does
+    // not exist at that geometry (one bucket completes every ten seconds, not
+    // thirty times a second). A frame-DEPENDENT boundary would satisfy both
+    // on paper and is rejected on sight: a clip that tracked `x(kLast)` would
+    // move the plot's right edge at bucket rate, which is the class of defect
+    // this whole round removes.
+    //
+    // The two clamps below are the total-function guards, both unreachable at
+    // the shipped 904/604-column plots: a plot under two columns wide has no
+    // boundary to give (`span < 1`, answered with an empty clip, as every
+    // version before this one did for such a panel), and one under five keeps
+    // its first column rather than losing it to the join margin.
+    static int visibleRight (int64_t kFull, float x0, float width) noexcept
     {
-        return juce::jmax (first, head - stride);
+        const float span = width - 1.0f;                // the anchor span, `right − x0`
+        if (span < 1.0f)
+            return (int) std::floor (x0);               // no plot: an empty clip, as before
+        const float pitch  = span / (float) (kFull - 1);
+        const float hidden = juce::jmin (pitch, 0.5f * span);
+        return juce::jmax ((int) std::floor (x0) + 1,
+                           (int) std::floor (x0 + span - hidden) - 1);
+    }
+
+    // The same boundary for a frame's own buckets. `buckets` needs the form
+    // above while it is still building them, which is the only reason there
+    // are two.
+    static int visibleRight (const Buckets& b, float x0, float width) noexcept
+    {
+        return visibleRight (b.kFull, x0, width);
+    }
+
+    // THE COLUMNS THE BOUNDARY HIDES, and so how far right the trace is drawn
+    // (0.2.12). `paintHistory` moves its whole drawing frame right by this
+    // much, which lands the boundary on the plot's own right edge and leaves
+    // the panel showing its full plot width — the width the spectrum view of
+    // the same well shows, the two having identical bounds and the same
+    // `reduced (10, 8)` inset. Nothing about the trace is scaled: the frame
+    // keeps the area's WIDTH, so the pitch is what it was and every vertex
+    // simply lands `hiddenColumns` further right than before.
+    static int64_t hiddenColumns (int64_t kFull, int cols) noexcept
+    {
+        const int64_t c = juce::jmax ((int64_t) 1, (int64_t) cols);
+        return c - (int64_t) visibleRight (kFull, 0.0f, (float) c);
+    }
+
+    // …and the buckets of OLDER history that shift needs on the left. Moving
+    // the frame right frees `hiddenColumns` columns at the panel's left edge,
+    // and they are filled by covering that many more pixels of history at the
+    // SAME pitch — `ceil (hidden / pitch)` buckets, the whole point of the
+    // exercise being that the trace is extended rather than stretched.
+    // Bounded at four, which is also what the arithmetic gives: `hidden` is at
+    // most `pitch + 3` (`visibleRight`'s floor plus its margin column), so the
+    // quotient is at most `1 + 3 / pitch`, and `pitch ≥ 1` for every geometry
+    // `buckets` produces (`kFull ≤ cols`).
+    static constexpr int64_t kMaxLead = 4;
+
+    static int64_t leadBuckets (int64_t kFull, int cols) noexcept
+    {
+        const int64_t c = juce::jmax ((int64_t) 1, (int64_t) cols);
+        const float pitch = ((float) c - 1.0f) / (float) (kFull - 1);
+        if (pitch <= 0.0f)
+            return 0;
+        return juce::jlimit ((int64_t) 0, kMaxLead,
+                             (int64_t) std::ceil ((double) hiddenColumns (kFull, cols) / (double) pitch));
     }
 
     // The nominal seconds one ring entry spans: the prepared block over the
@@ -492,20 +720,53 @@ public:
         return live - (int64_t) (anabasis::GrHistoryBuffer::kSize - 1);
     }
 
-    // The entry range bucket `k` aggregates: the trailing `stride` entries
-    // for the newest (`tipFirst`), the bucket's own span for every other,
-    // both clamped to the frame's oldest readable index. Half-open, and
-    // `e0 >= e1` means the bucket has nothing safe to read and is skipped.
-    // Pure and public for the reason the geometry statics are: the read set
-    // is where the ring-safety invariant lives, and an invariant reachable
-    // only from `paint` is one no test can pin.
+    // The entry range bucket `k` aggregates: its own span, clamped to the
+    // frame's oldest readable index at the expiring end and to `head` at the
+    // new end. For every DRAWN bucket BOTH clamps are now idle, so the range
+    // is exactly `[k · stride, (k + 1) · stride)` — a constant of `k`, whose
+    // value can never change between frames. The new-end clamp went idle at
+    // 0.2.11 (`kLast`: a drawn bucket is complete; until then the newest
+    // vertex read a trailing window that slid with every entry); the
+    // expiring-end clamp at 0.2.12's review, when `buckets` began aligning
+    // `first` to the oldest drawn bucket's own start and `paintHistory`
+    // began asking `firstDrawn` which bucket that is. Both clamps stay,
+    // because both state a bound this function must not be read without —
+    // the caller's guarantee is what changed, not the arithmetic. Half-open,
+    // and `e0 >= e1` means the bucket has nothing safe to read and is
+    // skipped. Pure and public for the reason the geometry
+    // statics are: the read set is where the ring-safety invariant lives,
+    // and an invariant reachable only from `paint` is one no test can pin.
     struct Reads { int64_t e0, e1; };
 
     static Reads bucketReads (const Buckets& b, int64_t k, int64_t first, int64_t head) noexcept
     {
-        return { k >= b.kHead ? tipFirst (first, head, b.stride)
-                              : juce::jmax (first, k * b.stride),
-                 juce::jmin (head, (k + 1) * b.stride) };
+        return { juce::jmax (first, k * b.stride), juce::jmin (head, (k + 1) * b.stride) };
+    }
+
+    // The oldest bucket a FRAME may draw. `buckets` answers `kFirst` from the
+    // window alone; this answers it from the RING, which the producer may
+    // have moved under the batch (`readFloor` — the live index, not the
+    // stale head the frame draws, and its banner argues why). A bucket whose
+    // earliest entries have gone over the ring's edge cannot be drawn at the
+    // value it has always had, and the one thing it must not do is come back
+    // re-shaped from what is left of it — so it is DROPPED, which is what
+    // "the bucket aged out of the backing window" honestly looks like. The
+    // caller then reads from `firstDrawn · stride`, and every clamp in
+    // `bucketReads` is idle for every bucket it draws.
+    //
+    // Idle at every ordinary window: the floor sits `kSize − 1` entries below
+    // the LIVE head while `first` sits at most `kSize − stride` below the
+    // drawn one, so this returns `kFirst` unless the window is saturated
+    // (`want` at the clamp) AND the producer has lapped the batch — the
+    // 192 kHz / 32 case `readFloor` was written for, where ~100 entries can
+    // land between the tick and the paint. Dropping one bucket there costs
+    // one pitch of the panel's oldest end for that frame; drawing it
+    // truncated would cost the invariant.
+    static int64_t firstDrawn (const Buckets& b, int64_t floorIndex) noexcept
+    {
+        if (floorIndex <= b.first)
+            return b.kFirst;                            // the ordinary case, and every negative floor
+        return juce::jmax (b.kFirst, (floorIndex + b.stride - 1) / b.stride);
     }
 
 private:

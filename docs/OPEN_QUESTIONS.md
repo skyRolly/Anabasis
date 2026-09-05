@@ -538,3 +538,55 @@ for the manufacturer code; there is no comparable exception available here.
 
 **Evidence [Unverified].** No build exists, so "these values register correctly in a host" is
 unproven — it becomes Verified at the first Level-5 check (P1).
+
+---
+
+## OQ-017 — Should the GR history absorb bursty or mis-sized host delivery with a lag allowance? · `Open`
+
+**Question.** The GR history scrolls by a head smoothed at the nominal entry rate and held to
+`[head, head + 1]` (`GrHistoryView::smoothedHead`, 0.2.8). That band has no slack: the ideal
+trajectory rides both of its edges, so any block that arrives a whole entry early or late becomes a
+visible snap or stall of the entire trace. Millisecond callback jitter is sub-pixel (measured σ
+0.017 px at 1 ms, 0.069 px at 3 ms). Two delivery patterns are not:
+
+- **Bursts** — several `processBlock` calls per callback, as hosts that render ahead of real time
+  do (REAPER's anticipative FX processing on prefill, seek, loop and catch-up; Cubase ASIO-Guard).
+  Measured at 48 kHz / 512 on the Simple well with bursts of four: the whole trace jumps 1.45 px,
+  creeps 0.48 px, then stands still, at the burst cadence, with one frame in five never repainted
+  — 0.2.7-scale motion.
+- **A delivered block shorter than the prepared one** — the AU wrapper prepares with the host's
+  maximum frames per slice, and a live or monitored Logic track delivers the I/O buffer instead.
+  With 1024 prepared and 512 delivered the trace runs at twice the design speed in alternating
+  0.97 / 1.93 px steps and the window spans ten seconds, not twenty; at 256 delivered, four times
+  and five seconds.
+
+**Why it cannot be guessed.** The instrument that absorbs both is a lag allowance —
+`[head − L, head + 1]`, so the estimate keeps its nominal rate through a burst and catches up
+later — and `L` is a latency-versus-smoothness trade with no value that fits every host: a
+render-ahead host needs hundreds of milliseconds, a host that delivers one block per period needs
+none and would only see the display fall `L` entries behind. The mis-sized case additionally needs
+the display to learn the delivered size rather than trust the prepared one, which changes the time
+base the 20-second window is mapped through. The 0.2.8 review measured the burst case and declined
+it as the owner's call (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §7 item 5); it was
+recorded in the code banner but never filed here. The 0.2.11 round, which fixed the newest vertex
+(the owner's second report), left this untouched by instruction and re-measured it
+(`worklogs/2026-09-05-gr-history-tip.md`).
+
+**Options.**
+
+1. Leave as is. Steady hosts are exact; bursty and mis-sized hosts degrade to per-entry stepping at
+   the host's own cadence — never behind the data, never more than one entry ahead.
+2. A fixed lag allowance `L` (say 4–8 entries) plus a catch-up rule. Costs `L` entries of display
+   latency everywhere; absorbs bursts up to `L`.
+3. An adaptive allowance: measure the delivered block size and the arrival pattern, size `L`
+   from them, and map the window through the measured size. Most machinery; fits every host.
+
+**Recommendation.** None without the owner's REAPER and Logic observations: whether the whole
+trace lurches with anticipative FX processing on and glides with it off, and whether a Logic
+session shows a twenty-second window or a shorter one. Those two observations decide between
+options 1 and 2/3.
+
+**Evidence [Verified for the display arithmetic, Unverified for the hosts].** The display's
+response to each pattern is measured on the real paint path with a simulated host; what REAPER and
+Logic actually deliver is from the wrappers' contracts and reports, not from a measurement in
+either host.
