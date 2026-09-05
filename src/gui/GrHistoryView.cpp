@@ -239,7 +239,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     juce::Path wave, gr;
     bool started = false;
     float lastX = area.getX(), lastWy = 0.0f, lastGy = 0.0f;
-    // THE DRAWING FRAME (0.2.13): the plot area's own WIDTH, moved right by
+    // THE DRAWING FRAME (0.2.12): the plot area's own WIDTH, moved right by
     // the columns `visibleRight` hides. The boundary then lands on the plot's
     // own right edge, so the panel shows its full plot width — the width the
     // spectrum view of the same well shows, the two having identical bounds

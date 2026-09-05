@@ -6369,7 +6369,7 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // the newest bucket is complete — the walk below covers the heads
             // where it is not, and the vertex before it is drawn instead.
             //
-            // Read in the DRAWING FRAME (0.2.13): `paintHistory` places the
+            // Read in the DRAWING FRAME (0.2.12): `paintHistory` places the
             // trace with its origin `hiddenColumns` right of the panel's, so
             // the boundary lands on the panel's own right edge and the plot
             // shows its full width. The frame keeps the panel's WIDTH, so the
@@ -6518,7 +6518,7 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                     // frame sits it one entry-pitch further out), and the
                     // vertex after it is inside — the crossing segment.
                     {
-                        // …in the DRAWING FRAME (0.2.13), whose origin is
+                        // …in the DRAWING FRAME (0.2.12), whose origin is
                         // `hiddenColumns` right of the panel's: the oldest
                         // drawn vertex is at or beyond the PANEL's left edge
                         // at both ends of the phase, and the trace covers the
@@ -6979,7 +6979,7 @@ static void testGrHistorySurvivesAHostBlockOfTenSeconds()
     check (visibleRight == (int) std::floor (10.0f + span - 0.5f * span) - 1 && visibleRight > 10,
            "grBlank: the boundary is held at the half-span bound, inside the plot rather than left of it");
     // …and the drawing frame carries that boundary onto the plot's right edge,
-    // as it does at every other geometry (0.2.13).
+    // as it does at every other geometry (0.2.12).
     const float shift = (float) GrHistoryView::hiddenColumns (nb.kFull, cols);
     check (GrHistoryView::visibleRight (nb, 10.0f + shift, (float) cols) == 10 + cols,
            "grBlank: …and the drawing frame puts it on the plot's right edge, so the panel still shows its full width");
@@ -7622,7 +7622,7 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
             // floor (right − pitch) − 1 with `right` the integer anchor `x0 + cols − 1`:
             // `ceil (pitch) + 2` columns hidden, the lead-out's start at least one
             // whole column beyond the last visible one at both ends of the phase
-            // …and in the DRAWING FRAME (0.2.13), which is the panel's own
+            // …and in the DRAWING FRAME (0.2.12), which is the panel's own
             // origin plus the columns the boundary hides, that boundary is the
             // plot's right edge itself: the trace fills the panel's full plot
             // width and the strip the boundary hides has moved off the panel.

@@ -235,7 +235,7 @@ public:
         // (32 ms at 48 kHz / 512) past the nominal window, every one of them
         // off the left edge: this item's "read and never shown".
         //
-        // THE PANEL COVERS MORE BUCKETS THAN THE PITCH DIVIDES (0.2.13).
+        // THE PANEL COVERS MORE BUCKETS THAN THE PITCH DIVIDES (0.2.12).
         // `kFull` is the pitch divisor — the buckets ONE window renders — and
         // it stays exactly what it was, so the pitch, the bucket boundaries
         // and every value are untouched. What is new is that `paintHistory`
@@ -450,7 +450,7 @@ public:
     // `ceil (pitch) + 2` columns wide — 4 for every pitch up to 2 px, which is
     // every block up to 1024 samples at every rate from 44.1 kHz and 2048 from
     // 48 kHz up, on either well (44.1 kHz / 2048 on the Simple well is 5;
-    // 4096-sample blocks add up to three more) — and since 0.2.13 the PANEL
+    // 4096-sample blocks add up to three more) — and since 0.2.12 the PANEL
     // does not pay for it: `paintHistory` draws its frame that many columns
     // further right, so the strip falls outside the plot and the plot shows
     // its full width (`hiddenColumns`). The lead-out itself stays in the path,
@@ -523,7 +523,7 @@ public:
     }
 
     // THE COLUMNS THE BOUNDARY HIDES, and so how far right the trace is drawn
-    // (0.2.13). `paintHistory` moves its whole drawing frame right by this
+    // (0.2.12). `paintHistory` moves its whole drawing frame right by this
     // much, which lands the boundary on the plot's own right edge and leaves
     // the panel showing its full plot width — the width the spectrum view of
     // the same well shows, the two having identical bounds and the same
