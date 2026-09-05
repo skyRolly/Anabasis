@@ -141,10 +141,21 @@ by construction rather than by stimulus luck.
    > pixels (1–2.4 px at 48 kHz / 512 on the Simple well) whose height jumped once per bucket and
    > whose left neighbour snapped from flat to sloped with it, in the
    > level fill as much as in the GR stroke — so the plot's visible right boundary is now
-   > `floor (right − pitch) − 1` (`GrHistoryView::visibleRight`): left of everything the lead-out
-   > can touch, since the newest drawn vertex satisfies `right − pitch ≤ x ≤ right` on every frame,
-   > with one further column of measured margin for the stroke join at the vertex before it, which
-   > re-shapes in the frame the newer one appears.
+   > `floor (right − min (pitch, span / 2)) − 1` (`GrHistoryView::visibleRight`, `span` the anchor
+   > span `right − x0`): left of everything the lead-out can touch, since the newest drawn vertex
+   > satisfies `right − pitch ≤ x ≤ right` on every frame, with one further column of measured
+   > margin for the stroke join at the vertex before it, which re-shapes in the frame the newer one
+   > appears. The `span / 2` cap is not a rescue clamp: `pitch == span / 2` EXACTLY when
+   > `kFull == 3`, so it leaves every window of three or more buckets — every configuration a
+   > real-time host presents — bit-for-bit uncapped, and holds a two-bucket window's boundary where
+   > a three-bucket window would put it. It exists because `buckets` floors `kFull` at 2: a window
+   > of two entries or fewer (`want ≤ 2`, i.e. `blockSize ≥ 10 · sampleRate`, which offline renders
+   > reach) reports one pitch as the whole plot, and hiding it hid the plot — the boundary landed
+   > one column left of the left edge and the history rendered blank. At that geometry the newest
+   > vertex sweeps the whole span once per bucket, so no non-empty frame-independent boundary can
+   > exclude the lead-out and the two requirements are genuinely exclusive; showing the history
+   > wins, and the fast artefact this bound exists to hide does not exist there (one bucket per ten
+   > seconds).
    > This is a clip and nothing else: the anchor, the rigid law, the values, the per-entry scroll,
    > the smoothed head, the zero-data region, the clear rule and the left edge are as decided
    > above; every column still shown is what 0.2.11 showed there; and the plot gives up

@@ -357,3 +357,161 @@ are measured separately.
 
 Gates: `check-docs`, `check-citations`, `check-portability`, `check-realtime`, `git diff --check`
 — recorded in the commit message with their counts.
+
+## 8 — 0.2.12 review: a large host block blanked the plot (2026-09-05)
+
+### 8.1 The finding, and the geometry that produces it
+
+Review finding against `src/gui/GrHistoryView.h`: when the host prepares blocks that are roughly
+half the history duration or more, the forced two-bucket geometry makes one pitch span the whole
+plot, `floor (right − pitch) − 1` falls at or left of the plot's left boundary, and the GR history
+disappears. Verified from the code before anything was changed:
+
+- `pitch = span / (kFull − 1)` with `span = right − x0`, and `buckets` sets
+  `kFull = max (2, ceil (want / stride))` — the `max` is a floor for the division, stated in its
+  own comment as reachable "(a panel around one pixel wide)".
+- `kFull == 2` ⟺ `want ≤ 2` ⟺ `ceil (20 · sr / block) ≤ 2` ⟺ **`block ≥ 10 · sr`**: one host block
+  carrying ten seconds of audio. At that point `pitch == span`, `right − pitch == x0`, and the
+  boundary is `x0 − 1`.
+- `paintHistory` builds the clip as `jmax (0, clipRight − x0)` wide, so the rectangle is not
+  invalid — it is EMPTY, and every stroke and fill is clipped away. The GR|SPEC chip survives
+  (it is painted outside the history's clip, deliberately), so the panel shows the chip on an
+  empty ground.
+
+Reproduced on the same real-processor harness (real `AnabasisAudioProcessor`, real
+`GrHistoryView::tick`/`paintHistory`, lit-pixel count per rendered frame), against the tree as
+committed in `de0be99`:
+
+| configuration | want | kFull | pitch | visibleRight | clip width | frames blank |
+|---|---|---|---|---|---|---|
+| 48 kHz / 512, Simple | 1875 | 625 | 1.447 | 910 | 900 | 0 of 480 |
+| 48 kHz / 512, Advanced | 1875 | 469 | 1.288 | 610 | 600 | 0 of 480 |
+| 48 kHz / 48000 (1 s) | 20 | 20 | 47.53 | 864 | 854 | 0 of 720 |
+| 48 kHz / 240000 (5 s) | 4 | 4 | 301.0 | 611 | 601 | 0 of 450 |
+| 48 kHz / 320160 (6.67 s) | 3 | 3 | 451.5 | 460 | 450 | 0 of 510 |
+| 48 kHz / 479999 (9.99998 s) | 3 | 3 | 451.5 | 460 | 450 | 0 of 480 |
+| **48 kHz / 480000 (10 s), Simple** | 2 | 2 | 903.0 | **9** | **0** | **528 of 528 (100 %)** |
+| **48 kHz / 960000 (20 s), Simple** | 1 | 2 | 903.0 | **9** | **0** | **525 of 525** |
+| **48 kHz / 480000, Advanced** | 2 | 2 | 603.0 | **9** | **0** | **528 of 528** |
+| **44.1 kHz / 441000 (10 s), Simple** | 2 | 2 | 903.0 | **9** | **0** | **528 of 528** |
+
+The finding is real and the boundary is exactly `block ≥ 10 · sr`: a 479999-sample block at 48 kHz
+still draws, a 480000-sample block draws nothing.
+
+### 8.2 What the rule has to be
+
+Two requirements, and the questions the review asked answered in order.
+
+- **"What does the newest stable visible history mean when the pitch is comparable to the plot?"**
+  Nothing, at `kFull == 2`. `bucketX` gives `right − pitch ≤ x(kLast) ≤ right` with `pitch == span`,
+  so the newest drawn vertex sweeps the ENTIRE plot once per bucket and every column carries the
+  lead-out on some frame. The stable content — the single segment from `x(kLast − 1)`, which is at
+  or left of `x0` — cannot be separated from it by any frame-independent boundary.
+- **"Is there always at least one complete stable bucket to show?"** There is always a complete
+  bucket, but at `kFull == 2` its vertex is off the left edge and the only visible stable content
+  is part of the segment leading to `x(kLast)` — whose right end is the unstable point itself.
+- **"What should happen when `right − pitch − 1` cannot fit inside the plot?"** The two
+  requirements are then genuinely exclusive, so one must be named as the loser. Showing the
+  history wins: a blank panel reports nothing at all, and the artefact the boundary exists to hide
+  is a FAST one — a 1–2 px stub replaced 23 to 43 times a second — which does not exist at a
+  geometry where one bucket completes every ten seconds.
+- **"Does the two-bucket geometry need a special case?"** No, and it should not have one: a
+  branch on `kFull == 2` would step the boundary discontinuously at the transition. The formula
+  expressed as a CAP covers it — and the cap is not a rescue clamp, because `pitch == span / 2`
+  EXACTLY when `kFull == 3`, so capping the hidden strip at `span / 2` is the same bound one bucket
+  further out. It engages only at `kFull == 2` and holds the boundary where a three-bucket window
+  puts it.
+- **A frame-dependent boundary** (clip at `x(kLast)` itself) would satisfy both requirements on
+  paper and is rejected on sight: the plot's right edge would then move at bucket rate, which is
+  the class of defect this whole round removes.
+
+### 8.3 The rule, and the invariant it enforces
+
+```
+span    = width − 1                         // the anchor span, right − x0
+hidden  = min (pitch, span / 2)             // pitch = span / (kFull − 1)
+visibleRight = max (x0 + 1, floor (x0 + span − hidden) − 1)      // span ≥ 1
+             = x0                            // span < 1: no plot, an empty clip as before
+```
+
+For every `width ≥ 2` and every `kFull ≥ 2`:
+
+1. `x0 < visibleRight ≤ right − 1` — the clip is a valid, non-empty rectangle inside the plot.
+2. If `kFull ≥ 3`: `visibleRight == floor (right − pitch) − 1`, bit-for-bit the rule as committed,
+   so no shown column can carry the lead-out (`x(kLast) ≥ right − pitch` on every frame) and the
+   join margin is intact.
+3. If `kFull == 2`: `visibleRight == floor (right − span / 2) − 1`, the three-bucket boundary.
+4. The boundary is non-increasing in the pitch, and the pitch is bounded by `span`, so the strip
+   is never wider than `span / 2 + 2` columns and at least the plot's left half always survives.
+
+(The boundary is NOT monotone in the block size, and never was: `stride` steps up at
+`want == cols + 1` and `kFull` halves under it, so the pitch is a one-column sawtooth there —
+48 kHz / 1062 samples gives 911 and 48 kHz / 1064 gives 910. That is 0.1.1 decimation geometry,
+identical in both rules and untouched here.)
+
+### 8.4 Validation
+
+Harness built twice — once against `de0be99` (the rule as committed) and once against the capped
+rule — same host schedule, same seeds, same frames.
+
+**1. Large blocks no longer blank, and the clip is always valid.** All four `kFull == 2`
+configurations: 0 blank frames of 528 / 525 / 528 / 528, boundary 460 (Simple) and 310 (Advanced),
+clip width 450 and 300, lit pixels 1350 minimum against 0 before.
+
+**2. At least the intended stable history remains visible.** The last visible column carries the
+trace on 528 of 528, 525 of 525, 528 of 528 and 528 of 528 frames; the leftmost lit column is 10
+(the plot's left edge) in every configuration.
+
+**3. Normal configurations are untouched.** Every rendered column, over the full panel width, is
+bit-identical before and after the cap on all six `kFull ≥ 3` configurations — 0 differing
+column-frames of 480, 480, 720, 450, 510 and 480 frames respectively (48 kHz / 512 on both wells,
+48 kHz / 48000, / 240000, / 320160 and / 479999). The 0.2.12 validation summary (§7.4's five
+configurations, all metrics) re-run against the capped build is byte-identical to the committed
+build's.
+
+**4. The right-edge artefact stays fixed, everywhere the bound can hold it.** Measured directly as
+"did the lead-out reach inside the visible range this frame": **0 frames** on every `kFull ≥ 3`
+configuration, including the 9.99998-second block one sample below the transition. At `kFull == 2`
+it reaches inside on 236 of 528 frames by 224 px mean / 442 px max (Simple) and 236 of 528 by
+149 / 295 px (Advanced) — the stated cost of a two-point window, at one bucket per ten seconds.
+
+**5. The transition is continuous.** Sweep of the real statics over 41 block sizes from 32 samples
+to 120 seconds, three rates (44.1 / 48 / 96 kHz) and both wells: never blank anywhere; identical to
+the committed rule at every `kFull ≥ 3`; and the boundary goes 910 → … → 611 (5 s) → 460 (6.67 s)
+→ 460 (9.99 s) → 460 (10 s, cap engaged) → 460 (20 s) → 460 (120 s) — it saturates rather than
+stepping.
+
+**6. Mutants** (one site each, state suite rebuilt and run, sources restored and verified identical
+after each):
+
+| Mutant | Kills (of 1071) |
+|---|---|
+| **rule as first committed** — no cap and no non-empty floor (the finding itself) | **12**, including the RENDERED one: "a ten-second host block still draws the GR history"; plus every-window-non-empty, two-bucket-at-the-half-span, no-step-at-the-transition and never-wider-than-half on both wells, the narrow-plot guard and the `grBlank` boundary |
+| **cap removed** — `hidden = pitch` (the non-empty floor left in, so the plot survives as one column) | 9: the two-bucket, no-step and half-span pins on both wells, and both `grBlank` boundary pins |
+| **cap too tight** — `min (pitch, span / 4)` | 6: "a window of three or more buckets keeps the uncapped bound" on both wells, the two-bucket pins, the `grBlank` boundary |
+| **non-empty floor removed** | 2: the narrow-plot pin |
+| **narrow-plot guard removed** | 2: the "narrower than two columns clips to nothing" pin |
+| **clip back on the plot edge** (`paintHistory`) | 3: both rendered "nothing beyond the boundary" pins — no arithmetic pin sees it |
+| **join margin column removed** | 14: the walk's boundary pin in all six geometry cases, both `grPaint` arithmetic pins, the boundary sweep and `grBlank` |
+| **two columns further in** | 16: the same, plus the half-span pins |
+
+The kill sets separate the three parts of the rule: the cap is measured by the two-bucket pins, the
+bound it caps by the "uncapped where it can" pins, and the clip that reads either by the rendered
+ones.
+
+**7. Suites and gates.** `AnabasisTests` 316 + `AnabasisStateTests` 1071 = 1387, 0 failures (1367
+before this round: the boundary sweep adds six checks per well, the narrow-plot guards two, and
+`testGrHistorySurvivesAHostBlockOfTenSeconds` six). Full `ninja` build clean; pluginval strictness
+10, deterministic ×3 and randomise ×3, green under xvfb; `check-docs`, `check-portability`,
+`check-realtime`, `check-citations` and `git diff --check` clean.
+
+### 8.5 What is not changed, and what is left
+
+The bucket values, `buckets`, `bucketX`, the anchor, the read window, the left edge, the frame
+clock, the smoothed head, the host-delivery behaviour (OQ-017) and the spectrum view are all
+untouched; `paintHistory` reads the boundary in one place and nothing else moved. The USER_MANUAL's
+"a few pixels" is left as written: it is exact for every interactive configuration, and the
+two-bucket geometry needs a host block of ten seconds, which is an offline-render buffer rather
+than something a user watches. The two-bucket display remains coarse by nature — two points across
+twenty seconds — and the honest presentation of it is a follow-up question for the owner, not a
+defect of this boundary.

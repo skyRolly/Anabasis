@@ -214,7 +214,10 @@ needed. `GrHistoryView` publishes the parts of its draw that carry a correctness
 statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.6 `grY`, and since
 0.2.8 `entryPeriod`, `smoothedHead`, `phaseOf`, `parked`, `paintHead`, `frameFor`, `readFloor` and
 `bucketReads` (0.2.8's `tipFirst`, the trailing window the newest vertex read, was removed in
-0.2.11: the newest drawn bucket reads its own span like every other), since 0.2.12 `visibleRight`,
+0.2.11: the newest drawn bucket reads its own span like every other), since 0.2.12 `visibleRight`
+(whose sweep pins BOTH of the requirements it holds apart — the uncapped bound wherever a window
+has three or more buckets, and a non-empty clip for every window and every plot at least two
+columns wide, the property whose absence blanked the plot at a ten-second host block),
 plus the ring's own
 `GrHistoryBuffer::prepare`, `prepared` and `batchIntact` (pinned by `grPrepared`, through the ring
 and through the wrapper) — because an expression reachable only from `paint` is one no test can pin
@@ -231,7 +234,10 @@ clip leaves on screen — are pinned through a RENDERED snapshot at every fill o
 (`grPaint`, 0.2.11; extended at 0.2.12 to the visible boundary: the last visible column lit on every
 fill, every column beyond it untouched on every fill), because the last plot column had been
 blinking for three rounds while every static was green, and the strip beyond the newest vertex had
-then been on screen for one more.
+then been on screen for one more. A THIRD rendered pin was added by the 0.2.12 review
+(`testGrHistorySurvivesAHostBlockOfTenSeconds`): a clip rectangle is not a number either, and a
+boundary computed one column left of the plot blanked the whole history while every arithmetic
+static stayed green.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the

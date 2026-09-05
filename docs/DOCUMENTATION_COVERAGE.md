@@ -190,9 +190,12 @@ the owner's reading confirmed before any change: the lead-out — the flat strip
 complete vertex to the plot edge, 1.00–2.42 px at 48 kHz / 512 — was on screen, and it is the one
 part of the trace that changes other than by scrolling (its height jumps and its left neighbour
 snaps from flat to sloped once per bucket; the stroke and the fill share the path). Fixed by
-clipping at `GrHistoryView::visibleRight` = `floor (right − pitch) − 1`, left of everything the
-lead-out can touch (the newest drawn vertex satisfies `right − pitch ≤ x ≤ right` on every frame),
-one further column of measured margin for the stroke join at the vertex before it; nothing
+clipping at `GrHistoryView::visibleRight` = `floor (right − min (pitch, span / 2)) − 1`, left of
+everything the lead-out can touch (the newest drawn vertex satisfies `right − pitch ≤ x ≤ right` on
+every frame), one further column of measured margin for the stroke join at the vertex before it,
+and the `span / 2` cap — added on the PR review finding that a ten-second host block blanked the
+plot, engaging only where `kFull == 2` and holding the boundary where a three-bucket window puts it;
+nothing
 else moved, and every column still shown is pixel-identical to 0.2.11 in 480 of 480 frames on every
 configuration. Validated old against new on the same frames (fill top-edge movement in the
 rightmost visible columns 0.52 → 0.07 px mean, 25 → 0.44 px max; stroke 0.24 → 0.04, 18 → 0.16; last

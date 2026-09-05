@@ -6558,6 +6558,98 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             }
         }
 
+        // THE BOUNDARY IS TOTAL (0.2.12 review finding). `visibleRight` hides
+        // one bucket pitch, and `buckets` FLOORS `kFull` at 2 so the division
+        // that defines the pitch is safe — so a window of two entries or fewer
+        // reports one pitch as the WHOLE plot, and hiding it hid the plot: the
+        // boundary landed one column LEFT of the left edge, `paintHistory`
+        // clamped the clip's width to zero and the history vanished. That
+        // geometry is `want <= 2`, i.e. `blockSize >= 10 * sampleRate` — a host
+        // handing over ten seconds of audio in one block, which offline
+        // renders do. The rule is now `hidden = min (pitch, span / 2)`, and
+        // what is pinned here is that the two requirements it has to hold
+        // apart are BOTH met:
+        //
+        //   • the strip stays hidden wherever it can be: for every window of
+        //     three or more buckets the boundary is bit-for-bit the uncapped
+        //     `floor (right − pitch) − 1` — the cases above are all such
+        //     windows, and this sweep says so for every `kFull` up to the
+        //     ring's clamp on both shipped plots;
+        //   • the plot is never empty: `x0 < visibleRight` for every window
+        //     and every plot at least two columns wide.
+        //
+        // The cap is the same bound one bucket further out — `pitch == span / 2`
+        // EXACTLY when `kFull == 3` — so it engages only at `kFull == 2` and
+        // holds the boundary where a three-bucket window put it, which is what
+        // makes the sequence monotone with no step at the transition. A
+        // two-bucket window is the one geometry where the strip cannot be
+        // hidden at all (the newest vertex sweeps the whole span once per
+        // bucket, so every column carries the lead-out on some frame); the
+        // rendered pin for what it does instead is
+        // `testGrHistorySurvivesAHostBlockOfTenSeconds`.
+        {
+            const int widths[] = { 904, 604 };
+            for (const int cols : widths)
+            {
+                const float span = (float) cols - 1.0f;
+                const auto  say2 = [cols] (const char* what)
+                { return juce::String ("grBoundary: ") + what + " — " + juce::String (cols) + " columns"; };
+                bool neverEmpty = true, uncappedWhereItCan = true, capIsTheThreeBucketBound = true,
+                     monotoneInThePitch = true, keepsHalfThePlot = true;
+                int  kFull2 = -1, kFull3 = -1;
+                std::vector<std::pair<float, int>> byPitch;         // (pitch, boundary) over the sweep
+                for (const int64_t want : { (int64_t) 1, (int64_t) 2, (int64_t) 3, (int64_t) 4, (int64_t) 5,
+                                            (int64_t) 6, (int64_t) 8, (int64_t) 10, (int64_t) 16, (int64_t) 32,
+                                            (int64_t) 64, (int64_t) 128, (int64_t) 256, (int64_t) 512,
+                                            (int64_t) 903, (int64_t) 904, (int64_t) 905, (int64_t) 1024,
+                                            (int64_t) 1875, (int64_t) 4095 })
+                {
+                    const auto  b     = GrHistoryView::buckets (10 * want, want, cols);
+                    const int   vr    = GrHistoryView::visibleRight (b, 10.0f, (float) cols);
+                    const float pitch = span / (float) (b.kFull - 1);
+                    neverEmpty  &= vr > 10;
+                    byPitch.push_back ({ pitch, vr });
+                    // the strip is never more than half the span, plus the margin
+                    // column and the floor the truncation costs
+                    keepsHalfThePlot &= (float) (10 + cols - 1 - vr) <= 0.5f * span + 2.0f;
+                    if (b.kFull >= 3)
+                        uncappedWhereItCan &= vr == (int) std::floor (10.0f + span - pitch) - 1;
+                    else
+                        capIsTheThreeBucketBound &= vr == (int) std::floor (10.0f + span - 0.5f * span) - 1;
+                    if (b.kFull == 2) kFull2 = vr;
+                    if (b.kFull == 3) kFull3 = vr;
+                }
+                // Monotone in the PITCH, which is the variable the rule reads —
+                // not in `want`, whose pitch is a sawtooth: `stride` steps up
+                // at `want == cols + 1` and `kFull` halves under it (0.1.1
+                // decimation, untouched here).
+                for (const auto& a : byPitch)
+                    for (const auto& b2 : byPitch)
+                        if (a.first > b2.first)
+                            monotoneInThePitch &= a.second <= b2.second;
+                check (neverEmpty,               say2 ("the boundary is always right of the left edge — no window blanks the plot").toRawUTF8());
+                check (uncappedWhereItCan,       say2 ("a window of three or more buckets keeps the uncapped floor (right − pitch) − 1, unchanged").toRawUTF8());
+                check (capIsTheThreeBucketBound, say2 ("a two-bucket window is held at the half-span bound").toRawUTF8());
+                check (kFull2 > 0 && kFull2 == kFull3,
+                       say2 ("…which is exactly where a three-bucket window puts it, so there is no step at the transition").toRawUTF8());
+                check (monotoneInThePitch,       say2 ("a wider pitch never moves the boundary right — the strip grows with the bucket and then stops").toRawUTF8());
+                check (keepsHalfThePlot,         say2 ("the strip is never wider than half the span, whatever the window").toRawUTF8());
+            }
+            // The total-function guards, for plots no layout produces but a
+            // resize or a test can: two columns is the narrowest plot with a
+            // boundary inside it, and anything narrower has none to give and
+            // clips to nothing, as every version before 0.2.12 did.
+            const auto degenerate = GrHistoryView::buckets (20, 2, 4);       // kFull == 2, the worst case
+            bool narrowNeverEmpty = true;
+            for (const float w : { 2.0f, 3.0f, 4.0f, 5.0f, 10.0f, 100.0f })
+                narrowNeverEmpty &= GrHistoryView::visibleRight (degenerate, 10.0f, w) > 10;
+            check (narrowNeverEmpty,
+                   "grBoundary: every plot at least two columns wide keeps a column, whatever the window");
+            check (GrHistoryView::visibleRight (degenerate, 10.0f, 1.0f) == 10
+                       && GrHistoryView::visibleRight (degenerate, 10.0f, 0.0f) == 10,
+                   "grBoundary: a plot narrower than two columns clips to nothing rather than to a column it does not have");
+        }
+
         // THE NEWEST DRAWN VERTEX IS A COMPLETE BUCKET (0.2.11, the owner's
         // second report). 0.2.8 drew the still-collecting bucket live at the
         // edge, valued as a min over the trailing `stride` entries — a vertex
@@ -6713,6 +6805,81 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
 // The meter's half is pinned by RENDERING one rather than by re-reading its
 // source: the claim under test is that the two readouts agree, and a test that
 // quoted the constant twice would pass with the meter dividing by anything.
+// ---------------------------------------------------------------------------
+// A HOST BLOCK OF TEN SECONDS MUST NOT BLANK THE HISTORY (0.2.12 review
+// finding). `visibleRight` hides one bucket pitch, and `buckets` floors
+// `kFull` at 2, so a window holding two entries or fewer reports one pitch as
+// the whole plot: the uncapped boundary came out one column LEFT of the plot,
+// `paintHistory` clamped the clip's width to zero, and the trace and the level
+// fill both disappeared — measured blank on 100 % of frames on the real paint
+// path at 48 kHz / 480000 and 44.1 kHz / 441000, on both wells. `want <= 2` is
+// `blockSize >= 10 * sampleRate`, which offline renders reach.
+//
+// Pinned by RENDERING, because the defect was a clip rectangle rather than a
+// number: every static the arithmetic sweep in
+// `testGrHistoryWindowNeverAsksForTheHeadSlot` pins was green through the
+// whole blank. The geometry is a function of the PREPARED pair — the ring
+// stores it, `windowEntries` reads it — and not of the buffers the host then
+// hands over, so this prepares for ten seconds and delivers short blocks:
+// the same `want`, the same `kFull`, the same boundary, the same rendered
+// frame as a real ten-second block, at none of its cost.
+static void testGrHistorySurvivesAHostBlockOfTenSeconds()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 480000);
+    proc.prepareToPlay (48000.0, 480000);
+    check (GrHistoryView::windowEntries (48000.0, 480000) == 2,
+           "grBlank: (premise) ten seconds of audio a block leaves the 20 s window holding two entries");
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int blk = 0; blk < 3; ++blk)
+    {
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+                buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (blk * 512 + i)));
+        proc.processBlock (buf, midi);
+    }
+    check (proc.grHistory().available() == 3,
+           "grBlank: (premise) the ring carries the entries the view will draw");
+
+    GrHistoryView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    const int   cols = view.getWidth() - 2 * 10;                  // paintHistory's reduced (10, 8)
+    const float span = (float) cols - 1.0f;
+    const auto  nb   = GrHistoryView::buckets (proc.grHistory().available(),
+                                               GrHistoryView::windowEntries (48000.0, 480000), cols);
+    check (nb.kFull == 2,
+           "grBlank: (premise) …and the two-entry window floors kFull at 2, one pitch spanning the whole plot");
+    const int visibleRight = GrHistoryView::visibleRight (nb, 10.0f, (float) cols);
+    check (visibleRight == (int) std::floor (10.0f + span - 0.5f * span) - 1 && visibleRight > 10,
+           "grBlank: the boundary is held at the half-span bound, inside the plot rather than left of it");
+
+    const auto snap = view.createComponentSnapshot (view.getLocalBounds(), false);
+    // The GR|SPEC chip is accent too and `paint` draws it OUTSIDE the history's
+    // clip (deliberately — the way back to the spectrum must survive an empty
+    // ring), so it is excluded here: counting it would have let a plot clipped
+    // to one column pass for a drawn history.
+    const auto chip = abgui::graph_switch::bounds (view.getWidth(), view.getHeight());
+    int drawn = 0, beyond = 0;
+    for (int y = 0; y < snap.getHeight(); ++y)
+        for (int x = 0; x < snap.getWidth(); ++x)
+        {
+            if (chip.contains (x, y)) continue;
+            const auto p = snap.getPixelAt (x, y);
+            if (p.getRed() > 128 && p.getGreen() > 100)           // the accent trace
+            {
+                ++drawn;
+                if (x >= visibleRight && x < 10 + cols) ++beyond;
+            }
+        }
+    check (drawn > 100,
+           "grBlank: a ten-second host block still draws the GR history — the clip keeps the plot's left half instead of collapsing to nothing");
+    check (beyond == 0,
+           "grBlank: …and still shows nothing between the boundary and the plot edge");
+}
+
 static void testGrHistoryAndTheMeterLanesShareOneReductionSpan()
 {
     const float y0 = 8.0f, h = 120.0f;
@@ -8535,6 +8702,7 @@ int main (int argc, char** argv)
         testTheGraphWellViewsOnlyClaimTheirModeChips();
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
+        testGrHistorySurvivesAHostBlockOfTenSeconds();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();

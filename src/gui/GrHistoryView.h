@@ -396,13 +396,64 @@ public:
     // which is every block up to 1024 samples at every rate from 44.1 kHz
     // and 2048 from 48 kHz up, on either well (44.1 kHz / 2048 on the Simple well is 5;
     // 4096-sample blocks lose up to three more). The lead-out itself stays in
-    // the path, wholly behind the clip (`paintHistory` says why). `kFull ≥ 2`
-    // (`buckets`), so the pitch is finite.
+    // the path, wholly behind the clip (`paintHistory` says why).
+    //
+    // That is the bound for every window of THREE OR MORE buckets, which is
+    // every configuration a real-time host presents. `buckets` floors `kFull`
+    // at 2, and a two-bucket window is the one geometry where the bound above
+    // cannot be honoured at all — the next block states the cap that answers
+    // it and what it costs.
+    // WHAT THE STRIP MAY COST (0.2.12 review): `pitch` is `span / (kFull − 1)`
+    // and `buckets` FLOORS `kFull` at 2 so the division is safe — so a window
+    // holding two entries or fewer reports one pitch as the WHOLE span, and
+    // `right − pitch` is then the left edge itself. Hiding a pitch there hid
+    // the panel: `floor (right − pitch) − 1` came out one column LEFT of the
+    // plot, the clip's width clamped to zero, and the GR history disappeared
+    // — measured blank on 100 % of frames at 48 kHz / 480000 and
+    // 44.1 kHz / 441000 on both wells. That geometry is `want ≤ 2`, which is
+    // `blockSize ≥ 10 · sampleRate`: a host delivering ten seconds of audio in
+    // one block, which offline renders do.
+    //
+    // The cap is `span / 2`, and it is not a rescue clamp — it is the same
+    // bound one bucket further out. `pitch = span / 2` EXACTLY when
+    // `kFull == 3`, so `min (pitch, span / 2)` leaves every geometry with
+    // three or more buckets bit-for-bit as it was (the shipped configurations,
+    // and every block shorter than `20 · sampleRate / 3` — 6.67 s at 48 kHz —
+    // are all far above that), and it holds the boundary of a two-bucket
+    // window where a three-bucket window would have put it: the plot's
+    // mid-point. The boundary is therefore continuous and monotone in the
+    // pitch across the whole block-size range, with no step at the two-bucket
+    // transition, which a bare "if (kFull == 2)" special case could not
+    // promise.
+    //
+    // WHAT A TWO-BUCKET WINDOW GIVES UP, stated rather than hidden: with
+    // `kFull == 2` the newest drawn vertex sweeps the ENTIRE span once per
+    // bucket (`bucketX`: `right − pitch ≤ x(kLast) ≤ right` with
+    // `pitch == span`), so every column can carry the lead-out on some frame
+    // and NO non-empty frame-independent boundary can exclude it. The two
+    // requirements — hide the strip, show the history — are then genuinely
+    // exclusive, and showing the history wins: a blank panel reports nothing
+    // at all, and the fast right-edge artefact this bound exists to hide does
+    // not exist at that geometry (one bucket completes every ten seconds, not
+    // thirty times a second). A frame-DEPENDENT boundary would satisfy both
+    // on paper and is rejected on sight: a clip that tracked `x(kLast)` would
+    // move the plot's right edge at bucket rate, which is the class of defect
+    // this whole round removes.
+    //
+    // The two clamps below are the total-function guards, both unreachable at
+    // the shipped 904/604-column plots: a plot under two columns wide has no
+    // boundary to give (`span < 1`, answered with an empty clip, as every
+    // version before this one did for such a panel), and one under five keeps
+    // its first column rather than losing it to the join margin.
     static int visibleRight (const Buckets& b, float x0, float width) noexcept
     {
-        const float right = x0 + (width - 1.0f);
-        const float pitch = (width - 1.0f) / (float) (b.kFull - 1);
-        return (int) std::floor (right - pitch) - 1;
+        const float span = width - 1.0f;                // the anchor span, `right − x0`
+        if (span < 1.0f)
+            return (int) std::floor (x0);               // no plot: an empty clip, as before
+        const float pitch  = span / (float) (b.kFull - 1);
+        const float hidden = juce::jmin (pitch, 0.5f * span);
+        return juce::jmax ((int) std::floor (x0) + 1,
+                           (int) std::floor (x0 + span - hidden) - 1);
     }
 
     // The nominal seconds one ring entry spans: the prepared block over the

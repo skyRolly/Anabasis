@@ -72,7 +72,10 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   every block size up to 1024 samples at every rate from 44.1 kHz, and up to 2048 from 48 kHz up,
   on either well;
   five at 44.1 kHz / 2048 on the Simple well — and what reaches that boundary is always a segment
-  between two complete buckets. Measured on the validation harness against 0.2.11 on the same
+  between two complete buckets. The strip is never wider than half the plot, which matters only
+  where one bucket would otherwise span all of it: a host handing over ten seconds of audio in a
+  block leaves the 20-second window holding two points, and there the plot keeps its left half
+  rather than hiding everything. Measured on the validation harness against 0.2.11 on the same
   frames (real processor, real paint path, 8 s per configuration, on five configurations: the Simple
   well at 48 kHz / 512, 48 kHz / 1024, 44.1 kHz / 512 and 44.1 kHz / 1024, and the Advanced well at
   48 kHz / 512): in the rightmost 24 visible
