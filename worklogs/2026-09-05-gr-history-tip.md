@@ -663,3 +663,104 @@ oldest point before this round. It is now true without exception, so the sentenc
 - The saturated window (blocks of about 234 samples or fewer at 48 kHz) holds one bucket fewer than
   before. Nothing else moved there: same boundary, same pitch to a thousandth of a pixel.
 - OQ-017 (host delivery) is untouched, as instructed.
+
+## 10 — 0.2.12 layout: the graph moved right so the panel keeps its full width (2026-09-05)
+
+### 10.1 The geometry, restated and checked against the code
+
+The owner's call: the right-edge boundary was taking its columns out of the PANEL, so the GR
+history showed four pixels less than the spectrum view of the same well. The graph is to be moved
+right by that amount instead — the boundary staying where it is in DATA terms, the freed columns on
+the left filled with earlier history, nothing stretched.
+
+Verified against the code before changing anything:
+
+| | before | after |
+|---|---|---|
+| plot area, both views (`reduced (10, 8)` on identical bounds) | x ∈ [10, 914) = 904 columns [604] | unchanged |
+| GR anchor `right` / pitch | 913 / 1.4471 px [613 / 1.2885] | 917 / 1.4471 [617 / 1.2885] |
+| GR boundary (`visibleRight`) | 910 [610] | 914 [614] — the plot's own right edge |
+| GR trace, painted columns (measured) | 10 … 909 = **900** [10 … 609 = 600] | 10 … 913 = **904** [10 … 613 = 604] |
+| spectrum curve, painted columns (measured) | 10 … 914 = 905 [10 … 614 = 605] | unchanged |
+
+`PluginEditor` gives both views the SAME rectangle in both modes (`strip`, `well`) and both inset it
+by `reduced (10, 8)`, so the plot area is shared; the spectrum maps its curve onto
+`area.getX() + t · area.getWidth()`, t ∈ [0, 1].
+
+### 10.2 The change
+
+- `paintHistory` draws in a FRAME whose origin is the plot area's plus `hiddenColumns` — the columns
+  the boundary hides — and whose WIDTH is the plot area's own. Same width ⇒ same pitch ⇒ the trace
+  is translated, not scaled; `bucketX` is linear in its `x0`, so every vertex moves by exactly the
+  shift and nothing else about it changes.
+- The boundary is read in that frame (`visibleRight (nb, ox, width)`), which by the definition of
+  the shift is `area.getRight()`: the strip it hides now lies outside the plot instead of inside it.
+- `buckets` covers `leadBuckets = ceil (hidden / pitch)` more buckets — 3 on the Simple well, 4 on
+  the Advanced — so the trace still crosses the panel's left edge and the freed columns carry
+  EARLIER history at the same pitch. The window holds `lead · stride` entries more than the nominal
+  twenty seconds: 9 entries (96 ms) Simple, 16 (168 ms) Advanced.
+- `kFull` — the pitch divisor, and so the pitch itself — is untouched; its ring cap now reserves the
+  four buckets `leadBuckets` can ask for (`kMaxLead`, which the arithmetic bounds: `hidden` is at
+  most `pitch + 3` and `pitch ≥ 1` for every geometry `buckets` produces).
+
+### 10.3 Validation, against `fea3740` on identical frames
+
+**The render is a pure translation.** Per-column pixel hashes, settled 26-second runs, comparing
+each column against the previous build's column four to its left:
+
+| configuration | columns compared | identical | differing |
+|---|---|---|---|
+| 48 kHz / 512 Simple | [14, 914) × 1560 frames | 1 401 969 | 2 031 (0.14 %) |
+| 48 kHz / 512 Advanced | [14, 614) × 1560 | 932 479 | 3 521 |
+| 48 kHz / 1024 Simple | [14, 914) × 1560 | 1 402 033 | 1 967 |
+| 44.1 kHz / 512 Simple | [14, 914) × 1560 | 1 401 795 | 2 205 |
+| 48 kHz / 512, still filling | [14, 914) × 480 | 431 516 | 484 |
+| 48 kHz / 480000 (two-bucket) | [464, 914) × 528, shift 454 px | 237 065 | 535 |
+| …Advanced | [314, 614) × 528, shift 304 px | 157 864 | 536 |
+
+Geometrically — the same comparison on the per-column fill height and stroke centroid rather than
+on pixel identity — the difference from a pure four-pixel translation is **0.00004 px mean**
+(Simple) and 0.00026 px (Advanced), and **every** difference above half a pixel is at column 14, on
+32 and 73 frames of 1560: that column was the previous build's clipped left END of the trace and is
+now an interior column with the trace continuing past it, which is exactly the point of the change.
+The rest are sub-pixel anti-aliasing (233 and 547 column-samples between 0.01 and 0.5 px, of 1.4 M
+and 0.94 M).
+
+**Nothing previously hidden became visible.** The trace's painted columns end at 913 [613], the
+plot's last column; nothing is drawn at or beyond `area.getRight()` on any frame, in any
+configuration, and the content of every visible column is the previous build's content from four
+columns to its left — all of which was already inside the previous build's own boundary.
+
+**The other invariants hold.** Drawn-bucket value changes: **0** in all seven configurations of the
+§9 harness. Right-edge stability (translation-compensated residual over the rightmost 24 visible
+columns, five configurations): **byte-identical** to the pre-shift run. Large host blocks: 0 blank
+frames, the trace now filling the panel there too (painted columns 10…913 at 48 kHz / 480000).
+Left-edge residual, which the shift could only have worsened, is slightly BETTER in every
+configuration — the leftmost visible columns are interior to the trace now rather than its clipped
+end: fill top edge 0.090 → 0.073 px mean, max 2.35 → 1.51 (Simple); 0.266 → 0.178, max 12.42 → 3.88
+(Advanced); the stride-1 controls 0.080 → 0.061 and 0.259 → 0.176.
+
+### 10.4 Tests and mutants
+
+Six checks added or restated (state suite 1078 → 1085): the settled-window and walk pins now read
+the geometry in the DRAWING frame and assert the oldest drawn vertex is at or beyond the PANEL's
+left edge with the trace covering the panel's whole width; a new pin asserts the frame is a
+TRANSLATION (one pixel of origin moves a vertex exactly one pixel, at an unchanged pitch); the
+window law pins `window == (kFull + lead) · stride`; and the two rendered pins now assert the trace
+reaches the plot's LAST column at every fill and that nothing is drawn beyond the plot.
+
+| Mutant | Kills (of 1085) |
+|---|---|
+| **no shift** — the frame back on the panel's origin | 2: the trace no longer reaches the plot's last column |
+| **no lead buckets** — `cover = kFull` | 22: every settled-window, window-law and oldest-vertex pin, plus three race pins |
+| **one lead bucket short** | 22: the same — the coverage is pinned exactly, not loosely |
+| **shift one pixel too far** | 3: content beyond the plot's right edge, in both rendered pins |
+| **clip read in the panel's frame** | 2: the trace no longer reaches the plot's last column |
+
+### 10.5 What is left
+
+The spectrum's curve is mapped onto `[x0, x0 + width]` and its 1.3 px stroke therefore lights one
+column BEYOND the plot area's last (914 [614], the first margin column), where the GR history fills
+the area exactly (10…913 [10…613]). The two graphs now cover the same 904 [604] plot columns; that
+one column of spectrum stroke spilling onto the margin is the spectrum's own endpoint convention,
+predates this change, and was left alone — the spectrum view was not to be touched.

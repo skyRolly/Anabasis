@@ -239,11 +239,22 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     juce::Path wave, gr;
     bool started = false;
     float lastX = area.getX(), lastWy = 0.0f, lastGy = 0.0f;
+    // THE DRAWING FRAME (0.2.13): the plot area's own WIDTH, moved right by
+    // the columns `visibleRight` hides. The boundary then lands on the plot's
+    // own right edge, so the panel shows its full plot width — the width the
+    // spectrum view of the same well shows, the two having identical bounds
+    // and the same inset — while the strip that boundary exists to hide moves
+    // off the panel entirely. Same width means the same pitch: every vertex is
+    // MOVED `shift` px right, not scaled, and the columns that frees at the
+    // left are filled by the older buckets `buckets` now covers (`leadBuckets`).
+    const float shift = (float) hiddenColumns (nb.kFull, cols);
+    const float ox    = area.getX() + shift;
+
     // The anchor: the newest COMPLETE bucket lands here the frame it
-    // completes (`bucketX`). It is the left boundary of the last plot column;
-    // the lead-out below runs on past it to the plot edge, and since 0.2.12
-    // the whole of that strip lies right of `visibleRight`, unseen.
-    const float right = area.getX() + area.getWidth() - 1.0f;
+    // completes (`bucketX`). It is the left boundary of the frame's last
+    // column; the lead-out below runs on past it to the frame's edge, and
+    // since 0.2.12 the whole of that strip lies right of the boundary, unseen.
+    const float right = ox + area.getWidth() - 1.0f;
 
     // Clip to the plot area's COLUMNS (the rows keep their overhang: the
     // 1.4 px stroke at zero reduction straddles `area.getY()` and must go on
@@ -261,7 +272,9 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // report. The header carries the bound's derivation from `bucketX`; this
     // is the ONLY place it is read, and the left edge of the rectangle is
     // what it always was.
-    const int clipRight = visibleRight (nb, area.getX(), area.getWidth());
+    // The boundary, read in the frame the trace is drawn in — which puts it
+    // on `area.getRight()`, by the definition of `shift`.
+    const int clipRight = visibleRight (nb, ox, area.getWidth());
     const juce::Graphics::ScopedSaveState clipState (g);
     g.reduceClipRegion (juce::Rectangle<float> (area.getX(), 0.0f,
                                                 juce::jmax (0.0f, (float) clipRight - area.getX()),
@@ -314,7 +327,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         // the zero line runs to the anchor and the lead-out carries it on to
         // the edge, so a just-reset ring shows the honest zero line across
         // the whole panel rather than nothing.
-        const float xFirst = nb.count > 0 ? bucketX (nb, kFirstDrawn, area.getX(), area.getWidth())
+        const float xFirst = nb.count > 0 ? bucketX (nb, kFirstDrawn, ox, area.getWidth())
                                           : right;
         const float xZero  = juce::jmin (area.getX(), xFirst);
         wave.startNewSubPath (xZero, zeroWy);
@@ -348,7 +361,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
             peak = juce::jmax (peak, entry.peak);
             grDb = juce::jmin (grDb, entry.grDb);
         }
-        const float x  = bucketX (nb, k, area.getX(), area.getWidth());
+        const float x  = bucketX (nb, k, ox, area.getWidth());
         const float wh = juce::jmax (0.5f, area.getHeight() * juce::jlimit (0.0f, 1.0f, peak));
         const float wy = area.getBottom() - wh;
         // 0.1.6 item 1: `grY`, which spends the WHOLE panel height on
@@ -429,7 +442,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // zero line would stop at `right`, both beyond `visibleRight` — and it
     // stays in the path only because removing it is not this fix, which
     // moves the clip and nothing else.
-    const float edge = area.getRight();
+    const float edge = ox + area.getWidth();
     if (lastX < edge - 0.01f)
     {
         wave.lineTo (edge, lastWy);

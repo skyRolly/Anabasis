@@ -68,11 +68,12 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
 
 ### Fixed
 - **The right edge of the GR history no longer shows the strip that is still being generated.** The
-  trace and the level fill end `ceil (pitch) + 2` columns short of the plot edge — four columns for
-  every block size up to 1024 samples at every rate from 44.1 kHz, and up to 2048 from 48 kHz up,
-  on either well;
+  trace and the level fill stop `ceil (pitch) + 2` columns short of where the newest bucket is
+  anchored — four columns for every block size up to 1024 samples at every rate from 44.1 kHz, and
+  up to 2048 from 48 kHz up, on either well;
   five at 44.1 kHz / 2048 on the Simple well — and what reaches that boundary is always a segment
-  between two complete buckets. The strip is never wider than half the plot, which matters only
+  between two complete buckets. The graph is drawn that many columns further right, so the strip
+  falls outside the plot rather than inside it and the history still fills the panel's full width. The strip is never wider than half the plot, which matters only
   where one bucket would otherwise span all of it: a host handing over ten seconds of audio in a
   block leaves the 20-second window holding two points, and there the plot keeps its left half
   rather than hiding everything. Measured on the validation harness against 0.2.11 on the same
@@ -107,10 +108,15 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   point fewer, so that the buffer can hold every point's blocks. Evidence: this release. [Verified]
 
 ### Changed
-- **The plot's right margin is wider by those columns** — 14 px against the 10 px on the left at
-  the shipped rates, and against the 10 px the spectrum view of the same well keeps, so the two
-  views' right-hand ends now differ by four pixels when the GR|SPEC pill is toggled — because the
-  boundary hides columns rather than moving the trace. The 0.2.11
+- **The history graph is drawn a few columns further right, and shows that much more of the past.**
+  The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR
+  history four pixels narrower than the spectrum view of the same well; instead the whole graph is
+  placed four columns further right (five where the strip is five), so the boundary lands on the
+  plot's own right edge and the plot keeps its full width — 904 columns on the Simple well, 604 on
+  the Advanced, the same columns the spectrum draws into. The columns that frees on the left are
+  filled with earlier history at the same pitch — the graph is moved, not stretched, and shows
+  96 ms more of the past on the Simple well (168 ms on the Advanced) than the nominal twenty
+  seconds. The 0.2.11
   entry's "the last pixel column of the GR plot no longer blinks" now holds for the last VISIBLE
   column; the plot's own last columns are no longer drawn at all. Evidence: this release. [Verified]
 

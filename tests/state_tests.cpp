@@ -6368,14 +6368,33 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // because every case's `want * 4` is a whole number of buckets, so
             // the newest bucket is complete — the walk below covers the heads
             // where it is not, and the vertex before it is drawn instead.
+            //
+            // Read in the DRAWING FRAME (0.2.13): `paintHistory` places the
+            // trace with its origin `hiddenColumns` right of the panel's, so
+            // the boundary lands on the panel's own right edge and the plot
+            // shows its full width. The frame keeps the panel's WIDTH, so the
+            // pitch is untouched and every vertex is simply that much further
+            // right; the columns that frees on the left are filled by the
+            // `leadBuckets` older buckets the window now covers, which is why
+            // the oldest drawn vertex is at or beyond the PANEL's left edge
+            // (0) rather than within a pitch of it.
+            const float sh = (float) GrHistoryView::hiddenColumns (b.kFull, c.cols);
+            const auto  atF = [&b, &c, sh] (int64_t k)
+            { return GrHistoryView::bucketX (b, k, sh, (float) c.cols); };
             const auto m2 = say ("a settled window spans the panel at the fixed pitch");
             check (b.kLast == b.kHead
-                   && std::abs (GrHistoryView::bucketX (b, b.kLast, 0.0f, (float) c.cols)
-                             - (float) (c.cols - 1)) < 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) < 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst, 0.0f, (float) c.cols) > -pitch - 1.0e-3f
-                   && GrHistoryView::bucketX (b, b.kFirst + 1, 0.0f, (float) c.cols) > -1.0e-3f,
+                   && std::abs (atF (b.kLast) - (sh + (float) (c.cols - 1))) < 1.0e-3f
+                   && atF (b.kFirst) < 1.0e-3f
+                   && atF (b.kFirst) > -pitch * (float) (GrHistoryView::leadBuckets (b.kFull, c.cols) + 1) - 1.0e-3f
+                   && atF (b.kLast) - atF (b.kFirst) >= (float) (c.cols - 1) + sh - 1.0e-3f,
                    m2.toRawUTF8());
+            // …and the frame is a TRANSLATION: the same call one pixel further
+            // right returns exactly one pixel further right, at the same pitch.
+            const auto m2b = say ("the drawing frame moves the trace and does not scale it");
+            check (std::abs ((GrHistoryView::bucketX (b, b.kLast, sh + 1.0f, (float) c.cols)
+                              - GrHistoryView::bucketX (b, b.kLast, sh, (float) c.cols)) - 1.0f) < 1.0e-4f
+                   && std::abs ((atF (b.kFirst + 1) - atF (b.kFirst)) - pitch) < 1.0e-3f,
+                   m2b.toRawUTF8());
             // …reading one window of entries: the READ window is `want`
             // rounded to whole buckets — under a bucket more than the 20 s,
             // and under a bucket LESS only where the ring cannot hold the
@@ -6388,8 +6407,10 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             // mid-bucket, and reading the oldest bucket from THERE let its
             // value change while it was still drawn.
             const auto m3 = say ("…reading one bucket-aligned window, from the oldest drawn bucket's own start, inside the ring");
-            check (b.window == b.kFull * b.stride
-                       && b.window - want < b.stride && want - b.window <= b.stride
+            const int64_t lead  = GrHistoryView::leadBuckets (b.kFull, c.cols);
+            const int64_t cover = b.kFull + lead;
+            check (b.window == cover * b.stride
+                       && b.window - want < (lead + 1) * b.stride && want - b.window <= b.stride
                        && b.first == b.kFirst * b.stride
                        && b.first <= head - b.window
                        && head - b.first <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1,
@@ -6497,12 +6518,21 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                     // frame sits it one entry-pitch further out), and the
                     // vertex after it is inside — the crossing segment.
                     {
+                        // …in the DRAWING FRAME (0.2.13), whose origin is
+                        // `hiddenColumns` right of the panel's: the oldest
+                        // drawn vertex is at or beyond the PANEL's left edge
+                        // at both ends of the phase, and the trace covers the
+                        // panel's whole width from there.
+                        const float shift = (float) GrHistoryView::hiddenColumns (now.kFull, c.cols);
+                        const auto  atS   = [&c, shift] (const GrHistoryView::Buckets& bb, int64_t k)
+                        { return GrHistoryView::bucketX (bb, k, shift, (float) c.cols); };
                         const auto full1 = GrHistoryView::buckets (h, want, c.cols, 1.0);
-                        oldestOffEdge &= at (now, now.kFirst) < 1.0e-3f
-                                      && at (now, now.kFirst) > -pitch - 1.0e-3f
-                                      && at (full1, full1.kFirst) < 1.0e-3f
-                                      && at (full1, full1.kFirst) > -pitch - perEntry - 1.0e-3f
-                                      && at (now, now.kFirst + 1) > -1.0e-3f;
+                        const float reach = pitch * (float) (GrHistoryView::leadBuckets (now.kFull, c.cols) + 1);
+                        oldestOffEdge &= atS (now, now.kFirst) < 1.0e-3f
+                                      && atS (now, now.kFirst) > -reach - 1.0e-3f
+                                      && atS (full1, full1.kFirst) < 1.0e-3f
+                                      && atS (full1, full1.kFirst) > -reach - perEntry - 1.0e-3f
+                                      && atS (now, now.kLast) >= shift + (float) (c.cols - 1) - pitch - 1.0e-3f;
                     }
                     // THE VISIBLE BOUNDARY (0.2.12) lies left of everything
                     // the lead-out can touch: the newest drawn vertex sits at
@@ -6948,6 +6978,11 @@ static void testGrHistorySurvivesAHostBlockOfTenSeconds()
     const int visibleRight = GrHistoryView::visibleRight (nb, 10.0f, (float) cols);
     check (visibleRight == (int) std::floor (10.0f + span - 0.5f * span) - 1 && visibleRight > 10,
            "grBlank: the boundary is held at the half-span bound, inside the plot rather than left of it");
+    // …and the drawing frame carries that boundary onto the plot's right edge,
+    // as it does at every other geometry (0.2.13).
+    const float shift = (float) GrHistoryView::hiddenColumns (nb.kFull, cols);
+    check (GrHistoryView::visibleRight (nb, 10.0f + shift, (float) cols) == 10 + cols,
+           "grBlank: …and the drawing frame puts it on the plot's right edge, so the panel still shows its full width");
 
     const auto snap = view.createComponentSnapshot (view.getLocalBounds(), false);
     // The GR|SPEC chip is accent too and `paint` draws it OUTSIDE the history's
@@ -6964,13 +6999,13 @@ static void testGrHistorySurvivesAHostBlockOfTenSeconds()
             if (p.getRed() > 128 && p.getGreen() > 100)           // the accent trace
             {
                 ++drawn;
-                if (x >= visibleRight && x < 10 + cols) ++beyond;
+                if (x >= 10 + cols) ++beyond;                    // nothing beyond the plot
             }
         }
     check (drawn > 100,
            "grBlank: a ten-second host block still draws the GR history — the clip keeps the plot's left half instead of collapsing to nothing");
     check (beyond == 0,
-           "grBlank: …and still shows nothing between the boundary and the plot edge");
+           "grBlank: …and still draws nothing beyond the plot's own right edge");
 }
 
 static void testGrHistoryAndTheMeterLanesShareOneReductionSpan()
@@ -7587,12 +7622,19 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
             // floor (right − pitch) − 1 with `right` the integer anchor `x0 + cols − 1`:
             // `ceil (pitch) + 2` columns hidden, the lead-out's start at least one
             // whole column beyond the last visible one at both ends of the phase
+            // …and in the DRAWING FRAME (0.2.13), which is the panel's own
+            // origin plus the columns the boundary hides, that boundary is the
+            // plot's right edge itself: the trace fills the panel's full plot
+            // width and the strip the boundary hides has moved off the panel.
+            const float shift = (float) GrHistoryView::hiddenColumns (nb.kFull, cols);
+            const int   drawnRight = GrHistoryView::visibleRight (nb, 10.0f + shift, (float) cols);
             check (visibleRight == 10 + (cols - 1) - (int) std::ceil (pitch) - 1
                    && visibleRight == (int) std::floor (10.0f + (float) (cols - 1) - pitch) - 1
-                   && GrHistoryView::bucketX (nb, nb.kLast, 10.0f, (float) cols) >= (float) (visibleRight + 1) - 1.0e-3f
+                   && drawnRight == 10 + cols
+                   && GrHistoryView::bucketX (nb, nb.kLast, 10.0f + shift, (float) cols) >= (float) (drawnRight + 1) - 1.0e-3f
                    && GrHistoryView::bucketX (GrHistoryView::buckets (proc.grHistory().available(), want, cols, 1.0),
-                                              nb.kLast, 10.0f, (float) cols) >= (float) (visibleRight + 1) - 1.0e-3f,
-                   "grPaint: visibleRight is floor (right − pitch) − 1, and the newest drawn vertex never sits left of the column after it");
+                                              nb.kLast, 10.0f + shift, (float) cols) >= (float) (drawnRight + 1) - 1.0e-3f,
+                   "grPaint: visibleRight is floor (right − pitch) − 1, it lands on the plot's right edge in the drawing frame, and the newest drawn vertex never sits left of the column after it");
             {
                 const auto simple   = GrHistoryView::buckets (4 * want, want, 904);
                 const auto advanced = GrHistoryView::buckets (4 * want, want, 604);
@@ -7614,21 +7656,21 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                 int lit = 0, spilled = 0;
                 for (int y = 0; y < snap.getHeight(); ++y)
                 {
-                    const auto p = snap.getPixelAt (visibleRight - 1, y);
+                    const auto p = snap.getPixelAt (10 + cols - 1, y);       // the plot's last column
                     if (p.getRed() > 128 && p.getGreen() > 100) ++lit;
                     // the outermost margin column is the untouched background this
-                    // snapshot paints on; every clipped column must match it row for row
+                    // snapshot paints on; every column beyond the plot must match it
                     const auto bg = snap.getPixelAt (snap.getWidth() - 1, y);
-                    for (int x = visibleRight; x < 10 + cols; ++x)
+                    for (int x = 10 + cols; x < snap.getWidth(); ++x)
                         if (snap.getPixelAt (x, y) != bg) ++spilled;
                 }
                 litAtEveryFill   &= lit > 0;
                 clearAtEveryFill &= spilled == 0;
             }
             check (litAtEveryFill,
-                   "grPaint: the trace reaches the last VISIBLE column at every fill of the newest bucket — nothing blinks at the boundary");
+                   "grPaint: the trace reaches the plot's last column at every fill of the newest bucket — nothing blinks at the boundary");
             check (clearAtEveryFill,
-                   "grPaint: …and no column from visibleRight to the plot edge carries a pixel at any fill — the lead-out strip is clipped, not moved");
+                   "grPaint: …and nothing is drawn beyond the plot at any fill — the strip the boundary hides sits outside the panel, clipped");
         }
     }
 }

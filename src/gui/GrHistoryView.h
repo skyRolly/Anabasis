@@ -198,7 +198,7 @@ public:
         // `firstDrawn`, which is where safety is enforced in any case.
         const int64_t kRing  = ((int64_t) anabasis::GrHistoryBuffer::kSize - stride) / stride;
         const int64_t kFull  = juce::jmax ((int64_t) 2,
-                                           juce::jmin ((want + stride - 1) / stride, kRing));
+                                           juce::jmin ((want + stride - 1) / stride, kRing - kMaxLead));
         // THE READ WINDOW IS BUCKET-ALIGNED (0.2.8, the review's left-edge
         // finding): `want` rounded UP to `kFull` whole buckets — at most
         // `stride − 1` entries older than the 20 s, all of them off the
@@ -235,12 +235,27 @@ public:
         // (32 ms at 48 kHz / 512) past the nominal window, every one of them
         // off the left edge: this item's "read and never shown".
         //
+        // THE PANEL COVERS MORE BUCKETS THAN THE PITCH DIVIDES (0.2.13).
+        // `kFull` is the pitch divisor — the buckets ONE window renders — and
+        // it stays exactly what it was, so the pitch, the bucket boundaries
+        // and every value are untouched. What is new is that `paintHistory`
+        // draws its frame `hiddenColumns` further right, so the boundary lands
+        // on the plot's own right edge and the panel's leftmost columns come
+        // free; `leadBuckets` more buckets of OLDER history fill them, at the
+        // same pitch. `cover` is therefore what the window must hold and how
+        // far back `kFirst` may reach — the display shows `lead · stride`
+        // entries more than the nominal twenty seconds (96 ms at
+        // 48 kHz / 512), all of it inside the panel now rather than off its
+        // left edge.
+        //
         // RING SAFETY, the same argument as `windowEntries`: the alignment
         // reaches at most `stride − 1` entries below `head − window`, and
-        // `kFull`'s cap above is exactly the room for it, so `head − first`
-        // stays inside the ring's one safe lap at every head. What a LAPPING
+        // `kFull`'s cap above — `kRing` less the four buckets `leadBuckets`
+        // can ask for — is exactly the room for both, so `head − first` stays
+        // inside the ring's one safe lap at every head. What a LAPPING
         // producer can still take is `firstDrawn`'s question, not this one.
-        const int64_t window = kFull * stride;
+        const int64_t cover  = juce::jmin (kFull + leadBuckets (kFull, (int) c), kRing);
+        const int64_t window = cover * stride;
         const int64_t start  = juce::jmax ((int64_t) 0, head - window);
         // Two lower bounds on the oldest bucket, both needed: the window
         // bound (the bucket HOLDING the window's start, whose own earlier
@@ -248,7 +263,7 @@ public:
         // bucket just OFF the panel's left edge, one beyond the `kFull` that
         // fit at the fixed pitch, so its segment crosses the edge). Never
         // past `kHead`.
-        const int64_t kFirst = juce::jmax (juce::jmin (kHead, start / stride), kHead - kFull);
+        const int64_t kFirst = juce::jmax (juce::jmin (kHead, start / stride), kHead - cover);
         const int64_t first  = kFirst * stride;
         // ≥ 1 even for the `head == 0` frame `paintHistory` never draws, so the
         // range the struct states is true of every value it can hold.
@@ -431,12 +446,15 @@ public:
     //
     // ONLY the clip reads this. `right`, `pitch`, `bucketX`, the read window
     // and the left edge are untouched, so every column that is still shown
-    // is pixel-for-pixel what 0.2.11 showed there; the plot gives up
-    // `ceil (pitch) + 2` columns on the right — 4 for every pitch up to 2 px,
-    // which is every block up to 1024 samples at every rate from 44.1 kHz
-    // and 2048 from 48 kHz up, on either well (44.1 kHz / 2048 on the Simple well is 5;
-    // 4096-sample blocks lose up to three more). The lead-out itself stays in
-    // the path, wholly behind the clip (`paintHistory` says why).
+    // is pixel-for-pixel what 0.2.11 showed there. The strip is
+    // `ceil (pitch) + 2` columns wide — 4 for every pitch up to 2 px, which is
+    // every block up to 1024 samples at every rate from 44.1 kHz and 2048 from
+    // 48 kHz up, on either well (44.1 kHz / 2048 on the Simple well is 5;
+    // 4096-sample blocks add up to three more) — and since 0.2.13 the PANEL
+    // does not pay for it: `paintHistory` draws its frame that many columns
+    // further right, so the strip falls outside the plot and the plot shows
+    // its full width (`hiddenColumns`). The lead-out itself stays in the path,
+    // wholly behind the clip (`paintHistory` says why).
     //
     // That is the bound for every window of THREE OR MORE buckets, which is
     // every configuration a real-time host presents. `buckets` floors `kFull`
@@ -485,15 +503,58 @@ public:
     // boundary to give (`span < 1`, answered with an empty clip, as every
     // version before this one did for such a panel), and one under five keeps
     // its first column rather than losing it to the join margin.
-    static int visibleRight (const Buckets& b, float x0, float width) noexcept
+    static int visibleRight (int64_t kFull, float x0, float width) noexcept
     {
         const float span = width - 1.0f;                // the anchor span, `right − x0`
         if (span < 1.0f)
             return (int) std::floor (x0);               // no plot: an empty clip, as before
-        const float pitch  = span / (float) (b.kFull - 1);
+        const float pitch  = span / (float) (kFull - 1);
         const float hidden = juce::jmin (pitch, 0.5f * span);
         return juce::jmax ((int) std::floor (x0) + 1,
                            (int) std::floor (x0 + span - hidden) - 1);
+    }
+
+    // The same boundary for a frame's own buckets. `buckets` needs the form
+    // above while it is still building them, which is the only reason there
+    // are two.
+    static int visibleRight (const Buckets& b, float x0, float width) noexcept
+    {
+        return visibleRight (b.kFull, x0, width);
+    }
+
+    // THE COLUMNS THE BOUNDARY HIDES, and so how far right the trace is drawn
+    // (0.2.13). `paintHistory` moves its whole drawing frame right by this
+    // much, which lands the boundary on the plot's own right edge and leaves
+    // the panel showing its full plot width — the width the spectrum view of
+    // the same well shows, the two having identical bounds and the same
+    // `reduced (10, 8)` inset. Nothing about the trace is scaled: the frame
+    // keeps the area's WIDTH, so the pitch is what it was and every vertex
+    // simply lands `hiddenColumns` further right than before.
+    static int64_t hiddenColumns (int64_t kFull, int cols) noexcept
+    {
+        const int64_t c = juce::jmax ((int64_t) 1, (int64_t) cols);
+        return c - (int64_t) visibleRight (kFull, 0.0f, (float) c);
+    }
+
+    // …and the buckets of OLDER history that shift needs on the left. Moving
+    // the frame right frees `hiddenColumns` columns at the panel's left edge,
+    // and they are filled by covering that many more pixels of history at the
+    // SAME pitch — `ceil (hidden / pitch)` buckets, the whole point of the
+    // exercise being that the trace is extended rather than stretched.
+    // Bounded at four, which is also what the arithmetic gives: `hidden` is at
+    // most `pitch + 3` (`visibleRight`'s floor plus its margin column), so the
+    // quotient is at most `1 + 3 / pitch`, and `pitch ≥ 1` for every geometry
+    // `buckets` produces (`kFull ≤ cols`).
+    static constexpr int64_t kMaxLead = 4;
+
+    static int64_t leadBuckets (int64_t kFull, int cols) noexcept
+    {
+        const int64_t c = juce::jmax ((int64_t) 1, (int64_t) cols);
+        const float pitch = ((float) c - 1.0f) / (float) (kFull - 1);
+        if (pitch <= 0.0f)
+            return 0;
+        return juce::jlimit ((int64_t) 0, kMaxLead,
+                             (int64_t) std::ceil ((double) hiddenColumns (kFull, cols) / (double) pitch));
     }
 
     // The nominal seconds one ring entry spans: the prepared block over the

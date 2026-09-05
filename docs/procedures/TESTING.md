@@ -219,6 +219,8 @@ statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.
 has three or more buckets, and a non-empty clip for every window and every plot at least two
 columns wide, the property whose absence blanked the plot at a ten-second host block),
 and `firstDrawn` (the oldest bucket a frame may draw once the ring's floor is taken into account),
+and `hiddenColumns`/`leadBuckets` (the columns the boundary hides, which is how far right the frame
+is drawn, and the buckets of earlier history that shift needs on the left),
 plus the ring's own
 `GrHistoryBuffer::prepare`, `prepared` and `batchIntact` (pinned by `grPrepared`, through the ring
 and through the wrapper) — because an expression reachable only from `paint` is one no test can pin

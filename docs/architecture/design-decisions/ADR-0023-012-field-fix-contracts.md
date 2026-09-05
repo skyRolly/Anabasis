@@ -187,6 +187,26 @@ by construction rather than by stimulus luck.
    > left of it: a bucket may leave the display because it has aged out of the ring, but it must
    > not come back re-shaped. `worklogs/2026-09-05-gr-history-tip.md` §9 carries the measurements.
 
+   > **Amended 2026-09-05 (0.2.12), the owner's layout call.** The boundary above was taking its
+   > `ceil (pitch) + 2` columns out of the PANEL, which left the GR history four pixels narrower
+   > than the spectrum view of the same well — the two share their bounds and their
+   > `reduced (10, 8)` inset, so they should show the same width. The panel no longer pays:
+   > `paintHistory` draws its frame `hiddenColumns` further right (same WIDTH, so the same pitch —
+   > the trace is moved, not scaled), which puts the boundary on the plot's own right edge and the
+   > strip it hides outside the plot altogether. The columns that frees at the left are filled with
+   > EARLIER history at the same pitch: `buckets` covers `leadBuckets` more buckets
+   > (`ceil (hidden / pitch)`, three on the Simple well and four on the Advanced), so the window
+   > holds `lead · stride` entries more than the nominal twenty seconds — 96 ms and 168 ms, all of
+   > it inside the panel now rather than off its left edge. The right boundary's RULE, the anchor
+   > law, `bucketX`, the bucket identities and their values, the read-window alignment and the
+   > drop rule are all unchanged; `kFull` — the pitch divisor — is unchanged too, and its ring cap
+   > reserves the four buckets `leadBuckets` can ask for. Measured: the trace's painted columns go
+   > from 10…909 to 10…913 on the Simple well (10…609 → 10…613 on the Advanced), the plot area
+   > being 10…913 and 10…613; every column of the rendered frame is the previous build's frame
+   > translated by exactly those four pixels (mean difference 0.00004 px over 1.4 M column
+   > samples), and nothing is drawn beyond the plot's right edge.
+   > `worklogs/2026-09-05-gr-history-tip.md` §10 carries the measurements.
+
 7. **Graph-well switch:** the GR|SPEC pill moves to the bottom-left (the least informative
    corner in both modes; the old top-right sat on the newest GR data), GR is the left segment
    and the default mode (`int_spectrumOn` default flips to `false` — a default change only,

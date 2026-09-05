@@ -202,7 +202,13 @@ fell mid-bucket and the oldest drawn bucket was read from there, losing its earl
 a time and changing value while its segment still crossed the left edge (340 changes in 1800 frames
 at 48 kHz / 512, up to 1.53 dB; 0 after). `Buckets::first` is now the oldest drawn bucket's own
 first entry, `kFull` is capped so that alignment fits the ring, and a bucket the producer has lapped
-into is dropped rather than truncated (`GrHistoryView::firstDrawn`). Nothing
+into is dropped rather than truncated (`GrHistoryView::firstDrawn`). The owner's layout call then
+moved the boundary's cost off the panel: `paintHistory` draws its frame `hiddenColumns` further
+right, so the boundary lands on the plot's own right edge and the GR history shows the same width as
+the spectrum view of the same well (painted columns 10…909 → 10…913 on the Simple well), with the
+freed columns filled by the `leadBuckets` extra buckets of earlier history the window now covers —
+moved, not scaled: every rendered column is the previous build's translated by exactly four pixels.
+Nothing
 else moved, and every column still shown is pixel-identical to 0.2.11 in 480 of 480 frames on every
 configuration. Validated old against new on the same frames (fill top-edge movement in the
 rightmost visible columns 0.52 → 0.07 px mean, 25 → 0.44 px max; stroke 0.24 → 0.04, 18 → 0.16; last
