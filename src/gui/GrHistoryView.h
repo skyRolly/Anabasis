@@ -112,6 +112,13 @@ public:
     bool hitTest (int x, int y) override;
     void visibilityChanged() override;
 
+    // The frame clock's callback, and the ONE thing that publishes the pair a
+    // frame draws. Public for the reason `SpectrumView::tick` is — a direction
+    // nothing can call is a direction nothing can guard, and the frame the
+    // view shows the instant it becomes visible (`visibilityChanged`) is a
+    // property only a test that can drive this by hand can pin.
+    void tick (double dt);
+
     // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band.
     static constexpr double kWindowSeconds = 20.0;
 
@@ -777,7 +784,6 @@ private:
     // them (matching `SpectrumView`) without losing the reader contract's
     // three early returns — see the definition.
     void paintHistory (juce::Graphics&);
-    void tick (double dt);
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;

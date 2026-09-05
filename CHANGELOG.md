@@ -107,6 +107,19 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   all of it off the left edge; at host blocks of about 234 samples or fewer the window holds one
   point fewer, so that the buffer can hold every point's blocks. Evidence: this release. [Verified]
 
+- **Switching back from the spectrum no longer shows one frame of the old history.** The GR history
+  publishes what it draws once per frame, and it stops publishing while the spectrum has the graph
+  well — so the pair describing "where the history is" went stale by one block for every block that
+  arrived meanwhile. The host repaints a view the moment it becomes visible, and that repaint can
+  reach the screen before the view's first frame callback: when it did, the first visible frame drew
+  the history as it was before the switch — the whole trace, and the level fill behind it, shifted
+  to the right — and the next frame snapped it back. Measured on the real paint path: with the
+  repaint landing first, 148 of 248 switches drew that stale frame, up to 91.7 px out after two
+  seconds on the spectrum (2.2 px after 50 ms); the view now re-derives its state the instant it
+  becomes visible, before any repaint can read it, and the same 248 switches — including 200 with no
+  recovery time between them — draw the current state on the first visible frame every time.
+  Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

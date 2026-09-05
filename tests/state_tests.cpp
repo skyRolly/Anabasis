@@ -6882,6 +6882,90 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
 // entry of every bucket: dropping that entry moves the bucket's value by 11 dB,
 // so a truncation cannot hide inside the aggregate. Every bucket drawn in two
 // different frames must yield the same value in both.
+// ---------------------------------------------------------------------------
+// THE FIRST FRAME AFTER THE SPECTRUM HANDS THE WELL BACK (0.2.12, the owner's
+// view-switch report). What a frame draws is the pair the TICK published
+// (`paintHead`), and nothing publishes while this view is hidden: its clock is
+// stopped and the spectrum owns the well. The ring does not stop, so the pair
+// goes stale by one entry for every block that arrives meanwhile — and
+// `paintHead` cannot tell, since a stale head is still positive and still
+// behind the producer. JUCE repaints a component the moment it becomes
+// visible, and that repaint can be dispatched before the clock's first
+// callback, so the first visible frame drew the pre-switch history: every
+// bucket one entry-pitch further RIGHT per entry missed, snapping back on the
+// next frame. Measured on the real paint path at 2.2 px after 50 ms hidden and
+// 91.2 px after two seconds (48 kHz / 512, Simple well).
+//
+// Pinned by RENDERING, because the defect is what a frame DRAWS: the frame
+// taken the instant the view becomes visible must equal the frame taken after
+// a tick has re-derived from the live ring, and must NOT equal the frame from
+// before it was hidden — which is what it used to be.
+static void testTheGrHistoryIsCurrentTheFrameItBecomesVisible()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    int64_t pushed = 0;
+    const auto pushBlocks = [&] (int n)
+    {
+        for (int b = 0; b < n; ++b, ++pushed)
+        {
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                for (int i = 0; i < buf.getNumSamples(); ++i)
+                    buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (pushed * 512 + i)));
+            proc.processBlock (buf, midi);
+        }
+    };
+
+    GrHistoryView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+    pushBlocks (400);
+    view.tick (1.0 / 60.0);
+    const auto beforeHiding = view.createComponentSnapshot (view.getLocalBounds(), false);
+
+    // …the spectrum takes the well, and the audio thread keeps filling the ring
+    view.setVisible (false);
+    pushBlocks (120);                       // 1.28 s of history the view never saw
+    check (proc.grHistory().available() == 520,
+           "grSwitch: (premise) the ring advanced while the view was hidden");
+
+    // …and hands it back. This is the frame JUCE paints on becoming visible,
+    // before the clock's first callback can land.
+    view.setVisible (true);
+    const auto firstVisible = view.createComponentSnapshot (view.getLocalBounds(), false);
+
+    // What the CURRENT state draws, from a view that has never been stale: one
+    // built on the same ring and shown for the first time. Its published pair
+    // is either the live head (`paintHead` falls back to it while nothing has
+    // been published) or the live head this view now publishes on becoming
+    // visible — the same frame either way, and independent of the view under
+    // test.
+    GrHistoryView reference (proc);
+    reference.setBounds (0, 0, 300, 120);
+    reference.setVisible (true);
+    const auto current = reference.createComponentSnapshot (reference.getLocalBounds(), false);
+
+    const auto same = [] (const juce::Image& a, const juce::Image& b)
+    {
+        if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight()) return false;
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+                if (a.getPixelAt (x, y) != b.getPixelAt (x, y)) return false;
+        return true;
+    };
+    check (! same (current, beforeHiding),
+           "grSwitch: (premise) the history moved while the view was hidden, so a stale frame would look different");
+    check (! same (firstVisible, beforeHiding),
+           "grSwitch: the first visible frame is NOT the one from before the spectrum took over");
+    check (same (firstVisible, current),
+           "grSwitch: …it is the frame the current ring draws — the state is republished when the view becomes visible, before any repaint can read it");
+}
+
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
 {
     using Ring = anabasis::GrHistoryBuffer;
@@ -8869,6 +8953,7 @@ int main (int argc, char** argv)
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testGrHistorySurvivesAHostBlockOfTenSeconds();
         testTheOldestDrawnBucketKeepsItsValueUntilItLeaves();
+        testTheGrHistoryIsCurrentTheFrameItBecomesVisible();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();
