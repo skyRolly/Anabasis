@@ -764,3 +764,101 @@ column BEYOND the plot area's last (914 [614], the first margin column), where t
 the area exactly (10…913 [10…613]). The two graphs now cover the same 904 [604] plot columns; that
 one column of spectrum stroke spilling onto the margin is the spectrum's own endpoint convention,
 predates this change, and was left alone — the spectrum view was not to be touched.
+
+## 11 — the owner's view-switch report: one stale frame on the way back (2026-09-05)
+
+### 11.1 The lifecycle, read off the code
+
+`GrHistoryView::visibilityChanged` starts the frame clock when the view is shown and STOPS it when
+it is hidden, and `tick` is the only thing that publishes `shownHead` / `smoothHead` /
+`publishedEpoch` — the pair (plus epoch) that `paintHead` and `frameFor` turn into the head and
+phase a frame draws. `paintHead` draws the TICK's head deliberately (0.2.8: the frame's phase must
+belong to the head it is the phase of), and it accepts that head whenever
+`shownHead > 0 && shownHead <= live` — a stale head satisfies both. The ring does not stop while the
+view is hidden: the audio thread fills it throughout, so the pair goes stale by one entry per block.
+
+`bucketX` places every vertex by `head + phase`, so a head `n` entries behind the ring puts the
+whole trace — the GR stroke and the level fill under it, one path — `n · perEntry` px to the RIGHT.
+
+`FrameClock::start` only attaches a `VBlankAttachment`; it does not call the callback. JUCE repaints
+a component the moment it becomes visible. So on the way back there are two message-thread events —
+the repaint and the clock's first callback — and nothing orders them.
+
+### 11.2 Reproduced, both orderings, on the real paint path
+
+Harness: real processor, real `GrHistoryView`, driven through the same lifecycle calls the editor
+makes (`setVisible`), with both orderings modelled explicitly. Per transition it records the head
+and phase the frame actually draws, the live head, and the offset measured from the RENDER by
+aligning the first visible frame against the next one.
+
+| hidden for | first visible frame draws | live head | entries behind | offset | rendered alignment |
+|---|---|---|---|---|---|
+| 50 ms | head 749, phase 0.438 | 754 | 5 | 2.20 px right | −2 px |
+| 100 ms | head 1161, phase 0.938 | 1171 | 10 | 4.37 px | −4 px |
+| 250 ms | head 1615 | 1640 | 25 | 12.03 px | −12 px |
+| 500 ms | head 2190 | 2238 | 48 | 23.12 px | −23 px |
+| 1 s | head 2952, phase 0.500 | 3047 | 95 | 45.58 px | −46 px |
+| 2 s | head 4090 | 4279 | 189 | 91.17 px | −91 px |
+
+The rendered alignment matches the analytic offset to the pixel at every duration, and
+`perEntry · entries` reproduces it (0.4824 × 189 = 91.2). With the clock's callback landing FIRST
+instead, the same transitions draw the live head every time — which is exactly why the owner saw it
+only sometimes.
+
+**Rate over the full set** (248 transitions per configuration: 100 with no gap at all, 100 one frame
+apart with no recovery time, then 8 each at 50 ms … 2 s):
+
+| | repaint first | clock first |
+|---|---|---|
+| before | **148 / 248 (60 %)**, worst 91.7 px, mean 10.2 px | 0 / 248 |
+| after | **0 / 248** | 0 / 248 |
+
+The 100 zero-gap toggles cannot be stale — no entry arrives in a zero-length gap — which is why the
+before-rate is 60 % and not 100 %: the defect needs the repaint to win AND at least one block to
+have landed, both of which a real switch satisfies.
+
+### 11.3 The root cause, and what it is not
+
+The first visible frame was drawing the pre-switch state, exactly as the owner hypothesised. It is
+not a geometry, anchor or clip problem: `visibleRight`, the drawing frame, the buckets, their values
+and the read window are all identical between the stale frame and the correct one — the ONLY
+difference is the head-and-phase pair the frame is placed by. The right-edge validation table
+re-runs byte-identical after the fix, which is the same statement from the other side.
+
+### 11.4 The fix
+
+`visibilityChanged` re-derives before anything can paint: a tick with **no elapsed time**, which
+`smoothedHead`'s `[head, head + 1]` clamp resolves to the live head at phase 0 — the same re-anchor
+it performs for a rewound head — published before `clock.start` and therefore before any repaint can
+read it. It is the publication the view always makes, on the thread that always makes it; no delay,
+no skipped frame, no drawing change. The parked and cleared cases are unaffected: a head that did
+not move while hidden leaves `parked` true and publishes nothing (the pair is already current), and
+a ring cleared while hidden takes the `cleared` branch and anchors at phase 0 under the new epoch.
+
+`GrHistoryView::tick` moved from private to public — the only other change — because the regression
+test has to publish a pre-hide state to create the condition at all, which is the reason
+`SpectrumView::tick` is public too ("a direction nothing can call is a direction nothing can
+guard").
+
+### 11.5 Validation
+
+- 248 transitions × 3 configurations after the fix: **0 stale frames**, worst 0.0 px, in BOTH
+  orderings and on both wells; including 200 per configuration with no recovery time between them.
+- The first visible frame's head equals the live head at every hidden duration from 0 ms to 2 s, and
+  the frame after it is 0.00–0.48 px away — one frame of ordinary scroll, no corrective jump.
+- The right-edge / rigid-translation validation table (§7.4's five configurations, every metric)
+  re-runs **byte-identical**: the drawing path is untouched.
+- Suites 316 + 1089 = **1405**, 0 failures. `testTheGrHistoryIsCurrentTheFrameItBecomesVisible`
+  renders three frames — before the spectrum takes the well, the instant it comes back, and one from
+  a view that has never been stale — and holds the returning frame to the last rather than the
+  first. Removing the re-derivation makes it fail with the defect verbatim: *"the first visible frame
+  is NOT the one from before the spectrum took over"*.
+
+### 11.6 What is left
+
+`SpectrumView` has the same lifecycle (`visibilityChanged` starts and stops its clock) and therefore
+the same class of staleness on ITS first visible frame: it would draw the spectrum as it was when
+the GR history took the well. It is far less visible — a spectrum's shape at 60 Hz differs little
+frame to frame, and nothing about it is placed by a scrolling index, so there is no jump — and the
+owner's instruction was to leave the spectrum alone unless the synchronisation strictly required it,
+which it does not. Recorded here as the obvious follow-up rather than changed.

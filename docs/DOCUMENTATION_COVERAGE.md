@@ -208,7 +208,12 @@ right, so the boundary lands on the plot's own right edge and the GR history sho
 the spectrum view of the same well (painted columns 10…909 → 10…913 on the Simple well), with the
 freed columns filled by the `leadBuckets` extra buckets of earlier history the window now covers —
 moved, not scaled: every rendered column is the previous build's translated by exactly four pixels.
-Nothing
+Last in the round, the owner's view-switch report: the pair a frame draws is published by the tick,
+nothing ticks while the spectrum owns the graph well, and JUCE's repaint of the newly visible view
+can beat the clock's first callback — so the first visible frame could draw the pre-switch history,
+shifted right by an entry-pitch per block missed (148 of 248 transitions, up to 91.7 px), snapping
+back on the next frame. `visibilityChanged` now re-derives before any repaint can read it (0 of 248
+after), with the drawing path untouched. Nothing
 else moved, and every column still shown is pixel-identical to 0.2.11 in 480 of 480 frames on every
 configuration. Validated old against new on the same frames (fill top-edge movement in the
 rightmost visible columns 0.52 → 0.07 px mean, 25 → 0.44 px max; stroke 0.24 → 0.04, 18 → 0.16; last

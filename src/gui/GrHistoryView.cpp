@@ -49,7 +49,40 @@ void GrHistoryView::mouseDown (const juce::MouseEvent& e)
 void GrHistoryView::visibilityChanged()
 {
     if (isVisible())
+    {
+        // RE-DERIVE BEFORE ANYONE CAN PAINT (0.2.12, the owner's view-switch
+        // report). What a frame DRAWS is the pair the tick published
+        // (`paintHead`: the tick's head, deliberately, so the frame's phase
+        // belongs to the head it is the phase OF), and nothing publishes while
+        // this view is hidden — the line below stops the clock, and the
+        // spectrum owns the well until the pill is pressed again. The ring
+        // does not stop: the audio thread fills it throughout. So the pair
+        // sitting in `shownHead`/`smoothHead` when the view comes back
+        // describes the history as it was when the spectrum took over, and
+        // `paintHead` cannot tell — it only asks that the head be positive and
+        // not ahead of the producer, which a stale head satisfies.
+        //
+        // JUCE repaints a component the moment it becomes visible, and that
+        // repaint can be dispatched before the frame clock's first callback:
+        // whichever lands first is a message-thread race, which is why the
+        // owner saw the bad frame only sometimes. When the repaint won, the
+        // first visible frame drew every bucket one entry-pitch further RIGHT
+        // for each entry that had arrived while the view was away (`bucketX`
+        // places by `head + phase`), and the next frame snapped it back:
+        // measured 2.2 px after 50 ms on the spectrum, 45.6 px after a second,
+        // 91.2 px after two, at 48 kHz / 512 on the Simple well.
+        //
+        // Publishing here closes the window rather than papering over it: a
+        // tick with NO elapsed time, which `smoothedHead`'s [head, head + 1]
+        // clamp resolves to the live head at phase 0 — the same re-anchor it
+        // performs for a rewound head — so the pair is current before any
+        // repaint can read it, and the clock's first real callback then
+        // carries on from there. `tick` is this thread's own function and the
+        // publication is the same one it always makes; nothing about the
+        // geometry, the buckets or the timing changes.
+        tick (0.0);
         clock.start (*this, [this] (double dt) { tick (dt); });
+    }
     else
         clock.stop();
 }

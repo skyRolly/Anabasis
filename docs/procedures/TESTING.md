@@ -244,7 +244,12 @@ static stayed green. The review's second finding needed neither a render nor the
 `GrHistoryBuffer` walked past 400 heads with a pattern whose minimum sits on the first entry of
 every bucket makes a one-entry truncation move a drawn value by 11 dB, so
 `testTheOldestDrawnBucketKeepsItsValueUntilItLeaves` can assert the invariant itself — no drawn
-bucket changes value while it is drawn — rather than a pixel consequence of it.
+bucket changes value while it is drawn — rather than a pixel consequence of it. The view-switch
+defect needed a render again, and a THIRD frame to compare against:
+`testTheGrHistoryIsCurrentTheFrameItBecomesVisible` snapshots the view before the spectrum takes the
+well, again the instant it gets it back, and once more from a view that has never been stale, and
+holds the middle one to the last rather than the first — the defect was a frame that was *valid*,
+just not current, so only a comparison between two states can see it.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the
