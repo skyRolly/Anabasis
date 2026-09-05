@@ -89,6 +89,23 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   no stroke pixel appearing or vanishing on any frame; at 75, 85, 125, 150 and 200 % UI scale the
   strip stays at least 0.89 px clear of the visible range. Evidence: this release. [Verified]
 
+- **The oldest point of the GR history no longer changes after it is drawn.** The twenty-second
+  window is a length, so its start fell inside a group of blocks, and the oldest point on screen was
+  summarised from only the part of its group still inside the window: as the history scrolled, that
+  point lost its earliest blocks one at a time, its value moved, and the segment crossing the plot's
+  left border re-shaped. The window now starts at the oldest drawn point's own first block, so every
+  point on screen is summarised from all of its blocks for as long as it is visible. Measured on the
+  validation harness against the previous build on the same frames, over 3.9 million point readings
+  in six configurations: changes to an already-drawn point **0** (before: 340 in 1800 frames at
+  48 kHz / 512 — 19 % of frames — up to 1.53 dB, which is 5.9 px on the Simple well and 15.5 px on
+  the Advanced; 370 on the Advanced well, 197 at 1024 samples, 264 at 44.1 kHz, 278 at 128 samples,
+  and none at all where a group holds a single block, the one geometry that could not have the
+  defect). The left-hand eight columns' translation-compensated movement fell from 0.19 px mean and
+  5.8 px max to 0.09 and 2.4 — the floor a single-block-per-point configuration shows. The display
+  now reaches up to one group of blocks (32 ms at 48 kHz / 512) further back than twenty seconds,
+  all of it off the left edge; at host blocks of about 234 samples or fewer the window holds one
+  point fewer, so that the buffer can hold every point's blocks. Evidence: this release. [Verified]
+
 ### Changed
 - **The plot's right margin is wider by those columns** — 14 px against the 10 px on the left at
   the shipped rates, and against the 10 px the spectrum view of the same well keeps, so the two

@@ -6377,17 +6377,27 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                    && GrHistoryView::bucketX (b, b.kFirst + 1, 0.0f, (float) c.cols) > -1.0e-3f,
                    m2.toRawUTF8());
             // …reading one window of entries: the READ window is `want`
-            // rounded up to whole buckets — under a bucket more than the 20 s,
-            // never less — and it stays inside what the ring safely holds
-            // (`kSize − 1`, the `windowEntries` clamp argument).
-            const auto m3 = say ("…reading one bucket-aligned window, inside the ring");
-            check (b.window >= want && b.window - want < b.stride
-                       && b.window <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1
-                       && b.first == head - b.window,
+            // rounded to whole buckets — under a bucket more than the 20 s,
+            // and under a bucket LESS only where the ring cannot hold the
+            // rounded-up window and the alignment (`kFull`'s cap, reachable
+            // only at `windowEntries`' own clamp) — and it starts at the
+            // oldest DRAWN bucket's own first entry, at or before the
+            // window's start and inside what the ring safely holds
+            // (`kSize − 1`, the `windowEntries` clamp argument). The
+            // start-alignment is 0.2.12's review fix: `head − window` lands
+            // mid-bucket, and reading the oldest bucket from THERE let its
+            // value change while it was still drawn.
+            const auto m3 = say ("…reading one bucket-aligned window, from the oldest drawn bucket's own start, inside the ring");
+            check (b.window == b.kFull * b.stride
+                       && b.window - want < b.stride && want - b.window <= b.stride
+                       && b.first == b.kFirst * b.stride
+                       && b.first <= head - b.window
+                       && head - b.first <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1,
                    m3.toRawUTF8());
             // Every drawn bucket has entries inside the window: the oldest is
-            // the bucket HOLDING `first` (partly expired — the paint clamps
-            // its read range to `first`) or a later one, and the newest holds
+            // the bucket the window's start falls in — read from its OWN
+            // start since 0.2.12's review, so nothing about it is partial —
+            // or a later one, and the newest holds
             // entry `head - 1` by keying on `head - 1` rather than `head`
             // (which left it empty whenever the head landed on a stride
             // boundary).
@@ -6460,13 +6470,16 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                                       && at (now, now.kLast) > (float) (c.cols - 1) - pitch - 1.0e-3f
                                       && (now.fill != now.stride
                                           || std::abs (at (now, now.kLast) - (float) (c.cols - 1)) < 1.0e-3f);
-                    // VALUES ARE FROZEN: every drawn bucket past the expiring
-                    // oldest one reads exactly its own span, whatever the
-                    // head — the read set is a constant of `k`, so the value
-                    // it yields cannot change between frames. The pre-0.2.11
-                    // trailing window read `[head − stride, head)` for the
-                    // newest, which moved with every entry.
-                    for (int64_t k = now.kFirst + 1; k <= now.kLast; ++k)
+                    // VALUES ARE FROZEN: EVERY drawn bucket — the oldest one
+                    // included since 0.2.12's review — reads exactly its own
+                    // span, whatever the head, so the read set is a constant
+                    // of `k` and the value it yields cannot change between
+                    // frames. The pre-0.2.11 trailing window read
+                    // `[head − stride, head)` for the newest, which moved with
+                    // every entry; the pre-review window clamped the OLDEST to
+                    // a mid-bucket window start, which shrank it one entry at
+                    // a time while its segment still crossed the left edge.
+                    for (int64_t k = now.kFirst; k <= now.kLast; ++k)
                     {
                         const auto r = GrHistoryView::bucketReads (now, k, now.first, h);
                         valuesFrozen &= r.e0 == k * now.stride && r.e1 == (k + 1) * now.stride;
@@ -6823,6 +6836,86 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
 // hands over, so this prepares for ten seconds and delivers short blocks:
 // the same `want`, the same `kFull`, the same boundary, the same rendered
 // frame as a real ten-second block, at none of its cost.
+// ---------------------------------------------------------------------------
+// A DRAWN BUCKET KEEPS ITS VALUE UNTIL IT LEAVES (0.2.12 review finding). The
+// display window is a LENGTH, so `head − window` lands mid-bucket on every
+// head that is not a multiple of `stride`; until this round that index was
+// `Buckets::first` and `bucketReads` clamped the OLDEST drawn bucket's span to
+// it. That bucket therefore lost its earliest entries one at a time as the
+// head advanced, and the value it yields — a min over its span — changed while
+// it was still drawn. Its vertex sits off the left edge, but the segment from
+// it to its neighbour crosses the edge, so the visible sliver re-shaped:
+// measured on the real paint path at 340 changes in 1800 frames (19 % of them)
+// at 48 kHz / 512, up to 1.53 dB, and never on any other drawn bucket.
+//
+// Pinned here on the REAL ring, with a pattern whose minimum sits on the FIRST
+// entry of every bucket: dropping that entry moves the bucket's value by 11 dB,
+// so a truncation cannot hide inside the aggregate. Every bucket drawn in two
+// different frames must yield the same value in both.
+static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
+{
+    using Ring = anabasis::GrHistoryBuffer;
+    const auto ringStorage = std::make_unique<Ring>();          // 32 KB: heap, not stack
+    auto& ring = *ringStorage;
+    const int     cols = 904;                                   // the Simple well
+    const auto    want = GrHistoryView::windowEntries (48000.0, 512);
+    const int64_t stride = GrHistoryView::buckets (want, want, cols).stride;
+    check (want == 1875 && stride == 3,
+           "grFrozen: (premise) 48 kHz / 512 on the Simple well buckets three entries at a time");
+
+    const auto value = [stride] (int64_t i) { return i % stride == 0 ? -12.0f : -1.0f; };
+    int64_t pushed = 0;
+    const auto pushOne = [&] { ring.push (value (pushed), 0.5f); ++pushed; };
+    for (int64_t i = 0; i < want + 40; ++i)
+        pushOne();                                              // the window is saturated and scrolling
+
+    std::map<int64_t, float> firstSeen;
+    bool frozen = true, seenTwice = false, spansComplete = true, oldestWasRedrawn = false,
+         windowStartsOnABucket = true;
+    int64_t readings = 0;
+    float worst = 0.0f;
+    for (int step = 0; step < 400; ++step)
+    {
+        pushOne();
+        const int64_t head = ring.available();
+        const auto    nb   = GrHistoryView::buckets (head, want, cols);
+        const int64_t kFD  = GrHistoryView::firstDrawn (nb, GrHistoryView::readFloor (head));
+        // the window's own start is the oldest drawn bucket's own start, so a
+        // caller that reads from `nb.first` — the walk above, and every frame
+        // whose ring the producer has not lapped — gets the same complete spans
+        windowStartsOnABucket &= (nb.first == nb.kFirst * nb.stride && kFD * nb.stride == nb.first);
+        for (int64_t k = kFD; k <= nb.kLast; ++k)
+        {
+            const auto r = GrHistoryView::bucketReads (nb, k, kFD * nb.stride, head);
+            spansComplete &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
+            float v = 0.0f;
+            for (int64_t e = r.e0; e < r.e1; ++e)
+                v = juce::jmin (v, ring.peek (e).grDb);
+            ++readings;
+            const auto it = firstSeen.find (k);
+            if (it == firstSeen.end())
+            {
+                firstSeen[k] = v;
+            }
+            else
+            {
+                seenTwice = true;
+                if (k == nb.kFirst) oldestWasRedrawn = true;
+                if (! juce::exactlyEqual (it->second, v)) { frozen = false; worst = juce::jmax (worst, std::abs (v - it->second)); }
+            }
+        }
+    }
+    check (seenTwice && oldestWasRedrawn && readings > 100000,
+           "grFrozen: (premise) the walk redraws every bucket many times over, the oldest one included");
+    check (windowStartsOnABucket,
+           "grFrozen: the read window starts on a bucket boundary — the oldest drawn bucket's own first entry — at every head");
+    check (spansComplete,
+           "grFrozen: every drawn bucket reads its complete span at every head");
+    check (frozen,
+           juce::String ("grFrozen: …so no drawn bucket ever changes value while it is drawn (worst seen "
+                         + juce::String (worst, 2) + " dB)").toRawUTF8());
+}
+
 static void testGrHistorySurvivesAHostBlockOfTenSeconds()
 {
     const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
@@ -6970,7 +7063,8 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         check (want == (int64_t) Ring::kSize - 1,
                "grRace: (premise) 192 kHz / 32 saturates the read window — the only case with no spare slot");
 
-        bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false;
+        bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false,
+             spansComplete = true;
         int64_t worstUnfixed = 0;
         for (const int64_t settled : { want * 3, want * 3 + 1, want * 3 + 6, want * 3 + 7, want * 5 + 4 })
             for (int64_t behind = 0; behind <= 8; ++behind)
@@ -6985,13 +7079,19 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                 unfixedRaces |= (live - nb.first > (int64_t) Ring::kSize - 1);
                 worstUnfixed = juce::jmax (worstUnfixed, live - nb.first);
 
-                const int64_t first = juce::jmax (nb.first, V::readFloor (live));
+                // The caller `paintHistory` actually uses since 0.2.12's
+                // review: the oldest bucket the RING allows, read from that
+                // bucket's own first entry. A bucket the producer has lapped
+                // into is dropped, never drawn from what is left of it.
+                const int64_t kFD   = V::firstDrawn (nb, V::readFloor (live));
+                const int64_t first = kFD * nb.stride;
                 floorHolds &= (live - first <= (int64_t) Ring::kSize - 1);
                 if (first >= drawn)
                     continue;                              // the paint blanks the frame here
-                for (int64_t k = nb.kFirst; k <= nb.kLast; ++k)
+                for (int64_t k = kFD; k <= nb.kLast; ++k)
                 {
                     const auto r = V::bucketReads (nb, k, first, drawn);
+                    spansComplete &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
                     for (int64_t n = r.e0; n < r.e1; ++n)
                     {
                         everyReadInside &= (live - n < kLap);
@@ -6999,14 +7099,16 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                     }
                 }
             }
-        check (unfixedRaces && worstUnfixed == (int64_t) Ring::kSize - 1 + 8,
-               "grRace: (premise) the pre-fix window DID reach a full lap behind the producer — one stale block was enough");
+        check (unfixedRaces && worstUnfixed >= (int64_t) Ring::kSize,
+               "grRace: (premise) the window's own start DOES reach a full lap behind the producer — one stale block is enough");
         check (floorHolds,
                "grRace: the read floor holds the oldest index inside one lap of the LIVE write index");
         check (everyReadInside,
                "grRace: …so every entry a frame peeks is inside that lap, at every staleness and every head");
         check (slotClear,
                "grRace: …and none of them aliases the slot the audio thread is filling right now");
+        check (spansComplete,
+               "grRace: …and every bucket a stale frame still draws reads its COMPLETE span — a lapped bucket is dropped, never truncated");
     }
 
     // -- 1b. The same invariant against the REAL ring, so the bound is read
@@ -7021,14 +7123,16 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         const int     cols    = 604;
         const auto    want    = V::windowEntries (192000.0, 32);
 
-        bool touchesWriteSlot = false;
+        bool touchesWriteSlot = false, spansComplete = true;
         int64_t reads = 0, oldest = live;
         const int64_t drawn = live - 1;                // ONE block arrived between the two reads
         const auto nb = V::buckets (drawn, want, cols, 0.0);
-        const int64_t first = juce::jmax (nb.first, V::readFloor (live));
-        for (int64_t k = nb.kFirst; k <= nb.kLast; ++k)
+        const int64_t kFD   = V::firstDrawn (nb, V::readFloor (live));
+        const int64_t first = kFD * nb.stride;
+        for (int64_t k = kFD; k <= nb.kLast; ++k)
         {
             const auto r = V::bucketReads (nb, k, first, drawn);
+            spansComplete &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
             for (int64_t n = r.e0; n < r.e1; ++n)
             {
                 touchesWriteSlot |= ((n & kMaskI) == writing);
@@ -7038,8 +7142,27 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         }
         check (reads > kLap / 2 && ! touchesWriteSlot,
                "grRace: a saturated real ring, one block stale, reads most of the buffer and never the write slot");
-        check ((drawn - nb.first) == want && oldest == V::readFloor (live) && oldest > nb.first,
-               "grRace: …and the clamp is what does it — the unclamped window starts one entry lower, on that slot");
+        check (oldest >= V::readFloor (live) && oldest == nb.first && kFD == nb.kFirst && spansComplete,
+               "grRace: …and at one stale block nothing has to be dropped — the window's own start still clears the floor, and every drawn bucket reads its whole span");
+
+        // …and when the producer HAS lapped into the oldest drawn bucket, that
+        // bucket leaves rather than coming back truncated. Three more entries
+        // put the floor past the window's own start; the frame still draws the
+        // same head.
+        for (int i = 0; i < 3; ++i)
+            ring.push (-2.0f, 0.25f);
+        const int64_t live2 = ring.available();
+        const int64_t kFD2  = V::firstDrawn (nb, V::readFloor (live2));
+        bool spans2 = true; int64_t oldest2 = live2;
+        for (int64_t k = kFD2; k <= nb.kLast; ++k)
+        {
+            const auto r = V::bucketReads (nb, k, kFD2 * nb.stride, drawn);
+            spans2 &= (r.e0 == k * nb.stride && r.e1 == (k + 1) * nb.stride);
+            oldest2 = juce::jmin (oldest2, r.e0);
+        }
+        check (V::readFloor (live2) > nb.first && kFD2 == nb.kFirst + 1 && spans2
+                   && oldest2 >= V::readFloor (live2),
+               "grRace: …and a bucket the producer has lapped into is DROPPED, not drawn from what is left of it");
 
         // The degenerate end of the same rule: a producer that has lapped
         // everything the frame would draw leaves nothing safe, and the paint
@@ -8703,6 +8826,7 @@ int main (int argc, char** argv)
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testGrHistorySurvivesAHostBlockOfTenSeconds();
+        testTheOldestDrawnBucketKeepsItsValueUntilItLeaves();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();

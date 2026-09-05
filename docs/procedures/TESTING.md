@@ -218,6 +218,7 @@ statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.
 (whose sweep pins BOTH of the requirements it holds apart — the uncapped bound wherever a window
 has three or more buckets, and a non-empty clip for every window and every plot at least two
 columns wide, the property whose absence blanked the plot at a ten-second host block),
+and `firstDrawn` (the oldest bucket a frame may draw once the ring's floor is taken into account),
 plus the ring's own
 `GrHistoryBuffer::prepare`, `prepared` and `batchIntact` (pinned by `grPrepared`, through the ring
 and through the wrapper) — because an expression reachable only from `paint` is one no test can pin
@@ -237,7 +238,11 @@ blinking for three rounds while every static was green, and the strip beyond the
 then been on screen for one more. A THIRD rendered pin was added by the 0.2.12 review
 (`testGrHistorySurvivesAHostBlockOfTenSeconds`): a clip rectangle is not a number either, and a
 boundary computed one column left of the plot blanked the whole history while every arithmetic
-static stayed green.
+static stayed green. The review's second finding needed neither a render nor the editor: a REAL
+`GrHistoryBuffer` walked past 400 heads with a pattern whose minimum sits on the first entry of
+every bucket makes a one-entry truncation move a drawn value by 11 dB, so
+`testTheOldestDrawnBucketKeepsItsValueUntilItLeaves` can assert the invariant itself — no drawn
+bucket changes value while it is drawn — rather than a pixel consequence of it.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the

@@ -515,3 +515,151 @@ two-bucket geometry needs a host block of ten seconds, which is an offline-rende
 than something a user watches. The two-bucket display remains coarse by nature — two points across
 twenty seconds — and the honest presentation of it is a follow-up question for the owner, not a
 defect of this boundary.
+
+## 9 — 0.2.12 review, second finding: the oldest drawn bucket changed value (2026-09-05)
+
+### 9.1 The finding, read off the code and then measured
+
+Review finding against `src/gui/GrHistoryView.h`: when a full window scrolls, `bucketReads`
+truncates the oldest displayed bucket as entries expire, so its value can change before it leaves
+the visible history, re-shaping the segment that crosses the left edge.
+
+Read off the code first. `buckets` computes `window` as a LENGTH — `kFull` whole buckets — and set
+`first = head − window`. That index is a bucket boundary only when `head` is a multiple of
+`stride`; on every other head it falls INSIDE the oldest drawn bucket, and `bucketReads` clamps
+that bucket's range to it:
+
+```
+bucketReads (b, k, first, head) = { max (first, k · stride), min (head, (k + 1) · stride) }
+```
+
+So bucket `kFirst` lost its earliest entries one at a time as the head advanced — up to `stride − 1`
+of them — and the value it yields, a MIN over its span, changed with them. Every other drawn bucket
+was unaffected: `first ≤ k · stride` for `k > kFirst`, and the new-end clamp went idle at 0.2.11.
+With `stride == 1` there is nothing to truncate, which is the control the measurements use.
+
+Measured on the real-processor harness (real `tick`/`paintHistory`; every frame, every drawn
+bucket's read span and the value it yields, compared with the same bucket's value in the previous
+frame):
+
+| configuration | stride | value changes | frames | max change | where the changing bucket sat |
+|---|---|---|---|---|---|
+| 48 kHz / 512, Simple | 3 | **340** | 18.9 % of 1800 | 1.53 dB = 5.9 px | x 8.6 … 9.5 (plot starts at 10) |
+| 48 kHz / 512, Advanced | 4 | **370** | 20.6 % | 1.57 dB = 15.5 px | x 8.7 … 9.7 |
+| 48 kHz / 1024, Simple | 2 | **197** | 10.9 % | 1.57 dB = 6.0 px | x 8.3 … 9.0 |
+| 44.1 kHz / 512, Simple | 2 | **264** | 14.7 % | 0.86 dB = 3.3 px | x 9.0 … 9.5 |
+| 48 kHz / 128, Simple (window at the ring clamp) | 5 | **278** | 29.0 % | 0.65 dB = 2.5 px | x 9.0 … 9.8 |
+| 48 kHz / 2048, Simple — the control | 1 | **0** | — | — | — |
+
+**Every one of the 1449 changes was on the oldest drawn bucket**, in 3.9 million drawn-bucket
+readings across the six configurations — the answer to "does the same ownership issue affect any
+other displayed point": it does not. The changing bucket's vertex sits just LEFT of the plot
+(x 8.3…9.8 against a left edge of 10), so what a viewer sees is not the vertex but the segment from
+it to its neighbour, re-sloping inside the sliver that crosses the edge. Rendered and measured
+translation-compensated over the leftmost eight columns: fill top edge 0.188 px mean / 5.81 px max,
+a column moving more than a pixel on 20 % of frames (Simple), 0.594 / 18.51 / 48 % (Advanced) —
+against an interior control of 0.069 / 0.51 / 0 %.
+
+### 9.2 The invariant, and the rule that enforces it
+
+> A displayed bucket aggregates its COMPLETE span for its whole visible life. It may leave the
+> display because it has scrolled out, or because the producer has lapped the ring out from under
+> it; it may never be re-drawn from part of itself.
+
+Two edits enforce it, one for each way the span could be cut:
+
+- **The window's start is aligned to the oldest drawn bucket's own first entry** — `buckets` keeps
+  `kFirst` exactly as it was (the same bucket, the same x, the same crossing segment) and sets
+  `first = kFirst · stride` instead of `head − window`. The expiring-end clamp in `bucketReads` is
+  then idle for every drawn bucket. `kFull` is capped at `(kSize − stride) / stride` so those extra
+  `stride − 1` entries fit inside the ring's one safe lap; the cap binds only where `want` is at
+  `windowEntries`' own clamp (blocks of about 234 samples or fewer at 48 kHz) and costs that window
+  one bucket of its twenty seconds and 0.2 % of its pitch. The cap is on `kFull` rather than on the
+  window length because the two must agree: a window shorter than `kFull` buckets would put the
+  oldest drawn vertex a pitch inside the left edge with the flat lead-in behind it, which is the
+  bucket-rate walk 0.2.8 removed (the 192 kHz / 32 case fails `oldestOffEdge` if the length alone
+  is capped — measured while getting this wrong).
+- **A bucket the producer has lapped into is dropped, not truncated** — `firstDrawn (b, floor)`
+  answers which bucket a frame may start at once `readFloor` is taken into account, and
+  `paintHistory` reads from that bucket's own first entry. Reachable only on a saturated window
+  with a stale head, which is the case `readFloor` exists for.
+
+What is NOT changed: bucket identity and values, `bucketX`, the anchor, `kFirst`, the pitch at
+every ordinary window, `visibleRight` and the right-edge clip, the smoothed head, the frame clock,
+host-delivery behaviour (OQ-017) and the spectrum view.
+
+### 9.3 Validation — the fixed tree against `b678c2b` on identical frames
+
+| | before | after |
+|---|---|---|
+| drawn-bucket value changes, all six configurations | 340 / 370 / 197 / 264 / 278 / 0 | **0 / 0 / 0 / 0 / 0 / 0** |
+| left-8 columns, fill top edge (mean / max / frames with a column > 1 px), 48 kHz / 512 Simple | 0.188 / 5.81 / 20 % | **0.090 / 2.35 / 4 %** |
+| …Advanced | 0.594 / 18.51 / 48 % | **0.266 / 12.42 / 15 %** |
+| …48 kHz / 1024 | 0.156 / 7.72 / 14 % | **0.080 / 2.49 / 2 %** |
+| …44.1 kHz / 512 | 0.142 / 4.12 / 17 % | **0.091 / 2.86 / 6 %** |
+| stride-1 control, Simple (cannot have the defect) | 0.080 / 2.23 / 2 % | 0.080 / 2.23 / 2 % — unchanged |
+| stride-1 control, Advanced (cannot have the defect) | 0.259 / 9.93 / 15 % | 0.259 / 9.93 / 15 % — unchanged |
+
+The two controls are what says the remaining left-edge motion is not the defect: a geometry whose
+buckets hold ONE entry each cannot truncate anything, and the fixed configurations land on its
+numbers. What is left there is a bucket leaving the display and the stroke being cut by the clip —
+the honest events, unchanged by this round and identical in both builds.
+
+**The right edge and the large-block protection are untouched, measured rather than argued.** The
+0.2.12 validation harness (§7.4's five configurations, every metric) re-runs **byte-identical** to
+`b678c2b`. The 26-second settled run differs in exactly three lines, all of them the left-40-column
+measurements and all of them improved (fill top edge 0.086 / 5.07 px on 22 % of frames → 0.073 /
+2.35 on 4 %); the novelty, fractional-scale, right-edge and hidden-column measurements are
+byte-identical. The large-host-block harness is identical row for row — every `want ≤ 4`
+configuration keeps its boundary (460 Simple, 310 Advanced), its clip width and its 0 blank frames;
+the only differences anywhere in that sweep are the saturated rows, where `kFull` moves 819 → 818
+(Simple) and 585 → 584 (Advanced) and the pitch by 0.001 px, leaving `visibleRight` unchanged.
+
+### 9.4 Tests and mutants
+
+Six checks added, four changed (state suite 1071 → 1078):
+
+- `testTheOldestDrawnBucketKeepsItsValueUntilItLeaves` — a REAL `GrHistoryBuffer` walked past 400
+  heads with a pattern whose minimum sits on the FIRST entry of every bucket, so dropping one entry
+  moves a bucket's value by 11 dB. Asserts that no bucket ever changes value while drawn, that the
+  window starts on a bucket boundary at every head, and that every drawn bucket reads its complete
+  span.
+- The walk's frozen-values pin now runs from `kFirst` rather than `kFirst + 1` — the oldest drawn
+  bucket is exactly what it used to exclude.
+- The window law (`m3`) pins `window == kFull · stride`, `first == kFirst · stride`,
+  `first ≤ head − window` and `head − first ≤ kSize − 1`.
+- The race test drives the paint's own caller (`firstDrawn`), pins that every bucket a stale frame
+  draws reads its complete span, and adds the lapped case: with the producer far enough ahead, the
+  oldest bucket is DROPPED (`kFD == kFirst + 1`) and everything still drawn reads its whole span.
+
+| Mutant | Kills (of 1078) |
+|---|---|
+| **window start unaligned** — `first = max (0, head − window)`, the rule as found | **13**: the walk's frozen-values pin in all five multi-entry geometry cases, `grFrozen`'s alignment pin, and seven race pins |
+| **ring cap removed** — `kFull` uncapped | 4: the floor binds where it should not, and the lapped-bucket pins |
+| **lapped bucket kept** — `firstDrawn` always returns `kFirst` | 5: the floor and write-slot pins, and the drop pin |
+| **floor division** — `firstDrawn` rounds the floor DOWN to a bucket | 5: the same — a bucket that starts below the floor is drawn |
+| **paint loop starts at `kFirst`** | **0 — equivalent.** With `first` at the drawn bucket's start, the lapped bucket's range comes out empty and the loop's existing `e0 >= e1` guard skips it. |
+| **paint reads from `max (nb.first, readFloor)`** | **0 — equivalent.** With the window's start aligned and the loop starting at `firstDrawn`, both expressions clamp to the same complete spans. |
+
+The two equivalent mutants are the two halves of the fix overlapping: either alone would hold the
+invariant in the case it covers, and the pair states the intent at both ends. They are recorded as
+equivalent rather than presented as kills.
+
+### 9.5 Verification record
+
+Suites, this container, Release, GCC 13.3: **`AnabasisTests` 316 + `AnabasisStateTests` 1078 =
+1394**, 0 failures (1387 before this round). Full `ninja` build of every target clean; pluginval
+strictness 10, deterministic ×3 and randomise ×3, green under xvfb; `check-docs`,
+`check-portability`, `check-realtime`, `check-citations` and `git diff --check` clean.
+
+The USER_MANUAL's "Each point of the trace is drawn once … and is never redrawn" was not true of the
+oldest point before this round. It is now true without exception, so the sentence stands as written.
+
+### 9.6 What is left
+
+- The left edge still shows a bucket LEAVING the display (a different vertex anchors the crossing
+  segment) and the stroke being cut by the clip. Both are inherent to a scrolling, clipped plot,
+  both are identical in the stride-1 controls, and neither is a value changing after it was drawn.
+- The saturated window (blocks of about 234 samples or fewer at 48 kHz) holds one bucket fewer than
+  before. Nothing else moved there: same boundary, same pitch to a thousandth of a pixel.
+- OQ-017 (host delivery) is untouched, as instructed.

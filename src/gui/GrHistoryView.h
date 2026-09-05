@@ -163,8 +163,8 @@ public:
         int64_t kFull;    // buckets one FULL window renders; fixes the pitch
         int64_t fill;     // entries the newest bucket holds so far: 1 … stride; == stride means complete
         double  phase;    // 0 … 1: how far into the newest entry's period the frame falls
-        int64_t window;   // entries a frame may read: `want` rounded UP to whole buckets, ≤ kSize − 1
-        int64_t first;    // oldest entry a frame may read: max (0, head − window)
+        int64_t window;   // the window LENGTH in entries: `want` rounded UP to whole buckets, capped to the ring
+        int64_t first;    // oldest entry a frame may read: the oldest DRAWN bucket's own first entry, `kFirst · stride`
     };
 
     // `head` = entries ever pushed (≥ 1), `want` = `windowEntries(...)`,
@@ -180,7 +180,25 @@ public:
         // only when the whole window fits in one bucket (want ≤ stride, i.e.
         // a panel around one pixel wide), where any pitch draws the same one
         // bucket at the right edge.
-        const int64_t kFull  = juce::jmax ((int64_t) 2, (want + stride - 1) / stride);
+        //
+        // …and capped so that `kFull` WHOLE buckets plus the alignment the
+        // read window needs (`stride − 1` entries, below) fit inside the
+        // ring's one safe lap: `kFull · stride + stride − 1 ≤ kSize − 1`. The
+        // cap is on `kFull` rather than on the window length because the two
+        // must agree — the panel renders `kFull` buckets at a pitch derived
+        // from `kFull`, and a window shorter than that would put the oldest
+        // DRAWN bucket a pitch inside the left edge with the flat lead-in
+        // behind it, which is the bucket-rate walk 0.2.8 removed. It binds
+        // only at a saturated window (`want` at `windowEntries`' clamp:
+        // blocks of about 234 samples or fewer at 48 kHz, 937 at 192 kHz),
+        // where it costs one bucket of the twenty seconds and 0.2 % of the
+        // pitch; every ordinary window sits far below it (1875 · 3 against
+        // 4089 at 48 kHz / 512). A panel so narrow that even two buckets
+        // overflow the ring keeps its two and leaves the ring to
+        // `firstDrawn`, which is where safety is enforced in any case.
+        const int64_t kRing  = ((int64_t) anabasis::GrHistoryBuffer::kSize - stride) / stride;
+        const int64_t kFull  = juce::jmax ((int64_t) 2,
+                                           juce::jmin ((want + stride - 1) / stride, kRing));
         // THE READ WINDOW IS BUCKET-ALIGNED (0.2.8, the review's left-edge
         // finding): `want` rounded UP to `kFull` whole buckets — at most
         // `stride − 1` entries older than the 20 s, all of them off the
@@ -193,23 +211,45 @@ public:
         // bucket-rate discontinuity the fix had left on the panel. Aligned,
         // the oldest bucket the panel needs always has its last entry inside
         // the window, so the segment that crosses the edge is drawn exactly
-        // (and clipped) and the lead-in is never reached. RING SAFETY is the
-        // `kSize − 1` cap, the same argument as `windowEntries`: the loop
-        // clamps every bucket's read range to `first` (`max (first, k ·
-        // stride)`), so a partly expired oldest bucket reads only its
-        // in-window remainder and no frame peeks below `head − (kSize − 1)`.
-        // A saturated window whose `kFull · stride` would exceed the cap
-        // (neither of this product's two plot widths does) keeps the cap as
-        // its window, unaligned, and falls back to the lead-in.
-        const int64_t window = juce::jmin (kFull * stride,
-                                           (int64_t) anabasis::GrHistoryBuffer::kSize - 1);
-        const int64_t first  = juce::jmax ((int64_t) 0, head - window);
+        // (and clipped) and the lead-in is never reached.
+        //
+        // AND THE START IS ALIGNED TOO (0.2.12 review). `window` is a LENGTH,
+        // so `head − window` lands mid-bucket on every head that is not a
+        // multiple of `stride`, and until this round THAT was `first`: the
+        // loop clamped the oldest drawn bucket's read range to it
+        // (`bucketReads`), so as the head advanced that bucket lost its
+        // earliest entries one at a time and the value it yields — a min over
+        // its span — changed while the bucket was still drawn. Its vertex
+        // sits off the left edge, but the segment from it to its neighbour
+        // crosses the edge, so the visible sliver re-shaped: 340 value
+        // changes in 1800 frames at 48 kHz / 512, up to 1.53 dB (5.9 px on
+        // the Simple well, 15.5 px on the Advanced), on 19 % of frames — and
+        // never on any other drawn bucket, in 3.9 million readings. `first`
+        // is now `kFirst · stride`, the oldest DRAWN bucket's OWN first
+        // entry, so every drawn bucket aggregates its complete span for its
+        // whole visible life. `kFirst` is untouched — the same bucket, the
+        // same x, the same crossing segment — and what changes is only which
+        // entries it aggregates: its own `stride` of them, always, rather
+        // than however many the 20-second boundary happened to leave inside
+        // it. The display therefore reaches up to `stride − 1` entries
+        // (32 ms at 48 kHz / 512) past the nominal window, every one of them
+        // off the left edge: this item's "read and never shown".
+        //
+        // RING SAFETY, the same argument as `windowEntries`: the alignment
+        // reaches at most `stride − 1` entries below `head − window`, and
+        // `kFull`'s cap above is exactly the room for it, so `head − first`
+        // stays inside the ring's one safe lap at every head. What a LAPPING
+        // producer can still take is `firstDrawn`'s question, not this one.
+        const int64_t window = kFull * stride;
+        const int64_t start  = juce::jmax ((int64_t) 0, head - window);
         // Two lower bounds on the oldest bucket, both needed: the window
-        // bound (the bucket HOLDING `first` — partly expired, its read range
-        // clamped in the loop) and the width bound (the bucket just OFF the
-        // panel's left edge, one beyond the `kFull` that fit at the fixed
-        // pitch, so its segment crosses the edge). Never past `kHead`.
-        const int64_t kFirst = juce::jmax (juce::jmin (kHead, first / stride), kHead - kFull);
+        // bound (the bucket HOLDING the window's start, whose own earlier
+        // entries the alignment above then takes in) and the width bound (the
+        // bucket just OFF the panel's left edge, one beyond the `kFull` that
+        // fit at the fixed pitch, so its segment crosses the edge). Never
+        // past `kHead`.
+        const int64_t kFirst = juce::jmax (juce::jmin (kHead, start / stride), kHead - kFull);
+        const int64_t first  = kFirst * stride;
         // ≥ 1 even for the `head == 0` frame `paintHistory` never draws, so the
         // range the struct states is true of every value it can hold.
         const int64_t fill   = juce::jmax ((int64_t) 1, head - kHead * stride);
@@ -621,12 +661,18 @@ public:
 
     // The entry range bucket `k` aggregates: its own span, clamped to the
     // frame's oldest readable index at the expiring end and to `head` at the
-    // new end. For every DRAWN bucket (`k <= kLast`) the new-end clamp is
-    // idle — a drawn bucket is complete — so the range is a constant of `k`
-    // and the value it yields can never change between frames (0.2.11; until
-    // then the newest vertex read a trailing window that slid with every
-    // entry). Half-open, and `e0 >= e1` means the bucket has nothing safe to
-    // read and is skipped. Pure and public for the reason the geometry
+    // new end. For every DRAWN bucket BOTH clamps are now idle, so the range
+    // is exactly `[k · stride, (k + 1) · stride)` — a constant of `k`, whose
+    // value can never change between frames. The new-end clamp went idle at
+    // 0.2.11 (`kLast`: a drawn bucket is complete; until then the newest
+    // vertex read a trailing window that slid with every entry); the
+    // expiring-end clamp at 0.2.12's review, when `buckets` began aligning
+    // `first` to the oldest drawn bucket's own start and `paintHistory`
+    // began asking `firstDrawn` which bucket that is. Both clamps stay,
+    // because both state a bound this function must not be read without —
+    // the caller's guarantee is what changed, not the arithmetic. Half-open,
+    // and `e0 >= e1` means the bucket has nothing safe to read and is
+    // skipped. Pure and public for the reason the geometry
     // statics are: the read set is where the ring-safety invariant lives,
     // and an invariant reachable only from `paint` is one no test can pin.
     struct Reads { int64_t e0, e1; };
@@ -634,6 +680,32 @@ public:
     static Reads bucketReads (const Buckets& b, int64_t k, int64_t first, int64_t head) noexcept
     {
         return { juce::jmax (first, k * b.stride), juce::jmin (head, (k + 1) * b.stride) };
+    }
+
+    // The oldest bucket a FRAME may draw. `buckets` answers `kFirst` from the
+    // window alone; this answers it from the RING, which the producer may
+    // have moved under the batch (`readFloor` — the live index, not the
+    // stale head the frame draws, and its banner argues why). A bucket whose
+    // earliest entries have gone over the ring's edge cannot be drawn at the
+    // value it has always had, and the one thing it must not do is come back
+    // re-shaped from what is left of it — so it is DROPPED, which is what
+    // "the bucket aged out of the backing window" honestly looks like. The
+    // caller then reads from `firstDrawn · stride`, and every clamp in
+    // `bucketReads` is idle for every bucket it draws.
+    //
+    // Idle at every ordinary window: the floor sits `kSize − 1` entries below
+    // the LIVE head while `first` sits at most `kSize − stride` below the
+    // drawn one, so this returns `kFirst` unless the window is saturated
+    // (`want` at the clamp) AND the producer has lapped the batch — the
+    // 192 kHz / 32 case `readFloor` was written for, where ~100 entries can
+    // land between the tick and the paint. Dropping one bucket there costs
+    // one pitch of the panel's oldest end for that frame; drawing it
+    // truncated would cost the invariant.
+    static int64_t firstDrawn (const Buckets& b, int64_t floorIndex) noexcept
+    {
+        if (floorIndex <= b.first)
+            return b.kFirst;                            // the ordinary case, and every negative floor
+        return juce::jmax (b.kFirst, (floorIndex + b.stride - 1) / b.stride);
     }
 
 private:

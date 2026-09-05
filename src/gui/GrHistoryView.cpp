@@ -223,7 +223,15 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // only when the window is saturated AND the drawn head is stale, and it
     // moves no geometry: `bucketX` and `kFirst` never see it, only which
     // entries the oldest bucket aggregates.
-    const int64_t first = juce::jmax (nb.first, readFloor (live));
+    // …and the oldest bucket THIS frame may draw, which is `nb.kFirst` unless
+    // the producer has lapped the batch's oldest slots (`firstDrawn`, which
+    // carries the whole argument). Reading from that bucket's own first entry
+    // is what makes every drawn bucket's span complete and constant for its
+    // whole visible life — the 0.2.12 review's finding was that the oldest
+    // one's span was being clamped to a mid-bucket window start instead, so
+    // its value changed while its segment was still crossing the left edge.
+    const int64_t kFirstDrawn = firstDrawn (nb, readFloor (live));
+    const int64_t first       = kFirstDrawn * nb.stride;
     if (first >= head)
         return;                                     // the producer has lapped everything this
                                                     // frame could draw; blank is the honest
@@ -306,7 +314,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         // the zero line runs to the anchor and the lead-out carries it on to
         // the edge, so a just-reset ring shows the honest zero line across
         // the whole panel rather than nothing.
-        const float xFirst = nb.count > 0 ? bucketX (nb, nb.kFirst, area.getX(), area.getWidth())
+        const float xFirst = nb.count > 0 ? bucketX (nb, kFirstDrawn, area.getX(), area.getWidth())
                                           : right;
         const float xZero  = juce::jmin (area.getX(), xFirst);
         wave.startNewSubPath (xZero, zeroWy);
@@ -326,7 +334,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // reads its bucket's whole span and will read the same span on every
     // later frame, so nothing drawn here is ever revised — the half-collected
     // newest bucket, which used to be drawn live at the edge, waits.
-    for (int64_t k = nb.kFirst; k <= nb.kLast; ++k)
+    for (int64_t k = kFirstDrawn; k <= nb.kLast; ++k)
     {
         const auto [e0, e1] = bucketReads (nb, k, first, head);
         if (e0 >= e1)

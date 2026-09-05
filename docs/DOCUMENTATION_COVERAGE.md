@@ -8,7 +8,9 @@ that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
 **Last updated:** for **0.2.12 (2026-09-05)** — the owner's third GR-history report, reproduced
 frame by frame on the real paint path, confirmed by the owner, and fixed by a clip and nothing else:
-the strip beyond the newest complete vertex is no longer shown (entry below). Before that, **0.2.11
+the strip beyond the newest complete vertex is no longer shown; then two PR review findings on that
+fix, both reproduced on the same harness before any change — a ten-second host block blanked the
+plot, and the OLDEST drawn bucket's value changed while it was still on screen (entry below). Before that, **0.2.11
 (2026-09-05)** — the owner's second GR-history report: the newest vertex is no longer a live
 estimate, and the last plot column no longer blinks.
 Before that, the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
@@ -194,8 +196,13 @@ clipping at `GrHistoryView::visibleRight` = `floor (right − min (pitch, span /
 everything the lead-out can touch (the newest drawn vertex satisfies `right − pitch ≤ x ≤ right` on
 every frame), one further column of measured margin for the stroke join at the vertex before it,
 and the `span / 2` cap — added on the PR review finding that a ten-second host block blanked the
-plot, engaging only where `kFull == 2` and holding the boundary where a three-bucket window puts it;
-nothing
+plot, engaging only where `kFull == 2` and holding the boundary where a three-bucket window puts it.
+The review's second finding moved the READ WINDOW'S START: it was a length behind the head, so it
+fell mid-bucket and the oldest drawn bucket was read from there, losing its earliest entries one at
+a time and changing value while its segment still crossed the left edge (340 changes in 1800 frames
+at 48 kHz / 512, up to 1.53 dB; 0 after). `Buckets::first` is now the oldest drawn bucket's own
+first entry, `kFull` is capped so that alignment fits the ring, and a bucket the producer has lapped
+into is dropped rather than truncated (`GrHistoryView::firstDrawn`). Nothing
 else moved, and every column still shown is pixel-identical to 0.2.11 in 480 of 480 frames on every
 configuration. Validated old against new on the same frames (fill top-edge movement in the
 rightmost visible columns 0.52 → 0.07 px mean, 25 → 0.44 px max; stroke 0.24 → 0.04, 18 → 0.16; last
