@@ -1,6 +1,7 @@
-# Worklog — 0.2.11: the GR history's newest vertex (2026-09-04/05)
+# Worklog — 0.2.11 and 0.2.12: the GR history's newest vertex, and its right edge (2026-09-04/05)
 
-Session-local evidence trail for version 0.2.11. Raw investigation material, NOT architecture
+Session-local evidence trail for version 0.2.11 (§1–§6) and, appended the same day, 0.2.12 (§7).
+Raw investigation material, NOT architecture
 documentation — `docs/SOURCE_OF_TRUTH.md`: worklogs are never cited as policy. What is binding is
 `CHANGELOG.md`, the code and the tests; this file carries the measurements, the alternatives that
 were rejected, and the parts of the previous round's account that this round found to be wrong.
@@ -196,6 +197,163 @@ restored after each):
 
 Each kill set is disjoint from the others, which is what says the three live parts of the fix are
 measured separately.
+
+Gates: `check-docs`, `check-citations`, `check-portability`, `check-realtime`, `git diff --check`
+— recorded in the commit message with their counts.
+
+## 7 — 0.2.12: the owner's third report — the lead-out was on screen (2026-09-05)
+
+### 7.1 The report, and what was verified before anything changed
+
+The owner, on the 0.2.11 build: *"approximately 1–2 pixels of newly generated content extending
+to the right as a short horizontal line … exposes the state while it is still being generated"*,
+in the grey level history as well as the yellow trace; proposed remedy, not to display that
+strip and to move the visible right edge only. Investigated on the same harness as §1 (real
+processor, real `tick`/`paintHistory`, simulated host and frame clock, 60 Hz, 8 s per
+configuration), with the outer clip the only difference between variants, and reported before
+any change; the owner confirmed and directed the clip-only fix with the extra column.
+
+**The strip is the lead-out.** `paintHistory` draws complete buckets only (`kLast`), then a flat
+segment from the newest drawn vertex to `area.getRight()` — the placeholder for the bucket still
+collecting — and clips at the plot area's right edge. With `fill ∈ [1, stride]` and
+`phase ∈ [0, 1]`, `bucketX` puts the newest drawn vertex at `right − pitch ≤ x(kLast) ≤ right`, the
+lower end only on a parked (phase 1) frame (measured 911.58–913.00 against the bound 911.55 on the
+Simple well at 48 kHz / 512), so the
+lead-out is 1.00–2.42 px long there (mean 1.71; 1.00–2.27, mean 1.63, on the Advanced well;
+1.00–2.90 at 48 kHz / 1024; 1.00–2.05 at 44.1 kHz), the 1 px floor being the last column, which the anchor —
+the column's left boundary — never lets a complete vertex cross. Once per bucket (218 appearances
+in 419 frames, 31.2/s, on the Simple well; 23.5/s Advanced and 48 kHz / 1024; 43/s at
+44.1 kHz / 1024) the frame after the completing block replaces the strip: the new vertex lands at
+`right − phase · perEntry`, the strip's height jumps to the new value and the segment left of it —
+up to a pitch wide — turns from flat to sloped. The GR stroke and the level fill share the loop,
+the `lastX/lastWy/lastGy` lead-out and the clip, so both show it.
+
+**Measured, per column, translation-compensated** (frame m against frame m − 4 shifted the whole
+3 px the trace moves in four frames; the fill's top edge from the ungated column coverage sum, the
+stroke from its coverage-weighted row centroid, so no colour gate is involved — the earlier gated
+grey metric was flipping on anti-aliased fill-edge pixels in the interior as much as at the edge,
+25–58 flips per frame in every variant, and was set aside for that reason), Simple well,
+48 kHz / 512, the 0.2.11 build, columns given as their position in the older frame:
+
+| column | 913 | 912 | 911 | 910 | 909 … |
+|---|---|---|---|---|---|
+| fill top edge, mean change px (max) | 6.01 (25.2) | 3.03 (25.1) | 0.53 (11.1) | 0.07 (0.5) | 0.07 |
+| stroke centroid, mean change px (max) | 3.08 (17.8) | 1.14 (10.4) | 0.20 (3.9) | 0.04 (0.1) | 0.04 |
+
+Everything left of 911 sits at the floor every content column shows (0.07 / 0.04 px: anti-aliased
+content moving through the grid, the §5 item, present in all variants alike). The instability is
+exactly `[right − pitch, area.getRight())` — three columns here.
+
+### 7.2 The bound, and the extra column
+
+Clipping at `B = floor (right − pitch)` — the first column the lead-out can reach — hides it on
+every frame by the inequality above, and every segment crossing `B` joins two complete buckets. A
+sweep of `B − 0 … B − 4` on the real
+`paintHistory` (outer clip only, per-column profile of the columns the older frame can be compared
+against) put the rightmost comparable columns at the interior floor at `B − 0` on the Simple and
+Advanced wells and at 44.1 kHz / 1024 — but at 48 kHz / 1024 the boundary-adjacent column read
+0.11 px mean, 3.0 px max, 5 % of frames over 0.25 px against a floor of 0.06 / 0.4 / 2 %, gone at
+`B − 1`. The cause is the stroke JOIN at the vertex that was newest until the new one appeared: its
+join re-shapes from "segment → horizontal lead-out" to "segment → sloped segment" in that frame,
+it sits between `right − 2·pitch` and `right − pitch` — at 60 Hz up to a frame's travel inside `B`
+(0.65 px there, 0.17 on the Simple well at 512), further on a slower clock — and a JUCE mitred join
+reaches up to four half-widths (2.8 px) from it. `visibleRight = floor (right − pitch) − 1` is the
+owner's choice and the fix: a measured margin rather than a bound (a re-shape that did reach a shown
+column would be confined to the stroke's width around one vertex, never a jump in height), and
+`ceil (pitch) + 2` columns hidden — four for every block up to 1024 samples at every rate from
+44.1 kHz and 2048 from 48 kHz up, on either well; five at 44.1 kHz / 2048 on the Simple well.
+
+### 7.3 The fix
+
+`GrHistoryView::visibleRight (const Buckets&, x0, width)` in the header, beside `bucketX` and
+derived from the same `right` and `pitch`, and one changed rectangle in `paintHistory`: the clip's
+right edge is `visibleRight` instead of `area.getRight()`. The anchor, `bucketX`, `buckets`, the
+read window, the values, the smoothed head, the tick, the host-delivery behaviour (OQ-017) and the
+left edge are untouched; the lead-out stays in the path, wholly behind the clip, because removing
+it is not this fix. The plot's right margin is wider by the hidden columns (14 px against 10 on the
+left at the shipped rates).
+
+### 7.4 Validation — 0.2.11 against 0.2.12 on the same frames
+
+The harness built twice, once linked against the 0.2.11 `GrHistoryView` (`7d34450`, taken from
+git) and once against the fixed one, same host schedule, same seeds, same frames; each build dumps
+a per-column pixel hash and the two geometric measures for every frame.
+
+| 48 kHz / 512, Simple well | 0.2.11 | 0.2.12 |
+|---|---|---|
+| fill top edge, rightmost 24 visible columns: mean / max change, columns > 1 px per frame | 0.516 / 25.2 px, 1.47 | **0.070 / 0.44 px, 0.00** |
+| stroke centroid, rightmost 24 visible columns: mean / max, columns > 1 px per frame | 0.242 / 17.9 px, 0.94 | **0.036 / 0.16 px, 0.00** |
+| gated stroke residual, rightmost 24 visible columns: flips per frame | 5.78 (79 % of frames) | **0.00 (0 %)** |
+| interior (fill mean / max; stroke mean / max) | 0.016 / 1.81; 0.008 / 3.28 | 0.016 / 1.81; 0.008 / 3.28 — unchanged |
+| left 40 columns, both measures | 0.000 | 0.000 |
+| last visible column carries the trace | 419 / 419 frames (column 913) | **419 / 419 frames (column 909)** |
+| columns from the boundary to the plot edge | — | **background on 419 / 419 frames** |
+| columns 10 … 909 pixel-identical to 0.2.11 | — | **480 / 480 frames** |
+| per-column profile at the boundary (fill mean \| max \| % > 0.25 px), rightmost comparable column and the seven left of it | 6.01\|25\|93, 3.03\|25\|73, 0.53\|11\|23, then 0.07\|0.3–0.5\|3–5 … | 0.07\|0.3–0.5\|3–5 in every column — the interior floor |
+
+The same holds on every configuration run — Advanced well (fill 1.58 / 69 → 0.175 / 0.98 px; stroke
+0.80 / 48 → 0.11 / 0.29; boundary 610), 48 kHz / 1024 (0.57 / 26 → 0.062 / 0.40; the join column
+now at the floor), 44.1 kHz / 1024 (0.47 / 30 → 0.059 / 0.47) and 44.1 kHz / 512 (0.47 / 28 →
+0.058 / 0.42): visible columns
+identical to 0.2.11 in 480 of 480 frames, the hidden columns background on every frame, the last
+visible column lit on every frame, the newest drawn vertex never nearer than 1.10 px to the last
+visible column (48 kHz / 1024; 1.58 px on the Simple well at 512, 1.73 on the Advanced). Contact
+sheets (rightmost 60 px, ×6, eight consecutive frames) and 2 s GIFs at 3× of both builds are in the
+session's scratch directory and were sent to the owner: the 0.2.11 frames show the stub growing
+and snapping, the 0.2.12 frames end on a sloped segment cut cleanly by the clip.
+
+Three checks the review asked for beyond the compensated residual, all on the same harness:
+
+- **The boundary column itself, frame against frame, with no translation model.** A stroke pixel
+  (coverage > 0.5) in frame m is NOVEL if frame m − 1 carried no stroke within ±2 rows in that
+  column or the one to its right — content that did not scroll in from its neighbour — and
+  VANISHED is the mirror. Over the three columns left of the last visible one (the last one's
+  right-hand neighbour is hidden in m − 1, so scroll-in there is not a change), 419 frames each:
+  0.2.12 stroke novel 0, vanished 0 on the Simple well at 48 kHz / 512 and / 1024, the Advanced
+  well and 44.1 kHz / 1024; 0.2.11's last three columns on the same frames: 640 / 36, 2061 / 44,
+  681 / 67, 576 / 13. The fill's top-edge version of the same test fires at the same rate per
+  content column at the boundary as in the interior (7 events in 3 columns against 597 across the
+  interior's filling content on the Simple well; 52 against 2218 on the Advanced) — a steep
+  anti-aliased edge crossing the threshold, the events repeating column by column as the feature
+  scrolls, not a boundary effect.
+- **Fractional UI scales.** The editor paints its children through `setTransform (scale (…))`,
+  and JUCE maps the integer clip to the smallest device-pixel container. Rendered through a scaled
+  `Graphics` on the Simple well at 48 kHz / 512, the rightmost device column ever lit ends, in
+  component units, at 910.67 (75 %), 910.59 (85 %), 910.00 (100 %), 910.40 (125 %), 910.00 (150 %
+  and 200 %) — against `right − pitch` = 911.55, so the lead-out stays at least 0.89 px clear of
+  the visible range at every scale, more than the stroke's half-width. The left edge expands by
+  the same mechanism (9.33 at 75 %), and it is the same rectangle edge 0.2.11 clipped at.
+- **The settled window.** 26 s on the Simple well at 48 kHz / 512 — the 20 s window full and
+  buckets expiring at the left edge for the last six — 0.2.11 against 0.2.12: visible columns
+  identical in 1560 of 1560 frames, the hidden columns background on every frame, the last visible
+  column lit on all 299 settled frames, the rightmost 24 visible columns at the floor (fill
+  0.071 / 0.47 px, stroke 0.036 / 0.14), the interior and the left 40 columns identical between
+  the builds to the digit (left 40: fill 0.086 / 5.07, stroke 0.041 / 2.38 in both — the expiring
+  oldest bucket's segment sliding under the clip, present and unchanged).
+
+### 7.5 Verification record
+
+Suites, this container, Release, GCC 13.3: **`AnabasisTests` 316 + `AnabasisStateTests` 1051 =
+1367**, 0 failures (1358 before this round). The state suite's changes: the walk in
+`testGrHistoryWindowNeverAsksForTheHeadSlot` gains `leadOutHidden` in every geometry case (the
+newest drawn vertex at or beyond `visibleRight + 1` at every head and both ends of the phase; the
+bound a constant of the window equal to `cols − 1 − ceil (pitch) − 1` and past the half-width), and
+`grPaint` pins the bound's arithmetic on this view and on both shipped wells (910 of 10…913, 610 of
+10…613) and re-pins the rendered snapshot at every fill of the newest bucket on both halves of the
+contract: the last VISIBLE column lit on every fill, and every column from `visibleRight` to the
+plot edge equal to the untouched margin on every fill.
+
+**Mutants** (one-site edits of the fixed tree, state suite rebuilt and run, the fixed sources
+restored and verified identical after each):
+
+| Mutant | Kills (of 1051) |
+|---|---|
+| **clipatedge** — the clip's right edge back on `area.getRight()` (0.2.11's rectangle, the bound computed and ignored) | 1: exactly the rendered "no column from `visibleRight` to the plot edge carries a pixel" check — the property no static can carry, which is why that pin is a snapshot; the last-visible-column pin still passes, as it should |
+| **noextracolumn** — `floor (right − pitch)` without the `− 1` | 8: the walk's boundary pin in all six geometry cases and both `grPaint` arithmetic pins (the formula, the shipped wells' 910 / 610) |
+| **overclip** — `floor (right − pitch) − 3` | 8: the same eight — the bound is pinned to its value, not merely to a side of the vertex |
+
+The rendered kill and the arithmetic kills are disjoint, which is what says the clip and the bound
+are measured separately.
 
 Gates: `check-docs`, `check-citations`, `check-portability`, `check-realtime`, `git diff --check`
 — recorded in the commit message with their counts.

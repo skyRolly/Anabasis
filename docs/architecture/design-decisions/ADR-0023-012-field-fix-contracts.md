@@ -134,6 +134,26 @@ by construction rather than by stimulus luck.
    > reaches the panel up to `stride − 1` blocks later than before.
    > `worklogs/2026-09-05-gr-history-tip.md` carries the measurements.
 
+   > **Amended 2026-09-05 (0.2.12), the owner's third report.** The sentence above ending "which
+   > now runs to the clip edge rather than to the anchor" describes a strip that is no longer
+   > shown. The lead-out is the placeholder for the bucket still collecting, and it was the one
+   > part of the trace that changed other than by scrolling — a flat stub of one to `pitch + 1`
+   > pixels (1–2.4 px at 48 kHz / 512 on the Simple well) whose height jumped once per bucket and
+   > whose left neighbour snapped from flat to sloped with it, in the
+   > level fill as much as in the GR stroke — so the plot's visible right boundary is now
+   > `floor (right − pitch) − 1` (`GrHistoryView::visibleRight`): left of everything the lead-out
+   > can touch, since the newest drawn vertex satisfies `right − pitch ≤ x ≤ right` on every frame,
+   > with one further column of measured margin for the stroke join at the vertex before it, which
+   > re-shapes in the frame the newer one appears.
+   > This is a clip and nothing else: the anchor, the rigid law, the values, the per-entry scroll,
+   > the smoothed head, the zero-data region, the clear rule and the left edge are as decided
+   > above; every column still shown is what 0.2.11 showed there; and the plot gives up
+   > `ceil (pitch) + 2` columns on the right — four for every pitch up to 2 px, which is every block
+   > up to 1024 samples at every rate from 44.1 kHz and 2048 from 48 kHz up, on either well.
+   > The 0.2.11 sentence about the last plot column blinking now applies to the last VISIBLE
+   > column, which carries the trace on every frame; the plot's own last columns are not drawn.
+   > `worklogs/2026-09-05-gr-history-tip.md` §7 carries the measurements.
+
 7. **Graph-well switch:** the GR|SPEC pill moves to the bottom-left (the least informative
    corner in both modes; the old top-right sat on the newest GR data), GR is the left segment
    and the default mode (`int_spectrumOn` default flips to `false` — a default change only,

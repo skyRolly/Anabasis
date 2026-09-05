@@ -232,8 +232,9 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     bool started = false;
     float lastX = area.getX(), lastWy = 0.0f, lastGy = 0.0f;
     // The anchor: the newest COMPLETE bucket lands here the frame it
-    // completes (`bucketX`). It is the left boundary of the last plot column,
-    // which is why the lead-out below runs on past it to the clip edge.
+    // completes (`bucketX`). It is the left boundary of the last plot column;
+    // the lead-out below runs on past it to the plot edge, and since 0.2.12
+    // the whole of that strip lies right of `visibleRight`, unseen.
     const float right = area.getX() + area.getWidth() - 1.0f;
 
     // Clip to the plot area's COLUMNS (the rows keep their overhang: the
@@ -244,9 +245,19 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // jumped at bucket rate. What the clip costs is the 0.7 px of end-cap
     // the stroke used to spill into the 10 px margin, which is the margin's,
     // not the trace's.
+    //
+    // The RIGHT bound is `visibleRight` (0.2.12), not the plot edge: the
+    // columns from the newest complete vertex to the edge hold the lead-out
+    // and, in the frame a vertex appears, the segment that replaces it — the
+    // one region that changes other than by scrolling, and the owner's third
+    // report. The header carries the bound's derivation from `bucketX`; this
+    // is the ONLY place it is read, and the left edge of the rectangle is
+    // what it always was.
+    const int clipRight = visibleRight (nb, area.getX(), area.getWidth());
     const juce::Graphics::ScopedSaveState clipState (g);
     g.reduceClipRegion (juce::Rectangle<float> (area.getX(), 0.0f,
-                                                area.getWidth(), (float) getHeight())
+                                                juce::jmax (0.0f, (float) clipRight - area.getX()),
+                                                (float) getHeight())
                             .toNearestInt());
 
     // The UNMEASURED region (0.1.2 item 3): everything left of the oldest
@@ -397,15 +408,19 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // The LEAD-OUT, mirror of the left edge's lead-in: the strip between the
     // newest drawn vertex and the edge — up to a pitch plus one entry-pitch
     // wide now that a bucket is drawn only once complete — holds no data yet,
-    // so the last value extends flat across it rather than leaving the line
-    // short of the edge and breathing at the block rate. It runs to the CLIP
-    // edge, not to the anchor `right` (0.2.11): `right` is the LEFT boundary
-    // of the last plot column, and a butt-capped horizontal stroke ending
-    // there lit nothing in that column while a steep segment ending at the
-    // same x spilled half its width into it — so the last column blinked at
-    // bucket rate (measured dark on 52 % of frames), the very breathing this
-    // lead-out was written to prevent. Ending at the clip edge makes the
-    // column part of the lead-out on every frame; the clip trims the cap.
+    // so the last value extends flat across it. It runs to the plot edge,
+    // not to the anchor `right` (0.2.11): `right` is the LEFT boundary of
+    // the last plot column, and a butt-capped horizontal stroke ending there
+    // lit nothing in that column while a steep segment ending at the same x
+    // spilled half its width into it. Since 0.2.12 NONE of this strip is
+    // visible — the clip ends at `visibleRight`, left of everything the
+    // lead-out can touch (header) — because the strip was the owner's third
+    // report: a flat stub standing in for a value that does not exist yet,
+    // jumping in height each time one arrives. Nothing visible depends on it
+    // now — without it the fill would close at `x(kLast)` and the just-reset
+    // zero line would stop at `right`, both beyond `visibleRight` — and it
+    // stays in the path only because removing it is not this fix, which
+    // moves the clip and nothing else.
     const float edge = area.getRight();
     if (lastX < edge - 0.01f)
     {

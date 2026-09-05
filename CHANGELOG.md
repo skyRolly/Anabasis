@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Eighteen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Nineteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,55 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.12] — 2026-09-05
+
+**The owner's third report on the GR history: 0.2.11 had not removed the visible instability at the
+right edge.** The owner's words: *"approximately 1–2 pixels of newly generated content extending to
+the right as a short horizontal line … exposes the state while it is still being generated"* — in
+the grey level history as much as in the yellow trace. Reproduced frame by frame on the real
+processor and the real paint path, and the owner's reading confirmed before anything was changed:
+every drawn vertex was frozen and moved rigidly, as 0.2.11 claimed, but the strip between the newest
+complete vertex and the plot edge — the lead-out, drawn flat at the last value because the bucket
+that belongs there is still collecting — was on screen, and it is the one part of the trace that
+changes other than by scrolling. Measured 1.00–2.42 px long at 48 kHz / 512 on the Simple well (up
+to 2.90 px at 1024 samples): once per bucket, 23 to 43 times a second, its height jumped to the new
+value and the segment to its left — up to a pitch wide, 1.4 px at 48 kHz / 512 on the Simple well —
+snapped from flat to sloped, in the GR stroke and the level fill alike, since both run the same
+path. The fix is a clip and nothing else: the plot's visible right
+boundary is now `floor (right − pitch) − 1`, left of everything the lead-out can touch; the anchor,
+the bucket law, the values, the timing, the smoothing, the host-delivery behaviour and the left edge
+are untouched, and every column still shown is pixel-for-pixel what 0.2.11 showed there.
+Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05-gr-history-tip.md)
+§7.
+
+### Fixed
+- **The right edge of the GR history no longer shows the strip that is still being generated.** The
+  trace and the level fill end `ceil (pitch) + 2` columns short of the plot edge — four columns for
+  every block size up to 1024 samples at every rate from 44.1 kHz, and up to 2048 from 48 kHz up,
+  on either well;
+  five at 44.1 kHz / 2048 on the Simple well — and what reaches that boundary is always a segment
+  between two complete buckets. Measured on the validation harness against 0.2.11 on the same
+  frames (real processor, real paint path, 8 s per configuration, on five configurations: the Simple
+  well at 48 kHz / 512, 48 kHz / 1024, 44.1 kHz / 512 and 44.1 kHz / 1024, and the Advanced well at
+  48 kHz / 512): in the rightmost 24 visible
+  columns the translation-compensated movement of the fill's top edge fell from a mean of 0.52 px
+  (max 25 px; 1.5 columns per frame moving more than a pixel) to 0.07 px (max 0.44; none), and the
+  stroke's from 0.24 px (max 18 px) to 0.04 px (max 0.16) — the floor the interior's content columns
+  show; the last visible column carries the trace on every frame, every column beyond it is
+  background on every frame, and every column left of the boundary is identical to 0.2.11 in 480 of
+  480 frames on every configuration run and in 1560 of 1560 frames of a 26 s run through the settled
+  window; frame against frame with no translation model, the three columns inside the boundary show
+  no stroke pixel appearing or vanishing on any frame; at 75, 85, 125, 150 and 200 % UI scale the
+  strip stays at least 0.89 px clear of the visible range. Evidence: this release. [Verified]
+
+### Changed
+- **The plot's right margin is wider by those columns** — 14 px against the 10 px on the left at
+  the shipped rates, and against the 10 px the spectrum view of the same well keeps, so the two
+  views' right-hand ends now differ by four pixels when the GR|SPEC pill is toggled — because the
+  boundary hides columns rather than moving the trace. The 0.2.11
+  entry's "the last pixel column of the GR plot no longer blinks" now holds for the last VISIBLE
+  column; the plot's own last columns are no longer drawn at all. Evidence: this release. [Verified]
 
 ## [0.2.11] — 2026-09-05
 

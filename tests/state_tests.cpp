@@ -6436,7 +6436,8 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                 const float perEntry = pitch / (float) b.stride;
                 bool onlyCompleteDrawn = true, newestWithinPitch = true, completedAtPitch = true,
                      advancesPerEntry = true, oldestOffEdge = true, neverRightward = true,
-                     phaseShifts = true, valuesFrozen = true, appearsAtEdge = true, neverUndrawn = true;
+                     phaseShifts = true, valuesFrozen = true, appearsAtEdge = true, neverUndrawn = true,
+                     leadOutHidden = true;
                 for (int64_t h = head; h < head + 3 * b.stride; ++h)
                 {
                     const auto now  = GrHistoryView::buckets (h,     want, c.cols);
@@ -6490,6 +6491,23 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                                       && at (full1, full1.kFirst) > -pitch - perEntry - 1.0e-3f
                                       && at (now, now.kFirst + 1) > -1.0e-3f;
                     }
+                    // THE VISIBLE BOUNDARY (0.2.12) lies left of everything
+                    // the lead-out can touch: the newest drawn vertex sits at
+                    // or beyond `visibleRight + 1` at every head and at both
+                    // ends of the phase, so the strip beyond it — the one
+                    // part of the trace that changes other than by scrolling,
+                    // the owner's third report — is never on screen. The
+                    // bound is a constant of the window (`kFull`), not of the
+                    // head, and it leaves the plot most of its width.
+                    {
+                        const int  vr    = GrHistoryView::visibleRight (now, 0.0f, (float) c.cols);
+                        const auto full1 = GrHistoryView::buckets (h, want, c.cols, 1.0);
+                        leadOutHidden &= at (now, now.kLast) >= (float) (vr + 1) - 1.0e-3f
+                                      && at (full1, full1.kLast) >= (float) (vr + 1) - 1.0e-3f
+                                      && vr == GrHistoryView::visibleRight (next, 0.0f, (float) c.cols)
+                                      && vr == c.cols - 1 - (int) std::ceil (pitch) - 1
+                                      && vr > c.cols / 2;
+                    }
                     // Every pair of drawn neighbours — the newest pair
                     // included, since 0.2.11 draws no half-collected bucket —
                     // is one pitch apart, whatever the newest bucket's fill.
@@ -6531,6 +6549,7 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                 check (valuesFrozen,      say ("walk: every drawn bucket reads exactly its own span at every head — its value is frozen").toRawUTF8());
                 check (appearsAtEdge,     say ("walk: a completing bucket appears at the edge as a NEW vertex one pitch past the previous").toRawUTF8());
                 check (neverUndrawn,      say ("walk: a bucket once drawn stays drawn").toRawUTF8());
+                check (leadOutHidden,     say ("walk: the visible boundary sits left of the newest drawn vertex at every head and both ends of the phase — the lead-out is never on screen").toRawUTF8());
                 check (completedAtPitch,  say ("walk: drawn neighbours are one pitch apart at every head, the newest pair included").toRawUTF8());
                 check (advancesPerEntry,  say ("walk: ONE entry moves every drawn bucket ONE entry-pitch").toRawUTF8());
                 check (neverRightward,    say ("walk: …and never moves anything rightward").toRawUTF8());
@@ -7250,24 +7269,49 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         check (differing == 0,
                "grPaint: …and two frames from one state are identical — the reads are of settled values, not of a moving target");
 
-        // -- 5. THE LAST PLOT COLUMN IS LIT AT EVERY FILL (0.2.11). The
-        //       lead-out used to end on the anchor `x0 + width − 1`, the LEFT
-        //       boundary of the last column, with a butt cap, so that column
-        //       was lit only when a steep segment ended there and spilled
-        //       half its stroke into it: a one-column sliver blinking at
-        //       bucket rate — measured dark on 52 % of frames. The lead-out
-        //       now runs to the clip edge, so the column carries it on every
-        //       frame. Pinned through a RENDERED snapshot at every fill state
-        //       of the newest bucket, which is the only way to see a stroke
-        //       cap; the accent's red channel is what the trace leaves
-        //       behind and the background's is not.
+        // -- 5. THE VISIBLE BOUNDARY (0.2.12). The lead-out — the flat strip
+        //       from the newest complete vertex to the plot edge, standing in
+        //       for the bucket still collecting — was the owner's third
+        //       report: a stub of one to `pitch + 1` pixels at the right edge
+        //       (1–2.4 px at 48 kHz / 512 on the Simple well) whose height jumped,
+        //       and whose left neighbour snapped from flat to sloped, once per
+        //       bucket — the one region of the trace that changes other than
+        //       by scrolling, in the GR stroke and the level fill alike.
+        //       0.2.11 had run it to the clip edge so the last column would
+        //       stop blinking (dark on 52 % of frames); 0.2.12 clips at
+        //       `visibleRight` (header), left of everything the lead-out can
+        //       touch, and moves nothing else. Pinned the way the blink was —
+        //       through a RENDERED snapshot at every fill state of the newest
+        //       bucket, the only way to see a stroke's cap or a clip — on both
+        //       halves of the contract: the last VISIBLE column carries the
+        //       trace on every fill (nothing blinks at the boundary), and no
+        //       column from `visibleRight` to the plot edge carries anything
+        //       on any of them (the strip is gone, not moved). The bound's
+        //       arithmetic is pinned first, here and on both shipped wells.
         {
-            const int cols = view.getWidth() - 2 * 10;           // paintHistory's reduced (10, 8)
-            const int lastColumn = 10 + cols - 1;
-            const auto stride = GrHistoryView::buckets (proc.grHistory().available(),
-                                                        GrHistoryView::windowEntries (48000.0, 512), cols).stride;
-            bool litAtEveryFill = true;
-            for (int64_t extra = 0; extra < stride; ++extra)
+            const int     cols = view.getWidth() - 2 * 10;           // paintHistory's reduced (10, 8)
+            const int64_t want = GrHistoryView::windowEntries (48000.0, 512);
+            const auto    nb   = GrHistoryView::buckets (proc.grHistory().available(), want, cols);
+            const int     visibleRight = GrHistoryView::visibleRight (nb, 10.0f, (float) cols);
+            const float   pitch        = (float) (cols - 1) / (float) (nb.kFull - 1);
+            // floor (right − pitch) − 1 with `right` the integer anchor `x0 + cols − 1`:
+            // `ceil (pitch) + 2` columns hidden, the lead-out's start at least one
+            // whole column beyond the last visible one at both ends of the phase
+            check (visibleRight == 10 + (cols - 1) - (int) std::ceil (pitch) - 1
+                   && visibleRight == (int) std::floor (10.0f + (float) (cols - 1) - pitch) - 1
+                   && GrHistoryView::bucketX (nb, nb.kLast, 10.0f, (float) cols) >= (float) (visibleRight + 1) - 1.0e-3f
+                   && GrHistoryView::bucketX (GrHistoryView::buckets (proc.grHistory().available(), want, cols, 1.0),
+                                              nb.kLast, 10.0f, (float) cols) >= (float) (visibleRight + 1) - 1.0e-3f,
+                   "grPaint: visibleRight is floor (right − pitch) − 1, and the newest drawn vertex never sits left of the column after it");
+            {
+                const auto simple   = GrHistoryView::buckets (4 * want, want, 904);
+                const auto advanced = GrHistoryView::buckets (4 * want, want, 604);
+                check (GrHistoryView::visibleRight (simple,   10.0f, 904.0f) == 910
+                       && GrHistoryView::visibleRight (advanced, 10.0f, 604.0f) == 610,
+                       "grPaint: on the shipped wells at 48 kHz / 512 the boundary hides four columns — 910 of 10…913 on the Simple well, 610 of 10…613 on the Advanced");
+            }
+            bool litAtEveryFill = true, clearAtEveryFill = true;
+            for (int64_t extra = 0; extra < nb.stride; ++extra)
             {
                 if (extra > 0)
                 {
@@ -7277,16 +7321,24 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                     proc.processBlock (buf, midi);
                 }
                 const auto snap = view.createComponentSnapshot (view.getLocalBounds(), false);
-                int lit = 0;
+                int lit = 0, spilled = 0;
                 for (int y = 0; y < snap.getHeight(); ++y)
                 {
-                    const auto p = snap.getPixelAt (lastColumn, y);
+                    const auto p = snap.getPixelAt (visibleRight - 1, y);
                     if (p.getRed() > 128 && p.getGreen() > 100) ++lit;
+                    // the outermost margin column is the untouched background this
+                    // snapshot paints on; every clipped column must match it row for row
+                    const auto bg = snap.getPixelAt (snap.getWidth() - 1, y);
+                    for (int x = visibleRight; x < 10 + cols; ++x)
+                        if (snap.getPixelAt (x, y) != bg) ++spilled;
                 }
-                litAtEveryFill &= lit > 0;
+                litAtEveryFill   &= lit > 0;
+                clearAtEveryFill &= spilled == 0;
             }
             check (litAtEveryFill,
-                   "grPaint: the trace reaches the last plot column at every fill of the newest bucket — the lead-out ends on the clip edge, not one column short of it");
+                   "grPaint: the trace reaches the last VISIBLE column at every fill of the newest bucket — nothing blinks at the boundary");
+            check (clearAtEveryFill,
+                   "grPaint: …and no column from visibleRight to the plot edge carries a pixel at any fill — the lead-out strip is clipped, not moved");
         }
     }
 }

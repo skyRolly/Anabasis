@@ -6,9 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.11 (2026-09-05)** — the owner's second GR-history report, reproduced
-frame by frame on the real paint path, confirmed by the owner, and fixed: the newest vertex is no
-longer a live estimate, and the last plot column no longer blinks (entry below, after round 4).
+**Last updated:** for **0.2.12 (2026-09-05)** — the owner's third GR-history report, reproduced
+frame by frame on the real paint path, confirmed by the owner, and fixed by a clip and nothing else:
+the strip beyond the newest complete vertex is no longer shown (entry below). Before that, **0.2.11
+(2026-09-05)** — the owner's second GR-history report: the newest vertex is no longer a live
+estimate, and the last plot column no longer blinks.
 Before that, the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
 findings disproved, G4/G5 fixed and scanner-confirmed, and this record synchronised with the audit
 records it covers. Before that, the **scanner-finding audit (2026-09-03)** — the first audit run
@@ -179,6 +181,31 @@ path's is a few instructions wide.
 records (`docs/reports/2026-09-03-scanner-audit.html`,
 `worklogs/2026-09-03-scanner-finding-audit.md`). No **State serialization schema** row: no schema,
 contract or behaviour changed.
+
+**0.2.12 (2026-09-05) — the GR history's right edge no longer shows the strip still being
+generated.** The owner's third report on the same display: a 1–2 px horizontal stub at the right
+edge of the trace and of the grey level history, exposing content still being generated. Reproduced
+on the same scratch harness (real processor, real `GrHistoryView` paint path, frame by frame) and
+the owner's reading confirmed before any change: the lead-out — the flat strip from the newest
+complete vertex to the plot edge, 1.00–2.42 px at 48 kHz / 512 — was on screen, and it is the one
+part of the trace that changes other than by scrolling (its height jumps and its left neighbour
+snaps from flat to sloped once per bucket; the stroke and the fill share the path). Fixed by
+clipping at `GrHistoryView::visibleRight` = `floor (right − pitch) − 1`, left of everything the
+lead-out can touch (the newest drawn vertex satisfies `right − pitch ≤ x ≤ right` on every frame),
+one further column of measured margin for the stroke join at the vertex before it; nothing
+else moved, and every column still shown is pixel-identical to 0.2.11 in 480 of 480 frames on every
+configuration. Validated old against new on the same frames (fill top-edge movement in the
+rightmost visible columns 0.52 → 0.07 px mean, 25 → 0.44 px max; stroke 0.24 → 0.04, 18 → 0.16; last
+visible column lit on every frame; every column beyond it background on every frame). Rows engaged:
+**Metering (GR history)** (`USER_MANUAL.md` — the trace stops short of the right-hand edge,
+supplied; `DSP_ALGORITHMS.md` and `TEST_REPORT.md` untouched, as at 0.2.11), **ADR** (ADR-0023 item
+6 amended in place, dated, on the owner's directive), **New/changed test** (`state_tests.cpp`: the
+walk's boundary pin in every geometry case, the boundary arithmetic on this view and both shipped
+wells, and the rendered `grPaint` snapshot re-pinned on both halves of the contract; `TESTING.md` —
+`visibleRight` joins the pinned statics, supplied; this file), and **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`). No **State serialization schema** row: nothing serialised changed.
+`OPEN_QUESTIONS.md` untouched (OQ-017 unchanged). Trail: `worklogs/2026-09-05-gr-history-tip.md`
+§7 (the measurement trail, the boundary sweep, the old-against-new identity check, the mutants).
 
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly

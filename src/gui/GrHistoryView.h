@@ -85,6 +85,13 @@ class AnabasisAudioProcessor;
 //  WHAT A FRAME DRAWS (0.2.11): complete buckets only, each created once at
 //  the value it keeps and moved as one rigid body with the rest — the newest
 //  vertex is no longer a live estimate. `bucketX` carries the argument.
+//
+//  WHAT A FRAME SHOWS (0.2.12): the plot's columns left of `visibleRight`
+//  only. The strip between the newest complete vertex and the clip edge —
+//  the lead-out, plus the newest segment in the frame it appears — is the
+//  one part of the trace that changes other than by translation, and it is
+//  now clipped rather than drawn to the edge. Nothing else moved: the anchor,
+//  `bucketX` and the left edge are what they were in 0.2.11.
 // ============================================================================
 
 class GrHistoryView : public juce::Component,
@@ -346,6 +353,56 @@ public:
         const float perEntry = pitch / (float) b.stride;
         return right - (float) (b.kHead - k) * pitch
              + (float) ((double) (b.stride - b.fill) - b.phase) * perEntry;
+    }
+
+    // THE VISIBLE RIGHT BOUNDARY (0.2.12, the owner's third report): the first
+    // plot column `paintHistory` does NOT show. What 0.2.11 left on screen was
+    // the strip from the newest complete vertex to the clip edge — the
+    // lead-out, drawn flat at the last value because the bucket that belongs
+    // there is still collecting — and the owner saw exactly that: a
+    // horizontal stub at the right edge, one to `pitch + 1` pixels long
+    // (1–2.4 px at 48 kHz / 512 on the Simple well), whose height jumped, and
+    // whose left neighbour snapped from flat to sloped, once per bucket (31
+    // times a second at 48 kHz / 512 on the Simple well), in the GR stroke and the
+    // level fill alike since both run the same path. Frozen values placed
+    // rigidly do not help there: the stub IS the placeholder for a value
+    // that does not exist yet, so the only honest thing to do with it is not
+    // to show it.
+    //
+    // The bound follows from `bucketX`. With `fill ∈ [1, stride]` and
+    // `phase ∈ [0, 1]` the newest drawn vertex sits at
+    //   right − pitch ≤ x(kLast) ≤ right
+    // on every frame — the lower end only at phase 1, a parked frame — so
+    // the lead-out never starts left of `right − pitch`, and with the clip's
+    // right edge at `B = floor (right − pitch)`, the first column the
+    // lead-out can reach, no column shown ever carries it. The further `− 1`
+    // is the owner's margin for the one thing that bound does not cover: the
+    // stroke JOIN at the vertex that was newest until this frame re-shapes
+    // when its successor appears (a horizontal lead-out gives way to a sloped
+    // segment), and that vertex sits between `right − 2·pitch` and
+    // `right − pitch` — up to a frame's travel inside `B` on a 60 Hz clock
+    // (0.65 px measured at 48 kHz / 1024), further on a slower one — while a
+    // JUCE mitred join can reach four half-widths from it. The boundary sweep
+    // in the worklog shows the one column of margin taking the only
+    // configuration that registered a residual (48 kHz / 1024) to the
+    // interior's floor; it is a measured margin, not a bound, and a re-shape
+    // that did reach a shown column would be confined to the stroke's own
+    // width around one vertex, never a jump in height.
+    //
+    // ONLY the clip reads this. `right`, `pitch`, `bucketX`, the read window
+    // and the left edge are untouched, so every column that is still shown
+    // is pixel-for-pixel what 0.2.11 showed there; the plot gives up
+    // `ceil (pitch) + 2` columns on the right — 4 for every pitch up to 2 px,
+    // which is every block up to 1024 samples at every rate from 44.1 kHz
+    // and 2048 from 48 kHz up, on either well (44.1 kHz / 2048 on the Simple well is 5;
+    // 4096-sample blocks lose up to three more). The lead-out itself stays in
+    // the path, wholly behind the clip (`paintHistory` says why). `kFull ≥ 2`
+    // (`buckets`), so the pitch is finite.
+    static int visibleRight (const Buckets& b, float x0, float width) noexcept
+    {
+        const float right = x0 + (width - 1.0f);
+        const float pitch = (width - 1.0f) / (float) (b.kFull - 1);
+        return (int) std::floor (right - pitch) - 1;
     }
 
     // The nominal seconds one ring entry spans: the prepared block over the
