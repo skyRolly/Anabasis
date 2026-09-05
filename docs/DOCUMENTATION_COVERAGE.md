@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
+**Last updated:** for **0.2.11 (2026-09-05)** — the owner's second GR-history report, reproduced
+frame by frame on the real paint path, confirmed by the owner, and fixed: the newest vertex is no
+longer a live estimate, and the last plot column no longer blinks (entry below, after round 4).
+Before that, the **scanner-audit remediation rounds 2-3 (2026-09-03)** — the two PR review
 findings disproved, G4/G5 fixed and scanner-confirmed, and this record synchronised with the audit
 records it covers. Before that, the **scanner-finding audit (2026-09-03)** — the first audit run
 against raw SARIF retrieved from the scanners themselves, and the one production finding it produced. Before
@@ -176,6 +179,31 @@ path's is a few instructions wide.
 records (`docs/reports/2026-09-03-scanner-audit.html`,
 `worklogs/2026-09-03-scanner-finding-audit.md`). No **State serialization schema** row: no schema,
 contract or behaviour changed.
+
+**0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
+complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly
+generated line can have instantaneous changes, and it also changes while it is moving."*
+Reproduced on a scratch harness driving the real processor and the real `GrHistoryView` paint path
+frame by frame, with the 0.2.7 and pre-fix 0.2.8 painters ported beside it on the same frames, and
+confirmed by the owner against the description before anything was changed. The completed trace
+was rigid, as 0.2.8 claimed; the newest vertex was a live estimate — a minimum over a trailing
+window re-evaluated on every block (`tipFirst`), pinned to the edge while its bucket filled
+(`bucketX`'s `k >= kHead` branch), released to drift and re-sprout once complete — revised 24–36
+times per second, up to 57 px on the Advanced well, and 0.2.8's "halved the tip's movement" was not
+reproduced on the real limiter (2.6 vs 2.9 px per frame; identical at stride 1). Fixed by drawing
+only complete buckets (`Buckets::kLast`) under the one rigid law every vertex already obeyed;
+`tipFirst` removed; the lead-out ends on the clip edge, which also closes the last plot column's
+blink (dark on 52 % of frames, present in both versions). Validated on the harness against both
+predecessors: revisions of a drawn vertex 0, re-sloped segments 0, ledge-to-spike collapses 0, the
+completed trace's translation unchanged, the last column lit on every frame — on every
+configuration run. Host-delivery motion (bursty or mis-sized blocks) is unchanged and filed as
+OQ-017. Rows engaged: **Metering (GR history)** (`USER_MANUAL.md` — supplied here;
+`DSP_ALGORITHMS.md` carries no display geometry and `TEST_REPORT.md` no display figure, neither
+touched), **ADR** (ADR-0023 item 6 amended in place, dated, on the owner's directive), **New/changed
+test** (`state_tests.cpp`: the walk's tip pins replaced by only-complete-drawn, values-frozen and
+appears-at-edge pins, the `grComplete` block, and a RENDERED last-column pin in `grPaint`;
+`TESTING.md` — supplied here; this file), **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`), and
+`OPEN_QUESTIONS.md` (OQ-017, new). Trail: `worklogs/2026-09-05-gr-history-tip.md`.
 
 **Scope of the 0.2.8 review round.** Three correctness findings against the scroll fix below, two of
 them races, all repaired in the same version (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §9).

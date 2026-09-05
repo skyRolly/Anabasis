@@ -191,8 +191,10 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     // `stride` of entries per bucket, bucket k spanning [k·stride, (k+1)·stride).
     // A given entry therefore stays in the same bucket for its whole life on
     // screen, so a completed bucket's decimated max never changes and the
-    // display scrolls instead of re-bucketing. Only the newest (still-filling)
-    // bucket changes between shifts, and its max can only grow while it fills.
+    // display scrolls instead of re-bucketing. Since 0.2.11 a bucket is drawn
+    // ONLY once it is complete (`Buckets::kLast`), so no drawn value ever
+    // changes at all — the still-filling bucket used to be drawn live, and
+    // the owner saw its vertex being revised (the banner over `bucketX`).
     //
     // The waveform is ONE filled path under a polyline top edge rather than a
     // per-column rectangle comb, so the renderer anti-aliases a single shape.
@@ -229,6 +231,10 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     juce::Path wave, gr;
     bool started = false;
     float lastX = area.getX(), lastWy = 0.0f, lastGy = 0.0f;
+    // The anchor: the newest COMPLETE bucket lands here the frame it
+    // completes (`bucketX`). It is the left boundary of the last plot column,
+    // which is why the lead-out below runs on past it to the clip edge.
+    const float right = area.getX() + area.getWidth() - 1.0f;
 
     // Clip to the plot area's COLUMNS (the rows keep their overhang: the
     // 1.4 px stroke at zero reduction straddles `area.getY()` and must go on
@@ -284,7 +290,13 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     const float zeroGy = grY (0.0f, area.getY(), area.getHeight());   // the GR zero line
     if (drawsZeroRegion (head, nb.window))
     {
-        const float xFirst = bucketX (nb, nb.kFirst, area.getX(), area.getWidth());
+        // Until the very first bucket completes (`count == 0`, the first
+        // `stride − 1` blocks after a reset) there is no vertex to drop into:
+        // the zero line runs to the anchor and the lead-out carries it on to
+        // the edge, so a just-reset ring shows the honest zero line across
+        // the whole panel rather than nothing.
+        const float xFirst = nb.count > 0 ? bucketX (nb, nb.kFirst, area.getX(), area.getWidth())
+                                          : right;
         const float xZero  = juce::jmin (area.getX(), xFirst);
         wave.startNewSubPath (xZero, zeroWy);
         gr.startNewSubPath (xZero, zeroGy);
@@ -293,16 +305,18 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
             wave.lineTo (xFirst, zeroWy);
             gr.lineTo (xFirst, zeroGy);
         }
+        lastX  = xFirst;
+        lastWy = zeroWy;
+        lastGy = zeroGy;
         started = true;
     }
 
-    for (int64_t k = nb.kFirst; k <= nb.kHead; ++k)
+    // Complete buckets only (`kLast`, 0.2.11): every vertex this loop emits
+    // reads its bucket's whole span and will read the same span on every
+    // later frame, so nothing drawn here is ever revised — the half-collected
+    // newest bucket, which used to be drawn live at the edge, waits.
+    for (int64_t k = nb.kFirst; k <= nb.kLast; ++k)
     {
-        // The newest vertex aggregates the TRAILING `stride` entries rather
-        // than its bucket's partial range (`tipFirst`, 0.2.8): the same
-        // filter length as every completed vertex, coinciding with the bucket
-        // the instant it completes, so the tip no longer pops to a single
-        // block's value at every bucket start.
         const auto [e0, e1] = bucketReads (nb, k, first, head);
         if (e0 >= e1)
             continue;                               // unreachable by construction (see the
@@ -380,17 +394,24 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
     if (! started)
         return;
 
-    // The LEAD-OUT, mirror of the left edge's lead-in: while a completed
-    // newest bucket drifts left on its phase (`bucketX`), the strip it
-    // vacates — under one entry-pitch — holds no newer data than that vertex,
-    // so its value extends flat to the edge rather than leaving the newest
-    // pixel column empty and breathing at the block rate.
-    const float right = area.getX() + area.getWidth() - 1.0f;
-    if (lastX < right - 0.01f)
+    // The LEAD-OUT, mirror of the left edge's lead-in: the strip between the
+    // newest drawn vertex and the edge — up to a pitch plus one entry-pitch
+    // wide now that a bucket is drawn only once complete — holds no data yet,
+    // so the last value extends flat across it rather than leaving the line
+    // short of the edge and breathing at the block rate. It runs to the CLIP
+    // edge, not to the anchor `right` (0.2.11): `right` is the LEFT boundary
+    // of the last plot column, and a butt-capped horizontal stroke ending
+    // there lit nothing in that column while a steep segment ending at the
+    // same x spilled half its width into it — so the last column blinked at
+    // bucket rate (measured dark on 52 % of frames), the very breathing this
+    // lead-out was written to prevent. Ending at the clip edge makes the
+    // column part of the lead-out on every frame; the clip trims the cap.
+    const float edge = area.getRight();
+    if (lastX < edge - 0.01f)
     {
-        wave.lineTo (right, lastWy);
-        gr.lineTo (right, lastGy);
-        lastX = right;
+        wave.lineTo (edge, lastWy);
+        gr.lineTo (edge, lastGy);
+        lastX = edge;
     }
 
     // Close the waveform's top edge down to the baseline and fill.

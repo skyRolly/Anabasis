@@ -119,6 +119,21 @@ by construction rather than by stimulus luck.
    > the zero-data region and the clear rule are exactly as decided above.
    > `worklogs/2026-09-01-gr-history-scroll-jitter.md` carries the measurements and the review.
 
+   > **Amended 2026-09-05 (0.2.11), the owner's second report and the owner's directive to fix
+   > the tip.** The sentence above beginning "the newest VERTEX may sit under one entry-pitch
+   > inside it" no longer holds: that vertex was a live estimate — a minimum over a window that
+   > slid with every block, pinned to the edge while its bucket filled, released to drift once
+   > complete — and the owner saw it revised and re-shaped after it had been drawn. A bucket is
+   > now drawn only once it is complete, at its final value, and every drawn vertex, the newest
+   > included, sits at `right − (pitch / stride) · ((head + phase) − (k + 1) · stride)`: one rigid
+   > law, no vertex pinned, no trailing window, no value revised after it is shown. The newest
+   > drawn vertex therefore lies between the anchor and one pitch inside it, and the strip beyond
+   > it is the lead-out, which now runs to the clip edge rather than to the anchor (the last plot
+   > column was blinking at bucket rate). The right anchor, the fixed pitch, the per-entry scroll,
+   > the smoothed head, the zero-data region and the clear rule are unchanged; the newest value
+   > reaches the panel up to `stride − 1` blocks later than before.
+   > `worklogs/2026-09-05-gr-history-tip.md` carries the measurements.
+
 7. **Graph-well switch:** the GR|SPEC pill moves to the bottom-left (the least informative
    corner in both modes; the old top-right sat on the newest GR data), GR is the left segment
    and the default mode (`int_spectrumOn` default flips to `false` — a default change only,

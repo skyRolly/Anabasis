@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Seventeen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Eighteen such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,47 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.11] — 2026-09-05
+
+**The owner's second report on the GR history: 0.2.8 had not fixed the part of the line that is
+being generated.** The owner's words: *"the newly generated line can have instantaneous changes,
+and it also changes while it is moving."* Reproduced frame by frame on the real processor and the
+real paint path, and confirmed by the owner against that description. The completed trace glided
+rigidly, exactly as 0.2.8 claimed — but the newest vertex was a live estimate: a minimum over a
+window that slid with every block, drawn pinned to the right edge while its bucket filled, released
+to drift once complete and then re-sprouted. So the last pitch of the line was revised on every
+block and re-shaped on every frame, and a value just shown could still rise when the block that set
+it left the window. 0.2.8's own claim that its part B had halved the tip's movement was not
+reproduced on the real limiter (2.6 px per frame against 0.2.7's 2.9, identical at stride 1, and
+more upward pops on the Advanced well). The newest vertex is now created once, when its bucket is
+complete, at the value it will keep, and obeys the same rigid law as every other vertex. Nothing on
+the audio thread, in the ring or in the smoothed head moved; the scroll timing on hosts that
+deliver blocks in bursts, or at a size other than the one they prepared, is unchanged and is filed
+as OQ-017. Measurement trail:
+[`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05-gr-history-tip.md).
+
+### Fixed
+- **The right-hand end of the GR trace no longer changes after it is drawn.** A bucket is drawn
+  only once all of its blocks have arrived, at its final value, and the strip between it and the
+  edge holds that value flat until the next bucket completes. Measured on the validation harness —
+  real processor, real paint path, 8 s per configuration, Simple and Advanced wells, 44.1 and
+  48 kHz, 512 to 2048-sample blocks, 1× and 2× scale — against the pre-fix code on the same
+  frames: revisions of an already-drawn vertex 0 (pre-fix 24–36 per second, up to 22 px on the
+  Simple well and 57 px on the Advanced), re-sloped segments 0 (pre-fix 30–45 per second),
+  ledge-to-spike collapses 0, and the completed trace still translates at one uniform step per
+  frame with zero deviation on a steady host. The newest value reaches the panel up to `stride − 1`
+  blocks later than before — 21 ms at 48 kHz / 512 on the Simple well, 32 ms on the Advanced —
+  which is the price of never revising a drawn vertex. Evidence: this release. [Verified]
+- **The last pixel column of the GR plot no longer blinks.** The flat lead-out ended on the anchor,
+  the left boundary of the last column, with a butt cap, so that column was lit only by the spill
+  of a steep segment ending there — dark on 52 % of frames at 48 kHz / 512 (37 % in 0.2.7). It now
+  runs to the clip edge and the column is lit on every frame. Evidence: this release. [Verified]
+
+### Changed
+- **The first bucket after a reset appears when it completes, not before.** For the first
+  `stride − 1` blocks the zero line spans the whole panel; 0.2.8 drew one bucket from the first
+  block and revised it as it filled. Evidence: this release. [Verified]
 
 ## [0.2.10] — 2026-09-03
 

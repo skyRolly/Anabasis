@@ -212,15 +212,21 @@ register instead.
 A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
 needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
 statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.6 `grY`, and since
-0.2.8 `tipFirst`, `entryPeriod`, `smoothedHead`, `phaseOf`, `parked`, `paintHead`, `frameFor`,
-`readFloor` and `bucketReads`, plus the ring's own `GrHistoryBuffer::prepare`, `prepared` and
-`batchIntact` (pinned by `grPrepared`, through the ring and through the wrapper) — because an
-expression reachable only from `paint` is one no test can pin and no mutant can kill; the GR
-trace's vertical mapping under-reported reduction past 12 dB for three rounds while it sat inline,
-and its horizontal geometry stepped a non-integer pitch once per bucket for six (0.1.2 → 0.2.8)
-while the pinned property was only *where* buckets land, never *how* they move — the 0.2.8 walk in
-`testGrHistoryWindowNeverAsksForTheHeadSlot` now holds the per-entry motion at every head across
-three buckets, which is the assertion the stepped form fails.
+0.2.8 `entryPeriod`, `smoothedHead`, `phaseOf`, `parked`, `paintHead`, `frameFor`, `readFloor` and
+`bucketReads` (0.2.8's `tipFirst`, the trailing window the newest vertex read, was removed in
+0.2.11: the newest drawn bucket reads its own span like every other), plus the ring's own
+`GrHistoryBuffer::prepare`, `prepared` and `batchIntact` (pinned by `grPrepared`, through the ring
+and through the wrapper) — because an expression reachable only from `paint` is one no test can pin
+and no mutant can kill; the GR trace's vertical mapping under-reported reduction past 12 dB for
+three rounds while it sat inline, and its horizontal geometry stepped a non-integer pitch once per
+bucket for six (0.1.2 → 0.2.8) while the pinned property was only *where* buckets land, never *how*
+they move — the 0.2.8 walk in `testGrHistoryWindowNeverAsksForTheHeadSlot` now holds the per-entry
+motion at every head across three buckets, which is the assertion the stepped form fails, and since
+0.2.11 holds that only complete buckets are drawn, that every drawn bucket's read set is a constant
+of its index, and that a completing bucket appears at the edge as a new vertex. The one property
+of that view no static can carry — where the stroke's cap lands — is pinned through a RENDERED
+snapshot at every fill of the newest bucket (`grPaint`, 0.2.11), because the last plot column had
+been blinking for three rounds while every static was green.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the
