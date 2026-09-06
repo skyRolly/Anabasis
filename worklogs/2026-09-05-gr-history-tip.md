@@ -1349,3 +1349,109 @@ equally**, which is the property under repair. It lasts one frame.
   them); and the pre-existing display margin against a producer that laps the reader DURING a
   transform is unchanged — `readEndingAt`'s start clamp now bounds what that can return, but the
   frames it drops are frames no reader could have had.
+
+---
+
+## 15 — the concurrent-publication finding: a chosen span is not a held span (2026-09-06)
+
+The finding, at `src/gui/SpectrumView.cpp:329`: the shared floor is sampled, a large block lands
+after that snapshot, the two `readEndingAt` calls no longer observe the same ring state, one window
+shortens, and the frame draws two spans again. **Correct, and the mechanism is exactly as described.**
+
+### 15.1 The interleaving
+
+`readEndingAt` clamps its start to ITS OWN ring's floor at ITS OWN acquire load — which is right for
+one ring and is precisely what breaks a pair: whichever read observes the newer state shortens, and
+the other does not. Four places the producer can land, all reachable:
+
+| where the producer publishes | what happened before | what happens now |
+|---|---|---|
+| before the snapshot | the span is chosen from the new state (§14) | unchanged |
+| between the snapshot and read 1 | read 1 shortens, read 2 does not | rejected, frame held |
+| between read 1 and read 2 | read 2 shortens, read 1 does not | rejected, frame held |
+| during either copy | neither `got` sees it; the copy is trampled | rejected by the floor re-read |
+
+Measured with a producer publishing flat out beside the analyser, 3000 frames per configuration:
+
+| | 512-frame chunk | 13000-frame chunk |
+|---|---|---|
+| frames with one read short (before) | 0 | **1802** |
+| frames whose copy was lapped (before) | 4 | **3000** |
+| **drawn frames holding two windows that were not the same audio (before)** | 0 | **1441 of 3000** |
+| the same, after | **0 of 2913** | **0 of 873** |
+
+### 15.2 Why §14's floor was not enough
+
+§14 chose the span from a snapshot, which settles what is ASKED. It cannot settle what came back:
+the snapshot is not a lock, and the two reads are two separate copies from a producer that never
+stops. The clamp inside `readEndingAt` then makes the asymmetry rather than preventing it.
+
+### 15.3 The invariant
+
+> Every displayed frame analyses one span that was valid for BOTH rings when it was acquired and
+> still valid for both reads when they finished. A frame that cannot show that is not drawn.
+
+### 15.4 The proof, and the term no reader can see
+
+`SpectrumView::onePairOneSpan (span, gotIn, gotOut, first, oldestIn, oldestOut)` — both reads served
+the whole span, and neither ring's floor has passed the window's start. The first term rejects a read
+the producer shortened. The second is the before-and-after discipline the reset generations already
+use, applied to the lapping bound: the floor is monotone, so a floor still at or below `first` after
+both copies means no slot in the window was overwritten at any point during either. The frame reads
+both windows into their own scratch pair BEFORE transforming either — the old single pair was
+overwritten by the second read — and a frame that cannot prove itself is **held whole**: nothing
+folded into either EMA, nothing committed, and the next tick re-derives. No retry loop, no lock: the
+invalidation needs the producer to publish `capacity − span` frames inside two 4096-frame copies, so
+a retry is a second draw of the same lottery on a thread that has a frame to paint.
+
+That proof still left a residual, and it is the one the review's framing cannot reach: **`pushBlock`
+writes its payload BEFORE it publishes its index**, so a push that has not published yet is invisible
+in `write` while its stores are already landing on slots a reader is copying — a reader checking the
+index before and after sees a ring that never moved. Measured: **17 of 2269 drawn frames** still held
+two different windows at a 13000-frame push with the pair proved against the published index alone.
+The bound a reader needs is the SIZE of the largest push, which only the producer knows, so the
+engine now tells the rings at `prepare` (`ScopeBuffer::prepare`, from `maxBlock`, which
+`processChunk`'s `jmin (maxBlock, …)` makes an upper bound) and `oldestReadable` reserves one push
+worth of history. Written on the host thread with audio stopped — the same named premise `reset`
+rests on — and never read by the push path, so **the audio thread pays nothing**.
+
+Rejected, and recorded rather than hidden: a RESERVATION INDEX published before the payload writes
+would be exact and would keep drawing where this reserve gives up, but it is a store on the audio
+path and an `ARCHITECTURE_REVIEW_GATE` item. What the reserve gives up: a host preparing blocks of a
+whole ring or more (16384 frames, 341 ms at 48 kHz) leaves no window a reader can vouch for at any
+instant, so the analyser holds. Below that it costs nothing measurable — with the producer at its
+real cadence and the analyser at 60 Hz, **0 of 360 frames** across 512-, 4096- and 13000-frame blocks
+refused to draw audio that had arrived, and the per-frame cost is two atomic loads and a branch.
+
+### 15.5 Tests and mutants
+
+The decision is a pure static with a seven-row truth table; the stimulus is a thread — a producer
+publishing 13000-frame chunks flat out beside 5000 drawn frames, with IDENTICAL audio in both rings,
+so a frame whose two traces differ at all is a frame whose two windows were not the same span. Five
+`specSync` checks pin the ring's reserve, including the case where one push can rewrite the whole
+ring and the floor says so rather than pretending.
+
+| mutant | killed by |
+|---|---|
+| the pair is never proved | `specRace` (threaded) |
+| only the counts are checked (a lapped copy accepted) | 2 × `specRace` truth table |
+| only the floors are checked (a short read accepted) | 2 × `specRace` truth table |
+| the floor stops reserving room for an in-flight push | 3 × `specSync` |
+| each ring read with its own independently acquired state | `specRace` + 3 × `specSpan` |
+| the engine stops telling the rings the largest push | `specRace` |
+
+### 15.6 What this changes about §14, and what it does not
+
+The no-split behaviour of §14 is unchanged: the full 4096-frame window up to a 12288-frame block,
+shorter above it. What changes is the SPLIT case at large blocks — where §14 drew a shortened window,
+the frame is now held, because the reserve says no window is safe while a push of that size may be in
+flight. Blocks up to 4096 are bit-identical to §14 in every case measured. KI-018 is untouched (its
+corner is a reset-identity question, this is a publication-timing one), the reveal-smoothing note is
+untouched (this decides which samples a frame analyses, never how many past frames the EMA has seen),
+and OQ-017 is untouched.
+
+### 15.7 Follow-ups
+
+1. **The reservation index** — the audio-path change that would keep the analyser drawing at block
+   sizes at or above the ring's capacity. An architecture-gate item; not taken here.
+2. Unchanged from §14: the taps are index-aligned, not audio-time aligned.

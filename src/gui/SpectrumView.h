@@ -67,6 +67,14 @@ public:
     // nothing can guard.
     void tick (double dt);
 
+    // THE WINDOW THE LAST DRAWN FRAME ACTUALLY USED — the range both traces were
+    // analysed over, recorded when the frame commits. Public for the reason the
+    // two trace accessors are: what a frame has to get right is a property of
+    // the PAIR, and a test that can only see the pixels cannot say which
+    // frames the pair was drawn from.
+    struct Window { uint64_t first = 0; int span = 0; };
+    Window lastWindow() const noexcept { return { drawnFirst, drawnSpan }; }
+
     // Read-only views of the smoothed analysis, for the same reason. BOTH, since
     // 0.2.12: what a frame has to get right is that its two traces describe the
     // same span of audio, and a test that can see only one of them cannot pin
@@ -106,12 +114,41 @@ public:
                                uint64_t count, uint64_t shownCount) noexcept
     { return gen != shownGen || count < shownCount; }
 
+    // DID THIS FRAME GET ONE SPAN, TWICE? The frame asks both rings for the same
+    // `[first, first + span)` and then has to establish that it got it — because
+    // the two reads are two separate copies from a producer that never stops,
+    // and choosing the span from a snapshot of the floors only settles what was
+    // ASKED, not what came back.
+    //
+    // Two things can go wrong between the snapshot and the end of the second
+    // copy, and this is the one place both are decided:
+    //   * A READ SHORTENED ITSELF. `readEndingAt` clamps its start to its own
+    //     ring's floor at its own load, so a producer that lapped this window
+    //     after the snapshot makes THAT read return fewer frames than the other.
+    //     `got == span` on both sides is what rejects the half-shortened pair.
+    //   * A COPY WAS LAPPED WHILE IT RAN. Neither `got` sees that: the frames
+    //     were in range when the read began. The floor re-read AFTER both copies
+    //     does see it, and it is monotone, so `oldest ≤ first` on both rings
+    //     means no slot in the window was overwritten at any point during
+    //     either copy. That is the same before-and-after discipline the reset
+    //     generations use two functions up, applied to the lapping bound.
+    //
+    // A span of 0 is coherent by definition — nothing was asked for and nothing
+    // came back, which is how an empty or rewound pair of rings is expressed —
+    // so the floor terms are not consulted there.
+    static bool onePairOneSpan (int span, int gotIn, int gotOut, uint64_t first,
+                                uint64_t oldestIn, uint64_t oldestOut) noexcept
+    {
+        return gotIn == span && gotOut == span
+               && (span == 0 || (oldestIn <= first && oldestOut <= first));
+    }
+
 private:
     // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
     // agree about it — see the definition.
     juce::Rectangle<int> chipHitArea() const noexcept;
-    void analyse (const anabasis::ScopeBuffer&, std::vector<float>& smoothedDb, double dt,
-                  uint64_t committed, int span);
+    void analyse (const float* srcL, const float* srcR, int got,
+                  std::vector<float>& smoothedDb, double dt);
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;
@@ -125,7 +162,12 @@ private:
     juce::dsp::WindowingFunction<float> window { kSize,
         juce::dsp::WindowingFunction<float>::hann };
 
-    std::vector<float> scratchL, scratchR, fftData, inDb, outDb;
+    // ONE PAIR PER RING, because the frame reads both windows BEFORE it analyses
+    // either: the pair has to be shown coherent (`onePairOneSpan`) while both
+    // copies are still in hand, and the old single pair was overwritten by the
+    // second read before the first had been transformed. 32 KB more, allocated
+    // once at construction — the tick allocates nothing, as before.
+    std::vector<float> scratchInL, scratchInR, scratchOutL, scratchOutR, fftData, inDb, outDb;
     // `shownInCount`/`shownOutCount` are the last index observed in each ring,
     // and since 0.2.12 they answer ONE question: has this ring rewound?
     // (`resetObserved`'s count term, whose coherence argument is about a single
@@ -138,6 +180,9 @@ private:
     // also what an empty pair of rings reports, so the first tick over empty
     // rings idles exactly as it always did.
     uint64_t shownCommitted = 0;
+    // …and the window the last DRAWN frame was analysed over (`lastWindow`).
+    uint64_t drawnFirst = 0;
+    int      drawnSpan  = 0;
     uint32_t shownInGen = 0, shownOutGen = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumView)

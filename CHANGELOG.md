@@ -174,6 +174,19 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   two traces agree everywhere, and buffers up to 12 288 samples are bit-identical to before.
   Evidence: this release. [Verified]
 
+- **…and neither can audio arriving while the frame is being drawn.** Choosing the window is not the
+  same as getting it: the audio thread keeps writing while the analyser copies, and each capture
+  protected itself alone — which is what broke the pair, since only one of the two copies would come
+  back short. Beside a producer running flat out at a 13 000-sample block, 1 441 of 3 000 drawn
+  frames held two windows that were not the same audio. The analyser now copies both windows before
+  it transforms either and draws the frame only if both came back whole and neither capture has
+  since overwritten the start of the window; a frame that cannot show that is held, and the next one
+  redraws from a settled state. It also accounts for a write that is still in progress — the audio
+  thread fills a capture before it announces it, so the captures are told at start-up how large a
+  block can be and hold back that much history. Measured after: 0 of 873 drawn frames disagreed, and
+  at the rate a host actually delivers audio not one frame in 360 declined to draw what had arrived.
+  Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

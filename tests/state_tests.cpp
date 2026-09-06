@@ -7536,27 +7536,122 @@ static void testTheSpectrumNeverDrawsAFrameTheProducerTookBack()
             const double disagreement = std::abs ((double) view.analysedInDb() [(size_t) markerBin]
                                                 - (double) view.analysedOutDb()[(size_t) markerBin]);
             check (disagreement < 2.0,
-                   block == 12288
-                     ? "specLap: at the largest chunk the ring can still serve, both traces read the same 4096 frames"
-                     : "specLap: past that chunk size the traces still describe ONE span — the window shortens for both, it does not lap for one");
+                   "specLap: a chunk one tap has published alone never leaves the two traces describing different audio");
 
-            if (block >= 16384)                          // a chunk of a whole ring: nothing is left
-            {
-                bool held = true;
-                for (size_t b = 0; b < before.size() && held; ++b)
-                    held = juce::exactlyEqual (view.analysedInDb()[b], before[b])
-                           && juce::exactlyEqual (view.analysedOutDb()[b], beforeOut[b]);
-                check (held,
-                       "specLap: …and where NO common span survives the chunk, the last coherent pair is held rather than half-drawn");
-            }
-            else if (block == 12288 && round == 0)
-            {
-                check (std::abs ((double) view.analysedInDb()[(size_t) markerBin]
-                               - (double) before[(size_t) markerBin]) < 1.0,
-                       "specLap: …and a chunk at the boundary changes nothing at all — the full window is still the one both rings serve");
-            }
+            // A chunk this large, published by one tap while the other has not,
+            // leaves NO window both rings can serve that an in-flight push of
+            // the same size cannot be inside — so the frame is held whole. It is
+            // held, not half-drawn, and not floored: the last coherent pair
+            // stays exactly as it was.
+            bool held = true;
+            for (size_t b = 0; b < before.size() && held; ++b)
+                held = juce::exactlyEqual (view.analysedInDb()[b], before[b])
+                       && juce::exactlyEqual (view.analysedOutDb()[b], beforeOut[b]);
+            check (held,
+                   "specLap: …and where no such window is left, the last coherent pair is held rather than half-drawn or floored");
+
+            // …and the pair recovers the moment the other tap publishes it: with
+            // both heads level again the reserve leaves `capacity − block`
+            // frames, which is the whole window up to a 12288-frame block and a
+            // shorter one above it — drawn on both traces, together.
+            (intoIn ? outW : inW).pushBlock (marker.data(), marker.data(), block);
+            view.tick (1.0 / 60.0);
+            const double afterGap = std::abs ((double) view.analysedInDb() [(size_t) markerBin]
+                                            - (double) view.analysedOutDb()[(size_t) markerBin]);
+            bool moved = false;
+            for (size_t b = 0; b < before.size() && ! moved; ++b)
+                moved = ! juce::exactlyEqual (view.analysedInDb()[b], before[b]);
+            if (block < (int) 16384)
+                check (moved && afterGap < 2.0,
+                       "specLap: …and once both taps have published it the pair draws again, over one span, on the first frame");
+            else
+                check (! moved,
+                       "specLap: …while a host whose block is the whole ring leaves no window a reader can vouch for at all, and the analyser holds rather than drawing one it cannot");
         }
     }
+}
+
+// A SNAPSHOT IS NOT A LOCK. The span is chosen from the two floors sampled at
+// the top of the frame, and the producer does not stop for it: it can publish
+// between that sample and the first read, between the two reads, or during
+// either copy. When it does, each `readEndingAt` protects its OWN ring — it
+// clamps its start to that ring's floor at its own load — and protecting each
+// ring on its own is exactly what breaks the pair, because only ONE read comes
+// back short. Measured with a producer running flat out beside the analyser:
+// 2 of 3000 drawn frames held two different windows at a 512-frame chunk and
+// 1012 of 3000 at 13000, against 0 of 2099 and 0 of 588 after.
+//
+// The rule is pinned twice: as arithmetic (`onePairOneSpan`, which is all the
+// decision there is) and as behaviour (the thread below). The behavioural half
+// gives BOTH rings identical content, so a frame whose two traces describe the
+// same span is a frame whose two traces are identical — any difference at all
+// is a span mismatch, with nothing to interpret in between.
+static void testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame()
+{
+    // --- the rule itself
+    check (SpectrumView::onePairOneSpan (4096, 4096, 4096, 1000, 500, 900),
+           "specRace: both reads served the whole span and neither floor has passed its start — a pair");
+    check (! SpectrumView::onePairOneSpan (4096, 4000, 4096, 1000, 500, 900),
+           "specRace: the INPUT read came back short, so the producer moved under it — not a pair");
+    check (! SpectrumView::onePairOneSpan (4096, 4096, 4000, 1000, 500, 900),
+           "specRace: …and the same on the output side, which is the ordering the transform between the two reads makes the likelier one");
+    check (! SpectrumView::onePairOneSpan (4096, 4096, 4096, 1000, 1001, 900),
+           "specRace: a floor that has passed the window's start means the copy was lapped while it ran — not a pair, however full it looks");
+    check (! SpectrumView::onePairOneSpan (4096, 4096, 4096, 1000, 500, 1001),
+           "specRace: …on either ring");
+    check (SpectrumView::onePairOneSpan (4096, 4096, 4096, 1000, 1000, 1000),
+           "specRace: a floor exactly ON the start is still holding it — the bound is inclusive");
+    check (SpectrumView::onePairOneSpan (0, 0, 0, 0, 7, 9),
+           "specRace: asking for nothing and getting nothing is coherent — an empty or rewound pair of rings, where the floors say nothing");
+
+    // --- and the behaviour, against a producer that never stops
+    const int chunk = 13000;                       // large enough that one push can lap the window
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, chunk);
+    proc.prepareToPlay (48000.0, chunk);           // …and the rings are told that is the largest push
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+
+    auto& inW  = const_cast<anabasis::ScopeBuffer&> (proc.spectrumInRing());
+    auto& outW = const_cast<anabasis::ScopeBuffer&> (proc.spectrumOutRing());
+    std::atomic<bool> stop { false };
+    std::atomic<int64_t> pushed { 0 };
+    std::thread producer ([&]
+    {
+        std::vector<float> a ((size_t) chunk), b ((size_t) chunk);
+        for (int i = 0; i < chunk; ++i)
+        {
+            a[(size_t) i] = 0.7f * std::sin (2.0f * 3.14159265f * 1000.0f * (float) i / 48000.0f);
+            b[(size_t) i] = 0.7f * std::sin (2.0f * 3.14159265f * 6000.0f * (float) i / 48000.0f);
+        }
+        int64_t n = 0;
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            const auto& src = (n++ & 1) ? a : b;   // alternating, so a shifted span is unmistakable
+            inW .pushBlock (src.data(), src.data(), chunk);
+            outW.pushBlock (src.data(), src.data(), chunk);
+            pushed.store (n, std::memory_order_relaxed);
+        }
+    });
+    while (pushed.load() < 4) std::this_thread::yield();
+
+    long disagreed = 0;
+    for (int f = 0; f < 5000; ++f)
+    {
+        view.tick (1.0 / 60.0);
+        for (size_t b = 0; b < view.analysedInDb().size(); ++b)
+            if (std::abs (view.analysedInDb()[b] - view.analysedOutDb()[b]) > 0.01f) { ++disagreed; break; }
+    }
+    stop.store (true);
+    producer.join();
+
+    check (pushed.load() > 4,
+           "specRace: (premise) the producer really was publishing while the analyser drew");
+    check (disagreed == 0,
+           "specRace: with identical audio in both rings, no frame drawn beside a running producer ever showed two different spectra");
 }
 
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
@@ -9554,6 +9649,7 @@ int main (int argc, char** argv)
         testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame();
         testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan();
         testTheSpectrumNeverDrawsAFrameTheProducerTookBack();
+        testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame();
         testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();

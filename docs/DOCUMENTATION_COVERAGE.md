@@ -303,6 +303,30 @@ ramp whose sample is its own index; `TESTING.md`; this file), **Ship a version**
 this is a lapping one, and KI-007 item 6's predicate already reads "the committed head". Trail:
 `worklogs/2026-09-05-gr-history-tip.md` §14.
 
+**Addendum (2026-09-06, same round) — and a chosen span is not a held span.** The window is chosen
+from a snapshot of the two floors, and the producer does not stop for it: publishing between the
+snapshot and the first read, between the two reads, or during either copy makes `readEndingAt`
+protect each ring on its own, which is what breaks the pair — only ONE read comes back short.
+Measured beside a producer running flat out at a 13000-frame chunk: 1441 of 3000 drawn frames held
+two windows that were not the same audio; **0 of 873** after. The frame now reads both windows before
+transforming either and draws only if `SpectrumView::onePairOneSpan` — both reads served the whole
+span, and neither ring's floor has since passed its start — else it holds whole. One further term is
+not a reader's to see: `pushBlock` writes its payload BEFORE publishing its index, so a push
+UNDERWAY is invisible in `write` (17 of 2269 drawn frames still mismatched with the pair proved
+against the published index alone), and the bound needed is the size of the largest push, which only
+the producer knows — so the engine tells the rings at `prepare` and the floor reserves one push worth
+of history. That reserve is written on the host thread with audio stopped and read on the GUI thread;
+**the audio path is untouched**, which is why it was preferred to a reservation index published
+before the payload writes (a store on the audio path, an `ARCHITECTURE_REVIEW_GATE` item, recorded as
+the follow-up). Costs nothing at real-time rates: 0 of 360 frames refused to draw audio that had
+arrived, across 512-, 4096- and 13000-frame blocks. Rows engaged: **Threading / cross-thread path**
+(ADR-0011's 0.2.12 amendment extended in place, dated — the proof, the reserve, what the audio path
+does and does not pay, and the rejected alternative; `THREAD_MODEL.md`), **New/changed test**
+(`state_tests.cpp` + `dsp_tests.cpp`; `TESTING.md` gains the two-halves shape for a property that
+only exists while another thread runs; this file), **Ship a version** (`CHANGELOG.md`,
+`HANDOVER.md`). `KNOWN_ISSUES.md` unchanged — KI-018's corner is a reset-identity question and this
+is a publication-timing one. Trail: `worklogs/2026-09-05-gr-history-tip.md` §15.
+
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly
 generated line can have instantaneous changes, and it also changes while it is moving."*

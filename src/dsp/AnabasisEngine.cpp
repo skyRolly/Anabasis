@@ -65,8 +65,12 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // reason — since 0.1.2 only when the rate or block size actually changed,
     // so a transport-start re-prepare keeps the scrolling timeline; these two
     // were the analyser state that survived.
-    specInRing.reset();
-    specOutRing.reset();
+    // …and told the largest push they will be given, which is this `maxBlock`:
+    // the chunk loop calls `processChunk` with `jmin (maxBlock, …)`, so no push
+    // can exceed it, and a reader cannot bound an IN-FLIGHT push without that
+    // number (`ScopeBuffer::oldestReadable`). `prepare` resets as `reset` did.
+    specInRing.prepare (maxBlock);
+    specOutRing.prepare (maxBlock);
 
     using OS = juce::dsp::Oversampling<float>;
     osTableMatchesJuce = true;

@@ -5,8 +5,10 @@ using namespace abgui;
 
 SpectrumView::SpectrumView (AnabasisAudioProcessor& p) : processor (p)
 {
-    scratchL.resize (kSize);
-    scratchR.resize (kSize);
+    scratchInL.resize (kSize);
+    scratchInR.resize (kSize);
+    scratchOutL.resize (kSize);
+    scratchOutR.resize (kSize);
     fftData.resize ((size_t) kSize * 2);
     inDb.assign (kBins, -120.0f);
     outDb.assign (kBins, -120.0f);
@@ -140,20 +142,13 @@ void SpectrumView::mouseDown (const juce::MouseEvent& e)
     processor.internalState.state().setProperty (iid::spectrumOn, false, nullptr);
 }
 
-void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
-                            std::vector<float>& smoothedDb, double dt, uint64_t committed, int span)
+void SpectrumView::analyse (const float* srcL, const float* srcR, int got,
+                            std::vector<float>& smoothedDb, double dt)
 {
-    // ENDING AT THE COMMITTED HEAD, not at this ring's own — `tick` passes the
-    // newest frame index BOTH taps have published, so the two traces of one
-    // frame describe the SAME span of audio. `readEndingAt` clamps it to what
-    // this ring has published, so a head from the other ring (which can be
-    // larger — the two loads are independent) or one this ring has since
-    // rewound reads exactly what `readLatest` would have.
-    // …and `span` frames of it: the length BOTH rings can still serve at that
-    // index, chosen once by the caller so neither read has to shorten itself
-    // and the two traces cannot end up with different windows. It is `kSize` in
-    // every configuration a real-time host presents; see `tick`.
-    const int got = ring.readEndingAt (scratchL.data(), scratchR.data(), span, committed);
+    // THE WINDOW IS ALREADY IN HAND. `tick` reads both rings — same endpoint,
+    // same length — and establishes that the pair survived the copies before
+    // either is transformed; this function is what turns one of those windows
+    // into a trace, and it decides nothing about which frames they are.
     if (got <= 0)
     {
         // A ZERO-LENGTH READ IS ITSELF A RESET ANNOUNCEMENT (round 7), and this
@@ -184,7 +179,7 @@ void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
     std::fill (fftData.begin(), fftData.end(), 0.0f);
     const int off = kSize - got;                          // zero-pad a short read
     for (int i = 0; i < got; ++i)
-        fftData[(size_t) (off + i)] = 0.5f * (scratchL[(size_t) i] + scratchR[(size_t) i]);
+        fftData[(size_t) (off + i)] = 0.5f * (srcL[i] + srcR[i]);
     window.multiplyWithWindowingTable (fftData.data(), kSize);
     fft.performFrequencyOnlyForwardTransform (fftData.data());
 
@@ -371,8 +366,33 @@ void SpectrumView::tick (double dt)
     if (span == 0 && committed > 0)
         return;
 
-    analyse (in, inDb, dt, committed, span);
-    analyse (out, outDb, dt, committed, span);
+    // BOTH WINDOWS FIRST, THEN THE PROOF, THEN THE TRANSFORMS (0.2.12, the
+    // review's concurrent-publication finding). The span above is chosen from a
+    // SNAPSHOT of the two floors, and a snapshot is not a lock: the producer can
+    // publish between it and the first read, between the two reads, or during
+    // either copy. When it does, `readEndingAt` protects each ring on its own —
+    // it clamps its start to that ring's floor at its own load — and protecting
+    // each ring on its own is exactly what breaks the pair: ONE read comes back
+    // short and the frame draws two different spans again, which is the defect
+    // the shared endpoint exists to prevent. So the reads happen while nothing
+    // is committed, the pair is proved with both windows in hand
+    // (`onePairOneSpan`: both served the whole span, and neither ring's floor
+    // has passed its start), and only then are the two transforms run.
+    //
+    // A frame that cannot prove it is HELD, not repaired: nothing is folded into
+    // either EMA, nothing is committed, and the next tick re-derives from a
+    // settled producer. There is no retry loop — the invalidation needs the
+    // producer to publish `capacity − span` frames inside two 4096-frame copies,
+    // so a retry would be a second draw of the same lottery on a thread that has
+    // a frame to paint, and the frame it would save is one 60th of a second old.
+    const uint64_t first  = committed - (uint64_t) span;
+    const int      gotIn  = in .readEndingAt (scratchInL .data(), scratchInR .data(), span, committed);
+    const int      gotOut = out.readEndingAt (scratchOutL.data(), scratchOutR.data(), span, committed);
+    if (! onePairOneSpan (span, gotIn, gotOut, first, in.oldestReadable(), out.oldestReadable()))
+        return;
+
+    analyse (scratchInL .data(), scratchInR .data(), gotIn,  inDb,  dt);
+    analyse (scratchOutL.data(), scratchOutR.data(), gotOut, outDb, dt);
 
     // The second sample. A generation that moved while the batch ran means the
     // frames just folded into the EMA may span the rewind, so the EMA is not a
@@ -392,6 +412,8 @@ void SpectrumView::tick (double dt)
     // — a rewind is a property of ONE ring's index, and the coherence argument
     // behind the count term is about that ring's modification order.
     shownCommitted = committed;
+    drawnFirst     = first;
+    drawnSpan      = span;
     repaint();
 }
 

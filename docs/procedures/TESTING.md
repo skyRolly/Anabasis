@@ -287,6 +287,20 @@ ring, and far past it) in both publication orders and three times each, assertin
 traces agree and that a block leaving no common span holds the last coherent pair rather than
 drawing half of one.
 
+The round after that had to pin something the suite had never had to pin: a property that only
+exists WHILE another thread runs. The analyser chooses its window from a snapshot of two rings and
+then copies from both, and the defect was that a producer publishing in between made only ONE copy
+come back short. That is pinned in two halves, which is the shape to copy for anything similar. The
+DECISION is a pure static (`SpectrumView::onePairOneSpan`) with a seven-row truth table — both reads
+whole, either one short, either floor past the window's start, and the empty span that is coherent by
+definition — so the rule is mutation-killable without a thread. The STIMULUS is a thread:
+`testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame` runs a producer publishing 13000-frame
+chunks flat out beside 5000 drawn frames, with IDENTICAL audio in both rings, so that a frame whose
+two traces differ at all is a frame whose two windows were not the same span — one assertion, one
+direction, and no schedule to depend on: the fixed code cannot fail it and the unfixed code fails it
+on every run measured. A thread is what this needed and a sleep is not: the property is "no
+interleaving produces a mismatched pair", which more interleavings can only test harder.
+
 **The two tests that sleep, and why they are the only ones.** `testTheGrHistoryDoesNotResumeAnExpiredRamp`
 and `testTheSpectrumIsCurrentTheFrameItBecomesVisible` each block for 40 ms between hiding a view and
 showing it again. The quantity under test IS real elapsed time — the seconds a view's frame clock was

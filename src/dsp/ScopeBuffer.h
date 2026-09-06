@@ -9,10 +9,12 @@
 // (`pushBlock`); and the reader side needed to serve TWO rings as one — an
 // entry point that takes the END of the window rather than always taking this
 // ring's own head, a start clamped to the frames the producer has not taken
-// back, and the floor query a caller needs to choose a length both rings can
-// honour (`readEndingAt`, `oldestReadable`, 0.2.12). The sibling has ONE ring
-// and no pairing question; this product has two, and its analyser must read
-// both over one committed span. ADR-0009 item 8 makes divergence accepted and one-way — there
+// back, a floor query a caller needs to choose a length both rings can honour,
+// and the size of the largest push the producer will make, without which that
+// floor cannot account for a push that is UNDERWAY (`readEndingAt`,
+// `oldestReadable`, `prepare`, 0.2.12). The sibling has ONE ring and no pairing
+// question; this product has two, and its analyser must read both over one
+// committed span. ADR-0009 item 8 makes divergence accepted and one-way — there
 // is no upstream-sync obligation and no backport path, and Anamorph is
 // read-only from here (CLAUDE.md §3) — so the sibling keeps the unrepaired
 // shape. That instance is recorded in `docs/KNOWN_ISSUES.md` (KI-016) rather
@@ -331,24 +333,52 @@ public:
     //     oldest-first order, same short-read return.
     static constexpr uint64_t kNewest = ~(uint64_t) 0;   // "wherever this ring is"
 
-    // THE OLDEST ABSOLUTE INDEX THIS RING CAN STILL SERVE. Slot `i & mask` holds
-    // index `i` until the producer writes `i + capacity`, so everything below
-    // `w − capacity` has been taken back. One acquire load, no payload touched,
-    // and it is what a reader pairing TWO rings needs before it can choose a
-    // window length both of them can honour: the pair's floor is the HIGHER of
-    // the two, because a span is only common if both rings still hold it.
+    // Host thread (prepare, audio stopped — the SAME named premise `reset` rests
+    // on, and it is called from the same place). Tells the ring the largest push
+    // it will be given, which is the engine's `maxBlock`: `processChunk` is
+    // called with `jmin (maxBlock, …)`, so no push can exceed it. That number is
+    // not decoration — `oldestReadable` cannot be correct without it, see there.
+    // Resets afterwards, because a re-prepare is exactly when both change.
+    void prepare (int maxPushFrames) noexcept
+    {
+        maxPush.store (maxPushFrames > 0 ? maxPushFrames : 0, std::memory_order_relaxed);
+        reset();
+    }
+
+    // THE OLDEST ABSOLUTE INDEX THIS RING CAN STILL SERVE — including against a
+    // push that is UNDERWAY. Slot `i & mask` holds index `i` until the producer
+    // writes `i + capacity`, so a completed push leaves everything from
+    // `w − capacity` intact. That bound is not enough for a reader that must
+    // still be right when it stops looking, and the reason is `pushBlock`'s
+    // publication order: THE PAYLOAD IS WRITTEN FIRST AND THE INDEX PUBLISHED
+    // AFTER, so a push that has not published yet is invisible in `w` while its
+    // stores are already landing on slots a reader is copying. A reader checking
+    // `w` before and after its copy — the seqlock discipline that works for the
+    // reset generations — sees nothing at all, because the producer publishes
+    // nothing until it has finished trampling. MEASURED: with the pair proved
+    // against the published index alone, 17 of 2269 drawn frames still held two
+    // windows that were not the same audio at a 13000-frame push (0 of 2998 at
+    // 512, where no single push can reach the window).
     //
-    // It is a bound at the instant of the load, like every other answer this
-    // ring gives a reader. A producer that advances afterwards raises the true
-    // floor, which is the pre-existing display margin `readLatest` has always
-    // had (a push of `capacity − count + 1` frames during the copy reaches the
-    // oldest slot) — unchanged by any of this, and the reason the clamp inside
-    // `readEndingAt` re-derives the floor from ITS OWN load rather than trusting
-    // a caller's earlier one.
+    // So the floor reserves room for one push of the largest size the producer
+    // was prepared for: the in-flight push can reach `w + maxPush`, and that
+    // trambles down to `w + maxPush − capacity`. A ring nobody prepared reports
+    // the plain bound, which is what every existing caller and test expects.
+    //
+    // WHAT THIS COSTS, stated because it is the whole trade: the usable history
+    // is `capacity − maxPush`, so the analyser's 4096-frame window survives
+    // every prepared block up to 12288 and shortens above it, and a host that
+    // prepares blocks of `capacity` or more leaves NO window a reader can hold
+    // with certainty — the reader holds its last coherent frame instead. The
+    // alternative that keeps drawing there is a producer-side reservation (an
+    // index published BEFORE the payload writes), which is an audio-path change
+    // and an `ARCHITECTURE_REVIEW_GATE` item; it is recorded as the follow-up
+    // rather than taken here.
     uint64_t oldestReadable() const noexcept
     {
         const auto w = write.load (std::memory_order_acquire);
-        return w > (uint64_t) capacity ? w - (uint64_t) capacity : 0;
+        const uint64_t reach = w + (uint64_t) maxPush.load (std::memory_order_relaxed);
+        return reach > (uint64_t) capacity ? reach - (uint64_t) capacity : 0;
     }
 
     int readEndingAt (float* dstL, float* dstR, int count, uint64_t end) const noexcept
@@ -367,7 +397,8 @@ public:
         // frames would hand the caller audio it did not ask for while telling it
         // the count it wanted. Shortening is the honest answer and the one the
         // short-read contract already covers — `analyse` zero-pads a short read.
-        const uint64_t oldest = w > (uint64_t) capacity ? w - (uint64_t) capacity : 0;
+        const uint64_t reach  = w + (uint64_t) maxPush.load (std::memory_order_relaxed);
+        const uint64_t oldest = reach > (uint64_t) capacity ? reach - (uint64_t) capacity : 0;
         if (start < oldest)
         {
             start     = oldest;
@@ -386,6 +417,11 @@ private:
     std::vector<Sample> left, right;
     std::atomic<uint64_t>       write { 0 };
     std::atomic<uint32_t>       resetGen { 0 };   // see reset() / resetGeneration()
+    // The largest push this ring will be given (`prepare`). Written on the host
+    // thread with audio stopped and read on the GUI thread, so it is an atomic
+    // rather than a plain int for the reason KI-017's pair is; the AUDIO thread
+    // never touches it, which is why this costs the push path nothing.
+    std::atomic<int>            maxPush { 0 };
 };
 
 } // namespace anabasis

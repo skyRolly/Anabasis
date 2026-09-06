@@ -415,6 +415,49 @@ no atomics and no possibility of interleaving with a user gesture.
   > newest chunk where the other's history is. `committed == 0` is NOT that case: empty or rewound
   > rings still take the zero-length read, which is how "nothing to analyse" is already expressed.
   >
+  > **Amended again 2026-09-06 (same round, the review's concurrent-publication finding) — a chosen
+  > span is not a held span.** The two amendments above settle WHICH window a frame asks for. Neither
+  > settles that it got it: the span is chosen from a SNAPSHOT of the two floors, and the producer
+  > does not stop for it. Publishing between the snapshot and the first read, between the two reads,
+  > or during either copy makes `readEndingAt` protect each ring on its own — which is exactly what
+  > breaks the pair, because only ONE read comes back short. MEASURED beside a producer running flat
+  > out at a 13000-frame chunk: 1802 of 3000 frames had one read short, 3000 of 3000 had a copy
+  > lapped, and **1441 of 3000 drawn frames held two windows that were not the same audio**; 0 of 873
+  > after.
+  >
+  > **The proof.** Both windows are read while nothing is committed, and the frame is drawn only if
+  > `onePairOneSpan`: both reads served the whole span, and neither ring's floor has since passed the
+  > window's start. The first term rejects a read the producer shortened; the second is the
+  > before-and-after discipline the reset generations already use, applied to the lapping bound —
+  > the floor is monotone, so a floor still at or below the start after both copies means no slot in
+  > the window was overwritten at any point during either. A frame that cannot show this is HELD
+  > whole: nothing folded into either EMA, nothing committed, and the next tick re-derives from a
+  > settled producer. There is no retry loop and no lock; the invalidation needs the producer to
+  > publish `capacity − span` frames inside two 4096-frame copies, so a retry would be a second draw
+  > of the same lottery on a thread that has a frame to paint.
+  >
+  > **And one thing no reader can see for itself.** `pushBlock` writes its payload BEFORE it
+  > publishes its index, so a push that has not published yet is invisible in `write` while its
+  > stores are already landing on slots a reader is copying — a reader checking the index before and
+  > after sees a ring that never moved. Measured with the pair proved against the published index
+  > alone: 17 of 2269 drawn frames still held two windows that were not the same audio at a
+  > 13000-frame push. The bound a reader needs is the SIZE of the largest push, which only the
+  > producer knows, so the engine now tells the rings at `prepare` (`ScopeBuffer::prepare`, from
+  > `maxBlock`; `processChunk` is called with `jmin (maxBlock, …)`, so no push exceeds it) and the
+  > floor reserves one push worth of history. **This costs the audio thread nothing** — the value is
+  > written on the host thread with audio stopped, the same named premise `reset` rests on, and the
+  > push path never reads it — which is why it was preferred to the alternative that would have made
+  > the display cheaper still: a reservation index published BEFORE the payload writes. That one is a
+  > store on the audio path and an `ARCHITECTURE_REVIEW_GATE` item; it is recorded as the follow-up,
+  > and what it would buy is the case this reserve gives up on — a host preparing blocks of a whole
+  > ring or more (16384 frames, 341 ms at 48 kHz) leaves no window a reader can vouch for at any
+  > instant, so the analyser holds rather than drawing one it cannot.
+  >
+  > **What it costs at real-time rates: nothing measurable.** With the producer delivering at its
+  > cadence and the analyser ticking at 60 Hz, 0 of 360 frames across 512-, 4096- and 13000-frame
+  > blocks refused to draw audio that had arrived; the reserve leaves the whole 4096-frame window up
+  > to a 12288-frame block, and the extra work per frame is two atomic loads and a branch.
+  >
   > **Out of scope, recorded so it is not mistaken for solved.** The two taps are now INDEX-aligned;
   > they are not AUDIO-TIME aligned. The output tap carries the chain's latency, so frame k of the
   > output ring is the processed form of input audio roughly 10 ms earlier at 48 kHz. Aligning them

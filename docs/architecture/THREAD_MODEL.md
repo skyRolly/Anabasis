@@ -205,11 +205,17 @@ above records a nuance without amending the ring rule.
   spectrum of another. Measured before the change: the two analysed windows ended at different
   indices on 1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128, the OUTPUT trace leading, because
   the 4096-point FFT between the two reads (132 µs) gives the producer room to publish. The LENGTH
-  is chosen with the same care: a ring serves `[w − capacity, w)` and no more, so the pair reads
+  is chosen with the same care: a ring serves `[w − capacity, w)` and no more — and less than that
+  while a push is UNDERWAY, since `pushBlock` writes its payload before it publishes its index, so
+  the floor reserves one push of the largest size the producer was prepared for
+  (`ScopeBuffer::prepare`, from the engine's `maxBlock`). The pair reads
   `min (kSize, committed − max (in.oldestReadable(), out.oldestReadable()))` frames — full in every
-  configuration a real-time host presents, shorter (for both traces together) where a chunk longer
-  than `capacity − kSize` = 12288 frames has taken the history back, and nothing at all where a
-  chunk of a whole ring leaves no common span, in which case the last coherent pair is held. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
+  configuration a real-time host presents, shorter (for both traces together) at larger blocks, and
+  nothing at all where no such window is left. **And a chosen span is not a held span:** both
+  windows are read BEFORE either is transformed, and the frame is drawn only if both reads served
+  the whole span and neither ring's floor has since passed its start (`SpectrumView::onePairOneSpan`)
+  — the before-and-after discipline the reset generations already use, applied to the lapping bound.
+  A frame that cannot show that is held whole; the next tick re-derives from a settled producer. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
   tap-content equality).
   **`prepare` rewinds both rings, and the rewind is ANNOUNCED on a generation counter**
   (`ScopeBuffer::resetGeneration()`, bumped release-after the index store; the generation-counter
