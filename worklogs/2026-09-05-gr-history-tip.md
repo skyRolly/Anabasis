@@ -1089,3 +1089,138 @@ Mutation testing, nine mutants, each rebuilt and run against the whole suite:
    accumulated in the view. Recorded, not fixed.
 6. **OQ-017 is untouched.** The band `[head, head + 1]` and the time base are exactly as they were;
    this change is about WHEN the ramp is advanced, not about what it is.
+
+---
+
+## 13 — the review's split-publication finding: the pairing the analyser never had (2026-09-06)
+
+The finding, at `src/gui/SpectrumView.cpp:64`: *"Split ring publication leaves stale spectrum"* —
+`tick` can observe the input ring advancing while the output ring has not, and the reveal then
+applies the full hidden-interval decay to both traces even though one still contains pre-switch
+audio, so the first visible frame is stale and recovers over later frames.
+
+**The causal chain as stated is false, and it is pointing at a bigger defect than it describes.**
+Both halves are worth writing down, because the difference decided the fix.
+
+### 13.1 Where the stated chain breaks
+
+1. **The counts `tick` loads never selected either analysis window.** `analyse` called
+   `readLatest`, which takes its OWN acquire load of its OWN ring's index; `ci`/`co` fed the idle
+   gate, the reset count-term and the commit, and nothing else. So an `in > out` observation at the
+   count loads had no effect at all on what was read or drawn.
+2. **The reveal's decay cannot carry stale content.** `dt` enters `analyse` at exactly one place —
+   `decay = 1 − exp (−dt / 0.12)` — acting on the EMA state, never on the window. A LONGER hide
+   anchors a trace harder to the window just read (decay > 0.98 at half a second), which is the
+   opposite of preserving pre-hide audio.
+3. **The band the finding needs is a single point.** A window holds pre-hide audio only while fewer
+   than 4096 frames have arrived since the hide, and publications are whole chunks, so "the output
+   window still holds pre-hide audio while the input window does not" requires exactly
+   `N_out = 3584, N_in = 4096` — one 512-frame chunk of a 4096-frame window, at the OLDEST end,
+   where the Hann window weights it at 1.2 % of amplitude.
+4. **The zero-progress case it claims is damaged is the one case that was already exactly right:**
+   with neither count nor generation moved the idle gate returns before `analyse`, so both traces
+   are held bit-for-bit and no decay is applied for audio nobody produced.
+
+### 13.2 What is actually wrong — and it is ~100× more frequent
+
+The skew that reaches the screen is not between the producer's two stores; it is between the
+reader's two READS, and those are separated by a whole 4096-point FFT. Measured on the real
+processor with a real audio thread (`spec.cpp`):
+
+| what was measured | 48 kHz / 512 | 48 kHz / 128 |
+|---|---|---|
+| the two rings disagree at the COUNT loads (the review's window, ~1 µs) | 0.015 % of observations, **in ahead** | 0.029 %, in ahead |
+| the two ANALYSED WINDOWS end at different indices | **1.28 % of ticks, out ahead** | **4.70 %, out ahead** |
+| one FFT, measured | 132 µs | 133 µs |
+
+The direction is the reverse of the finding's: `analyse (in, …)` runs first, so the output ring's
+read is the later one and it is the OUTPUT trace that leads. At 60 Hz, 1.28 % is about once a
+second. What such a frame draws, constructed deterministically (a marker chunk published to one
+ring only, 6 kHz into a bin the settled programme leaves empty):
+
+| first visible frame, 48 kHz / 512 | before | after |
+|---|---|---|
+| marker bin, input trace | **−32.97 dB** | −120.00 dB |
+| marker bin, output trace | −120.00 dB | −120.00 dB |
+| in/out mismatch | **87.03 dB** | **0.00 dB** |
+| the same with the roles swapped (output published alone) | 87.03 dB | **0.00 dB** |
+| a chunk BOTH taps published | 0.00 dB (both show it) | 0.00 dB (both show it) |
+| neither tap moved | 0.00 dB, held | 0.00 dB, held |
+
+The reveal is not special here: an ordinary tick produced the same 87.03 dB mismatch. The finding
+attached the defect to the reveal because that is where it was looking; the defect is in every tick.
+
+### 13.3 The invariant
+
+> **One frame, one span.** A frame's two traces are analysed over the SAME committed span of audio:
+> the window ending at `E = min (w_in, w_out)`, the newest frame index BOTH taps have published. A
+> chunk one tap has published alone is not yet a state the PAIR can represent, and is drawn on the
+> first frame where both have. The hidden-interval decay is then justified for both traces by
+> construction, because they describe the same span and the same seconds.
+
+Chosen over the alternatives the brief lists: a shared publication epoch would mean a new atomic on
+the audio path for a display concern; per-trace elapsed time is the wrong quantity (time passed for
+both, and the EMA's target is the analysis of what each ring holds); atomic publication of the pair
+would mean changing the producer, which is the one thing a display must not cost.
+
+### 13.4 The fix
+
+* `ScopeBuffer::readEndingAt (dst, dst, count, end)` — `readLatest` with an upper bound on where the
+  window ends, and `readLatest` is now that call with `kNewest`. The CLAMP is the correctness half:
+  `e = min (end, acquired index)`, so an index from the other ring (which can be larger) or one this
+  ring has since rewound reads exactly what `readLatest` would have. Fourth functional delta on a
+  file copied from Anamorph; the provenance banner says so.
+* `SpectrumView::tick` takes `E = min (ci, co)` once, passes it to both analyses, keys the idle gate
+  on it, and remembers it (`shownCommitted`). The per-ring counts stay for `resetObserved`, whose
+  coherence argument is about one ring's modification order and does not transfer to a minimum.
+* `analysedOutDb()` joins `analysedInDb()` as a read-only accessor: the defect is a disagreement
+  between the pair, and a test that can see one trace cannot pin it.
+
+Cost: a frame that catches the split waits for the other tap — at most one chunk (10.7 ms at
+48 kHz / 512), on the ~1–5 % of ticks that see it at all. Nothing else changes: same FFT, same
+window function, same normalisation, same EMA, same attack-instant rule, same bin mapping, same
+reset floors, same geometry.
+
+### 13.5 Validation
+
+* **0 of ~15 000 ticks** with differing spans at either block size, against 193 and 707 before.
+* All four orderings, deterministic: input alone → neither trace moves; output alone → neither
+  moves; both → both move together; neither → held bit-for-bit. Through an ordinary tick and
+  through the reveal.
+* **No recovery tail:** the marker reaches both traces on the first frame after the second tap
+  publishes, and the 12 frames after that move it 0.00 dB further.
+* The GR history's right-edge/rigid-translation table and its left-edge/oldest-bucket table both
+  re-run **byte-identical**; §11/§12's reveal numbers re-run unchanged (stopped-transport GR first
+  frames 0 of 180; spectrum distance from the current analysis 1.230 → 1.231 dB, run-to-run noise).
+* Suites 320 + 1116 = **1436**, 0 failures.
+
+### 13.6 Tests and mutants
+
+`testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan` (state suite) constructs the split at the
+narrowest boundary that reproduces it — a chunk pushed into one ring and not the other IS the state
+the audio thread holds between its two publications — and separates the two halves of the repair:
+the READ cases advance the pair first, so the tick RUNS and the read is what decides; the GATE case
+leaves the EMA mid-fall, so "the gate held" is distinguishable from "the gate opened and the
+analysis landed on the same numbers". Four ring-level checks in the DSP suite pin `readEndingAt`
+itself, the clamp included.
+
+| mutant | killed by |
+|---|---|
+| each ring read at its own head again (the pre-0.2.12 pairing) | 3 × `specSpan` |
+| the committed head takes `max` instead of `min` | 6 × `specSpan` |
+| `readEndingAt` no longer clamps to this ring's head | 4 × DSP, incl. the tap-content pin |
+| the idle gate goes back to the per-ring counts | `specSpan` (the mid-fall gate case) |
+| the committed head is never remembered | `specSpan` (the same) |
+
+### 13.7 What is left
+
+1. **Index-aligned is not time-aligned.** The output tap carries the chain's latency, so frame k of
+   the output ring is the processed form of input audio ~10 ms earlier at 48 kHz. Aligning the taps
+   would mean delaying the input tap by the reported latency — a display decision with its own cost.
+   Recorded, not taken.
+2. **KI-018's cross-ring variant is narrowed, not closed** — a rewind visible at the count loads now
+   floors both traces together; one landing after them still floors the rewound ring alone for one
+   tick. Its equal-count corner is untouched.
+3. **KI-007 item 6 is untouched by design:** a tick that sees nothing new still holds the trace, and
+   the entry's predicate wording was corrected rather than its behaviour.
+4. **OQ-017 untouched.**

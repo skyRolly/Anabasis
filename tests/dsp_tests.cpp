@@ -4079,6 +4079,40 @@ static void testSpectrumRingsCarryTheTaps()
             newest = juce::exactlyEqual (ol[(size_t) i], ramp[(size_t) (over - Ring::capacity + i)]);
         check (newest,
                "specSync: a push longer than the ring keeps the newest capacity frames and still advances the index by the whole block");
+
+        // THE WINDOW'S END IS THE CALLER'S TO CHOOSE (0.2.12). The analyser
+        // draws TWO traces from TWO rings the producer publishes with one
+        // release-store each, so it reads both at the newest index BOTH have
+        // published rather than at each ring's own — `readEndingAt` is what
+        // lets it, and the CLAMP is the part with a correctness argument: an
+        // index from the other ring can be larger than this one's, and an index
+        // this ring has since rewound is larger still, so the read must land on
+        // what THIS ring has published in both cases and never past it.
+        const auto endStorage = std::make_unique<Ring>();
+        auto& e = *endStorage;
+        std::vector<float> ramp2 ((size_t) 100), el ((size_t) 8), er ((size_t) 8), el2 ((size_t) 8), er2 ((size_t) 8);
+        for (int i = 0; i < 100; ++i)
+            ramp2[(size_t) i] = (float) i;
+        e.pushBlock (ramp2.data(), ramp2.data(), 100);
+        bool endsWhereAsked = e.readEndingAt (el.data(), er.data(), 8, 60) == 8;
+        for (int i = 0; i < 8 && endsWhereAsked; ++i)
+            endsWhereAsked = juce::exactlyEqual (el[(size_t) i], (float) (52 + i));
+        check (endsWhereAsked,
+               "specSync: a read ending at 60 returns frames 52…59 — the window the caller asked for, not the ring's newest");
+
+        const int gotClamped = e.readEndingAt (el.data(), er.data(), 8, 1000);   // past the head
+        const int gotLatest  = e.readLatest   (el2.data(), er2.data(), 8);
+        bool clampsToHead = gotClamped == gotLatest && gotClamped == 8;
+        for (int i = 0; i < 8 && clampsToHead; ++i)
+            clampsToHead = juce::exactlyEqual (el[(size_t) i], el2[(size_t) i])
+                           && juce::exactlyEqual (el[(size_t) i], (float) (92 + i));
+        check (clampsToHead,
+               "specSync: an end PAST this ring's head reads the head's own window — the other ring's index can be ahead, and a rewound head leaves a stale one behind");
+
+        check (e.readEndingAt (el.data(), er.data(), 8, 0) == 0,
+               "specSync: an end of 0 reads nothing, which is what a rewound partner ring drags the committed head to");
+        check (anabasis::ScopeBuffer::kNewest > (uint64_t) 1 << 62,
+               "specSync: …and `readLatest` is that same read with no bound, so the two cannot drift apart");
     }
 }
 

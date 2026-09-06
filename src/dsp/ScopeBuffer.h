@@ -2,11 +2,14 @@
 
 // Provenance (ADR-0009): copied from Anamorph src/dsp/ScopeBuffer.h:1-93 @ b6a3db8.
 // The §2.9 spectrum capture rings instantiate it — the THREAD_MODEL planned
-// edge, now implemented on the SPSC ring row. THREE functional deltas beyond
+// edge, now implemented on the SPSC ring row. FOUR functional deltas beyond
 // the namespace, each stated where it lives: heap storage instead of inline
-// arrays (the ctor, below); an ATOMIC payload; and, following from it, the
+// arrays (the ctor, below); an ATOMIC payload; following from it, the
 // reversion of the sibling's Wave-4 two-segment `memcpy` to two store loops
-// (`pushBlock`). ADR-0009 item 8 makes divergence accepted and one-way — there
+// (`pushBlock`); and a reader entry point that takes the END of the window
+// rather than always taking this ring's own head (`readEndingAt`, 0.2.12) —
+// the sibling has ONE ring and no pairing question, this product has two and
+// its analyser must read both at one committed head. ADR-0009 item 8 makes divergence accepted and one-way — there
 // is no upstream-sync obligation and no backport path, and Anamorph is
 // read-only from here (CLAUDE.md §3) — so the sibling keeps the unrepaired
 // shape. That instance is recorded in `docs/KNOWN_ISSUES.md` (KI-016) rather
@@ -281,14 +284,51 @@ public:
     // A future capacity reduction or window widening narrows the DISPLAY
     // margin, not the legality; `count > capacity` alone would not catch it.
     int readLatest (float* dstL, float* dstR, int count) const noexcept
+    { return readEndingAt (dstL, dstR, count, kNewest); }
+
+    // THE SAME READ, ENDING WHERE THE CALLER SAYS (the fourth provenance delta,
+    // 0.2.12). `readLatest` answers "the newest `count` frames THIS ring has",
+    // which is the right question for a display with one ring and the wrong one
+    // for a display with two: the engine publishes the input tap and the output
+    // tap with one release-store each, back to back, so a reader can observe one
+    // ring a chunk past the other and pair the input spectrum of chunk k with
+    // the output spectrum of chunk k−1. `SpectrumView` therefore takes the
+    // COMMON COMMITTED HEAD — `min` of the two indices, the newest frame both
+    // taps have published — and asks each ring for the window ending there.
+    // Measured before it did: the two analysed windows ended at different
+    // indices on 1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128 — the
+    // producer publishing during the 132 µs FFT that sits between the two
+    // reads — and a chunk of audio one tap had published alone reached one
+    // trace and not the other.
+    //
+    // EVERY SAFETY ARGUMENT OF `readLatest` SURVIVES, because this is that
+    // function with an upper bound on where the window ends:
+    //   * The acquire load is the same load, taken here rather than by the
+    //     caller, and `end` is CLAMPED to it. A caller's index can only be
+    //     stale-LARGE — the other ring's head, or an index this ring has since
+    //     rewound (`reset`) — and the clamp makes both cases read what this
+    //     ring has actually published, never past it. That is what keeps the
+    //     "copies strictly below the acquired index" contract true for an index
+    //     the caller supplied.
+    //   * The window is [e − count, e) with e ≤ w, so it stays disjoint from the
+    //     slot the producer is filling at w. The DISPLAY margin against a lap
+    //     narrows by exactly `w − e`, which is bounded by one chunk (the two
+    //     publications are adjacent stores): 12288 frames become 12288 − skew
+    //     for the only caller's 4096 of 16384.
+    //   * Nothing else is touched: same mask, same relaxed payload loads, same
+    //     oldest-first order, same short-read return.
+    static constexpr uint64_t kNewest = ~(uint64_t) 0;   // "wherever this ring is"
+
+    int readEndingAt (float* dstL, float* dstR, int count, uint64_t end) const noexcept
     {
         const auto w = write.load (std::memory_order_acquire);
+        const uint64_t e = end < w ? end : w;
         if (count > capacity) count = capacity;
         // Adapted (beyond the namespace): both ternary arms made unsigned —
         // the original's int arm trips -Wsign-conversion under this repo's
         // warning gate; the value range is unchanged (count ≤ capacity).
-        const uint64_t available = (w < (uint64_t) count) ? w : (uint64_t) count;
-        const uint64_t start = w - available;
+        const uint64_t available = (e < (uint64_t) count) ? e : (uint64_t) count;
+        const uint64_t start = e - available;
         for (uint64_t i = 0; i < available; ++i)
         {
             const auto idx = (start + i) & mask;

@@ -264,6 +264,21 @@ back to rings nothing was written to must hold its trace bit-identically
 must reach the first visible frame as the floor
 (`testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame`).
 
+The 0.2.12 review round added one more thing the suite could not previously see: a defect that is
+not in either trace but in the PAIR. `SpectrumView` draws two traces from two rings the audio thread
+publishes with one release-store each, and the question — do the two traces describe the same span
+of audio? — is invisible to a test that can read one of them, so `analysedOutDb()` joins
+`analysedInDb()`. `testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan` then constructs the split
+state directly rather than racing for it: a chunk pushed into one ring and not the other IS the
+state the producer holds between its two publications, and it is reached with a `const_cast` on the
+processor's own ring, the test standing in for the producer. Its two halves are pinned separately
+because the repair has two — the READ cases advance the pair first so the tick actually runs and the
+read is what decides, and the GATE case leaves the EMA mid-fall so that "the gate held" is
+distinguishable from "the gate opened and the analysis landed on the same numbers". The ring's own
+new entry point is pinned in the DSP suite beside the other `specSync` checks, the clamp included:
+an end past this ring's head must read the head's own window, which is what makes a stale index from
+the OTHER ring safe.
+
 **The two tests that sleep, and why they are the only ones.** `testTheGrHistoryDoesNotResumeAnExpiredRamp`
 and `testTheSpectrumIsCurrentTheFrameItBecomesVisible` each block for 40 ms between hiding a view and
 showing it again. The quantity under test IS real elapsed time — the seconds a view's frame clock was

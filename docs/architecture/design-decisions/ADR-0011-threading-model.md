@@ -353,6 +353,47 @@ no atomics and no possibility of interleaving with a user gesture.
   > the fence has drifted below the payload stores, when it is the wrong fence, when it is only in a
   > comment, and when the function has been renamed out from under the rule. Six self-test cases,
   > both directions.
+
+  > **Amended 2026-09-06 (0.2.12, the PR review's split-publication finding) — the two SPECTRUM
+  > rings are one publication, and the reader now treats them as one.** The rows above settle how a
+  > reader reads ONE ring safely. `SpectrumView` reads TWO, and the pairing was never stated: the
+  > engine publishes the post-input-gain tap and the post-chain tap with one release-store each,
+  > back to back in `processChunk`, and until this amendment each trace was analysed at ITS OWN
+  > ring's head — two independent acquire loads separated by a whole 4096-point FFT. A chunk
+  > published between those two reads therefore reached one trace and not the other, and the frame
+  > drew the input spectrum of chunk k beside the output spectrum of chunk k ± 1, in the one display
+  > whose purpose is comparing them. MEASURED on the real processor with a real audio thread: the
+  > two analysed windows ended at different indices on **1.28 % of ticks at 48 kHz / 512 and 4.70 %
+  > at 128** — the OUTPUT trace leading, because its read is the later one — against 0.015 % /
+  > 0.029 % for the window between the producer's two stores, which is the window the review named
+  > and two orders of magnitude the smaller of the two.
+  >
+  > **The rule.** A frame's two traces describe the SAME committed span: the reader takes
+  > `E = min (w_in, w_out)` — the newest frame index BOTH taps have published — once per tick, and
+  > each trace is analysed over the window ENDING at E (`ScopeBuffer::readEndingAt`, the fourth
+  > delta on that copied file). A chunk one tap has published alone is not yet a state the PAIR can
+  > represent; it is drawn on the first frame where both have, at most one chunk later. The idle
+  > gate keys on the same E, so "new frames" means frames the pair can be drawn from.
+  >
+  > **What it does NOT change, and this is the half worth stating.** No new atomic, no new ordering,
+  > nothing added to the audio path: the producer is untouched and the reader still takes the same
+  > acquire loads it always did. `readEndingAt` CLAMPS the caller's index to its own ring's acquired
+  > head, so every safety argument above survives verbatim — the window stays strictly below the
+  > slot the producer is filling, and a caller's index that is stale-large (the other ring's head,
+  > or one this ring has since rewound) reads exactly what `readLatest` would have. The lapping
+  > MARGIN narrows by the skew, bounded by one chunk: 12288 frames become 12288 − skew for the
+  > analyser's 4096 of 16384. The per-ring `shownInCount`/`shownOutCount` stay exactly as they were,
+  > because `resetObserved`'s count term is a claim about ONE ring's modification order and does not
+  > transfer to a minimum of two. KI-018's cross-ring variant is narrowed rather than closed (see
+  > that entry); its equal-count corner is untouched.
+  >
+  > **Out of scope, recorded so it is not mistaken for solved.** The two taps are now INDEX-aligned;
+  > they are not AUDIO-TIME aligned. The output tap carries the chain's latency, so frame k of the
+  > output ring is the processed form of input audio roughly 10 ms earlier at 48 kHz. Aligning them
+  > would mean delaying the input tap by the reported latency — a display decision with its own
+  > cost, not a correctness repair, and nobody has asked for it.
+  > `worklogs/2026-09-05-gr-history-tip.md` §13 carries the measurements, the disproof of the
+  > review's own causal chain, and the mutants.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

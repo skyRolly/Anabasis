@@ -263,6 +263,29 @@ publishes nothing the painting side reads — ADR-0038's atomic set is untouched
 `worklogs/2026-09-05-gr-history-tip.md` §12 (both read-offs, the 450-transition before/after sweep
 on the real paint paths, the nine mutants and the one that survives, and what is left).
 
+**Addendum (2026-09-06) — the review's split-publication finding, disproved as stated and fixed as
+found.** The finding says the reveal can apply the hidden-interval decay to two traces when only one
+ring has advanced. The stated chain is false at its second link — the counts `tick` loads never
+selected either analysis window, since each `analyse` took its own acquire load inside `readLatest`
+— and its stated symptom cannot be carried by the decay at all, the EMA's target being the analysis
+of whatever the ring holds NOW. What it points at is real and larger: the skew that reaches the
+screen is between the reader's two READS, which a 132 µs FFT separates, so the OUTPUT trace led the
+input one on **1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128** — against 0.015 % / 0.029 % for
+the producer's own store window — and a frame drew the input spectrum of one chunk beside the output
+spectrum of another, in the display whose purpose is comparing them (measured: 87 dB apart in a
+marker bin). The rule now is **one frame, one span**: both traces are analysed over the window ending
+at `min` of the two published indices (`ScopeBuffer::readEndingAt`, the fourth functional delta on
+that copied file, with a clamp that keeps every one of `readLatest`'s safety arguments), the idle
+gate keys on the same head, and a chunk one tap has published alone is drawn on the first frame where
+both have. Rows engaged: **Threading / cross-thread path** (`THREAD_MODEL.md` — the reader's peek is
+now bounded by the committed head; **ADR-0011 amended a fourth time, dated**, stating the pairing
+rule and what it does NOT change — no new atomic, no producer change, the lapping margin narrowed by
+the skew; `THREADING_POLICY.md` needs nothing: no row changes, the SPSC contract is the one it
+already states), **New/changed test** (`state_tests.cpp` + `dsp_tests.cpp`; `TESTING.md`; this file),
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`), and `KNOWN_ISSUES.md` (KI-007 item 6's predicate
+corrected — the behaviour it documents is unchanged; KI-018's cross-ring variant **narrowed**, its
+equal-count corner untouched). Trail: `worklogs/2026-09-05-gr-history-tip.md` §13.
+
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly
 generated line can have instantaneous changes, and it also changes while it is moving."*

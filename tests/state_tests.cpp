@@ -7272,6 +7272,202 @@ static void testTheHiddenIntervalMeasuresWhatItClaims()
            "hiddenGap: …and the never-stopped stamp is not a time in 1970");
 }
 
+// ONE FRAME, ONE SPAN. The analyser draws two traces from two rings, and the
+// audio thread publishes them with one release-store each, back to back inside
+// `processChunk`. Until 0.2.12 each trace was read at ITS OWN ring's head — two
+// independent acquire loads separated by a whole 4096-point FFT — so a chunk
+// published between the two reads reached one trace and not the other, and the
+// frame drew the input spectrum of chunk k beside the output spectrum of
+// chunk k ± 1. In a display whose whole purpose is comparing input against
+// output that is a defect of the PAIRING, not of either trace: measured on the
+// real processor with a real audio thread, the two analysed windows ended at
+// different indices on 1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128, the
+// OUTPUT trace leading because its read is the later one.
+//
+// The split is constructed here rather than raced for, at the narrowest state
+// boundary that reproduces it: a chunk pushed into one ring and not the other
+// IS the state the audio thread holds between its two publications, and it is
+// the only state that matters. A `const_cast` is what reaches it — the rings
+// are the processor's own members, exposed read-only because the GUI has no
+// business writing them, and this test is standing in for the producer.
+static void testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan()
+{
+    const int markerBin = 512;                       // 6 kHz at 48 kHz / 4096-point
+    const int bodyBin   = 85;                        // 1 kHz, the settled programme
+
+    struct Rig
+    {
+        std::unique_ptr<AnabasisAudioProcessor> proc;
+        std::unique_ptr<SpectrumView> view;
+        std::vector<float> marker;
+    };
+    const auto build = [&] ()
+    {
+        Rig r;
+        r.proc = std::make_unique<AnabasisAudioProcessor>();
+        r.proc->setRateAndBufferSizeDetails (48000.0, 512);
+        r.proc->prepareToPlay (48000.0, 512);
+        r.view = std::make_unique<SpectrumView> (*r.proc);
+        r.view->setBounds (0, 0, 300, 120);
+        r.view->setVisible (true);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 16; ++b)                  // a full 4096-frame window of 1 kHz
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    buf.setSample (ch, i, 0.5f * std::sin (2.0f * 3.14159265f * 1000.0f
+                                                            * (float) (b * 512 + i) / 48000.0f));
+            r.proc->processBlock (buf, midi);
+        }
+        for (int f = 0; f < 40; ++f) r.view->tick (1.0 / 60.0);
+
+        r.marker.resize (512);                       // 6 kHz, loud: 87 dB above the empty bin
+        for (int i = 0; i < 512; ++i)
+            r.marker[(size_t) i] = 0.9f * std::sin (2.0f * 3.14159265f * 6000.0f * (float) i / 48000.0f);
+        return r;
+    };
+    const auto pushInto = [] (const anabasis::ScopeBuffer& ring, const std::vector<float>& v)
+    {
+        const_cast<anabasis::ScopeBuffer&> (ring).pushBlock (v.data(), v.data(), (int) v.size());
+    };
+
+    {   // ---- (premise) the settled state, and what a chunk BOTH taps published does
+        Rig r = build();
+        const float inSettled  = r.view->analysedInDb() [(size_t) markerBin];
+        const float outSettled = r.view->analysedOutDb()[(size_t) markerBin];
+        check (inSettled < -100.0f && outSettled < -100.0f
+                 && r.view->analysedInDb()[(size_t) bodyBin] > -20.0f,
+               "specSpan: (premise) the programme is on the trace and the marker bin is empty on both traces");
+
+        pushInto (r.proc->spectrumInRing(),  r.marker);
+        pushInto (r.proc->spectrumOutRing(), r.marker);
+        r.view->tick (1.0 / 60.0);
+        check (r.view->analysedInDb() [(size_t) markerBin] > inSettled  + 40.0f
+                 && r.view->analysedOutDb()[(size_t) markerBin] > outSettled + 40.0f,
+               "specSpan: a chunk BOTH taps have published is drawn, on both traces, at once");
+    }
+
+    // The two halves of the repair are separable and are pinned separately: WHAT
+    // A TICK READS (both rings at the committed head) and WHEN A TICK RUNS (the
+    // idle gate keys on that head). A test in which the only advance is the
+    // half-published chunk exercises the gate alone — it returns early and the
+    // read is never reached — so the read cases below advance the pair FIRST,
+    // with a chunk both taps have, and only then publish the marker to one.
+    // PHASE-CONTINUOUS with the 8192 frames the settle pushed through the real
+    // chain, so the advance itself adds no broadband step for the marker bin to
+    // pick up: the only discontinuity in either ring is the marker, which is
+    // what these cases are asking about.
+    const auto advanceBoth = [&] (Rig& r)
+    {
+        std::vector<float> body ((size_t) 512);
+        for (int i = 0; i < 512; ++i)
+            body[(size_t) i] = 0.5f * std::sin (2.0f * 3.14159265f * 1000.0f
+                                                 * (float) (8192 + i) / 48000.0f);
+        pushInto (r.proc->spectrumInRing(),  body);
+        pushInto (r.proc->spectrumOutRing(), body);
+    };
+
+    {   // ---- READ: input advanced past the pair, output still at the committed head
+        Rig r = build();
+        const std::vector<float> inBefore = r.view->analysedInDb(), outBefore = r.view->analysedOutDb();
+        advanceBoth (r);                                   // the pair moves: this tick will RUN
+        pushInto (r.proc->spectrumInRing(), r.marker);      // …and the input tap runs ahead of it
+        r.view->tick (1.0 / 60.0);
+        check (r.view->analysedInDb() [(size_t) markerBin] < inBefore [(size_t) markerBin] + 1.0f
+                 && r.view->analysedOutDb()[(size_t) markerBin] < outBefore[(size_t) markerBin] + 1.0f,
+               "specSpan: a chunk only the INPUT tap has published is on NEITHER trace, even on a tick that redraws");
+
+        pushInto (r.proc->spectrumOutRing(), r.marker);
+        r.view->tick (1.0 / 60.0);
+        check (r.view->analysedInDb() [(size_t) markerBin] > inBefore [(size_t) markerBin] + 40.0f
+                 && r.view->analysedOutDb()[(size_t) markerBin] > outBefore[(size_t) markerBin] + 40.0f,
+               "specSpan: …and it reaches BOTH traces on the first frame after the output tap publishes it too");
+    }
+
+    {   // ---- READ: output advanced past the pair (the ordering the 132 µs FFT
+        //      between the two reads makes the COMMON one, and the one a reader
+        //      that trusted the producer's store order would not expect)
+        Rig r = build();
+        const std::vector<float> inBefore = r.view->analysedInDb(), outBefore = r.view->analysedOutDb();
+        advanceBoth (r);
+        pushInto (r.proc->spectrumOutRing(), r.marker);
+        r.view->tick (1.0 / 60.0);
+        check (r.view->analysedInDb() [(size_t) markerBin] < inBefore [(size_t) markerBin] + 1.0f
+                 && r.view->analysedOutDb()[(size_t) markerBin] < outBefore[(size_t) markerBin] + 1.0f,
+               "specSpan: a chunk only the OUTPUT tap has published is on neither trace either");
+
+        pushInto (r.proc->spectrumInRing(), r.marker);
+        r.view->tick (1.0 / 60.0);
+        check (r.view->analysedInDb() [(size_t) markerBin] > inBefore [(size_t) markerBin] + 40.0f
+                 && r.view->analysedOutDb()[(size_t) markerBin] > outBefore[(size_t) markerBin] + 40.0f,
+               "specSpan: …and the pair catches up together, not one trace at a time");
+    }
+
+    {   // ---- GATE: one tap alone moving is not "new frames". Pinned with the
+        //      EMA deliberately MID-FALL — a quieter chunk into both rings and a
+        //      single tick leaves every bin part way to its new target — because
+        //      a converged trace cannot tell "the gate held" from "the gate
+        //      opened and the analysis landed on the same numbers".
+        Rig r = build();
+        std::vector<float> quiet ((size_t) 512);
+        for (int i = 0; i < 512; ++i)
+            quiet[(size_t) i] = 0.05f * std::sin (2.0f * 3.14159265f * 1000.0f
+                                                   * (float) (8192 + i) / 48000.0f);
+        pushInto (r.proc->spectrumInRing(),  quiet);
+        pushInto (r.proc->spectrumOutRing(), quiet);
+        r.view->tick (1.0 / 60.0);                          // one 13 % step of a fall in progress
+        const std::vector<float> inBefore = r.view->analysedInDb(), outBefore = r.view->analysedOutDb();
+
+        pushInto (r.proc->spectrumInRing(), r.marker);       // only one tap moves
+        r.view->tick (1.0 / 60.0);
+        bool held = true;
+        for (size_t b = 0; b < inBefore.size() && held; ++b)
+            held = juce::exactlyEqual (r.view->analysedInDb()[b], inBefore[b])
+                   && juce::exactlyEqual (r.view->analysedOutDb()[b], outBefore[b]);
+        check (held,
+               "specSpan: a tick that sees only one tap move draws nothing at all — not even another step of a decay in progress");
+    }
+
+    {   // ---- neither advanced: the idle gate, unchanged in meaning
+        Rig r = build();
+        const std::vector<float> inBefore = r.view->analysedInDb(), outBefore = r.view->analysedOutDb();
+        r.view->tick (1.0 / 60.0);
+        r.view->tick (1.0 / 60.0);
+        bool held = true;
+        for (size_t b = 0; b < inBefore.size() && held; ++b)
+            held = juce::exactlyEqual (r.view->analysedInDb()[b], inBefore[b])
+                   && juce::exactlyEqual (r.view->analysedOutDb()[b], outBefore[b]);
+        check (held,
+               "specSpan: with neither tap advancing, both traces are held exactly — no decay for audio nobody produced");
+    }
+
+    {   // ---- and the same through the REVEAL, which is where the review found it
+        Rig r = build();
+        const std::vector<float> inBefore = r.view->analysedInDb(), outBefore = r.view->analysedOutDb();
+        r.view->setVisible (false);
+        {
+            std::vector<float> body ((size_t) 512);
+            for (int i = 0; i < 512; ++i)
+                body[(size_t) i] = 0.5f * std::sin (2.0f * 3.14159265f * 1000.0f
+                                                     * (float) (8192 + i) / 48000.0f);
+            pushInto (r.proc->spectrumInRing(),  body);      // the pair moved while it was away…
+            pushInto (r.proc->spectrumOutRing(), body);
+        }
+        pushInto (r.proc->spectrumOutRing(), r.marker);      // …and one tap ran on past it
+        r.view->setVisible (true);                            // the reveal analyses with the gap
+        bool held = true;
+        for (size_t b = 0; b < inBefore.size() && held; ++b)
+            held = juce::exactlyEqual (r.view->analysedInDb()[b], inBefore[b])
+                   && juce::exactlyEqual (r.view->analysedOutDb()[b], outBefore[b]);
+        check (r.view->analysedInDb() [(size_t) markerBin] < inBefore [(size_t) markerBin] + 1.0f
+                 && r.view->analysedOutDb()[(size_t) markerBin] < outBefore[(size_t) markerBin] + 1.0f,
+               "specSpan: a reveal draws no half-published chunk either — the hidden interval's decay belongs to a span both taps have");
+        (void) held;
+    }
+}
+
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
 {
     using Ring = anabasis::GrHistoryBuffer;
@@ -9265,6 +9461,7 @@ int main (int argc, char** argv)
         testTheSpectrumIsCurrentTheFrameItBecomesVisible();
         testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden();
         testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame();
+        testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan();
         testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();

@@ -148,6 +148,19 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   used to put one frame of the previous configuration's analysis on screen through the new
   configuration's frequency mapping. Evidence: this release. [Verified]
 
+- **The spectrum's two traces always describe the same moment.** The input and the output trace are
+  drawn from two separate captures that the audio engine hands over one after the other, and each
+  trace used to be read at whichever point its own capture had reached — with a 4096-point transform
+  running between the two reads, which is long enough for a new block to arrive in between. The
+  result was a frame showing the input of one block beside the output of another, in the one display
+  whose purpose is comparing them: measured on 1.3 % of frames at 48 kHz / 512 and 4.7 % at 128 —
+  roughly once a second — with a transient reaching one trace 87 dB above where the other still read
+  it as silence. Both traces are now read at the newest point BOTH captures have reached, so a block
+  only one of them has handed over is drawn on the first frame where both have, at most one block
+  later. Measured after: 0 of 15 000 frames at either block size, and a marker block published to one
+  capture alone reaches neither trace until the other publishes it too. Evidence: this release.
+  [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

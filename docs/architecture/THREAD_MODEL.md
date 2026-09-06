@@ -197,8 +197,14 @@ above records a nuance without amending the ring rule.
   instances in the engine (post-input-gain and post-chain/render taps), each filled into
   preallocated scratch during stages A/E and published with ONE release-store per processed
   chunk — the SPSC ring row, same discipline as `GrHistoryBuffer` INCLUDING the atomic payload since the KI-015 follow-up (ADR-0011 amended a third time, 2026-09-02): the element is a `Sample` wrapper over one relaxed `std::atomic<float>`, the producer stores per sample instead of `memcpy`ing, and the ring takes no reader-side acquire fence because its `reset()` touches no sample. The FFT runs GUI-side
-  (`SpectrumView`), reading stateless `readLatest` peeks; nothing on the audio thread windows,
-  transforms or allocates. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
+  (`SpectrumView`), reading stateless peeks; nothing on the audio thread windows,
+  transforms or allocates. Since 0.2.12 the two peeks END AT ONE INDEX — `min` of the two published
+  write counts, the newest frame BOTH taps have committed (`ScopeBuffer::readEndingAt`) — because
+  the two rings are published by one producer with one release-store each and a reader that asks
+  each ring for its own newest window draws the input spectrum of one chunk beside the output
+  spectrum of another. Measured before the change: the two analysed windows ended at different
+  indices on 1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128, the OUTPUT trace leading, because
+  the 4096-point FFT between the two reads (132 µs) gives the producer room to publish. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
   tap-content equality).
   **`prepare` rewinds both rings, and the rewind is ANNOUNCED on a generation counter**
   (`ScopeBuffer::resetGeneration()`, bumped release-after the index store; the generation-counter

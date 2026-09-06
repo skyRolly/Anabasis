@@ -553,9 +553,11 @@ record.
    node.
 
 6. **The spectrum view freezes rather than decaying when audio stops.**
-   `SpectrumView::tick` returns early when neither capture ring's write count moved, so the
-   per-bin EMA stops and the last analysed trace stays on screen indefinitely after a transport
-   stop or a plugin suspend. It is cheap and reads as deliberate ("idle: nothing new"), but most
+   `SpectrumView::tick` returns early when nothing new has arrived — since 0.2.12 that means the
+   COMMITTED HEAD (`min` of the two rings' write counts, the newest frame both taps have published)
+   has not moved and neither generation has; before it, that neither ring's write count had moved.
+   The behaviour this entry is about is unchanged either way: the per-bin EMA stops and the last
+   analysed trace stays on screen indefinitely after a transport stop or a plugin suspend. It is cheap and reads as deliberate ("idle: nothing new"), but most
    analysers decay to the floor, and a frozen trace can be mistaken for live signal. Which
    behaviour this product wants is a listening-pass call, not a repair — the fix (run the EMA
    toward the floor on an idle tick) is three lines once the answer is known.
@@ -1228,6 +1230,15 @@ Evidence [Verified]:
 > `analyse (out, …)` folds pre-reset frames into `outDb`, painting a floored input trace beside an
 > intact pre-reset output one. Both variants are **correct-but-one-frame-late**, not wrong data:
 > nothing incorrect is committed, and the fall-through commit is idempotent.
+>
+> **NARROWED 2026-09-06 (0.2.12), by the committed head.** The reader now reads both rings at
+> `min` of the two published counts and each read clamps that to its own ring's index
+> (`ScopeBuffer::readEndingAt`), so a rewind that is VISIBLE when the tick takes its two count
+> loads drags the committed head to 0 and both reads return nothing: both traces floor together and
+> the cross-ring variant cannot occur. What survives is the narrower window in which the rewind
+> lands AFTER those loads — there the clamp floors the rewound ring alone and the other still reads
+> its pre-reset frames, for the same one tick. The equal-count corner this entry is about is
+> untouched: the refilled head equals the shown one, so the idle test matches exactly as before.
 >
 > **Why it is bounded — and the correction that matters most.** The "worst case is a scheduling
 > quantum, tens of milliseconds" bound stated above **does not apply to this corner**, and leaving it

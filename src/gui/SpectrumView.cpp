@@ -141,17 +141,26 @@ void SpectrumView::mouseDown (const juce::MouseEvent& e)
 }
 
 void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
-                            std::vector<float>& smoothedDb, double dt)
+                            std::vector<float>& smoothedDb, double dt, uint64_t committed)
 {
-    const int got = ring.readLatest (scratchL.data(), scratchR.data(), kSize);
+    // ENDING AT THE COMMITTED HEAD, not at this ring's own — `tick` passes the
+    // newest frame index BOTH taps have published, so the two traces of one
+    // frame describe the SAME span of audio. `readEndingAt` clamps it to what
+    // this ring has published, so a head from the other ring (which can be
+    // larger — the two loads are independent) or one this ring has since
+    // rewound reads exactly what `readLatest` would have.
+    const int got = ring.readEndingAt (scratchL.data(), scratchR.data(), kSize, committed);
     if (got <= 0)
     {
         // A ZERO-LENGTH READ IS ITSELF A RESET ANNOUNCEMENT (round 7), and this
         // is the one place the rewind is observable through the load that
-        // actually drives the display. `readLatest` clamps to
-        // `min (acquired index, kSize)`, so `got == 0` is EQUIVALENT to "the
-        // index I acquired was 0" — reachable only from construction or from
-        // `reset()`. The caller's `resetObserved` cannot see this case when the
+        // actually drives the display. `readEndingAt` clamps to
+        // `min (committed head, acquired index, kSize)`, so `got == 0` is
+        // EQUIVALENT to "the window I was asked for ends at 0" — reachable from
+        // construction, from `reset()`, and (since 0.2.12) from the OTHER ring
+        // having been rewound, which drags the common committed head to 0 and
+        // is what stops one trace being drawn from a span the other cannot
+        // honour. The caller's `resetObserved` cannot see this case when the
         // reset lands between its own `writeCount()` load and this one: the
         // count it compared was the pre-reset value, so it stayed silent while
         // this read came back empty. Flooring here is what stops the reader
@@ -264,9 +273,45 @@ void SpectrumView::tick (double dt)
     const auto ci  = in.writeCount();
     const auto co  = out.writeCount();
 
+    // ONE FRAME, ONE SPAN (0.2.12, from the review's split-publication finding —
+    // which points at this region and has the mechanism backwards; the worklog
+    // carries both). The two taps are published by ONE producer with one
+    // release-store each, back to back inside `processChunk`, so THESE two
+    // loads can straddle that window and read `ci > co`. That is not what
+    // decided the frame, and it is not where the skew lives: until 0.2.12 each
+    // `analyse` took its OWN acquire load of its OWN ring inside `readLatest`,
+    // and the two are separated by a whole 4096-point FFT — 132 µs, measured —
+    // during which the producer has every chance to publish a chunk to BOTH
+    // rings. The skew that reaches the screen is therefore the one between the
+    // two READS, it runs the OTHER way (the output trace leads, because its
+    // read is the later one), and it is two orders of magnitude more common
+    // than the store window: measured on the real processor with a real audio
+    // thread, the two analysed windows described different spans on 1.28 % of
+    // ticks at 48 kHz / 512 and 4.70 % at 128 — roughly once a second at 60 Hz —
+    // against 0.015 % / 0.029 % for the count loads above. What that draws is
+    // the input spectrum of chunk k beside the output spectrum of chunk k ± 1,
+    // in a display whose entire purpose is comparing the two: a marker chunk
+    // published to one ring alone reaches one trace at 87 dB in a bin the other
+    // still reads as empty.
+    //
+    // The committed head is the newest frame index BOTH taps have published, so
+    // a chunk one of them has published alone is simply not yet a state the
+    // PAIR can represent; it is drawn on the first frame where both have. That
+    // also answers the reveal question the finding is about: the hidden
+    // interval's decay is applied to two traces that describe the same span and
+    // the same seconds, which is what makes applying it to both correct.
+    const uint64_t committed = juce::jmin (ci, co);
+
     // The generations join the idle test, or a reset landing on a tick with no
-    // new frames would early-return past the clear below.
-    if (ci == shownInCount && co == shownOutCount
+    // new frames would early-return past the clear below. The COUNTS left it
+    // when the committed head arrived: "new frames" now means frames the pair
+    // can be drawn from, so a tick that observes one ring alone move waits for
+    // the other rather than redrawing an inconsistent pair — at most one chunk
+    // later, and only on the observations that saw the split at all. A rewind
+    // still cannot hide here: it drags the committed head DOWN (to 0 for a
+    // `reset`), which differs from the shown one, and the generations catch a
+    // refill that has returned the head to where it was.
+    if (committed == shownCommitted
         && gi0 == shownInGen && go0 == shownOutGen)
         return;                                           // idle: nothing new
 
@@ -285,8 +330,8 @@ void SpectrumView::tick (double dt)
     if (resetIn)  std::fill (inDb.begin(),  inDb.end(),  -120.0f);
     if (resetOut) std::fill (outDb.begin(), outDb.end(), -120.0f);
 
-    analyse (in, inDb, dt);
-    analyse (out, outDb, dt);
+    analyse (in, inDb, dt, committed);
+    analyse (out, outDb, dt, committed);
 
     // The second sample. A generation that moved while the batch ran means the
     // frames just folded into the EMA may span the rewind, so the EMA is not a
@@ -301,6 +346,11 @@ void SpectrumView::tick (double dt)
     shownOutGen  = go1;
     shownInCount = ci;
     shownOutCount = co;
+    // What this frame actually drew from, which is what the next tick's idle
+    // test compares against. The per-ring counts above stay for `resetObserved`
+    // — a rewind is a property of ONE ring's index, and the coherence argument
+    // behind the count term is about that ring's modification order.
+    shownCommitted = committed;
     repaint();
 }
 

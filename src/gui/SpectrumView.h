@@ -67,8 +67,12 @@ public:
     // nothing can guard.
     void tick (double dt);
 
-    // Read-only view of the smoothed analysis, for the same reason.
-    const std::vector<float>& analysedInDb() const noexcept { return inDb; }
+    // Read-only views of the smoothed analysis, for the same reason. BOTH, since
+    // 0.2.12: what a frame has to get right is that its two traces describe the
+    // same span of audio, and a test that can see only one of them cannot pin
+    // it — the defect is precisely a disagreement between the pair.
+    const std::vector<float>& analysedInDb()  const noexcept { return inDb; }
+    const std::vector<float>& analysedOutDb() const noexcept { return outDb; }
 
     // HAS A RESET HAPPENED THAT THIS VIEW HAS NOT YET ACCOUNTED FOR? Two
     // SUFFICIENT conditions, neither of them necessary, and the OR is the whole
@@ -106,7 +110,8 @@ private:
     // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
     // agree about it — see the definition.
     juce::Rectangle<int> chipHitArea() const noexcept;
-    void analyse (const anabasis::ScopeBuffer&, std::vector<float>& smoothedDb, double dt);
+    void analyse (const anabasis::ScopeBuffer&, std::vector<float>& smoothedDb, double dt,
+                  uint64_t committed);
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;
@@ -121,10 +126,18 @@ private:
         juce::dsp::WindowingFunction<float>::hann };
 
     std::vector<float> scratchL, scratchR, fftData, inDb, outDb;
-    // `shownInCount`/`shownOutCount` answer "are there new frames?" and nothing
-    // else. Detecting a RESET is the generations' job — see tick(), where the
-    // counter comparison that used to carry both duties is explained.
+    // `shownInCount`/`shownOutCount` are the last index observed in each ring,
+    // and since 0.2.12 they answer ONE question: has this ring rewound?
+    // (`resetObserved`'s count term, whose coherence argument is about a single
+    // ring's modification order.) "Are there new frames?" is `shownCommitted`'s
+    // question, because a frame is drawn from the span BOTH taps have
+    // published — see tick().
     uint64_t shownInCount = 0, shownOutCount = 0;
+    // The common committed head this view last drew from: `min` of the two
+    // published indices at that tick. Zero before anything is drawn, which is
+    // also what an empty pair of rings reports, so the first tick over empty
+    // rings idles exactly as it always did.
+    uint64_t shownCommitted = 0;
     uint32_t shownInGen = 0, shownOutGen = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumView)
