@@ -184,8 +184,8 @@ per block, and they exist for this purpose. Reaching past them into the meter is
 section is here to prevent.
 
 **0.2.12 adds the third such read, and the first that carries a PAYLOAD — `SpectrumView`'s two
-traces** ([ADR-0039](design-decisions/ADR-0039-spectrum-frame-publication.md), **Proposed
-2026-09-06; the Architecture Review Gate is OPEN and is a merge prerequisite**). `tick` computes
+traces** ([ADR-0039](design-decisions/ADR-0039-spectrum-frame-publication.md), **Accepted 2026-09-06;
+the Architecture Review Gate is cleared**). `tick` computes
 2048 smoothed dB values per trace on the message thread and `paint` walked them directly: an
 unsynchronised read of plain floats on exactly the two platforms where the context attaches, and —
 separately from the memory model — a frame that could hold the input trace of one tick beside the
@@ -207,8 +207,24 @@ entries through the prepared pair, and which `GrHistoryView` has always taken �
 publishes and the ring frames it publishes belong to one configuration, and `paint` reads no
 processor state at all. This is the case ADR-0027
 clause 4 and ADR-0038 clause 8 both exclude by name ("anything carrying a payload… is a new path
-again and returns to this gate"), so it is filed as a gated decision rather than claimed under
-either. Nothing on the audio thread changed.
+again and returns to this gate"), so it was filed as a gated decision rather than claimed under
+either, and both clauses now carry a dated by-exception amendment. Nothing on the audio thread
+changed.
+
+**A NUANCE THE ROW ABOVE HAS ALWAYS LEFT OUT, and round 11 measured it: JUCE paints components on
+the GL render thread UNDER THE MESSAGE-MANAGER LOCK.** At the ADR-0028-pinned JUCE 9.0.1,
+`OpenGLContext::CachedImage::renderFrame` takes a `MessageManager::Lock::ScopedTryLockType`
+(`juce_OpenGLContext.cpp:372`, `scopedLock.emplace (mmLock)`), returns early if it cannot get it, and
+releases it only after `paintComponent` — which itself opens with
+`JUCE_ASSERT_MESSAGE_MANAGER_IS_LOCKED`. So a component paint on the render thread is mutually
+exclusive with the message thread, and the interleavings ADR-0027, ADR-0038 and ADR-0039 defend
+against are prevented, on that path, by a lock none of this code owns. That is why all three records
+say the race is **argued rather than measured**. It changes none of them: a correctness argument that
+rests on an undocumented try-lock inside a vendored renderer is the "safe by ordering" reasoning this
+tree already refuses elsewhere (`~AnabasisAudioProcessorEditor`, `~SpectrumView`), the lock is absent
+from the other paths that reach `paint` (`createComponentSnapshot`, the test suites), and the pin can
+move. Recorded so the next reader does not mistake the synchronisation for the only thing standing
+between the display and a race.
 
 **Adding a second reader thread to these two getters is a threading-model change**, and therefore
 an Architecture Review Gate item (`CLAUDE.md`'s Hard Stop list): it needs atomics on the cache or

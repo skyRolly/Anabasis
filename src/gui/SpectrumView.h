@@ -107,11 +107,24 @@ public:
     // rate from the processor behind the frame's back.
     Frame paintedFrame() const noexcept { return paintFrame; }
 
+    // …and the TRACE that paint drew, for the same reason one step further: the
+    // frame description and the bins have to agree, and only a reader that can
+    // see both can say so. Painter-owned, so it is safe to read from the thread
+    // that painted (which is what the concurrent-paint test does) or from a
+    // quiesced view.
+    const std::vector<float>& paintedInDb() const noexcept { return paintIn; }
+
     // THE PUBLISHED PAIR, READ AS A PAIR. `tick` runs on the message thread and
     // `paint` does NOT, on two of the three shipped hosts: JUCE renders an
     // OpenGL-backed editor on the context's own render thread (macOS, Windows —
-    // `THREAD_MODEL`, "Which context paints"), so the painter is a second thread
-    // reading state a message-thread tick is in the middle of writing. Two
+    // `THREAD_MODEL`, "Which context paints"), so the painter is a SECOND THREAD
+    // reading state the message thread writes. JUCE happens to serialise the two
+    // with the message-manager lock on that path — measured at the pinned 9.0.1,
+    // and recorded in `THREAD_MODEL` — which is a property of a vendored
+    // renderer, not of this class: it is absent from the other callers of
+    // `paint`, it can move with the pin, and "safe because something else holds
+    // a lock" is the reasoning this tree refuses two lines further down in this
+    // very file. Two
     // separate `std::vector<float>` traces gave it neither guarantee it needs:
     // the accesses were an unsynchronised float race outright, and even where
     // the hardware made them benign a frame could take `inDb` from tick N and
@@ -123,8 +136,17 @@ public:
     // whole or not at all. `false` means the reader was overtaken twice and has
     // no new frame — the caller keeps the pair it already had, which is a
     // coherent frame from an earlier tick rather than a mixed one from two. The
-    // three output arguments are filled only on `true`; `inTrace` and
-    // `outTrace` must already hold `kBins` entries.
+    // `frame` is filled only on `true`. `inTrace` and `outTrace` must already
+    // hold `kBins` entries, and on `false` their contents are INDETERMINATE —
+    // the 4096-bin copy has already happened by the time the bracket can be
+    // checked, so a lost read leaves them holding bins from more than one
+    // publication. The caller therefore reads into storage it is willing to
+    // throw away and commits only on `true`; `paint` stages into
+    // `stageIn`/`stageOut` and swaps. Round 11 found this documented the other
+    // way round, with `paint` discarding the result — which drew a mix of up to
+    // three publications' bins through the PREVIOUS frame's rate, exactly the
+    // defect this publication exists to prevent, and one no sanitizer can see
+    // because there is no race in it, only a broken invariant.
     //
     // Public because the coherence it provides is exactly what a test has to be
     // able to observe from ANOTHER THREAD — the same reasoning as the two
@@ -294,7 +316,10 @@ private:
     uint32_t shownInGen = 0, shownOutGen = 0;
 
     static_assert (std::atomic<float>::is_always_lock_free
-                     && std::atomic<double>::is_always_lock_free,
+                     && std::atomic<double>::is_always_lock_free
+                     && std::atomic<uint64_t>::is_always_lock_free
+                     && std::atomic<int>::is_always_lock_free
+                     && std::atomic<uint32_t>::is_always_lock_free,
                    "the published trace is stored one bin at a time in atomics that the renderer "
                    "reads; a locking atomic here would put a lock inside paint() on the OpenGL "
                    "render thread, so a target without lock-free float atomics must fail the "
@@ -335,6 +360,13 @@ private:
     // analyser with no frame yet has always drawn.
     std::vector<float> paintIn, paintOut;
     Frame              paintFrame {};
+    // …and the buffers it reads INTO, which are a different thing: a lost read
+    // leaves indeterminate content behind, so the read lands here and is
+    // committed to the pair above only when it succeeded. The commit is a SWAP,
+    // so a successful frame costs two pointer exchanges rather than a second
+    // copy and a lost one costs nothing at all. 16 KB more, allocated once.
+    std::vector<float> stageIn, stageOut;
+    Frame              stageFrame {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumView)
 };

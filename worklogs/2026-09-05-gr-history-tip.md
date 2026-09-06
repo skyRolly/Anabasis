@@ -1756,3 +1756,122 @@ Nothing on the audio path changed.
    and the reveal-smoothing limitation, which this round did not touch — the ring still does not
    retain the intermediate windows a continuously visible EMA would have seen, and nothing in the
    frame publication changes that premise.
+
+---
+
+## 18. The sanitizers job, closed (2026-09-06, round 12)
+
+### 18.1 What actually failed
+
+The job is named `sanitizers` and runs two legs. Both were examined rather than one:
+
+| leg | result |
+|---|---|
+| clang-22 ASan + UBSan, both suites | `PASS: 327` and `PASS: 1261`, **no sanitizer report of any kind** |
+| valgrind memcheck, `AnabasisTests` | `PASS: 323`, `ERROR SUMMARY: 0 errors from 0 contexts` |
+| valgrind memcheck, `AnabasisStateTests` | **`FAIL: specAxis: (premise) …` — 1261 checks, 1 failure**, `ERROR SUMMARY: 0 errors from 0 contexts` |
+
+So: not a sanitizer, not a memory error, not UB. The failing command is the memcheck step
+(`build.yml:1184-1189`) on the UNSANITIZED `build-vg` binary, and the failing thing is one premise
+assertion in `testNoFrameARendererPicksUpEverMixesTwoConfigurations`.
+
+**It is the same class as round 11's failure, in the test round 11 added** — the repair was applied
+to the sibling test and not to the new one, which ran a bounded churn and then asserted that the
+reading thread had seen a frame at both rates. Under valgrind's serialised scheduler the reader's
+share of frames is not the test's to decide, and a bounded loop simply runs out.
+
+**Reproduced?** Not locally, and that is stated rather than glossed. Three configurations were run
+against the CI-failing form — native; memcheck on one CPU; memcheck on one CPU under eight competing
+spin loops — and all three passed. This is exactly what
+`testTheFrozenLatchNeedsNoThreadCrossing` recorded of its own instance in 2026-08-14 ("the same build
+under the same command reproduces 8440 polls here across repeated runs and never 0 — so the mechanism
+is unconfirmed and is deliberately not asserted"). The reproduction of record is CI itself, twice.
+
+**One honest correction to the round-11 report.** It cited "the property the test exists to assert
+did not fail" as evidence of product correctness. That is vacuous on that run: `split` is only
+incremented for frames the reader actually observed, so if the reader observed none at the second
+rate, `split == 0` says nothing. A premise failure invalidates the assertion it guards. Withdrawn.
+
+### 18.2 The fix, and a second one the audit found
+
+**Test side.** Every threaded premise in the file is now (a) established by waiting for the other
+thread to have done the thing, (b) BOUNDED, so a liveness defect fails the suite instead of hanging
+it to a CI timeout, and (c) split into one check per conjunct, so a failure names which half broke.
+
+**Product side — and this one is real.** Auditing the whole publication path for anything a sanitizer
+could legitimately report turned up something no sanitizer can: `readPublishedFrame` copies the
+4096-bin payload into the CALLER's vectors before it validates the bracket — it has to, the
+validation is what the copy is checked against — and `paint` was reading straight into its drawing
+buffers and discarding the result. A read the painter LOST therefore left it drawing a mixture of two
+publications through the previous frame's rate: the exact incoherence ADR-0039 exists to prevent,
+arriving through the reader instead of the writer. Three places said the opposite, including the ADR.
+
+There is no race in it and no memory error, so ASan, UBSan and memcheck are silent by construction.
+MEASURED on the shipped build: 4274 paints, **95 reads the painter lost, 44 of which had already
+copied**. `paint` now stages into its own pair and commits with a swap only on success — two pointer
+exchanges, 16 KB more, nothing else changed — and the contract is stated at `readPublishedFrame` so a
+future caller cannot make the same assumption.
+
+### 18.3 What the sanitizer legs do and do not establish
+
+They establish no memory error and no UB on the paths executed. They say **nothing** about data
+races: ASan, UBSan and memcheck are not race detectors, and the repository runs no ThreadSanitizer,
+helgrind or DRD lane. Round 11's report implied otherwise; corrected here.
+
+Asked properly: helgrind reports 16 "possible data race" hits on this publication. A twenty-line
+control program containing nothing but a textbook lock-free seqlock over `std::atomic<float>` —
+no product code at all — produces the same reports, because helgrind models pthread primitives and
+not the C++11 memory model. **Helgrind is not an instrument for this code either way**, and that was
+established by experiment rather than by citing the manual.
+
+### 18.4 And the premise the whole family rests on, measured
+
+`JUCE 9.0.1`'s `OpenGLContext::CachedImage::renderFrame` takes a
+`MessageManager::Lock::ScopedTryLockType` before it paints components and releases it after;
+`paintComponent` opens with `JUCE_ASSERT_MESSAGE_MANAGER_IS_LOCKED`. So on that path the GL render
+thread paints **under the message-manager lock**, mutually exclusive with the message thread — which
+is why ADR-0027, ADR-0038 and ADR-0039 all say the race is argued rather than measured. It changes
+none of them: the lock is a property of a vendored renderer that the pin can move, it is absent from
+the other callers of `paint`, and "safe because something else holds a lock" is the reasoning this
+tree refuses elsewhere. Recorded in `THREAD_MODEL.md` so the next reader does not mistake the
+synchronisation for the only thing standing between the display and a race.
+
+### 18.5 Tests and mutants
+
+`specPaint` — a thread that PAINTS while the analyser publishes. Two tones at opposite ends of the
+spectrum, one whole window per tick and `dt = 1 s`, so a coherent frame has exactly one marker bin
+lit and a torn one has both or neither; `lit(low) == lit(high)` catches both tear directions.
+
+| mutant | killed by |
+|---|---|
+| `paint` reads into its drawing buffers and ignores the result (the round-12 defect) | `specPaint` |
+| the staged read committed regardless of the result | `specPaint` |
+| *(re-run, all still killed)* the nine of §16.4 and §17.4 | as recorded there |
+
+### 18.6 ADR-0039
+
+**Accepted 2026-09-06** on the owner's explicit approval, recorded in the four places this
+repository's process puts it plus the two clause amendments it widens. §17.2's "still open" is
+superseded.
+
+### 18.6b Three more the final diff review turned up, all closed here
+
+* **`testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame` (round 9) had the same unguaranteed
+  premise.** Its handshake exits at `pushed >= 4` and it then asserts `pushed > 4`, i.e. that the
+  producer pushed again during a measured section containing no yield, no sleep and no syscall. It
+  has never failed, and it is the same class as the two that did; snapshotted and waited for
+  explicitly, bounded.
+* **`HANDOVER.md`'s status-of-record still described the GR reveal as a "zero-`dt` tick … resolved to
+  phase 0".** False in both halves since round 9: the reveal ticks with the measured hidden interval,
+  and the code explicitly rejects phase 0 because it would move the trace right. Corrected.
+* **ADR-0039's citations into `SpectrumView.cpp` were stale by ~139 lines** — the round that wrote
+  them inserted that many lines above them in the same file. Re-anchored by SYMBOL, with the reason
+  stated in place: a line anchor into a file the same change is still editing is a trap, and the
+  review artefact is the worst place for one.
+
+### 18.7 Follow-ups
+
+1. There is no repository mechanism for classifying or retrying an environmental CI failure, and none
+   is proposed here: the two failures were test defects, not infrastructure, and both are fixed.
+2. Unchanged: the audio-path reservation index; the taps are index-aligned, not audio-time aligned;
+   the reveal-smoothing limitation, whose premise this round did not touch.

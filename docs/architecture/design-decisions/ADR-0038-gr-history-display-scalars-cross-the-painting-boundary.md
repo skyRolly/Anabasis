@@ -131,7 +131,19 @@ a snapshot struct, a lock) is a materially larger change than two atomics.
    `grResetPhase`, and mutation-verified against **both** wrong answers — ignoring the epoch, and
    inferring the reset from the head — each of which fails the same three assertions.
 
-8. **This row is still not a licence to widen.** ADR-0027 clause 4 stands with its boundary moved,
+8. **This row is still not a licence to widen.**
+
+   > **Amended 2026-09-06 by [ADR-0039](ADR-0039-spectrum-frame-publication.md) (Accepted), which is
+   > the case this clause sends back to the gate, sent back and answered.** The spectrum's published
+   > frame carries a PAYLOAD and a pair whose cross-pairings are not legal frames — both of the things
+   > named below — so it was filed `Proposed` and held until the owner approved it. What that adds is
+   > ONE site with a mechanism (a sequence bracket; a single writer; a bounded two-attempt reader
+   > whose caller stages and commits only on success), not a general permission. Clause 7's rule
+   > travels with it: the identity that payload carries is the CONFIGURATION — the sample rate its
+   > bins are read through — because a bin index means nothing without it. Everything this clause
+   > excludes it still excludes.
+
+   ADR-0027 clause 4 stands with its boundary moved,
    not removed: the painting side may read scalars that are relaxed (bar the identity of clause 7,
    whose ordering is what makes the others checkable), read-only, payload-free, and
    whose every stale/fresh pairing is a frame the writer was itself about to produce. Anything the

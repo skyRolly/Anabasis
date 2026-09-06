@@ -7703,6 +7703,14 @@ static void testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame()
         }
     });
     while (pushed.load() < 4) std::this_thread::yield();
+    // …and the premise below is that the producer kept going ACROSS the measured
+    // section, which the handshake alone does not give: it can exit at exactly 4
+    // and the section that follows contains no yield, no sleep and no syscall, so
+    // a further push is the scheduler's to grant. Snapshot here and wait for it
+    // explicitly — the rule the round-12 tests are written to, applied to the
+    // round-9 test that predates it. Bounded, so a producer that has stopped
+    // fails the premise instead of hanging the suite.
+    const auto pushedBefore = pushed.load();
 
     long disagreed = 0;
     for (int f = 0; f < 5000; ++f)
@@ -7711,10 +7719,11 @@ static void testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame()
         for (size_t b = 0; b < view.analysedInDb().size(); ++b)
             if (std::abs (view.analysedInDb()[b] - view.analysedOutDb()[b]) > 0.01f) { ++disagreed; break; }
     }
+    for (int i = 0; i < 200000 && pushed.load() <= pushedBefore; ++i) std::this_thread::yield();
     stop.store (true);
     producer.join();
 
-    check (pushed.load() > 4,
+    check (pushed.load() > pushedBefore,
            "specRace: (premise) the producer really was publishing while the analyser drew");
     check (disagreed == 0,
            "specRace: with identical audio in both rings, no frame drawn beside a running producer ever showed two different spectra");
@@ -7960,7 +7969,13 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     // loops, 219 under 24 — the reader's share of frames is the scheduler's to
     // decide, and CI decided 1.
     //
-    // So both halves are made to hold by construction. The reader must be seen
+    // So both halves are made to hold by construction — and both waits are
+    // BOUNDED, because a liveness defect must fail the suite rather than hang it:
+    // a wait that can only end when the property holds turns publication ceasing
+    // into a CI timeout, which reports nothing. The caps are far above anything
+    // a working scheduler needs.
+    //
+    // The reader must be seen
     // RUNNING and to have taken a whole frame before the measured section
     // begins — guaranteed, because nothing is publishing during this wait, so
     // `frameSeq` is even and stable and its first attempt succeeds — and it must
@@ -7968,7 +7983,12 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     // publishing-and-yielding delivers to any scheduler that runs the thread at
     // all. A stronger stimulus than the original, not a weaker one: the frame
     // count the property is measured over is now a floor rather than a hope.
-    while (reads.load() == 0) std::this_thread::yield();
+    // BOUNDED, and that is not a hedge. A wait that can only end when the
+    // property holds turns a LIVENESS defect — publication ceasing — into a CI
+    // timeout, which reports nothing at all; bounded, the same defect fails the
+    // premise and names itself. The cap is generous enough that only a genuine
+    // freeze reaches it.
+    for (int i = 0; i < 200000 && reads.load() == 0; ++i) std::this_thread::yield();
 
     for (int f = 0; f < 4000; ++f)
     {
@@ -7977,7 +7997,7 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
         outW.pushBlock (src.data(), src.data(), chunk);
         view.tick (1.0 / 60.0);
     }
-    while (distinct.load() < 2)
+    for (int i = 0; i < 20000 && distinct.load() < 2; ++i)
     {
         inW .pushBlock (toneA.data(), toneA.data(), chunk);
         outW.pushBlock (toneA.data(), toneA.data(), chunk);
@@ -8195,7 +8215,7 @@ static void testNoFrameARendererPicksUpEverMixesTwoConfigurations()
     // hoped for (`testTheFrozenLatchNeedsNoThreadCrossing`'s rule): nothing
     // publishes during this wait, so the sequence counter is even and stable and
     // the reader's first attempt succeeds.
-    while (reads.load() == 0) std::this_thread::yield();
+    for (int i = 0; i < 200000 && reads.load() == 0; ++i) std::this_thread::yield();
 
     const auto feedAndDraw = [&] (double sr, int rounds)
     {
@@ -8214,26 +8234,161 @@ static void testNoFrameARendererPicksUpEverMixesTwoConfigurations()
         }
     };
 
-    // …and the churn: the whole reconfiguration cycle, repeatedly, with the
-    // reader looking the entire time. Bounded by the premise it has to
-    // establish — frames with a real peak at BOTH rates — so the run is as long
-    // as the scheduler needs and no longer.
-    for (int cycle = 0; cycle < 12 && (peaksA.load() == 0 || peaksB.load() == 0); ++cycle)
+    // …AND THE REST OF THE PREMISE IS ESTABLISHED THE SAME WAY, one rate at a
+    // time. This is the second half of the lesson: the first form of this test
+    // ran a bounded churn and then ASSERTED that the reader had seen a peak
+    // frame at both rates. **CI caught it** on 2026-09-06 in the `sanitizers`
+    // job's valgrind step — 1261 checks, 1 failure, memcheck itself reporting 0
+    // errors from 0 contexts — for the same reason the sibling test had failed
+    // the round before: under a serialised scheduler the reader's share of
+    // frames is not the test's to decide, and a bounded loop simply runs out.
+    //
+    // So each rate is CONFIRMED before the next one starts. The wait terminates
+    // by construction rather than by luck: while it spins, the published frame
+    // is a peak frame at this rate and stays one — the same tone keeps
+    // arriving — so the first reader turn that completes a read counts it. The
+    // `split` term is the escape hatch for the case the test exists to catch: a
+    // real mismatch increments `split` instead of the peak counter, and the wait
+    // must end so the assertion can report it rather than spin for ever.
+    const auto churnAndConfirm = [&] (double sr, std::atomic<long>& seen)
     {
-        proc.setRateAndBufferSizeDetails (rA, 512);
-        proc.prepareToPlay (rA, 512);
-        feedAndDraw (rA, 80);
-        proc.setRateAndBufferSizeDetails (rB, 512);
-        proc.prepareToPlay (rB, 512);
-        feedAndDraw (rB, 80);
+        proc.setRateAndBufferSizeDetails (sr, 512);
+        proc.prepareToPlay (sr, 512);
+        feedAndDraw (sr, 40);                       // a full ring at the new rate, then a real peak
+        for (int i = 0; i < 20000 && seen.load() == 0 && split.load() == 0; ++i)
+            feedAndDraw (sr, 1);                    // …held there until the reader has seen it
+    };
+    for (int cycle = 0; cycle < 3; ++cycle)         // and then the churn itself, three whole cycles
+    {
+        churnAndConfirm (rA, peaksA);
+        churnAndConfirm (rB, peaksB);
     }
     stop.store (true);
     renderer.join();
 
-    check (reads.load() > 0 && peaksA.load() > 0 && peaksB.load() > 0,
-           "specAxis: (premise) the reading thread saw whole frames at both rates while the configuration churned under it");
+    // Three checks, not one conjunction: a premise that fails should say which
+    // half of itself failed, which the round-10 form of the sibling test did not.
+    check (reads.load() > 0,
+           "specAxis: (premise) the reading thread really did read whole frames");
+    check (peaksA.load() > 0,
+           "specAxis: (premise) …and saw a frame with the tone in it at the first rate");
+    check (peaksB.load() > 0,
+           "specAxis: (premise) …and at the second, with the configuration churning under it");
     check (split.load() == 0,
            "specAxis: …and not one of them put the tone anywhere but where its own rate says it is — the trace and the rate it is read through are one frame or neither");
+}
+
+// AND THE ONE THAT ACTUALLY PAINTS ON ANOTHER THREAD. Every test above reads
+// the published frame from a second thread; none of them PAINTS from one, so
+// none could see what a renderer does with a read it LOSES. It loses whenever a
+// tick publishes across its copy — 4099 relaxed stores against 4099 relaxed
+// loads — and `readPublishedFrame` cannot preserve its output there: the
+// 4096-bin copy has already happened by the time the bracket can be checked.
+// Reading straight into the drawing buffers and ignoring the result therefore
+// left the renderer drawing a MIX of two publications, which is the defect the
+// whole publication exists to prevent, arriving through the reader instead of
+// the writer. No sanitizer can see it — there is no race in it, only a broken
+// invariant — so it needs a test that paints while the pair moves.
+//
+// THE MARKER HAS TO BE POSITION-INDEPENDENT, and the first attempt at it was
+// not. A torn copy is a PREFIX of one publication and a SUFFIX of another, and
+// where the two sweeps cross depends on their relative speed — so two marker
+// tones only catch a tear that falls between them, and a run where every
+// crossing lands below the lower one detects nothing. Measured: with tones at
+// bins 21 and 1707 the defect was caught in some runs and missed in others.
+//
+// So the two publications differ in EVERY bin: one is white noise (every bin
+// lit), the next is digital silence (every bin at the -120 floor). A clean frame
+// therefore has its first and last bins BOTH lit or BOTH dark; a torn one has
+// one of each, for a crossing anywhere in between — which is the whole array.
+// `lit(first) != lit(last)` is the detector, it is position-independent, and
+// there is no threshold to argue about: noise reads tens of dB above the floor
+// and silence reads exactly the floor. `dt = 1 s` drives the EMA's decay to
+// 0.9998 so each frame is its own analysis, and one whole window per tick means
+// the analysed span is never a blend of the two.
+static void testAPaintThatLosesTheRaceKeepsTheFrameItAlreadyHad()
+{
+    const int chunk = SpectrumView::kSize;                  // one whole window per tick
+    const auto kBins = (size_t) SpectrumView::kBins;
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, chunk);
+    proc.prepareToPlay (48000.0, chunk);
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);          // set ONCE, before the painter starts
+    view.setVisible (true);
+
+    auto& inW  = const_cast<anabasis::ScopeBuffer&> (proc.spectrumInRing());
+    auto& outW = const_cast<anabasis::ScopeBuffer&> (proc.spectrumOutRing());
+    std::vector<float> noise ((size_t) chunk), quiet ((size_t) chunk, 0.0f);
+    uint32_t lcg = 22222u;                                  // deterministic, so runs repeat
+    for (int i = 0; i < chunk; ++i)
+    {
+        lcg = lcg * 1664525u + 1013904223u;
+        noise[(size_t) i] = 0.9f * ((float) (lcg >> 8) / 8388608.0f - 1.0f);
+    }
+    for (int b = 0; b < 4; ++b)
+    {
+        inW .pushBlock (noise.data(), noise.data(), chunk);
+        outW.pushBlock (noise.data(), noise.data(), chunk);
+    }
+    view.tick (1.0);
+
+    std::atomic<bool> stop { false };
+    std::atomic<long> paints { 0 }, torn { 0 }, litFrames { 0 }, darkFrames { 0 };
+    std::thread painter ([&]
+    {
+        juce::Image img (juce::Image::ARGB, view.getWidth(), view.getHeight(), true);
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            { juce::Graphics g (img); view.paint (g); }
+            paints.fetch_add (1, std::memory_order_relaxed);
+            // Read back on the thread that painted — `paintedFrame` and
+            // `paintedInDb` are painter-owned, which is exactly why this is the
+            // thread allowed to ask.
+            const auto& t = view.paintedInDb();
+            if (view.paintedFrame().span <= 0) continue;
+            const bool a = t[1] > -70.0f, b = t[kBins - 1] > -70.0f;
+            if (a != b) torn.fetch_add (1, std::memory_order_relaxed);
+            else if (a)  litFrames .fetch_add (1, std::memory_order_relaxed);
+            else         darkFrames.fetch_add (1, std::memory_order_relaxed);
+        }
+    });
+
+    const auto publish = [&] (const std::vector<float>& src)
+    {
+        inW .pushBlock (src.data(), src.data(), chunk);
+        outW.pushBlock (src.data(), src.data(), chunk);
+        view.tick (1.0);
+        std::this_thread::yield();
+    };
+
+    // Established, not hoped for — and BOUNDED, because a wait that can only end
+    // when the property holds turns a liveness defect into a CI timeout, which
+    // reports nothing. Each wait terminates because the published frame is that
+    // kind and stays it while the wait spins; `torn` ends them early if the
+    // property has already failed, so a defective build reports rather than
+    // hangs.
+    for (int i = 0; i < 200000 && paints.load() == 0; ++i) std::this_thread::yield();
+    publish (noise);
+    for (int i = 0; i < 20000 && litFrames.load()  == 0 && torn.load() == 0; ++i) publish (noise);
+    publish (quiet);
+    for (int i = 0; i < 20000 && darkFrames.load() == 0 && torn.load() == 0; ++i) publish (quiet);
+
+    // …and then the measured run: the pair alternating as fast as the analyser
+    // can publish it, with the painter reading across every one of those windows.
+    for (int f = 0; f < 6000 && torn.load() == 0; ++f)
+        publish ((f & 1) ? noise : quiet);
+
+    stop.store (true);
+    painter.join();
+
+    check (paints.load() > 0,     "specPaint: (premise) the painting thread really did paint");
+    check (litFrames.load() > 0,  "specPaint: (premise) …and drew a frame with every bin lit");
+    check (darkFrames.load() > 0, "specPaint: (premise) …and one with every bin at the floor, so the pair really moved under it");
+    check (torn.load() == 0,
+           "specPaint: every painted frame was one publication end to end — a read the painter loses leaves the frame it already had, never a prefix of one and a suffix of another");
 }
 
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
@@ -10237,6 +10392,7 @@ int main (int argc, char** argv)
         testTheSpectrumsRendererNeverSeesHalfOfTwoFrames();
         testASpectrumFrameCarriesTheRateItsBinsAreReadThrough();
         testNoFrameARendererPicksUpEverMixesTwoConfigurations();
+        testAPaintThatLosesTheRaceKeepsTheFrameItAlreadyHad();
         testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();

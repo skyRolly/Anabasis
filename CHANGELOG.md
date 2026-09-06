@@ -198,6 +198,15 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   keeps the pair it already had — never a mixture. Measured after: 0 of 306 485.
   Evidence: this release. [Verified]
 
+- **The spectrum display can no longer draw a mixture of two updates.** The drawing takes the
+  display's two traces through a hand-over that can be overtaken by an update in progress; when that
+  happens it must keep the pair it already had. It was instead reading the new pair into the buffers
+  it draws from and then finding out the read had failed — leaving up to two updates' worth of
+  content mixed together on screen, read through the previous update's frequency scale. Measured on
+  the shipped build: of 4274 drawings, 95 lost the hand-over and 44 of those had already overwritten
+  what they draw. The read now lands in its own buffers and is taken up only when it succeeded.
+  Evidence: this release. [Verified]
+
 - **The spectrum's frequency scale can no longer belong to a different moment than the trace.** A
   trace is a row of analysis bins; what turns a bin into a frequency is the sample rate, and the
   display used to fetch that rate for itself while the trace came from the update that produced it.
@@ -207,7 +216,9 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   when the two agree and −116.8 dB and −120.0 dB when they do not, i.e. the tone gone from the
   display either way. The trace and the scale it is read through are now handed to the drawing as one
   thing, taken from one configuration, so a frame either shows both or keeps the pair it already had.
-  Evidence: this release. [Verified]
+  This widens the threading decision ADR-0038 took, so it went to architecture review and was
+  **approved** ([ADR-0039](docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md),
+  Accepted 2026-09-06). Evidence: this release. [Verified]
 
 - **A change of sample rate or buffer size can no longer leave the previous spectrum on screen.**
   Re-preparing the plugin clears both captures and re-maps every frequency, and the analyser drops

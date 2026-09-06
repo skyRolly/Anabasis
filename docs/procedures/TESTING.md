@@ -354,6 +354,36 @@ one. A stronger stimulus than the original, not a weaker one — the frame count
 measured over becomes a floor rather than a hope. Re-run under memcheck on one CPU: 1261 checks, 0
 failures, 0 errors from 0 contexts.
 
+**AND CI TAUGHT IT A THIRD TIME, in the round that quoted the lesson.** The repair above was applied
+to `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` and NOT to
+`testNoFrameARendererPicksUpEverMixesTwoConfigurations`, written in the same round: that one ran a
+bounded churn and then asserted that the reading thread had seen a frame at both rates. The
+`sanitizers` job failed on it — 1261 checks, 1 failure, memcheck itself reporting 0 errors from 0
+contexts — for exactly the reason the paragraph above gives. Two things follow, and both are now in
+force across every threaded test in this file. **A premise is established, never asserted after the
+fact**: each rate is confirmed by waiting for the reader to have seen it, and the wait terminates
+because the published frame is that rate's and stays it while the wait spins. **And every such wait
+is BOUNDED**, because a wait that can only end when the property holds turns a LIVENESS defect into a
+CI timeout, which reports nothing — bounded, the same defect fails the premise and names itself. The
+caps are far above what any working scheduler needs. A conjunction is also split into one check per
+conjunct, so a failure says which half broke; the round-10 form did not, and its log could not
+distinguish "the reader never ran" from "the reader never saw the second rate".
+
+**THE TEST THAT ACTUALLY PAINTS.** `specPaint`
+(`testAPaintThatLosesTheRaceKeepsTheFrameItAlreadyHad`) is the only test in the tree that calls
+`SpectrumView::paint` from a thread that is not the one ticking, and it exists because nothing else
+could see what a renderer does with a read it LOSES. `readPublishedFrame` cannot preserve its output
+on failure — the 4096-bin copy has already happened by the time the bracket can be checked — so a
+caller that reads into its drawing buffers and ignores the result draws a mixture of two
+publications. That is a broken invariant with no race in it, so ASan, UBSan and memcheck are all
+silent on it by construction, and it took a test that paints. The marker is three-part: one whole
+window of one tone per tick (so the analysed window is never a blend), `dt = 1 s` (so the EMA is the
+analysis rather than the last second's), and the two tones at OPPOSITE ends of the spectrum (so the
+stretch a tear must fall in is 82 % of the trace). The rule is then exact — a coherent frame has
+exactly one of the two marker bins lit, a torn one has both or neither — and `lit(low) == lit(high)`
+catches both directions. Measured on the shipped build: 4274 paints, 95 lost reads, 44 of which had
+already copied.
+
 **What the suite cannot see here, stated rather than implied.** `repaint()` is what carries a
 published frame to the screen, and a headless suite has no repaint region to inspect: the tests pin
 the published state and the painter's copy of it, so a mutant that deletes the `repaint()` call while

@@ -365,7 +365,17 @@ before approval and still **`Proposed`** (amending a record that is not signed o
 coherent design in front of the reviewer; the index's warning about widening is about signed-off
 records); `THREAD_MODEL.md` and — the gap round 10 left — `THREADING_POLICY.md`'s Message → Painting
 row, which `DOCUMENTATION_LIFECYCLE_POLICY.md` requires alongside it and which had not been touched.
-Also **Known issue corrected** (`KNOWN_ISSUES.md`: KI-017's `prepareToPlay` publication-lag audit
+**CLEARED 2026-09-06 (round 12): the owner approved ADR-0039 and it is now `Accepted`** — the fifth
+gated record cleared here. Recorded where this repository's process puts it: the ADR's Status banner
+and Status line, `ADR_INDEX.md`'s row and its amendment registry, dated by-exception amendment
+banners on ADR-0027 clause 4 and ADR-0038 clause 8, `THREAD_MODEL.md`, `THREADING_POLICY.md`'s
+Message → Painting row (header included), `HANDOVER.md`'s Pending Tasks row and `CHANGELOG.md`'s
+cross-link. `RELEASE_COMPATIBILITY_CHECKLIST.md` does not bind: the change is display-only and the
+checklist is a release-time gate with no tag cut. The same round fixed a REAL defect in the same
+path that no sanitizer can see — `paint` read the published frame into its drawing buffers and
+ignored the result, so a read it lost drew a mixture of two publications through the previous
+frame's rate; it now stages and commits on success only (`specPaint`). Also **Known issue corrected**
+(`KNOWN_ISSUES.md`: KI-017's `prepareToPlay` publication-lag audit
 covered the window INSIDE `engine.prepare` and not the one after it, which is where the mismatch
 lived; KI-018's one-tick cross-ring residual gains a rate consequence, not a wider window),
 **New/changed test** (`state_tests.cpp`; `TESTING.md`, including the valgrind premise lesson),

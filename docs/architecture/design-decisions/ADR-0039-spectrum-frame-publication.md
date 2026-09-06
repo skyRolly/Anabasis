@@ -1,7 +1,8 @@
 # ADR-0039 — The spectrum publishes its two traces, and the configuration that makes them readable, to the painting thread as ONE frame
 
-> **⛔ PROPOSED — THE ARCHITECTURE REVIEW GATE IS OPEN. This is a merge prerequisite, and a green
-> build does not clear it.** `ARCHITECTURE_REVIEW_GATE.md` lists "**Thread Model change** — new
+> **✅ RATIFIED — THE ARCHITECTURE REVIEW GATE IS CLEARED (2026-09-06).** The owner approved this
+> decision on review of the shipped publication, including the round-11 widening that put the sample
+> rate inside the frame. How it arrived stays in the record, because that is the half worth keeping: `ARCHITECTURE_REVIEW_GATE.md` lists "**Thread Model change** — new
 > thread, new cross-thread path, new atomic ordering (`THREAD_MODEL.md`)"; `CLAUDE.md` and
 > `AI_AGENT_POLICY.md` repeat "threading-model change" in the Hard Stop list. This record adds a
 > cross-thread path carrying a **payload** and a **new atomic ordering** (a sequence bracket with
@@ -11,7 +12,9 @@
 > exactly this case back here in as many words: *"Anything the paint path WRITES, anything carrying
 > a payload, and any pair whose cross-pairings are not legal frames is a new path again and returns
 > to this gate."* Every cross-pairing here is illegal by construction — that is the whole defect —
-> so the exemption ADR-0038 won does not extend to this site, and it is not claimed.
+> so the exemption ADR-0038 won did not extend to this site and was never claimed. It was filed
+> `Proposed`, flagged in the pull request as a gate item a green build does not clear, and held there
+> until the owner answered.
 >
 > Filed `Proposed` **with the code in the tree**, for ADR-0038's stated reason and no other: the path
 > already existed as an UNSYNCHRONISED read of two `std::vector<float>` — plain floats written on the
@@ -20,23 +23,42 @@
 > race while the gate is answered. What the round must not do is assert "no threading change" in a
 > pull request, which is the failure ADR-0027's banner records; this record is the flag.
 
-**Status:** **Proposed — 2026-09-06**, widened the same day (round 11) and still `Proposed`.
-Awaiting the owner's explicit approval.
+**Status:** **Accepted — 2026-09-06**, on the owner's explicit approval of this record. It was NOT
+covered by the standing blanket approval for the post-v0.1.0 rounds (ADR-0027 established that a
+gated thread-model item is outside it, and ADR-0038 was held at `Proposed` for the same reason). The
+approval is of the design recorded below — a sequence-bracketed frame carrying both traces, the
+window they were analysed over and the rate their bins are read through — and explicitly *not* an
+instruction to revert the synchronisation, which is the one option that was never available.
 
-> **WIDENED BEFORE APPROVAL, DELIBERATELY.** Round 11's review found that the published frame carried
+> **IT WAS WIDENED BEFORE APPROVAL, DELIBERATELY.** Round 11's review found that the published frame carried
 > the two traces but not the SAMPLE RATE that turns their bin indices into frequencies, so `paint`
 > read that rate for itself and a rendered frame could pair one configuration's trace with another's
 > mapping. The repair belongs to this record rather than to a new one, and the reason is the index's
 > own rule about widening: *"that record was signed off naming three different changes, and widening
 > a signed-off record after the fact is the failure mode, not the shortcut"* (`ADR_INDEX.md`). This
-> record is **not signed off**. Amending it now is what puts ONE coherent design in front of the
-> reviewer instead of a decision plus an erratum — the opposite of the failure mode that rule names.
-> The Decision below describes the final design; nothing from the first filing has been deleted.
+> record was **not signed off** at the time. Amending it then is what put ONE coherent design in
+> front of the reviewer instead of a decision plus an erratum — the opposite of the failure mode that
+> rule names — and it is the design below, as widened, that the approval covers. Nothing from the
+> first filing has been deleted.
 
-**It is NOT covered by the standing blanket approval for the post-v0.1.0 rounds** — ADR-0027 established that a gated
-thread-model item falls outside it, and ADR-0038 was held at `Proposed` until answered for the same
-reason. Approval sought is of the design below; withholding it does not imply reverting to the
-unsynchronised read, which is the one option that is not available.
+> **A ROUND-11 CORRECTION IS PART OF WHAT WAS APPROVED, and it is worth naming because no sanitizer
+> could have found it.** The reader cannot preserve its output on failure — the 4096-bin copy has
+> already happened by the time the bracket can be checked — and `paint` was reading straight into its
+> drawing buffers and discarding the result, so a read it LOST left it drawing a mixture of two
+> publications through the previous frame's rate: the very incoherence this record exists to prevent,
+> arriving through the reader instead of the writer. There is no race in it and no memory error, so
+> ASan, UBSan and memcheck are all silent on it by construction. `paint` now stages the read and
+> commits it with a swap only on success (clause 5), which is what the rest of this record always
+> claimed it did.
+>
+> **WHAT THE APPROVAL COVERS, stated precisely because the correction landed in the same round.** Two
+> things changed after the widening the owner reviewed, and neither is a widening: `paint` now stages
+> its read and commits on success (clause 5), which makes the code do what clause 4 already promised
+> — a CONFORMANCE repair, adding no cross-thread path, no shared state and no ordering; and the
+> lock-free `static_assert` now names all five published types instead of one (clause 6), which only
+> TIGHTENS a build-time guarantee. Both are dated here and in `CHANGELOG.md` so a reviewer who
+> considers either material can see it rather than having to find it. Nothing about the boundary this
+> gate protects moved.
 
 ## Context
 
@@ -61,13 +83,17 @@ widened it:
    amendments), re-entering one layer further out, in the one display whose entire purpose is
    comparing the two traces.
 3. **A rendered frame could mix two CONFIGURATIONS.** A trace is a row of BIN indices; what turns a
-   bin into a frequency is `binHz = rate / kSize` (`src/gui/SpectrumView.cpp:619`), and `paint` read
-   that rate from `AnabasisAudioProcessor::preparedSampleRate()` on its own
-   (`src/gui/SpectrumView.cpp:575` before this round) while the trace came from the published frame.
+   bin into a frequency is `binHz = rate / kSize` (`SpectrumView::paint`), and `paint` read that rate
+   from `AnabasisAudioProcessor::preparedSampleRate()` on its own (same function, before this round)
+   while the trace came from the published frame.
    Two independent reads of two objects, free to disagree. Note precisely what moves: the x axis is a
-   FIXED 20 Hz–20 kHz log sweep with no rate term (`src/gui/SpectrumView.cpp:577,651-654`), so a
-   mismatch does not move the axis — it moves the DATA under it, through the regime test, the
-   Catmull-Rom sample position and the averaged bin range (`:636`, `:638`, `:639-640`). MEASURED on
+   FIXED 20 Hz–20 kHz log sweep with no rate term (`paint`'s `fLo`/`fHi` and its `freqAt` lambda), so
+   a mismatch does not move the axis — it moves the DATA under it, through `dbForColumn`'s regime
+   test, `dbCubic`'s sample position and the averaged bin range. *(Cited by SYMBOL, not by line: the
+   round that first wrote this paragraph also inserted ~139 lines above these sites in the same file
+   and shipped citations pointing at the wrong code. Line anchors into a file the same change is
+   still editing are a trap; `SOURCE_OF_TRUTH.md`'s line format is kept everywhere the target is
+   stable.)* MEASURED on
    the round-11 harness at the bin the tone actually occupies, 6 kHz being bin 512 at 48 kHz and bin
    256 at 96 kHz: **−0.00 dB** paired correctly, **−116.80 dB** as a 48 kHz trace under the 96 kHz
    rate, **−120.00 dB** as a 96 kHz trace under the 48 kHz rate. The tone leaves the display
@@ -155,13 +181,24 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    constraint met by construction rather than by tuning: the frame a third attempt would win is one
    the caller is about to redraw 16.7 ms later, and a spin on the render thread turns a stale frame
    into a dropped one.
-5. **The painter owns its copy.** `paint` reads into `paintIn`/`paintOut`/`paintWindow`, which only
-   `paint` touches, because each trace is walked four times over by the column interpolators and
-   must not move between those reads. Both vectors are `kBins` long from construction; `paint`
-   allocates nothing.
-6. **Lock-freedom is a build-time requirement**, `static_assert`ed on
-   `std::atomic<float>::is_always_lock_free`, for decision E's reason: a target where it does not
-   hold would silently put a lock inside `paint`, and must fail the build instead.
+5. **The painter owns its copy, AND STAGES THE READ INTO A SECOND ONE.** `paint` walks
+   `paintIn`/`paintOut`, which only `paint` touches, because each trace is read four times over by
+   the column interpolators and must not move between those reads. The read itself lands in
+   `stageIn`/`stageOut` and is committed with a **swap** only when `readPublishedFrame` returned
+   `true`. That is load-bearing rather than tidy: the reader CANNOT preserve its output on failure —
+   the 4096-bin copy has already happened by the time the bracket can be checked — so a caller that
+   reads into its drawing buffers and ignores the result draws a mixture of two publications through
+   the previous frame's rate. Round 11 found exactly that in the tree and this clause is the repair;
+   the contract is now stated at `readPublishedFrame` as well, so a future caller cannot make the
+   same assumption. All four vectors are `kBins` long from construction; the commit is two pointer
+   exchanges; `paint` allocates nothing.
+6. **Lock-freedom is a build-time requirement, for EVERY published type** — `std::atomic<float>`,
+   `<double>`, `<uint64_t>`, `<int>` and `<uint32_t>`, all `static_assert`ed together, matching
+   `GrHistoryView`'s complete set. Decision E's reason: a target where any of them is not lock-free
+   would silently put a lock inside `paint`, and must fail the build instead. The first filing named
+   the float alone while the payload already carried five types — `std::atomic<uint64_t>` being the
+   one with a real chance of failing on a 32-bit target — so the stated guarantee was narrower than
+   the thing it claimed to cover. Corrected 2026-09-06.
 7. **Publication is the LAST thing a tick does**, after both EMAs are settled and after the
    post-batch reset-generation checks. A tick that HOLDS (no coherent span — ADR-0011's 0.2.12
    amendments) publishes nothing and leaves the previous frame readable, which is the behaviour that
@@ -242,9 +279,9 @@ Collected here so a reviewer does not have to assemble it from the prose above.
 | **Read sequence** | counter acquire → reject if odd → relaxed copy of both traces and the three scalars → `atomic_thread_fence(acquire)` → relaxed re-read → keep only if unchanged. |
 | **Memory ordering, and why each part** | The release FENCE rather than a release store, because release orders what came BEFORE it and what must be ordered here is what comes after. The payload relaxed, because the counter carries the ordering and the atomics exist to make the access defined. The closing store `release`, which is what publishes the payload. The reader's acquire fence BEFORE the re-read, which is the Boehm (MSPC 2012) seqlock reader — an acquire load alone is not sufficient on a weakly ordered target. `frameSeq` has one writer, so no read-modify-write is needed. |
 | **Coherent-frame invariant** | *Every rendered frame observes one tick's traces, the window they were analysed over, and the sample rate they were captured at — or it observes an earlier such frame in full. No rendered frame combines state from two ticks or two configurations.* |
-| **Retry / fallback** | Bounded at two attempts; a reader that loses both keeps the frame it already holds — an older coherent frame, never a mixed one. No spin, no lock, no delay. The bound is deliberate: a spin here is a spin on the render thread, where a stall is a dropped frame rather than a stale one. |
-| **Allocation** | None on either side at run time. 16 KB of published storage and 16 KB of painter-owned copy, both sized once in the constructor (`std::vector<std::atomic<float>>` cannot be resized, so it is built with a count). |
-| **Cost** | MEASURED, 2000 iterations on the round-11 harness: a whole tick (two 4096-point FFTs and both ring reads) is **210.5 µs**; `publishFrame` is **2.37 µs** of it — **1.13 % of a tick, 0.014 % of a 60 Hz frame period**. `readPublishedFrame` is **1.50 µs** per paint. Memory: 16 KB published + 16 KB painter copy = **32 KB per view**, one view per editor, both allocated once at construction. Nothing on the audio path changed at all. |
+| **Retry / fallback** | Bounded at two attempts. `readPublishedFrame` returns `false` and its two trace outputs are then INDETERMINATE; the caller stages, so the frame `paint` draws is the one it already held — an older coherent frame, never a mixed one. No spin, no lock, no delay. The bound is deliberate: a spin here is a spin on the render thread, where a stall is a dropped frame rather than a stale one. |
+| **Allocation** | None on either side at run time. 16 KB of published storage, 16 KB of painter-owned drawing copy and 16 KB of painter-owned staging, all sized once in the constructor (`std::vector<std::atomic<float>>` cannot be resized, so it is built with a count). |
+| **Cost** | MEASURED, 2000 iterations on the round-11 harness: a whole tick (two 4096-point FFTs and both ring reads) is **210.5 µs**; `publishFrame` is **2.37 µs** of it — **1.13 % of a tick, 0.014 % of a 60 Hz frame period**. `readPublishedFrame` is **1.50 µs** per paint, and committing it is two pointer swaps. Memory: 16 KB published + 16 KB drawn + 16 KB staged = **48 KB per view**, one view per editor, all allocated once at construction. Nothing on the audio path changed at all. |
 | **Reset / reconfiguration** | A reset publishes the EMPTY frame — the display floor in both traces, a zero-length window, and the new rate — and commits its accounting, so a reconfiguration can never leave the previous configuration's pixels up. The configuration bracket closes BEFORE that accounting, so a tick that straddled a clear commits nothing and the reset is answered by the next tick rather than swallowed. |
 | **Sample-rate coupling** | The rate is part of the frame (clause 1) and is taken under the GR ring's reset epoch (clause 9), which is what makes it the same configuration's as the frames. `paint` reads no processor state. |
 | **Alternatives** | Immutable snapshot per tick (allocates 16 KB per frame; `atomic<shared_ptr>` is not lock-free here) · two-slot double buffer (tears when two ticks land in one paint — a timing assumption, not a proof) · triple buffer (correct and wait-free, but 48 KB and an ownership protocol the tree does not otherwise have, to avoid a fallback that costs one repeated frame at 16.7 ms) · a mutex (a lock on the paint path, and one the tick can be made to wait on) · painting-thread ownership ("the painting thread" is not one thread). For the rate specifically: a second atomic beside the frame (rejected — that is the mismatch, restated) and adding a rate to `ScopeBuffer` (rejected — it extends the producer/consumer protocol for a fact the plugin already publishes, the same reasoning that withdrew the `maxPush` draft this round). |
@@ -263,11 +300,21 @@ Collected here so a reviewer does not have to assemble it from the prose above.
   this record adds the one site where a mechanism supplies the consistency instead of an argument.
 - The painter may repeat one frame when it loses the bracket twice. That is a display consequence and
   it is bounded by the tick rate; option C is the recorded answer if it ever must not happen.
+- **RACE-FREEDOM IS ARGUED, NOT DETECTED, AND NOTHING IN CI CHANGES THAT.** The `sanitizers` job runs
+  AddressSanitizer, UndefinedBehaviorSanitizer and valgrind **memcheck**; none of the three is a race
+  detector, and the repository runs no ThreadSanitizer, helgrind or DRD lane. A green sanitizers job
+  therefore says "no memory error and no UB on the paths executed" and says **nothing** about races,
+  and this record does not claim otherwise. Measured while asking the question honestly: helgrind
+  reports 16 "possible data race" hits on this publication — and a twenty-line control program
+  containing nothing but a textbook lock-free seqlock over `std::atomic<float>` produces the same
+  reports, because helgrind models pthread primitives and not the C++11 memory model. So helgrind is
+  not an instrument for this code either way.
 - **What the tests can and cannot see, stated rather than implied.** The coherence is pinned by a
-  reading thread and by the painter's own frame (`specFrame`, `specAxis`). Three things are argued
-  rather than measured, and each is a mutant that survives: the `repaint()` that carries a published
-  frame to the screen (a headless suite has no repaint region to inspect); the data race itself (the
-  same limit ADR-0038 records); and the configuration bracket's three guards — the bracket itself,
+  reading thread, by the painter's own frame, and — since round 11 — by a thread that actually PAINTS
+  while the pair moves (`specFrame`, `specAxis`, `specPaint`). Two things are argued rather than
+  measured, and each is a mutant that survives: the `repaint()` that carries a published frame to the
+  screen (a headless suite has no repaint region to inspect); and the configuration bracket's three
+  guards — the bracket itself,
   its evenness test and the placement of the reset commit behind it — which defend against a
   `prepareToPlay` landing INSIDE a tick. The suite reconfigures from the thread that ticks, so a clear
   cannot overlap a tick there, and making one overlap needs a host thread reconfiguring while audio
@@ -309,11 +356,18 @@ Evidence [Verified]:
   publishes carries its configuration; a never-prepared view falls back to 48 kHz rather than
   dividing by zero; and a reading thread watching a 48 kHz ⇄ 96 kHz churn never sees the tone
   anywhere but where its own frame's rate puts it.
+- Test (round 11): `specPaint` — a thread that PAINTS while the analyser publishes, with two tones at
+  opposite ends of the spectrum and a `dt` that makes every frame its own analysis, so a coherent
+  frame has exactly one of the two marker bins lit and a torn one has both or neither. Measured on the
+  shipped build: 4274 paints, 95 reads the painter lost, 44 of which had already copied — the state
+  the test looks for is reached tens of times per run.
 - Mutants killed: the renderer reading the tick's working vectors (1 161 778 of 1 321 607 mixed
   reads); each trace published as it is computed (277 334 of 416 230); the sequence bracket removed;
   the painter reading the working vectors; the reset publishing nothing; the reader-side reserve
   dropped (30 checks); `paint` reading `preparedSampleRate()` for itself; the trace published without
-  its rate; and the rate published on the tick's schedule rather than the frame's.
+  its rate; the rate published on the tick's schedule rather than the frame's; **`paint` reading into
+  its drawing buffers and ignoring the result** (the round-11 defect); and **the staged read committed
+  regardless of the result**.
 - Mutants that SURVIVE, with the reason: the rate stored one instruction past the closing release
   (the reader reads it ~4096 loads after the sequence load, so the writer would have to be preempted
   inside a one-instruction window for the reader's whole copy); and the three configuration-bracket

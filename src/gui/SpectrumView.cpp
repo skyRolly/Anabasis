@@ -21,6 +21,8 @@ SpectrumView::SpectrumView (AnabasisAudioProcessor& p)
     // it is of the EMA before the first analysis.
     paintIn.assign (kBins, -120.0f);
     paintOut.assign (kBins, -120.0f);
+    stageIn.assign (kBins, -120.0f);
+    stageOut.assign (kBins, -120.0f);
     for (int b = 0; b < kBins; ++b)
     {
         pubIn [(size_t) b].store (-120.0f, std::memory_order_relaxed);
@@ -653,6 +655,9 @@ bool SpectrumView::readPublishedFrame (std::vector<float>& inTrace,
                                        std::vector<float>& outTrace,
                                        Frame& frame) const noexcept
 {
+    // The three SCALARS are staged in locals below and committed only on
+    // success. The 4096-bin payload cannot be — that is the caller's job, and
+    // the header states it as the contract rather than leaving it to be found.
     if (inTrace.size() != (size_t) kBins || outTrace.size() != (size_t) kBins)
     {
         jassertfalse;   // the caller owns the storage and must size it once
@@ -689,12 +694,29 @@ void SpectrumView::paint (juce::Graphics& g)
 
     // THE PAIR THE RENDERER DRAWS IS ONE TICK'S, WHOLE — and so is the rate it
     // reads the bins through. On macOS and Windows this function runs on the
-    // OpenGL context's render thread while `tick` runs on the message thread
-    // (`THREAD_MODEL`), so the traces are taken through the published bracket
-    // into buffers only this function touches. A lost read leaves the previous
-    // copy in place — an older coherent frame, never a mixed one — and the
-    // vectors are `kBins` long from construction, so nothing here allocates.
-    (void) readPublishedFrame (paintIn, paintOut, paintFrame);
+    // OpenGL context's render thread, not the message thread that ticks
+    // (`THREAD_MODEL`, "Which context paints"), so the traces are taken through
+    // the published bracket into buffers only this function touches. Nothing
+    // here allocates: every vector is `kBins` long from construction.
+    //
+    // THE READ LANDS IN THE STAGING PAIR, AND ONLY A SUCCESSFUL ONE IS COMMITTED
+    // (0.2.12, round 11). `readPublishedFrame` cannot preserve its output on
+    // failure — the 4096-bin copy has already happened by the time the bracket
+    // can be checked — so reading straight into `paintIn`/`paintOut` and
+    // discarding the result, which is what this line used to do, drew a mix of
+    // up to three publications' bins through the PREVIOUS frame's rate. That is
+    // the defect this whole publication exists to prevent, arriving through the
+    // reader rather than the writer, and no sanitizer can see it: there is no
+    // race in it, only a broken invariant. Staged and swapped, a lost read now
+    // leaves the previous frame exactly where it was — which is what the header
+    // and ADR-0039 always claimed — and a successful one costs two pointer
+    // exchanges rather than a second copy.
+    if (readPublishedFrame (stageIn, stageOut, stageFrame))
+    {
+        paintIn .swap (stageIn);
+        paintOut.swap (stageOut);
+        paintFrame = stageFrame;
+    }
 
     // KI-017's rule, and since 0.2.12 the FRAME's rate rather than a second read
     // of the processor's. Reading `preparedSampleRate()` here was correct about
