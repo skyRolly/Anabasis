@@ -7702,7 +7702,7 @@ static void testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame()
             pushed.store (n, std::memory_order_relaxed);
         }
     });
-    while (pushed.load() < 4) std::this_thread::yield();
+    for (int i = 0; i < 200000 && pushed.load() < 4; ++i) std::this_thread::yield();   // bounded: see below
     // …and the premise below is that the producer kept going ACROSS the measured
     // section, which the handshake alone does not give: it can exit at exactly 4
     // and the section that follows contains no yield, no sleep and no syscall, so
