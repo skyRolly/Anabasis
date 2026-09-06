@@ -301,6 +301,33 @@ direction, and no schedule to depend on: the fixed code cannot fail it and the u
 on every run measured. A thread is what this needed and a sleep is not: the property is "no
 interleaving produces a mismatched pair", which more interleavings can only test harder.
 
+The round after THAT had to reach one layer further out, and it changed what the suite is allowed
+to look at. The two defects were in the hand-over from `tick` to `paint` — a boundary that is TWO
+THREADS on macOS and Windows and one on Linux — so `SpectrumView::readPublishedFrame` and
+`paintedWindow()` are public for the same reason `analysedOutDb()` is: the property at stake is what
+a SECOND thread can see, and a test that can only read the message thread's own state cannot say it.
+`testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` pins the deterministic half first (what a tick
+publishes is the frame it committed; an idle tick disturbs nothing; a paint takes the published
+window and follows it across publications) and then runs the threaded half with a MARKER made of the
+audio itself: both rings get identical blocks, so a coherent frame's two traces are bit-identical,
+and the tone alternates over a whole 4096-frame window per tick, so a frame assembled from two ticks
+disagrees across the spectrum. Any inequality at all is therefore a mixed frame and there is no
+threshold to argue about — 0 of 306 485 reads on the fixed tree, 1 161 778 of 1 321 607 with the
+renderer reading the tick's working vectors. `testAReconfiguredSpectrumNeverKeepsThePreviousMapping`
+pins the other defect across the ring-capacity boundary (8192, 13000, 16384, 32768 samples, with and
+without new audio, re-preparing 48 kHz → 96 kHz so the same tone moves from bin 512 to bin 256):
+where a window survives, the first frame after the change is the new configuration's; where none can
+(at or above a whole ring, where none ever will) the view publishes the empty frame rather than
+leaving the old rate's spectrum under the new rate's axis. The reader-side in-flight reserve that
+replaced the withdrawn ring-side one is pinned by `specReserve` — the arithmetic on its own, and
+that a drawn frame's window obeys it at the block the host prepared.
+
+**What the suite cannot see here, stated rather than implied.** `repaint()` is what carries a
+published frame to the screen, and a headless suite has no repaint region to inspect: the tests pin
+the published state and the painter's copy of it, so a mutant that deletes the `repaint()` call while
+leaving the publication survives. The same limit applies to the data race itself, which is argued
+from the memory model rather than measured (ADR-0038 records it the same way).
+
 **The two tests that sleep, and why they are the only ones.** `testTheGrHistoryDoesNotResumeAnExpiredRamp`
 and `testTheSpectrumIsCurrentTheFrameItBecomesVisible` each block for 40 ms between hiding a view and
 showing it again. The quantity under test IS real elapsed time — the seconds a view's frame clock was

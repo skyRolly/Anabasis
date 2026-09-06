@@ -1409,11 +1409,13 @@ writes its payload BEFORE it publishes its index**, so a push that has not publi
 in `write` while its stores are already landing on slots a reader is copying — a reader checking the
 index before and after sees a ring that never moved. Measured: **17 of 2269 drawn frames** still held
 two different windows at a 13000-frame push with the pair proved against the published index alone.
-The bound a reader needs is the SIZE of the largest push, which only the producer knows, so the
-engine now tells the rings at `prepare` (`ScopeBuffer::prepare`, from `maxBlock`, which
-`processChunk`'s `jmin (maxBlock, …)` makes an upper bound) and `oldestReadable` reserves one push
-worth of history. Written on the host thread with audio stopped — the same named premise `reset`
-rests on — and never read by the push path, so **the audio thread pays nothing**.
+The bound a reader needs is the SIZE of the largest push. **CORRECTED in §16.3, same round:** this
+section first recorded a `ScopeBuffer::prepare (maxPushFrames)` and a `maxPush` atomic inside the
+ring, set by the engine at `prepare`. That draft was withdrawn — the largest push is
+`samplesPerBlock`, which the plugin ALREADY publishes — and the reserve is now
+`SpectrumView::reservedFloor (writeCount, preparedBlockSize())`, applied where the two rings are
+paired. The arithmetic and every measurement below are unchanged; what changed is which side owns
+the bound, and that the ring's protocol gained nothing. **The audio thread pays nothing** either way.
 
 Rejected, and recorded rather than hidden: a RESERVATION INDEX published before the payload writes
 would be exact and would keep drawing where this reserve gives up, but it is a store on the audio
@@ -1436,9 +1438,9 @@ ring and the floor says so rather than pretending.
 | the pair is never proved | `specRace` (threaded) |
 | only the counts are checked (a lapped copy accepted) | 2 × `specRace` truth table |
 | only the floors are checked (a short read accepted) | 2 × `specRace` truth table |
-| the floor stops reserving room for an in-flight push | 3 × `specSync` |
+| the floor stops reserving room for an in-flight push | `specSync` / `specReserve` (§16.3) |
 | each ring read with its own independently acquired state | `specRace` + 3 × `specSpan` |
-| the engine stops telling the rings the largest push | `specRace` |
+| the engine stops telling the rings the largest push | `specRace` (mutant retired with the draft — see §16.3) |
 
 ### 15.6 What this changes about §14, and what it does not
 
@@ -1455,3 +1457,143 @@ and OQ-017 is untouched.
 1. **The reservation index** — the audio-path change that would keep the analyser drawing at block
    sizes at or above the ring's capacity. An architecture-gate item; not taken here.
 2. Unchanged from §14: the taps are index-aligned, not audio-time aligned.
+
+---
+
+## 16. The pair reaches the screen (2026-09-06, round 10)
+
+Three items from one review pass: two SpectrumView correctness bugs and one repository
+architecture-review requirement. §15 and everything before it concern how the analyser READS. This
+section is about the hand-over from `tick` to `paint`, and about a protocol extension that turned out
+not to be needed.
+
+### 16.1 Concurrent painting splits the traces
+
+**Who runs `paint`.** Not assumed — read off the tree. `PluginEditor` attaches a
+`juce::OpenGLContext` on macOS and Windows and never on Linux/X11, and when a context is attached
+JUCE paints its components on the context's render thread. `THREAD_MODEL.md` §"Which context paints"
+already states it, and ADR-0027 and ADR-0038 are two earlier defects of exactly this shape in this
+editor. `SpectrumView::tick` is a `juce::VBlankAttachment` callback through `abgui::FrameClock`, so
+it is the message thread. Two threads, two `std::vector<float>` of 2048 floats each, nothing between
+them.
+
+**Two defects, one fix.** The accesses are a data race by the letter of the memory model — the
+same class as `presetMenusOpen` (ADR-0027) and the GR scroll scalars (ADR-0038). Separately, and
+this is the one that is visible: `tick` assigns `inDb` and then `outDb`, so a paint landing between
+them draws the input spectrum of tick N beside the output spectrum of tick N + 1 — the split the
+committed head removed from the ANALYSIS, re-entering at the display.
+
+**Reproduced with a controlled harness and a generation marker made of the audio itself.** Both
+rings get IDENTICAL blocks, so a coherent frame analyses the same samples twice and its two traces
+come back bit-identical; the tone alternates every tick over a whole 4096-frame window, so a frame
+assembled from two ticks disagrees across the spectrum. Any inequality is a mixed frame, and there is
+no threshold:
+
+| what the reading thread reads | reads | mixed |
+|---|---|---|
+| the tick's working vectors (pre-fix shape) | 1 321 607 | **1 161 778 (87.9 %)** |
+| each trace published as soon as it is computed | 416 230 | **277 334 (66.6 %)** |
+| one bracketed publication (shipped) | 306 485 | **0** |
+
+**The mechanism, and why this one.** A sequence bracket over per-bin `std::atomic<float>` storage,
+carrying both traces and the window they describe; the painter copies inside the bracket into buffers
+only `paint` touches and keeps the copy only if the counter did not move; two attempts, then keep the
+frame already held. Rejected: an immutable snapshot per tick (16 KB allocated every frame, and
+`atomic<shared_ptr>` is not lock-free here), two slots with an atomic index (tears if two ticks land
+in one paint — a timing assumption, not a proof), a triple buffer (correct and wait-free, but 48 KB
+and an ownership protocol the tree does not otherwise have, for a fallback that costs one repeated
+frame at 16.7 ms — recorded as the option to take first if that ever matters), a mutex (a lock on the
+paint path and one the tick can wait on), and painting-thread ownership ("the painting thread" is not
+one thread — GL during `renderOpenGL`, the message thread on Linux, and again for
+`createComponentSnapshot`, which the suite uses).
+
+**This is an `ARCHITECTURE_REVIEW_GATE` item and it is FILED, not claimed.** A new cross-thread path
+carrying a payload, and a new atomic ordering. ADR-0027 clause 4 and ADR-0038 clause 8 both name this
+case as returning to the gate in as many words. [ADR-0039](../docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md)
+is `Proposed`; a green build does not clear it.
+
+### 16.2 A large-block reset leaves the previous mapping on screen
+
+**Not the mechanism the finding names, and the difference matters.** The vectors ARE floored on the
+reset edge — `resetIn`/`resetOut` fill them with −120 before the span is consulted. What the early
+return at `span == 0 && committed > 0` skips is the **publication and the repaint**, so the floored
+trace never reaches the screen. And at a host block of at least a whole ring the span is 0 not for
+one tick but for every tick that follows (`reservedFloor` puts the floor at or past the head there),
+so the hold never ends: the previous rate's spectrum stays up, under the new rate's bin mapping, for
+as long as the plugin runs. 6 kHz sits at bin 512 at 48 kHz and at bin 256 at 96 kHz.
+
+It needs the reset and the audio to arrive TOGETHER: a tick landing between the rewind and the first
+block sees `committed == 0`, takes the ordinary zero-length path, floors and publishes. That case
+always worked, and it is the control in the test.
+
+**The behaviour chosen.** On the reset edge only, the view publishes the display floor in both traces
+with a zero-length window and commits the reset accounting. Not a fabricated frame — it is exactly
+what this view shows before its first frame. Scoped to the edge deliberately: without a reset, a span
+of 0 is the lapping case of §15, where the held pair is still the current configuration's and
+blanking it would put silence on screen where there is audio. §15's ring-safety behaviour is
+unchanged at every block size.
+
+### 16.3 The threading change that was withdrawn instead of reviewed
+
+§15 added `ScopeBuffer::prepare (maxPushFrames)` and a `maxPush` atomic inside the ring so the floor
+could reserve an in-flight push. The review is right that this is architecture-level: it adds a field
+to the shared producer/consumer protocol, which is `ARCHITECTURE_REVIEW_GATE.md`'s "Thread Model
+change — new cross-thread path" and `AI_AGENT_POLICY.md`'s hard stop, and no test result clears it.
+
+Before preparing that review material the question the round is required to ask first — can the
+design avoid extending the protocol? — has a plain answer: **the largest push is `samplesPerBlock`,
+and the plugin already publishes it.** `GrHistoryBuffer::prepared()` returns `{rate, block}`,
+`AnabasisAudioProcessor::preparedSampleRate()` forwards the rate under the stated rule "one atomic,
+one publication discipline, no second home for the same fact", and `PluginProcessor.cpp` passes the
+same `samplesPerBlock` to `grHistoryRing.prepare` and to `engine.prepare`, where it becomes
+`maxBlock` and bounds every `processChunk` push. So the draft was a SECOND HOME for a published
+fact, and it was removed rather than reviewed: `ScopeBuffer::prepare` and `maxPush` are gone,
+`oldestReadable()` is back to promising exactly what the published index proves, and the reserve is
+`SpectrumView::reservedFloor (writeCount, preparedBlockSize())`, applied both when the span is chosen
+and in the post-read proof. The ring's protocol is byte-identical to §14's.
+
+Verified rather than assumed: the `spec` harness re-run against the shipped view reports 0 frames
+with disagreeing traces at 512-, 13000- and 16384-frame chunks with a producer flat out, the
+large-block boundary table is identical to §14/§15 frame for frame, and the mutant that drops the
+reserve fails 30 checks.
+
+**What would still have needed clearance had it been kept**, recorded because the answer is the
+material and not the outcome: `maxPush` is the largest number of frames one `pushBlock` can write; it
+is written by the host thread inside `prepare` with audio stopped (the same named premise `reset`
+rests on) and read by the GUI thread in the floor query; relaxed would have sufficed since it orders
+nothing, and its lifetime is the ring's; it is needed because a reader cannot otherwise bound an
+unpublished push; the invariant it serves is "a drawn frame rests only on frames no in-flight push
+can be inside"; it interacts with overwrite safety by making the floor conservative and never
+liberal; it adds no allocation and no blocking to the audio path, which never reads it; the
+alternatives were the reader-side reserve that shipped and an audio-path reservation index (still
+rejected, still a gate item); and without any of them 17 of 2269 drawn frames mismatched.
+
+### 16.4 Tests and mutants
+
+`specFrame` — deterministic (what a tick publishes is the frame it committed; an idle tick leaves it
+untouched; a paint takes the published window and follows it) and threaded (4000 publications, a
+reading thread standing in for the renderer, alternating whole-window tones, identical audio in both
+rings). `specReset` — 8192/13000/16384/32768 × with and without new audio, 48 kHz → 96 kHz.
+`specReserve` — the floor arithmetic and a drawn frame obeying it at three prepared block sizes.
+
+| mutant | killed by |
+|---|---|
+| the reset publishes nothing (pre-fix early return) | 4 × `specReset` |
+| the renderer reads the tick's working vectors | `specFrame` (1 161 778 mixed) |
+| the sequence bracket removed from the reader | `specFrame` |
+| the reader-side reserve dropped | 30 checks (`specLap`, `specReserve`) |
+| the painter reads the working vectors | 2 × `specFrame` (the painted window never moves) |
+| each trace published as soon as it is computed | `specFrame` (277 334 mixed) |
+| *(survives)* the reader brackets each trace separately | the writer's gap between two brackets is zero-width; the mutant models no realistic defect |
+| *(survives)* the reset publishes without committing its accounting | behaviourally identical — later ticks re-answer the same reset and produce the identical frame; it costs work, not correctness |
+
+**What no headless suite can see, stated rather than implied.** `repaint()` is what carries a
+published frame to the screen, and there is no repaint region to inspect: a mutant that deletes the
+call while leaving the publication survives. The data race itself is likewise argued from the memory
+model rather than measured — the same limit ADR-0038 records.
+
+### 16.5 Follow-ups
+
+1. **ADR-0039's clearance.** A merge prerequisite for the pull request, not work in the tree.
+2. Unchanged from §15: the audio-path reservation index; and the taps are index-aligned, not
+   audio-time aligned.

@@ -7571,6 +7571,72 @@ static void testTheSpectrumNeverDrawsAFrameTheProducerTookBack()
     }
 }
 
+// THE FLOOR THE READER USES IS NOT THE FLOOR THE RING PUBLISHES. `pushBlock`
+// writes its payload before it releases `write`, so while a push runs the ring
+// has already overwritten slots that its published index still vouches for —
+// and no store the reader can observe says so, which is why `got` and the
+// before/after floor comparison both miss it (17 of 2269 drawn frames mismatched
+// with the published floor alone). `SpectrumView::reservedFloor` gives up one
+// prepared block of history for it, using `samplesPerBlock` from the pair the
+// plugin already publishes at `prepare` rather than a second copy inside the
+// ring: the ring's protocol is unchanged, and the bound lives on the side that
+// needs it. These pin the arithmetic and that the drawn window obeys it.
+static void testTheSpectrumsFloorLeavesRoomForAPushInFlight()
+{
+    using Ring = anabasis::ScopeBuffer;
+    const auto cap = (uint64_t) Ring::capacity;
+
+    check (SpectrumView::reservedFloor (0, 512) == 0,
+           "specReserve: an empty ring serves from frame 0 — there is no history to give up");
+    check (SpectrumView::reservedFloor (100, 512) == 0,
+           "specReserve: …and nothing underflows before the head has run past the ring");
+    check (SpectrumView::reservedFloor (cap, 512) == 512,
+           "specReserve: a full ring gives up one prepared block — exactly the frames an unpublished push could already be overwriting, which its own floor still calls readable");
+    check (Ring().oldestReadable() == 0 && SpectrumView::reservedFloor (cap, 512) > 0,
+           "specReserve: …and that is strictly more than the ring promises, which is why the reader cannot take the ring's answer");
+    check (SpectrumView::reservedFloor (cap + 512, 512) == 1024,
+           "specReserve: the reserve travels with the head, never with the history");
+    check (SpectrumView::reservedFloor (cap, (int) cap) == cap,
+           "specReserve: where one push can rewrite the whole ring the floor meets the head — no window is left to vouch for, and the span is 0");
+
+    // …AND THE FRAME USES IT. A drawn window must start at or after both rings'
+    // reserved floors, at the block the host actually prepared — the value the
+    // view takes from `preparedBlockSize()`, not a constant of its own.
+    for (const int block : { 128, 512, 2048 })
+    {
+        const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& proc = *procStorage;
+        proc.setRateAndBufferSizeDetails (48000.0, block);
+        proc.prepareToPlay (48000.0, block);
+        check (proc.preparedBlockSize() == block,
+               "specReserve: the block the reader reserves for is the one the host prepared, published once by the pair the plugin already keeps");
+
+        SpectrumView view (proc);
+        view.setBounds (0, 0, 300, 120);
+        view.setVisible (true);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, block);
+        int64_t n = 0;
+        const int blocks = juce::jmax (2, (int) std::ceil (3.0 * 16384.0 / (double) block));
+        for (int b = 0; b < blocks; ++b, ++n)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < block; ++i)
+                    buf.setSample (ch, i, 0.5f * std::sin (2.0f * 3.14159265f * 1000.0f
+                                                            * (float) (n * block + i) / 48000.0f));
+            proc.processBlock (buf, midi);
+        }
+        view.tick (1.0 / 60.0);
+
+        const auto w = view.lastWindow();
+        const auto floorIn  = SpectrumView::reservedFloor (proc.spectrumInRing() .writeCount(), block);
+        const auto floorOut = SpectrumView::reservedFloor (proc.spectrumOutRing().writeCount(), block);
+        check (w.span == SpectrumView::kSize && w.first >= floorIn && w.first >= floorOut,
+               "specReserve: a drawn frame rests on frames no in-flight push of the prepared block can be inside — and at these block sizes it still gets the whole 4096-frame window");
+    }
+}
+
 // A SNAPSHOT IS NOT A LOCK. The span is chosen from the two floors sampled at
 // the top of the frame, and the producer does not stop for it: it can publish
 // between that sample and the first read, between the two reads, or during
@@ -7652,6 +7718,238 @@ static void testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame()
            "specRace: (premise) the producer really was publishing while the analyser drew");
     check (disagreed == 0,
            "specRace: with identical audio in both rings, no frame drawn beside a running producer ever showed two different spectra");
+}
+
+// A HELD FRAME IS ONLY AN ANSWER WHILE IT STILL DESCRIBES THE AUDIO. `tick`
+// refuses to draw when no window survives that both rings can serve, and holds
+// the last coherent pair instead — right while the configuration is unchanged,
+// wrong the moment it is not. A re-prepare rewinds both rings and re-maps every
+// bin, and where the host's block is at least a whole ring `reservedFloor` puts
+// the floor at or past the head for EVERY tick that follows, so the hold is not
+// one frame long: the previous rate's spectrum stays on screen indefinitely,
+// drawn against the new rate's frequency axis. 6 kHz sits at bin 512 at 48 kHz
+// and at bin 256 at 96 kHz, so a surviving trace shows a peak where the new
+// mapping says 12 kHz and nothing where the tone actually is.
+static void testAReconfiguredSpectrumNeverKeepsThePreviousMapping()
+{
+    const int oldBin = 512;                    // 6 kHz at 48 kHz / 4096-point
+    const int newBin = 256;                    // …the same tone at 96 kHz
+    const auto kBins = (size_t) SpectrumView::kBins;
+
+    for (const int block : { 8192, 13000, 16384, 32768 })   // below, below, AT and far above capacity
+      for (const bool withAudio : { true, false })
+    {
+        const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& proc = *procStorage;
+        proc.setRateAndBufferSizeDetails (48000.0, 512);
+        proc.prepareToPlay (48000.0, 512);
+
+        SpectrumView view (proc);
+        view.setBounds (0, 0, 300, 120);
+        view.setVisible (true);
+
+        const auto feed = [&] (double sr, int n, int count)
+        {
+            juce::MidiBuffer midi;
+            juce::AudioBuffer<float> buf (2, n);
+            for (int b = 0, t = 0; b < count; ++b)
+            {
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < n; ++i)
+                        buf.setSample (ch, i, 0.5f * std::sin (2.0f * 3.14159265f * 6000.0f
+                                                                * (float) (t + i) / (float) sr));
+                t += n;
+                proc.processBlock (buf, midi);
+            }
+        };
+
+        feed (48000.0, 512, 64);                            // a full ring of 6 kHz at the old rate
+        for (int f = 0; f < 30; ++f) view.tick (1.0 / 60.0);
+
+        std::vector<float> pi (kBins), po (kBins);
+        SpectrumView::Window w {};
+        check (view.readPublishedFrame (pi, po, w) && w.span == SpectrumView::kSize
+                 && pi[(size_t) oldBin] > -60.0f && pi[(size_t) newBin] < pi[(size_t) oldBin] - 20.0f,
+               "specReset: (premise) the old configuration really is on screen, peaking in the bin 6 kHz maps to at 48 kHz");
+
+        // THE RECONFIGURATION, with no tick in between — a tick landing between
+        // the rewind and the first block sees `committed == 0`, floors and
+        // publishes on the ordinary path, which is the case that always worked.
+        // The defect needs the reset and the audio to arrive together.
+        proc.setRateAndBufferSizeDetails (96000.0, block);
+        proc.prepareToPlay (96000.0, block);
+        if (withAudio)
+            feed (96000.0, block, juce::jmax (2, (int) std::ceil (3.0 * 16384.0 / (double) block)));
+        view.tick (1.0 / 60.0);
+
+        check (view.readPublishedFrame (pi, po, w),
+               "specReset: the renderer always has a frame to read after a reconfiguration");
+
+        if (withAudio && block < 16384)
+        {
+            // A window survives at these block sizes, so the frame is DRAWN, and
+            // what it draws is the new configuration: the tone has moved to the
+            // bin 96 kHz maps it to.
+            check (w.span > 0 && pi[(size_t) newBin] > -60.0f
+                     && pi[(size_t) newBin] > pi[(size_t) oldBin] + 20.0f,
+                   "specReset: where a window survives the reconfiguration, the first frame after it is the NEW mapping's");
+        }
+        else
+        {
+            // No window survives — at or above a whole ring, none ever will — so
+            // there is nothing honest to draw and the view publishes the empty
+            // frame rather than leaving the previous rate's trace up. Not a
+            // fabricated spectrum: the floor in both traces and a zero-length
+            // window, which is exactly what this view shows before its first
+            // frame.
+            bool blank = w.span == 0;
+            for (size_t b = 0; b < kBins && blank; ++b)
+                blank = juce::exactlyEqual (pi[b], -120.0f) && juce::exactlyEqual (po[b], -120.0f);
+            check (blank,
+                   "specReset: where no window survives, the reconfiguration publishes the empty frame — the old mapping never outlives the configuration that made it");
+        }
+
+        // …and it stays answered. Before the fix the reset path returned without
+        // committing anything, so every later tick re-observed the same reset;
+        // the point of committing is that the view settles.
+        for (int f = 0; f < 5; ++f) view.tick (1.0 / 60.0);
+        std::vector<float> pi2 (kBins), po2 (kBins);
+        SpectrumView::Window w2 {};
+        check (view.readPublishedFrame (pi2, po2, w2)
+                 && (withAudio && block < 16384 ? w2.span > 0 : w2.span == 0),
+               "specReset: …and the frames that follow describe the new configuration too, rather than re-answering the reset for ever");
+    }
+}
+
+// ONE RENDERED FRAME, ONE PAIR — ACROSS THE THREAD BOUNDARY. `tick` runs on the
+// message thread; `paint` runs on the OpenGL context's render thread on macOS
+// and Windows (`THREAD_MODEL`, "Which context paints"). Two plain
+// `std::vector<float>` traces updated one after the other gave the renderer no
+// guarantee at all: the accesses were an unsynchronised float race, and a frame
+// could take the input trace from tick N and the output trace from tick N + 1 —
+// the same split the shared committed head closes one layer down, re-entering
+// at the publication.
+//
+// The marker is the audio itself. Both rings are given IDENTICAL blocks, so a
+// coherent frame analyses the same samples twice and the two traces come back
+// bit-identical; the tone alternates every tick over a whole window, so a frame
+// assembled from two ticks disagrees across the spectrum. Any inequality the
+// reading thread sees is therefore a mixed frame, and there is no threshold to
+// argue about.
+static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
+{
+    const int chunk  = 4096;                                // one whole window per tick
+    const auto kBins = (size_t) SpectrumView::kBins;
+
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, chunk);
+    proc.prepareToPlay (48000.0, chunk);
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+
+    auto& inW  = const_cast<anabasis::ScopeBuffer&> (proc.spectrumInRing());
+    auto& outW = const_cast<anabasis::ScopeBuffer&> (proc.spectrumOutRing());
+    std::vector<float> toneA ((size_t) chunk), toneB ((size_t) chunk);
+    for (int i = 0; i < chunk; ++i)
+    {
+        toneA[(size_t) i] = 0.7f * std::sin (2.0f * 3.14159265f * 1000.0f * (float) i / 48000.0f);
+        toneB[(size_t) i] = 0.7f * std::sin (2.0f * 3.14159265f * 9000.0f * (float) i / 48000.0f);
+    }
+    for (int b = 0; b < 4; ++b)
+    {
+        inW .pushBlock (toneA.data(), toneA.data(), chunk);
+        outW.pushBlock (toneA.data(), toneA.data(), chunk);
+    }
+    view.tick (1.0 / 60.0);
+
+    // --- deterministic first: what a tick publishes is what the tick drew
+    std::vector<float> pi (kBins), po (kBins);
+    SpectrumView::Window w {};
+    bool matched = view.readPublishedFrame (pi, po, w);
+    for (size_t b = 0; b < kBins && matched; ++b)
+        matched = juce::exactlyEqual (pi[b], view.analysedInDb()[b])
+                  && juce::exactlyEqual (po[b], view.analysedOutDb()[b]);
+    check (matched && w.first == view.lastWindow().first && w.span == view.lastWindow().span,
+           "specFrame: the published frame is the frame the tick committed — both traces and the window they describe, together");
+
+    // …and a tick that draws nothing publishes nothing: an idle tick must not
+    // disturb the pair the renderer is entitled to keep reading.
+    view.tick (1.0 / 60.0);                                 // no new frames: the idle gate returns
+    std::vector<float> pi2 (kBins), po2 (kBins);
+    SpectrumView::Window w2 {};
+    bool unchanged = view.readPublishedFrame (pi2, po2, w2)
+                     && w2.first == w.first && w2.span == w.span;
+    for (size_t b = 0; b < kBins && unchanged; ++b)
+        unchanged = juce::exactlyEqual (pi2[b], pi[b]) && juce::exactlyEqual (po2[b], po[b]);
+    check (unchanged,
+           "specFrame: …and a tick with nothing to draw leaves it exactly where it was");
+
+    // …and what the RENDERER draws is that published frame. `paint` is the only
+    // caller of the seam in the plugin, and the window it picks up is the proof:
+    // a painter reading the tick's working vectors instead would leave this at
+    // the empty window it starts on and would never move it.
+    check (view.paintedWindow().span == 0 && view.paintedWindow().first == 0,
+           "specFrame: (premise) nothing has been painted yet, so the renderer holds no window");
+    {
+        juce::Image img (juce::Image::ARGB, view.getWidth(), view.getHeight(), true);
+        juce::Graphics g (img);
+        view.paint (g);
+    }
+    check (view.paintedWindow().first == w.first && view.paintedWindow().span == w.span,
+           "specFrame: a paint draws the published frame — the window it took is the one the tick published");
+
+    for (int b = 0; b < 2; ++b)                             // move the pair on and publish again
+    {
+        inW .pushBlock (toneB.data(), toneB.data(), chunk);
+        outW.pushBlock (toneB.data(), toneB.data(), chunk);
+    }
+    view.tick (1.0 / 60.0);
+    {
+        juce::Image img (juce::Image::ARGB, view.getWidth(), view.getHeight(), true);
+        juce::Graphics g (img);
+        view.paint (g);
+    }
+    check (view.paintedWindow().first == view.lastWindow().first
+             && view.paintedWindow().first != w.first,
+           "specFrame: …and it follows the publication rather than the working copy, frame after frame");
+
+    // --- then the behaviour, with a second thread reading while ticks publish
+    std::atomic<bool> stop { false };
+    std::atomic<long> reads { 0 }, mixed { 0 }, distinct { 0 };
+    std::thread renderer ([&]
+    {
+        std::vector<float> ri (kBins), ro (kBins);
+        SpectrumView::Window rw {};
+        uint64_t lastFirst = ~(uint64_t) 0;
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            if (! view.readPublishedFrame (ri, ro, rw))
+                continue;                                   // overtaken twice: no frame, not a bad one
+            reads.fetch_add (1, std::memory_order_relaxed);
+            if (rw.first != lastFirst) { lastFirst = rw.first; distinct.fetch_add (1, std::memory_order_relaxed); }
+            for (size_t b = 0; b < kBins; ++b)
+                if (! juce::exactlyEqual (ri[b], ro[b]))
+                { mixed.fetch_add (1, std::memory_order_relaxed); break; }
+        }
+    });
+
+    for (int f = 0; f < 4000; ++f)
+    {
+        const auto& src = (f & 1) ? toneA : toneB;          // a whole window of one tone per tick
+        inW .pushBlock (src.data(), src.data(), chunk);
+        outW.pushBlock (src.data(), src.data(), chunk);
+        view.tick (1.0 / 60.0);
+    }
+    stop.store (true);
+    renderer.join();
+
+    check (reads.load() > 0 && distinct.load() > 1,
+           "specFrame: (premise) the reading thread really did read whole frames, and the pair really was moving under it");
+    check (mixed.load() == 0,
+           "specFrame: no frame a renderer could pick up ever combined the input trace of one tick with the output trace of another");
 }
 
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
@@ -9649,7 +9947,10 @@ int main (int argc, char** argv)
         testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame();
         testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan();
         testTheSpectrumNeverDrawsAFrameTheProducerTookBack();
+        testTheSpectrumsFloorLeavesRoomForAPushInFlight();
         testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame();
+        testAReconfiguredSpectrumNeverKeepsThePreviousMapping();
+        testTheSpectrumsRendererNeverSeesHalfOfTwoFrames();
         testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();

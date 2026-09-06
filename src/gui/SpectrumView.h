@@ -7,6 +7,8 @@
 #include "HiddenInterval.h"
 #include "../dsp/ScopeBuffer.h"
 
+#include <atomic>
+
 class AnabasisAudioProcessor;
 
 // ============================================================================
@@ -74,6 +76,42 @@ public:
     // frames the pair was drawn from.
     struct Window { uint64_t first = 0; int span = 0; };
     Window lastWindow() const noexcept { return { drawnFirst, drawnSpan }; }
+
+    // …AND THE WINDOW THE LAST PAINT ACTUALLY DREW, which is a different fact on
+    // a different thread. `lastWindow` is what the message thread committed;
+    // this is what the renderer picked up through `readPublishedFrame`, and the
+    // two are only ever equal because the publication makes them so. A test that
+    // could see only the first could not tell a renderer reading the published
+    // frame from one reading the tick's working vectors.
+    Window paintedWindow() const noexcept { return paintWindow; }
+
+    // THE PUBLISHED PAIR, READ AS A PAIR. `tick` runs on the message thread and
+    // `paint` does NOT, on two of the three shipped hosts: JUCE renders an
+    // OpenGL-backed editor on the context's own render thread (macOS, Windows —
+    // `THREAD_MODEL`, "Which context paints"), so the painter is a second thread
+    // reading state a message-thread tick is in the middle of writing. Two
+    // separate `std::vector<float>` traces gave it neither guarantee it needs:
+    // the accesses were an unsynchronised float race outright, and even where
+    // the hardware made them benign a frame could take `inDb` from tick N and
+    // `outDb` from tick N + 1 — the exact split the shared committed head was
+    // introduced to prevent, re-entering one layer later, in a display whose
+    // entire purpose is comparing the two traces.
+    //
+    // The pair is therefore PUBLISHED, in one bracketed store, and read back
+    // whole or not at all. `false` means the reader was overtaken twice and has
+    // no new frame — the caller keeps the pair it already had, which is a
+    // coherent frame from an earlier tick rather than a mixed one from two. The
+    // three output arguments are filled only on `true`; `inTrace` and
+    // `outTrace` must already hold `kBins` entries.
+    //
+    // Public because the coherence it provides is exactly what a test has to be
+    // able to observe from ANOTHER THREAD — the same reasoning as the two
+    // `analysed*Db` accessors, one step further out: those report the message
+    // thread's own state, and the property at stake here is what a second
+    // thread can see.
+    bool readPublishedFrame (std::vector<float>& inTrace,
+                             std::vector<float>& outTrace,
+                             Window& drawnWindow) const noexcept;
 
     // Read-only views of the smoothed analysis, for the same reason. BOTH, since
     // 0.2.12: what a frame has to get right is that its two traces describe the
@@ -143,12 +181,48 @@ public:
                && (span == 0 || (oldestIn <= first && oldestOut <= first));
     }
 
+    // THE OLDEST FRAME A DRAWN PAIR MAY REST ON, which is NOT the oldest frame
+    // the ring still holds. `ScopeBuffer::oldestReadable()` answers the question
+    // the RING can answer — "given the index I have published, what have I not
+    // yet overwritten?" — and the reader needs a different one, because a push
+    // writes its payload BEFORE it releases the index. While `pushBlock` runs,
+    // slots `[w, w + n)` have already been taken and `w` still says they have
+    // not; a window ending at `w` that starts at `w − capacity` therefore has
+    // its oldest `n` frames rewritten UNDER the copy, with no store the reader
+    // can observe and nothing in `got` to show for it. Measured before this
+    // bound existed: 17 of 2269 drawn frames mismatched with both rings proved
+    // by the published floor alone.
+    //
+    // The reserve is the largest push the producer can be inside, and it is not
+    // a new fact — it is `samplesPerBlock`, which `GrHistoryBuffer::prepared()`
+    // already publishes for the whole plugin and `AnabasisAudioProcessor::
+    // preparedBlockSize()` forwards (the same discipline, and the same single
+    // home, as `preparedSampleRate()`). The draft that carried it a second time
+    // as a `maxPush` atomic INSIDE the ring extended the producer/consumer
+    // protocol for a quantity the protocol already had; it was withdrawn rather
+    // than sent to architecture review, and this is where the bound lives now:
+    // on the reader, which is the only side that needs it.
+    //
+    // At `reserve == capacity` (a chunk of a whole ring) the floor meets the
+    // head and the span is 0 — the "nothing coherent left" case, which this
+    // view HOLDS rather than draws, and which is the honest answer there.
+    static uint64_t reservedFloor (uint64_t writeCount, int reserve) noexcept
+    {
+        const auto cap   = (uint64_t) anabasis::ScopeBuffer::capacity;
+        const auto reach = writeCount + (uint64_t) reserve;
+        return reach > cap ? reach - cap : 0;
+    }
+
 private:
     // The chip hit-area, in ONE place because `hitTest` and `mouseDown` must
     // agree about it — see the definition.
     juce::Rectangle<int> chipHitArea() const noexcept;
     void analyse (const float* srcL, const float* srcR, int got,
                   std::vector<float>& smoothedDb, double dt);
+    // Copies the message thread's two traces and the window they describe into
+    // the published storage, inside the odd/even bracket `readPublishedFrame`
+    // checks. The ONLY writer, and the only place a frame becomes visible.
+    void publishFrame (uint64_t first, int span) noexcept;
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;
@@ -184,6 +258,44 @@ private:
     uint64_t drawnFirst = 0;
     int      drawnSpan  = 0;
     uint32_t shownInGen = 0, shownOutGen = 0;
+
+    static_assert (std::atomic<float>::is_always_lock_free,
+                   "the published trace is stored one bin at a time in atomics that the renderer "
+                   "reads; a locking atomic here would put a lock inside paint() on the OpenGL "
+                   "render thread, so a target without lock-free float atomics must fail the "
+                   "build rather than ship one (same rule, same reason, as ScopeBuffer::Sample)");
+
+    // THE PUBLISHED FRAME. `std::atomic<float>` per bin for the reason
+    // `ScopeBuffer::Sample` is one: the renderer reads these while a tick writes
+    // them, and a plain `float` touched by two threads is a data race whatever
+    // the hardware does with it. Relaxed on both sides — the ORDERING is carried
+    // by `frameSeq`, not by the payload, which is the standard sequence-bracket
+    // discipline and is why the payload needs no stronger order.
+    //
+    // 16 KB, allocated once at construction. A tick allocates nothing: it stores
+    // 2 × 2048 floats it has already computed, and the painter loads them into
+    // buffers it also allocated once. Publishing an immutable snapshot per tick
+    // would have been simpler to state and would have allocated 16 KB every
+    // frame at 60 Hz; this does not.
+    std::vector<std::atomic<float>> pubIn, pubOut;
+    std::atomic<uint64_t> pubFirst { 0 };
+    std::atomic<int>      pubSpan  { 0 };
+    // EVEN means the published frame is whole; ODD means a tick is inside the
+    // bracket. A reader that sees an odd value, or a different value after its
+    // copy, saw a publication in progress and has no frame — see
+    // `readPublishedFrame`, which gives up after two attempts rather than
+    // spinning: the frame it would win by retrying further is one it is about
+    // to redraw a 60th of a second later, and an unbounded loop on the render
+    // thread is a worse failure than a repeated frame.
+    std::atomic<uint32_t> frameSeq { 0 };
+
+    // The painter's OWN copy of the pair, so the traces it walks cannot move
+    // under it while it walks them (each is read four times over, by the
+    // interpolators). Touched only by `paint`, which JUCE never runs twice over
+    // one component at once. Seeded to the display floor, which is what an
+    // analyser with no frame yet has always drawn.
+    std::vector<float> paintIn, paintOut;
+    Window             paintWindow {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumView)
 };

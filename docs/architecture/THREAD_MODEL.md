@@ -183,6 +183,22 @@ constraint no caller currently violates is an API change this record does not re
 per block, and they exist for this purpose. Reaching past them into the meter is the mistake this
 section is here to prevent.
 
+**0.2.12 adds the third such read, and the first that carries a PAYLOAD — `SpectrumView`'s two
+traces** ([ADR-0039](design-decisions/ADR-0039-spectrum-frame-publication.md), **Proposed
+2026-09-06; the Architecture Review Gate is OPEN and is a merge prerequisite**). `tick` computes
+2048 smoothed dB values per trace on the message thread and `paint` walked them directly: an
+unsynchronised read of plain floats on exactly the two platforms where the context attaches, and —
+separately from the memory model — a frame that could hold the input trace of one tick beside the
+output trace of the next. Measured with a reading thread standing in for the renderer and identical
+audio in both rings, so a coherent frame's traces are bit-identical: **1 161 778 of 1 321 607 reads
+(87.9 %) held two different ticks; 0 of 306 485 after.** Both traces and the window they were
+analysed over are now published together inside a sequence bracket — the counter odd, a release
+fence, relaxed per-bin `std::atomic<float>` stores, the counter even with release — and read back
+whole or not at all, at most twice, into buffers only `paint` touches. This is the case ADR-0027
+clause 4 and ADR-0038 clause 8 both exclude by name ("anything carrying a payload… is a new path
+again and returns to this gate"), so it is filed as a gated decision rather than claimed under
+either. Nothing on the audio thread changed.
+
 **Adding a second reader thread to these two getters is a threading-model change**, and therefore
 an Architecture Review Gate item (`CLAUDE.md`'s Hard Stop list): it needs atomics on the cache or
 a different mechanism, decided in an ADR and not at the call site.
@@ -207,8 +223,10 @@ above records a nuance without amending the ring rule.
   the 4096-point FFT between the two reads (132 µs) gives the producer room to publish. The LENGTH
   is chosen with the same care: a ring serves `[w − capacity, w)` and no more — and less than that
   while a push is UNDERWAY, since `pushBlock` writes its payload before it publishes its index, so
-  the floor reserves one push of the largest size the producer was prepared for
-  (`ScopeBuffer::prepare`, from the engine's `maxBlock`). The pair reads
+  the READER's floor reserves one push of the size the host prepared
+  (`SpectrumView::reservedFloor`, from `AnabasisAudioProcessor::preparedBlockSize` — the block half
+  of the pair `GrHistoryBuffer::prepared` already publishes; the ring's own protocol is unchanged and
+  `oldestReadable()` still promises exactly what the published index proves). The pair reads
   `min (kSize, committed − max (in.oldestReadable(), out.oldestReadable()))` frames — full in every
   configuration a real-time host presents, shorter (for both traces together) at larger blocks, and
   nothing at all where no such window is left. **And a chosen span is not a held span:** both

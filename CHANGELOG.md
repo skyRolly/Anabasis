@@ -182,9 +182,31 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   it transforms either and draws the frame only if both came back whole and neither capture has
   since overwritten the start of the window; a frame that cannot show that is held, and the next one
   redraws from a settled state. It also accounts for a write that is still in progress — the audio
-  thread fills a capture before it announces it, so the captures are told at start-up how large a
-  block can be and hold back that much history. Measured after: 0 of 873 drawn frames disagreed, and
+  thread fills a capture before it announces it, so the analyser holds back one block's worth of the
+  oldest history, using the block size the plugin already publishes when the host prepares it.
+  Measured after: 0 of 873 drawn frames disagreed, and
   at the rate a host actually delivers audio not one frame in 360 declined to draw what had arrived.
+  Evidence: this release. [Verified]
+
+- **…and neither can the drawing itself.** On macOS and Windows the display is drawn on a different
+  thread from the one that computes it, and the two traces were handed over one after the other — so
+  a drawn frame could pair the input trace of one update with the output trace of the next, in the
+  one display whose purpose is comparing them. Measured with a second thread reading as fast as it
+  could while the analyser updated 4 000 times, each update carrying a whole window of one of two
+  alternating tones: 1 161 778 of 1 321 607 reads held two different updates. Both traces and the
+  stretch of audio they describe are now handed over together, and the drawing takes them whole or
+  keeps the pair it already had — never a mixture. Measured after: 0 of 306 485.
+  Evidence: this release. [Verified]
+
+- **A change of sample rate or buffer size can no longer leave the previous spectrum on screen.**
+  Re-preparing the plugin clears both captures and re-maps every frequency, and the analyser drops
+  its trace to the floor when that happens — but where the host's buffer is as large as a capture
+  (16 384 samples, a third of a second at 48 kHz) no window is ever left to draw, and the cleared
+  trace never reached the screen: the old spectrum stayed up, now stretched across a different
+  frequency axis, indefinitely. A 6 kHz tone drawn at 48 kHz sits where 12 kHz belongs after a
+  change to 96 kHz. The reset now puts the empty display up instead, and holds it until a frame it
+  can vouch for exists. Nothing is invented and the smaller buffer sizes are unaffected: there the
+  first frame after the change is the new configuration's, as before.
   Evidence: this release. [Verified]
 
 ### Changed

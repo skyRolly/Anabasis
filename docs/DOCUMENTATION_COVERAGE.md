@@ -313,12 +313,15 @@ transforming either and draws only if `SpectrumView::onePairOneSpan` — both re
 span, and neither ring's floor has since passed its start — else it holds whole. One further term is
 not a reader's to see: `pushBlock` writes its payload BEFORE publishing its index, so a push
 UNDERWAY is invisible in `write` (17 of 2269 drawn frames still mismatched with the pair proved
-against the published index alone), and the bound needed is the size of the largest push, which only
-the producer knows — so the engine tells the rings at `prepare` and the floor reserves one push worth
-of history. That reserve is written on the host thread with audio stopped and read on the GUI thread;
-**the audio path is untouched**, which is why it was preferred to a reservation index published
-before the payload writes (a store on the audio path, an `ARCHITECTURE_REVIEW_GATE` item, recorded as
-the follow-up). Costs nothing at real-time rates: 0 of 360 frames refused to draw audio that had
+against the published index alone), and the bound needed is the size of the largest push — which is
+`samplesPerBlock`, already published for the whole plugin, so the READER reserves it
+(`SpectrumView::reservedFloor`, from `AnabasisAudioProcessor::preparedBlockSize`) and the ring's
+protocol is byte-identical. **The audio path is untouched**, which is also why this was preferred to
+a reservation index published before the payload writes (a store on the audio path, an
+`ARCHITECTURE_REVIEW_GATE` item, recorded as the follow-up). *(Corrected 2026-09-06, same round: the
+draft put a `maxPush` atomic INSIDE `ScopeBuffer` and this paragraph described it. It was withdrawn
+rather than sent to review — a second home for a published fact — and the sentence above records
+what shipped.)* Costs nothing at real-time rates: 0 of 360 frames refused to draw audio that had
 arrived, across 512-, 4096- and 13000-frame blocks. Rows engaged: **Threading / cross-thread path**
 (ADR-0011's 0.2.12 amendment extended in place, dated — the proof, the reserve, what the audio path
 does and does not pay, and the rejected alternative; `THREAD_MODEL.md`), **New/changed test**
@@ -326,6 +329,26 @@ does and does not pay, and the rejected alternative; `THREAD_MODEL.md`), **New/c
 only exists while another thread runs; this file), **Ship a version** (`CHANGELOG.md`,
 `HANDOVER.md`). `KNOWN_ISSUES.md` unchanged — KI-018's corner is a reset-identity question and this
 is a publication-timing one. Trail: `worklogs/2026-09-05-gr-history-tip.md` §15.
+
+**Addendum (2026-09-06, same round) — the pair reaches the SCREEN as a pair, and a reset reaches it
+at all.** Two findings one layer out from the ring. (1) `tick` computes `inDb`/`outDb` on the message
+thread and `paint` walked them on the GL render thread (macOS/Windows, "Which context paints"): an
+unsynchronised payload read, and a frame that could hold the input trace of tick N beside the output
+trace of tick N + 1 — **1 161 778 of 1 321 607 reads, measured; 0 of 306 485 after**. Both traces and
+the window they describe are now published inside a sequence bracket and read whole or not at all,
+into buffers only `paint` touches. (2) The reset edge floored the EMA and then returned before
+publishing, so where the host's block is at least a whole ring — the span is 0 on every tick there,
+not one — the previous rate's spectrum stayed on screen under the new rate's bin mapping; the reset
+now publishes the empty frame and commits its accounting. Rows engaged: **Threading / cross-thread
+path** — and this one is GATED: [ADR-0039](architecture/design-decisions/ADR-0039-spectrum-frame-publication.md)
+is filed **`Proposed`**, a new cross-thread path carrying a payload and a new atomic ordering, which
+ADR-0027 clause 4 and ADR-0038 clause 8 both name as returning to `ARCHITECTURE_REVIEW_GATE.md`; a
+green build does not clear it and `HANDOVER.md`'s Pending Tasks row carries it. Also **New ADR**
+(`ADR_INDEX.md`), ADR-0011's 0.2.12 amendment extended in place and dated, `THREAD_MODEL.md`'s
+"Which context paints" gaining its third — and first payload-carrying — site, **New/changed test**
+(`state_tests.cpp`; `TESTING.md`, including what a headless suite cannot see), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`). `KNOWN_ISSUES.md` unchanged. Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §16.
 
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly

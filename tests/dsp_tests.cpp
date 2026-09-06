@@ -4153,23 +4153,28 @@ static void testSpectrumRingsCarryTheTaps()
         check (fl.oldestReadable() == 5000,
                "specSync: …and after 5000 more frames the oldest it can serve is frame 5000 — the floor a reader pairing two rings takes the higher of");
 
-        // A PUSH THAT HAS NOT PUBLISHED YET IS STILL WRITING. `pushBlock` fills the
-        // payload BEFORE it releases the index, so `write` says nothing about the
-        // slots the producer is trampling right now — a reader that checks the
-        // index before and after its copy sees a ring that never moved. The floor
-        // therefore reserves room for one push of the largest size the producer was
-        // prepared for, which is the only bound a reader can have without the
-        // producer publishing its intent.
+        // A PUSH THAT HAS NOT PUBLISHED YET IS STILL WRITING, AND THAT BOUND IS
+        // THE READER'S. `pushBlock` fills the payload BEFORE it releases the
+        // index, so `write` says nothing about the slots the producer is
+        // trampling right now — a reader that checks the index before and after
+        // its copy sees a ring that never moved. The ring deliberately does NOT
+        // reserve for it: the size of the largest push is `samplesPerBlock`,
+        // which the plugin already publishes once, and carrying it a second time
+        // inside the ring would extend the producer/consumer protocol for a fact
+        // the protocol already has. What `oldestReadable` promises is exactly
+        // what the PUBLISHED index proves, and the checks below pin that it
+        // promises no more than that — `SpectrumView::reservedFloor` adds the
+        // in-flight block on the reader, where the frame that needs it lives
+        // (state suite, "specReserve").
         const auto resStorage = std::make_unique<Ring>();
         auto& res = *resStorage;
-        res.prepare (512);
-        check (res.oldestReadable() == 0, "specSync: an empty prepared ring still serves from frame 0");
+        check (res.oldestReadable() == 0, "specSync: an empty ring serves from frame 0");
         res.pushBlock (idx.data(), idx.data(), Ring::capacity);
-        check (res.oldestReadable() == 512,
-               "specSync: a prepared ring holds back one push worth of history — the frames an unpublished push could already be overwriting");
+        check (res.oldestReadable() == 0,
+               "specSync: the ring's floor is the published one — a full ring has published nothing it has taken back, and it does not pretend to know what an unpublished push is doing");
         res.pushBlock (notHistory.data(), notHistory.data(), 512);
-        check (res.oldestReadable() == 1024,
-               "specSync: …and the reserve travels with the head, never with the history");
+        check (res.oldestReadable() == 512,
+               "specSync: …and it travels with the head, one frame per frame pushed");
 
         std::vector<float> rl ((size_t) 4096), rr ((size_t) 4096);
         const int reserved = res.readEndingAt (rl.data(), rr.data(), 4096, Ring::capacity);
@@ -4177,14 +4182,7 @@ static void testSpectrumRingsCarryTheTaps()
         for (int i = 0; i < reserved && reservedRight; ++i)
             reservedRight = juce::exactlyEqual (rl[(size_t) i], (float) (Ring::capacity - 4096 + i));
         check (reservedRight,
-               "specSync: the read honours the same reserve, so a window it returns is one no in-flight push of the prepared size can be inside");
-
-        const auto wholeStorage = std::make_unique<Ring>();
-        auto& whole = *wholeStorage;
-        whole.prepare (Ring::capacity);                    // a push as long as the ring itself
-        whole.pushBlock (idx.data(), idx.data(), Ring::capacity);
-        check (whole.oldestReadable() == Ring::capacity,
-               "specSync: where one push can rewrite the whole ring there is no history a reader can be sure of, and the floor says so rather than pretending");
+               "specSync: a window that ends before the floor is served whole and from its own history, whatever the producer did after it");
     }
 }
 

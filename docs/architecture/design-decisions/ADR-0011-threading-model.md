@@ -441,17 +441,27 @@ no atomics and no possibility of interleaving with a user gesture.
   > stores are already landing on slots a reader is copying — a reader checking the index before and
   > after sees a ring that never moved. Measured with the pair proved against the published index
   > alone: 17 of 2269 drawn frames still held two windows that were not the same audio at a
-  > 13000-frame push. The bound a reader needs is the SIZE of the largest push, which only the
-  > producer knows, so the engine now tells the rings at `prepare` (`ScopeBuffer::prepare`, from
-  > `maxBlock`; `processChunk` is called with `jmin (maxBlock, …)`, so no push exceeds it) and the
-  > floor reserves one push worth of history. **This costs the audio thread nothing** — the value is
-  > written on the host thread with audio stopped, the same named premise `reset` rests on, and the
-  > push path never reads it — which is why it was preferred to the alternative that would have made
-  > the display cheaper still: a reservation index published BEFORE the payload writes. That one is a
-  > store on the audio path and an `ARCHITECTURE_REVIEW_GATE` item; it is recorded as the follow-up,
-  > and what it would buy is the case this reserve gives up on — a host preparing blocks of a whole
-  > ring or more (16384 frames, 341 ms at 48 kHz) leaves no window a reader can vouch for at any
-  > instant, so the analyser holds rather than drawing one it cannot.
+  > 13000-frame push. The bound a reader needs is the SIZE of the largest push, and the reserve is
+  > `SpectrumView::reservedFloor` — `w + samplesPerBlock − capacity` — applied where the two rings
+  > are paired, both when the span is chosen and in the post-read proof.
+  >
+  > **The RING's protocol is unchanged, and that is deliberate — CORRECTED 2026-09-06, same round.**
+  > This paragraph first recorded a `ScopeBuffer::prepare (maxPushFrames)` and a `maxPush` atomic
+  > INSIDE the ring, set by the engine at `prepare`. That draft was **withdrawn rather than sent to
+  > review**, because it added a field to the shared producer/consumer protocol for a fact the
+  > protocol already carried: the largest push is `samplesPerBlock`, which `GrHistoryBuffer::prepared`
+  > publishes to the GUI under a settled discipline and `AnabasisAudioProcessor::preparedBlockSize`
+  > forwards — "one atomic, one publication discipline, no second home for the same fact", the rule
+  > `preparedSampleRate` already states one line above it. A second home would have been an
+  > `ARCHITECTURE_REVIEW_GATE` Thread Model item (new shared state on the producer/consumer boundary)
+  > bought for nothing; the reader-side floor needs no clearance because it adds no shared state at
+  > all, reads only what is already published, and leaves `oldestReadable()` promising exactly what
+  > the PUBLISHED index proves. What both spellings give up is identical and is stated here rather
+  > than lost with the draft: a host preparing blocks of a whole ring or more (16384 frames, 341 ms
+  > at 48 kHz) leaves no window a reader can vouch for at any instant, so the analyser holds rather
+  > than drawing one it cannot. The alternative that would close even that — a reservation index
+  > published BEFORE the payload writes — is a store on the AUDIO path and remains a gated follow-up,
+  > not taken.
   >
   > **What it costs at real-time rates: nothing measurable.** With the producer delivering at its
   > cadence and the analyser ticking at 60 Hz, 0 of 360 frames across 512-, 4096- and 13000-frame
@@ -465,6 +475,29 @@ no atomics and no possibility of interleaving with a user gesture.
   > cost, not a correctness repair, and nobody has asked for it.
   > `worklogs/2026-09-05-gr-history-tip.md` §13 carries the measurements, the disproof of the
   > review's own causal chain, and the mutants.
+
+  > **Amended again 2026-09-06 (same round, the review's concurrent-painting and large-block-reset
+  > findings) — the analysed pair is PUBLISHED to the painting thread, and that is a GATED change.**
+  > Everything above concerns how the reader reads the rings. It says nothing about how the reader's
+  > RESULT reaches the screen, and until this amendment the answer was: two plain
+  > `std::vector<float>` written by `tick` on the message thread and read by `paint` on the GL render
+  > thread (macOS/Windows — "Which context paints"). That is an unsynchronised cross-thread read of a
+  > payload, and a frame could hold the input trace of tick N beside the output trace of tick N + 1 —
+  > the split the amendments above remove from the ANALYSIS, re-entering at the display.
+  > **MEASURED with a reading thread standing in for the renderer, identical audio in both rings and
+  > a whole 4096-frame window of one of two alternating tones per tick: 1 161 778 of 1 321 607 reads
+  > (87.9 %) held two different ticks; 0 of 306 485 after.** A reset is the same story one step on: a
+  > held pair describes a configuration that no longer exists, and where the host's block is at least
+  > a whole ring the hold never ends, so the previous rate's spectrum stayed on screen under the new
+  > rate's bin mapping.
+  >
+  > The mechanism — a sequence bracket over per-bin `std::atomic<float>` storage carrying both traces
+  > and the window they describe, a painter-owned copy, two attempts and no more, and an empty frame
+  > published on the reset edge — is **[ADR-0039](ADR-0039-spectrum-frame-publication.md), filed
+  > `Proposed`**. It is a new cross-thread path carrying a PAYLOAD and a new atomic ordering, which
+  > `ARCHITECTURE_REVIEW_GATE.md` gates and which ADR-0027 clause 4 and ADR-0038 clause 8 both name
+  > explicitly as returning to that gate. **A green build does not clear it.** Nothing on the audio
+  > thread changed.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

@@ -3,7 +3,10 @@
 
 using namespace abgui;
 
-SpectrumView::SpectrumView (AnabasisAudioProcessor& p) : processor (p)
+SpectrumView::SpectrumView (AnabasisAudioProcessor& p)
+    // Sized HERE, not in the body: `std::atomic<float>` is neither copyable nor
+    // movable, so a vector of them can be built with a count but never resized.
+    : processor (p), pubIn ((size_t) kBins), pubOut ((size_t) kBins)
 {
     scratchInL.resize (kSize);
     scratchInR.resize (kSize);
@@ -12,6 +15,17 @@ SpectrumView::SpectrumView (AnabasisAudioProcessor& p) : processor (p)
     fftData.resize ((size_t) kSize * 2);
     inDb.assign (kBins, -120.0f);
     outDb.assign (kBins, -120.0f);
+    // …and the two copies the pair passes through on its way to the screen, at
+    // the same floor: an analyser with no frame yet draws the empty trace, and
+    // that is true of the painter's copy before the first publication exactly as
+    // it is of the EMA before the first analysis.
+    paintIn.assign (kBins, -120.0f);
+    paintOut.assign (kBins, -120.0f);
+    for (int b = 0; b < kBins; ++b)
+    {
+        pubIn [(size_t) b].store (-120.0f, std::memory_order_relaxed);
+        pubOut[(size_t) b].store (-120.0f, std::memory_order_relaxed);
+    }
     // Fires over the mode switch only (`hitTest` narrows the pointer claim),
     // so the hint names the switch's ACTION. Same string in both views — it is
     // one control drawn twice. Wording ⊕.
@@ -321,7 +335,19 @@ void SpectrumView::tick (double dt)
     // above a 12288-frame chunk, 256 ms at 48 kHz), shorter only where the
     // alternative was reading frames the producer had taken back, and zero when
     // nothing coherent is left, which is the one case this view refuses to draw.
-    const uint64_t floor = juce::jmax (in.oldestReadable(), out.oldestReadable());
+    //
+    // …AND THE FLOOR IS THE READER'S, NOT THE RING'S (`reservedFloor`). A push
+    // in flight has already overwritten the slots it will publish, so the pair
+    // gives up one prepared block of the oldest history it could otherwise have
+    // claimed. `preparedBlockSize()` is the block half of the pair the plugin
+    // already publishes at `prepare` — no second home for the same fact, and no
+    // new store on the producer's path. Clamped from BELOW at 1 to mirror the
+    // engine's own `jmax (1, maxBlockSize)`, and from above at `capacity`,
+    // where the span reaches 0 and the frame holds.
+    const int reserve = juce::jlimit (1, (int) anabasis::ScopeBuffer::capacity,
+                                      processor.preparedBlockSize());
+    const uint64_t floor = juce::jmax (reservedFloor (in .writeCount(), reserve),
+                                       reservedFloor (out.writeCount(), reserve));
     const int span = committed > floor
                          ? (int) juce::jmin ((uint64_t) kSize, committed - floor)
                          : 0;
@@ -364,7 +390,45 @@ void SpectrumView::tick (double dt)
     // `committed == 0` is NOT this case: the rings are empty or rewound, and the
     // zero-length read is how that is already expressed (`analyse` floors).
     if (span == 0 && committed > 0)
+    {
+        // …UNLESS THE PAIR THIS FRAME WOULD HOLD IS THE PREVIOUS CONFIGURATION'S
+        // (0.2.12, the review's large-block-reset finding). "Hold the last
+        // coherent pair" is only an answer while the held pair still describes
+        // the audio the view is looking at. A re-prepare invalidates it
+        // outright — the bins mean different frequencies now — and where the
+        // host's block is at least a whole ring the span is 0 not for one tick
+        // but for EVERY tick that follows, because `reservedFloor` puts the
+        // floor at or past the head at that size. The EMA above is floored on
+        // the reset edge and then this return skipped the publication, so the
+        // floored trace never reached the screen: the previous rate's spectrum
+        // stayed drawn, under the new rate's mapping, indefinitely.
+        //
+        // So the reset publishes. Not a fabricated frame — an EMPTY one: the
+        // floor in both traces and a zero-length window, which is exactly the
+        // state this view has always shown before its first frame, and the
+        // honest answer to "what does the new configuration look like so far?".
+        // The accounting is committed with it (generations, counts, head), for
+        // the same reason the drawn path commits: a reset that has been answered
+        // must not be answered again on every tick from here on.
+        //
+        // Scoped to the reset EDGE deliberately. Without one, a span of 0 is the
+        // lapping case a paragraph up — the traces are still the current
+        // configuration's, they are still coherent, and blanking them there
+        // would put silence on screen where there is audio.
+        if (resetIn || resetOut)
+        {
+            shownInGen     = gi0;
+            shownOutGen    = go0;
+            shownInCount   = ci;
+            shownOutCount  = co;
+            shownCommitted = committed;
+            drawnFirst     = committed;
+            drawnSpan      = 0;
+            publishFrame (committed, 0);
+            repaint();
+        }
         return;
+    }
 
     // BOTH WINDOWS FIRST, THEN THE PROOF, THEN THE TRANSFORMS (0.2.12, the
     // review's concurrent-publication finding). The span above is chosen from a
@@ -388,7 +452,9 @@ void SpectrumView::tick (double dt)
     const uint64_t first  = committed - (uint64_t) span;
     const int      gotIn  = in .readEndingAt (scratchInL .data(), scratchInR .data(), span, committed);
     const int      gotOut = out.readEndingAt (scratchOutL.data(), scratchOutR.data(), span, committed);
-    if (! onePairOneSpan (span, gotIn, gotOut, first, in.oldestReadable(), out.oldestReadable()))
+    if (! onePairOneSpan (span, gotIn, gotOut, first,
+                          reservedFloor (in .writeCount(), reserve),
+                          reservedFloor (out.writeCount(), reserve)))
         return;
 
     analyse (scratchInL .data(), scratchInR .data(), gotIn,  inDb,  dt);
@@ -414,7 +480,89 @@ void SpectrumView::tick (double dt)
     shownCommitted = committed;
     drawnFirst     = first;
     drawnSpan      = span;
+    // …and only now does the frame become visible. Publication is the LAST thing
+    // the tick does, after both EMAs are settled and both post-batch generation
+    // checks have had their say, so the pair the renderer can pick up is one
+    // this tick was willing to commit to — never a half-updated one it was
+    // about to floor.
+    publishFrame (first, span);
     repaint();
+}
+
+// ONE PUBLICATION, BOTH TRACES. The bracket is the ordinary sequence-counter
+// form and every step of it is load-bearing:
+//   * the counter goes ODD first, so a reader that starts mid-write sees an odd
+//     value and knows it before it copies anything;
+//   * a RELEASE FENCE follows that store rather than the store carrying release
+//     itself — release orders what came BEFORE it, and what has to be ordered
+//     here is what comes after, namely the payload stores, which must not sink
+//     above the odd marker;
+//   * the payload is relaxed, because the counter carries the ordering and the
+//     atomics are there to make the concurrent access defined rather than to
+//     synchronise anything on their own;
+//   * the counter goes EVEN with RELEASE, which is what publishes every payload
+//     store to the reader that acquires the same value.
+// The counter is only ever written here, on the message thread, so the plain
+// load/store pair needs no read-modify-write.
+void SpectrumView::publishFrame (uint64_t first, int span) noexcept
+{
+    const auto s = frameSeq.load (std::memory_order_relaxed);
+    frameSeq.store (s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence (std::memory_order_release);
+
+    for (int b = 0; b < kBins; ++b)
+        pubIn [(size_t) b].store (inDb [(size_t) b], std::memory_order_relaxed);
+    for (int b = 0; b < kBins; ++b)
+        pubOut[(size_t) b].store (outDb[(size_t) b], std::memory_order_relaxed);
+    pubFirst.store (first, std::memory_order_relaxed);
+    pubSpan .store (span,  std::memory_order_relaxed);
+
+    frameSeq.store (s + 2, std::memory_order_release);
+}
+
+// …AND THE MIRROR OF IT. Read the counter, copy, read it again: an odd first
+// value or a changed second one means a tick was inside the bracket and the
+// copy may hold bins from two frames, so it is DISCARDED rather than drawn. The
+// acquire fence before the second load is the counterpart of the writer's
+// release fence — it stops the payload loads floating past the check that is
+// meant to validate them.
+//
+// TWO ATTEMPTS, then give up. A tick publishes 4098 relaxed stores at 60 Hz;
+// losing twice in a row means being overtaken twice inside that window, and the
+// caller's answer — keep the frame it already has — costs one repeated frame at
+// 16.7 ms. An unbounded spin here would be a spin on the render thread, which is
+// the one place a stall is visible as a dropped frame rather than a stale one.
+bool SpectrumView::readPublishedFrame (std::vector<float>& inTrace,
+                                       std::vector<float>& outTrace,
+                                       Window& drawnWindow) const noexcept
+{
+    if (inTrace.size() != (size_t) kBins || outTrace.size() != (size_t) kBins)
+    {
+        jassertfalse;   // the caller owns the storage and must size it once
+        return false;
+    }
+
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        const auto s0 = frameSeq.load (std::memory_order_acquire);
+        if ((s0 & 1u) != 0u)
+            continue;                                   // a tick is mid-publication
+
+        for (int b = 0; b < kBins; ++b)
+            inTrace [(size_t) b] = pubIn [(size_t) b].load (std::memory_order_relaxed);
+        for (int b = 0; b < kBins; ++b)
+            outTrace[(size_t) b] = pubOut[(size_t) b].load (std::memory_order_relaxed);
+        const auto first = pubFirst.load (std::memory_order_relaxed);
+        const auto span  = pubSpan .load (std::memory_order_relaxed);
+
+        std::atomic_thread_fence (std::memory_order_acquire);
+        if (frameSeq.load (std::memory_order_relaxed) == s0)
+        {
+            drawnWindow = { first, span };
+            return true;
+        }
+    }
+    return false;
 }
 
 void SpectrumView::paint (juce::Graphics& g)
@@ -518,9 +666,18 @@ void SpectrumView::paint (juce::Graphics& g)
         }
     };
 
+    // THE PAIR THE RENDERER DRAWS IS ONE TICK'S, WHOLE. On macOS and Windows
+    // this function runs on the OpenGL context's render thread while `tick`
+    // runs on the message thread (`THREAD_MODEL`), so the traces are taken
+    // through the published bracket into buffers only this function touches.
+    // A lost read leaves the previous copy in place — an older coherent pair,
+    // never a mixed one — and the vectors are `kBins` long from construction,
+    // so nothing here allocates.
+    (void) readPublishedFrame (paintIn, paintOut, paintWindow);
+
     juce::Path pin, pout;
-    traceOf (inDb, pin);
-    traceOf (outDb, pout);
+    traceOf (paintIn, pin);
+    traceOf (paintOut, pout);
     g.setColour (colours::textDim.withAlpha (0.55f));
     g.strokePath (pin, juce::PathStrokeType (1.0f));
     g.setColour (colours::accent);
