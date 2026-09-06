@@ -4,6 +4,7 @@
 #include <atomic>
 #include "LookAndFeel.h"
 #include "FrameClock.h"
+#include "HiddenInterval.h"
 #include "../dsp/GrHistoryBuffer.h"
 
 class AnabasisAudioProcessor;
@@ -704,6 +705,16 @@ public:
         return { h, publishedEpoch == liveEpoch ? phaseOf (smoothHead, h) : 0.0 };
     }
 
+    // THE PAIR A FRAME DRAWN RIGHT NOW WOULD USE — `frameFor` above, applied to
+    // the published scalars and to the ring as it stands. Public for the reason
+    // `tick` is: what a reveal has to get right is a property of the PAIR (the
+    // head must be the producer's, the phase must be the one the elapsed
+    // seconds put it at), and a rendered snapshot can only pin that indirectly
+    // and at sub-pixel amplitude. `paintHistory` does NOT call this — it needs
+    // the live index and the epoch for its own read window as well, and one
+    // batch must make one observation of each.
+    Frame drawnFrame() const noexcept;
+
     // The oldest ring index a frame may read, given the producer's live write
     // index. `push` fills slot `live & kMask` and publishes afterwards, so the
     // reader must stay strictly inside one full lap of it: `live − n ≤
@@ -787,6 +798,12 @@ private:
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;
+    // The seconds this view was hidden for, which is the dt the reveal's tick
+    // publishes: the ramp `smoothedHead` runs is a wall-clock ramp and the
+    // stopped clock cannot report the time it did not tick through. Shared with
+    // `SpectrumView`, whose EMA needs the same quantity for its own reason —
+    // see `HiddenInterval.h` and `visibilityChanged`.
+    abgui::HiddenInterval hidden;
 
     // PUBLISHED by `tick` (message thread), READ by `paintHistory` (the thread
     // that paints — the message thread on Linux, the GL render thread on

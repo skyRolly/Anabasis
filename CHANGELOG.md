@@ -120,6 +120,34 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   recovery time between them — draw the current state on the first visible frame every time.
   Evidence: this release. [Verified]
 
+- **A GR history that comes back to a stopped transport no longer drifts.** The first fix above
+  re-derived the view's state the instant it became visible, which repairs the position when blocks
+  arrived while the spectrum had the well. It could not repair the sub-block one: between blocks the
+  trace advances by real time, and re-deriving with no elapsed time kept whatever fraction of a block
+  the switch happened to catch — so a history that came back to a transport that had stopped resumed
+  the rest of a movement whose time had already passed, and the first frame sat up to one block-step
+  from where a view that had never been hidden would have drawn it (0.48 px at 48 kHz / 512 on the
+  Simple well, 4.2 px at 4096-sample blocks). The view now re-derives for the seconds it was actually
+  away. Measured over 450 switches on the real paint path, with the transport stopped: the first
+  visible frame is where a never-hidden view would have it on every one of them (it was wrong on all
+  150 of the stopped-transport cases before), and nothing moves afterwards until audio arrives.
+  Evidence: this release. [Verified]
+
+- **The spectrum is current the frame it comes back, too.** It has no scrolling trace, so the same
+  lifecycle showed up as levels rather than positions: the analyser stops while the GR history has
+  the well, the first frame after the switch back drew the analysis of audio that had already gone
+  by, and because the per-bin smoothing is a time constant rather than a step, the trace kept 87 % of
+  every falling bin for a further tenth of a second of watching. Measured against a view that was
+  never hidden: mean 4.1–5.7 dB per bin off, up to 55 dB on one, for switches from one frame to two
+  seconds. The analyser now runs once for the seconds it was away before the first frame can be
+  painted, which lands the trace on the current spectrum outright for any switch of about half a
+  second or more (0.07 dB at 500 ms, exact at two seconds) and keeps exactly the peaks a never-hidden
+  view would still be holding for a brief one. A view that comes back to a ring nothing has been
+  written to still holds the trace it had, unchanged, which is what a visible analyser does with an
+  idle ring. One further case closes with it: a sample-rate or block-size change during the switch
+  used to put one frame of the previous configuration's analysis on screen through the new
+  configuration's frequency mapping. Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

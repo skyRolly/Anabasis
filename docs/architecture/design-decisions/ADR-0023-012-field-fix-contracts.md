@@ -207,6 +207,30 @@ by construction rather than by stimulus luck.
    > samples), and nothing is drawn beyond the plot's right edge.
    > `worklogs/2026-09-05-gr-history-tip.md` §10 carries the measurements.
 
+   > **Amended 2026-09-06 (0.2.12), the PR review's finding on the view-switch fix.** The 0.2.8
+   > amendment above put the trace's motion between arrivals on "a head smoothed at the nominal
+   > entry rate and held to `[head, head + 1]`". That ramp is a WALL-CLOCK ramp, and the view stops
+   > ticking while the spectrum owns the well — so the seconds it is away are seconds the ramp does
+   > not advance through. Republishing on the way back with no elapsed time repairs the HEAD (the
+   > band's lower bound binds whenever the producer advanced) and cannot repair the PHASE: with the
+   > transport stopped the bound is inert, the pre-switch sub-entry offset is republished verbatim,
+   > and the clock then completes a step whose time had already passed — up to one entry-pitch of
+   > position on the first visible frame and the same again as motion with no new data behind it
+   > (0.48 px Simple, 0.32 px Advanced at 48 kHz / 512; 4.2 px at 44.1 kHz / 4096). The reveal now
+   > advances the ramp by the seconds the clock was actually stopped (`abgui::HiddenInterval`,
+   > measured from the wall clock beside `FrameClock::stop`/`start`), which the SAME band then
+   > resolves: producer advanced → the live head at the offset the ramp really has; nothing arrived
+   > and the gap outlasts the remaining ramp → parked one entry on, where an unhidden view already
+   > sits; a shorter gap → part way along, as an unhidden view's would be; already parked → nothing
+   > published; cleared → the phase-0 re-anchor, as decided. The band, the nominal rate, the pitch,
+   > the anchor, the values, the zero-data region, the clear rule and both edges are unchanged, and
+   > OQ-017 is untouched — this decides WHEN the ramp is advanced, not what it is. The sub-entry
+   > phase after a hide the producer ran through is reconstructed to within one entry-pitch and no
+   > closer, because a never-hidden view's ramp is clamped once per frame and the clamp is lossy;
+   > the head is exact. `SpectrumView` shares the lifecycle and the measurement but not the model —
+   > its retained state is a per-bin EMA, and the same seconds go into its decay.
+   > `worklogs/2026-09-05-gr-history-tip.md` §12 carries the measurements and the mutants.
+
 7. **Graph-well switch:** the GR|SPEC pill moves to the bottom-left (the least informative
    corner in both modes; the old top-right sat on the newest GR data), GR is the left segment
    and the default mode (`int_spectrumOn` default flips to `false` — a default change only,

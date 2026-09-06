@@ -228,6 +228,41 @@ wells, and the rendered `grPaint` snapshot re-pinned on both halves of the contr
 `OPEN_QUESTIONS.md` untouched (OQ-017 unchanged). Trail: `worklogs/2026-09-05-gr-history-tip.md`
 §7 (the measurement trail, the boundary sweep, the old-against-new identity check, the mutants).
 
+**Addendum (2026-09-06) — the review finding under the view-switch fix, and the spectrum's half of
+the same lifecycle.** The fix above re-derives with NO elapsed time, and the review found what that
+cannot repair: the smoothed head's clamp re-anchors only where its lower bound bites, i.e. only when
+the producer advanced, so a switch that caught the ramp mid-flight over a stopped transport
+republished the pre-switch sub-entry phase and the clock then replayed the rest of a step whose
+seconds had already passed (measured: 48 of 60 stopped-transport transitions per configuration, up
+to one entry-pitch — 0.48 px on the Simple well, 0.32 on the Advanced, 4.2 px at 4096-sample
+blocks). `SpectrumView` was then investigated on its own terms rather than by analogy and is NOT the
+same defect: it has no head and no phase, so nothing replays; what it retains is the two per-bin
+EMAs `paint` reads directly, and because the frame clock restarts with a neutral 1/60 s dt by
+design, 87 % of every FALLING bin survived into the first analysed frame (measured 5.1 dB mean per
+bin from the current analysis, up to 55 dB on one bin). Both are one missing measurement —
+`abgui::HiddenInterval` (new file, `src/gui/HiddenInterval.h`), a wall-clock stamp beside
+`clock.stop()` whose elapsed seconds are handed to the view's own tick beside `clock.start()` — and
+each view then applies its OWN model to them: the GR ramp resolves through the clamp it already has
+(0 of 60 stopped-transport transitions differ afterwards, in all three configurations), and the
+spectrum's `decay` re-anchors the trace outright for any switch of about half a second (1.23 dB mean
+from the current analysis, exact beyond ~2.1 s where the float decay saturates), while a switch with
+no new frames stays a bit-exact no-op — KI-007 item 6's listening-pass question is deliberately NOT
+answered here. One further defect closes with it: a re-prepare during the switch used to put one
+frame of the pre-reset EMA on screen through the new rate's bin mapping, the reset floors living in
+`tick`. It is NOT in `FrameClock`: that file is a verbatim Anamorph copy (ADR-0009), its restart
+semantics are correct as they stand, and it is shared with `LoudnessMeterView`, which is never
+hidden. Rows engaged: **ADR** (ADR-0023 item 6 amended in place, dated), **New/changed test**
+(`state_tests.cpp`: five new tests plus the shared measurement's truth table, and the 0.2.12
+view-switch test restated to assert the published pair through the new public
+`GrHistoryView::drawnFrame` so it no longer depends on how long the hide took; `TESTING.md` — the
+new pins and the two tests that sleep, with the argument for why a lower bound keeps them
+deterministic; this file), **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`), and the architecture
+file table (`DESIGN.md` gains the new header's row). No **Threading / cross-thread path** row:
+the new member is written and read on the message thread only, inside `visibilityChanged`, and
+publishes nothing the painting side reads — ADR-0038's atomic set is untouched. Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §12 (both read-offs, the 450-transition before/after sweep
+on the real paint paths, the nine mutants and the one that survives, and what is left).
+
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly
 generated line can have instantaneous changes, and it also changes while it is moving."*

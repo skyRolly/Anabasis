@@ -249,7 +249,31 @@ defect needed a render again, and a THIRD frame to compare against:
 `testTheGrHistoryIsCurrentTheFrameItBecomesVisible` snapshots the view before the spectrum takes the
 well, again the instant it gets it back, and once more from a view that has never been stale, and
 holds the middle one to the last rather than the first — the defect was a frame that was *valid*,
-just not current, so only a comparison between two states can see it.
+just not current, so only a comparison between two states can see it. The review finding under that
+fix moved the same question OFF the pixels, because its amplitude is sub-pixel: what a reveal has to
+get right is the published pair, so `GrHistoryView::drawnFrame` was made public (the reason `tick`
+is) and `testTheGrHistoryDoesNotResumeAnExpiredRamp` asserts the pair directly — hidden mid-ramp
+with the transport stopped, the reveal must publish the parked value, and nothing may move for
+thirty frames after it. `testTogglingTheGraphWellNeverMovesTheGrHistoryBackwards` pins the direction
+the other candidate repair would have broken (`head + phase` may only grow across fifty switches).
+The same round pins the spectrum's half of the lifecycle through its own state rather than a render
+too, `analysedInDb()` being public for the same reason: a bin that was falling must have decayed by
+the seconds the view was away (`testTheSpectrumIsCurrentTheFrameItBecomesVisible`), a view that came
+back to rings nothing was written to must hold its trace bit-identically
+(`testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden`), and a re-prepare during the switch
+must reach the first visible frame as the floor
+(`testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame`).
+
+**The two tests that sleep, and why they are the only ones.** `testTheGrHistoryDoesNotResumeAnExpiredRamp`
+and `testTheSpectrumIsCurrentTheFrameItBecomesVisible` each block for 40 ms between hiding a view and
+showing it again. The quantity under test IS real elapsed time — the seconds a view's frame clock was
+stopped for, which the views measure from the wall clock because neither the ring (it stops with the
+transport) nor the `FrameClock` (its pacing state is reset on restart, deliberately) can report it —
+so no injected `dt` can stand in for it without bypassing the code under test. They stay
+deterministic because only a LOWER bound is asserted and `sleep_for` guarantees exactly that: it
+blocks for at least the requested duration, 40 ms is 3.75 entry periods at 48 kHz / 512, and more
+elapsed time only saturates the same clamp harder. A test that needs an UPPER bound on elapsed time
+would not be admissible here.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the

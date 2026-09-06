@@ -17,6 +17,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <thread>
 
 static int failures = 0;
@@ -6939,15 +6940,29 @@ static void testTheGrHistoryIsCurrentTheFrameItBecomesVisible()
     view.setVisible (true);
     const auto firstVisible = view.createComponentSnapshot (view.getLocalBounds(), false);
 
+    // THE HEAD IS THE PRODUCER'S. This is the half of "current" that does not
+    // depend on how long the hide really took, so it is asserted on the pair
+    // rather than on pixels — 120 entries of staleness would be 120 entry
+    // pitches of displacement, and no rendering is needed to see it.
+    const auto revealed = view.drawnFrame();
+    check (revealed.head == proc.grHistory().available(),
+           "grSwitch: the head the first visible frame draws is the one the producer has now");
+
     // What the CURRENT state draws, from a view that has never been stale: one
-    // built on the same ring and shown for the first time. Its published pair
-    // is either the live head (`paintHead` falls back to it while nothing has
-    // been published) or the live head this view now publishes on becoming
-    // visible — the same frame either way, and independent of the view under
-    // test.
+    // built on the same ring, shown for the first time — which publishes the
+    // live head at phase 0 — and then advanced to the SAME sub-entry offset the
+    // view under test came back at. Driving the phase rather than assuming it
+    // is 0 is what keeps this pin independent of the hidden interval: since
+    // 0.2.12 the reveal advances the smoothed head by the seconds the clock was
+    // stopped (`HiddenInterval`), and how many seconds those are is a property
+    // of the machine running the suite, not of the behaviour under test. What
+    // IS under test is that nothing else survives the hide: the same pair over
+    // the same ring must draw the same pixels, whatever the pair is.
     GrHistoryView reference (proc);
     reference.setBounds (0, 0, 300, 120);
     reference.setVisible (true);
+    if (revealed.phase > 0.0)
+        reference.tick (revealed.phase * (512.0 / 48000.0));
     const auto current = reference.createComponentSnapshot (reference.getLocalBounds(), false);
 
     const auto same = [] (const juce::Image& a, const juce::Image& b)
@@ -6964,6 +6979,297 @@ static void testTheGrHistoryIsCurrentTheFrameItBecomesVisible()
            "grSwitch: the first visible frame is NOT the one from before the spectrum took over");
     check (same (firstVisible, current),
            "grSwitch: …it is the frame the current ring draws — the state is republished when the view becomes visible, before any repaint can read it");
+}
+
+// A HIDDEN VIEW IS NOT A STOPPED CLOCK — the review finding under 0.2.12's
+// first view-switch fix. What a GR frame draws is `head + phase`; the head is
+// the producer's and the phase is a WALL-CLOCK ramp (`smoothedHead` advances
+// the previous value by the frame's seconds and clamps it to [head, head + 1]).
+// The reveal's tick repaired the head, because the clamp's LOWER bound bites
+// whenever the head moved — but with the transport stopped the head does not
+// move, the lower bound is inert, and a zero-second tick republished the
+// sub-entry offset the switch caught mid-ramp. The clock then replayed the
+// remainder of a step whose seconds had already passed: motion on screen with
+// no new audio behind it, and a first frame up to one entry-pitch from where a
+// view that was never hidden would have drawn it.
+//
+// WHY THIS TEST SLEEPS, when nothing else in the suite does. The quantity under
+// test is real elapsed time — the seconds the view's clock was stopped for —
+// and it is measured from the wall clock inside `visibilityChanged`, because
+// neither the ring (which stops with the transport) nor the frame clock (whose
+// pacing state is deliberately reset on restart) can report it. The assertions
+// below depend ONLY on the gap being at least one entry period, which
+// `sleep_for` guarantees by contract — it blocks for at least the requested
+// duration, never less — so the outcome is deterministic even though the exact
+// gap is not: 40 ms is 3.75 entry periods at 48 kHz / 512, and a longer sleep
+// only saturates the same clamp harder.
+static void testTheGrHistoryDoesNotResumeAnExpiredRamp()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    const double period = 512.0 / 48000.0;                  // one ring entry, 10.667 ms
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    int64_t pushed = 0;
+    const auto pushBlocks = [&] (int n)
+    {
+        for (int b = 0; b < n; ++b, ++pushed)
+        {
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                for (int i = 0; i < buf.getNumSamples(); ++i)
+                    buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (pushed * 512 + i)));
+            proc.processBlock (buf, midi);
+        }
+    };
+
+    GrHistoryView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+    pushBlocks (400);
+    view.tick (0.0);                                        // anchor: the live head at phase 0
+    view.tick (0.4 * period);                               // …and 40 % of the way into its entry
+    const auto beforeHiding = view.drawnFrame();
+    check (beforeHiding.head == 400 && std::abs (beforeHiding.phase - 0.4) < 1.0e-9,
+           "grRamp: (premise) the view is hidden mid-ramp, four tenths into the newest entry");
+
+    // The spectrum takes the well and the transport stops: no block arrives, so
+    // the ring cannot say how much time went by. The wall clock can.
+    view.setVisible (false);
+    std::this_thread::sleep_for (std::chrono::milliseconds (40));
+    view.setVisible (true);
+
+    const auto revealed = view.drawnFrame();
+    check (revealed.head == 400 && proc.grHistory().available() == 400,
+           "grRamp: (premise) the producer made no progress at all while the view was hidden");
+    check (std::abs (revealed.phase - 1.0) < 1.0e-9,
+           "grRamp: the first visible frame is where the ramp had already got to — parked one entry on, not four tenths in");
+
+    // …and it stays there. A view with no new data must not move; before the
+    // fix the clock finished the expired ramp over the following frames.
+    for (int f = 0; f < 30; ++f)
+        view.tick (1.0 / 60.0);
+    const auto later = view.drawnFrame();
+    check (later.head == revealed.head && std::abs (later.phase - revealed.phase) < 1.0e-12,
+           "grRamp: …and nothing moves over the next thirty frames, because no new history arrived");
+}
+
+// THE REVEAL MUST NOT INVENT MOTION EITHER, and it must never move the trace
+// RIGHT: `bucketX` places by −(head + phase), so a reveal that re-anchored the
+// phase at 0 — the other candidate repair, and what the first fix's comment
+// claimed it already did — would shift the trace back towards the newest end by
+// up to one entry-pitch on every switch. Toggling with nothing arriving is the
+// case that isolates it: `head + phase` may only ever grow.
+static void testTogglingTheGraphWellNeverMovesTheGrHistoryBackwards()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    const double period = 512.0 / 48000.0;
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    int64_t pushed = 0;
+    const auto pushBlocks = [&] (int n)
+    {
+        for (int b = 0; b < n; ++b, ++pushed)
+        {
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                for (int i = 0; i < buf.getNumSamples(); ++i)
+                    buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (pushed * 512 + i)));
+            proc.processBlock (buf, midi);
+        }
+    };
+
+    GrHistoryView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+    pushBlocks (200);
+    view.tick (0.0);
+    view.tick (0.6 * period);
+    double drawn = (double) view.drawnFrame().head + view.drawnFrame().phase;
+    bool   monotone = true, bounded = true;
+    for (int t = 0; t < 50; ++t)
+    {
+        view.setVisible (false);
+        view.setVisible (true);                             // hidden for as long as that took
+        const auto f = view.drawnFrame();
+        const double now = (double) f.head + f.phase;
+        if (now < drawn - 1.0e-12) monotone = false;        // a rightward jump
+        if (f.phase < 0.0 || f.phase > 1.0) bounded = false;
+        drawn = now;
+    }
+    check (monotone, "grToggle: fifty switches with no new audio never move the trace back towards the newest end");
+    check (bounded, "grToggle: …and the reveal never publishes a phase outside the one-entry band");
+    check (proc.grHistory().available() == 200,
+           "grToggle: (premise) nothing was produced during the toggling, so every frame drew the same head");
+}
+
+// THE SPECTRUM'S HALF OF THE SAME LIFECYCLE, and it is NOT the same defect:
+// this view has no head and no phase, so nothing here replays motion. What it
+// retains is the two per-bin EMAs, which `paint` draws directly — so before
+// 0.2.12 the first frame after the switch back was the analysis of audio that
+// had already gone by, and the frame clock's neutral first dt (1/60 s by
+// design) left 87 % of every falling bin in place for a further ~0.12 s of
+// VISIBLE time. The reveal now analyses first, with the seconds the view was
+// hidden for as its dt, so the decay is the one that would have been applied
+// had the view never been hidden.
+static void testTheSpectrumIsCurrentTheFrameItBecomesVisible()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    int64_t pushed = 0;
+    const auto pushTone = [&] (int n, float hz)             // hz == 0 pushes silence
+    {
+        for (int b = 0; b < n; ++b, ++pushed)
+        {
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                for (int i = 0; i < buf.getNumSamples(); ++i)
+                    buf.setSample (ch, i, hz > 0.0f
+                        ? 0.7f * std::sin (2.0f * 3.14159265f * hz * (float) (pushed * 512 + i) / 48000.0f)
+                        : 0.0f);
+            proc.processBlock (buf, midi);
+        }
+    };
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+    pushTone (12, 1000.0f);
+    view.tick (1.0 / 60.0);
+    const std::vector<float> before = view.analysedInDb();
+    int loudest = 0;
+    for (int b = 1; b < (int) before.size(); ++b)
+        if (before[(size_t) b] > before[(size_t) loudest]) loudest = b;
+    check (before[(size_t) loudest] > -60.0f,
+           "specSwitch: (premise) the tone is on the trace before the well switches away");
+
+    // The GR history takes the well; the transport keeps running but the
+    // programme stops, so every bin the tone owned is now FALLING — the one
+    // direction the EMA smooths rather than tracking instantly, and therefore
+    // the one that shows whether the elapsed seconds were accounted for.
+    view.setVisible (false);
+    pushTone (12, 0.0f);                                    // 6144 samples: the whole 4096 window
+    std::this_thread::sleep_for (std::chrono::milliseconds (40));   // see the note on grRamp's sleep
+    view.setVisible (true);
+
+    const std::vector<float> after = view.analysedInDb();
+    const double reachable = (double) before[(size_t) loudest] + 120.0;   // silence analyses to the floor
+    const double fell      = (double) before[(size_t) loudest] - (double) after[(size_t) loudest];
+    // decay = 1 − exp (−dt / 0.12) ≥ 0.283 for the 40 ms the sleep guarantees;
+    // a zero-second reveal (what the first fix would have done here) leaves a
+    // falling bin untouched, so anything above 0 already separates them.
+    check (fell >= 0.20 * reachable,
+           "specSwitch: the first visible frame has decayed by the seconds the view was away, not by one frame's worth");
+}
+
+// …AND IT MUST NOT INVENT ANYTHING. With no new frames in either ring the
+// analysis is still the analysis of what the rings hold, and the idle gate at
+// the top of `tick` returns before touching it — which is also what a VISIBLE
+// analyser does with an idle ring (`KNOWN_ISSUES` KI-007 item 6, deliberately
+// unchanged). A reveal that floored or re-analysed unconditionally would answer
+// that open question by accident.
+static void testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 12; ++b)
+    {
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+                buf.setSample (ch, i, 0.7f * std::sin (0.13f * (float) (b * 512 + i)));
+        proc.processBlock (buf, midi);
+    }
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+    view.tick (1.0 / 60.0);
+    const std::vector<float> before = view.analysedInDb();
+
+    view.setVisible (false);
+    std::this_thread::sleep_for (std::chrono::milliseconds (5));    // time passes; no audio does
+    view.setVisible (true);
+
+    bool identical = view.analysedInDb().size() == before.size();
+    for (size_t b = 0; identical && b < before.size(); ++b)
+        identical = juce::exactlyEqual (view.analysedInDb()[b], before[b]);
+    check (identical,
+           "specIdle: a view hidden and shown again with no new frames in the rings holds exactly the trace it had");
+}
+
+// A RE-PREPARE DURING THE SWITCH is the case the reveal's analysis closes on
+// the way past: `AnabasisEngine::prepare` rewinds both scope rings, and the
+// floors that drop the trace the rewind invalidated live in `tick` — which,
+// before 0.2.12, could not run until after JUCE had already painted the newly
+// visible component. One frame of the PREVIOUS configuration's analysis,
+// mapped through the NEW rate's bins, is precisely the artefact the rewind
+// exists to remove.
+static void testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 12; ++b)
+    {
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+                buf.setSample (ch, i, 0.7f * std::sin (0.11f * (float) (b * 512 + i)));
+        proc.processBlock (buf, midi);
+    }
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+    view.tick (1.0 / 60.0);
+    bool anyAnalysed = false;
+    for (float v : view.analysedInDb()) if (v > -119.0f) anyAnalysed = true;
+    check (anyAnalysed, "specPrepare: (premise) there is a trace to lose before the host reconfigures");
+
+    view.setVisible (false);
+    proc.prepareToPlay (96000.0, 512);                      // the rings rewind; the EMA is orphaned
+    view.setVisible (true);
+
+    bool allFloored = true;
+    for (float v : view.analysedInDb()) if (v > -119.99f) allFloored = false;
+    check (allFloored,
+           "specPrepare: the first visible frame after a reconfiguration is the floor, not the previous rate's analysis");
+}
+
+// The measurement both reveals are built on, pinned on its own because it is
+// all the arithmetic there is (`HiddenInterval`).
+static void testTheHiddenIntervalMeasuresWhatItClaims()
+{
+    abgui::HiddenInterval h;
+    check (juce::exactlyEqual (h.resumedSeconds (1000.0), 0.0),
+           "hiddenGap: a view that was never hidden resumes with no elapsed time at all");
+    h.stopped (1000.0);
+    check (std::abs (h.resumedSeconds (1040.0) - 0.04) < 1.0e-12,
+           "hiddenGap: milliseconds in, seconds out");
+    check (juce::exactlyEqual (h.resumedSeconds (2000.0), 0.0),
+           "hiddenGap: the stamp is consumed, so an interval is never counted twice");
+    h.stopped (5000.0);
+    check (juce::exactlyEqual (h.resumedSeconds (4000.0), 0.0),
+           "hiddenGap: a clock that appears to run backwards hands the view zero, never a negative dt");
+    check (juce::exactlyEqual (abgui::HiddenInterval::gapSeconds (abgui::HiddenInterval::kNotStopped, 9.0e9), 0.0),
+           "hiddenGap: …and the never-stopped stamp is not a time in 1970");
 }
 
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
@@ -8954,6 +9260,12 @@ int main (int argc, char** argv)
         testGrHistorySurvivesAHostBlockOfTenSeconds();
         testTheOldestDrawnBucketKeepsItsValueUntilItLeaves();
         testTheGrHistoryIsCurrentTheFrameItBecomesVisible();
+        testTheGrHistoryDoesNotResumeAnExpiredRamp();
+        testTogglingTheGraphWellNeverMovesTheGrHistoryBackwards();
+        testTheSpectrumIsCurrentTheFrameItBecomesVisible();
+        testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden();
+        testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame();
+        testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();

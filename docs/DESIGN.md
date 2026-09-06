@@ -117,6 +117,7 @@ in ─ InputGain ─ EQ(pre) ─ Comp ─┤OS region: Clip/Sat ─ Limiter├�
 | gui | `PluginEditor.{h,cpp}` | views, top bar, Settings/About backdrops |
 | gui | `LookAndFeel.{h,cpp}` | brand palette + glass language + control drawing |
 | gui | `FrameClock.h` | vblank-paced visualizer driver (copy) |
+| gui | `HiddenInterval.h` | the seconds a visibility-gated view did not tick for (0.2.12) |
 | gui | `GrHistoryView`, `LoudnessMeterView`, `SpectrumView`, `CurveView` | visualizers |
 | dsp | `AnabasisEngine.{h,cpp}` | chain owner, transitions, snapshot adoption |
 | dsp | `EngineParameters.h` | POD snapshot |

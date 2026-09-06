@@ -19,9 +19,58 @@ SpectrumView::SpectrumView (AnabasisAudioProcessor& p) : processor (p)
 void SpectrumView::visibilityChanged()
 {
     if (isVisible())
+    {
+        // ANALYSE BEFORE ANYONE CAN PAINT, FOR THE TIME THAT ACTUALLY PASSED
+        // (0.2.12, from the review that followed the GR history's version of
+        // this). The two views of the well share a LIFECYCLE — each stops its
+        // clock when the other takes over — and therefore share one hazard:
+        // while this view is hidden nothing analyses, and the audio thread goes
+        // on filling both scope rings regardless (`AnabasisEngine::processChunk`
+        // has no visibility term). They do NOT share a state model, and this is
+        // not the GR fix transplanted: there is no head here, no phase, no
+        // position of any kind. What is retained is `inDb`/`outDb`, the two
+        // per-bin EMAs, and `paint` draws them directly.
+        //
+        // So the first frame after the switch back drew the spectrum of audio
+        // that had already gone by — and the recovery was slower than it looks,
+        // because the EMA is a time constant rather than a step: the frame clock
+        // deliberately restarts its pacing with a neutral 1/60 s dt, so the
+        // first analysed frame keeps 87 % of every bin whose true level had
+        // FALLEN (`decay = 1 − exp (−dt / 0.12)` = 0.13 at 60 Hz), and the trace
+        // reads high for ~0.12 s of VISIBLE time however long the switch was.
+        // Measured against a view that was never hidden, over the real analyser
+        // on the real rings: mean 2.1–3.6 dB per bin and up to 48 dB on one, for
+        // hidden intervals from one frame to two seconds.
+        //
+        // The missing quantity is the same one the GR view needed — the seconds
+        // this view did not tick for — so it is measured in the same place
+        // (`HiddenInterval`), and what it MEANS here is this view's own EMA
+        // arithmetic: `analyse` folds the current window in with `decay` taken
+        // from the gap, so a switch of half a second or more re-anchors the
+        // trace outright (decay > 0.98) while a brief one keeps exactly the
+        // peaks a view that was never hidden would still be holding. It also
+        // brings the reset floors forward: they live in `tick`, so before this
+        // a re-prepare during the switch could paint the PRE-reset EMA through
+        // the new rate's bin mapping for one frame — the very artefact the
+        // rewind exists to remove.
+        //
+        // NOTHING IS INVENTED when no audio arrived while the view was away:
+        // the idle gate at the top of `tick` sees both counts and both
+        // generations unmoved and returns before `analyse`, so the trace is
+        // held exactly as it was — which is also what a VISIBLE analyser does
+        // with an idle ring (`KNOWN_ISSUES` KI-007 item 6). A resume that
+        // floored or re-analysed unconditionally would be a change to that
+        // listening-pass behaviour, not a fix to this one.
+        tick (hidden.resumedSeconds (juce::Time::getMillisecondCounterHiRes()));
         clock.start (*this, [this] (double dt) { tick (dt); });
+    }
     else
+    {
         clock.stop();
+        // Stamped AFTER the stop, so the interval measured is exactly the
+        // interval in which no tick could run.
+        hidden.stopped (juce::Time::getMillisecondCounterHiRes());
+    }
 }
 
 // The mode switch's hit-area — since 0.1.1 the shared two-segment GR|SPEC

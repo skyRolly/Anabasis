@@ -830,10 +830,22 @@ re-runs byte-identical after the fix, which is the same statement from the other
 `visibilityChanged` re-derives before anything can paint: a tick with **no elapsed time**, which
 `smoothedHead`'s `[head, head + 1]` clamp resolves to the live head at phase 0 — the same re-anchor
 it performs for a rewound head — published before `clock.start` and therefore before any repaint can
-read it. It is the publication the view always makes, on the thread that always makes it; no delay,
+read it.
+
+It is the publication the view always makes, on the thread that always makes it; no delay,
 no skipped frame, no drawing change. The parked and cleared cases are unaffected: a head that did
-not move while hidden leaves `parked` true and publishes nothing (the pair is already current), and
-a ring cleared while hidden takes the `cleared` branch and anchors at phase 0 under the new epoch.
+not move while hidden AND had reached the cap leaves `parked` true and publishes nothing (the pair
+is already current), and a ring cleared while hidden takes the `cleared` branch and anchors at
+phase 0 under the new epoch.
+
+> **Corrected in §12 (the review's finding under this fix).** Two sentences above need it. "Resolves
+> to the live head at phase 0" holds only when the producer ADVANCED while the view was hidden,
+> which is what makes the clamp's LOWER bound bite; with the head unmoved the clamp does nothing at
+> all and a zero-second tick republishes the retained phase verbatim — `tick (0.0)` is a clamp of the
+> old value into the new head's window, not a re-anchor. And "a head that did not move leaves
+> `parked` true" is only half a case: `parked` also requires the smoothed head to have reached
+> `head + 1`, so a switch that catches the ramp mid-flight is not parked and does republish the stale
+> phase. §12 replaces the zero with the seconds the clock was actually stopped, which resolves both.
 
 `GrHistoryView::tick` moved from private to public — the only other change — because the regression
 test has to publish a pre-hide state to create the condition at all, which is the reason
@@ -856,9 +868,224 @@ guard").
 
 ### 11.6 What is left
 
+> **Superseded by §12 (2026-09-06).** The follow-up below was taken up in the same review round:
+> `SpectrumView` was investigated on its own terms — it is not the same defect — and fixed.
+
 `SpectrumView` has the same lifecycle (`visibilityChanged` starts and stops its clock) and therefore
 the same class of staleness on ITS first visible frame: it would draw the spectrum as it was when
 the GR history took the well. It is far less visible — a spectrum's shape at 60 Hz differs little
 frame to frame, and nothing about it is placed by a scrolling index, so there is no jump — and the
 owner's instruction was to leave the spectrum alone unless the synchronisation strictly required it,
 which it does not. Recorded here as the obvious follow-up rather than changed.
+
+---
+
+## 12 — the review's finding under §11, and the spectrum's half of the same lifecycle (2026-09-06)
+
+Two things were asked for together: the finding that §11's fix is incomplete when the producer makes
+no progress while the view is hidden, and an independent investigation of `SpectrumView`, which §11.6
+had recorded as a follow-up. They turn out to be one missing measurement applied to two different
+state models, so they are recorded together — but the models were read separately, and the second is
+NOT the first by analogy.
+
+### 12.1 The GR finding, read off the arithmetic
+
+`tick (0.0)` reaches `smoothedHead (previous, head, 0.0, T, cleared)`, which is
+
+```
+smoothHead' = cleared ? head : (previous > head + 1 ? head : clamp (previous, head, head + 1))
+```
+
+so with `dt == 0` the advance term is exactly 0 and the call is a CLAMP of the retained value into
+the new head's window, not a re-anchor. It re-anchors only where the clamp bites:
+
+| what happened while hidden | `previous` vs the new `head` | what `tick (0.0)` published |
+|---|---|---|
+| many entries arrived | `previous ≤ head₀ + 1 < head` | the lower bound binds → the live head, phase 0 ✅ |
+| exactly one entry arrived | `previous ≤ head₀ + 1 = head` | the lower bound still binds (equality) → phase 0 ✅ |
+| nothing arrived, ramp mid-flight | `head ≤ previous < head + 1` | **neither bound binds → the pre-switch phase, verbatim** ❌ |
+| nothing arrived, ramp already parked | `previous == head + 1` | `parked` returns first: nothing published (already correct) ✅ |
+| the ring was cleared | — | `cleared` → phase 0 under the new epoch ✅ |
+
+So the defect surface is exactly the zero-progress case, as the review says, and one entry of
+producer progress cures it. What it costs: the phase is a fraction of an ENTRY, so the first visible
+frame is out by up to one entry-pitch — 0.48 px on the Simple well and 0.32 px on the Advanced at
+48 kHz / 512, 0.22 px at 96 kHz / 128, and 4.2 px at 44.1 kHz / 4096 — and the frame clock then
+finishes the expired ramp over the following frames, which is the "obsolete motion" of the finding.
+
+### 12.2 The spectrum, read independently
+
+`SpectrumView` is **not** structurally analogous. It has no head, no phase and no position of any
+kind; its retained display state is the two per-bin EMAs (`inDb`, `outDb`), which `paint` reads
+directly, plus the four "have I seen this?" counters. Its only wall-clock coupling is
+`decay = 1 − exp (−dt / 0.12)` inside `analyse`. What it shares with the GR view is the LIFECYCLE —
+`visibilityChanged` starts and stops the clock — and the consequences of that:
+
+* the two `ScopeBuffer` rings keep filling while the view is hidden (`AnabasisEngine::processChunk`
+  pushes unconditionally; there is no visibility term anywhere on the audio path), so the retained
+  analysis ages;
+* `Component::setVisible (true)` marks the component dirty BEFORE it sends the visibility change, and
+  the paint runs later on the message loop — so a reveal that publishes nothing hands the first
+  visible frame whatever the view was holding;
+* `FrameClock::start` resets its pacing on purpose, so the first callback after a restart carries a
+  neutral 1/60 s, never the hidden interval. At that dt the decay is 0.13: **87 % of every bin whose
+  true level had FALLEN survives into the first analysed frame**, and the trace reads high for a
+  further ~0.12 s of watching however long the switch was. Bins that ROSE are corrected in the same
+  frame by the instant-attack branch, so the staleness is one-sided.
+
+Two further consequences, neither of them the GR defect:
+
+* **no obsolete motion is possible here** — there is no ramp to replay;
+* **a re-prepare during the switch** put one frame of the previous configuration's analysis on screen
+  through the new rate's bin mapping, because the reset floors live in `tick` and `tick` could not
+  run before the visibility repaint. That is the artefact the ring rewind exists to remove.
+
+And one place where doing nothing is already right: with **no** new frames in either ring the idle
+gate at the top of `tick` returns before `analyse`, so a hidden-then-shown view holds exactly the
+trace it had — which is what a VISIBLE analyser does with an idle ring (`KNOWN_ISSUES` KI-007
+item 6, deliberately unchanged). A reveal that floored or re-analysed unconditionally would answer
+that open question by accident.
+
+### 12.3 Reproduced on the real processor and the real paint paths
+
+`life.cpp` runs BOTH views on one processor for every scenario: a CONTROL that stays visible and is
+ticked throughout, and a TEST that is hidden for the interval and then shown. The hidden interval is
+spent in REAL time, because the production code measures it from the wall clock, with the audio
+pushed on the same real timeline — or not pushed at all, which is the review's case. The oracle is
+therefore the invariant itself: **the first frame after a reveal should be the frame a view that was
+never hidden would be showing at that instant.**
+
+Sweep: hidden ∈ {0, 17, 50, 250, 1000} ms × audio {arriving, stopped} × pre-hide phase ∈ {0, 0.25,
+0.5, 0.75, 0.99} × 3 repeats × 3 configurations — 450 GR transitions — and for the spectrum
+hidden ∈ {0, 17, 100, 500, 2000} ms × audio {arriving, stopped} × 3 repeats × 2 configurations,
+with the programme changed at the moment of hiding so stale state is distinguishable.
+
+**GR, transport stopped while hidden** (the review's case; 60 transitions per configuration):
+
+| configuration | first frame ≠ a never-hidden view's | worst | motion after the reveal that the control does not have |
+|---|---|---|---|
+| Simple 924×108, 48 kHz / 512 | **48 → 0** | 0.482 px → **0.000** | 48 → **0** |
+| Advanced 624×254, 48 kHz / 512 | **48 → 0** | 0.322 px → **0.000** | 48 → **0** |
+| Simple, 96 kHz / 128 | **48 → 0** | 0.222 px → **0.000** | 48 → **0** |
+
+(The 12 per configuration that never differed are the φ = 0.99 rows — already at the cap, the case
+`parked` was covering.)
+
+**GR, audio arriving while hidden** (60 per configuration): the head was already correct after §11;
+what remains is the sub-entry phase, and it improves but does not vanish — 60 → 45 differing on the
+Simple well, worst 0.392 → 0.260 px; 60 → 45 Advanced, 0.260 → 0.177 px; 45 → 30 at 96 kHz / 128,
+0.222 → 0.203 px. §12.6 says why that residue is irreducible.
+
+**Spectrum** (mean per-bin distance over in and out, 12 transitions per configuration, hidden > 0):
+
+| measured against | before | after |
+|---|---|---|
+| the PRE-HIDE analysis it must no longer be | **0.000 dB — it *was* that frame** | 3.880 dB |
+| the CURRENT raw analysis of the rings | 5.110 dB | **1.231 dB** |
+| a never-hidden control | 2.727 dB | 3.502 dB (the control's own distance from the current analysis is 4.72 — see §12.6) |
+| audio stopped while hidden, all three of the above | 0.000 dB | **0.000 dB** (nothing invented) |
+
+Per hidden interval, distance from the current analysis: 4.11 → 3.16 dB at 17 ms, 5.21 → **1.67** at
+100 ms, 5.66 → **0.07** at 500 ms, 5.49 → **0.000** at two seconds (`decay` saturates to exactly
+1.0f in float beyond ~2.1 s, so the reveal is a bit-exact re-anchor there).
+
+**Re-prepare while hidden:** the first visible state moved **0.000 dB** from the pre-reset analysis
+with **0 of 2048** bins floored before; **116.8 dB** and **2048 of 2048** after.
+
+### 12.4 The fix: one measurement, two state models
+
+`abgui::HiddenInterval` (new, `src/gui/HiddenInterval.h`) is the whole of the shared mechanism: a
+wall-clock stamp taken beside `clock.stop()`, and the seconds since it, handed to the view's own tick
+beside `clock.start()`. It is deliberately not in `FrameClock` — the clock is a PACING device whose
+restart semantics ("a neutral 1/60 s rather than the whole hidden interval") are correct as they
+stand, it is a verbatim Anamorph copy under ADR-0009, and it is shared with `LoudnessMeterView`,
+which is never hidden.
+
+What the seconds MEAN is each view's own business, and that is the part that is not shared:
+
+* **GR** — they go into the ramp `smoothedHead` already runs, and its existing clamp resolves every
+  case: the producer advanced ⇒ the lower bound gives the live head carrying the offset the ramp
+  really has by now; nothing arrived and the gap outlasts the remaining ramp ⇒ the upper bound parks
+  the trace one entry on, which is where a never-hidden view already sits; the gap is shorter than
+  the remaining ramp ⇒ it lands part way along, exactly as an unhidden view's would; already parked
+  ⇒ `parked` publishes nothing; cleared ⇒ the `cleared` re-anchor, gap or no gap. No new branch.
+* **SPECTRUM** — they go into `decay`, so the reveal folds the current window in with the decay the
+  elapsed time earns: a switch of half a second or more re-anchors the trace outright, a brief one
+  keeps exactly the peaks a never-hidden view would still be holding. The idle gate keeps the
+  no-audio case an exact no-op, and the reset floors now run before the first visible frame.
+
+Rejected alternatives, for the record. **Re-anchoring at phase 0 on every reveal** moves the GR trace
+RIGHT by the offset it discards, which is the one direction `bucketX` guarantees no vertex ever moves
+(`testTogglingTheGraphWellNeverMovesTheGrHistoryBackwards` fails on that mutant). **Saturating to the
+parked value** is right only because the flip is driven by a 24 Hz timer, so it would be wrong for
+any caller whose gap is genuinely shorter than an entry. **Flooring the spectrum on every reveal**
+would answer KI-007 item 6 by accident and would re-attack on every rapid toggle.
+
+### 12.5 Tests, and the one place the suite sleeps
+
+Eighteen checks, seven of them new pins:
+
+* `testTheGrHistoryDoesNotResumeAnExpiredRamp` — mid-ramp before the hide, no producer progress, a
+  40 ms gap: the reveal must publish the parked value, and nothing may move over the next thirty
+  frames. **This is the one test in either suite that depends on real elapsed time**, and it is
+  written so that only a LOWER bound matters: `sleep_for` blocks for at least the requested duration,
+  40 ms is 3.75 entry periods at 48 kHz / 512, and a longer sleep only saturates the same clamp
+  harder. The quantity under test is real elapsed seconds and neither the ring (which stops with the
+  transport) nor the frame clock (whose pacing state is reset on restart) can report it.
+* `testTogglingTheGraphWellNeverMovesTheGrHistoryBackwards` — fifty switches, no audio: `head + phase`
+  may only grow, and the phase must stay inside the one-entry band.
+* `testTheSpectrumIsCurrentTheFrameItBecomesVisible` — a falling bin must have decayed by the seconds
+  the view was away, not by one frame's worth (the same 40 ms bound).
+* `testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden` — and must be bit-identical when nothing
+  arrived.
+* `testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame` — a reconfiguration during the
+  switch reaches the first visible frame as the floor, not as the previous rate's analysis.
+* `testTheHiddenIntervalMeasuresWhatItClaims` — never-stopped reads 0, ms→s, the stamp is consumed,
+  a backwards clock reads 0.
+* `testTheGrHistoryIsCurrentTheFrameItBecomesVisible` (§11's) is **restated** rather than extended: it
+  now asserts the head on the published pair (`GrHistoryView::drawnFrame`, new and public for the
+  reason `tick` is) and drives its reference view to the same phase before comparing pixels, so it
+  pins "nothing survives the hide" without depending on how long the hide happened to take. Left as
+  it was, it would have become timing-dependent: the reference publishes phase 0, and a gap above
+  1.29 s would have parked the view under test at phase 1.
+
+Mutation testing, nine mutants, each rebuilt and run against the whole suite:
+
+| mutant | killed by |
+|---|---|
+| the GR reveal publishes a zero-second tick again | `grRamp` (both checks) |
+| the GR reveal publishes nothing (pre-§11) | `grSwitch` (all three) + `grRamp` |
+| the hide never stamps, so every gap reads 0 | `grRamp` (both) |
+| the GR reveal re-anchors the phase at 0 | `grToggle` |
+| the spectrum reveal analyses with no elapsed time | `specSwitch` |
+| the spectrum reveal publishes nothing | `specSwitch` + `specPrepare` |
+| the gap is not clamped at zero | `hiddenGap` |
+| the stamp is not consumed | `hiddenGap` |
+| the reveal happens AFTER `clock.start` | **NOT killed** — see §12.6 |
+
+### 12.6 What is left, honestly
+
+1. **The sub-entry phase after a hide during which the producer advanced cannot be reconstructed
+   exactly.** A never-hidden view integrates its ramp in ~60 steps, each clamped to `[head, head + 1]`,
+   and the clamp is lossy: where the host's real cadence differs from the nominal one the estimate
+   repeatedly loses the excess. A single-step reconstruction over the whole gap keeps it. The
+   difference is bounded by one entry-pitch — measured ≤ 0.26 px on the Simple well and ≤ 0.18 px on
+   the Advanced at 48 kHz / 512 — it is the tolerance `smoothedHead` already advertises, and it never
+   moves a vertex rightward. The head is exact in every case.
+2. **The gap under-counts by up to one frame period.** It is measured from `clock.stop()`, and the
+   last tick that folded state ran up to ~16.7 ms before that. The error is bounded, one-sided
+   (it can only keep MORE of the old state, never less) and disappears into the same clamp.
+3. **Ordering is not testable headlessly.** The reveal must publish before `clock.start` so that the
+   race §11 measured cannot re-open; with no message loop and no vblank in the suite, swapping the
+   two lines changes nothing observable — hence the surviving mutant. The argument is stated at the
+   call site and the ordering is a one-line invariant.
+4. **The spectrum's resumed frame is not the control's frame, and cannot be.** A never-hidden view
+   folded every intermediate window into its EMA; those windows are gone (the ring holds 4096
+   samples). The resumed frame is the current analysis with the elapsed decay — closer to the current
+   spectrum than the control is (1.23 dB vs 4.72 dB mean), and smoothing rather than staleness is
+   what separates them.
+5. **`LoudnessMeterView` has the same start/stop shape** and is not changed: it is never hidden in
+   either layout, and its ballistics are published from the processor's atomics rather than
+   accumulated in the view. Recorded, not fixed.
+6. **OQ-017 is untouched.** The band `[head, head + 1]` and the time base are exactly as they were;
+   this change is about WHEN the ramp is advanced, not about what it is.

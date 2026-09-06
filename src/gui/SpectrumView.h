@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "LookAndFeel.h"
 #include "FrameClock.h"
+#include "HiddenInterval.h"
 #include "../dsp/ScopeBuffer.h"
 
 class AnabasisAudioProcessor;
@@ -109,6 +110,12 @@ private:
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;
+    // The seconds this view was hidden for, which is the dt the reveal's tick
+    // analyses with: the per-bin EMA decays in wall-clock time and the stopped
+    // clock cannot report the time it did not tick through. Shared with
+    // `GrHistoryView`, whose smoothed head needs the same quantity for its own
+    // reason — see `HiddenInterval.h` and `visibilityChanged`.
+    abgui::HiddenInterval hidden;
     juce::dsp::FFT fft { kOrder };
     juce::dsp::WindowingFunction<float> window { kSize,
         juce::dsp::WindowingFunction<float>::hann };
