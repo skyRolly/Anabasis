@@ -161,6 +161,19 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   capture alone reaches neither trace until the other publishes it too. Evidence: this release.
   [Verified]
 
+- **…and a very large audio buffer cannot break that.** Each capture holds about a third of a second
+  of audio at 48 kHz, so a single buffer longer than 12 288 samples can overwrite the very history
+  the two traces were about to be drawn from — one sample of it at 12 289, all of it at 16 384 and
+  above — and the analyser would have drawn whatever had replaced it: the two traces disagreed by
+  15.6 dB at a 13 000-sample buffer and 21.4 dB at 20 000, in a place where the input and the output
+  genuinely differ by 0.3. The pair now also agrees on the LENGTH it reads — whatever both captures
+  can still supply — so the window shortens for both traces together instead of one of them reading
+  audio that has been taken back, and where a buffer as long as the whole capture leaves nothing in
+  common, the last coherent pair stays on screen for that frame rather than half of it being
+  redrawn. Measured after: no overwritten sample is read at any buffer size from 512 to 32 768, the
+  two traces agree everywhere, and buffers up to 12 288 samples are bit-identical to before.
+  Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

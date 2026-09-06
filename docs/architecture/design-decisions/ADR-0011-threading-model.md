@@ -387,6 +387,34 @@ no atomics and no possibility of interleaving with a user gesture.
   > transfer to a minimum of two. KI-018's cross-ring variant is narrowed rather than closed (see
   > that entry); its equal-count corner is untouched.
   >
+  > **Amended again 2026-09-06 (same round, the review's large-block finding) — a shared END is only
+  > half of a shared SPAN.** The rule above is right and was under-specified: a ring can serve
+  > `[w − capacity, w)` and no more, so a ring whose head has run `capacity − kSize` = **12288**
+  > frames past the committed endpoint has already taken back the oldest frame of the window ending
+  > there. One chunk does it — `num` is the host's prepared block with no upper clamp — and the
+  > reader was still asking for 4096 frames. Reproduced at the boundary, one tap published and the
+  > other not: **0** overwritten frames of the 4096 requested at a 12288-frame chunk, **1** at 12289,
+  > **712** at 13000, **4095** at 16383, **all 4096** at 16384 and above; the traces that came back
+  > disagreed by 15.6 dB at 13000 and 21.4 dB at 20000, in a bin where the two taps genuinely differ
+  > by 0.3.
+  >
+  > **The completed rule.** The pair's floor is the HIGHER of the two rings' `oldestReadable()` — a
+  > span is common only if BOTH still hold it — and the span is `min (kSize, committed − floor)`,
+  > chosen once by the reader so that neither read has to shorten itself and the two windows cannot
+  > end up different lengths. It is `kSize` in every configuration a real-time host presents (the
+  > shrink begins only above a 12288-frame chunk, 256 ms at 48 kHz), and where it shrinks, both
+  > traces shrink together — a shorter window zero-padded at the front, which is exactly what the
+  > short-read path already does at start-up and after a rewind. `readEndingAt` additionally clamps
+  > its own START to the same floor, re-derived from its own acquired index: a backstop for the
+  > caller that does not ask, and for the producer that advances during the transform.
+  >
+  > **When no common span survives** — a chunk of a whole ring (16384 frames, 341 ms at 48 kHz)
+  > landing between the two publications — the tick draws nothing and the last coherent pair stays on
+  > screen: the split closes on the producer's next store, and the following tick draws the new span
+  > in full. Flooring would put silence where there is audio; reading anyway would put one trace's
+  > newest chunk where the other's history is. `committed == 0` is NOT that case: empty or rewound
+  > rings still take the zero-length read, which is how "nothing to analyse" is already expressed.
+  >
   > **Out of scope, recorded so it is not mistaken for solved.** The two taps are now INDEX-aligned;
   > they are not AUDIO-TIME aligned. The output tap carries the chain's latency, so frame k of the
   > output ring is the processed form of input audio roughly 10 ms earlier at 48 kHz. Aligning them

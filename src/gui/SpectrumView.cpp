@@ -141,7 +141,7 @@ void SpectrumView::mouseDown (const juce::MouseEvent& e)
 }
 
 void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
-                            std::vector<float>& smoothedDb, double dt, uint64_t committed)
+                            std::vector<float>& smoothedDb, double dt, uint64_t committed, int span)
 {
     // ENDING AT THE COMMITTED HEAD, not at this ring's own — `tick` passes the
     // newest frame index BOTH taps have published, so the two traces of one
@@ -149,7 +149,11 @@ void SpectrumView::analyse (const anabasis::ScopeBuffer& ring,
     // this ring has published, so a head from the other ring (which can be
     // larger — the two loads are independent) or one this ring has since
     // rewound reads exactly what `readLatest` would have.
-    const int got = ring.readEndingAt (scratchL.data(), scratchR.data(), kSize, committed);
+    // …and `span` frames of it: the length BOTH rings can still serve at that
+    // index, chosen once by the caller so neither read has to shorten itself
+    // and the two traces cannot end up with different windows. It is `kSize` in
+    // every configuration a real-time host presents; see `tick`.
+    const int got = ring.readEndingAt (scratchL.data(), scratchR.data(), span, committed);
     if (got <= 0)
     {
         // A ZERO-LENGTH READ IS ITSELF A RESET ANNOUNCEMENT (round 7), and this
@@ -302,6 +306,31 @@ void SpectrumView::tick (double dt)
     // the same seconds, which is what makes applying it to both correct.
     const uint64_t committed = juce::jmin (ci, co);
 
+    // …AND A LENGTH BOTH RINGS CAN STILL SERVE (0.2.12, the review's large-block
+    // finding). A shared endpoint is only half of a shared span: each ring holds
+    // `capacity` frames, so it can serve `[w − capacity, w)` and no more, and a
+    // ring whose head has run `capacity − kSize` = 12288 frames past the
+    // committed endpoint has already taken back the oldest frame of the window
+    // ending there. One chunk is enough to do it — `num` is the host's prepared
+    // block with no upper clamp, and an offline render prepares whatever it
+    // likes. Reproduced exactly at the boundary, one ring published and the
+    // other not: 0 overwritten frames of the 4096 requested at a 12288-frame
+    // chunk, 1 at 12289, 712 at 13000, 4095 at 16383, all 4096 at 16384 and
+    // above.
+    //
+    // The pair's floor is the HIGHER of the two rings' — a span is common only
+    // if BOTH still hold it — and the span is what is left between it and the
+    // committed endpoint. Choosing it here rather than letting each read
+    // shorten itself is what keeps the two windows the same length: `kSize` in
+    // every configuration a real-time host presents (the shrink begins only
+    // above a 12288-frame chunk, 256 ms at 48 kHz), shorter only where the
+    // alternative was reading frames the producer had taken back, and zero when
+    // nothing coherent is left, which is the one case this view refuses to draw.
+    const uint64_t floor = juce::jmax (in.oldestReadable(), out.oldestReadable());
+    const int span = committed > floor
+                         ? (int) juce::jmin ((uint64_t) kSize, committed - floor)
+                         : 0;
+
     // The generations join the idle test, or a reset landing on a tick with no
     // new frames would early-return past the clear below. The COUNTS left it
     // when the committed head arrived: "new frames" now means frames the pair
@@ -330,8 +359,20 @@ void SpectrumView::tick (double dt)
     if (resetIn)  std::fill (inDb.begin(),  inDb.end(),  -120.0f);
     if (resetOut) std::fill (outDb.begin(), outDb.end(), -120.0f);
 
-    analyse (in, inDb, dt, committed);
-    analyse (out, outDb, dt, committed);
+    // NOTHING COHERENT LEFT: the producer has taken back every frame of the
+    // window both taps share, which needs a chunk of a whole ring (16384 frames,
+    // 341 ms at 48 kHz) landing between the two publications. The last coherent
+    // pair stays on screen for this tick — the split closes on the producer's
+    // next store and the following tick draws the new span in full. Flooring
+    // instead would put silence on screen where there is audio, and reading
+    // anyway would put one trace's newest chunk where the other's history is.
+    // `committed == 0` is NOT this case: the rings are empty or rewound, and the
+    // zero-length read is how that is already expressed (`analyse` floors).
+    if (span == 0 && committed > 0)
+        return;
+
+    analyse (in, inDb, dt, committed, span);
+    analyse (out, outDb, dt, committed, span);
 
     // The second sample. A generation that moved while the batch ran means the
     // frames just folded into the EMA may span the rewind, so the EMA is not a

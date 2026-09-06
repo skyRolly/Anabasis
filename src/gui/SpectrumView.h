@@ -111,7 +111,7 @@ private:
     // agree about it — see the definition.
     juce::Rectangle<int> chipHitArea() const noexcept;
     void analyse (const anabasis::ScopeBuffer&, std::vector<float>& smoothedDb, double dt,
-                  uint64_t committed);
+                  uint64_t committed, int span);
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;

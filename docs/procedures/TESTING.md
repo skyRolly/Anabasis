@@ -277,7 +277,15 @@ read is what decides, and the GATE case leaves the EMA mid-fall so that "the gat
 distinguishable from "the gate opened and the analysis landed on the same numbers". The ring's own
 new entry point is pinned in the DSP suite beside the other `specSync` checks, the clamp included:
 an end past this ring's head must read the head's own window, which is what makes a stale index from
-the OTHER ring safe.
+the OTHER ring safe. The review round that followed added the other half — a window ending inside the
+ring can still BEGIN outside it once a chunk longer than `capacity − kSize` has run past the
+endpoint — and it is pinned BY VALUE rather than by count: the ring is filled with a ramp whose
+sample IS its absolute index, so a frame the producer took back reads as something else and the
+assertion sees it. `testTheSpectrumNeverDrawsAFrameTheProducerTookBack` then drives the same
+boundary through the real analyser at four host block sizes (at the threshold, past it, a whole
+ring, and far past it) in both publication orders and three times each, asserting that the two
+traces agree and that a block leaving no common span holds the last coherent pair rather than
+drawing half of one.
 
 **The two tests that sleep, and why they are the only ones.** `testTheGrHistoryDoesNotResumeAnExpiredRamp`
 and `testTheSpectrumIsCurrentTheFrameItBecomesVisible` each block for 40 ms between hiding a view and

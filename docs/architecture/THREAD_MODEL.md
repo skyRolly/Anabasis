@@ -204,7 +204,12 @@ above records a nuance without amending the ring rule.
   each ring for its own newest window draws the input spectrum of one chunk beside the output
   spectrum of another. Measured before the change: the two analysed windows ended at different
   indices on 1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128, the OUTPUT trace leading, because
-  the 4096-point FFT between the two reads (132 µs) gives the producer room to publish. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
+  the 4096-point FFT between the two reads (132 µs) gives the producer room to publish. The LENGTH
+  is chosen with the same care: a ring serves `[w − capacity, w)` and no more, so the pair reads
+  `min (kSize, committed − max (in.oldestReadable(), out.oldestReadable()))` frames — full in every
+  configuration a real-time host presents, shorter (for both traces together) where a chunk longer
+  than `capacity − kSize` = 12288 frames has taken the history back, and nothing at all where a
+  chunk of a whole ring leaves no common span, in which case the last coherent pair is held. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
   tap-content equality).
   **`prepare` rewinds both rings, and the rewind is ANNOUNCED on a generation counter**
   (`ScopeBuffer::resetGeneration()`, bumped release-after the index store; the generation-counter

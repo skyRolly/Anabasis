@@ -286,6 +286,23 @@ already states), **New/changed test** (`state_tests.cpp` + `dsp_tests.cpp`; `TES
 corrected — the behaviour it documents is unchanged; KI-018's cross-ring variant **narrowed**, its
 equal-count corner untouched). Trail: `worklogs/2026-09-05-gr-history-tip.md` §13.
 
+**Addendum (2026-09-06, same round) — the large-block half of that rule.** A shared ENDPOINT is only
+half of a shared SPAN: a ring serves `[w − capacity, w)` and no more, so a chunk longer than
+`capacity − kSize` = 12288 frames takes back the oldest frame of the window ending at the committed
+endpoint — 1 frame at 12289, 712 at 13000, all 4096 at 16384 — and the analyser was still asking for
+4096, so one trace drew what had replaced the history (measured: the traces disagreed by 15.6 dB at
+13000 and 21.4 dB at 20000, where the two taps genuinely differ by 0.3). The pair now agrees on the
+LENGTH as well as the end — `min (kSize, committed − max (oldestReadable))` — so the window shortens
+for both traces together, `readEndingAt` clamps its own start to the same floor as a backstop, and
+where a chunk of a whole ring leaves no common span the last coherent pair is held rather than half
+redrawn. Buffers up to 12288 frames are bit-identical to before. Rows engaged: **Threading /
+cross-thread path** (ADR-0011's 0.2.12 amendment extended in place, dated; `THREAD_MODEL.md`),
+**New/changed test** (`state_tests.cpp` + `dsp_tests.cpp` — the ring's floor pinned by VALUE with a
+ramp whose sample is its own index; `TESTING.md`; this file), **Ship a version** (`CHANGELOG.md`,
+`HANDOVER.md`). `KNOWN_ISSUES.md` unchanged: KI-018's remaining corner is a reset/refill question and
+this is a lapping one, and KI-007 item 6's predicate already reads "the committed head". Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §14.
+
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly
 generated line can have instantaneous changes, and it also changes while it is moving."*

@@ -1224,3 +1224,128 @@ itself, the clamp included.
 3. **KI-007 item 6 is untouched by design:** a tick that sees nothing new still holds the trace, and
    the entry's predicate wording was corrected rather than its behaviour.
 4. **OQ-017 untouched.**
+
+---
+
+## 14 — the large-block finding: a shared endpoint is only half of a shared span (2026-09-06)
+
+The finding, at `src/dsp/ScopeBuffer.h:325`: *"Large audio blocks desynchronize spectrum traces"* —
+`readEndingAt` does not stay safe when one producer chunk is longer than the ring's safe historical
+window, so the faster ring can overwrite slots the shared endpoint still makes the reader ask for,
+and the two traces describe different audio again despite sharing `E`.
+
+**This one is right, and it is right in the terms it states.** §13's own comment named the quantity
+— "12288 frames become 12288 − skew" — and did not follow the subtraction to zero.
+
+### 14.1 The arithmetic, and the boundary
+
+A slot holds absolute index `i` until the producer writes `i + capacity`. The reader asks for
+`[E − count, E)`, so the oldest frame it wants survives iff `w − E ≤ capacity − count` = **12288**
+for the analyser's 4096 of 16384. Above that, `w − E − 12288` frames of the window have been taken
+back, all of it at `w − E ≥ 16384`. In the split window `w − E` is one chunk, and `num` is the
+host's prepared block with no upper clamp.
+
+Reproduced directly — the window each ring returns at `E` is snapshotted, the split is constructed,
+and the same window is re-read and compared frame by frame:
+
+| chunk | frames of the 4096 requested that had been overwritten |
+|---|---|
+| 512, 4096, 12287, **12288** | **0** |
+| **12289** | **1** |
+| 13000 | 712 |
+| 16383 | 4095 |
+| 16384, 20000, 32768 | **4096 — the whole window** |
+
+Which ring is unsafe: whichever one is AHEAD (it is the one that has lapped its own history); the
+lagging ring can still serve the window in full, which is precisely how the two traces come to
+describe different audio while sharing an endpoint. Both publication orders reach it — the producer
+publishes the input tap first, but a reset publishes the rings independently and the reader's own
+loads are independent too. The condition is per-CHUNK, not cumulative: the two rings advance by the
+same `num` per chunk, so the skew is 0 or `num` and never compounds. The reader's own delay is the
+OTHER term (`w_at_read − count_at_load`), which is the pre-existing `readLatest` display margin and
+is unchanged by any of this.
+
+Reachability needs both halves: the tick must RUN (the committed head is also the idle gate, so a
+split alone leaves that head where the last frame was drawn) and the skew must exceed 12288. That
+means a host preparing blocks above 12288 frames AND a reader that missed a chunk — an offline
+render with the editor open, where the message thread is starved for far longer than one block.
+
+### 14.2 What it drew
+
+The display consequence, measured through the real analyser on the real rings, in a bin where the
+two taps genuinely differ by 0.3 dB:
+
+| chunk | before: overwritten / in vs out | after: span / in vs out |
+|---|---|---|
+| 512 … 12288 | 0 / **0.31 dB** | 4096 / **0.31 dB** (bit-identical) |
+| 12289 | 1 / 0.31 | 4095 / 0.31 |
+| 13000 | 712 / **15.6 dB** | 3384 / **0.43 dB** |
+| 16383 | 4095 / 2.8–3.2 dB | 1 / 0.19 dB |
+| 16384 | 4096 / **18.4 dB** (one trace at −120) | **held** / 0.34 dB |
+| 20000, 32768 | 4096 / **21.4 dB** | **held** / 0.24 dB |
+
+### 14.3 The invariant
+
+> **One frame, one span — and a span both rings still hold.** A ring can serve `[w − capacity, w)`.
+> The pair's floor is the HIGHER of the two rings' floors, because a span is common only if both
+> still hold it; the window is `[E − N, E)` with `N = min (kSize, E − floor)`; and where `N` is
+> zero there is no coherent pair to draw.
+
+### 14.4 The fix
+
+* `ScopeBuffer::oldestReadable()` — one acquire load, no payload touched: the oldest absolute index
+  this ring can still serve.
+* `readEndingAt` clamps its START to that floor, re-derived from its own acquired index, and returns
+  the shorter count. A backstop for the caller that does not ask and for the producer that advances
+  during the transform; the short-read contract already covers it (`analyse` zero-pads).
+* `SpectrumView::tick` computes `floor = max (in.oldestReadable(), out.oldestReadable())` and
+  `span = min (kSize, committed − floor)`, passes ONE span to both analyses — so neither read has to
+  shorten itself and the two windows cannot end up different lengths — and where `span == 0` with a
+  non-empty history, **holds the last coherent pair** rather than drawing half a frame.
+
+Why holding only there: a shorter window is the honest analysis of what is still available, and it
+is what this view already does at start-up and after a rewind; an EMPTY window is not an analysis at
+all, and flooring would put silence on screen where there is audio. `committed == 0` stays on the
+zero-length path (empty or rewound rings floor, as before).
+
+The one visible consequence of a shortened window, recorded rather than hidden: fewer real samples
+zero-padded into the same 4096-point transform leak more, so a shortened frame reads a little hotter
+away from the programme (16 dB in the marker bin at a 13000-frame chunk) — **on both traces
+equally**, which is the property under repair. It lasts one frame.
+
+### 14.5 Validation
+
+* **0 overwritten frames read at every chunk size from 512 to 32768**, both publication orders.
+* Traces agree at every size: worst 0.43 dB, against 15.6–21.6 dB before.
+* **Blocks up to 12288 are bit-identical to before** — same span, same numbers.
+* §13's skew measurement re-runs: 0.80 % / 3.82 % of ticks with differing spans at each ring's own
+  head, **0.000 % at the committed head**.
+* §11/§12's reveal numbers re-run unchanged (GR zero-progress first frames 0 of 180; spectrum
+  distance from the current analysis 1.231 dB); the GR right-edge and left-edge tables re-run
+  **byte-identical**.
+* Suites 324 + 1154 = **1478**, 0 failures.
+
+### 14.6 Mutants
+
+| mutant | killed by |
+|---|---|
+| `readEndingAt` no longer clamps its start | the ring's value-pinned lapping check |
+| the view asks for the full window regardless | 34 × `specLap` |
+| the pair's floor takes the LOWER of the two rings | 34 × `specLap` |
+| no hold when no common span survives | 4 × `specLap` (the held case) |
+| each ring read at its own head again | 16 × `specLap` + `specSpan` |
+
+### 14.7 What this does and does not touch
+
+* **KI-018 is unchanged.** Its remaining corner is a reset-and-refill identity question; this is a
+  lapping one. Nothing here narrows or widens it.
+* **The reveal-smoothing note stays informational.** A resumed view cannot replay the intermediate
+  windows a continuously visible one folded into its EMA — the ring holds 4096 frames, and those
+  windows are gone. This round changes nothing about it: the span rule decides WHICH samples a frame
+  analyses, never how many past frames the EMA has seen. Still a design limitation, still recorded,
+  still not expanded into a fix.
+* **OQ-017 untouched**; the GR history is not in this diff.
+* Still open: the taps are index-aligned, not audio-time aligned (the chain's latency sits between
+  them); and the pre-existing display margin against a producer that laps the reader DURING a
+  transform is unchanged — `readEndingAt`'s start clamp now bounds what that can return, but the
+  frames it drops are frames no reader could have had.

@@ -6,10 +6,13 @@
 // the namespace, each stated where it lives: heap storage instead of inline
 // arrays (the ctor, below); an ATOMIC payload; following from it, the
 // reversion of the sibling's Wave-4 two-segment `memcpy` to two store loops
-// (`pushBlock`); and a reader entry point that takes the END of the window
-// rather than always taking this ring's own head (`readEndingAt`, 0.2.12) —
-// the sibling has ONE ring and no pairing question, this product has two and
-// its analyser must read both at one committed head. ADR-0009 item 8 makes divergence accepted and one-way — there
+// (`pushBlock`); and the reader side needed to serve TWO rings as one — an
+// entry point that takes the END of the window rather than always taking this
+// ring's own head, a start clamped to the frames the producer has not taken
+// back, and the floor query a caller needs to choose a length both rings can
+// honour (`readEndingAt`, `oldestReadable`, 0.2.12). The sibling has ONE ring
+// and no pairing question; this product has two, and its analyser must read
+// both over one committed span. ADR-0009 item 8 makes divergence accepted and one-way — there
 // is no upstream-sync obligation and no backport path, and Anamorph is
 // read-only from here (CLAUDE.md §3) — so the sibling keeps the unrepaired
 // shape. That instance is recorded in `docs/KNOWN_ISSUES.md` (KI-016) rather
@@ -312,12 +315,41 @@ public:
     //     the caller supplied.
     //   * The window is [e − count, e) with e ≤ w, so it stays disjoint from the
     //     slot the producer is filling at w. The DISPLAY margin against a lap
-    //     narrows by exactly `w − e`, which is bounded by one chunk (the two
-    //     publications are adjacent stores): 12288 frames become 12288 − skew
-    //     for the only caller's 4096 of 16384.
+    //     narrows by exactly `w − e`: 12288 frames become 12288 − skew for the
+    //     only caller's 4096 of 16384 — AND THAT SUBTRACTION REACHES ZERO,
+    //     which the first draft of this comment named without following. A
+    //     chunk longer than the margin laps the window the caller asked for:
+    //     at `w − e ≥ 12289` the oldest requested frame is already overwritten,
+    //     at `w − e ≥ 16384` all of it is. Reproduced exactly there — 0
+    //     overwritten frames at a 12288-frame chunk, 1 at 12289, 712 at 13000,
+    //     4096 at 16384 — so the read now CLAMPS ITS OWN START as well as its
+    //     end (`oldestReadable`), and returns the shorter count rather than
+    //     frames the producer has taken back. The caller that reads two rings
+    //     as one span asks both for a length neither has to shorten, so the
+    //     clamp is a backstop rather than the mechanism; see `SpectrumView::tick`.
     //   * Nothing else is touched: same mask, same relaxed payload loads, same
     //     oldest-first order, same short-read return.
     static constexpr uint64_t kNewest = ~(uint64_t) 0;   // "wherever this ring is"
+
+    // THE OLDEST ABSOLUTE INDEX THIS RING CAN STILL SERVE. Slot `i & mask` holds
+    // index `i` until the producer writes `i + capacity`, so everything below
+    // `w − capacity` has been taken back. One acquire load, no payload touched,
+    // and it is what a reader pairing TWO rings needs before it can choose a
+    // window length both of them can honour: the pair's floor is the HIGHER of
+    // the two, because a span is only common if both rings still hold it.
+    //
+    // It is a bound at the instant of the load, like every other answer this
+    // ring gives a reader. A producer that advances afterwards raises the true
+    // floor, which is the pre-existing display margin `readLatest` has always
+    // had (a push of `capacity − count + 1` frames during the copy reaches the
+    // oldest slot) — unchanged by any of this, and the reason the clamp inside
+    // `readEndingAt` re-derives the floor from ITS OWN load rather than trusting
+    // a caller's earlier one.
+    uint64_t oldestReadable() const noexcept
+    {
+        const auto w = write.load (std::memory_order_acquire);
+        return w > (uint64_t) capacity ? w - (uint64_t) capacity : 0;
+    }
 
     int readEndingAt (float* dstL, float* dstR, int count, uint64_t end) const noexcept
     {
@@ -327,8 +359,20 @@ public:
         // Adapted (beyond the namespace): both ternary arms made unsigned —
         // the original's int arm trips -Wsign-conversion under this repo's
         // warning gate; the value range is unchanged (count ≤ capacity).
-        const uint64_t available = (e < (uint64_t) count) ? e : (uint64_t) count;
-        const uint64_t start = e - available;
+        uint64_t available = (e < (uint64_t) count) ? e : (uint64_t) count;
+        uint64_t start = e - available;
+        // …and the START is clamped to what the producer has not taken back, from
+        // the SAME acquired index: a window ending inside the ring can still begin
+        // outside it (a chunk longer than `capacity − count`), and returning those
+        // frames would hand the caller audio it did not ask for while telling it
+        // the count it wanted. Shortening is the honest answer and the one the
+        // short-read contract already covers — `analyse` zero-pads a short read.
+        const uint64_t oldest = w > (uint64_t) capacity ? w - (uint64_t) capacity : 0;
+        if (start < oldest)
+        {
+            start     = oldest;
+            available = e > start ? e - start : 0;
+        }
         for (uint64_t i = 0; i < available; ++i)
         {
             const auto idx = (start + i) & mask;

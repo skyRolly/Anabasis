@@ -7468,6 +7468,97 @@ static void testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan()
     }
 }
 
+// A SHARED ENDPOINT IS ONLY HALF OF A SHARED SPAN. Each ring holds `capacity`
+// frames, so it can serve `[w − capacity, w)` and no more: a ring whose head has
+// run `capacity − kSize` = 12288 frames past the endpoint the pair agreed on has
+// already taken back the oldest frame of the window ending there, and one chunk
+// is enough to do it (`num` is the host's prepared block, unclamped — an offline
+// render prepares what it likes). Measured at the boundary, one tap published
+// and the other not: 0 overwritten frames of the 4096 requested at a
+// 12288-frame chunk, 1 at 12289, 712 at 13000, 4095 at 16383, all 4096 at 16384
+// and above — and the traces that came back disagreed by 15.6 dB at 13000 and
+// 21.4 dB at 20000, in a bin where the two taps genuinely differ by 0.3.
+//
+// The scenario has to make the tick RUN as well as make the rings disagree,
+// because the committed head is also the idle gate: a split alone leaves that
+// head where the last frame was drawn. So the pair advances by a chunk the
+// reader did not draw — an offline render starves the message thread for far
+// longer than that — and only then does one tap publish the large one.
+static void testTheSpectrumNeverDrawsAFrameTheProducerTookBack()
+{
+    const int markerBin = 512;                          // 6 kHz at 48 kHz / 4096-point
+
+    for (const int block : { 12288, 13000, 16384, 32768 })
+      for (const bool intoIn : { true, false })
+    {
+        const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& proc = *procStorage;
+        proc.setRateAndBufferSizeDetails (48000.0, block);
+        proc.prepareToPlay (48000.0, block);
+
+        SpectrumView view (proc);
+        view.setBounds (0, 0, 300, 120);
+        view.setVisible (true);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, block);
+        int64_t n = 0;
+        const int blocks = juce::jmax (2, (int) std::ceil (3.0 * 16384.0 / (double) block));
+        for (int b = 0; b < blocks; ++b, ++n)           // fill both rings through the real chain
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < block; ++i)
+                    buf.setSample (ch, i, 0.5f * std::sin (2.0f * 3.14159265f * 1000.0f
+                                                            * (float) (n * block + i) / 48000.0f));
+            proc.processBlock (buf, midi);
+        }
+        for (int f = 0; f < 40; ++f) view.tick (1.0 / 60.0);
+
+        auto& inW  = const_cast<anabasis::ScopeBuffer&> (proc.spectrumInRing());
+        auto& outW = const_cast<anabasis::ScopeBuffer&> (proc.spectrumOutRing());
+        std::vector<float> body ((size_t) 512), marker ((size_t) block);
+        for (int i = 0; i < 512; ++i)
+            body[(size_t) i] = 0.5f * std::sin (2.0f * 3.14159265f * 1000.0f
+                                                 * (float) (n * block + i) / 48000.0f);
+        for (int i = 0; i < block; ++i)
+            marker[(size_t) i] = 0.9f * std::sin (2.0f * 3.14159265f * 6000.0f * (float) i / 48000.0f);
+
+        for (int round = 0; round < 3; ++round)          // repeated large chunks
+        {
+            inW .pushBlock (body.data(), body.data(), 512);   // the pair moves…
+            outW.pushBlock (body.data(), body.data(), 512);
+            (intoIn ? inW : outW).pushBlock (marker.data(), marker.data(), block);   // …one tap runs on
+
+            const std::vector<float> before = view.analysedInDb();
+            const std::vector<float> beforeOut = view.analysedOutDb();
+            view.tick (1.0 / 60.0);
+
+            const double disagreement = std::abs ((double) view.analysedInDb() [(size_t) markerBin]
+                                                - (double) view.analysedOutDb()[(size_t) markerBin]);
+            check (disagreement < 2.0,
+                   block == 12288
+                     ? "specLap: at the largest chunk the ring can still serve, both traces read the same 4096 frames"
+                     : "specLap: past that chunk size the traces still describe ONE span — the window shortens for both, it does not lap for one");
+
+            if (block >= 16384)                          // a chunk of a whole ring: nothing is left
+            {
+                bool held = true;
+                for (size_t b = 0; b < before.size() && held; ++b)
+                    held = juce::exactlyEqual (view.analysedInDb()[b], before[b])
+                           && juce::exactlyEqual (view.analysedOutDb()[b], beforeOut[b]);
+                check (held,
+                       "specLap: …and where NO common span survives the chunk, the last coherent pair is held rather than half-drawn");
+            }
+            else if (block == 12288 && round == 0)
+            {
+                check (std::abs ((double) view.analysedInDb()[(size_t) markerBin]
+                               - (double) before[(size_t) markerBin]) < 1.0,
+                       "specLap: …and a chunk at the boundary changes nothing at all — the full window is still the one both rings serve");
+            }
+        }
+    }
+}
+
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
 {
     using Ring = anabasis::GrHistoryBuffer;
@@ -9462,6 +9553,7 @@ int main (int argc, char** argv)
         testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden();
         testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame();
         testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan();
+        testTheSpectrumNeverDrawsAFrameTheProducerTookBack();
         testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();

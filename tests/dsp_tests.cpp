@@ -4113,6 +4113,45 @@ static void testSpectrumRingsCarryTheTaps()
                "specSync: an end of 0 reads nothing, which is what a rewound partner ring drags the committed head to");
         check (anabasis::ScopeBuffer::kNewest > (uint64_t) 1 << 62,
                "specSync: …and `readLatest` is that same read with no bound, so the two cannot drift apart");
+
+        // A WINDOW ENDING INSIDE THE RING CAN STILL BEGIN OUTSIDE IT. The end is
+        // clamped to the head; the START has to be clamped to what the producer
+        // has not taken back, because a chunk longer than `capacity − count`
+        // laps the window the caller asked for — one frame at 12289, all 4096 at
+        // 16384. Pinned by VALUE, not by count alone: the ring is filled with a
+        // ramp whose sample IS its absolute index, so a frame the producer
+        // overwrote reads back as the marker instead of as itself.
+        std::vector<float> idx ((size_t) Ring::capacity), notHistory ((size_t) 20000),
+                           gotL ((size_t) 4096), gotR ((size_t) 4096);
+        for (int i = 0; i < Ring::capacity; ++i) idx[(size_t) i] = (float) i;
+        for (int i = 0; i < 20000; ++i)          notHistory[(size_t) i] = -1.0f;
+        bool boundary = true;
+        for (const int n : { 12287, 12288, 12289, 13000, 16383, 16384, 20000 })
+        {
+            const auto fresh = std::make_unique<Ring>();
+            auto& rr = *fresh;
+            rr.pushBlock (idx.data(), idx.data(), Ring::capacity);          // frames 0…16383
+            const uint64_t E = rr.writeCount();                            // 16384
+            rr.pushBlock (notHistory.data(), notHistory.data(), n);         // the producer runs on
+            const int served = rr.readEndingAt (gotL.data(), gotR.data(), 4096, E);
+            const int want = juce::jlimit (0, 4096, Ring::capacity - n);
+            bool values = served == want;
+            for (int i = 0; i < served && values; ++i)
+                values = juce::exactlyEqual (gotL[(size_t) i], (float) ((int) E - served + i));
+            if (! values) boundary = false;
+        }
+        check (boundary,
+               "specSync: a read whose window the producer has lapped returns only the frames it still holds — 4096 at a 12288-frame chunk, 4095 at 12289, 3384 at 13000, 1 at 16383, none at 16384 — and every one of them is its own history, never an overwritten slot");
+
+        const auto floorStorage = std::make_unique<Ring>();
+        auto& fl = *floorStorage;
+        check (fl.oldestReadable() == 0, "specSync: an empty ring can serve from frame 0");
+        fl.pushBlock (idx.data(), idx.data(), Ring::capacity);
+        check (fl.oldestReadable() == 0,
+               "specSync: a ring holding exactly its capacity has taken nothing back yet");
+        fl.pushBlock (notHistory.data(), notHistory.data(), 5000);
+        check (fl.oldestReadable() == 5000,
+               "specSync: …and after 5000 more frames the oldest it can serve is frame 5000 — the floor a reader pairing two rings takes the higher of");
     }
 }
 
