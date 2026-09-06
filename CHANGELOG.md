@@ -198,6 +198,17 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   keeps the pair it already had — never a mixture. Measured after: 0 of 306 485.
   Evidence: this release. [Verified]
 
+- **The spectrum's frequency scale can no longer belong to a different moment than the trace.** A
+  trace is a row of analysis bins; what turns a bin into a frequency is the sample rate, and the
+  display used to fetch that rate for itself while the trace came from the update that produced it.
+  Across a rate change the two could disagree for as long as it took the next update to arrive, so a
+  6 kHz tone captured at 48 kHz was drawn where 12 kHz belongs after a change to 96 kHz — and where
+  the tone actually was, the display showed nothing: measured at that point on the scale, −0.00 dB
+  when the two agree and −116.8 dB and −120.0 dB when they do not, i.e. the tone gone from the
+  display either way. The trace and the scale it is read through are now handed to the drawing as one
+  thing, taken from one configuration, so a frame either shows both or keeps the pair it already had.
+  Evidence: this release. [Verified]
+
 - **A change of sample rate or buffer size can no longer leave the previous spectrum on screen.**
   Re-preparing the plugin clears both captures and re-maps every frequency, and the analyser drops
   its trace to the floor when that happens — but where the host's buffer is as large as a capture

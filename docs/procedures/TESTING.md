@@ -322,6 +322,38 @@ leaving the old rate's spectrum under the new rate's axis. The reader-side in-fl
 replaced the withdrawn ring-side one is pinned by `specReserve` — the arithmetic on its own, and
 that a drawn frame's window obeys it at the block the host prepared.
 
+Round 11 added the third fact a frame has to carry, and it is not in the trace at all: the SAMPLE
+RATE its bins are read through. `testASpectrumFrameCarriesTheRateItsBinsAreReadThrough` uses the
+audio as its own marker — 6 kHz is bin 512 at 48 kHz and bin 256 at 96 kHz, so the peak bin of a
+published trace says which configuration produced it — and its load-bearing case is the one that
+needs no thread at all: reconfigure and refill with NO tick in between, so the processor has already
+moved to the new rate while the newest frame any renderer can pick up is still the old one, then
+paint. The frame must be drawn through the rate that produced it. `paintedFrame().rate` is what makes
+that observable: `paint` writes the rate it actually resolved back into the frame it drew, so a
+renderer reading the processor behind the frame's back is visible from outside rather than only in
+the pixels. `testNoFrameARendererPicksUpEverMixesTwoConfigurations` then runs the same marker past a
+reading thread while the main thread churns 48 kHz ⇄ 96 kHz, which is what kills a rate published on
+the tick's schedule rather than the frame's — the deterministic cases cannot see that one, because
+single-threaded there is no window between the two publications to observe.
+
+**THE PREMISE OF A THREADED TEST IS ESTABLISHED, NOT ASSERTED — and CI taught this file the same
+lesson twice.** `testTheFrozenLatchNeedsNoThreadCrossing` learned it on 2026-08-14 (run
+31801408265). `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` learned it on 2026-09-06, in the
+same `sanitizers` job and in the same shape: the suite reported 1248 checks / 1 failure while
+memcheck reported 0 errors from 0 contexts, and the one failure was the premise — `distinct > 1`,
+i.e. the reading thread got exactly ONE productive turn in 4000 ticks. The mechanism is valgrind's
+serialised scheduler: while the reader holds the CPU the published frame cannot move, so every
+iteration of a reader quantum returns the same frame and `distinct` counts reader quanta that
+straddled a publication rather than reads. MEASURED under memcheck pinned to one CPU, 500 ticks: 481
+distinct frames idle, 221 under 8 competing spin loops, 219 under 24 — the reader's share of frames
+is the scheduler's to decide. The fix is the one the older test already prescribes, "remove the
+dependency rather than tune it": wait for the reader to be RUNNING and to have taken a whole frame
+before the measured section begins (guaranteed, because nothing publishes during that wait, so the
+counter is even and stable), and keep publishing and yielding until it has taken a second, different
+one. A stronger stimulus than the original, not a weaker one — the frame count the property is
+measured over becomes a floor rather than a hope. Re-run under memcheck on one CPU: 1261 checks, 0
+failures, 0 errors from 0 contexts.
+
 **What the suite cannot see here, stated rather than implied.** `repaint()` is what carries a
 published frame to the screen, and a headless suite has no repaint region to inspect: the tests pin
 the published state and the painter's copy of it, so a mutant that deletes the `repaint()` call while

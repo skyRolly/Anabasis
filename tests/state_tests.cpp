@@ -7629,7 +7629,7 @@ static void testTheSpectrumsFloorLeavesRoomForAPushInFlight()
         }
         view.tick (1.0 / 60.0);
 
-        const auto w = view.lastWindow();
+        const auto w = view.lastFrame();
         const auto floorIn  = SpectrumView::reservedFloor (proc.spectrumInRing() .writeCount(), block);
         const auto floorOut = SpectrumView::reservedFloor (proc.spectrumOutRing().writeCount(), block);
         check (w.span == SpectrumView::kSize && w.first >= floorIn && w.first >= floorOut,
@@ -7767,7 +7767,7 @@ static void testAReconfiguredSpectrumNeverKeepsThePreviousMapping()
         for (int f = 0; f < 30; ++f) view.tick (1.0 / 60.0);
 
         std::vector<float> pi (kBins), po (kBins);
-        SpectrumView::Window w {};
+        SpectrumView::Frame w {};
         check (view.readPublishedFrame (pi, po, w) && w.span == SpectrumView::kSize
                  && pi[(size_t) oldBin] > -60.0f && pi[(size_t) newBin] < pi[(size_t) oldBin] - 20.0f,
                "specReset: (premise) the old configuration really is on screen, peaking in the bin 6 kHz maps to at 48 kHz");
@@ -7814,7 +7814,7 @@ static void testAReconfiguredSpectrumNeverKeepsThePreviousMapping()
         // the point of committing is that the view settles.
         for (int f = 0; f < 5; ++f) view.tick (1.0 / 60.0);
         std::vector<float> pi2 (kBins), po2 (kBins);
-        SpectrumView::Window w2 {};
+        SpectrumView::Frame w2 {};
         check (view.readPublishedFrame (pi2, po2, w2)
                  && (withAudio && block < 16384 ? w2.span > 0 : w2.span == 0),
                "specReset: …and the frames that follow describe the new configuration too, rather than re-answering the reset for ever");
@@ -7867,21 +7867,23 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
 
     // --- deterministic first: what a tick publishes is what the tick drew
     std::vector<float> pi (kBins), po (kBins);
-    SpectrumView::Window w {};
+    SpectrumView::Frame w {};
     bool matched = view.readPublishedFrame (pi, po, w);
     for (size_t b = 0; b < kBins && matched; ++b)
         matched = juce::exactlyEqual (pi[b], view.analysedInDb()[b])
                   && juce::exactlyEqual (po[b], view.analysedOutDb()[b]);
-    check (matched && w.first == view.lastWindow().first && w.span == view.lastWindow().span,
-           "specFrame: the published frame is the frame the tick committed — both traces and the window they describe, together");
+    check (matched && w.first == view.lastFrame().first && w.span == view.lastFrame().span
+             && juce::exactlyEqual (w.rate, view.lastFrame().rate),
+           "specFrame: the published frame is the frame the tick committed — both traces and EVERY field of the description they belong to, together");
 
     // …and a tick that draws nothing publishes nothing: an idle tick must not
     // disturb the pair the renderer is entitled to keep reading.
     view.tick (1.0 / 60.0);                                 // no new frames: the idle gate returns
     std::vector<float> pi2 (kBins), po2 (kBins);
-    SpectrumView::Window w2 {};
+    SpectrumView::Frame w2 {};
     bool unchanged = view.readPublishedFrame (pi2, po2, w2)
-                     && w2.first == w.first && w2.span == w.span;
+                     && w2.first == w.first && w2.span == w.span
+                     && juce::exactlyEqual (w2.rate, w.rate);
     for (size_t b = 0; b < kBins && unchanged; ++b)
         unchanged = juce::exactlyEqual (pi2[b], pi[b]) && juce::exactlyEqual (po2[b], po[b]);
     check (unchanged,
@@ -7891,14 +7893,14 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     // caller of the seam in the plugin, and the window it picks up is the proof:
     // a painter reading the tick's working vectors instead would leave this at
     // the empty window it starts on and would never move it.
-    check (view.paintedWindow().span == 0 && view.paintedWindow().first == 0,
+    check (view.paintedFrame().span == 0 && view.paintedFrame().first == 0,
            "specFrame: (premise) nothing has been painted yet, so the renderer holds no window");
     {
         juce::Image img (juce::Image::ARGB, view.getWidth(), view.getHeight(), true);
         juce::Graphics g (img);
         view.paint (g);
     }
-    check (view.paintedWindow().first == w.first && view.paintedWindow().span == w.span,
+    check (view.paintedFrame().first == w.first && view.paintedFrame().span == w.span,
            "specFrame: a paint draws the published frame — the window it took is the one the tick published");
 
     for (int b = 0; b < 2; ++b)                             // move the pair on and publish again
@@ -7912,17 +7914,17 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
         juce::Graphics g (img);
         view.paint (g);
     }
-    check (view.paintedWindow().first == view.lastWindow().first
-             && view.paintedWindow().first != w.first,
+    check (view.paintedFrame().first == view.lastFrame().first
+             && view.paintedFrame().first != w.first,
            "specFrame: …and it follows the publication rather than the working copy, frame after frame");
 
     // --- then the behaviour, with a second thread reading while ticks publish
     std::atomic<bool> stop { false };
-    std::atomic<long> reads { 0 }, mixed { 0 }, distinct { 0 };
+    std::atomic<long> reads { 0 }, mixed { 0 }, distinct { 0 }, wrongRate { 0 };
     std::thread renderer ([&]
     {
         std::vector<float> ri (kBins), ro (kBins);
-        SpectrumView::Window rw {};
+        SpectrumView::Frame rw {};
         uint64_t lastFirst = ~(uint64_t) 0;
         while (! stop.load (std::memory_order_relaxed))
         {
@@ -7930,11 +7932,43 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
                 continue;                                   // overtaken twice: no frame, not a bad one
             reads.fetch_add (1, std::memory_order_relaxed);
             if (rw.first != lastFirst) { lastFirst = rw.first; distinct.fetch_add (1, std::memory_order_relaxed); }
+            // THE RATE IS PART OF THE FRAME, so it is part of what "one tick's"
+            // means. Nothing reconfigures here, so every whole frame must carry
+            // the one rate this processor was prepared at; a rate arriving on
+            // any schedule other than the frame's own would show up here.
+            if (! juce::exactlyEqual (rw.rate, 48000.0))
+                wrongRate.fetch_add (1, std::memory_order_relaxed);
             for (size_t b = 0; b < kBins; ++b)
                 if (! juce::exactlyEqual (ri[b], ro[b]))
                 { mixed.fetch_add (1, std::memory_order_relaxed); break; }
         }
     });
+
+    // THE OVERLAP IS ESTABLISHED, NOT HOPED FOR — `testTheFrozenLatchNeedsNoThread
+    // Crossing`'s rule, applied to the other side of the boundary. The first form
+    // of this test asserted `reads > 0 && distinct > 1` after the fact and
+    // nothing made either true: **CI caught it** on 2026-09-06 (the `sanitizers`
+    // job's valgrind step), where the suite reported 1248 checks / 1 failure
+    // while memcheck itself reported 0 errors from 0 contexts. valgrind
+    // SERIALISES threads, so while the reader holds the CPU the published frame
+    // cannot move — every iteration of a reader quantum returns the same
+    // `first`, and `distinct` counts reader quanta that straddled a publication
+    // rather than reads. With `lastFirst` seeded to ~0 the first successful read
+    // always makes it 1, so `distinct > 1` failing means the reader got exactly
+    // ONE productive turn in 4000 ticks. MEASURED here under memcheck pinned to
+    // one CPU, 500 ticks: 481 distinct frames idle, 221 under 8 competing spin
+    // loops, 219 under 24 — the reader's share of frames is the scheduler's to
+    // decide, and CI decided 1.
+    //
+    // So both halves are made to hold by construction. The reader must be seen
+    // RUNNING and to have taken a whole frame before the measured section
+    // begins — guaranteed, because nothing is publishing during this wait, so
+    // `frameSeq` is even and stable and its first attempt succeeds — and it must
+    // be seen to have taken a SECOND, different frame before the run ends, which
+    // publishing-and-yielding delivers to any scheduler that runs the thread at
+    // all. A stronger stimulus than the original, not a weaker one: the frame
+    // count the property is measured over is now a floor rather than a hope.
+    while (reads.load() == 0) std::this_thread::yield();
 
     for (int f = 0; f < 4000; ++f)
     {
@@ -7943,13 +7977,263 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
         outW.pushBlock (src.data(), src.data(), chunk);
         view.tick (1.0 / 60.0);
     }
+    while (distinct.load() < 2)
+    {
+        inW .pushBlock (toneA.data(), toneA.data(), chunk);
+        outW.pushBlock (toneA.data(), toneA.data(), chunk);
+        view.tick (1.0 / 60.0);
+        std::this_thread::yield();
+    }
     stop.store (true);
     renderer.join();
 
-    check (reads.load() > 0 && distinct.load() > 1,
-           "specFrame: (premise) the reading thread really did read whole frames, and the pair really was moving under it");
+    check (reads.load() > 0,
+           "specFrame: (premise) the reading thread really did read whole frames");
+    check (distinct.load() > 1,
+           "specFrame: (premise) …and the pair really was moving under it");
     check (mixed.load() == 0,
            "specFrame: no frame a renderer could pick up ever combined the input trace of one tick with the output trace of another");
+    check (wrongRate.load() == 0,
+           "specFrame: …and every one of them carried the rate its bins are read through, on the frame's own schedule and no other");
+}
+
+// A ROW OF BIN INDICES MEANS NOTHING WITHOUT THE RATE THAT TURNS THEM INTO
+// FREQUENCIES. `paint` maps a column to a bin through `binHz = rate / kSize`,
+// and until 0.2.12's round 11 it read that rate for itself
+// (`processor.preparedSampleRate()`) while the trace came from the published
+// frame — two independent reads of two configurations, free to disagree inside
+// one rendered frame. Note what is and is not affected: the x axis is a FIXED
+// 20 Hz–20 kHz log sweep with no rate term at all, so a rate mismatch does not
+// move the axis, it moves the DATA under it — the same defect, and worth naming
+// precisely because the finding's word for it was "axis".
+//
+// 6 kHz sits at bin 512 at 48 kHz and at bin 256 at 96 kHz. MEASURED on the
+// harness at the bin the tone actually occupies: −0.00 dB paired correctly,
+// −116.80 dB as a 48 kHz trace under the 96 kHz rate, −120.00 dB as a 96 kHz
+// trace under the 48 kHz rate. The tone leaves the display outright, either way.
+static void testASpectrumFrameCarriesTheRateItsBinsAreReadThrough()
+{
+    const double rA = 48000.0, rB = 96000.0;
+    const float  tone = 6000.0f;
+    const auto kBins = (size_t) SpectrumView::kBins;
+    const auto binOf = [] (double hz, double sr)
+    { return (int) std::lround (hz * (double) SpectrumView::kSize / sr); };
+    check (binOf (tone, rA) == 512 && binOf (tone, rB) == 256,
+           "specAxis: (premise) the marker tone lands in a different bin at each rate, so a swapped rate is visible");
+
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+
+    const auto feed = [&proc, tone] (double sr, int block, int count)
+    {
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, block);
+        for (int b = 0, t = 0; b < count; ++b)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < block; ++i)
+                    buf.setSample (ch, i, 0.5f * std::sin (2.0f * 3.14159265f * tone
+                                                            * (float) (t + i) / (float) sr));
+            t += block;
+            proc.processBlock (buf, midi);
+        }
+    };
+    const auto repaint = [&view]
+    {
+        juce::Image img (juce::Image::ARGB, view.getWidth(), view.getHeight(), true);
+        juce::Graphics g (img);
+        view.paint (g);
+    };
+    // The loudest bin of a published trace — which is where that trace says the
+    // tone is, in the only units a trace has.
+    const auto peakBin = [] (const std::vector<float>& t)
+    {
+        int best = 0;
+        for (size_t b = 1; b < t.size(); ++b) if (t[b] > t[(size_t) best]) best = (int) b;
+        return best;
+    };
+
+    std::vector<float> pi (kBins), po (kBins);
+    SpectrumView::Frame fr {};
+
+    // --- rate A: a recognisable spectrum, drawn through its own rate
+    proc.setRateAndBufferSizeDetails (rA, 512);
+    proc.prepareToPlay (rA, 512);
+    feed (rA, 512, 64);
+    for (int f = 0; f < 30; ++f) view.tick (1.0 / 60.0);
+    repaint();
+    check (view.readPublishedFrame (pi, po, fr)
+             && juce::exactlyEqual (fr.rate, rA)
+             && peakBin (pi) == binOf (tone, rA)
+             && juce::exactlyEqual (view.paintedFrame().rate, rA),
+           "specAxis: a frame is published with the rate its bins were captured at, and that is the rate the paint reads them through");
+
+    // --- THE MISMATCH WINDOW. Reconfigure and refill with NO tick in between:
+    // the processor's published rate is already B while the newest frame any
+    // renderer can pick up is still A's. A paint landing here is exactly the
+    // reported defect — and it must draw A's trace through A's rate, because
+    // that is the only pairing that describes anything real.
+    proc.setRateAndBufferSizeDetails (rB, 512);
+    proc.prepareToPlay (rB, 512);
+    feed (rB, 512, 64);
+    check (juce::exactlyEqual (proc.preparedSampleRate(), rB),
+           "specAxis: (premise) the processor has already moved to the new rate…");
+    repaint();
+    check (juce::exactlyEqual (view.paintedFrame().rate, rA)
+             && peakBin (view.analysedInDb()) == binOf (tone, rA),
+           "specAxis: …and a paint before the next tick still draws the previous frame through the rate that produced it, never through the new one");
+
+    // --- and the frame moves as one: the trace and its rate change together.
+    bool everSplit = false, sawB = false;
+    for (int f = 0; f < 40; ++f)
+    {
+        view.tick (1.0 / 60.0);
+        repaint();
+        if (! view.readPublishedFrame (pi, po, fr)) continue;
+        const double drawn = view.paintedFrame().rate;
+        if (! juce::exactlyEqual (drawn, fr.rate)) everSplit = true;
+        // A trace with a real peak must have that peak where ITS OWN rate puts
+        // the tone. A floored frame (everything at −120) says nothing and is
+        // skipped — that is the honest post-reset state, not a mismatch.
+        if (fr.span > 0 && pi[(size_t) peakBin (pi)] > -60.0f)
+        {
+            if (peakBin (pi) != binOf (tone, fr.rate)) everSplit = true;
+            if (juce::exactlyEqual (fr.rate, rB)) sawB = true;
+        }
+    }
+    check (sawB, "specAxis: (premise) the reconfiguration really did produce frames at the new rate");
+    check (! everSplit,
+           "specAxis: across the reconfiguration no frame ever pairs a trace with a rate that did not produce it, and the paint never reads a rate the frame did not carry");
+
+    // --- the empty frame a reconfiguration publishes carries a rate too, and it
+    // is the new one: nothing to mis-map, and nothing left unspecified either.
+    proc.setRateAndBufferSizeDetails (rA, 512);
+    proc.prepareToPlay (rA, 512);
+    view.tick (1.0 / 60.0);
+    repaint();
+    check (view.readPublishedFrame (pi, po, fr) && juce::exactlyEqual (fr.rate, rA)
+             && juce::exactlyEqual (view.paintedFrame().rate, rA),
+           "specAxis: the frame a reconfiguration publishes carries the configuration it belongs to, empty or not");
+
+    // --- A VIEW THAT HAS NEVER BEEN PREPARED still paints, and paints what it
+    // always did. `preparedSampleRate()` is 0 before the first `prepareToPlay`
+    // and the published rate starts there too; `binHz = 0` would make the column
+    // reader's `fa / binHz` infinite and its conversion to `int` undefined, so
+    // the 48 kHz fallback that used to sit on the processor read now sits on the
+    // frame's, and this is the case that says so.
+    const auto freshStorage = std::make_unique<AnabasisAudioProcessor>();
+    SpectrumView fresh (*freshStorage);
+    fresh.setBounds (0, 0, 300, 120);
+    fresh.setVisible (true);
+    check (juce::exactlyEqual (freshStorage->preparedSampleRate(), 0.0),
+           "specAxis: (premise) an unprepared processor publishes no rate at all");
+    {
+        juce::Image img (juce::Image::ARGB, fresh.getWidth(), fresh.getHeight(), true);
+        juce::Graphics g (img);
+        fresh.paint (g);
+    }
+    check (juce::exactlyEqual (fresh.paintedFrame().rate, 48000.0),
+           "specAxis: …and a paint with no frame yet falls back to 48 kHz rather than dividing by a rate of zero");
+}
+
+// …AND THE PAIRING HAS TO SURVIVE A READER THAT IS NOT THE TICK. The test above
+// establishes the invariant from the message thread, where the rate can only be
+// wrong for as long as a tick takes. A renderer reads on its own schedule, so a
+// rate published on ANY schedule other than the frame's own — one store outside
+// the sequence bracket, or a write on every tick rather than on every
+// publication — leaves a whole tick's window in which the traces are one
+// configuration's and the rate is another's. The marker is the audio: 6 kHz
+// peaks at bin 512 at 48 kHz and at bin 256 at 96 kHz, so a frame that carries
+// the wrong one of the two says so in its own numbers, with no threshold to
+// argue about.
+static void testNoFrameARendererPicksUpEverMixesTwoConfigurations()
+{
+    const double rA = 48000.0, rB = 96000.0;
+    const float  tone = 6000.0f;
+    const auto kBins = (size_t) SpectrumView::kBins;
+    const auto binOf = [] (double hz, double sr)
+    { return (int) std::lround (hz * (double) SpectrumView::kSize / sr); };
+
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (rA, 512);
+    proc.prepareToPlay (rA, 512);
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+
+    std::atomic<bool> stop { false };
+    std::atomic<long> reads { 0 }, split { 0 }, peaksA { 0 }, peaksB { 0 };
+    std::thread renderer ([&]
+    {
+        std::vector<float> ri (kBins), ro (kBins);
+        SpectrumView::Frame rw {};
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            if (! view.readPublishedFrame (ri, ro, rw)) continue;
+            reads.fetch_add (1, std::memory_order_relaxed);
+            int best = 0;
+            for (size_t b = 1; b < kBins; ++b) if (ri[b] > ri[(size_t) best]) best = (int) b;
+            // A floored frame says nothing about any configuration — that is the
+            // honest post-reset state, and it is skipped rather than counted.
+            if (rw.span <= 0 || ri[(size_t) best] <= -60.0f) continue;
+            if (best == binOf (tone, rw.rate))
+            {
+                if (juce::exactlyEqual (rw.rate, rA)) peaksA.fetch_add (1, std::memory_order_relaxed);
+                if (juce::exactlyEqual (rw.rate, rB)) peaksB.fetch_add (1, std::memory_order_relaxed);
+            }
+            else
+                split.fetch_add (1, std::memory_order_relaxed);
+        }
+    });
+
+    // The reader must be RUNNING before the churn begins — established, not
+    // hoped for (`testTheFrozenLatchNeedsNoThreadCrossing`'s rule): nothing
+    // publishes during this wait, so the sequence counter is even and stable and
+    // the reader's first attempt succeeds.
+    while (reads.load() == 0) std::this_thread::yield();
+
+    const auto feedAndDraw = [&] (double sr, int rounds)
+    {
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0, t = 0; b < rounds; ++b)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    buf.setSample (ch, i, 0.5f * std::sin (2.0f * 3.14159265f * tone
+                                                            * (float) (t + i) / (float) sr));
+            t += 512;
+            proc.processBlock (buf, midi);
+            view.tick (1.0 / 60.0);
+            std::this_thread::yield();
+        }
+    };
+
+    // …and the churn: the whole reconfiguration cycle, repeatedly, with the
+    // reader looking the entire time. Bounded by the premise it has to
+    // establish — frames with a real peak at BOTH rates — so the run is as long
+    // as the scheduler needs and no longer.
+    for (int cycle = 0; cycle < 12 && (peaksA.load() == 0 || peaksB.load() == 0); ++cycle)
+    {
+        proc.setRateAndBufferSizeDetails (rA, 512);
+        proc.prepareToPlay (rA, 512);
+        feedAndDraw (rA, 80);
+        proc.setRateAndBufferSizeDetails (rB, 512);
+        proc.prepareToPlay (rB, 512);
+        feedAndDraw (rB, 80);
+    }
+    stop.store (true);
+    renderer.join();
+
+    check (reads.load() > 0 && peaksA.load() > 0 && peaksB.load() > 0,
+           "specAxis: (premise) the reading thread saw whole frames at both rates while the configuration churned under it");
+    check (split.load() == 0,
+           "specAxis: …and not one of them put the tone anywhere but where its own rate says it is — the trace and the rate it is read through are one frame or neither");
 }
 
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
@@ -9951,6 +10235,8 @@ int main (int argc, char** argv)
         testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame();
         testAReconfiguredSpectrumNeverKeepsThePreviousMapping();
         testTheSpectrumsRendererNeverSeesHalfOfTwoFrames();
+        testASpectrumFrameCarriesTheRateItsBinsAreReadThrough();
+        testNoFrameARendererPicksUpEverMixesTwoConfigurations();
         testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();

@@ -1597,3 +1597,162 @@ model rather than measured — the same limit ADR-0038 records.
 1. **ADR-0039's clearance.** A merge prerequisite for the pull request, not work in the tree.
 2. Unchanged from §15: the audio-path reservation index; and the taps are index-aligned, not
    audio-time aligned.
+
+---
+
+## 17. The frame carries its own configuration (2026-09-06, round 11)
+
+Three items: one correctness finding, one architecture-review requirement, one CI failure that turned
+out to be neither.
+
+### 17.1 Mismatched frequency axes — reproduced, and not quite where the finding said
+
+**The lifecycle, traced rather than assumed.** The rate the display uses lives in
+`GrHistoryBuffer::preparedRate` (`src/dsp/GrHistoryBuffer.h:338`), written relaxed inside `clear`
+(`:232`) between a release-fenced odd guard increment and a release even one (`:217-235`), read
+relaxed through `prepared()` (`:176-180`) and forwarded as
+`AnabasisAudioProcessor::preparedSampleRate` (`src/PluginProcessor.h:564`). One writer: the host's
+reconfiguration thread, through `prepareToPlay` (`src/PluginProcessor.cpp:748,785`). Three readers:
+`GrHistoryView` (bracketed), `CurveView` (unbracketed), `SpectrumView::paint` (unbracketed,
+`src/gui/SpectrumView.cpp:575` before this round).
+
+**What it affects, corrected.** Not the axis. The x axis is a fixed 20 Hz–20 kHz log sweep with no
+rate term (`:577,651-654,661`); the rate enters only as `binHz = rate / kSize` (`:619`) and from
+there into the regime test (`:636`), the Catmull-Rom sample position (`:638`) and the averaged bin
+range (`:639-640`). A rate mismatch moves the DATA under a stationary axis. There are no frequency
+labels and no Nyquist bound to get wrong; above Nyquist the fixed axis saturates onto the top bin
+through `jlimit`, which is a pre-existing display property and is untouched.
+
+**Reproduced.** 6 kHz is bin 512 at 48 kHz and bin 256 at 96 kHz. Read at the bin the tone actually
+occupies:
+
+| pairing | dB at the tone |
+|---|---|
+| 48 kHz trace, 48 kHz rate | **−0.00** |
+| 48 kHz trace, 96 kHz rate | **−116.80** |
+| 96 kHz trace, 96 kHz rate | **−0.00** |
+| 96 kHz trace, 48 kHz rate | **−120.00** |
+
+The tone leaves the display outright, either way.
+
+**Where the window is, and it is not the one already audited.** `KNOWN_ISSUES` KI-017's
+`prepareToPlay` publication-lag note audits the window INSIDE `engine.prepare` — rings rewound, pair
+not yet republished — and concludes correctly that `SpectrumView` reads an empty ring there. The
+defect is on the other side: **after** the pair republishes and **before** the view's next tick
+publishes a frame. Round 10 widened that window rather than closing it, by giving the trace its own
+publication schedule and leaving the rate on the processor's.
+
+**The fix, and why it is a bracket rather than a comparison.** The rate travels inside the published
+frame (`SpectrumView::Frame`), and `paint` reads no processor state at all. Which rate to publish is
+the whole question: the rate and the frames live in different objects, and a relaxed load of one is
+unordered against an acquire load of the other. `prepareToPlay` writes them in one sequence — rings
+rewound at `:769`, pair republished at `:785` — so `tick` samples `GrHistoryBuffer::resetEpoch()` and
+the rate together at its top and closes with `batchIntact` before it commits anything. That is
+`GrHistoryView`'s reader contract verbatim, evenness test included
+(`src/gui/GrHistoryView.cpp:144`), and it is what moves this view from the ring banner's unbracketed
+discipline to its bracketed one. The three cases are a split over where the sampled epoch fell in
+`resetGuard`'s modification order — odd; even-before-the-clear; even-after-the-clear — which is what
+makes them exhaustive; splitting over the direction of the mismatch, as the first draft did, is not a
+partition. Full statement in ADR-0039 clause 9.
+
+**Two things it does not claim**, both found by adversarially refuting the first draft: the epoch
+announces the RATE, not the ring reset (`GrHistoryBuffer::prepare` clears only on a changed pair
+while `AnabasisEngine::prepare` rewinds unconditionally, so `resetObserved` remains the sole detector
+for a same-pair re-prepare); and it pairs the rate with the frames this tick's ACQUIRED INDICES
+describe, not with every sample the EMA remembers — KI-018's one-tick cross-ring residual is
+unchanged and now carries a rate consequence, recorded there.
+
+### 17.2 The architecture gate
+
+Unchanged in substance and still OPEN. `ARCHITECTURE_REVIEW_GATE.md:13` gates a "new cross-thread
+path, new atomic ordering"; `THREADING_POLICY.md:29` makes "any path not in this table" one;
+ADR-0027 clause 4 and ADR-0038 clause 8 name a payload as returning to the gate.
+`AI_AGENT_POLICY.md:62-63` says a passing build does not clear it and only human review does, and
+there is no provision anywhere for an agent to mark such a record Accepted. The owner's blanket
+approval for post-v0.1.0 rounds explicitly excludes the gated class (ADR-0026).
+
+**Widened rather than re-filed.** ADR-0039 is `Proposed`, not signed off; the index's warning is
+about widening a record that HAS been signed off. Amending it now is what puts one coherent design in
+front of the reviewer. The record gained a review package (ownership, threads, publication sequence,
+orderings, invariant, retry, allocation, measured cost, reset behaviour, rate coupling, alternatives,
+necessity) and file:line citations in the format `SOURCE_OF_TRUTH.md` fixes.
+
+**Simpler design, asked and answered.** The chosen mechanism makes the boundary NARROWER than before,
+not wider: `paint` now reads exactly one object where it used to read the view's mutable vectors plus
+a processor accessor. Adding the rate cost one `std::atomic<double>` inside an existing bracket and
+one reuse of an existing reader contract — no new mechanism, no new shared state, nothing on the
+audio path. The alternatives are recorded in the ADR and each is larger.
+
+**A doc-sync gap round 10 left, found and closed:** `DOCUMENTATION_LIFECYCLE_POLICY.md` requires
+`THREAD_MODEL.md` AND `THREADING_POLICY.md` AND an ADR; only the first two of the three had been
+done. That is verbatim the omission ADR-0027 exists to record.
+
+### 17.3 The CI failure was the test, not the detector
+
+The failing job is named `sanitizers`, but the failing STEP is valgrind memcheck on the UNSANITIZED
+Release build, and memcheck reported **0 errors from 0 contexts**. The failure was one assertion:
+`specFrame: (premise) the reading thread really did read whole frames, and the pair really was moving
+under it`. The ASan+UBSan leg passed.
+
+**Root cause.** valgrind serialises threads, so while the reader holds the CPU the published frame
+cannot move: every iteration of a reader quantum returns the same frame, and `distinct` counts reader
+quanta that straddled a publication rather than reads. With `lastFirst` seeded to `~0` the first
+successful read always makes it 1, so `distinct > 1` failing means the reader got exactly ONE
+productive turn in 4000 ticks — near-total starvation, not a marginal miss.
+
+**Not reproduced locally, and the honest form of that.** Three configurations, none failing: native;
+memcheck on one CPU; memcheck on one CPU under contention. What DOES reproduce is the mechanism, as a
+monotone degradation — distinct frames out of 500 ticks:
+
+| competing spin loops on the same CPU | no yield | with a yield per tick |
+|---|---|---|
+| 0 | 481 | 499 |
+| 8 | 221 | 454 |
+| 24 | 219 | 486 |
+
+The reader's share of frames is the scheduler's to decide, and CI decided 1.
+
+**The fix is the test's, and the repo already prescribes it.**
+`testTheFrozenLatchNeedsNoThreadCrossing` records the same class of failure from 2026-08-14 (run
+31801408265, same job) and the rule: *"the fix is to remove the dependency rather than to tune it …
+holds by construction … A stronger stimulus than the original, not a weaker one."* So the reader is
+waited for — RUNNING and holding a whole frame before the measured section (guaranteed: nothing
+publishes during that wait, so the counter is even and stable and its first attempt succeeds) — and
+then published-and-yielded to until it has taken a second, different frame. The two halves of the
+premise are also split into two checks, so a future failure names which one broke. No product change
+is justified: widening the two-attempt retry bound would contradict its stated rationale and would
+itself be a gated threading change.
+
+**Evidence it now passes:** memcheck, `--track-origins=yes --error-exitcode=1`, pinned to ONE CPU
+(the worst case for this starvation): **1261 checks, 0 failures, 0 errors from 0 contexts, exit 0.**
+
+### 17.4 Tests and mutants
+
+`specAxis` (deterministic: the frame carries its rate; a paint before the next tick draws the previous
+frame through the rate that produced it; the reconfiguration cycle never splits the pair; the empty
+frame carries its configuration; a never-prepared view falls back to 48 kHz rather than dividing by
+zero) and a threaded variant in which a reading thread watches a 48 kHz ⇄ 96 kHz churn and asserts
+that every whole frame with a real peak puts the tone where its own rate says it is. `specFrame`
+gains a rate check in the reading thread.
+
+| mutant | killed by |
+|---|---|
+| `paint` reads `preparedSampleRate()` for itself (the pre-fix pairing) | `specAxis` (the no-tick window) |
+| the trace is published without its rate | 4 × `specAxis` |
+| the rate is published on the tick's schedule, not the frame's | `specAxis` (threaded churn) |
+| the zero-rate fallback removed | `specAxis` (unprepared view) |
+| *(re-run)* renderer reads the working vectors · reset publishes nothing · sequence bracket removed · reserve dropped | as §16.4 |
+| *(survives)* the rate stored one instruction past the closing release | the reader reads the rate ~4096 loads after the sequence load, so the writer must be preempted inside a one-instruction window for the reader's whole copy |
+| *(survives)* the configuration bracket removed · its evenness test removed · the reset commit moved in front of it | all three guard against a `prepareToPlay` landing INSIDE a tick; the suite reconfigures from the thread that ticks, and staging an overlap needs a host thread reconfiguring while audio is present, which the named plugin-API premise forbids. The evenness test is required by `GrHistoryBuffer`'s stated reader contract whether or not a test can see it |
+
+**Cost, measured** (2000 iterations): a whole tick 210.5 µs; `publishFrame` 2.37 µs of it — 1.13 % of
+a tick, 0.014 % of a 60 Hz frame; `readPublishedFrame` 1.50 µs. 32 KB per view, allocated once.
+Nothing on the audio path changed.
+
+### 17.5 Follow-ups
+
+1. **ADR-0039's clearance.** Still a merge prerequisite, not work in the tree.
+2. Unchanged: the audio-path reservation index; the taps are index-aligned, not audio-time aligned;
+   and the reveal-smoothing limitation, which this round did not touch — the ring still does not
+   retain the intermediate windows a continuously visible EMA would have seen, and nothing in the
+   frame publication changes that premise.

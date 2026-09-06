@@ -1,4 +1,4 @@
-# ADR-0039 — The spectrum publishes its two traces to the painting thread as ONE frame
+# ADR-0039 — The spectrum publishes its two traces, and the configuration that makes them readable, to the painting thread as ONE frame
 
 > **⛔ PROPOSED — THE ARCHITECTURE REVIEW GATE IS OPEN. This is a merge prerequisite, and a green
 > build does not clear it.** `ARCHITECTURE_REVIEW_GATE.md` lists "**Thread Model change** — new
@@ -20,8 +20,20 @@
 > race while the gate is answered. What the round must not do is assert "no threading change" in a
 > pull request, which is the failure ADR-0027's banner records; this record is the flag.
 
-**Status:** **Proposed — 2026-09-06.** Awaiting the owner's explicit approval. **It is NOT covered by
-the standing blanket approval for the post-v0.1.0 rounds** — ADR-0027 established that a gated
+**Status:** **Proposed — 2026-09-06**, widened the same day (round 11) and still `Proposed`.
+Awaiting the owner's explicit approval.
+
+> **WIDENED BEFORE APPROVAL, DELIBERATELY.** Round 11's review found that the published frame carried
+> the two traces but not the SAMPLE RATE that turns their bin indices into frequencies, so `paint`
+> read that rate for itself and a rendered frame could pair one configuration's trace with another's
+> mapping. The repair belongs to this record rather than to a new one, and the reason is the index's
+> own rule about widening: *"that record was signed off naming three different changes, and widening
+> a signed-off record after the fact is the failure mode, not the shortcut"* (`ADR_INDEX.md`). This
+> record is **not signed off**. Amending it now is what puts ONE coherent design in front of the
+> reviewer instead of a decision plus an erratum — the opposite of the failure mode that rule names.
+> The Decision below describes the final design; nothing from the first filing has been deleted.
+
+**It is NOT covered by the standing blanket approval for the post-v0.1.0 rounds** — ADR-0027 established that a gated
 thread-model item falls outside it, and ADR-0038 was held at `Proposed` until answered for the same
 reason. Approval sought is of the design below; withholding it does not imply reverting to the
 unsynchronised read, which is the one option that is not available.
@@ -37,7 +49,8 @@ macOS and Windows and never on Linux/X11, and when attached JUCE paints componen
 thread. So on two of the three shipped platforms these two vectors are written by one thread and
 read by another, with nothing between them.
 
-Two things follow, and they are separate findings that happen to have one fix:
+Three things follow. The first two are the original filing's; the third is round 11's and is what
+widened it:
 
 1. **It is a data race by the letter of the memory model** — the third instance of the defect class
    ADR-0027 recorded for `presetMenusOpen` and ADR-0038 for the GR history's scroll scalars, found
@@ -47,6 +60,26 @@ Two things follow, and they are separate findings that happen to have one fix:
    the same split the 0.2.12 committed-head work removed from the ANALYSIS (ADR-0011's 0.2.12
    amendments), re-entering one layer further out, in the one display whose entire purpose is
    comparing the two traces.
+3. **A rendered frame could mix two CONFIGURATIONS.** A trace is a row of BIN indices; what turns a
+   bin into a frequency is `binHz = rate / kSize` (`src/gui/SpectrumView.cpp:619`), and `paint` read
+   that rate from `AnabasisAudioProcessor::preparedSampleRate()` on its own
+   (`src/gui/SpectrumView.cpp:575` before this round) while the trace came from the published frame.
+   Two independent reads of two objects, free to disagree. Note precisely what moves: the x axis is a
+   FIXED 20 Hz–20 kHz log sweep with no rate term (`src/gui/SpectrumView.cpp:577,651-654`), so a
+   mismatch does not move the axis — it moves the DATA under it, through the regime test, the
+   Catmull-Rom sample position and the averaged bin range (`:636`, `:638`, `:639-640`). MEASURED on
+   the round-11 harness at the bin the tone actually occupies, 6 kHz being bin 512 at 48 kHz and bin
+   256 at 96 kHz: **−0.00 dB** paired correctly, **−116.80 dB** as a 48 kHz trace under the 96 kHz
+   rate, **−120.00 dB** as a 96 kHz trace under the 48 kHz rate. The tone leaves the display
+   outright, either way.
+
+   This is [ADR-0038](ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md) clause 7 —
+   *"a published display estimate carries the identity of the state it describes"* — applied to a
+   payload instead of a scroll phase, and the first filing did not cite it. `GrHistoryBuffer`'s own
+   banner had already drawn the line this view fell on the wrong side of: a reader that maps ENTRIES
+   through the prepared pair *"must bracket it with the epoch exactly as it brackets `peek`"*, while
+   only a reader with *"no entries in its question"* may take it unbracketed
+   (`src/dsp/GrHistoryBuffer.h:153-175`). `SpectrumView` has entries in its question.
 
 Measured, with the reading thread standing in for the renderer and identical audio in both rings so
 that a coherent frame's traces are bit-identical (`specFrame`, 4000 publications, a whole 4096-frame
@@ -60,8 +93,9 @@ window of one of two alternating tones per tick):
 
 ## Problem
 
-The painting thread needs **4098 values** — 2048 input bins, 2048 output bins, and the window
-`{first, span}` they were analysed over — and it needs them to be **one tick's**. ADR-0038 admitted
+The painting thread needs **4099 values** — 2048 input bins, 2048 output bins, the window
+`{first, span}` they were analysed over, and the sample rate they were captured at — and it needs
+them to be **one tick's**. ADR-0038 admitted
 a second site on the explicit ground that its two scalars did NOT need consistency: every
 stale/fresh pairing was a frame the ramp itself produced. That argument is unavailable here and its
 negation is the defect. So the question is not "may the paint read these?" but **which consistency
@@ -98,10 +132,13 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
 
 1. **The Message → Painting boundary admits a PAYLOAD at one named site: `SpectrumView`'s published
    frame.** Two arrays of `std::atomic<float>` (`pubIn`, `pubOut`, 2048 each), plus
-   `std::atomic<uint64_t> pubFirst` and `std::atomic<int> pubSpan` — the window the pair was
-   analysed over, which travels WITH the pair because it is part of what makes the frame one frame.
-   Written only by `SpectrumView::publishFrame` on the message thread; read only by
-   `SpectrumView::readPublishedFrame`.
+   `std::atomic<uint64_t> pubFirst`, `std::atomic<int> pubSpan` and `std::atomic<double> pubRate` —
+   the window the pair was analysed over and the rate its bins are read through, both of which travel
+   WITH the pair because they are what make the frame one frame. Written only by
+   `SpectrumView::publishFrame` on the message thread; read only by
+   `SpectrumView::readPublishedFrame`. The reader receives them as one `Frame`
+   (`src/gui/SpectrumView.h:77-105`), and `paint` reads **no processor state at all** — the one
+   accessor call it used to make is gone.
 2. **The payload is `memory_order_relaxed` on both sides, and the ordering is carried by the
    counter.** `std::atomic<float>` per bin for `ScopeBuffer::Sample`'s reason and no other: it makes
    the concurrent access DEFINED. It synchronises nothing on its own and is not asked to.
@@ -138,10 +175,80 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    edge the view therefore publishes the display floor in both traces and a zero-length window, and
    commits the reset accounting with it. Not a fabricated frame: it is exactly what this view shows
    before its first frame.
-9. **This is not a licence to widen.** The permission is for ONE site, for a payload that is
-   read-only on the painting side, published whole by a single writer, and validated by the bracket
-   above. A second payload site, a paint-path WRITE, or a second writer of `frameSeq` is a new path
-   again and returns to this gate.
+9. **THE RATE IS TAKEN UNDER THE CONFIGURATION BRACKET, and that is what makes it the frame's own.**
+   The rate lives in `GrHistoryBuffer` and the frames live in two `ScopeBuffer`s; a relaxed load of
+   one is unordered against an acquire load of the other, so "publish the rate you happen to read" is
+   not enough. `AnabasisAudioProcessor::prepareToPlay` writes both in one thread in one sequence —
+   `engine.prepare` rewinds the two spectrum rings (`src/PluginProcessor.cpp:769` →
+   `src/dsp/AnabasisEngine.cpp:68-69` → `src/dsp/ScopeBuffer.h:201-205`), then
+   `grHistoryRing.prepare` republishes the pair inside its seqlock window
+   (`src/PluginProcessor.cpp:785` → `src/dsp/GrHistoryBuffer.h:217-235`) — and `tick` uses that
+   sequence by sampling `GrHistoryBuffer::resetEpoch()` and the rate together at its top and closing
+   with `SpectrumView::configurationHeld` before it commits anything
+   (`src/gui/SpectrumView.cpp`, `tick` and `configurationHeld`). It is `GrHistoryView`'s reader
+   contract verbatim, including the evenness test (`src/gui/GrHistoryView.cpp:144`), and it is what
+   moves this view from the banner's unbracketed case to its bracketed one.
+
+   The cases are a split over where the sampled epoch fell in `resetGuard`'s modification order,
+   which is what makes them exhaustive — **not** over the direction of the mismatch, which is not a
+   partition: (i) ODD, rejected outright, because the odd increment is a RELAXED RMW and an acquire
+   load that takes it synchronises with the PREVIOUS clear, carrying no ordering against the rewinds;
+   (ii) EVEN and before the clear — either the tick read the new rate, which it can only have read
+   from a store inside the clear window, and the seqlock reader rule (Boehm, MSPC 2012) forces the
+   re-read past the acquire fence to observe that clear's odd increment; or the tick's acquired ring
+   indices were post-rewind, and the clear's even release RMW happens-before the pushes that revealed
+   them, so coherence forbids the re-read returning anything earlier — either way the epoch moved and
+   the frame is held; (iii) EVEN and after the clear, where the acquire load of a release RMW puts
+   the rate store AND both rings' `write.store (0, release)` before every later load in the tick.
+
+   **A NAMED PREMISE**, in the words `ScopeBuffer::reset` already uses (`src/dsp/ScopeBuffer.h:197-200`):
+   the host does not deliver audio across `prepareToPlay`. It is a plugin-API contract, not a C++
+   guarantee, and case (ii)'s second limb rests on it. It also covers the window this bracket cannot
+   see into — the milliseconds between the ring rewinds and the clear, spent constructing the eight
+   oversamplers — where the epoch and the rate are both the old configuration's and the rings are
+   already rewound: there is no new-rate audio yet to mis-map, and the rings report `committed == 0`.
+   That window is the one `KNOWN_ISSUES.md` KI-017 already audited and accepted.
+
+10. **TWO THINGS THIS BRACKET IS NOT**, stated because the short version is wrong in both:
+    * **It announces the RATE, not the ring reset.** `GrHistoryBuffer::prepare` clears only when the
+      (rate, block) pair CHANGED (`src/dsp/GrHistoryBuffer.h:144-151`) while `AnabasisEngine::prepare`
+      rewinds both rings UNCONDITIONALLY (`src/dsp/AnabasisEngine.cpp:68-69`), so the ordinary
+      transport-start re-prepare at an unchanged pair rewinds with the epoch standing still. That case
+      cannot move the rate, which is all this bracket is about, and the rings' own `resetGeneration`
+      remains the SOLE detector for it. Nothing here subsumes `resetObserved`.
+    * **It pairs the rate with the frames this tick's ACQUIRED INDICES describe, not with every sample
+      the EMA remembers.** The ring payload is read through relaxed loads, and KI-018's cross-ring
+      residual — one ring's rewind observed and the other's not, for one tick — is unchanged: that
+      tick floors the ring it saw and can fold the other's pre-reset frames into an EMA published
+      beside the new rate. One tick, ~16.7 ms, decaying on the 120 ms EMA. **The residual is bounded,
+      not removed**, and the property claimed is the bounded one.
+
+11. **This is not a licence to widen.** The permission is for ONE site, for a payload that is
+   read-only on the painting side, published whole by a single writer, validated by the sequence
+   bracket, and carrying the identity of the configuration it describes. A second payload site, a
+   paint-path WRITE, or a second writer of `frameSeq` is a new path again and returns to this gate.
+
+## Review package
+
+Collected here so a reviewer does not have to assemble it from the prose above.
+
+| | |
+|---|---|
+| **Problem** | Two 2048-bin dB traces and the configuration that makes them readable cross from the message thread to the painting thread. Before this record they crossed as plain `std::vector<float>` plus an independent accessor call: a data race on two of three shipped platforms, a frame that could mix two ticks, and a frame that could mix two sample rates. |
+| **Ownership** | ONE writer (`SpectrumView::publishFrame`, message thread, called only from `tick`), ONE reader (`SpectrumView::readPublishedFrame`, called from `paint` in the plugin and from tests). The published storage is written nowhere else and read nowhere else. |
+| **Writer thread** | The message thread — `tick` is a `juce::VBlankAttachment` callback through `abgui::FrameClock` (`src/gui/FrameClock.h`). |
+| **Reader thread** | Whichever thread paints: the OpenGL context's render thread on macOS and Windows, the message thread on Linux, and the message thread again for `createComponentSnapshot` (`docs/architecture/THREAD_MODEL.md` §"Which context paints"). |
+| **Publication sequence** | counter odd (relaxed) → `atomic_thread_fence(release)` → 2048 + 2048 relaxed `float` stores → `first`, `span`, `rate` relaxed → counter even (`release`). |
+| **Read sequence** | counter acquire → reject if odd → relaxed copy of both traces and the three scalars → `atomic_thread_fence(acquire)` → relaxed re-read → keep only if unchanged. |
+| **Memory ordering, and why each part** | The release FENCE rather than a release store, because release orders what came BEFORE it and what must be ordered here is what comes after. The payload relaxed, because the counter carries the ordering and the atomics exist to make the access defined. The closing store `release`, which is what publishes the payload. The reader's acquire fence BEFORE the re-read, which is the Boehm (MSPC 2012) seqlock reader — an acquire load alone is not sufficient on a weakly ordered target. `frameSeq` has one writer, so no read-modify-write is needed. |
+| **Coherent-frame invariant** | *Every rendered frame observes one tick's traces, the window they were analysed over, and the sample rate they were captured at — or it observes an earlier such frame in full. No rendered frame combines state from two ticks or two configurations.* |
+| **Retry / fallback** | Bounded at two attempts; a reader that loses both keeps the frame it already holds — an older coherent frame, never a mixed one. No spin, no lock, no delay. The bound is deliberate: a spin here is a spin on the render thread, where a stall is a dropped frame rather than a stale one. |
+| **Allocation** | None on either side at run time. 16 KB of published storage and 16 KB of painter-owned copy, both sized once in the constructor (`std::vector<std::atomic<float>>` cannot be resized, so it is built with a count). |
+| **Cost** | MEASURED, 2000 iterations on the round-11 harness: a whole tick (two 4096-point FFTs and both ring reads) is **210.5 µs**; `publishFrame` is **2.37 µs** of it — **1.13 % of a tick, 0.014 % of a 60 Hz frame period**. `readPublishedFrame` is **1.50 µs** per paint. Memory: 16 KB published + 16 KB painter copy = **32 KB per view**, one view per editor, both allocated once at construction. Nothing on the audio path changed at all. |
+| **Reset / reconfiguration** | A reset publishes the EMPTY frame — the display floor in both traces, a zero-length window, and the new rate — and commits its accounting, so a reconfiguration can never leave the previous configuration's pixels up. The configuration bracket closes BEFORE that accounting, so a tick that straddled a clear commits nothing and the reset is answered by the next tick rather than swallowed. |
+| **Sample-rate coupling** | The rate is part of the frame (clause 1) and is taken under the GR ring's reset epoch (clause 9), which is what makes it the same configuration's as the frames. `paint` reads no processor state. |
+| **Alternatives** | Immutable snapshot per tick (allocates 16 KB per frame; `atomic<shared_ptr>` is not lock-free here) · two-slot double buffer (tears when two ticks land in one paint — a timing assumption, not a proof) · triple buffer (correct and wait-free, but 48 KB and an ownership protocol the tree does not otherwise have, to avoid a fallback that costs one repeated frame at 16.7 ms) · a mutex (a lock on the paint path, and one the tick can be made to wait on) · painting-thread ownership ("the painting thread" is not one thread). For the rate specifically: a second atomic beside the frame (rejected — that is the mismatch, restated) and adding a rate to `ScopeBuffer` (rejected — it extends the producer/consumer protocol for a fact the plugin already publishes, the same reasoning that withdrew the `maxPush` draft this round). |
+| **Why the design is necessary** | The path exists whether or not it is synchronised; the only question is whether it is defined. Removing it would mean not drawing the spectrum, or drawing it from the audio thread. Of the mechanisms that make it defined without a lock, an allocation or an unbounded retry, this is the smallest — and it makes the boundary NARROWER than before, because `paint` now reads exactly one object instead of the view's mutable vectors plus a processor accessor. |
 
 ## Consequences
 
@@ -156,29 +263,59 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
   this record adds the one site where a mechanism supplies the consistency instead of an argument.
 - The painter may repeat one frame when it loses the bracket twice. That is a display consequence and
   it is bounded by the tick rate; option C is the recorded answer if it ever must not happen.
-- **What the tests can and cannot see.** The coherence is pinned by a reading thread and by the
-  painter's own window (`specFrame`); the `repaint()` that carries a published frame to the screen is
-  not observable in a headless suite and is argued, not measured — the same limit ADR-0038 records
-  for the race itself.
+- **What the tests can and cannot see, stated rather than implied.** The coherence is pinned by a
+  reading thread and by the painter's own frame (`specFrame`, `specAxis`). Three things are argued
+  rather than measured, and each is a mutant that survives: the `repaint()` that carries a published
+  frame to the screen (a headless suite has no repaint region to inspect); the data race itself (the
+  same limit ADR-0038 records); and the configuration bracket's three guards — the bracket itself,
+  its evenness test and the placement of the reset commit behind it — which defend against a
+  `prepareToPlay` landing INSIDE a tick. The suite reconfigures from the thread that ticks, so a clear
+  cannot overlap a tick there, and making one overlap needs a host thread reconfiguring while audio
+  is present, which the named plugin-API premise forbids. The evenness test is required by
+  `GrHistoryBuffer`'s stated reader contract (`src/dsp/GrHistoryBuffer.h:122-127`) whether or not a
+  test can see it, and `SOURCE_OF_TRUTH.md` puts that contract above a test's reach.
+- **`CurveView` is NOT covered by this record.** It reads `preparedSampleRate()` unbracketed from
+  both the painting thread and the editor's timer (`src/gui/CurveView.cpp:27,35`), and it is the
+  banner's legitimate unbracketed case: its curve comes from the parameter set, not from a ring, so
+  there are no entries whose timeline the rate has to match. KI-017 already records the consequence —
+  a bounded correct-but-late frame. Left alone deliberately.
 
 ## Related code
 
-- `src/gui/SpectrumView.h` (`readPublishedFrame`, `paintedWindow`, the published member block and its
-  `static_assert`)
-- `src/gui/SpectrumView.cpp` (`publishFrame`, `readPublishedFrame`, `tick`'s reset publication,
-  `paint`)
+- `src/gui/SpectrumView.h:77-105` (`Frame`, `lastFrame`, `paintedFrame`), `:107-131`
+  (`readPublishedFrame`), `:275-300` (the published member block and its `static_assert`)
+- `src/gui/SpectrumView.cpp` (`tick` — the configuration sample at its top, the reset-edge
+  publication, the bracket close before each commit; `publishFrame`; `readPublishedFrame`;
+  `configurationHeld`; `paint`)
+- `src/dsp/GrHistoryBuffer.h:144-151` (the clear-on-change gate), `:153-175` (the two-discipline
+  rule this view now sits on the other side of), `:189-193` (`batchIntact`), `:217-235` (`clear`)
+- `src/PluginProcessor.cpp:769,785` (the order the bracket's proof rests on),
+  `src/PluginProcessor.h:560-564`
+- `src/dsp/AnabasisEngine.cpp:68-69`, `src/dsp/ScopeBuffer.h:197-205`
+- `src/gui/GrHistoryView.cpp:144` (the same reader contract, already in the tree)
 - `docs/architecture/THREAD_MODEL.md` §"Which context paints"
 - `docs/policies/THREADING_POLICY.md` (Message → Painting row)
 
 Evidence [Verified]:
-- Source: the files above at 0.2.12
+- Source: the files and lines above at 0.2.12
 - Test: `specFrame` — the published frame equals the frame the tick committed; an idle tick leaves it
   untouched; a paint takes the published window and follows it; and a reading thread over 4000
   publications with alternating whole-window tones never observes a mixed pair. `specReset` — the
   reconfiguration cases across the block-size boundary (8192, 13000, 16384, 32768), with and without
   new audio.
-- Mutants: the renderer reading the tick's working vectors (1 161 778 mixed reads); each trace
-  published as it is computed (277 334); the bracket removed (mixed reads); the painter reading the
-  working vectors (the painted window never moves); the reset publishing nothing (`specReset` fails
-  on every block at or above capacity).
+- Test (round 11): `specAxis` — a frame carries the rate its bins were captured at; a paint before
+  the next tick draws the previous frame through the rate that produced it; across a reconfiguration
+  no frame pairs a trace with a rate that did not produce it; the empty frame a reconfiguration
+  publishes carries its configuration; a never-prepared view falls back to 48 kHz rather than
+  dividing by zero; and a reading thread watching a 48 kHz ⇄ 96 kHz churn never sees the tone
+  anywhere but where its own frame's rate puts it.
+- Mutants killed: the renderer reading the tick's working vectors (1 161 778 of 1 321 607 mixed
+  reads); each trace published as it is computed (277 334 of 416 230); the sequence bracket removed;
+  the painter reading the working vectors; the reset publishing nothing; the reader-side reserve
+  dropped (30 checks); `paint` reading `preparedSampleRate()` for itself; the trace published without
+  its rate; and the rate published on the tick's schedule rather than the frame's.
+- Mutants that SURVIVE, with the reason: the rate stored one instruction past the closing release
+  (the reader reads it ~4096 loads after the sequence load, so the writer would have to be preempted
+  inside a one-instruction window for the reader's whole copy); and the three configuration-bracket
+  guards, for the reason given under Consequences.
 - Worklog: `worklogs/2026-09-05-gr-history-tip.md` §16

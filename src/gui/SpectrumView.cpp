@@ -215,6 +215,27 @@ void SpectrumView::tick (double dt)
 {
     const anabasis::ScopeBuffer& in  = processor.spectrumInRing();
     const anabasis::ScopeBuffer& out = processor.spectrumOutRing();
+
+    // THE CONFIGURATION THIS FRAME IS ABOUT, TAKEN ONCE AND UNDER THE EPOCH THAT
+    // OWNS IT (0.2.12, the review's mismatched-axis finding). A trace is a row
+    // of BIN indices; the sample rate is what turns a bin into a frequency, and
+    // until this round `paint` read it for itself while the pair came from the
+    // published frame — two independent reads of two different configurations,
+    // free to disagree in one rendered frame.
+    //
+    // The pair is now published WITH its rate, and this is where the rate that
+    // goes with it is chosen. Taken here rather than at publication time
+    // deliberately: `AnabasisAudioProcessor::prepareToPlay` rewinds both
+    // spectrum rings (`engine.prepare`) BEFORE it republishes the prepared pair
+    // (`grHistoryRing.prepare`), so the epoch bracket around this read is what
+    // makes "the rate this frame publishes" and "the frames that rate is
+    // published with" one configuration rather than two — see
+    // `configurationHeld`, which is the close of this bracket and the reader
+    // contract `GrHistoryBuffer`'s banner states for any reader that maps
+    // entries through the pair. `GrHistoryView` has always done this; this view
+    // was on the other side of that banner's split and should not have been.
+    const auto   cfgEpoch = processor.grHistory().resetEpoch();
+    const double cfgRate  = processor.preparedSampleRate();
     // THE RESET IS ANNOUNCED, NOT INFERRED. `AnabasisEngine::prepare` rewinds
     // both rings so frames captured at the previous sample rate become
     // unreachable; making them unreachable is only half of it, because
@@ -417,6 +438,14 @@ void SpectrumView::tick (double dt)
         // would put silence on screen where there is audio.
         if (resetIn || resetOut)
         {
+            // …and the configuration bracket closes BEFORE any of it. A tick
+            // that straddled a clear must commit NOTHING — committing the
+            // generations here while discarding the frame would mark this reset
+            // answered without ever answering it, and at a block of a whole ring
+            // this is the last publication that would ever happen, so the blank
+            // would never arrive. Held whole, retried next tick.
+            if (! configurationHeld (cfgEpoch))
+                return;
             shownInGen     = gi0;
             shownOutGen    = go0;
             shownInCount   = ci;
@@ -424,7 +453,8 @@ void SpectrumView::tick (double dt)
             shownCommitted = committed;
             drawnFirst     = committed;
             drawnSpan      = 0;
-            publishFrame (committed, 0);
+            drawnRate      = cfgRate;
+            publishFrame (committed, 0, cfgRate);
             repaint();
         }
         return;
@@ -469,6 +499,15 @@ void SpectrumView::tick (double dt)
     if (gi1 != gi0) std::fill (inDb.begin(),  inDb.end(),  -120.0f);
     if (go1 != go0) std::fill (outDb.begin(), outDb.end(), -120.0f);
 
+    // …AND THE CONFIGURATION HAS TO HAVE HELD ACROSS ALL OF IT. Everything above
+    // proves the two traces describe one span of audio; this proves that span
+    // belongs to the rate about to be published beside it. Held, not repaired,
+    // and held BEFORE anything is committed: a tick that spanned a re-prepare
+    // leaves every `shown*` where it was, so the next tick re-derives from a
+    // settled configuration instead of inheriting this one's half-answer.
+    if (! configurationHeld (cfgEpoch))
+        return;
+
     shownInGen   = gi1;
     shownOutGen  = go1;
     shownInCount = ci;
@@ -480,13 +519,90 @@ void SpectrumView::tick (double dt)
     shownCommitted = committed;
     drawnFirst     = first;
     drawnSpan      = span;
+    drawnRate      = cfgRate;
     // …and only now does the frame become visible. Publication is the LAST thing
     // the tick does, after both EMAs are settled and both post-batch generation
     // checks have had their say, so the pair the renderer can pick up is one
     // this tick was willing to commit to — never a half-updated one it was
     // about to floor.
-    publishFrame (first, span);
+    publishFrame (first, span, cfgRate);
     repaint();
+}
+
+// THE CLOSE OF THE CONFIGURATION BRACKET, and it is `GrHistoryView`'s reader
+// contract verbatim (`GrHistoryView.cpp` `paintHistory`, and the two-discipline
+// rule at `GrHistoryBuffer::prepared`): an ODD sample was taken inside a clear
+// and describes a half-written pair, and a value that has MOVED means a clear
+// overlapped the tick. Either way the frame is HELD.
+//
+// WHAT IT IS FOR. The rate and the frames live in DIFFERENT objects — the rate
+// in `GrHistoryBuffer`, the frames in two `ScopeBuffer`s — and a relaxed load of
+// one is unordered against an acquire load of the other. `prepareToPlay` writes
+// them in one thread in one sequence (`engine.prepare` rewinds both rings at
+// `PluginProcessor.cpp:769`, `grHistoryRing.prepare` republishes the pair at
+// `:785`), and this bracket is what lets a reader use that sequence.
+//
+// THE CASES ARE A SPLIT OVER WHERE `epoch0` FELL IN `resetGuard`'s MODIFICATION
+// ORDER, which is what makes them exhaustive — not over the direction of the
+// mismatch, which is not a partition:
+//   (i)  `epoch0` ODD. Rejected outright, before `batchIntact` is consulted at
+//        all. The odd increment is a RELAXED RMW, so an acquire load that takes
+//        it synchronises with the PREVIOUS clear, not this one — it carries no
+//        ordering against the rewinds, and `batchIntact` would compare it equal
+//        to itself and pass. This test is the whole of that case.
+//   (ii) `epoch0` EVEN and BEFORE the clear. Two sub-cases, both forced:
+//        * the tick read the NEW rate — that load read a store made INSIDE the
+//          clear window, and it is sequenced before the acquire fence
+//          `batchIntact` carries, so the seqlock reader rule (Boehm, MSPC 2012 —
+//          the paper `GrHistoryBuffer` cites for exactly this) forces the
+//          re-read to observe at least that clear's odd increment;
+//        * the tick's ACQUIRED RING INDICES were post-rewind — those frames are
+//          pushed only after `prepareToPlay` returned, so the clear's even
+//          release RMW happens-before the pushes, which happen-before this
+//          tick's acquire of the index that revealed them, which is sequenced
+//          before the re-read; coherence forbids the re-read returning anything
+//          earlier.
+//        Either way the value has moved and the frame is held.
+//   (iii) `epoch0` EVEN and AFTER the clear. Nothing to catch, and nothing that
+//        needs catching: `epoch0` is then a value written by a RELEASE RMW and
+//        read by an ACQUIRE load, so everything sequenced before it — the rate
+//        store AND both rings' `write.store (0, release)` — happens-before every
+//        later load in this tick.
+//
+// A NAMED PREMISE, in the words `ScopeBuffer::reset` already uses for the same
+// thing: the host does not deliver audio across `prepareToPlay`. It is a
+// plugin-API contract, not a C++ guarantee, and case (ii)'s second sub-case
+// rests on it. It also covers the gap this bracket cannot see into — the
+// milliseconds between the ring rewinds and the clear, spent constructing the
+// oversamplers — where `epoch0` and the rate are both the OLD configuration's
+// and the rings are already rewound: there is no new-rate audio yet to mis-map,
+// and the rings report `committed == 0`.
+//
+// WHAT THIS DOES *NOT* CLAIM, stated because the shorter version is wrong in two
+// ways a reader would not otherwise find:
+//   * IT IS AN ANNOUNCEMENT FOR THE RATE, NOT FOR THE RING RESET.
+//     `GrHistoryBuffer::prepare` clears only when the (rate, block) pair
+//     CHANGED, while `AnabasisEngine::prepare` rewinds both spectrum rings
+//     UNCONDITIONALLY — so the ordinary transport-start re-prepare at an
+//     unchanged pair rewinds the rings with the epoch standing still. That case
+//     cannot move the rate, which is all this bracket is about, and the rings'
+//     own `resetGeneration` remains the SOLE detector for it (`resetObserved`,
+//     and the second sample after the batch). Nothing here subsumes that.
+//   * IT PAIRS THE RATE WITH THE FRAMES THIS TICK'S ACQUIRED INDICES DESCRIBE,
+//     not with every sample the EMA remembers. The payload itself is read
+//     through relaxed loads, and `KNOWN_ISSUES` KI-018's cross-ring residual —
+//     one ring's rewind observed and the other's not, for one tick — is
+//     unchanged: that tick floors the ring it saw and can fold the other's
+//     pre-reset frames into an EMA published beside the new rate. One tick,
+//     ~16.7 ms, decaying on the 120 ms EMA, and the next tick floors it. The
+//     residual is bounded, not removed, and saying so is the point.
+//
+// CONSERVATIVE IN ONE DIRECTION, deliberately: a block-size-only re-prepare
+// moves the epoch and holds one frame whose rate did not change. One frame at
+// 60 Hz, on an event that already blanks the display.
+bool SpectrumView::configurationHeld (uint32_t epoch0) const noexcept
+{
+    return (epoch0 & 1u) == 0u && processor.grHistory().batchIntact (epoch0);
 }
 
 // ONE PUBLICATION, BOTH TRACES. The bracket is the ordinary sequence-counter
@@ -504,7 +620,7 @@ void SpectrumView::tick (double dt)
 //     store to the reader that acquires the same value.
 // The counter is only ever written here, on the message thread, so the plain
 // load/store pair needs no read-modify-write.
-void SpectrumView::publishFrame (uint64_t first, int span) noexcept
+void SpectrumView::publishFrame (uint64_t first, int span, double rate) noexcept
 {
     const auto s = frameSeq.load (std::memory_order_relaxed);
     frameSeq.store (s + 1, std::memory_order_relaxed);
@@ -516,6 +632,7 @@ void SpectrumView::publishFrame (uint64_t first, int span) noexcept
         pubOut[(size_t) b].store (outDb[(size_t) b], std::memory_order_relaxed);
     pubFirst.store (first, std::memory_order_relaxed);
     pubSpan .store (span,  std::memory_order_relaxed);
+    pubRate .store (rate,  std::memory_order_relaxed);
 
     frameSeq.store (s + 2, std::memory_order_release);
 }
@@ -534,7 +651,7 @@ void SpectrumView::publishFrame (uint64_t first, int span) noexcept
 // the one place a stall is visible as a dropped frame rather than a stale one.
 bool SpectrumView::readPublishedFrame (std::vector<float>& inTrace,
                                        std::vector<float>& outTrace,
-                                       Window& drawnWindow) const noexcept
+                                       Frame& frame) const noexcept
 {
     if (inTrace.size() != (size_t) kBins || outTrace.size() != (size_t) kBins)
     {
@@ -554,11 +671,12 @@ bool SpectrumView::readPublishedFrame (std::vector<float>& inTrace,
             outTrace[(size_t) b] = pubOut[(size_t) b].load (std::memory_order_relaxed);
         const auto first = pubFirst.load (std::memory_order_relaxed);
         const auto span  = pubSpan .load (std::memory_order_relaxed);
+        const auto rate  = pubRate .load (std::memory_order_relaxed);
 
         std::atomic_thread_fence (std::memory_order_acquire);
         if (frameSeq.load (std::memory_order_relaxed) == s0)
         {
-            drawnWindow = { first, span };
+            frame = { first, span, rate };
             return true;
         }
     }
@@ -568,12 +686,33 @@ bool SpectrumView::readPublishedFrame (std::vector<float>& inTrace,
 void SpectrumView::paint (juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat().reduced (10.0f, 8.0f);
-    // KI-017: the published pair, not `getSampleRate()`'s plain member — the
-    // host's reconfiguring thread writes that one while this thread paints.
-    // Read ONCE: the old spelling called the accessor twice and could have
-    // straddled a reconfiguration inside a single ternary.
-    const double prepared = processor.preparedSampleRate();
-    const double sr = prepared > 0.0 ? prepared : 48000.0;
+
+    // THE PAIR THE RENDERER DRAWS IS ONE TICK'S, WHOLE — and so is the rate it
+    // reads the bins through. On macOS and Windows this function runs on the
+    // OpenGL context's render thread while `tick` runs on the message thread
+    // (`THREAD_MODEL`), so the traces are taken through the published bracket
+    // into buffers only this function touches. A lost read leaves the previous
+    // copy in place — an older coherent frame, never a mixed one — and the
+    // vectors are `kBins` long from construction, so nothing here allocates.
+    (void) readPublishedFrame (paintIn, paintOut, paintFrame);
+
+    // KI-017's rule, and since 0.2.12 the FRAME's rate rather than a second read
+    // of the processor's. Reading `preparedSampleRate()` here was correct about
+    // the data race — it is the published pair, not `getSampleRate()`'s plain
+    // member — and wrong about the pairing: it is a different configuration's
+    // answer from the one the bins came from whenever a re-prepare falls between
+    // the tick and the paint. The bins and the rate now arrive together or not
+    // at all, and `paint` reads no processor state at all (see `Frame`).
+    // The fallback stays exactly where it was and for the same reason: a view
+    // that has never published carries rate 0 — as JUCE's member does before the
+    // first `prepareToPlay` — and `binHz = 0` would make `fa / binHz` infinite
+    // and its conversion to `int` undefined, two lines further down. The
+    // resolved value is written BACK into the frame, so `paintedFrame().rate` is
+    // by construction the rate this paint actually mapped bins through, which is
+    // what lets a test tell a renderer reading the published rate from one
+    // reading the processor's behind the frame's back.
+    const double sr = paintFrame.rate > 0.0 ? paintFrame.rate : 48000.0;
+    paintFrame.rate = sr;
     const float fLo = 20.0f, fHi = 20000.0f;
     const float dbLo = -90.0f, dbHi = 0.0f;
 
@@ -665,15 +804,6 @@ void SpectrumView::paint (juce::Graphics& g)
             else           path.lineTo (x, y);
         }
     };
-
-    // THE PAIR THE RENDERER DRAWS IS ONE TICK'S, WHOLE. On macOS and Windows
-    // this function runs on the OpenGL context's render thread while `tick`
-    // runs on the message thread (`THREAD_MODEL`), so the traces are taken
-    // through the published bracket into buffers only this function touches.
-    // A lost read leaves the previous copy in place — an older coherent pair,
-    // never a mixed one — and the vectors are `kBins` long from construction,
-    // so nothing here allocates.
-    (void) readPublishedFrame (paintIn, paintOut, paintWindow);
 
     juce::Path pin, pout;
     traceOf (paintIn, pin);

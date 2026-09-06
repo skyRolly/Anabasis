@@ -350,6 +350,28 @@ green build does not clear it and `HANDOVER.md`'s Pending Tasks row carries it. 
 (`CHANGELOG.md`, `HANDOVER.md`). `KNOWN_ISSUES.md` unchanged. Trail:
 `worklogs/2026-09-05-gr-history-tip.md` §16.
 
+**Addendum (2026-09-06, round 11) — the frame carries the configuration that makes it readable.**
+A trace is a row of BIN indices; `binHz = rate / kSize` is what turns one into a frequency, and
+`paint` read that rate from the processor while the trace came from the published frame — two
+independent reads of two objects, free to disagree, and round 10's frame publication widened the
+window rather than closing it. Measured at 6 kHz (bin 512 at 48 kHz, bin 256 at 96 kHz): −0.00 dB
+paired, **−116.80 dB** as an old trace under the new rate, **−120.00 dB** as a new trace under the
+old one. The rate now travels inside the frame and is taken under `GrHistoryBuffer`'s reset epoch —
+the bracket that ring's banner already required of any reader mapping entries through the prepared
+pair — so `SpectrumView` moves from the banner's unbracketed discipline to its bracketed one and
+`paint` reads no processor state at all. Rows engaged: **Threading / cross-thread path** — still
+GATED, [ADR-0039](architecture/design-decisions/ADR-0039-spectrum-frame-publication.md) WIDENED
+before approval and still **`Proposed`** (amending a record that is not signed off is what puts one
+coherent design in front of the reviewer; the index's warning about widening is about signed-off
+records); `THREAD_MODEL.md` and — the gap round 10 left — `THREADING_POLICY.md`'s Message → Painting
+row, which `DOCUMENTATION_LIFECYCLE_POLICY.md` requires alongside it and which had not been touched.
+Also **Known issue corrected** (`KNOWN_ISSUES.md`: KI-017's `prepareToPlay` publication-lag audit
+covered the window INSIDE `engine.prepare` and not the one after it, which is where the mismatch
+lived; KI-018's one-tick cross-ring residual gains a rate consequence, not a wider window),
+**New/changed test** (`state_tests.cpp`; `TESTING.md`, including the valgrind premise lesson),
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`). Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §17.
+
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly
 generated line can have instantaneous changes, and it also changes while it is moving."*

@@ -1169,6 +1169,21 @@ previous rate for the duration of `engine.prepare`, which is a bounded correct-b
 invariant, stated for the next reader: **a GR frame never maps one configuration's entries through
 another's time base, and the price is that non-ring readers may lag by one reconfiguration.**
 
+> **CORRECTED AND EXTENDED 2026-09-06 (round 11).** The audit above is right about the window it
+> examined — the one INSIDE `engine.prepare`, where the rings are rewound and the pair has not yet
+> republished — and its conclusion for `SpectrumView` ("reads an empty ring and floors its trace")
+> holds there. It did not examine the window on the OTHER side: **after** the pair republishes and
+> **before** the view's next tick publishes a frame. There `paint` read the NEW rate against the
+> trace the LAST tick left, which is the previous configuration's — the mismatch this round's review
+> found, and which round 10's published frame made wider rather than narrower, by giving the trace
+> its own publication schedule while leaving the rate on the processor's. Measured at 6 kHz, bin 512
+> at 48 kHz and bin 256 at 96 kHz: −0.00 dB paired, −116.80 dB and −120.00 dB crossed. Repaired by
+> carrying the rate INSIDE the published frame and taking it under the GR ring's epoch (ADR-0039,
+> `Proposed`); `SpectrumView` therefore moves from the banner's unbracketed discipline to its
+> bracketed one, and `CurveView` is the only unbracketed reader left — legitimately, since its curve
+> comes from the parameter set and not from a ring, and its "bounded correct-but-late frame" reading
+> above is unchanged.
+
 Evidence [Verified]:
 - Source: `src/gui/SpectrumView.cpp` (`paint`, the axis mapping) and `src/gui/CurveView.cpp`
   (`readInputs`, reached from `paint` AND the editor's timer); `src/gui/PluginEditor.cpp` (the
@@ -1239,6 +1254,16 @@ Evidence [Verified]:
 > lands AFTER those loads — there the clamp floors the rewound ring alone and the other still reads
 > its pre-reset frames, for the same one tick. The equal-count corner this entry is about is
 > untouched: the refilled head equals the shown one, so the idle test matches exactly as before.
+>
+> **AND WHAT THAT ONE TICK NOW ALSO COSTS (round 11).** Since ADR-0039 the published frame carries
+> the sample rate its bins are read through, and the pairing that record proves is between the rate
+> and the frames the tick's ACQUIRED INDICES describe — not between the rate and every sample the
+> per-bin EMA remembers. So in exactly the window above, the ring whose rewind was not yet visible
+> can fold pre-reset frames into an EMA that is published beside the NEW rate: one trace drawn
+> through the wrong bin mapping for that one tick, ~16.7 ms at 60 Hz, decaying on the 120 ms EMA and
+> floored by the next tick. It is the same window, the same bound and the same one-tick cost this
+> entry already carries; it is recorded because ADR-0039's property would otherwise read as stronger
+> than it is. Nothing about the corner changed — the residual gained a consequence, not a width.
 >
 > **Why it is bounded — and the correction that matters most.** The "worst case is a scheduling
 > quantum, tens of milliseconds" bound stated above **does not apply to this corner**, and leaving it

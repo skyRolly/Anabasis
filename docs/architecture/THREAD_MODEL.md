@@ -194,7 +194,18 @@ audio in both rings, so a coherent frame's traces are bit-identical: **1 161 778
 (87.9 %) held two different ticks; 0 of 306 485 after.** Both traces and the window they were
 analysed over are now published together inside a sequence bracket — the counter odd, a release
 fence, relaxed per-bin `std::atomic<float>` stores, the counter even with release — and read back
-whole or not at all, at most twice, into buffers only `paint` touches. This is the case ADR-0027
+whole or not at all, at most twice, into buffers only `paint` touches.
+**Round 11 widened the same record before it was answered:** the frame carries the SAMPLE RATE its
+bins are read through as well, because `paint` had been reading that for itself while the trace came
+from the frame, so a rendered frame could pair one configuration's trace with another's bin mapping.
+The x axis is a fixed 20 Hz–20 kHz log sweep with no rate term, so the mismatch does not move the
+axis — it moves the DATA under it, through `binHz = rate / kSize`. Measured at 6 kHz, which is bin
+512 at 48 kHz and bin 256 at 96 kHz: −0.00 dB paired, **−116.80 dB** as an old trace under the new
+rate, **−120.00 dB** as a new trace under the old one. The rate is now taken under
+`GrHistoryBuffer`'s reset epoch — the bracket its banner already required of any reader that maps
+entries through the prepared pair, and which `GrHistoryView` has always taken — so the rate a frame
+publishes and the ring frames it publishes belong to one configuration, and `paint` reads no
+processor state at all. This is the case ADR-0027
 clause 4 and ADR-0038 clause 8 both exclude by name ("anything carrying a payload… is a new path
 again and returns to this gate"), so it is filed as a gated decision rather than claimed under
 either. Nothing on the audio thread changed.

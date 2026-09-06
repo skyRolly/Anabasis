@@ -69,21 +69,43 @@ public:
     // nothing can guard.
     void tick (double dt);
 
-    // THE WINDOW THE LAST DRAWN FRAME ACTUALLY USED — the range both traces were
-    // analysed over, recorded when the frame commits. Public for the reason the
-    // two trace accessors are: what a frame has to get right is a property of
-    // the PAIR, and a test that can only see the pixels cannot say which
-    // frames the pair was drawn from.
-    struct Window { uint64_t first = 0; int span = 0; };
-    Window lastWindow() const noexcept { return { drawnFirst, drawnSpan }; }
+    // EVERYTHING A RENDERER NEEDS TO INTERPRET THE PAIR, and it is deliberately
+    // one struct rather than three facts a frame has to re-collect. `first` and
+    // `span` are the range of ring frames both traces were analysed over;
+    // `rate` is the sample rate those frames were captured at, which is what
+    // turns a bin index into a frequency (`paint`'s `binHz = rate / kSize`).
+    //
+    // THE RATE IS PART OF THE FRAME BECAUSE THE BINS MEAN NOTHING WITHOUT IT.
+    // This is ADR-0038 clause 7 — "a published display estimate carries the
+    // identity of the state it describes" — applied to a payload rather than to
+    // a scroll phase, and it was the round-11 review finding: `paint` used to
+    // take the pair from the published frame and the rate from
+    // `AnabasisAudioProcessor::preparedSampleRate()` on its own, so a rendered
+    // frame could hold one configuration's trace against another's bin mapping.
+    // MEASURED at 6 kHz, which sits at bin 512 at 48 kHz and at bin 256 at
+    // 96 kHz: the tone read −0.00 dB paired correctly, −116.80 dB as an old
+    // trace under the new rate, and −120.00 dB as a new trace under the old one
+    // — the tone gone from the display outright, either way.
+    //
+    // Public for the reason the two trace accessors are: what a frame has to
+    // get right is a property of the WHOLE frame, and a test that can only see
+    // the pixels cannot say which state the pair was drawn from.
+    struct Frame
+    {
+        uint64_t first = 0;
+        int      span  = 0;
+        double   rate  = 0.0;
+    };
+    Frame lastFrame() const noexcept { return { drawnFirst, drawnSpan, drawnRate }; }
 
-    // …AND THE WINDOW THE LAST PAINT ACTUALLY DREW, which is a different fact on
-    // a different thread. `lastWindow` is what the message thread committed;
+    // …AND THE FRAME THE LAST PAINT ACTUALLY DREW, which is a different fact on
+    // a different thread. `lastFrame` is what the message thread committed;
     // this is what the renderer picked up through `readPublishedFrame`, and the
     // two are only ever equal because the publication makes them so. A test that
     // could see only the first could not tell a renderer reading the published
-    // frame from one reading the tick's working vectors.
-    Window paintedWindow() const noexcept { return paintWindow; }
+    // frame from one reading the tick's working vectors — nor one taking the
+    // rate from the processor behind the frame's back.
+    Frame paintedFrame() const noexcept { return paintFrame; }
 
     // THE PUBLISHED PAIR, READ AS A PAIR. `tick` runs on the message thread and
     // `paint` does NOT, on two of the three shipped hosts: JUCE renders an
@@ -111,7 +133,7 @@ public:
     // thread can see.
     bool readPublishedFrame (std::vector<float>& inTrace,
                              std::vector<float>& outTrace,
-                             Window& drawnWindow) const noexcept;
+                             Frame& frame) const noexcept;
 
     // Read-only views of the smoothed analysis, for the same reason. BOTH, since
     // 0.2.12: what a frame has to get right is that its two traces describe the
@@ -219,10 +241,21 @@ private:
     juce::Rectangle<int> chipHitArea() const noexcept;
     void analyse (const float* srcL, const float* srcR, int got,
                   std::vector<float>& smoothedDb, double dt);
-    // Copies the message thread's two traces and the window they describe into
-    // the published storage, inside the odd/even bracket `readPublishedFrame`
-    // checks. The ONLY writer, and the only place a frame becomes visible.
-    void publishFrame (uint64_t first, int span) noexcept;
+    // Copies the message thread's two traces and the frame description they
+    // belong to into the published storage, inside the odd/even bracket
+    // `readPublishedFrame` checks. The ONLY writer, and the only place a frame
+    // becomes visible.
+    void publishFrame (uint64_t first, int span, double rate) noexcept;
+
+    // IS THE CONFIGURATION THIS TICK READ STILL THE ONE IT STARTED UNDER? The
+    // GR history ring publishes the prepared (rate, block) pair inside its own
+    // reset epoch, and `AnabasisAudioProcessor::prepareToPlay` rewinds the two
+    // spectrum rings BEFORE it republishes that pair — so the epoch bracket is
+    // what makes "the rate this frame publishes" and "the frames this rate is
+    // published with" one configuration. Same shape, same reader contract, as
+    // `GrHistoryView`'s: an ODD sample is a clear in progress, and a moved value
+    // is a clear that overlapped the tick. Either way the frame is HELD.
+    bool configurationHeld (uint32_t epoch0) const noexcept;
 
     AnabasisAudioProcessor& processor;
     abgui::FrameClock clock;
@@ -257,9 +290,11 @@ private:
     // …and the window the last DRAWN frame was analysed over (`lastWindow`).
     uint64_t drawnFirst = 0;
     int      drawnSpan  = 0;
+    double   drawnRate  = 0.0;
     uint32_t shownInGen = 0, shownOutGen = 0;
 
-    static_assert (std::atomic<float>::is_always_lock_free,
+    static_assert (std::atomic<float>::is_always_lock_free
+                     && std::atomic<double>::is_always_lock_free,
                    "the published trace is stored one bin at a time in atomics that the renderer "
                    "reads; a locking atomic here would put a lock inside paint() on the OpenGL "
                    "render thread, so a target without lock-free float atomics must fail the "
@@ -280,6 +315,10 @@ private:
     std::vector<std::atomic<float>> pubIn, pubOut;
     std::atomic<uint64_t> pubFirst { 0 };
     std::atomic<int>      pubSpan  { 0 };
+    // …and the rate the published bins are to be read through, inside the same
+    // bracket as the bins themselves. `std::atomic<double>` for the reason the
+    // bins are atomic, and lock-free for the reason they must be.
+    std::atomic<double>   pubRate  { 0.0 };
     // EVEN means the published frame is whole; ODD means a tick is inside the
     // bracket. A reader that sees an odd value, or a different value after its
     // copy, saw a publication in progress and has no frame — see
@@ -295,7 +334,7 @@ private:
     // one component at once. Seeded to the display floor, which is what an
     // analyser with no frame yet has always drawn.
     std::vector<float> paintIn, paintOut;
-    Window             paintWindow {};
+    Frame              paintFrame {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumView)
 };

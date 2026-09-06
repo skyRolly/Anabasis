@@ -167,9 +167,23 @@ public:
     //    coherent by itself, and a caller that reads a rate one reconfiguration
     //    stale draws one frame at the previous rate — the same class of
     //    residual ADR-0027 clause 4 (as amended by ADR-0038) already licenses
-    //    for a single unpaired scalar on this boundary. `SpectrumView` and
-    //    `CurveView` do this, through `AnabasisAudioProcessor::preparedSampleRate`.
-    //    What they must NOT do is read it twice in one expression.
+    //    for a single unpaired scalar on this boundary. `CurveView` does this,
+    //    through `AnabasisAudioProcessor::preparedSampleRate`: its curve comes
+    //    from the parameter set, not from a ring, so there are no entries whose
+    //    timeline the rate has to match. What it must NOT do is read it twice in
+    //    one expression.
+    //
+    //    **`SpectrumView` MOVED TO THE FIRST DISCIPLINE ON 2026-09-06, and this
+    //    sentence used to name it here.** That was the split misapplied: a
+    //    spectrum trace is a row of BIN indices, and the rate is what turns a
+    //    bin into a frequency, so the view has entries in its question exactly
+    //    as `GrHistoryView` does. Reading the rate unbracketed let a rendered
+    //    frame pair one configuration's trace with another's mapping — measured
+    //    at 6 kHz, which is bin 512 at 48 kHz and bin 256 at 96 kHz: the tone
+    //    read −0.00 dB paired, −116.80 dB and −120.00 dB crossed. It now samples
+    //    `resetEpoch()` and the pair together at the top of its tick and closes
+    //    with `batchIntact` before it publishes anything
+    //    (`SpectrumView::configurationHeld`; ADR-0039).
     //
     // Zeros before the first `prepare`, which the view's `windowEntries` /
     // `entryPeriod` already read as 48 kHz.
