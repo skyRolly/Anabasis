@@ -67,6 +67,19 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
 §7.
 
 ### Fixed
+- **The GR history holds twenty seconds at every buffer size, not only at large ones.** The history
+  ring stored 4096 points, and a point is one buffer of processed audio — so what the ring held was
+  `4096 × buffer ÷ sample rate` SECONDS, and only a large buffer made that twenty. Measured on the
+  real plugin before the fix: 20 s at 48 kHz with 256-sample buffers and larger, then 10.9 s at 128,
+  5.5 s at 64, 2.7 s at 32, and 0.7 s at 192 kHz with 32-sample buffers — the display quietly showing
+  a fraction of the twenty seconds it draws a scale for, with nothing on screen saying so. The ring
+  now holds 131072 points, taken from the 120000 a twenty-second window needs at 192 kHz with a
+  32-sample buffer, and the same measurements return 20.00 s at all twenty-six rate/buffer
+  combinations swept. It costs about 0.9 MB per instance and nothing on the audio thread (2.11 ns per
+  point, unchanged); the extra reading a wider window needs is done only by the sessions that have
+  one. Cross-links [ADR-0040](docs/architecture/design-decisions/ADR-0040-gr-history-ring-capacity-is-a-duration.md).
+  Evidence: this release. [Verified]
+
 - **The right edge of the GR history no longer shows the strip that is still being generated.** The
   trace and the level fill stop `ceil (pitch) + 2` columns short of where the newest bucket is
   anchored — four columns for every block size up to 1024 samples at every rate from 44.1 kHz, and
@@ -104,8 +117,10 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   defect). The left-hand eight columns' translation-compensated movement fell from 0.19 px mean and
   5.8 px max to 0.09 and 2.4 — the floor a single-block-per-point configuration shows. The display
   now reaches up to one group of blocks (32 ms at 48 kHz / 512) further back than twenty seconds,
-  all of it off the left edge; at host blocks of about 234 samples or fewer the window holds one
-  point fewer, so that the buffer can hold every point's blocks. Evidence: this release. [Verified]
+  all of it off the left edge; at prepared blocks small enough to saturate the ring the window
+  holds a few points fewer, so that the buffer can hold every point's blocks — since ADR-0040 that
+  is blocks of about 7 samples or fewer at 48 kHz and 29 at 192 kHz, sizes no host offers.
+  Evidence: this release. [Verified]
 
 - **Switching back from the spectrum no longer shows one frame of the old history.** The GR history
   publishes what it draws once per frame, and it stops publishing while the spectrum has the graph

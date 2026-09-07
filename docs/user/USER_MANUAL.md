@@ -244,7 +244,8 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   empty until twenty seconds of audio have actually been measured — nothing is estimated
   or stretched. Twenty seconds means twenty seconds of audio whatever size of buffer your
   host hands the plugin, and whether or not that size stays the same: the timeline follows
-  the audio rather than the callback rate (since 0.2.12). The trace scrolls continuously — it advances a fraction of a pixel with
+  the audio rather than the callback rate (since 0.2.12). That holds at every buffer size a
+  host offers — down to 32 samples at 192 kHz and 8 samples at 48 kHz. The trace scrolls continuously — it advances a fraction of a pixel with
   every processed block rather than stepping once per bucket (since 0.2.8). Each point of
   the trace is drawn once, when every block it summarises has been processed, and is never
   redrawn: a new point enters at the right edge as each group of blocks completes, and what

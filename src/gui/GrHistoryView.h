@@ -125,7 +125,10 @@ public:
     // property only a test that can drive this by hand can pin.
     void tick (double dt);
 
-    // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band.
+    // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band. NOMINAL:
+    // what a frame actually gets is this OR what the ring can hold at the
+    // prepared pair, whichever is smaller — see `windowEntries`' clamp and
+    // `windowSeconds`, which is the quantity §2.9 states.
     static constexpr double kWindowSeconds = 20.0;
 
     // How many entries behind the head the frame may read, given the prepared
@@ -142,6 +145,24 @@ public:
         const int    bs = juce::jmax (1, blockSize);
         return juce::jmin ((int64_t) (anabasis::GrHistoryBuffer::kSize - 1),
                            (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
+    }
+
+    // …AND WHAT THAT WINDOW IS WORTH IN SECONDS, which is the quantity §2.9
+    // and USER_MANUAL.md actually promise and the one the ring's CAPACITY
+    // decides: `windowEntries · block / rate`. Pure and public for the reason
+    // `windowEntries` is — the clamp's CONSEQUENCE is the half with a
+    // correctness argument, and until 0.2.12 round 17 nothing in the tree
+    // stated it. A ring sized against one block size therefore read as a
+    // twenty-second promise at every block size, and was not one: the clamp
+    // binds whenever `rate / block` exceeds `(kSize - 1) / kWindowSeconds`
+    // entries a second, and the window shortens in exact proportion below
+    // that. `testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` pins
+    // the seconds themselves rather than the entry count.
+    static double windowSeconds (double sampleRate, int blockSize) noexcept
+    {
+        const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
+        const int    bs = juce::jmax (1, blockSize);
+        return (double) windowEntries (sr, bs) * (double) bs / sr;
     }
 
     // The decimation geometry one frame draws. Public and pure for the reason
@@ -202,11 +223,17 @@ public:
         // from `kFull`, and a window shorter than that would put the oldest
         // DRAWN bucket a pitch inside the left edge with the flat lead-in
         // behind it, which is the bucket-rate walk 0.2.8 removed. It binds
-        // only at a saturated window (`want` at `windowEntries`' clamp:
-        // blocks of about 234 samples or fewer at 48 kHz, 937 at 192 kHz),
-        // where it costs one bucket of the twenty seconds and 0.2 % of the
-        // pitch; every ordinary window sits far below it (1875 · 3 against
-        // 4089 at 48 kHz / 512). A panel so narrow that even two buckets
+        // only at a saturated window — `want` at `windowEntries`' clamp,
+        // which since round 17's capacity means blocks of about 7 samples or
+        // fewer at 48 kHz and 29 at 192 kHz, below anything a host offers —
+        // and there the window is what the ring's safe lap allows rather than
+        // the whole `want`: measured at 192 kHz / 16 on the Advanced well,
+        // 130800 entries of the 131071 the clamp permits, 0.023 s of the
+        // 10.92 s the ring holds at that pair. Every ordinary window sits far
+        // below the cap (1877 against 131071 at 48 kHz / 512), and the figure
+        // this sentence used to quote — one bucket of the twenty seconds at
+        // blocks of 234 samples or fewer — was the 4096-entry ring's, where
+        // the clamp bound at ordinary block sizes. A panel so narrow that even two buckets
         // overflow the ring keeps its two and leaves the ring to
         // `firstDrawn`, which is where safety is enforced in any case.
         const int64_t kRing  = ((int64_t) anabasis::GrHistoryBuffer::kSize - stride) / stride;

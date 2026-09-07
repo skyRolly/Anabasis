@@ -5329,6 +5329,77 @@ static void testTheHistoryTimelineIsTheRingsTimeline()
     }
 }
 
+// ---------------------------------------------------------------------------
+// THE PRODUCER'S HALF OF THE DURATION CONTRACT (0.2.12 round 17). The ring's
+// capacity is a duration at every prepared pair — `kSize · block / rate` — and
+// `GrHistoryView`'s window is one slot less than that; the seconds themselves
+// are pinned on the view's side
+// (`testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs`, state suite).
+// What only the ENGINE can show is that those entries are the ones it
+// published: at 192 kHz with a 32-sample prepared block it publishes 6000 a
+// second, so one second of processed audio is already half again what the
+// 4096-entry ring could hold, and the entry standing for the first block of it
+// had been overwritten before the second was over. A marker in that first
+// block, read back through the ring's own index, is the whole proof.
+static void testTheRingKeepsASecondOfEntriesAtTheSmallestPreparedBlock()
+{
+    using anabasis::GrHistoryBuffer;
+    using anabasis::AnabasisEngine;
+    using anabasis::EngineParameters;
+    const double rate = 192000.0;
+    const int    B    = 32;
+
+    AnabasisEngine engine;
+    const auto ringStorage = std::make_unique<GrHistoryBuffer>();   // a megabyte: heap, never stack
+    auto& ring = *ringStorage;
+    ring.prepare (rate, B);
+    engine.prepare (rate, B, 2);
+    engine.setGrHistorySink (&ring);
+    engine.prepareHistoryTimeline (rate, B);
+
+    EngineParameters p;
+    juce::AudioBuffer<float> buf (2, B);
+    const int64_t total = (int64_t) rate;                 // one second of audio
+    const int     marked = 6 * B;                         // the first six entries carry it
+    int64_t t = 0;
+    for (int64_t done = 0; done < total; done += B)
+    {
+        for (int i = 0; i < B; ++i, ++t)
+        {
+            const float v = t < marked ? 0.95f : 0.05f;
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        engine.process (buf, p);
+    }
+
+    const int64_t entries = ring.available();
+    check (entries == total / B,
+           "grHold: (premise) one second at 192 kHz / 32 is 6000 entries — one per prepared block, as ADR-0011's amendment has it");
+    check (entries > 4095,
+           "grHold: (premise) …which is more than the ring held in total before round 17");
+    check (entries - 0 <= (int64_t) GrHistoryBuffer::kSize - 1,
+           "grHold: every one of them is still inside the lap a reader may peek — entry 0 included");
+
+    // …and they are still the FIRST second's audio, not later entries wearing
+    // those indices. The engine's own group delay puts the marker's render
+    // exactly `groupDelaySamples / B` entries in — 60 at this pair — so the
+    // marker is looked for where the latency says it lands rather than at 0,
+    // and finding it there is what says index 0 has not been re-used.
+    const int64_t delayEntries = (int64_t) engine.groupDelaySamples() / B;
+    int64_t loud = 0, firstLoud = -1, lastLoud = -1;
+    for (int64_t k = 0; k < entries; ++k)
+        if (ring.peek (k).peak > 0.5f)
+        {
+            ++loud;
+            lastLoud = k;
+            if (firstLoud < 0) firstLoud = k;
+        }
+    check (loud == marked / B && firstLoud == delayEntries
+             && lastLoud == delayEntries + (int64_t) (marked / B) - 1,
+           "grHold: …and the marker is still where the group delay put it, so those indices are the FIRST second's");
+}
+
 
 
 
@@ -6319,6 +6390,7 @@ int main()
     testGrHistoryEntriesFollowThePreparedBlock();
     testTheHistorySurvivesASameConfigurationRePrepare();
     testTheHistoryTimelineIsTheRingsTimeline();
+    testTheRingKeepsASecondOfEntriesAtTheSmallestPreparedBlock();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();

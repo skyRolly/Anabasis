@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
+#include <memory>
 
 // ============================================================================
 //  GrHistoryBuffer — the §2.9 GR/waveform history ring, the first Audio→GUI
@@ -72,9 +73,21 @@
 //    `REALTIME_AUDIO_POLICY` forbids outright — it must fail the build).
 //
 //  Entry = per-block gain reduction (dB, ≤ 0) + the block's waveform peak
-//  (post-chain, linear). At 512-sample blocks a 4096-entry ring holds ~43 s
-//  at 48 kHz — beyond the 10–30 s display window at every rate the product
-//  supports; the GUI decimates for display.
+//  (post-chain, linear), ONE PER PREPARED BLOCK — so the seconds a full ring
+//  holds are `kSize · block / rate`, and the window a frame may read is one
+//  slot less than that (`GrHistoryView::windowEntries`). THE SIZE OF THIS RING
+//  IS THEREFORE A TIME CONTRACT, and it is one at EVERY prepared pair rather
+//  than at a nominal one. Sizing it against a single block size is what this
+//  constant did until 0.2.12 round 17, and the sentence that stood here —
+//  "~43 s at 48 kHz, beyond the 10–30 s display window at every rate the
+//  product supports" — was true only of the 512-sample block it quietly
+//  assumed. MEASURED at 4096 entries on the real engine, the real ring and
+//  the real view: 20 s held at 48 kHz / 256 and above, then 10.92 s at
+//  48 kHz / 128, 5.46 s at 48 kHz / 64, 2.73 s at 48 kHz / 32 and 0.6825 s at
+//  192 kHz / 32 — against the twenty seconds USER_MANUAL.md promises and the
+//  ten DESIGN §2.9 floors at. The capacity below is chosen from the worst
+//  prepared pair this product costs itself against instead; the GUI decimates
+//  for display.
 // ============================================================================
 
 namespace anabasis
@@ -113,7 +126,25 @@ public:
         int    block = 0;
     };
 
-    static constexpr int kSize = 4096;            // power of two
+    // CHOSEN FROM THE WORST PREPARED PAIR, NOT FROM A NOMINAL BLOCK (0.2.12
+    // round 17). An entry is one prepared block, so `N` slots are
+    // `N · block / rate` seconds and the entries a 20 s window needs are
+    // `ceil (20 · rate / block)`: 120000 at 192 kHz / 32, the cell ADR-0020 §1
+    // and ADR-0011's 2026-09-07 amendment already cost this product against
+    // and the state suite already exercises. The next power of two is this,
+    // which holds the whole 20 s at every pair up to 6553 entries a second
+    // and stays inside DESIGN §2.9's 10 s floor up to 13107 — 192 kHz / 16,
+    // below anything a host offers. Below THAT the window is
+    // `(kSize - 1) · block / rate` and shortens in proportion, which is what
+    // `GrHistoryView::windowSeconds` states and a test pins.
+    //
+    // FIXED, not sized at `prepare`. A reader can be inside `peek` when the
+    // host re-prepares: the epoch bracket makes a torn READ safe, and no
+    // amount of it makes a freed pointer safe. Re-allocating on the prepared
+    // pair would need a reclamation protocol this ring deliberately does not
+    // have, so the capacity is a constant and the shortfall below it is
+    // documented rather than allocated away.
+    static constexpr int kSize = 1 << 17;         // 131072 entries, power of two
     static constexpr int kMask = kSize - 1;
 
     GrHistoryBuffer() = default;
@@ -250,10 +281,10 @@ private:
         // exists to announce — and the accesses on both sides have to be
         // atomic for the announcement to be about defined behaviour. The
         // fence above still orders the odd value before every one of them.
-        for (auto& e : entries)
+        for (int n = 0; n < kSize; ++n)
         {
-            e.grDb.store (0.0f, std::memory_order_relaxed);
-            e.peak.store (0.0f, std::memory_order_relaxed);
+            entries[(size_t) n].grDb.store (0.0f, std::memory_order_relaxed);
+            entries[(size_t) n].peak.store (0.0f, std::memory_order_relaxed);
         }
         // The pair the NEW timeline is recorded under, inside the same window
         // as the entries it governs — that is what lets a reader treat the two
@@ -382,7 +413,17 @@ public:
     }
 
 private:
-    Slot entries[kSize];
+    // ON THE HEAP, ONE ALLOCATION AT CONSTRUCTION, AND THAT IS NOT AN
+    // AESTHETIC CHOICE. At `kSize` entries this array is a megabyte, and the
+    // suites build both this ring and whole `AnabasisAudioProcessor`s as
+    // LOCALS — three in one scope in places — against a Windows main thread
+    // whose default stack is one megabyte in total. A member array would put
+    // the capacity decision and a stack overflow on the same line, with no
+    // diagnostic between them. Nothing on the audio path allocates: the block
+    // is taken once here, on the message thread, and lives as long as the
+    // ring, so `push` and `peek` pay one extra load of a pointer that is hot
+    // in L1 (measured: no change in the per-entry push cost).
+    std::unique_ptr<Slot[]> entries { new Slot[(size_t) kSize] };
     std::atomic<int64_t>  writeIndex { 0 };
     std::atomic<uint32_t> resetGuard { 0 };
     // Host-thread written inside `clear`'s epoch window, read by the painting

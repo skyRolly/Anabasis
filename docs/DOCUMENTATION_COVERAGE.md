@@ -6,7 +6,12 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-07, round 16)** — the PR review's second blocking finding:
+**Last updated:** for **0.2.12 (2026-09-07, round 17)** — the PR review's third blocking finding:
+the GR history ring was sized as an ENTRY COUNT (4096) against a 512-sample block, while an entry is
+one PREPARED block, so its capacity was really a duration of `kSize · block / rate` seconds — 0.6825 s
+at 192 kHz / 32, 5.46 s at 48 kHz / 64, below DESIGN §2.9's ten-second floor and not merely below
+`kWindowSeconds`. The capacity is now derived from the worst prepared pair and its slots live on the
+heap (ADR-0040, new; entry below). Before that, for **0.2.12 (2026-09-07, round 16)** — the PR review's second blocking finding:
 round 15's engine MIRRORED the ring's clear-on-change comparison, so a ring cleared any other way
 (`GrHistoryBuffer::reset()`) restarted its timeline while a partial from the old one survived into
 it — the new timeline's first entry closing on as little as one sample. The engine now READS the
@@ -424,6 +429,29 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-07, round 17) — the ring's capacity is a DURATION, and it is now derived from
+one.** The review's third blocking finding. `GrHistoryBuffer::kSize` was 4096, argued in the ring's
+banner from a single block size ("~43 s at 48 kHz" at 512 samples) and generalised to "every rate the
+product supports"; since an entry is one PREPARED block, the window a frame can show is
+`min (kWindowSeconds, (kSize − 1) · block / rate)`. Measured on the real engine, the real ring and the
+real view: 10.92 s at 48 kHz / 128, 5.46 s at 48 kHz / 64, 2.73 s at 48 kHz / 32, 0.6825 s at
+192 kHz / 32. The entry-count saturation was recorded in five places and the duration in none, and the
+two places that quantified its cost ("one bucket of the twenty seconds and 0.2 % of the pitch";
+"the window holds one point fewer") were exact at the saturation threshold and understated it by ~29×
+at 192 kHz / 32. Capacity is now `1 << 17` — the 120000 entries a 20 s window needs at 192 kHz / 32,
+rounded to a power of two — with the slots on the heap, since a megabyte-sized member array would meet
+a Windows main thread's megabyte of stack in suites that build rings and whole processors as locals.
+Rows engaged: **New ADR** — ADR-0040, with `ADR_INDEX.md`'s registry row; **User documentation** —
+`USER_MANUAL.md`'s twenty-second promise now names the buffer sizes it holds at; **Stale-figure
+correction** — `GrHistoryView.h`, ADR-0023's 2026-09-05 amendment and `CHANGELOG.md`'s 0.2.12 entry
+all carried the 4096-ring's saturation figures. Explicitly **not** a review-gate item: no parameter,
+serialization, threading, signal-order or latency change — the SPSC contract, the reset epoch and the
+reader's window clamp are untouched, and the producer's per-entry cost is unchanged at 2.11 ns.
+Producer-side decimation, which would have held 20 s in 4096 slots and drawn an identical picture, was
+rejected because it changes what an entry IS and so conflicts with ADR-0011's 2026-09-07 amendment —
+a hard stop. `worklogs/2026-09-07-gr-history-duration.md` carries the measurements and the blast
+radius.
 
 **Addendum (2026-09-07, round 16) — the partial entry's timeline is READ from the ring, not
 mirrored.** The review's second blocking finding. Round 15 reproduced `GrHistoryBuffer::prepare`'s

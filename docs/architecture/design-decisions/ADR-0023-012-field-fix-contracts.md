@@ -181,8 +181,13 @@ by construction rather than by stimulus luck.
    > up to `stride − 1` entries (32 ms at 48 kHz / 512) past the nominal twenty seconds, all of it
    > off the left edge — this item's "read and never shown" — and `kFull` is capped so those
    > entries fit inside the ring's one safe lap, which costs a SATURATED window (`want` at
-   > `windowEntries`' clamp: blocks of about 234 samples or fewer at 48 kHz) one bucket of its
-   > twenty seconds and 0.2 % of its pitch, and costs every ordinary window nothing. A bucket the
+   > `windowEntries`' clamp) part of a bucket of its window and a fraction of its pitch, and costs
+   > every ordinary window nothing. The figures once given here — "blocks of about 234 samples or
+   > fewer at 48 kHz", "one bucket of its twenty seconds and 0.2 % of its pitch" — were the
+   > 4096-entry ring's, where the clamp bound at ordinary block sizes; at
+   > [ADR-0040](ADR-0040-gr-history-ring-capacity-is-a-duration.md)'s capacity it binds at blocks
+   > of about 7 samples or fewer at 48 kHz and 29 at 192 kHz, and there it costs 271 entries of
+   > 131071 (0.023 s of the 10.92 s the ring holds at 192 kHz / 16, on the Advanced well). A bucket the
    > producer has lapped into is DROPPED (`GrHistoryView::firstDrawn`), never drawn from what is
    > left of it: a bucket may leave the display because it has aged out of the ring, but it must
    > not come back re-shaped. `worklogs/2026-09-05-gr-history-tip.md` §9 carries the measurements.

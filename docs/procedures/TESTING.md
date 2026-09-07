@@ -499,6 +499,33 @@ entry's span through `processBlock`. It leaves 100 samples in flight rather than
 partial LARGER than the new block is dropped by `prepare`'s span guard — a well-formedness rule, not
 a timeline decision — which would have masked the question the pass exists to ask.
 
+**Round 17 pins what the ring's SIZE means, which is a duration rather than an entry count**
+([ADR-0040](../architecture/design-decisions/ADR-0040-gr-history-ring-capacity-is-a-duration.md)).
+Because an entry is one prepared block, `kSize` decides `kSize · block / rate` seconds — and no test
+in the tree had ever asserted a number of seconds, so a ring sized against a 512-sample block passed
+everything while retaining 0.6825 s at 192 kHz / 32.
+`testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` sweeps twenty-six prepared pairs and
+asserts the quantity the contract is written in — retained entries × prepared block ÷ sample rate.
+Its bounds are **derived from `kSize`** rather than quoted, so the sweep pins the SHAPE of the
+contract at any capacity (the whole window wherever the ring can hold one, never below §2.9's floor
+down to the ring's own bound, and the exact proportion past it) while the named cases — 192 kHz / 32,
+48 kHz / 64, 48 kHz / 8, and 192 kHz / 16 and / 8 either side of the boundary — pin its VALUE. It
+closes on the real ring: a whole window's entries pushed at 192 kHz / 32, and the frame's own
+`Buckets::first` used to find the oldest of them.
+`testTheRingKeepsASecondOfEntriesAtTheSmallestPreparedBlock` adds the producer's half in the DSP
+suite, where the engine can be driven: one second of audio at 192 kHz / 32 is 6000 entries, half
+again what the whole 4096-entry ring held, and the marker in the first six blocks is looked for at
+`groupDelaySamples / B` — where the engine's own latency puts it — so finding it there is what says
+index 0 has not been re-used. Nine checks fail on the 4096-entry ring.
+
+**`specFrame` gained the premise it had always rested on.** Its marker is that identical audio in
+both spectrum rings analyses to bit-identical traces, so any inequality a reading thread sees is a
+mixed frame; nothing checked that, and a failure could therefore point at the wrong side of the
+thread boundary. The writer's own pair is now compared on every tick, on the thread that produced
+it, and the test prints its counts — reads, distinct frames, mixed frames, working-pair splits, and
+the first offending bin with both values — so a failure carries its own evidence rather than needing
+a second run.
+
 **The hot pass runs FROZEN, and that is a measured property of the chain rather than a
 convenience.** §5.4's `adaptiveEngine.finishBlock` runs once per `process()` CALL and its trims are
 adopted for that whole call, so the DELIVERED size — not the chunking — sets the adaptation cadence:

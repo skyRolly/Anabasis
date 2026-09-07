@@ -6300,10 +6300,19 @@ static void testTheSettingsPanelFollowsAProjectLoad()
 static void testGrHistoryWindowNeverAsksForTheHeadSlot()
 {
     using Ring = anabasis::GrHistoryBuffer;
-    check (GrHistoryView::windowEntries (48000.0, 64) == Ring::kSize - 1,
-           "grWindow: a 64-sample block saturates at kSize - 1, never kSize");
-    check (GrHistoryView::windowEntries (192000.0, 32) == Ring::kSize - 1,
-           "grWindow: …and so does every rate/block that would overflow the ring");
+    check (GrHistoryView::windowEntries (192000.0, 16) == Ring::kSize - 1,
+           "grWindow: a pair that would overflow the ring saturates at kSize - 1, never kSize");
+    check (GrHistoryView::windowEntries (96000.0, 8) == Ring::kSize - 1,
+           "grWindow: …and so does every other one of them");
+    // …AND THE PAIRS THAT USED TO SATURATE NO LONGER DO (0.2.12 round 17).
+    // These two are the review's case and the block size a 48 kHz host most
+    // often runs at; at 4096 entries the clamp bound at both and the window
+    // was 0.6825 s and 5.46 s rather than the twenty it claimed.
+    check (GrHistoryView::windowEntries (192000.0, 32)
+               == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 192000.0 / 32.0)
+             && GrHistoryView::windowEntries (48000.0, 64)
+               == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 48000.0 / 64.0),
+           "grWindow: …and the pairs the ring used to clamp — 192 kHz / 32, 48 kHz / 64 — now get the whole window");
     check (GrHistoryView::windowEntries (48000.0, 512)
                == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 48000.0 / 512.0),
            "grWindow: below the clamp the window is the whole 20 s");
@@ -6342,19 +6351,28 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             { 48000.0, 2048, 904, "…and a block big enough that entries are SCARCER than columns" },
             { 48000.0,  512, 604, "Advanced well, 48 kHz / 512" },
             { 44100.0,  256, 904, "44.1 kHz / 256 — want mod stride is 2, the alignment case" },
-            { 192000.0,  32, 604, "192 kHz / 32 — the window saturates at the ring clamp" },
+            { 192000.0,  32, 604, "192 kHz / 32 — 120000 entries, the widest window the ring holds whole" },
+            { 192000.0,  16, 604, "192 kHz / 16 — the window saturates at the ring clamp" },
         };
         for (const auto& c : cases)
         {
             const auto want = GrHistoryView::windowEntries (c.sr, c.bs);
-            const auto head = want * 4;                        // long settled, ring wrapped
+            // Long settled, ring wrapped — and rounded DOWN to a whole number
+            // of buckets, because the block below reads the newest bucket on
+            // the right edge and a bucket is only drawn once it is complete.
+            // `want * 4` was such a number for every pair in the table until
+            // round 17 widened the ring; `stride` depends on (want, cols)
+            // alone, so it can be taken before the head is chosen.
+            const auto stride0 = GrHistoryView::buckets (want * 4, want, c.cols).stride;
+            const auto head = (want * 4 / stride0) * stride0;
             const auto b    = GrHistoryView::buckets (head, want, c.cols);
             const auto say  = [&c] (const char* what)
             { return juce::String ("grBuckets: ") + what + " — " + c.what; };
             const float pitch = ((float) c.cols - 1.0f) / (float) (b.kFull - 1);
 
-            const auto m1 = say ("2..cols buckets");
-            check (b.count >= 2 && b.count <= (int64_t) c.cols && b.kFull <= (int64_t) c.cols,
+            const auto m1 = say ("2..cols buckets plus the lead the drawing frame uncovers");
+            check (b.count >= 2 && b.kFull <= (int64_t) c.cols
+                   && b.count == b.kFull + GrHistoryView::leadBuckets (b.kFull, c.cols),
                    m1.toRawUTF8());
             // Settled: newest on the right edge; the oldest DRAWN vertex on
             // or beyond the left edge (within one pitch of it) with the next
@@ -6413,7 +6431,9 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             const int64_t lead  = GrHistoryView::leadBuckets (b.kFull, c.cols);
             const int64_t cover = b.kFull + lead;
             check (b.window == cover * b.stride
-                       && b.window - want < (lead + 1) * b.stride && want - b.window <= b.stride
+                       && b.window - want < (lead + 1) * b.stride
+                       && (want - b.window <= b.stride
+                           || b.window + 2 * b.stride - 1 > (int64_t) anabasis::GrHistoryBuffer::kSize - 1)
                        && b.first == b.kFirst * b.stride
                        && b.first <= head - b.window
                        && head - b.first <= (int64_t) anabasis::GrHistoryBuffer::kSize - 1,
@@ -6648,7 +6668,9 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                                             (int64_t) 6, (int64_t) 8, (int64_t) 10, (int64_t) 16, (int64_t) 32,
                                             (int64_t) 64, (int64_t) 128, (int64_t) 256, (int64_t) 512,
                                             (int64_t) 903, (int64_t) 904, (int64_t) 905, (int64_t) 1024,
-                                            (int64_t) 1875, (int64_t) 4095 })
+                                            (int64_t) 1875, (int64_t) 4095,
+                                            (int64_t) 120000,
+                                            (int64_t) (anabasis::GrHistoryBuffer::kSize - 1) })
                 {
                     const auto  b     = GrHistoryView::buckets (10 * want, want, cols);
                     const int   vr    = GrHistoryView::visibleRight (b, 10.0f, (float) cols);
@@ -6827,6 +6849,126 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
                "grZeroRegion: a scrolling window does NOT — that strip is expired history, not unmeasured");
         check (! GrHistoryView::drawsZeroRegion (want * 97 + 3, want),
                "grZeroRegion: …however long it has been scrolling, at any bucket-expiry phase");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// THE WINDOW'S SECONDS, NOT ITS ENTRY COUNT (0.2.12 round 17, the review's
+// "small buffers erase most history"). An entry is one PREPARED block, so what
+// a frame can show is `windowEntries · block / rate` and the ring's CAPACITY
+// is a duration contract at every prepared pair rather than at one of them.
+// Until this round the ring held 4096 entries — sized against a 512-sample
+// block, and documented as "beyond the 10–30 s display window at every rate
+// the product supports" — while `windowEntries`' clamp turned the shortfall
+// into a shorter window without saying so anywhere. MEASURED on the real
+// engine, the real ring and the real view before the resize: 10.92 s at
+// 48 kHz / 128, 5.46 s at 48 kHz / 64, 2.73 s at 48 kHz / 32 and 0.6825 s at
+// 192 kHz / 32, against DESIGN §2.9's 10–30 s band, `kWindowSeconds`' twenty
+// and USER_MANUAL.md's "twenty seconds of audio whatever size of buffer your
+// host hands the plugin".
+//
+// What is pinned is the DURATION at each pair, computed the way the invariant
+// states it, and the two bounds the tree already claims: the whole window
+// wherever the ring can hold it, and §2.9's ten-second floor down to a block
+// size no host offers. The bounds themselves are DERIVED from `kSize` rather
+// than quoted, because the capacity is what decides them — and every seconds
+// assertion below fails on the 4096-entry ring.
+static void testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs()
+{
+    using Ring = anabasis::GrHistoryBuffer;
+    using V    = GrHistoryView;
+
+    // Entries a second the ring can still hold a whole window of, and the rate
+    // at which §2.9's floor is the last thing left.
+    const double fullRate  = (double) (Ring::kSize - 1) / V::kWindowSeconds;
+    const double floorRate = (double) (Ring::kSize - 1) / 10.0;
+
+    struct P { double rate; int block; };
+    const P pairs[] = {
+        {  44100.0,   32 }, {  44100.0,   64 }, {  44100.0,  128 }, {  44100.0,  512 },
+        {  48000.0,    8 }, {  48000.0,   16 }, {  48000.0,   32 }, {  48000.0,   64 },
+        {  48000.0,  128 }, {  48000.0,  256 }, {  48000.0,  512 }, {  48000.0, 1024 },
+        {  48000.0, 2048 }, {  88200.0,   32 }, {  88200.0,   64 },
+        {  96000.0,   16 }, {  96000.0,   32 }, {  96000.0,   64 }, {  96000.0,  128 },
+        {  96000.0,  512 }, { 176400.0,   32 }, { 192000.0,   32 }, { 192000.0,   64 },
+        { 192000.0,  128 }, { 192000.0,  512 }, { 192000.0, 1024 },
+    };
+    bool arithmeticHolds = true, wholeWindowWhereItFits = true, floorEverywhere = true;
+    double worstWhole = 1.0e9, worstAny = 1.0e9;
+    juce::String worstAnyPair;
+    for (const auto& p : pairs)
+    {
+        const auto   entries   = V::windowEntries (p.rate, p.block);
+        const double secs      = V::windowSeconds (p.rate, p.block);
+        const double perSecond = p.rate / (double) p.block;
+        arithmeticHolds &= juce::exactlyEqual (secs, (double) entries * (double) p.block / p.rate);
+        if (perSecond <= fullRate)
+        {
+            wholeWindowWhereItFits &= (secs >= V::kWindowSeconds - 1.0e-9);
+            worstWhole = juce::jmin (worstWhole, secs);
+        }
+        if (perSecond <= floorRate)
+            floorEverywhere &= (secs >= 10.0);
+        if (secs < worstAny)
+        {
+            worstAny     = secs;
+            worstAnyPair = juce::String (p.rate / 1000.0, 1) + " kHz / " + juce::String (p.block);
+        }
+    }
+    check (arithmeticHolds,
+           "grSeconds: the window's duration IS retained entries × prepared block ÷ sample rate, at every pair");
+    check (wholeWindowWhereItFits && worstWhole >= V::kWindowSeconds - 1.0e-9,
+           "grSeconds: …and it is the whole window at every pair the ring can hold one for");
+    check (floorEverywhere,
+           "grSeconds: …and never below DESIGN §2.9's ten-second floor at any pair down to the ring's own bound");
+
+    // The pairs the review named, and the two the band is about, said out loud
+    // rather than left to the sweep: a regression that shrank the ring would
+    // put a number here that a reader can compare against the manual.
+    check (V::windowSeconds (192000.0, 32) >= V::kWindowSeconds - 1.0e-9,
+           "grSeconds: 192 kHz / 32 — the review's case — holds the whole twenty seconds");
+    check (V::windowSeconds (48000.0, 64) >= V::kWindowSeconds - 1.0e-9
+             && V::windowSeconds (48000.0, 32) >= V::kWindowSeconds - 1.0e-9
+             && V::windowSeconds (48000.0, 8) >= V::kWindowSeconds - 1.0e-9,
+           "grSeconds: …and so does every block size a 48 kHz host can offer, down to eight samples");
+
+    // THE BOUNDARY, from both sides. The clamp binds at `fullRate` entries a
+    // second and the window shortens in exact proportion past it; the first
+    // pair over the line is below any host's smallest buffer at that rate, and
+    // it still clears the floor.
+    check (192000.0 / 32.0 <= fullRate && 192000.0 / 16.0 > fullRate,
+           "grSeconds: (premise) 192 kHz / 16 is the first pair past the clamp — half the smallest buffer a host offers there");
+    check (V::windowSeconds (192000.0, 16) < V::kWindowSeconds
+             && V::windowSeconds (192000.0, 16) >= 10.0
+             && juce::exactlyEqual (V::windowSeconds (192000.0, 16),
+                                    (double) (Ring::kSize - 1) * 16.0 / 192000.0),
+           "grSeconds: …and past it the window is exactly what the ring holds, still inside the band");
+    check (V::windowSeconds (192000.0, 8) < 10.0
+             && juce::exactlyEqual (V::windowSeconds (192000.0, 8),
+                                    (double) (Ring::kSize - 1) * 8.0 / 192000.0),
+           "grSeconds: …and only below THAT does the band's floor go, in exact proportion and nowhere abruptly");
+
+    // …AND THROUGH THE REAL RING AND THE REAL READ WINDOW, because everything
+    // above is a promise about a pure function: the entries a twenty-second
+    // window needs at 192 kHz / 32 have to still BE in the ring when the frame
+    // reads them, and the frame reads through `Buckets::first`.
+    {
+        const double rate = 192000.0; const int block = 32; const int cols = 604;
+        const auto ringStorage = std::make_unique<Ring>();       // a megabyte: heap, never stack
+        auto& ring = *ringStorage;
+        ring.prepare (rate, block);
+        const auto want = V::windowEntries (rate, block);
+        ring.push (-42.0f, 0.75f);                               // the oldest entry of the window
+        for (int64_t i = 1; i < want; ++i)
+            ring.push (-1.0f, 0.25f);
+        const auto b      = V::buckets (ring.available(), want, cols);
+        const auto oldest = ring.peek (0);
+        check (ring.available() == want && b.first == 0
+                 && juce::exactlyEqual (oldest.grDb, -42.0f),
+               "grSeconds: a whole window of entries at 192 kHz / 32 is still in the ring, oldest included, when the frame reads it");
+        check ((double) b.window * (double) block / rate
+                   >= V::kWindowSeconds - (double) b.stride * (double) block / rate,
+               "grSeconds: …and the window that frame reads spans the twenty seconds, to within the bucket it rounds to");
     }
 }
 
@@ -7932,6 +8074,15 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     // --- then the behaviour, with a second thread reading while ticks publish
     std::atomic<bool> stop { false };
     std::atomic<long> reads { 0 }, mixed { 0 }, distinct { 0 }, wrongRate { 0 };
+    // WHAT A MIXED FRAME ACTUALLY LOOKED LIKE, kept so a failure carries its
+    // own evidence (0.2.12 round 17). `mixed != 0` on its own cannot say
+    // whether the reader took half of two publications or the writer published
+    // two traces that already disagreed, and those are opposite defects on
+    // opposite sides of the boundary; the diagnostic below and the writer-side
+    // premise further down separate them without a second run.
+    std::atomic<int>   mixedBin { -1 };
+    std::atomic<float> mixedIn { 0.0f }, mixedOut { 0.0f };
+    std::atomic<uint64_t> mixedFirst { 0 };
     std::thread renderer ([&]
     {
         std::vector<float> ri (kBins), ro (kBins);
@@ -7951,7 +8102,17 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
                 wrongRate.fetch_add (1, std::memory_order_relaxed);
             for (size_t b = 0; b < kBins; ++b)
                 if (! juce::exactlyEqual (ri[b], ro[b]))
-                { mixed.fetch_add (1, std::memory_order_relaxed); break; }
+                {
+                    mixed.fetch_add (1, std::memory_order_relaxed);
+                    int unseen = -1;
+                    if (mixedBin.compare_exchange_strong (unseen, (int) b))
+                    {
+                        mixedIn  .store (ri[b]);
+                        mixedOut .store (ro[b]);
+                        mixedFirst.store (rw.first);
+                    }
+                    break;
+                }
         }
     });
 
@@ -7992,23 +8153,61 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     // freeze reaches it.
     for (int i = 0; i < 200000 && reads.load() == 0; ++i) std::this_thread::yield();
 
+    // THE MARKER'S OWN PREMISE, MEASURED RATHER THAN ASSUMED (0.2.12 round
+    // 17). "Both rings are given IDENTICAL blocks, so a coherent frame
+    // analyses the same samples twice and the two traces come back
+    // bit-identical" is what makes an inequality PROOF of a mixed frame. If
+    // one tick's two identical windows ever analysed to two different traces,
+    // every coherent frame after it would read as mixed and this test would
+    // report a torn publication that never happened — a wrong answer pointing
+    // at the wrong side of the thread boundary. So the writer's own pair is
+    // compared on every tick, on the thread that produced it, where no
+    // publication is involved at all.
+    long workingSplit = 0; int splitBin = -1; float splitIn = 0.0f, splitOut = 0.0f;
+    const auto compareWorkingPair = [&]
+    {
+        const auto& wIn  = view.analysedInDb();
+        const auto& wOut = view.analysedOutDb();
+        for (size_t b = 0; b < kBins; ++b)
+            if (! juce::exactlyEqual (wIn[b], wOut[b]))
+            {
+                ++workingSplit;
+                if (splitBin < 0) { splitBin = (int) b; splitIn = wIn[b]; splitOut = wOut[b]; }
+                break;
+            }
+    };
     for (int f = 0; f < 4000; ++f)
     {
         const auto& src = (f & 1) ? toneA : toneB;          // a whole window of one tone per tick
         inW .pushBlock (src.data(), src.data(), chunk);
         outW.pushBlock (src.data(), src.data(), chunk);
         view.tick (1.0 / 60.0);
+        compareWorkingPair();
     }
     for (int i = 0; i < 20000 && distinct.load() < 2; ++i)
     {
         inW .pushBlock (toneA.data(), toneA.data(), chunk);
         outW.pushBlock (toneA.data(), toneA.data(), chunk);
         view.tick (1.0 / 60.0);
+        compareWorkingPair();
         std::this_thread::yield();
     }
     stop.store (true);
     renderer.join();
 
+    std::printf ("      specFrame: %ld reads, %ld distinct, %ld mixed, %ld working-pair splits",
+                 reads.load(), distinct.load(), mixed.load(), workingSplit);
+    if (mixedBin.load() >= 0)
+        std::printf ("; first mixed bin %d in=%.9g out=%.9g on frame %llu",
+                     mixedBin.load(), (double) mixedIn.load(), (double) mixedOut.load(),
+                     (unsigned long long) mixedFirst.load());
+    if (splitBin >= 0)
+        std::printf ("; first split bin %d in=%.9g out=%.9g",
+                     splitBin, (double) splitIn, (double) splitOut);
+    std::printf ("\n");
+
+    check (workingSplit == 0,
+           "specFrame: (premise) one tick's two identical windows analyse to bit-identical traces — the marker an inequality is read through");
     check (reads.load() > 0,
            "specFrame: (premise) the reading thread really did read whole frames");
     check (distinct.load() > 1,
@@ -9383,15 +9582,26 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
     //        the fills either side) and every staleness a frame can carry.
     {
         const int    cols = 604;                       // the Advanced well
-        const auto   want = V::windowEntries (192000.0, 32);
+        const auto   want = V::windowEntries (192000.0, 16);
         check (want == (int64_t) Ring::kSize - 1,
-               "grRace: (premise) 192 kHz / 32 saturates the read window — the only case with no spare slot");
+               "grRace: (premise) 192 kHz / 16 saturates the read window — the shape with no spare slot");
 
         bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false,
              spansComplete = true;
         int64_t worstUnfixed = 0;
         for (const int64_t settled : { want * 3, want * 3 + 1, want * 3 + 6, want * 3 + 7, want * 5 + 4 })
-            for (int64_t behind = 0; behind <= 8; ++behind)
+        {
+            // HOW MANY BLOCKS THE WINDOW'S START CAN STILL ABSORB. At 0.2.12's
+            // clamp this was zero — the saturated window began exactly one lap
+            // behind the head, so one stale block took it out — and at round
+            // 17's capacity `kFull`'s ring-safety cap leaves a few entries of
+            // margin in front of it. The sweep therefore runs THROUGH the
+            // margin rather than stopping short of it: the same invariant, at
+            // the staleness that actually exercises it.
+            const auto    nb0   = V::buckets (settled, want, cols, 0.5);
+            const int64_t slack = (int64_t) Ring::kSize - 1 - (settled - nb0.first);
+            for (const int64_t behind : std::vector<int64_t> { 0, 1, 2, 3, 4, 5, 6, 7, 8,
+                                                               slack, slack + 1, slack + 4, slack + 8 })
             {
                 const int64_t drawn = settled;             // what the tick published
                 const int64_t live  = settled + behind;    // where the producer is now
@@ -9423,8 +9633,9 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                     }
                 }
             }
+        }
         check (unfixedRaces && worstUnfixed >= (int64_t) Ring::kSize,
-               "grRace: (premise) the window's own start DOES reach a full lap behind the producer — one stale block is enough");
+               "grRace: (premise) the window's own start DOES reach a full lap behind the producer once the ring's margin is spent");
         check (floorHolds,
                "grRace: the read floor holds the oldest index inside one lap of the LIVE write index");
         check (everyReadInside,
@@ -9438,14 +9649,14 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
     // -- 1b. The same invariant against the REAL ring, so the bound is read
     //        from the buffer's own kSize/kMask rather than restated here.
     {
-        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        const auto ringStorage = std::make_unique<Ring>();   // a megabyte: heap, never stack
         auto& ring = *ringStorage;
         for (int64_t i = 0; i < kLap + 250; ++i)
             ring.push (-2.0f, 0.25f);                  // saturated: the ring has wrapped
         const int64_t live    = ring.available();
         const int64_t writing = live & kMaskI;         // the slot `push` fills next
         const int     cols    = 604;
-        const auto    want    = V::windowEntries (192000.0, 32);
+        const auto    want    = V::windowEntries (192000.0, 16);
 
         bool touchesWriteSlot = false, spansComplete = true;
         int64_t reads = 0, oldest = live;
@@ -9470,10 +9681,13 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                "grRace: …and at one stale block nothing has to be dropped — the window's own start still clears the floor, and every drawn bucket reads its whole span");
 
         // …and when the producer HAS lapped into the oldest drawn bucket, that
-        // bucket leaves rather than coming back truncated. Three more entries
-        // put the floor past the window's own start; the frame still draws the
-        // same head.
-        for (int i = 0; i < 3; ++i)
+        // bucket leaves rather than coming back truncated. Enough entries to
+        // put the floor ONE past the window's own start — the margin the
+        // bucket cap leaves plus one, which was three at 0.2.12's clamp and is
+        // read from the geometry here so it stays the same statement at any
+        // capacity; the frame still draws the same head.
+        const int64_t past = nb.first + (int64_t) Ring::kSize - live;
+        for (int64_t i = 0; i < past; ++i)
             ring.push (-2.0f, 0.25f);
         const int64_t live2 = ring.available();
         const int64_t kFD2  = V::firstDrawn (nb, V::readFloor (live2));
@@ -9503,7 +9717,8 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         bool neverBinds = true, bindsWhenSaturatedAndStale = false;
         for (const auto& c : { Case { 48000.0, 512, 904 }, Case { 48000.0, 1024, 904 },
                                Case { 44100.0, 256, 904 }, Case { 48000.0, 2048, 904 },
-                               Case { 48000.0, 512, 604 }, Case { 192000.0, 32, 604 } })
+                               Case { 48000.0, 512, 604 }, Case { 192000.0, 32, 604 },
+                               Case { 192000.0, 16, 604 } })
         {
             const auto want = V::windowEntries (c.sr, c.bs);
             const bool saturated = want == (int64_t) Ring::kSize - 1;
@@ -9515,6 +9730,20 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                 if (binds) bindsWhenSaturatedAndStale = true;
                 else       continue;
                 neverBinds &= (saturated && behind > 0);
+            }
+            // …and it DOES bind, once the drawn head is stale enough for the
+            // window's own start to leave the lap. That was one block at
+            // 0.2.12's clamp; round 17's capacity leaves the bucket cap's
+            // margin in front of it, so the probe is the margin rather than a
+            // constant — and it is taken on the saturated case alone, because
+            // an unsaturated window's start is a whole unused ring away from
+            // the floor and reaching it would say nothing about this rule.
+            if (saturated)
+            {
+                const int64_t drawn = want * 3 + 5;
+                const auto    nb    = V::buckets (drawn, want, c.cols, 0.25);
+                const int64_t edge  = (int64_t) Ring::kSize - 1 - (drawn - nb.first);
+                bindsWhenSaturatedAndStale |= V::readFloor (drawn + edge + 1) > nb.first;
             }
         }
         check (neverBinds,
@@ -11156,6 +11385,7 @@ int main (int argc, char** argv)
         testTheGraphWellViewsOnlyClaimTheirModeChips();
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
+        testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs();
         testGrHistorySurvivesAHostBlockOfTenSeconds();
         testTheGrHistoryScrollsAtThePreparedBlock();
         testTheOldestDrawnBucketKeepsItsValueUntilItLeaves();
