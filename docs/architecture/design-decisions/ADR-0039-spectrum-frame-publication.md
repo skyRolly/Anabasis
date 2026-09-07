@@ -427,7 +427,7 @@ Evidence [Verified]:
   publishes carries its configuration; a never-prepared view falls back to 48 kHz rather than
   dividing by zero; and a reading thread watching a 48 kHz ⇄ 96 kHz churn never sees the tone
   anywhere but where its own frame's rate puts it.
-- Test (round 11, marker replaced in round 18): `specPaint` — a thread that PAINTS while the analyser
+- Test (round 11, marker replaced 2026-09-06 at `134e7fd` when the painter's read was staged): `specPaint` — a thread that PAINTS while the analyser
   publishes, and a `dt` that makes every frame its own analysis. The marker is now
   POSITION-INDEPENDENT, because two marker tones catch only a tear that falls between them and the
   crossing point moves with the two sweeps' relative speed (with tones at bins 21 and 1707 the defect
