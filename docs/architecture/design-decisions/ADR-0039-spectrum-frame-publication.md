@@ -300,6 +300,38 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    bracket, and carrying the identity of the configuration it describes. A second payload site, a
    paint-path WRITE, or a second writer of `frameSeq` is a new path again and returns to this gate.
 
+12. **Amended 2026-09-07 (0.2.12 round 18) — the bracket carries three RENDEZVOUS POINTS, and they
+   are how the tests stop hoping.** `SpectrumView` gains three public `std::function<void()>`
+   members, each called at exactly one place: `whileHalfPublished` inside `publishFrame` between the
+   input bins and the output bins (counter odd, payload genuinely torn), `whileReadUncommitted`
+   inside `readPublishedFrame` between the copy and the closing check, and `whileBatchAnalysed`
+   inside `tick` between the two `analyse` calls and the post-batch generation re-read.
+
+   **Why.** Every state this record exists for lives inside one of those three functions, and no
+   public call ends inside one — so until this round the two concurrency tests SWEPT for the states
+   instead of entering them, and asserted that a counter of accidental hits was non-zero. That is a
+   test of the scheduler. CI proved it twice: `specFrame`'s invariant failed on the macOS x86_64
+   slice under Rosetta, and `specStraddle`'s straddle premise produced ZERO hits in six thousand
+   rounds under valgrind, whose cooperative scheduler will not slide one thread into another's
+   arithmetic on request (KI-019). Worse, the sweep was not even necessary for the assertions to
+   pass: every one of `specFrame`'s held for a reader that never once overlapped a publication.
+   The tests now BLOCK the thread inside the bracket on a condition variable until the other thread
+   has done its half, so each state is entered on every run, on every scheduler, and each is counted
+   so that a run which did not enter it fails.
+
+   **What this does not do, which is what makes it compatible with clause 11.** No second payload
+   site, no paint-path write, no second writer of `frameSeq`. Each call sits BETWEEN two existing
+   operations and can move neither; it adds no store, no fence, no memory order and no field of the
+   frame. All three are empty in every shipped build — nothing in `src/` assigns one, the only
+   writers are the two tests, and `specFrame` asserts on a freshly built view that production armed
+   none of them — so each is a null test and a not-taken branch on the message thread, never on the
+   audio path. The one rule they carry is the ordinary one for a non-atomic member two threads can
+   reach and it is stated in the header: assign only while no thread can be inside the function that
+   reads it. **This clause is put to the reviewer explicitly** rather than assumed: it is a
+   production edit inside the mechanism this record owns, and the round's position is that it is not
+   an `ARCHITECTURE_REVIEW_GATE.md` thread-model change — no new thread, no new cross-thread path, no
+   new atomic and no new ordering — but that call is the owner's to make.
+
 ## Review package
 
 Collected here so a reviewer does not have to assemble it from the prose above.

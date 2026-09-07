@@ -8,6 +8,7 @@
 #include "../dsp/ScopeBuffer.h"
 
 #include <atomic>
+#include <functional>
 
 class AnabasisAudioProcessor;
 
@@ -177,6 +178,68 @@ public:
     bool readPublishedFrame (std::vector<float>& inTrace,
                              std::vector<float>& outTrace,
                              Frame& frame) const noexcept;
+
+    // ── THE THREE RENDEZVOUS POINTS, AND WHY THEY ARE HERE ──────────────────
+    //
+    // A test cannot establish an interleaving it can only observe. Everything
+    // this publication is FOR happens inside two functions and one tick: a
+    // reader that lands while the counter is odd, a reader whose copy is
+    // overtaken, a rewind that becomes visible between a tick's two generation
+    // samples. None of those states is reachable from outside the class — the
+    // windows are a few hundred instructions long, they sit in the middle of
+    // `publishFrame`, `readPublishedFrame` and `tick`, and no public call ends
+    // inside one. Until 0.2.12 round 18 the two concurrency tests therefore
+    // SWEPT for them: they ran the real threads and hoped the scheduler would
+    // put one inside the other, counted the times it did, and asserted that the
+    // count was not zero. That is a test of the scheduler as much as of the
+    // code, and CI proved it twice — `specFrame` on the macOS x86_64 slice
+    // under Rosetta, `specStraddle` under valgrind, where a cooperative
+    // scheduler produced ZERO straddles in six thousand rounds (KI-019).
+    //
+    // These three `std::function`s are how the tests stop hoping. Each is
+    // called at ONE point, in a state the caller could not otherwise be in, and
+    // each is EMPTY in every shipped build — nothing in `src/` assigns one, and
+    // the only writers are the two tests. What a test does with the callback is
+    // block: the thread inside the bracket waits on a condition variable until
+    // the other thread has done its half, so the interleaving is FORCED rather
+    // than raced, and it is forced identically under a preemptive scheduler,
+    // under valgrind's cooperative one and under binary translation.
+    //
+    // WHAT THEY DO NOT DO, stated because a seam that quietly changed the thing
+    // it observes would be worse than no seam. They add no ordering: each sits
+    // BETWEEN two existing operations and cannot move either, and an empty
+    // `std::function` is a null test and a not-taken branch, on the message
+    // thread, never on the audio path (`REALTIME_AUDIO_POLICY` — the audio
+    // thread's only contact with this view is filling two `ScopeBuffer`s). They
+    // change no store, no fence, no memory order and no field of the frame.
+    // They allocate nothing per tick: the one allocation is the test's own
+    // assignment, once, before the threads start. And they are not a way to
+    // reach private state — a callback sees exactly what any other thread sees,
+    // which is the point.
+    //
+    // `whileHalfPublished` runs with the counter ODD and the input bins stored
+    // against the output bins of the PREVIOUS frame: the published payload is
+    // genuinely torn at that instant, which is the state ADR-0039 exists to
+    // make unreadable rather than merely unlikely.
+    // `whileReadUncommitted` runs with a reader's copy in hand and its closing
+    // check not yet run, so a publication completed from another thread must be
+    // caught by that check.
+    // `whileBatchAnalysed` runs with both windows read and folded and the
+    // generations not yet re-read, which is the only instant at which a rewind
+    // can become visible INSIDE a tick.
+    //
+    // THE ONE RULE FOR ASSIGNING THEM, and it is the ordinary one for a
+    // non-atomic member two threads can reach: assign a rendezvous only while
+    // NO thread can be inside the function that reads it. `readPublishedFrame`
+    // is `const` and runs on whichever thread paints, so arming
+    // `whileReadUncommitted` after a reading thread has started — or clearing it
+    // before that thread is JOINED — is a data race on the `std::function`
+    // itself, not on anything this class publishes. Both tests arm before the
+    // thread starts and clear after the join, and the rule is written here
+    // rather than left to be rediscovered.
+    std::function<void()> whileHalfPublished;      // publishFrame, counter odd, payload torn
+    std::function<void()> whileReadUncommitted;    // readPublishedFrame, copy taken, unchecked
+    std::function<void()> whileBatchAnalysed;      // tick, windows folded, generations unre-read
 
     // Read-only views of the smoothed analysis, for the same reason. BOTH, since
     // 0.2.12: what a frame has to get right is that its two traces describe the
