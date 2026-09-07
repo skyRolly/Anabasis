@@ -1443,10 +1443,16 @@ condition to a diagnostic about the machine.
    Each rendezvous parks a thread on a mutex, and mutex release/acquire supplies happens-before
    edges strictly stronger than the seqlock's own annotations — so deleting the writer's release
    fence, the reader's acquire fence or the closing store's `release` is invisible to the forced
-   phases. It is invisible to the stress too, and to every other test in the tree: on x86-64 those
-   fences emit no instructions at all, so the mutant is byte-identical, and on AArch64 observing the
-   reordering they prevent needs the luck this round exists to stop depending on. Recorded as an
-   unkillable mutant class rather than left to be discovered — see the round's mutation table.
+   phases. It is invisible to the stress too, and to every other test in the tree, and on x86-64 that
+   is not an argument but a measurement: compiling `SpectrumView.cpp` with each fence removed and
+   disassembling the two functions gives, for the writer's release fence and the reader's acquire
+   fence, **textually identical machine code** — the mutant is the same program, so no test on this
+   architecture can distinguish it. Demoting the closing store from `release` to `relaxed` changes
+   the emitted code by exactly one instruction's POSITION (`movq %xmm0,%rax` moves one slot), which
+   carries no ordering meaning under x86's TSO. On AArch64 the fences are real `dmb ish` instructions
+   and the mutants are real; observing the reordering they prevent still needs the luck this round
+   exists to stop depending on. Recorded as an unkillable mutant class rather than left to be
+   discovered — see the round's mutation table.
 
 Evidence [Verified]:
 - Source: `src/gui/SpectrumView.h` (the rendezvous banner and the assignment rule),
