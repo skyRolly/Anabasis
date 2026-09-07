@@ -453,7 +453,12 @@ rather than assumed not to be an `ARCHITECTURE_REVIEW_GATE.md` item; **Known iss
 on the test design and separately records the two things it does NOT close (the Rosetta environment
 fault, and that a mutex-based rendezvous cannot exercise the memory-model half of the bracket);
 **Procedures** — `TESTING.md`'s two passages described the sweep as the mechanism and the straddle as
-"observed, not assumed", both now rewritten to what the tests do.
+"observed, not assumed", both now rewritten to what the tests do, and its `specStraddle` measurement
+line no longer quotes the deleted six-thousand-round hunt's counts (~1200 reconfigurations, ~1000
+guard-floored frames) but the forty-run battery's (60 reconfigurations, 0-2 guard-floored, the guard
+now a diagnostic rather than a pass condition); **Mutation record** — KI-019 carries the round's
+table, ten mutants, seven killed, and M6/M7 are the two that delete the rendezvous itself and fail
+the test that depended on it.
 
 **Addendum (2026-09-07, round 17) — the ring's capacity is a DURATION, and it is now derived from
 one.** The review's third blocking finding. `GrHistoryBuffer::kSize` was 4096, argued in the ring's

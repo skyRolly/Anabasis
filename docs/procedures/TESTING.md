@@ -422,9 +422,12 @@ never appears beside a lit one, no trace ever holds two markers, no identity eve
 configurations). Both markers complete a whole number of cycles in one pushed chunk (96000 / 512 = 187.5 Hz;
 6937.5 = 37 × 187.5 and 12000 = 64 × 187.5), because a repeated chunk that does not is a pulse train
 whose splatter puts real energy in the other marker's bin — that mistake made the mixture detector
-count the stimulus, at 59 frames a run, before it was fixed. Measured on the shipped build: ~1200
-reconfigurations, ~2500 lit frames, ~1000 of them floored by the guard, 0 lopsided, 0 mixed, 0
-identity switches.
+count the stimulus, at 59 frames a run, before it was fixed. Measured on the shipped build across
+round 18's forty-run battery (twenty native, ten pinned to one core, ten under twelve competing spin
+loops): the forced straddle occurs exactly once in every run, and the sixty-round stress that follows
+it gives 60 reconfigurations, 234-246 lit frames, 0-2 of them floored by the guard — the guard
+firing is now a diagnostic about the machine and not a pass condition — 0 lopsided, 0 mixed and 0
+identity switches, with the premise counter `starvedAt` zero in all forty.
 
 **THE TWO TESTS THAT PIN THE HISTORY'S CADENCE (round 14, OQ-017 fix 1).**
 `testGrHistoryEntriesFollowThePreparedBlock` (`dsp_tests.cpp`) drives the real engine with a real

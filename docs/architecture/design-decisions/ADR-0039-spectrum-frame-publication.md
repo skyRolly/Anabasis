@@ -317,7 +317,11 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    pass: every one of `specFrame`'s held for a reader that never once overlapped a publication.
    The tests now BLOCK the thread inside the bracket on a condition variable until the other thread
    has done its half, so each state is entered on every run, on every scheduler, and each is counted
-   so that a run which did not enter it fails.
+   so that a run which did not enter it fails. That the handshake is what does the work is measured
+   rather than asserted: deleting the wait that holds the tick inside `whileBatchAnalysed` fails
+   `specStraddle`, and deleting the wait that holds the writer inside `whileHalfPublished` fails
+   `specFrame` (KI-019's mutation table, M6 and M7) — so a future edit that quietly removes the
+   ordering cannot leave a passing test behind.
 
    **What this does not do, which is what makes it compatible with clause 11.** No second payload
    site, no paint-path write, no second writer of `frameSeq`. Each call sits BETWEEN two existing

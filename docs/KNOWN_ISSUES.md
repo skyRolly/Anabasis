@@ -1452,7 +1452,29 @@ condition to a diagnostic about the machine.
    carries no ordering meaning under x86's TSO. On AArch64 the fences are real `dmb ish` instructions
    and the mutants are real; observing the reordering they prevent still needs the luck this round
    exists to stop depending on. Recorded as an unkillable mutant class rather than left to be
-   discovered — see the round's mutation table.
+   discovered — see the table below.
+
+**The round's mutation table.** Each mutant was compiled and the whole state suite run against it;
+"killed by" counts only failures NAMED `specFrame` or `specStraddle`, since a mutant that merely
+breaks some other test proves nothing about these two. `specPaint` — the round's other publication
+test — is listed separately where it also fired, because it reads the same protocol through `paint`
+and its agreement is corroboration rather than the claim.
+
+| # | Mutation | Outcome |
+| --- | --- | --- |
+| M1 | `publishFrame` never stores the odd marker, so the bracket never opens | **Killed** — 3 `specFrame` failures (refusal, untouched buffers, four-placement coverage); `specPaint` also fires |
+| M2 | `readPublishedFrame` copies the payload even with the bracket open | **Killed** — 4 `specFrame` failures, including the mixed-frame assertion itself; `specPaint` also fires |
+| M3 | the reader's closing re-read always accepts | **Killed** — 7 `specFrame` failures across phases B and C (overtaken-once recovery, overtaken-twice refusal, both premises); `specPaint` also fires |
+| M4 | the post-batch generation guard is deleted | **Killed** — 2 `specStraddle` failures (the floored straddle frame, and the premise that the run established it) |
+| M5 | the generation guard floors only the input trace | **Killed** — 2 `specStraddle` failures |
+| M6 | the straddle rendezvous no longer holds the tick — the MECHANISM that establishes the interleaving is removed, the rest of the test untouched | **Killed** — 2 `specStraddle` failures. This is the test failing because the ordering was not established, which is what makes the assertion non-vacuous |
+| M7 | `specFrame`'s half-publication rendezvous no longer holds the writer inside the bracket — same removal, on the other test | **Killed** — 3 `specFrame` failures, the coverage assertion among them |
+| M8 | the writer's release fence is deleted | **Survived** — and unkillable here: `objdump` of `publishFrame` is textually identical with and without it on x86-64 |
+| M9 | the reader's acquire fence is deleted | **Survived** — same measurement on `readPublishedFrame` |
+| M10 | the closing store is demoted from `release` to `relaxed` | **Survived** — the emitted code differs only by one instruction's position (`movq %xmm0,%rax`), which carries no ordering meaning under TSO |
+
+M6 and M7 are the two that answer "does the test still pass if the thing that makes it deterministic
+is taken away". They do not. M8-M10 are the class this entry declines to claim coverage of.
 
 Evidence [Verified]:
 - Source: `src/gui/SpectrumView.h` (the rendezvous banner and the assignment rule),
