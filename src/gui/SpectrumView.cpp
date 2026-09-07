@@ -292,12 +292,19 @@ void SpectrumView::tick (double dt)
     // `analyse`, which is therefore not redundant with this re-read: each
     // closes what the other cannot.
     //
-    // PER RING, and the scope is deliberate. One `prepare` resets both rings in
-    // order, so the in-ring's rewind orders nothing about the out-ring's. A tick
-    // can floor `inDb` on a zero-length read while `analyse (out, …)` folds
-    // pre-reset frames — bounded to one tick (the next tick's `co` is below
-    // `shownOutCount`, so the count term fires) and excluded on both shipped
-    // ISAs, not closed by force. KI-018 carries it.
+    // DETECTED PER RING, ANSWERED JOINTLY (0.2.12, the review's
+    // cross-configuration finding). One `prepare` resets both rings in order, so
+    // the in-ring's rewind orders nothing about the out-ring's and this re-read
+    // really can catch one of the two alone. What USED to follow from that was a
+    // floor on the ring it caught, which left `analyse (out, …)`'s pre-reset
+    // frames folded into a trace published beside the other ring's post-reset
+    // one. It no longer does: every floor below is joint, because a reset
+    // observed on EITHER ring is proof that `AnabasisEngine::prepare` ran and
+    // therefore that both rings were rewound. Detection stays per ring — a
+    // rewind is a property of one ring's index — and the CONSEQUENCE is the
+    // whole view's. What KI-018 still carries is the other direction: a
+    // configuration whose bump neither ring has made visible yet is one this
+    // view cannot see at all, and no flooring rule can answer that.
     //
     // What is guaranteed unconditionally: `shownInGen` only ever advances in a
     // tick that floored the EMA first (`resetIn`) or after (`gi1 != gi0`), and
@@ -396,12 +403,47 @@ void SpectrumView::tick (double dt)
     const bool resetIn  = resetObserved (gi0, shownInGen,  ci, shownInCount);
     const bool resetOut = resetObserved (go0, shownOutGen, co, shownOutCount);
 
-    // Only on the reset EDGE, deliberately. This is not the "should an idle
-    // analyser decay to the floor?" question — that is the early return above,
-    // it is a listening-pass call, and it stays exactly as it was
-    // (`KNOWN_ISSUES` KI-007 item 6).
-    if (resetIn)  std::fill (inDb.begin(),  inDb.end(),  -120.0f);
-    if (resetOut) std::fill (outDb.begin(), outDb.end(), -120.0f);
+    // EITHER RING'S RESET FLOORS BOTH TRACES (0.2.12, the review's
+    // cross-configuration finding). This used to floor per ring — `resetIn` the
+    // input trace, `resetOut` the output one — and that is what let a published
+    // frame hold one trace from each configuration. A RESET IS NOT A PROPERTY OF
+    // ONE RING: `AnabasisEngine::prepare` rewinds both, back to back and
+    // unconditionally, so observing it on either ring is proof the configuration
+    // changed and therefore that the OTHER trace's EMA is stale too — the EMA is
+    // the only state in this view that survives a tick, and it is what carries
+    // the previous configuration forward.
+    //
+    // MEASURED on the real processor with the reader holding one ring's reset
+    // and not the other (`resetIn` true, `resetOut` false), across a genuine
+    // `prepareToPlay` from 48 kHz to 96 kHz with a 5 kHz marker tone — bin 427
+    // at the old rate, a frequency the new rate's mapping calls 10 kHz and the
+    // audio has nothing at. At bin 427 the published pair read −120.0 dB (input,
+    // floored and refilled from the new configuration) against −15.7 dB (output,
+    // still the old configuration's EMA): 104.3 dB apart in ONE frame at a
+    // 512-frame block, and 69.0 dB at 4096. After this change the same forced
+    // ordering leaves 3.1 dB and 0.1 dB, both of them the ordinary difference
+    // between a pre-chain and a post-chain tap near the floor — the control run
+    // with no reconfiguration at all shows the same residual.
+    //
+    // HOW OFTEN IT ARRIVES ON ITS OWN, stated honestly: not once. A host thread
+    // alternating 48/96 kHz against a ticking analyser reached 2006 re-prepares
+    // over four eight-second runs and produced no cross-configuration frame
+    // either before or after this change. Getting there needs the reader to
+    // hold one of `AnabasisEngine::prepare`'s two back-to-back rewinds and not
+    // the other, which is KI-018's propagation corner rather than an ordinary
+    // interleaving. The defect is constructible, not frequent; it is fixed here
+    // because a frame that mixes two configurations is wrong whenever it lands.
+    //
+    // Still only on the reset EDGE. This is not the "should an idle analyser
+    // decay to the floor?" question — that is the early return above, it is a
+    // listening-pass call, and it stays exactly as it was (`KNOWN_ISSUES`
+    // KI-007 item 6). What changed is WHICH traces a reset floors, not when.
+    bool configChanged = resetIn || resetOut;
+    if (configChanged)
+    {
+        std::fill (inDb.begin(),  inDb.end(),  -120.0f);
+        std::fill (outDb.begin(), outDb.end(), -120.0f);
+    }
 
     // NOTHING COHERENT LEFT: the producer has taken back every frame of the
     // window both taps share, which needs a chunk of a whole ring (16384 frames,
@@ -448,15 +490,33 @@ void SpectrumView::tick (double dt)
             // would never arrive. Held whole, retried next tick.
             if (! configurationHeld (cfgEpoch))
                 return;
-            shownInGen     = gi0;
-            shownOutGen    = go0;
+            // THE GENERATIONS ARE RE-SAMPLED, not carried down from the top of
+            // the tick. `gi0`/`go0` are loaded before the two counts and so
+            // inherit none of the ordering a post-reset count establishes: one
+            // of them can be the generation the ring has already left. Marking a
+            // reset "answered" against a generation the ring never had is a
+            // bookkeeping error that pays for itself twice — the next tick fires
+            // `resetObserved` again for a reset already answered, floors again,
+            // and advances the identity a second time for ONE reconfiguration.
+            //
+            // Re-sampling is sound precisely because this branch publishes the
+            // FLOOR: an empty frame belongs to every configuration equally, so
+            // committing the newest generations either ring can show says no
+            // more than "every reset visible at this instant is answered by the
+            // blank about to be published", which is exactly true. The drawn
+            // path below needs no equivalent — it commits `gi1`/`go1`, which are
+            // sequenced after the reads and are forced past the bump whenever
+            // the read returned anything at all.
+            shownInGen     = in .resetGeneration();
+            shownOutGen    = out.resetGeneration();
             shownInCount   = ci;
             shownOutCount  = co;
             shownCommitted = committed;
             drawnFirst     = committed;
             drawnSpan      = 0;
             drawnRate      = cfgRate;
-            publishFrame (committed, 0, cfgRate);
+            drawnConfig    = ++configSeq;
+            publishFrame (committed, 0, cfgRate, drawnConfig);
             repaint();
         }
         return;
@@ -498,8 +558,16 @@ void SpectrumView::tick (double dt)
     // which is what a reset leaves in any case.
     const auto gi1 = in.resetGeneration();
     const auto go1 = out.resetGeneration();
-    if (gi1 != gi0) std::fill (inDb.begin(),  inDb.end(),  -120.0f);
-    if (go1 != go0) std::fill (outDb.begin(), outDb.end(), -120.0f);
+    if (gi1 != gi0 || go1 != go0)
+    {
+        // BOTH, for the reason above: a generation that moved on either ring is
+        // a reconfiguration, and the frames just folded into the OTHER trace
+        // belong to the configuration it ended. Flooring one of the two here was
+        // the same defect one step later in the tick.
+        configChanged = true;
+        std::fill (inDb.begin(),  inDb.end(),  -120.0f);
+        std::fill (outDb.begin(), outDb.end(), -120.0f);
+    }
 
     // …AND THE CONFIGURATION HAS TO HAVE HELD ACROSS ALL OF IT. Everything above
     // proves the two traces describe one span of audio; this proves that span
@@ -522,12 +590,21 @@ void SpectrumView::tick (double dt)
     drawnFirst     = first;
     drawnSpan      = span;
     drawnRate      = cfgRate;
+    // THE IDENTITY OF THE CONFIGURATION THESE TRACES BELONG TO, and it advances
+    // exactly when this view answers a reset. Not the GR ring's epoch — that
+    // does not move on a re-prepare at an unchanged (rate, block) pair, which
+    // still rewinds both spectrum rings — and not either ring's generation,
+    // because there are two of them and a frame needs ONE identity. This counter
+    // is what the view itself has accounted for, which is precisely the
+    // generation of the content it is about to publish.
+    if (configChanged) ++configSeq;
+    drawnConfig = configSeq;
     // …and only now does the frame become visible. Publication is the LAST thing
     // the tick does, after both EMAs are settled and both post-batch generation
     // checks have had their say, so the pair the renderer can pick up is one
     // this tick was willing to commit to — never a half-updated one it was
     // about to floor.
-    publishFrame (first, span, cfgRate);
+    publishFrame (first, span, cfgRate, drawnConfig);
     repaint();
 }
 
@@ -622,7 +699,7 @@ bool SpectrumView::configurationHeld (uint32_t epoch0) const noexcept
 //     store to the reader that acquires the same value.
 // The counter is only ever written here, on the message thread, so the plain
 // load/store pair needs no read-modify-write.
-void SpectrumView::publishFrame (uint64_t first, int span, double rate) noexcept
+void SpectrumView::publishFrame (uint64_t first, int span, double rate, uint32_t config) noexcept
 {
     const auto s = frameSeq.load (std::memory_order_relaxed);
     frameSeq.store (s + 1, std::memory_order_relaxed);
@@ -635,6 +712,7 @@ void SpectrumView::publishFrame (uint64_t first, int span, double rate) noexcept
     pubFirst.store (first, std::memory_order_relaxed);
     pubSpan .store (span,  std::memory_order_relaxed);
     pubRate .store (rate,  std::memory_order_relaxed);
+    pubConfig.store (config, std::memory_order_relaxed);
 
     frameSeq.store (s + 2, std::memory_order_release);
 }
@@ -677,11 +755,12 @@ bool SpectrumView::readPublishedFrame (std::vector<float>& inTrace,
         const auto first = pubFirst.load (std::memory_order_relaxed);
         const auto span  = pubSpan .load (std::memory_order_relaxed);
         const auto rate  = pubRate .load (std::memory_order_relaxed);
+        const auto cfg   = pubConfig.load (std::memory_order_relaxed);
 
         std::atomic_thread_fence (std::memory_order_acquire);
         if (frameSeq.load (std::memory_order_relaxed) == s0)
         {
-            frame = { first, span, rate };
+            frame = { first, span, rate, cfg };
             return true;
         }
     }

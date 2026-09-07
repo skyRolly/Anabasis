@@ -75,6 +75,26 @@ public:
     // `rate` is the sample rate those frames were captured at, which is what
     // turns a bin index into a frequency (`paint`'s `binHz = rate / kSize`).
     //
+    // …AND `config` IS THE IDENTITY OF THE CONFIGURATION THE TRACES BELONG TO.
+    // It advances when this view answers a reset, which is what makes a frame
+    // self-describing: the pair, the span, the rate and the generation they were
+    // all produced under, published together or not at all. It is deliberately
+    // NOT the GR ring's reset epoch — that does not move on a re-prepare at an
+    // unchanged (rate, block) pair, which still rewinds both spectrum rings —
+    // and deliberately not either `ScopeBuffer`'s generation, because there are
+    // two of those and a frame needs ONE identity.
+    //
+    // WHAT IT PROMISES, EXACTLY, because a serial invites the stronger reading:
+    // two frames carrying the SAME id were produced with no reset observed
+    // between them, so they describe one configuration. The converse is NOT
+    // promised — a single reconfiguration may be answered on one ring and then
+    // the other, and each answer advances the id — so a consumer may see one
+    // configuration split across two ids. That direction is the safe one (it
+    // over-reports change, never under-reports it), and the tick keeps it rare
+    // by committing re-sampled generations on the blank branch rather than the
+    // pre-count samples. The corner a serial cannot reach at all is a
+    // configuration NEITHER ring has made visible: `KNOWN_ISSUES` KI-018.
+    //
     // THE RATE IS PART OF THE FRAME BECAUSE THE BINS MEAN NOTHING WITHOUT IT.
     // This is ADR-0038 clause 7 — "a published display estimate carries the
     // identity of the state it describes" — applied to a payload rather than to
@@ -92,11 +112,12 @@ public:
     // the pixels cannot say which state the pair was drawn from.
     struct Frame
     {
-        uint64_t first = 0;
-        int      span  = 0;
-        double   rate  = 0.0;
+        uint64_t first  = 0;
+        int      span   = 0;
+        double   rate   = 0.0;
+        uint32_t config = 0;
     };
-    Frame lastFrame() const noexcept { return { drawnFirst, drawnSpan, drawnRate }; }
+    Frame lastFrame() const noexcept { return { drawnFirst, drawnSpan, drawnRate, drawnConfig }; }
 
     // …AND THE FRAME THE LAST PAINT ACTUALLY DREW, which is a different fact on
     // a different thread. `lastFrame` is what the message thread committed;
@@ -267,7 +288,7 @@ private:
     // belong to into the published storage, inside the odd/even bracket
     // `readPublishedFrame` checks. The ONLY writer, and the only place a frame
     // becomes visible.
-    void publishFrame (uint64_t first, int span, double rate) noexcept;
+    void publishFrame (uint64_t first, int span, double rate, uint32_t config) noexcept;
 
     // IS THE CONFIGURATION THIS TICK READ STILL THE ONE IT STARTED UNDER? The
     // GR history ring publishes the prepared (rate, block) pair inside its own
@@ -313,6 +334,11 @@ private:
     uint64_t drawnFirst = 0;
     int      drawnSpan  = 0;
     double   drawnRate  = 0.0;
+    // The configuration identity of the last committed frame, and the view's
+    // running count of the resets it has answered. Message-thread only; the
+    // published copy is `pubConfig`, inside the frame's own bracket.
+    uint32_t drawnConfig = 0;
+    uint32_t configSeq   = 0;
     uint32_t shownInGen = 0, shownOutGen = 0;
 
     static_assert (std::atomic<float>::is_always_lock_free
@@ -344,6 +370,7 @@ private:
     // bracket as the bins themselves. `std::atomic<double>` for the reason the
     // bins are atomic, and lock-free for the reason they must be.
     std::atomic<double>   pubRate  { 0.0 };
+    std::atomic<uint32_t> pubConfig { 0 };
     // EVEN means the published frame is whole; ODD means a tick is inside the
     // bracket. A reader that sees an odd value, or a different value after its
     // copy, saw a publication in progress and has no frame — see

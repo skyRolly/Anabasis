@@ -18,6 +18,8 @@
 #include <cmath>
 #include <cstdio>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 static int failures = 0;
@@ -8391,6 +8393,578 @@ static void testAPaintThatLosesTheRaceKeepsTheFrameItAlreadyHad()
            "specPaint: every painted frame was one publication end to end — a read the painter loses leaves the frame it already had, never a prefix of one and a suffix of another");
 }
 
+// ONE FRAME, ONE CONFIGURATION. The test above establishes that a frame's two
+// traces describe one SPAN of audio, and `specAxis` that they are published with
+// the RATE that produced them. Neither says which configuration GENERATION the
+// two traces belong to, and that is a third fact: `AnabasisEngine::prepare`
+// rewinds both spectrum rings, so the frames either trace was accumulated from
+// stop meaning anything the moment it runs, and the EMA — the only state this
+// view carries across a tick — is what carries the previous configuration
+// forward. Floor it on the ring whose rewind the reader happened to notice and
+// the other trace goes on describing a configuration that has ended, published
+// beside a trace that describes the one that replaced it.
+//
+// THE STATE THIS BUILDS is the one a reader sees when it has accounted for one
+// ring's rewind and not the other's: the seen ring shows a bumped generation and
+// a rewound index, the unseen one shows neither, and BOTH rings' slots over the
+// window they share already hold the new configuration's audio (a rewind sends
+// the producer back to slot 0, so the frames it writes next overwrite exactly
+// the slots the shared window reads). It is built here by rewinding one ring and
+// letting the other's head run on, because `processBlock` cannot build it —
+// it publishes to both taps with one `num` and can never put one ring a
+// configuration ahead of the other. Whether the state arrives in the field is
+// KI-018's question and is not what this test is for; that it must never reach
+// the screen is.
+//
+// THE MARKERS ARE THE PROOF. Three tones at three bins, and the assertion is
+// made at the bin the PREVIOUS configuration's tone occupied — a bin the new
+// configuration's audio has nothing at. A trace still carrying the old EMA reads
+// tens of dB above the floor there; one that was floored with its partner reads
+// the floor. Two traces that disagree by 100 dB at one bin in one published
+// frame are not describing the same thing, and no threshold argument is needed
+// to say so.
+static void testNoSpectrumFrameEverPairsTwoConfigurationGenerations()
+{
+    const double rA = 48000.0, rB = 96000.0;
+    const float  toneA = 5000.0f, toneB = 7000.0f, toneC = 12000.0f;
+    const auto   kBins = (size_t) SpectrumView::kBins;
+    const auto binOf = [] (double hz, double sr)
+    { return (int) std::lround (hz * (double) SpectrumView::kSize / sr); };
+
+    check (binOf (toneA, rA) == 427 && binOf (toneB, rB) == 299 && binOf (toneC, rB) == 512,
+           "specGen: (premise) the three markers occupy three different bins, so a trace says in its own numbers which configuration it belongs to");
+    check (binOf (toneB, rB) != binOf (toneC, rB) && binOf (toneA, rA) != binOf (toneC, rB),
+           "specGen: (premise) …and no marker lands where another configuration puts its own");
+
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+
+    auto& inW  = const_cast<anabasis::ScopeBuffer&> (proc.spectrumInRing());
+    auto& outW = const_cast<anabasis::ScopeBuffer&> (proc.spectrumOutRing());
+
+    // Straight into the ring, phase-continuous from its own head.
+    const auto push = [] (anabasis::ScopeBuffer& ring, float hz, double sr, int frames)
+    {
+        std::vector<float> buf ((size_t) 512);
+        const auto base = (int64_t) ring.writeCount();
+        for (int done = 0; done < frames; )
+        {
+            const int n = juce::jmin (512, frames - done);
+            for (int i = 0; i < n; ++i)
+                buf[(size_t) i] = 0.5f * std::sin (2.0f * 3.14159265f * hz
+                                                    * (float) (base + done + i) / (float) sr);
+            ring.pushBlock (buf.data(), buf.data(), n);
+            done += n;
+        }
+    };
+    const auto repaint = [&view]
+    {
+        juce::Image img (juce::Image::ARGB, view.getWidth(), view.getHeight(), true);
+        juce::Graphics g (img);
+        view.paint (g);
+    };
+    const auto peakBin = [] (const std::vector<float>& t)
+    {
+        int best = 0;
+        for (size_t b = 1; b < t.size(); ++b) if (t[b] > t[(size_t) best]) best = (int) b;
+        return best;
+    };
+    const auto flooredEverywhere = [] (const std::vector<float>& a, const std::vector<float>& b)
+    {
+        for (size_t i = 0; i < kBins; ++i) if (a[i] > -119.0f || b[i] > -119.0f) return false;
+        return true;
+    };
+
+    std::vector<float> pi (kBins), po (kBins);
+    SpectrumView::Frame fr {};
+
+    // --- CASE 1: the old configuration, both traces the old configuration's.
+    proc.setRateAndBufferSizeDetails (rA, 512);
+    proc.prepareToPlay (rA, 512);
+    push (inW,  toneA, rA, 4096);
+    push (outW, toneA, rA, 4096);
+    view.tick (1.0 / 60.0);
+    repaint();
+    check (view.readPublishedFrame (pi, po, fr) && juce::exactlyEqual (fr.rate, rA),
+           "specGen: case 1 — the frame carries the rate the audio was captured at");
+    check (peakBin (pi) == binOf (toneA, rA) && peakBin (po) == binOf (toneA, rA),
+           "specGen: case 1 — …and BOTH traces are the old configuration's");
+    const uint32_t cfgA = fr.config;
+
+    // --- CASE 2: the new configuration, at a different sample rate, both traces
+    // the new configuration's — and the old marker gone from both, not one.
+    proc.setRateAndBufferSizeDetails (rB, 512);
+    proc.prepareToPlay (rB, 512);
+    push (inW,  toneB, rB, 4096);
+    push (outW, toneB, rB, 4096);
+    view.tick (1.0 / 60.0);
+    repaint();
+    check (view.readPublishedFrame (pi, po, fr) && juce::exactlyEqual (fr.rate, rB),
+           "specGen: case 2 — the reconfigured frame carries the new rate");
+    check (peakBin (pi) == binOf (toneB, rB) && peakBin (po) == binOf (toneB, rB),
+           "specGen: case 2 — …and BOTH traces are the new configuration's");
+    check (fr.config != cfgA,
+           "specGen: case 2 — …and the frame says it is a different configuration from the one before it");
+    check (pi[(size_t) binOf (toneA, rA)] < -80.0f && po[(size_t) binOf (toneA, rA)] < -80.0f,
+           "specGen: case 2 — …with the previous configuration's marker gone from both traces");
+
+    // --- CASES 3 AND 4: one ring's reset observed and the other's not, each way
+    // round. This is the frame the finding is about, and it must not exist.
+    const auto splitReset = [&] (bool resetInputRing, const char* which)
+    {
+        proc.setRateAndBufferSizeDetails (rB, 512);
+        proc.prepareToPlay (rB, 512);
+        push (inW,  toneB, rB, 4096);
+        push (outW, toneB, rB, 4096);
+        view.tick (1.0 / 60.0);
+        check (peakBin (view.analysedInDb()) == binOf (toneB, rB),
+               (juce::String ("specGen: (premise, ") + which + ") the input trace is settled on the configuration the split will leave behind").toRawUTF8());
+        check (peakBin (view.analysedOutDb()) == binOf (toneB, rB),
+               (juce::String ("specGen: (premise, ") + which + ") the output trace is too, so an unfloored EMA is unmistakable").toRawUTF8());
+        const uint32_t before = view.lastFrame().config;
+
+        auto& seen   = resetInputRing ? inW  : outW;
+        auto& unseen = resetInputRing ? outW : inW;
+        const auto genUnseen = unseen.resetGeneration();
+        const auto genSeen   = seen.resetGeneration();
+
+        seen  .reset();                      // rewound: the reader will see this one
+        push (seen,   toneC, rB, 8192);      // slots 0…8191 are the new configuration's
+        push (unseen, toneC, rB, 4096);      // slots 4096…8191 are too, with no rewind seen
+
+        check (seen.resetGeneration() != genSeen && seen.writeCount() == 8192,
+               (juce::String ("specGen: (premise, ") + which + ") the observed ring really was rewound and refilled from the new configuration").toRawUTF8());
+        check (unseen.resetGeneration() == genUnseen && unseen.writeCount() == 8192,
+               (juce::String ("specGen: (premise, ") + which + ") the unobserved ring shows no rewind at all, and its head only ever went forward").toRawUTF8());
+
+        view.tick (1.0 / 60.0);
+        repaint();
+        check (view.readPublishedFrame (pi, po, fr),
+               (juce::String ("specGen: (") + which + ") the split tick published a frame to read").toRawUTF8());
+        check (fr.span == 4096 && fr.first == 8192 - 4096,
+               (juce::String ("specGen: (premise, ") + which + ") the published window is exactly the one BOTH rings filled with the new configuration's audio").toRawUTF8());
+        check (pi[(size_t) binOf (toneC, rB)] > -20.0f && po[(size_t) binOf (toneC, rB)] > -20.0f,
+               (juce::String ("specGen: (premise, ") + which + ") both traces really did receive that audio").toRawUTF8());
+
+        const auto old = (size_t) binOf (toneB, rB);
+        check (std::fabs (pi[old] - po[old]) <= 6.0f,
+               (juce::String ("specGen: (") + which + ") at the PREVIOUS configuration's marker bin the two traces agree — neither of them is still describing it").toRawUTF8());
+        check (pi[old] < -60.0f && po[old] < -60.0f,
+               (juce::String ("specGen: (") + which + ") …and what they agree on is that the previous configuration is gone, from both traces and not just the rewound one").toRawUTF8());
+        check (fr.config != before,
+               (juce::String ("specGen: (") + which + ") …and the frame carries a configuration identity that says so").toRawUTF8());
+    };
+    splitReset (true,  "input reset seen, output reset not");
+    splitReset (false, "output reset seen, input reset not");
+
+    // --- WHAT A RESET PUBLISHES BEFORE ANY NEW AUDIO ARRIVES: the floor in both
+    // traces under the NEW rate, which is the honest answer to "what does this
+    // configuration look like so far?" — not the previous pair held over.
+    proc.setRateAndBufferSizeDetails (rA, 1024);
+    proc.prepareToPlay (rA, 1024);
+    const uint32_t beforeBlank = view.lastFrame().config;
+    view.tick (1.0 / 60.0);
+    repaint();
+    check (view.readPublishedFrame (pi, po, fr) && fr.span == 0 && juce::exactlyEqual (fr.rate, rA),
+           "specGen: a reconfiguration with no audio yet publishes an EMPTY frame under the new rate");
+    check (flooredEverywhere (pi, po),
+           "specGen: …and BOTH traces are at the floor, not one of them");
+    check (fr.config != beforeBlank,
+           "specGen: …and it is published as a new configuration rather than as more of the previous one");
+
+    // --- AND THROUGH THE RESET EDGE, where a host block of a whole ring leaves
+    // the span at 0 for every tick that follows: same answer, same identity.
+    proc.setRateAndBufferSizeDetails (rB, (int) anabasis::ScopeBuffer::capacity);
+    proc.prepareToPlay (rB, (int) anabasis::ScopeBuffer::capacity);
+    const uint32_t beforeEdge = view.lastFrame().config;
+    push (inW,  toneC, rB, (int) anabasis::ScopeBuffer::capacity);
+    push (outW, toneC, rB, (int) anabasis::ScopeBuffer::capacity);
+    view.tick (1.0 / 60.0);
+    repaint();
+    check (view.readPublishedFrame (pi, po, fr) && fr.span == 0 && juce::exactlyEqual (fr.rate, rB),
+           "specGen: at a host block of a whole ring the reset edge publishes the empty frame rather than holding the previous configuration's pair");
+    check (flooredEverywhere (pi, po) && fr.config != beforeEdge,
+           "specGen: …with both traces floored and a new identity, which is what makes it the new configuration's blank rather than the old one's remains");
+
+    // --- ONE BLOCK AFTER A RESET, AND THEN SEVERAL: the pair is coherent from
+    // the first frame either way, at a normal host block.
+    for (const int blocks : { 1, 8 })
+    {
+        proc.setRateAndBufferSizeDetails (rB, 512);
+        proc.prepareToPlay (rB, 512);
+        push (inW,  toneC, rB, blocks * 512);
+        push (outW, toneC, rB, blocks * 512);
+        view.tick (1.0 / 60.0);
+        repaint();
+        check (view.readPublishedFrame (pi, po, fr)
+                 && fr.span == juce::jmin (SpectrumView::kSize, blocks * 512),
+               (juce::String ("specGen: ") + juce::String (blocks) + " block(s) after a reset the frame spans what the pair can serve").toRawUTF8());
+        check (std::fabs (pi[(size_t) binOf (toneB, rB)] - po[(size_t) binOf (toneB, rB)]) <= 6.0f,
+               (juce::String ("specGen: …and after ") + juce::String (blocks) + " block(s) neither trace is still carrying the configuration before it").toRawUTF8());
+    }
+
+    // --- REPEATED REPREPARE, A → B → A, AND A SECOND RATE PAIR, with the two
+    // rings refilled one at a time so the reader meets every ordering: a ring
+    // ahead, a ring behind, and the pair in step.
+    const double rC = 44100.0, rD = 88200.0;
+    double previous = rB;
+    for (const double sr : { rA, rB, rA, rC, rD, rC })
+    {
+        const uint32_t before = view.lastFrame().config;
+        proc.setRateAndBufferSizeDetails (sr, 512);
+        proc.prepareToPlay (sr, 512);
+        push (inW, toneC, sr, 4096);
+        view.tick (1.0 / 60.0);                 // one ring refilled: nothing coherent yet
+        push (outW, toneC, sr, 4096);
+        view.tick (1.0 / 60.0);                 // …and now the pair
+        repaint();
+        check (view.readPublishedFrame (pi, po, fr) && juce::exactlyEqual (fr.rate, sr)
+                 && fr.config != before,
+               (juce::String ("specGen: the reconfiguration to ") + juce::String (sr, 0) + " Hz publishes under its own rate and its own identity").toRawUTF8());
+        check (peakBin (pi) == binOf (toneC, sr) && peakBin (po) == binOf (toneC, sr),
+               (juce::String ("specGen: …with both traces reading the marker where ") + juce::String (sr, 0) + " Hz puts it").toRawUTF8());
+        const auto stale = (size_t) binOf (toneC, previous);
+        if (stale != (size_t) binOf (toneC, sr))
+            check (std::fabs (pi[stale] - po[stale]) <= 6.0f,
+                   (juce::String ("specGen: …and the two traces agree at the bin the PREVIOUS rate put the marker in, which is where a half-answered reset shows")).toRawUTF8());
+        previous = sr;
+    }
+
+    // --- AND THE SPLIT AT THE RESET EDGE, where a host block of a whole ring
+    // leaves the span at 0 for every tick that follows. There is no trace to
+    // compare here — at that block size the EMA is floored on every tick — so
+    // what has to hold is that the blank is PUBLISHED at all: gate it on both
+    // rings' resets rather than either and a reader that saw one of the two
+    // keeps the previous configuration's frame on screen for good.
+    {
+        const int whole = (int) anabasis::ScopeBuffer::capacity;
+        proc.setRateAndBufferSizeDetails (rB, whole);
+        proc.prepareToPlay (rB, whole);
+        push (inW,  toneC, rB, whole);
+        push (outW, toneC, rB, whole);
+        view.tick (1.0 / 60.0);
+        const uint32_t before = view.lastFrame().config;
+        check (view.readPublishedFrame (pi, po, fr) && fr.span == 0,
+               "specGen: (premise) at a whole-ring block every frame is the empty one, so the edge is the only publication there is");
+
+        const auto genOut = outW.resetGeneration();
+        inW .reset();                       // one ring rewound, the other's head running on
+        push (inW,  toneC, rB, whole);
+        push (outW, toneC, rB, whole);
+        check (outW.resetGeneration() == genOut,
+               "specGen: (premise) the unobserved ring shows no rewind at the reset edge either");
+        view.tick (1.0 / 60.0);
+        repaint();
+        check (view.readPublishedFrame (pi, po, fr) && fr.span == 0 && fr.config != before,
+               "specGen: a reset the reader sees on ONE ring still publishes the new configuration's blank — the edge answers a reset it saw, it does not wait for the ring it did not");
+    }
+}
+
+// …AND A RECONFIGURATION THAT LANDS INSIDE ONE TICK IS THE SAME QUESTION ONE
+// LEVEL DOWN. The test above builds the split from a settled state, which is the
+// only way a single thread can build it. It cannot build the OTHER half of the
+// same invariant: a reset that becomes visible AFTER `tick` has sampled the two
+// generations and BEFORE it re-samples them, so the edge floor is silent and the
+// batch has already folded post-reset frames into a pre-reset EMA. The
+// post-batch re-read is the guard for that, and it is reachable only
+// concurrently — the window it covers is two ring reads and two 4096-point FFTs,
+// ~130 µs, which is why a producer running at any rate at all lands inside it.
+//
+// ESTABLISHED, NOT HOPED FOR. The producer here does not free-run: it rewinds
+// both rings and refills them exactly once per PUBLISHED frame, waiting on the
+// reader's own counter with a bounded spin (so a reader that stops publishing
+// fails the test rather than hanging it). That pins the interleaving at both
+// ends — every reset happens after a commit, so the following tick begins with
+// `gi0 == shownInGen` and the edge floor cannot fire on the generation, and the
+// reset lands while that tick is running. The stimulus is also stronger than the
+// product's: a real host reconfigures once in a while, this one reconfigures
+// thousands of times, alternating two markers so that any tick that folds one
+// configuration's frames into the other's EMA says so by holding BOTH markers in
+// one trace. A clean trace holds exactly one.
+static void testAResetThatLandsInsideATickNeverReachesTheScreen()
+{
+    const double sr = 96000.0;
+    const int    chunk = 512;
+    // BOTH MARKERS COMPLETE A WHOLE NUMBER OF CYCLES IN ONE PUSHED CHUNK
+    // (96000 / 512 = 187.5 Hz, and 6937.5 = 37 × 187.5, 12000 = 64 × 187.5), so
+    // a ring filled by repeating one chunk holds a continuous tone rather than a
+    // 187.5 Hz pulse train. Without that the splatter from every chunk boundary
+    // puts real energy in the OTHER marker's bin and the mixture detector below
+    // counts the stimulus instead of the defect.
+    const float  toneB = 6937.5f, toneC = 12000.0f;
+    const auto   kBins = (size_t) SpectrumView::kBins;
+    const auto binOf = [] (double hz, double rate)
+    { return (size_t) std::lround (hz * (double) SpectrumView::kSize / rate); };
+    const auto bB = binOf (toneB, sr), bC = binOf (toneC, sr);
+    check (bB != bC, "specStraddle: (premise) the two markers are two different bins, so one trace holding both is unmistakable");
+    check (std::fabs (toneB * (float) chunk / (float) sr - std::round (toneB * (float) chunk / (float) sr)) < 1.0e-4f
+             && std::fabs (toneC * (float) chunk / (float) sr - std::round (toneC * (float) chunk / (float) sr)) < 1.0e-4f,
+           "specStraddle: (premise) …and each completes a whole number of cycles per pushed chunk, so a repeated chunk is a continuous tone and not a pulse train");
+
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    proc.setRateAndBufferSizeDetails (sr, 512);
+    proc.prepareToPlay (sr, 512);
+
+    SpectrumView view (proc);
+    view.setBounds (0, 0, 300, 120);
+    view.setVisible (true);
+
+    auto& inW  = const_cast<anabasis::ScopeBuffer&> (proc.spectrumInRing());
+    auto& outW = const_cast<anabasis::ScopeBuffer&> (proc.spectrumOutRing());
+
+    // Long enough to refill a whole window in ONE `pushBlock`. That matters for
+    // the straddle: the producer has to get the rewind AND the audio that
+    // follows it in before the reader's tick reaches its two ring reads, or the
+    // reads come back short and `onePairOneSpan` rejects the frame before the
+    // guard under test ever runs. Twenty-four separate pushes lost that race
+    // almost every round; one push wins it almost every round.
+    const int kRefill = 24 * chunk;
+    std::vector<float> waveB ((size_t) kRefill), waveC ((size_t) kRefill);
+    for (int i = 0; i < kRefill; ++i)
+    {
+        waveB[(size_t) i] = 0.5f * std::sin (2.0f * 3.14159265f * toneB * (float) i / (float) sr);
+        waveC[(size_t) i] = 0.5f * std::sin (2.0f * 3.14159265f * toneC * (float) i / (float) sr);
+    }
+
+    // The producer models the audio thread it stands in for: chunks into both
+    // rings, and once a round a rewind of both rings with the marker changed —
+    // `AnabasisEngine::prepare`'s two resets, back to back, with the
+    // configuration it announces. Each round runs a CLEAN phase, paced by the
+    // reader's own publications so this configuration reaches the screen as
+    // itself, and then a STRADDLE phase that puts the rewind inside a running
+    // tick.
+    // ROUNDS ENOUGH TO SEE IT, and no more. The straddle is common on a native
+    // run and rare under valgrind, where the scheduler is cooperative and the
+    // producer's rewind and refill cannot be slid finely into the reader's
+    // batch. So the loop runs a fixed minimum — enough for the marker and
+    // mixture detectors to have something to work on — and then keeps going only
+    // until it has SEEN the interleaving, up to a hard cap. Natively it stops at
+    // the minimum; under valgrind it costs the extra rounds rather than the
+    // coverage.
+    const int  kMinRounds = 60, kMaxRounds = 6000, kChunksPerReset = 24, kCleanFrames = 2;
+    const int  kHoldSweep = 8;                       // the yield sweep's width
+    const long kMinHold = 16, kMaxHold = 1L << 16;   // the spin sweep's range
+    const auto kPatience = std::chrono::seconds (60);
+    std::atomic<bool> stop { false }, starved { false };
+    std::atomic<int>  starvedAt { 0 };
+    std::atomic<long> resets { 0 };
+    // How many ticks had a rewind become visible inside them. The reader counts
+    // it and the producer calibrates its hold against it.
+    std::atomic<long> guardFired { 0 };
+
+    // THE HANDSHAKE IS A CONDITION VARIABLE, NOT A SPIN. Two threads polling
+    // each other with bounded spins fail in the one place this test has to work:
+    // under valgrind, where the scheduler is cooperative, a spinning producer
+    // holds the reader off and a reader with nothing to publish runs millions of
+    // empty ticks past the producer's budget. Blocking removes the question, and
+    // the ORDERING it gives is stronger rather than weaker — the reader signals
+    // `ticking` immediately BEFORE `view.tick` and clears it after, so a
+    // producer released by that signal is racing the tick body by construction
+    // instead of by luck. `kPatience` is the liveness bound and nothing else: a
+    // thread that stops making progress fails a premise rather than hanging the
+    // job, and no assertion below depends on how long anything took.
+    std::mutex              m;
+    std::condition_variable cvPub;
+    long                    published = 0;          // guarded by m
+    // HOW MANY TICKS HAVE BEGUN. A COUNTER, not a "tick in progress" flag: the
+    // flag is only true while `view.tick` is on the stack, and an idle tick is
+    // short enough that a waiter woken by it re-acquires the mutex after the
+    // flag is false again — a condition that is true only in passing cannot be
+    // waited on, and under valgrind that missed wake-up starved the producer
+    // every time. A counter is durable: "the next tick has begun" stays true
+    // once it is true, so the wait ends on the first tick and no wake-up can be
+    // missed.
+    std::atomic<long>       tickStarts { 0 };
+
+    std::thread host ([&]
+    {
+        const float* w = waveC.data();
+        long hold = kMinHold, guardSeen = 0;
+        const auto waitOnePublication = [&] (long before)
+        {
+            std::unique_lock<std::mutex> lk (m);
+            if (! cvPub.wait_for (lk, kPatience, [&] { return published > before; }))
+            { starvedAt = 1; starved = true; stop = true; return false; }
+            return true;
+        };
+        const auto publishedNow = [&] { std::lock_guard<std::mutex> lk (m); return published; };
+        for (int r = 0; r < kMaxRounds && ! stop.load(); ++r)
+        {
+            if (r >= kMinRounds && guardFired.load() > 0) break;
+            // CLEAN PHASE: this configuration is pushed at the reader's pace, so
+            // it reaches the screen as itself before anything disturbs it. Without
+            // it the producer outruns the reader, every published frame is a
+            // straddled one, and the two mixture detectors have nothing to catch.
+            for (int c = 0; c < kCleanFrames; ++c)
+            {
+                const long mark = publishedNow();
+                for (int k = 0; k < kChunksPerReset; ++k)
+                {
+                    inW .pushBlock (w, w, chunk);
+                    outW.pushBlock (w, w, chunk);
+                }
+                if (! waitOnePublication (mark)) return;
+            }
+            // STRADDLE PHASE, AND THE ORDERING IS EXPLICIT RATHER THAN RACED.
+            // One more chunk gives the reader a full batch to run, and the
+            // producer then waits for the reader's tick COUNTER to advance,
+            // which says a tick has begun since the chunk landed. A wall-clock delay cannot stand in for that: the ratio
+            // between a spin and a 4096-point FFT is two orders of magnitude
+            // different under valgrind, so a delay tuned for one lands outside
+            // the batch on the other. The wait is bounded by `kPatience`, so a
+            // reader that stops ticking fails the test rather than hanging it,
+            // and whether the rewind really landed inside the batch is still not
+            // assumed: `guardFired` counts the ticks where it did.
+            inW .pushBlock (w, w, chunk);
+            outW.pushBlock (w, w, chunk);
+            {
+                const long t0 = tickStarts.load();
+                const auto until = std::chrono::steady_clock::now() + kPatience;
+                while (tickStarts.load() == t0)
+                {
+                    std::this_thread::yield();
+                    if (std::chrono::steady_clock::now() > until)
+                    { starvedAt = 2; starved = true; stop = true; return; }
+                }
+            }
+            // …and then far enough INTO that tick to be past its two count
+            // loads. The unit is a YIELD, not a spin: a spin measures this
+            // machine's clock, and under valgrind — whose scheduler is
+            // cooperative — it measures nothing at all, because a spinning
+            // producer does not let the reader advance one instruction. A yield
+            // hands the reader a slice, so the offset is denominated in the
+            // reader's OWN progress under valgrind. Natively the opposite is
+            // true — a yield there hands over a whole tick and overshoots, while
+            // a short spin lands inside one — so the round number sweeps BOTH
+            // units, eight offsets of each, and the two halves cover the two
+            // scales between them. No clock is read and no delay is tuned to a
+            // machine; and whether any of it landed inside a batch is not
+            // assumed either — `guardFired` counts the ticks where it did.
+            if ((r & 1) != 0)
+            {
+                // ODD ROUNDS SWEEP YIELDS, for the cooperative scheduler.
+                for (int q = 0; q <= (r / 2) % kHoldSweep; ++q) std::this_thread::yield();
+            }
+            else
+            {
+                // EVEN ROUNDS SWEEP SPINS, and the sweep is a calibration: the
+                // hold doubles on every even round that produced no straddle,
+                // holds still on every one that did, and wraps when it runs out
+                // of range. That converges on a native run within a handful of
+                // rounds and stays there.
+                if (guardFired.load() == guardSeen) hold = hold < kMaxHold ? hold * 2 : kMinHold;
+                guardSeen = guardFired.load();
+                volatile int sink = 0;
+                for (long q = 0; q < hold; ++q) sink = sink + 1;
+            }
+            const long before = publishedNow();
+            inW .reset();
+            outW.reset();
+            w = (r & 1) ? waveC.data() : waveB.data();
+            resets.fetch_add (1);
+            // …and the audio resumes under the new configuration, which is what
+            // gives the straddled batch post-rewind frames to fold and the tick
+            // after it a span to publish.
+            inW .pushBlock (w, w, kRefill);
+            outW.pushBlock (w, w, kRefill);
+            // …and then the producer waits for the reader to publish once, so
+            // the two run at the reader's pace rather than the producer's. A
+            // free-running producer never lets a clean window reach the screen,
+            // which would make the mixture detectors vacuous.
+            if (! waitOnePublication (before)) return;
+        }
+        stop = true;
+    });
+
+    std::vector<float> pi (kBins), po (kBins);
+    SpectrumView::Frame fr {}, seen {};
+    long ticks = 0, lit = 0, lopsided = 0, mixed = 0;
+    long sawB = 0, sawC = 0, switchedWithinConfig = 0;
+    uint32_t markedConfig = 0;
+    int      markedDominant = 0;
+    while (! stop.load())
+    {
+        tickStarts.fetch_add (1, std::memory_order_release);
+        view.tick (1.0 / 60.0);
+        ++ticks;
+        if (! view.readPublishedFrame (pi, po, fr)) continue;
+        if (fr.config == seen.config && fr.first == seen.first && fr.span == seen.span)
+        {
+            std::this_thread::yield();      // nothing new: let the producer run
+            continue;
+        }
+        seen = fr;
+        if (fr.span <= 0) continue;
+        // …and only a frame with a SPAN releases the next reconfiguration. The
+        // blank a rewind publishes while the producer is still refilling is a
+        // publication, but it is not the reader having seen this round's audio,
+        // and letting it release the handshake would rewind the rings again
+        // before a single window of the new marker was ever analysed.
+        { std::lock_guard<std::mutex> lk (m); ++published; }
+        cvPub.notify_all();
+        bool inFloored = true, outFloored = true;
+        for (size_t i = 0; i < kBins; ++i)
+        {
+            if (pi[i] > -119.0f) inFloored  = false;
+            if (po[i] > -119.0f) outFloored = false;
+        }
+        const bool inLit  = pi[bB] > -40.0f || pi[bC] > -40.0f;
+        const bool outLit = po[bB] > -40.0f || po[bC] > -40.0f;
+        if (inLit || outLit) ++lit;
+        // …AND THE IDENTITY HAS TO MEAN SOMETHING. Frames carrying one `config`
+        // are frames of one configuration, so the marker they show cannot change
+        // while it does not: a tick that publishes the PREVIOUS marker under an
+        // advanced identity is caught on the very next frame, which shows the
+        // new one under the same identity.
+        const bool showsB = (pi[bB] > -40.0f || po[bB] > -40.0f) && pi[bC] <= -40.0f && po[bC] <= -40.0f;
+        const bool showsC = (pi[bC] > -40.0f || po[bC] > -40.0f) && pi[bB] <= -40.0f && po[bB] <= -40.0f;
+        if (showsB || showsC)
+        {
+            const int marker = showsB ? 1 : 2;
+            if (markedDominant != 0 && fr.config == markedConfig && marker != markedDominant)
+                ++switchedWithinConfig;
+            if (marker == 1) ++sawB; else ++sawC;
+            markedConfig    = fr.config;
+            markedDominant  = marker;
+        }
+        // THE PREMISE, OBSERVED RATHER THAN ASSUMED: a frame with a full span
+        // whose two traces are BOTH entirely at the floor can only come from the
+        // post-batch generation re-read — the reset edge floors and then folds
+        // the new window in, so its frames are lit.
+        if (inFloored && outFloored) guardFired.fetch_add (1);
+        // THE INVARIANT, twice. One trace at the floor beside a lit one is a
+        // pair from two configurations…
+        if (inFloored != outFloored) ++lopsided;
+        // …and one trace holding both markers is a single trace from two.
+        if ((pi[bB] > -40.0f && pi[bC] > -40.0f) || (po[bB] > -40.0f && po[bC] > -40.0f))
+            ++mixed;
+    }
+    host.join();
+
+    check (! starved.load(),
+           "specStraddle: (premise) the reader kept publishing throughout, so the producer's handshake never spun out");
+    check (resets.load() >= (long) kMinRounds,
+           "specStraddle: (premise) the producer reconfigured at least as many times as it was asked to");
+    check (lit >= 10,
+           "specStraddle: (premise) …and the reader published enough frames with real content to inspect");
+    check (guardFired.load() > 0,
+           "specStraddle: a rewind that becomes visible INSIDE a tick floors what that tick folded — frames with a full span and both traces at the floor are the post-batch re-read doing exactly that, and they have to exist");
+    check (lopsided == 0,
+           "specStraddle: a rewind seen inside a tick never leaves one trace floored beside a lit one — the two traces answer it together or not at all");
+    check (mixed == 0,
+           "specStraddle: …and no trace ever holds two markers, so nothing a tick folded before the rewind is ever published under the configuration that followed it");
+    check (sawB > 0 && sawC > 0,
+           "specStraddle: (premise) both configurations really did reach the screen, so an identity that spanned the two would have something to span");
+    check (switchedWithinConfig == 0,
+           "specStraddle: …and no two frames sharing one configuration identity ever showed different configurations' markers — the identity a frame publishes is the one its traces belong to");
+    std::printf ("      specStraddle: starvedAt=%d, %ld ticks, %ld reconfigurations, %ld lit frames, %ld guard-floored, %ld lopsided, %ld mixed, %ld B, %ld C, %ld id-switch\n",
+                 starvedAt.load(), ticks, resets.load(), lit, guardFired.load(), lopsided, mixed, sawB, sawC, switchedWithinConfig);
+}
+
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
 {
     using Ring = anabasis::GrHistoryBuffer;
@@ -10393,6 +10967,8 @@ int main (int argc, char** argv)
         testASpectrumFrameCarriesTheRateItsBinsAreReadThrough();
         testNoFrameARendererPicksUpEverMixesTwoConfigurations();
         testAPaintThatLosesTheRaceKeepsTheFrameItAlreadyHad();
+        testNoSpectrumFrameEverPairsTwoConfigurationGenerations();
+        testAResetThatLandsInsideATickNeverReachesTheScreen();
         testTheHiddenIntervalMeasuresWhatItClaims();
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();

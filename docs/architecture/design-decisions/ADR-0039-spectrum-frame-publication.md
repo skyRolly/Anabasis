@@ -23,6 +23,20 @@
 > race while the gate is answered. What the round must not do is assert "no threading change" in a
 > pull request, which is the failure ADR-0027's banner records; this record is the flag.
 
+> **AMENDED BY EXCEPTION — 2026-09-07, clause 1 and clause 10.** The round-13 review found a frame
+> that pairs one configuration's trace with another's: `tick` floored the EMA of the ring whose
+> rewind it had observed and left the other ring's alone, so a reader that had accounted for one of
+> `AnabasisEngine::prepare`'s two back-to-back rewinds and not the other published one floored,
+> refilled trace beside one still carrying the previous configuration — **measured 104.3 dB apart at
+> a 512-frame block, 69.0 dB at 4096**, at a bin the new rate maps to a frequency the audio has
+> nothing at. The repair is inside this record's own mechanism and adds none: the floor is now
+> JOINT, and the frame carries a configuration identity beside the window and the rate it already
+> carried. Clause 10's second bullet ratified the removed behaviour in as many words ("the residual
+> is bounded, not removed"), so the amendment is filed rather than assumed — a green build does not
+> clear a conflict with an Accepted ADR. Nothing about the publication protocol, its ordering, its
+> thread pairing or its bound changes; clause 11's trigger list is not tripped, because the identity
+> is a scalar inside the SAME bracket published by the SAME single writer.
+
 **Status:** **Accepted — 2026-09-06**, on the owner's explicit approval of this record. It was NOT
 covered by the standing blanket approval for the post-v0.1.0 rounds (ADR-0027 established that a
 gated thread-model item is outside it, and ADR-0038 was held at `Proposed` for the same reason). The
@@ -158,9 +172,18 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
 
 1. **The Message → Painting boundary admits a PAYLOAD at one named site: `SpectrumView`'s published
    frame.** Two arrays of `std::atomic<float>` (`pubIn`, `pubOut`, 2048 each), plus
-   `std::atomic<uint64_t> pubFirst`, `std::atomic<int> pubSpan` and `std::atomic<double> pubRate` —
-   the window the pair was analysed over and the rate its bins are read through, both of which travel
-   WITH the pair because they are what make the frame one frame. Written only by
+   `std::atomic<uint64_t> pubFirst`, `std::atomic<int> pubSpan`, `std::atomic<double> pubRate` and
+   `std::atomic<uint32_t> pubConfig` — the window the pair was analysed over, the rate its bins are
+   read through, and the identity of the configuration generation all three belong to, every one of
+   which travels WITH the pair because they are what make the frame one frame. **`pubConfig` was
+   added 2026-09-07** (see the amendment banner): a frame is one span AND one configuration, and the
+   second half of that has to be published or it cannot be checked. It is the view's own count of
+   the resets it has answered, not the GR ring's epoch (which stands still on a re-prepare at an
+   unchanged (rate, block) pair, though the rings still rewind) and not either `ScopeBuffer`
+   generation (there are two of those and a frame needs one identity). Two frames sharing an
+   identity were produced with no reset observed between them; the converse is not promised, because
+   one reconfiguration answered on one ring and then the other advances it twice — over-reporting
+   change, which is the safe direction. Written only by
    `SpectrumView::publishFrame` on the message thread; read only by
    `SpectrumView::readPublishedFrame`. The reader receives them as one `Frame`
    (`src/gui/SpectrumView.h:77-105`), and `paint` reads **no processor state at all** — the one
@@ -254,11 +277,21 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
       cannot move the rate, which is all this bracket is about, and the rings' own `resetGeneration`
       remains the SOLE detector for it. Nothing here subsumes `resetObserved`.
     * **It pairs the rate with the frames this tick's ACQUIRED INDICES describe, not with every sample
-      the EMA remembers.** The ring payload is read through relaxed loads, and KI-018's cross-ring
-      residual — one ring's rewind observed and the other's not, for one tick — is unchanged: that
-      tick floors the ring it saw and can fold the other's pre-reset frames into an EMA published
-      beside the new rate. One tick, ~16.7 ms, decaying on the 120 ms EMA. **The residual is bounded,
-      not removed**, and the property claimed is the bounded one.
+      the EMA remembers.** The ring payload is read through relaxed loads, and this bracket says
+      nothing about the EMA either trace carries in from earlier ticks.
+
+      **AMENDED 2026-09-07.** As first filed this bullet went on to ratify a residual: *"KI-018's
+      cross-ring residual — one ring's rewind observed and the other's not, for one tick — is
+      unchanged: that tick floors the ring it saw and can fold the other's pre-reset frames into an
+      EMA published beside the new rate … The residual is bounded, not removed, and the property
+      claimed is the bounded one."* That is no longer the behaviour and is no longer the property
+      claimed. **A reset observed on EITHER ring now floors BOTH traces**, at the reset edge and at
+      the post-batch generation re-read alike, because `AnabasisEngine::prepare` rewinds both rings
+      back to back and unconditionally — so observing one is proof the configuration changed, and
+      proof the other trace's EMA belongs to the configuration that ended. The residual is
+      **removed**, not bounded: no published frame can hold one trace from each generation. What
+      KI-018 still carries is the other direction, which no flooring rule can answer — a
+      reconfiguration NEITHER ring has yet made visible is one this view cannot see at all.
 
 11. **This is not a licence to widen.** The permission is for ONE site, for a payload that is
    read-only on the painting side, published whole by a single writer, validated by the sequence
@@ -275,14 +308,14 @@ Collected here so a reviewer does not have to assemble it from the prose above.
 | **Ownership** | ONE writer (`SpectrumView::publishFrame`, message thread, called only from `tick`), ONE reader (`SpectrumView::readPublishedFrame`, called from `paint` in the plugin and from tests). The published storage is written nowhere else and read nowhere else. |
 | **Writer thread** | The message thread — `tick` is a `juce::VBlankAttachment` callback through `abgui::FrameClock` (`src/gui/FrameClock.h`). |
 | **Reader thread** | Whichever thread paints: the OpenGL context's render thread on macOS and Windows, the message thread on Linux, and the message thread again for `createComponentSnapshot` (`docs/architecture/THREAD_MODEL.md` §"Which context paints"). |
-| **Publication sequence** | counter odd (relaxed) → `atomic_thread_fence(release)` → 2048 + 2048 relaxed `float` stores → `first`, `span`, `rate` relaxed → counter even (`release`). |
-| **Read sequence** | counter acquire → reject if odd → relaxed copy of both traces and the three scalars → `atomic_thread_fence(acquire)` → relaxed re-read → keep only if unchanged. |
+| **Publication sequence** | counter odd (relaxed) → `atomic_thread_fence(release)` → 2048 + 2048 relaxed `float` stores → `first`, `span`, `rate`, `config` relaxed → counter even (`release`). |
+| **Read sequence** | counter acquire → reject if odd → relaxed copy of both traces and the four scalars → `atomic_thread_fence(acquire)` → relaxed re-read → keep only if unchanged. |
 | **Memory ordering, and why each part** | The release FENCE rather than a release store, because release orders what came BEFORE it and what must be ordered here is what comes after. The payload relaxed, because the counter carries the ordering and the atomics exist to make the access defined. The closing store `release`, which is what publishes the payload. The reader's acquire fence BEFORE the re-read, which is the Boehm (MSPC 2012) seqlock reader — an acquire load alone is not sufficient on a weakly ordered target. `frameSeq` has one writer, so no read-modify-write is needed. |
-| **Coherent-frame invariant** | *Every rendered frame observes one tick's traces, the window they were analysed over, and the sample rate they were captured at — or it observes an earlier such frame in full. No rendered frame combines state from two ticks or two configurations.* |
+| **Coherent-frame invariant** | *Every rendered frame observes one tick's traces, the window they were analysed over, the sample rate they were captured at AND the configuration generation all three belong to — or it observes an earlier such frame in full. No rendered frame combines state from two ticks or two configurations, and neither does a single frame's PAIR: the two traces are floored together or analysed together, never one of each.* (The clause about the pair is the 2026-09-07 amendment.) |
 | **Retry / fallback** | Bounded at two attempts. `readPublishedFrame` returns `false` and its two trace outputs are then INDETERMINATE; the caller stages, so the frame `paint` draws is the one it already held — an older coherent frame, never a mixed one. No spin, no lock, no delay. The bound is deliberate: a spin here is a spin on the render thread, where a stall is a dropped frame rather than a stale one. |
 | **Allocation** | None on either side at run time. 16 KB of published storage, 16 KB of painter-owned drawing copy and 16 KB of painter-owned staging, all sized once in the constructor (`std::vector<std::atomic<float>>` cannot be resized, so it is built with a count). |
 | **Cost** | MEASURED, 2000 iterations on the round-11 harness: a whole tick (two 4096-point FFTs and both ring reads) is **210.5 µs**; `publishFrame` is **2.37 µs** of it — **1.13 % of a tick, 0.014 % of a 60 Hz frame period**. `readPublishedFrame` is **1.50 µs** per paint, and committing it is two pointer swaps. Memory: 16 KB published + 16 KB drawn + 16 KB staged = **48 KB per view**, one view per editor, all allocated once at construction. Nothing on the audio path changed at all. |
-| **Reset / reconfiguration** | A reset publishes the EMPTY frame — the display floor in both traces, a zero-length window, and the new rate — and commits its accounting, so a reconfiguration can never leave the previous configuration's pixels up. The configuration bracket closes BEFORE that accounting, so a tick that straddled a clear commits nothing and the reset is answered by the next tick rather than swallowed. |
+| **Reset / reconfiguration** | A reset publishes the EMPTY frame — the display floor in both traces, a zero-length window, the new rate and a new identity — and commits its accounting, so a reconfiguration can never leave the previous configuration's pixels up. A reset observed on EITHER ring floors BOTH traces and publishes, because one ring's rewind is proof the other was rewound too (2026-09-07). The configuration bracket closes BEFORE that accounting, so a tick that straddled a clear commits nothing and the reset is answered by the next tick rather than swallowed. |
 | **Sample-rate coupling** | The rate is part of the frame (clause 1) and is taken under the GR ring's reset epoch (clause 9), which is what makes it the same configuration's as the frames. `paint` reads no processor state. |
 | **Alternatives** | Immutable snapshot per tick (allocates 16 KB per frame; `atomic<shared_ptr>` is not lock-free here) · two-slot double buffer (tears when two ticks land in one paint — a timing assumption, not a proof) · triple buffer (correct and wait-free, but 48 KB and an ownership protocol the tree does not otherwise have, to avoid a fallback that costs one repeated frame at 16.7 ms) · a mutex (a lock on the paint path, and one the tick can be made to wait on) · painting-thread ownership ("the painting thread" is not one thread). For the rate specifically: a second atomic beside the frame (rejected — that is the mismatch, restated) and adding a rate to `ScopeBuffer` (rejected — it extends the producer/consumer protocol for a fact the plugin already publishes, the same reasoning that withdrew the `maxPush` draft this round). |
 | **Why the design is necessary** | The path exists whether or not it is synchronised; the only question is whether it is defined. Removing it would mean not drawing the spectrum, or drawing it from the audio thread. Of the mechanisms that make it defined without a lock, an allocation or an unbounded retry, this is the smallest — and it makes the boundary NARROWER than before, because `paint` now reads exactly one object instead of the view's mutable vectors plus a processor accessor. |

@@ -195,7 +195,7 @@ Properties: `releaseOctaves`, `stereoLink`, `scHpfHz`, `dynTiltDb` (doubles;
 
 The §5.3 macro-baseline child ADR-0007 gave a per-slot home. **No code path in this build
 originates one**: the only constructor of a `BASELINE` tree in the whole repository is the
-test that seeds one (`tests/state_tests.cpp:2364`). The wrapper *adopts* the child from an
+test that seeds one (`tests/state_tests.cpp:2366`). The wrapper *adopts* the child from an
 incoming slot or session, *carries* it through A/B, undo and saves
 (`src/PluginProcessor.cpp:1193-1194, 1459, 1902` — `saveSlotFromLive`, `applySlotToLive`,
 `setStateInformation`), and *drops* it where the state it describes

@@ -1875,3 +1875,155 @@ superseded.
    is proposed here: the two failures were test defects, not infrastructure, and both are fixed.
 2. Unchanged: the audio-path reservation index; the taps are index-aligned, not audio-time aligned;
    the reveal-smoothing limitation, whose premise this round did not touch.
+
+## 19. The cross-configuration pair: one frame is one span AND one configuration (2026-09-07, round 13)
+
+The review's finding, at `src/gui/SpectrumView.cpp:492`: *"When one ring's reset/reconfiguration
+state becomes visible before the other ring's reset state, `tick` can still call `analyse` for both
+windows … one trace is based on old-configuration / old-sample-rate data while the other trace is
+already based on the new configuration."* It is real, it is constructible, and this section records
+what it is, what it is not, and what was measured.
+
+### 19.1 What the tick could observe, ordering by ordering
+
+Six orderings, taken against the real `tick` (`gi0`, `go0`, `ci`, `co` are the four loads at the top
+of the tick; `committed = min(ci, co)`).
+
+| # | State | What the tick does |
+|---|---|---|
+| 1 | Neither reset observed | `resetIn`/`resetOut` both false. Either the idle gate returns, or an ordinary frame is drawn and published. Coherent. |
+| 2 | Input observed, output not, `ci == 0` | `committed = 0` → `span = 0`, the reset-edge branch is skipped (`committed > 0` fails), both reads return nothing, `analyse`'s zero-length branch floors BOTH. Safe, and it is `min` that made it so. |
+| 3 | Input observed, output not, `ci = R > 0` | **THE DEFECT.** A non-zero post-rewind count is a value released by `pushBlock`, and both rewinds happen-before that push (the audio-stopped premise at `ScopeBuffer::reset`), so `co` is forced post-reset too: both windows hold the NEW configuration's audio, `onePairOneSpan` accepts, and the pre-repair tick folded them into an `outDb` still holding the PREVIOUS configuration's EMA. |
+| 4 | Output observed, input not | The mirror of 3, exactly. |
+| 5 | Reset concurrent with the tick | If the rewind becomes visible inside `readEndingAt`, that ring's `e = min(end, w)` collapses and `onePairOneSpan` REJECTS — nothing published, nothing committed. If both copies finished first, the post-batch generation re-read is the guard, and pre-repair it was per ring. |
+| 6 | Reset concurrent with `paint` | No effect. `paint` reads no processor state at all: it takes the pair through `readPublishedFrame`'s bracket into `stageIn`/`stageOut` and commits on success only, and it maps bins through `paintFrame.rate`. A reset during a paint is answered by the next tick. |
+
+Row 3 is the whole finding, and the mechanism is narrower than "the rings disagree": **the ring
+CONTENT is the new configuration's in both traces.** What is stale is the reader's own EMA — the
+only state this view carries across a tick — for the ring whose rewind it did not observe.
+`resetObserved`'s count term does not save it: the two counts are committed as the raw `ci`/`co` of
+the last successful tick and can differ by a chunk, and in any case the count term is silent for a
+ring that has refilled past its shown count.
+
+### 19.2 Measured, before and after
+
+A harness driving the real `AnabasisAudioProcessor` and the real `SpectrumView`, with the reader
+holding one ring's reset and not the other across a genuine `prepareToPlay` from 48 kHz to 96 kHz.
+Marker 5 kHz — bin 427 at the old rate, a frequency the new rate's mapping calls 10 kHz and the
+audio has nothing at.
+
+| Host block | Before (per-ring floor) | After (joint floor) |
+|---|---|---|
+| 512 | IN −120.0 dB, OUT −15.7 dB — **104.3 dB apart in one frame** | 3.1 dB |
+| 4096 | IN −79.9 dB, OUT −10.9 dB — **69.0 dB apart** | 0.1 dB |
+| 16384 | span 0, both floored — 0.0 dB | 0.0 dB |
+
+The 3.1 dB and 0.1 dB that remain are the ordinary difference between a pre-chain and a post-chain
+tap near the floor: the control run, with no reconfiguration at all, shows the same residual.
+
+**How often it arrives on its own: not once.** A host thread alternating 48/96 kHz against a ticking
+analyser reached 2006 re-prepares over four eight-second runs and produced no cross-configuration
+frame either before or after the repair. Reaching row 3 needs the reader to hold one of `prepare`'s
+two back-to-back rewinds and not the other, which is KI-018's propagation corner rather than an
+ordinary interleaving. **The defect is constructible, not frequent**, and it is fixed because a frame
+that mixes two configurations is wrong whenever it lands. Two earlier detectors were discarded before
+this one: a peak-bin comparison found nothing (the EMA's instant attack moves both peaks together),
+and a "worst bin disagreement > 20 dB" rule found 28 % — until a control run with ZERO
+reconfigurations found the same, proving it was measuring the chain rather than the reset. The
+detector of record is per-configuration marker tones with non-colliding harmonics and a relative
+threshold, and its control reads 0 %.
+
+### 19.3 The invariant, and the repair
+
+**Every published frame represents one coherent audio span AND one coherent configuration
+generation.** The two traces, the window, the rate and the generation belong to one configuration or
+the frame is not published.
+
+Two changes, both inside ADR-0039's existing mechanism:
+
+1. **A reset observed on EITHER ring floors BOTH traces**, at the reset edge and at the post-batch
+   generation re-read alike. Detection stays per ring — a rewind is a property of one ring's index,
+   and `resetObserved`'s coherence argument is about that ring's modification order — and the
+   CONSEQUENCE becomes the whole view's, because `AnabasisEngine::prepare` rewinds both rings back to
+   back and unconditionally. Observing one is therefore proof the configuration changed, and proof
+   the other trace's EMA describes the configuration that ended.
+2. **The frame carries a configuration identity** (`Frame::config`, `pubConfig`), stored inside the
+   same sequence bracket as the traces, the window and the rate. Not the GR ring's epoch, which
+   stands still on a re-prepare at an unchanged (rate, block) pair while the rings still rewind; not
+   either `ScopeBuffer` generation, because there are two and a frame needs one identity.
+
+**What it promises, exactly:** two frames carrying the same id were produced with no reset observed
+between them, so they describe one configuration. The converse is not promised — one reconfiguration
+answered on one ring and then the other advances it twice — and that direction is the safe one. The
+blank branch now commits RE-SAMPLED generations rather than the pre-count samples, which removes the
+common cause of that double advance: marking a reset answered against a generation the ring never
+had made the next tick answer it again.
+
+**Split-reset behaviour, chosen and deterministic.** A tick that observes either reset floors both
+EMAs and then publishes what the new configuration actually looks like: the analysed window if the
+pair can serve one, and the EMPTY frame — the floor in both traces, a zero-length window, the new
+rate and a new identity — if it cannot. Where no reset is involved and the span is 0, the last
+coherent pair is HELD, which is the lapping case and unchanged. Nothing is fabricated, nothing waits,
+nothing depends on repaint timing.
+
+### 19.4 ADR-0039 is amended, not reopened
+
+The approved protocol is sufficient: the defect was in the ANALYSIS stage, before publication, and no
+part of the bracket, its ordering, its writer or its bound changes. But clause 10's second bullet
+ratified the removed behaviour in as many words — *"The residual is bounded, not removed, and the
+property claimed is the bounded one"* — so the change conflicts with an Accepted ADR, which
+`CLAUDE.md` lists as a hard stop a green build does not clear. Filed as a dated by-exception
+amendment to clauses 1 and 10, with a self-row in `ADR_INDEX.md`'s amendment registry. Clause 11's
+trigger list ("a second payload site, a paint-path WRITE, or a second writer of `frameSeq`") is not
+tripped by adding one scalar to the existing bracket.
+
+A code comment 130 lines above the change said the opposite of the code — *"PER RING, and the scope
+is deliberate … KI-018 carries it"* — and is rewritten. That drift is reported here rather than
+quietly overwritten, per the source-of-truth rule.
+
+### 19.5 Tests, and what they can and cannot reach
+
+`specGen` (`testNoSpectrumFrameEverPairsTwoConfigurationGenerations`) is single-threaded and exact. It
+settles both traces on one configuration, rewinds ONE ring and refills BOTH — which is the
+reader-visible state of the propagation skew, since a rewind sends the producer back to slot 0 and
+the frames it writes next overwrite exactly the slots the shared window reads. It asserts at the
+PREVIOUS configuration's marker bin that the two traces agree, and agree that it is gone. Four cases
+(old/old, new/new, input-new + output-old, input-old + output-new), both split directions, the reset
+edge at a whole-ring block, one and eight blocks after a reset, and a 48 → 96 → 48 → 44.1 → 88.2 →
+44.1 sweep.
+
+`specStraddle` (`testAResetThatLandsInsideATickNeverReachesTheScreen`) covers the half no single
+thread can reach: a rewind that becomes visible after the tick sampled the generations and before it
+re-sampled them. Its producer is paced by the reader's own publications with a bounded spin, and the
+rewind's landing point is swept with a delay drawn from a plain LCG rather than a clock. The
+interleaving is OBSERVED, not assumed: a published frame with a full span and both traces entirely at
+the floor can only come from the post-batch re-read, and the test requires such frames to exist
+before it believes its own negative results.
+
+### 19.6 Mutants
+
+| Mutant | Result |
+|---|---|
+| Floor per ring at the reset edge (the defect itself) | **Killed** — `specGen`, both split directions, on both detectors |
+| Floor per ring at the post-batch re-read | **Survived** — see below |
+| Remove the post-batch generation guard entirely | **Killed** — `specStraddle` (the guard-floored frames vanish, and a trace holding two markers appears) |
+| Publish the traces without a configuration identity | **Killed** — `specGen` case 2, and `specStraddle`'s identity-consistency check |
+| Require BOTH rings' resets before flooring | **Killed** — `specGen`, both split directions |
+| Require BOTH rings' resets before publishing the reset-edge blank | **Killed** — `specGen`'s whole-ring-block leg |
+| `paint` reads the sample rate from the processor instead of the frame | **Killed** — `specAxis` |
+| Commit the pre-count generation samples on the blank branch | **Survived** — see below |
+
+**The two survivors, stated rather than hidden.** Flooring per ring at the POST-BATCH re-read is
+indistinguishable from flooring jointly unless the reader's two generation re-reads straddle the
+producer's two `reset()` calls — two nanosecond-scale windows nested inside each other. It is kept
+joint for consistency with the edge and because the per-ring form is the shape the finding named, not
+because a test can tell the difference. Committing the pre-count generation samples on the blank
+branch likewise has no single-threaded consequence: it can only advance the identity twice for one
+reconfiguration, which is the safe direction, and it cannot produce a mixed frame.
+
+### 19.7 Follow-ups, unchanged
+
+OQ-017's bursty-host lurch; the input/output taps being index-aligned rather than audio-time aligned;
+KI-018's remaining equal-count corner; the audio-path reservation index; `LoudnessMeterView`; and the
+spectrum reveal-smoothing limitation, whose premise this round did not touch. The memcheck job's
+wall-clock cost is a CI-performance question and not a reason to change product behaviour.

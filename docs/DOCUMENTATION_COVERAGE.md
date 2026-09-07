@@ -6,7 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-05)** — the owner's third GR-history report, reproduced
+**Last updated:** for **0.2.12 (2026-09-07, round 13)** — the review's cross-configuration finding:
+a published spectrum frame could hold one trace from each configuration, and the floor is now joint
+while the frame carries the identity of the configuration generation it belongs to (ADR-0039 amended
+by exception, KI-018's cross-ring variant removed; entry below). Before that, for **0.2.12
+(2026-09-05)** — the owner's third GR-history report, reproduced
 frame by frame on the real paint path, confirmed by the owner, and fixed by a clip and nothing else:
 the strip beyond the newest complete vertex is no longer shown; then two PR review findings on that
 fix, both reproduced on the same harness before any change — a ten-second host block blanked the
@@ -381,6 +385,31 @@ lived; KI-018's one-tick cross-ring residual gains a rate consequence, not a wid
 **New/changed test** (`state_tests.cpp`; `TESTING.md`, including the valgrind premise lesson),
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`). Trail:
 `worklogs/2026-09-05-gr-history-tip.md` §17.
+
+**Addendum (2026-09-07, round 13) — one frame is one span AND one configuration generation.** The
+review found a published pair holding one trace from each configuration: `tick` floored the EMA of
+the ring whose rewind it had observed and left the other's alone, so a reader that had accounted for
+one of `AnabasisEngine::prepare`'s two back-to-back rewinds and not the other drew a freshly refilled
+trace beside one still carrying the configuration that ended — **104.3 dB apart** at the old marker
+bin at a 512-frame block, 69.0 dB at 4096, measured on the real processor through the real analysis
+and rendering path. The repair is inside ADR-0039's own mechanism and adds none: the floor is now
+JOINT (detection stays per ring, because a rewind is a property of one ring's index; the consequence
+is the whole view's, because `prepare` rewinds both rings unconditionally), and the frame carries a
+`uint32_t` configuration identity beside the window and the rate it already carried. Rows engaged:
+**Accepted-ADR conflict** — ADR-0039 clause 10's second bullet had ratified the removed behaviour in
+as many words (*"The residual is bounded, not removed, and the property claimed is the bounded
+one"*), so the change is filed as a dated **by-exception amendment** to clauses 1 and 10 rather than
+assumed, with a self-row added to `ADR_INDEX.md`'s amendment registry — a green build does not clear
+a conflict with an Accepted ADR even when the conflict is the code being stronger than the record.
+Clause 11's trigger list is NOT tripped: same site, same single writer, same bracket, same ordering,
+one scalar more. **Known issue corrected** (`KNOWN_ISSUES.md`: KI-018's cross-ring variant is
+REMOVED rather than narrowed, and its "reading in force is PER RING" line is corrected to per ring
+for detection and per display for the consequence; what remains is a reconfiguration NEITHER ring has
+made visible, which no flooring rule can answer). **Code comment corrected**: `SpectrumView.cpp`'s
+"PER RING, and the scope is deliberate" banner contradicted the code in its own file and is
+rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
+stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly

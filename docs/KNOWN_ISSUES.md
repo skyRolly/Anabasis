@@ -1194,7 +1194,7 @@ Evidence [Verified]:
   `paintComponent`), read at the pinned 9.0.1
 - Worklog: `worklogs/2026-09-02-ki015-scopebuffer-payload.md`
 
-### KI-018 — A spectrum reset can leave the previous trace on screen for one or more ticks (2026-09-02) — **REPAIRED except for one corner, round 7**
+### KI-018 — A spectrum reset can leave the previous trace on screen for one or more ticks (2026-09-02) — **REPAIRED except for one corner, round 7; the cross-ring variant removed in round 13 (2026-09-07)**
 
 > **⟳ RETAINED AND NARROWED, not closed.** Round 7 repaired the case this entry describes and, in
 > doing so, found that **both halves of the bound written below are wrong**. The corrections matter
@@ -1239,12 +1239,14 @@ Evidence [Verified]:
 > test matches on all four equalities, and the tick does nothing.
 >
 > **The observable effect.** The previous trace is held. With both rings in the corner the tick
-> early-returns and the trace is held verbatim. There is also a CROSS-RING variant, found in round 8
+> early-returns and the trace is held verbatim. There was also a CROSS-RING variant, found in round 8
 > and not previously written down: one `prepare` resets both rings in order, so the in-ring's rewind
-> orders nothing about the out-ring's — a tick can floor `inDb` on a zero-length read while
-> `analyse (out, …)` folds pre-reset frames into `outDb`, painting a floored input trace beside an
-> intact pre-reset output one. Both variants are **correct-but-one-frame-late**, not wrong data:
-> nothing incorrect is committed, and the fall-through commit is idempotent.
+> orders nothing about the out-ring's — a tick could floor `inDb` on a zero-length read while
+> `analyse (out, …)` folded pre-reset frames into `outDb`, painting a floored input trace beside an
+> intact pre-reset output one. **That variant is gone as of round 13** (see below): either ring's
+> observed reset now floors both traces. The equal-count corner — this entry's subject — remains, and
+> is **correct-but-one-frame-late**, not wrong data: nothing incorrect is committed, and the
+> fall-through commit is idempotent.
 >
 > **NARROWED 2026-09-06 (0.2.12), by the committed head.** The reader now reads both rings at
 > `min` of the two published counts and each read clamps that to its own ring's index
@@ -1255,15 +1257,25 @@ Evidence [Verified]:
 > its pre-reset frames, for the same one tick. The equal-count corner this entry is about is
 > untouched: the refilled head equals the shown one, so the idle test matches exactly as before.
 >
-> **AND WHAT THAT ONE TICK NOW ALSO COSTS (round 11).** Since ADR-0039 the published frame carries
-> the sample rate its bins are read through, and the pairing that record proves is between the rate
-> and the frames the tick's ACQUIRED INDICES describe — not between the rate and every sample the
-> per-bin EMA remembers. So in exactly the window above, the ring whose rewind was not yet visible
-> can fold pre-reset frames into an EMA that is published beside the NEW rate: one trace drawn
-> through the wrong bin mapping for that one tick, ~16.7 ms at 60 Hz, decaying on the 120 ms EMA and
-> floored by the next tick. It is the same window, the same bound and the same one-tick cost this
-> entry already carries; it is recorded because ADR-0039's property would otherwise read as stronger
-> than it is. Nothing about the corner changed — the residual gained a consequence, not a width.
+> **AND WHAT THAT ONE TICK USED TO ALSO COST (round 11) — CLOSED IN ROUND 13.** Since ADR-0039 the
+> published frame carries the sample rate its bins are read through, and the pairing that record
+> proves is between the rate and the frames the tick's ACQUIRED INDICES describe — not between the
+> rate and every sample the per-bin EMA remembers. In exactly the window above, the ring whose
+> rewind was not yet visible could therefore fold pre-reset frames into an EMA published beside the
+> NEW rate: one trace drawn through the wrong bin mapping, measured at **104.3 dB from its partner**
+> at the previous configuration's marker bin (512-frame block; 69.0 dB at 4096).
+>
+> **THE CROSS-RING VARIANT IS REMOVED (2026-09-07, round 13), not narrowed.** `SpectrumView::tick`
+> now floors BOTH traces whenever EITHER ring's reset is observed, at the reset edge and at the
+> post-batch generation re-read alike. The detection stays per ring — a rewind is a property of one
+> ring's index — but the consequence is the whole view's, because `AnabasisEngine::prepare` rewinds
+> both rings back to back and unconditionally, so observing one is proof the other was rewound too
+> and proof the other trace's EMA belongs to the configuration that ended. The published frame also
+> carries the identity of the configuration generation it belongs to, so a frame that mixed two
+> would say so in its own numbers. ADR-0039 clause 10, which had ratified the residual as *"bounded,
+> not removed"*, is amended by exception with the same date. Pinned by `specGen` (the split each way
+> round, both markers, both directions of the pair) and `specStraddle` (a rewind becoming visible
+> inside a tick).
 >
 > **Why it is bounded — and the correction that matters most.** The "worst case is a scheduling
 > quantum, tens of milliseconds" bound stated above **does not apply to this corner**, and leaving it
@@ -1288,11 +1300,13 @@ Evidence [Verified]:
 > "the count term is silent (equal, not lower)" reads as though the reader holds evidence and
 > discards it. It does not: the value C it loads is BIT-IDENTICAL to what the ring published before
 > the reset, so that load carries **zero bits of evidence**, as do the stale generation and a
-> non-empty `readLatest`. All facets are silent. **The reading in force is PER RING** — each trace is
-> drawn from its own EMA — which is what makes the cross-ring variant a residual rather than a
-> violation; the stronger per-display, real-time reading is not the contract and cannot be, since
-> under it every reset violates invariant 2 for one tick period and the invariant would describe no
-> achievable design for a polled reader.
+> non-empty `readLatest`. All facets are silent. The reading in force is **per ring for DETECTION and
+> per display for the CONSEQUENCE** (round 13): each trace is still drawn from its own EMA, but a
+> reset detected on one ring floors both, so there is no longer a cross-ring variant to classify. The
+> stronger per-display, real-time reading of the ANTECEDENT is still not the contract and cannot be,
+> since under it every reset violates invariant 2 for one tick period and the invariant would
+> describe no achievable design for a polled reader. What remains is a reset NEITHER ring has made
+> observable — where the reader holds zero bits of evidence and no flooring rule can help.
 >
 > **Why it cannot persist and cannot lose a reset.** The idle early-return precedes the commit, so
 > `shownInGen` stays at the pre-reset value and the reader is still comparing against it. Transport

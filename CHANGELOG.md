@@ -230,6 +230,20 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   can vouch for exists. Nothing is invented and the smaller buffer sizes are unaffected: there the
   first frame after the change is the new configuration's, as before.
   Evidence: this release. [Verified]
+- **The spectrum's two traces can no longer belong to two different configurations.** Re-preparing
+  the plugin clears both captures, and the analyser dropped the trace of whichever capture it had
+  noticed being cleared — one at a time. A display that had noticed one and not the other therefore
+  drew one trace freshly built from the new configuration beside one still holding the previous
+  one's, in a display whose whole purpose is comparing the two: with a 5 kHz tone at 48 kHz and a
+  change to 96 kHz, the pair read **104.3 dB apart** at the bin the old rate put the tone in — a
+  frequency the new configuration's audio has nothing at — at a 512-sample buffer, and 69.0 dB at
+  4096. Either capture being cleared now drops BOTH traces, because re-preparing clears both, and
+  every published frame carries the identity of the configuration it belongs to alongside the window
+  and the sample rate it already carried. Nothing else about the display changes: the same frames,
+  the same smoothing, the same axis, and a display with nothing to show yet still shows the empty
+  panel rather than the previous configuration's. Cross-links
+  [ADR-0039](docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md), amended by
+  exception for this repair. Evidence: this release. [Verified]
 
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**

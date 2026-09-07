@@ -384,6 +384,41 @@ exactly one of the two marker bins lit, a torn one has both or neither — and `
 catches both directions. Measured on the shipped build: 4274 paints, 95 lost reads, 44 of which had
 already copied.
 
+**THE TWO TESTS THAT BUILD A SPLIT RESET.** `specGen`
+(`testNoSpectrumFrameEverPairsTwoConfigurationGenerations`) and `specStraddle`
+(`testAResetThatLandsInsideATickNeverReachesTheScreen`) pin the round-13 half of the frame
+invariant: one frame is one span AND one configuration generation. Neither can be built through
+`processBlock`, which publishes to both taps with one `num` and so can never put one ring a
+configuration ahead of the other, so both reach past it — the `const_cast` handles on
+`AnabasisAudioProcessor::spectrumInRing()`/`spectrumOutRing()` that `specLap` already uses.
+
+`specGen` is single-threaded and exact. It settles both traces on one configuration, rewinds ONE
+ring and refills BOTH — which is precisely the state a reader is in when it has accounted for one of
+`AnabasisEngine::prepare`'s two back-to-back rewinds and not the other, since a rewind sends the
+producer back to slot 0 and the frames it writes next overwrite exactly the slots the shared window
+reads. The assertion is made at the bin the PREVIOUS configuration's marker occupied, which the new
+configuration's audio has nothing at: the two traces must agree there, and must agree that it is
+gone. Before the repair they were 104.3 dB apart at a 512-frame block and 69.0 dB at 4096. Three
+markers at three bins (5 kHz at 48 kHz = 427, 7 kHz at 96 kHz = 299, 12 kHz at 96 kHz = 512) mean a
+trace says in its own numbers which configuration it belongs to, with no threshold to argue about,
+and the test walks the four required cases, both split directions, the reset edge at a whole-ring
+block, one and eight blocks after a reset, and a 48 → 96 → 48 → 44.1 → 88.2 → 44.1 sweep.
+
+`specStraddle` covers the half a single thread cannot reach: a rewind that becomes visible AFTER the
+tick sampled the two generations and BEFORE it re-samples them, so the reset edge is silent and the
+post-batch re-read is the only guard. Its producer is paced by the reader's own publications — a
+bounded spin, so a reader that stops publishing fails the test rather than hanging it — and the
+rewind's landing point is swept with a delay drawn from a plain LCG rather than a clock, so the same
+sweep runs on every machine even though the batch does not. **The interleaving is observed, not
+assumed**: a published frame with a full span and both traces entirely at the floor can only come
+from that re-read, and the test requires such frames to exist before it believes its own negative
+results. Both markers complete a whole number of cycles in one pushed chunk (96000 / 512 = 187.5 Hz;
+6937.5 = 37 × 187.5 and 12000 = 64 × 187.5), because a repeated chunk that does not is a pulse train
+whose splatter puts real energy in the other marker's bin — that mistake made the mixture detector
+count the stimulus, at 59 frames a run, before it was fixed. Measured on the shipped build: ~1200
+reconfigurations, ~2500 lit frames, ~1000 of them floored by the guard, 0 lopsided, 0 mixed, 0
+identity switches.
+
 **What the suite cannot see here, stated rather than implied.** `repaint()` is what carries a
 published frame to the screen, and a headless suite has no repaint region to inspect: the tests pin
 the published state and the painter's copy of it, so a mutant that deletes the `repaint()` call while
