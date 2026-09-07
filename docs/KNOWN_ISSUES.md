@@ -1374,72 +1374,86 @@ Evidence [Verified]:
 - Related: ADR-0011's first and third dated 2026-09-02 amendments; KI-015
 - Worklog: `worklogs/2026-09-02-round6-concurrency.md`
 
-### KI-019 — Two spectrum concurrency PREMISES are environment-dependent and fail intermittently in CI (2026-09-07)
+### KI-019 — Two spectrum concurrency tests asserted on interleavings they SEARCHED for rather than established (2026-09-07) — **CLOSED 2026-09-07 (0.2.12 round 18)**
 
-Neither is a defect in the product. Both are assertions in `tests/state_tests.cpp` that require a
-particular INTERLEAVING to be observed, and each has now been seen to fail in one execution
-environment while passing in every other — including, in one case, on the same commit in two runs an
-hour apart. They are recorded together because they are one failure mode: **a premise that hopes for
-a race rather than establishing one.** `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames`'s own
-banner records the round that learned this lesson for two of its other premises ("THE OVERLAP IS
-ESTABLISHED, NOT HOPED FOR"); these two were not given the same treatment.
+Neither failure was ever a defect in the product. Both were assertions in `tests/state_tests.cpp`
+that needed a particular interleaving to occur, and neither test made it occur: they ran the real
+threads, hoped the scheduler would put one inside the other, counted the times it did, and asserted
+the count was not zero. That is a test of the scheduler, and CI proved it twice in two different
+environments before the design was corrected.
 
-**(a) `specFrame`'s `mixed == 0`, on the macOS x86_64 slice under Rosetta only.** Observed FAIL at
-`abd209e3` and `ee32738d`, PASS at `f7fea2a7`, `20a9bd19` and twice at `50cc099d`. The same universal
-binary's arm64 slice passes in the same job every time, native Intel (`macos-15-intel`) passes every
-time, and Linux passes under gcc, clang, LTO, ASan+UBSan and valgrind. A dedicated harness on the
-real view ran 6.5 million successful reads across one to eight concurrent readers, pinned and
-unpinned, with no mixed frame. The publication bracket is the textbook sequence-counter form and its
-reader cannot accept a torn payload under the C++ memory model — the writer's release fence orders
-the odd marker before the payload stores, and the reader's acquire fence forces its closing re-read
-to observe any publication whose payload it saw.
+**What CI saw.** `specFrame`'s `mixed == 0` failed on the macOS x86_64 slice under Rosetta at
+`abd209e3` and `ee32738d` and again at `f2babdc8`, passing at `f7fea2a7`, `20a9bd19` and twice at
+`50cc099d`; the same universal binary's arm64 slice, native Intel (`macos-15-intel`) and Linux under
+gcc, clang, LTO, ASan+UBSan and valgrind never failed it. `specStraddle`'s `guardFired > 0` failed
+under valgrind memcheck on a GitHub `ubuntu-latest` runner in run 34134239185 attempt 2 —
+**3 261 238 ticks, 6000 rewinds, 0 straddles** — while the same commit's attempt 1 had passed
+memcheck an hour earlier and this container reaches the premise under memcheck in 99 rewinds with
+exactly one straddle.
 
-**The instrumentation added in round 17 caught it, and the answer is the environment.** At
-`f2babdc8` (run 34140061828) the Rosetta slice reported:
+**Root cause, `specFrame`: the concurrent half was vacuous.** Its renderer thread read while four
+thousand ticks published, but not one assertion in the function required the reader to have
+overlapped a publication even once — every one of them holds for a reader that only ever reads
+quiesced frames, so the test could take two hundred thousand reads without entering the state it
+exists to check. `distinct > 1` measures publications BETWEEN reads, which is the opposite of the
+overlap it was standing in for. What the sweep did do at that scale was expose the run to the
+machine: ~4 x 10^8 float comparisons per run, against an environment that miscompares about one in
+4 x 10^8 (below).
 
-    specFrame: 202760 reads, 3861 distinct, 1 mixed, 0 working-pair splits;
-               first mixed bin 202 in=-112.685745 out=-112.685745 on frame 15073280, re-read 0
+**Root cause, `specStraddle`: an open-loop search with a feedback signal that arrives too late.**
+The window a rewind must land in is `tick`'s interior — after both ring windows are read and folded,
+before the two generations are re-read. Land earlier and the reads come back short and
+`onePairOneSpan` rejects the frame; land later and the tick has already committed. The producer
+woke on "a tick has begun" and then swept a doubling spin and a yield count trying to land there,
+with `guardFired` as its feedback — a signal that only becomes non-zero after the search has already
+succeeded once. Natively the window is most of a tick and it converged on the first rounds; under a
+cooperative scheduler it never converged at all.
 
-Four things in one line. **`0 working-pair splits`**: the writer's own two traces were bit-identical
-after every one of ~4000 ticks on that slice, so the marker the test reads an inequality through
-holds and the published pair was never unequal — an analysis that is not bit-identical there is
-ruled out. **`re-read 0`**: reading the published frame again at once returned the same bin equal, so
-the pair standing in the publication was coherent. **The two recorded values are themselves
-identical** — `%.9g` round-trips a `float` exactly, so two distinct floats cannot print alike — which
-means the two operands were equal when read back a few instructions after the comparison that
-called them different, on a thread that owns both buffers and with nothing else able to write them.
-**One event in 202760 reads**, each read comparing 2048 bins: roughly one in 4 x 10^8 comparisons.
+**The deterministic architecture now used.** `SpectrumView` carries three rendezvous points, each
+called at one place, each empty in every shipped build (ADR-0039 clause 12):
+`whileHalfPublished` (counter odd, payload genuinely torn), `whileReadUncommitted` (a reader's copy
+taken, closing check not yet run) and `whileBatchAnalysed` (both windows folded, generations not yet
+re-read). The tests block the thread inside the bracket on a condition variable until the other
+thread has done its half, so the interleaving is FORCED rather than raced — identically under a
+preemptive scheduler, valgrind's cooperative one and binary translation.
 
-A comparison that disagrees with a reload of its own operands is not a state this program can be in,
-and nothing in the product can produce one: both operands live in thread-local storage, the compare
-and the reload are on one thread microseconds apart, and no store separates them. On the three
-passes either side of it the same slice exercised the same property over 204953, 242557 and 222384
-reads with `0 mixed`. The conclusion is a fault in the execution environment — an `-O3` compare loop
-under binary translation — and the correct response is to record it rather than to change product
-behaviour or weaken the assertion. Round 17 added one further diagnostic so the next occurrence also
-rules out a mis-reported index: the number of bins that differ, then and on the re-read. A frame
-genuinely assembled from two publications disagrees in HUNDREDS of bins, because the test alternates
-two tones a whole window apart; one bin is not a frame at all.
+`specFrame` now places a reader at all four states a publication has — before it, inside it with the
+counter odd, across it, and after it — counts each placement separately in the branch that verified
+that placement's own observable, and asserts all four are non-zero. It also asserts what the odd
+marker actually buys: the refusal happens BEFORE the copy, so a reader's own buffers still hold the
+last coherent frame and the torn pair is unreadable rather than read and discarded. `specStraddle`
+forces exactly one straddle, on two real threads, and asserts the frame it produces has a full span
+and both traces at the floor; its concurrent phase is now a fixed sixty rounds of stress with the
+spin/yield sweep and the six-thousand-round hunt deleted, and `guardFired` demoted from a pass
+condition to a diagnostic about the machine.
 
-**(b) `specStraddle`'s `guardFired > 0`, under valgrind memcheck.** The premise is that a ring rewind
-becoming visible INSIDE a tick must be observed at least once; the test calibrates for it with a spin
-sweep that doubles until a straddle lands. That converges natively and it converged under memcheck on
-one machine (19033 ticks, 99 reconfigurations, **1** guard-floored). On a GitHub `ubuntu-latest`
-runner it did not: 3 261 238 ticks and 6000 reconfigurations — the round cap — with **0**
-guard-floored, in run 34134239185 attempt 2. The same commit's attempt 1 passed memcheck. memcheck
-serialises threads, which is the same reason the same test's sibling premises were rewritten once
-before; `specFrame`'s reader gets 2 distinct frames there against 3246 natively.
+**What is NOT closed, and is not the same thing.**
 
-Neither failure indicates a product defect and neither may be answered by weakening the property it
-guards: `mixed == 0` and `lopsided == 0` are the invariants ADR-0039 exists for. What (b) needs is
-what (a)'s siblings already have — the interleaving MADE to happen rather than swept for — and that
-is a change to a Spectrum concurrency test, out of scope for the GR-history round that surfaced it.
+1. **The execution-environment fault behind the Rosetta failures is real and remains.** At
+   `f2babdc8` the instrumented test recorded `1 mixed, 0 working-pair splits; first mixed bin 202
+   in=-112.685745 out=-112.685745 … re-read 0`: the writer's pair was bit-identical on every tick,
+   the published pair read back equal immediately, and the two recorded values are themselves
+   identical (`%.9g` round-trips a `float`). A comparison that disagrees with a reload of its own
+   thread-local operands is not a state this program can be in. The redesign cuts the exposure from
+   ~4 x 10^8 float comparisons a run to ~5 x 10^4 — about four orders of magnitude — which makes the
+   symptom vanishingly unlikely without pretending the machine is sound. That is an environment
+   fact, not a test-design one, and it is why this entry is closed on the DESIGN and not on the
+   observation.
+2. **The forced placements prove the control-flow half of ADR-0039 and not the memory-model half.**
+   Each rendezvous parks a thread on a mutex, and mutex release/acquire supplies happens-before
+   edges strictly stronger than the seqlock's own annotations — so deleting the writer's release
+   fence, the reader's acquire fence or the closing store's `release` is invisible to the forced
+   phases. It is invisible to the stress too, and to every other test in the tree: on x86-64 those
+   fences emit no instructions at all, so the mutant is byte-identical, and on AArch64 observing the
+   reordering they prevent needs the luck this round exists to stop depending on. Recorded as an
+   unkillable mutant class rather than left to be discovered — see the round's mutation table.
 
 Evidence [Verified]:
-- Source: `tests/state_tests.cpp` (`testTheSpectrumsRendererNeverSeesHalfOfTwoFrames`,
-  `testAResetThatLandsInsideATickNeverReachesTheScreen`)
-- Test:   the two assertions named above, and the diagnostic lines both tests now print
-- Related: ADR-0039; the `specFrame` diagnostic added 2026-09-07 (round 17)
+- Source: `src/gui/SpectrumView.h` (the rendezvous banner and the assignment rule),
+  `src/gui/SpectrumView.cpp` (the three call sites), `tests/state_tests.cpp`
+- Test:   `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` (four placements, each counted),
+  `testAResetThatLandsInsideATickNeverReachesTheScreen` (one forced straddle)
+- Related: ADR-0039 clause 12 (2026-09-07)
 
 ## Standing note for P1 onward
 

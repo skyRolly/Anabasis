@@ -406,13 +406,20 @@ block, one and eight blocks after a reset, and a 48 → 96 → 48 → 44.1 → 8
 
 `specStraddle` covers the half a single thread cannot reach: a rewind that becomes visible AFTER the
 tick sampled the two generations and BEFORE it re-samples them, so the reset edge is silent and the
-post-batch re-read is the only guard. Its producer is paced by the reader's own publications — a
-bounded spin, so a reader that stops publishing fails the test rather than hanging it — and the
-rewind's landing point is swept with a delay drawn from a plain LCG rather than a clock, so the same
-sweep runs on every machine even though the batch does not. **The interleaving is observed, not
-assumed**: a published frame with a full span and both traces entirely at the floor can only come
-from that re-read, and the test requires such frames to exist before it believes its own negative
-results. Both markers complete a whole number of cycles in one pushed chunk (96000 / 512 = 187.5 Hz;
+post-batch re-read is the only guard. **Round 18 made that interleaving ESTABLISHED rather than
+searched for.** Until then the producer swept the rewind's landing point with a doubling spin and a
+yield count and `guardFired` counted the hits — a feedback signal that only goes non-zero after the
+search has already succeeded, which converged natively on the first rounds and never converged at
+all under valgrind's cooperative scheduler: 3 261 238 ticks, 6000 rewinds, zero straddles on a
+GitHub runner (KI-019). The window is now ENTERED: the ticking thread blocks inside it at
+`SpectrumView::whileBatchAnalysed` while a second thread performs the two real
+`ScopeBuffer::reset` calls and the refill, so one straddle happens on every run on every scheduler,
+and the frame it produces — full span, both traces at the floor — is asserted directly. The sweep,
+the six-thousand-round hunt and `guardFired` as a pass condition are gone; what remains after the
+forced straddle is sixty rounds of stress, still paced by the reader's own publications through a
+condition variable, checking the invariants that need no particular interleaving (a floored trace
+never appears beside a lit one, no trace ever holds two markers, no identity ever spans two
+configurations). Both markers complete a whole number of cycles in one pushed chunk (96000 / 512 = 187.5 Hz;
 6937.5 = 37 × 187.5 and 12000 = 64 × 187.5), because a repeated chunk that does not is a pulse train
 whose splatter puts real energy in the other marker's bin — that mistake made the mixture detector
 count the stimulus, at 59 frames a run, before it was fixed. Measured on the shipped build: ~1200
@@ -517,6 +524,19 @@ suite, where the engine can be driven: one second of audio at 192 kHz / 32 is 60
 again what the whole 4096-entry ring held, and the marker in the first six blocks is looked for at
 `groupDelaySamples / B` — where the engine's own latency puts it — so finding it there is what says
 index 0 has not been re-used. Nine checks fail on the 4096-entry ring.
+
+**`specFrame` places its reader instead of hoping it lands (round 18).** Its concurrent half used to
+run a renderer thread against four thousand publications and assert that nothing it accepted was
+mixed — and not one assertion in the function required the reader to have overlapped a publication
+even once, so two hundred thousand reads could pass without entering the state the bracket exists
+for. The reader is now put at all four states a publication has — before it, inside it with the
+counter odd, across it, and after it — each through a rendezvous inside the production function,
+each counted in the branch that verified that placement's own observable, and all four asserted
+non-zero. The odd marker's real payoff is asserted directly rather than implied: the refusal happens
+BEFORE the copy, so a reader that arrives with the payload torn still holds the last coherent frame
+in its own buffers and the mixed pair is unreadable rather than read and discarded. What remains of
+the free-running phase is a bounded stress — two hundred publications, twenty thousand reads, two
+marker bins — whose value is coverage and not the proof.
 
 **`specFrame` gained the premise it had always rested on.** Its marker is that identical audio in
 both spectrum rings analyses to bit-identical traces, so any inequality a reading thread sees is a
