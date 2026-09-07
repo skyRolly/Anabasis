@@ -239,10 +239,10 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    The rate lives in `GrHistoryBuffer` and the frames live in two `ScopeBuffer`s; a relaxed load of
    one is unordered against an acquire load of the other, so "publish the rate you happen to read" is
    not enough. `AnabasisAudioProcessor::prepareToPlay` writes both in one thread in one sequence —
-   `engine.prepare` rewinds the two spectrum rings (`src/PluginProcessor.cpp:769` →
+   `engine.prepare` rewinds the two spectrum rings (`src/PluginProcessor.cpp:776` →
    `src/dsp/AnabasisEngine.cpp:68-69` → `src/dsp/ScopeBuffer.h:201-205`), then
    `grHistoryRing.prepare` republishes the pair inside its seqlock window
-   (`src/PluginProcessor.cpp:785` → `src/dsp/GrHistoryBuffer.h:217-235`) — and `tick` uses that
+   (`src/PluginProcessor.cpp:792` → `src/dsp/GrHistoryBuffer.h:217-235`) — and `tick` uses that
    sequence by sampling `GrHistoryBuffer::resetEpoch()` and the rate together at its top and closing
    with `SpectrumView::configurationHeld` before it commits anything
    (`src/gui/SpectrumView.cpp`, `tick` and `configurationHeld`). It is `GrHistoryView`'s reader
@@ -369,7 +369,7 @@ Collected here so a reviewer does not have to assemble it from the prose above.
   `configurationHeld`; `paint`)
 - `src/dsp/GrHistoryBuffer.h:144-151` (the clear-on-change gate), `:153-175` (the two-discipline
   rule this view now sits on the other side of), `:189-193` (`batchIntact`), `:217-235` (`clear`)
-- `src/PluginProcessor.cpp:769,785` (the order the bracket's proof rests on),
+- `src/PluginProcessor.cpp:776, 792` (the order the bracket's proof rests on),
   `src/PluginProcessor.h:560-564`
 - `src/dsp/AnabasisEngine.cpp:68-69`, `src/dsp/ScopeBuffer.h:197-205`
 - `src/gui/GrHistoryView.cpp:144` (the same reader contract, already in the tree)

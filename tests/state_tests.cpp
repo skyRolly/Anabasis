@@ -9039,12 +9039,19 @@ static void testGrHistorySurvivesAHostBlockOfTenSeconds()
            "grBlank: (premise) ten seconds of audio a block leaves the 20 s window holding two entries");
 
     juce::MidiBuffer midi;
-    juce::AudioBuffer<float> buf (2, 512);
+    // TEN SECONDS A BLOCK, WHICH IS WHAT THIS TEST IS NAMED FOR (0.2.12,
+    // OQ-017 fix 1). Until this round the stimulus delivered 512-sample
+    // buffers against a 480000-sample prepared block and still got one entry
+    // per call — three entries, thirty seconds of history, for 32 ms of audio.
+    // That is the defect this round removed, so the delivery now matches the
+    // preparation and three calls carry three entries because they carry three
+    // prepared blocks of audio. Every assertion below is unchanged.
+    juce::AudioBuffer<float> buf (2, 480000);
     for (int blk = 0; blk < 3; ++blk)
     {
         for (int ch = 0; ch < buf.getNumChannels(); ++ch)
             for (int i = 0; i < buf.getNumSamples(); ++i)
-                buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (blk * 512 + i)));
+                buf.setSample (ch, i, 0.9f * std::sin (0.05f * (float) (blk * 480000 + i)));
         proc.processBlock (buf, midi);
     }
     check (proc.grHistory().available() == 3,
@@ -9090,6 +9097,108 @@ static void testGrHistorySurvivesAHostBlockOfTenSeconds()
     check (beyond == 0,
            "grBlank: …and still draws nothing beyond the plot's own right edge");
 }
+
+// THE HISTORY SCROLLS AT THE PREPARED BLOCK, NOT AT THE HOST'S CALL RATE
+// (0.2.12, OQ-017 fix 1) — the same property as the engine-level pass, stated
+// where the DISPLAY reads it: through the wrapper's ring and through
+// `GrHistoryView`'s own time base.
+//
+// `entryPeriod` is `block / rate` and `windowEntries` is `20 s · rate / block`,
+// both from the pair the RING publishes, which is the PREPARED one. Until
+// 0.2.12 the wrapper pushed one entry per processBlock CALL, so a host
+// delivering D ran that time base out by B / D: at Logic's 1156-sample
+// preparation with 512 delivered the twenty-second window held under nine
+// seconds and the trace scrolled 2.26x too fast, and at REAPER's 512 prepared
+// with 4096 delivered it held 160 s and crawled. Nothing in the view changed
+// to fix it — only which samples one entry stands for.
+static void testTheGrHistoryScrollsAtThePreparedBlock()
+{
+    const auto procStorage = std::make_unique<AnabasisAudioProcessor>();
+    auto& proc = *procStorage;
+    juce::MidiBuffer midi;
+
+    // One delivery of `d` samples of hot material, so the GR meter has
+    // something to report and the entries are not all silence.
+    int64_t t = 0;
+    juce::AudioBuffer<float> scratch (2, 4096);
+    const auto deliver = [&] (int d)
+    {
+        for (int i = 0; i < d; ++i, ++t)
+        {
+            const float v = 1.50f * std::sin (0.05f * (float) t);   // over the ceiling: real GR
+            scratch.setSample (0, i, v);
+            scratch.setSample (1, i, v);
+        }
+        juce::AudioBuffer<float> sub (scratch.getArrayOfWritePointers(), 2, d);
+        proc.processBlock (sub, midi);
+    };
+
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    check (proc.grHistory().prepared().block == 512
+           && juce::exactlyEqual (proc.grHistory().prepared().rate, 48000.0),
+           "grCadence: (premise) the ring publishes the PREPARED pair, which is what the view maps through");
+
+    // A HOST DELIVERING A QUARTER OF THE PREPARED BLOCK. Four calls, one entry.
+    for (int b = 0; b < 200; ++b) deliver (128);
+    check (proc.grHistory().available() == 50,
+           "grCadence: 200 calls of 128 samples against a 512-sample preparation publish 50 entries — "
+           "one per prepared block of audio, not one per call");
+    check (proc.meterGrDb() < 0.0f,
+           "grCadence: (premise) the material draws real reduction, so the per-call GR METER — which "
+           "is a per-block reading and stays one — is still being written");
+
+    // A HOST DELIVERING EIGHT PREPARED BLOCKS A CALL, on the same timeline:
+    // the entries keep coming at the same rate, eight to a call instead of a
+    // quarter of one.
+    const int64_t before = proc.grHistory().available();
+    for (int b = 0; b < 10; ++b) deliver (4096);
+    check (proc.grHistory().available() - before == 80,
+           "grCadence: …and ten calls of 4096 against the same preparation publish 80, so the entry "
+           "rate is unchanged by a 32x change in the delivered size");
+
+    // A VARIABLE DELIVERY, which is what JUCE's prepareToPlay contract
+    // actually promises: seven sizes whose mean is the prepared block, none of
+    // them a multiple of it.
+    const int64_t before2 = proc.grHistory().available();
+    const int sizes[] = { 1, 3, 17, 63, 512, 1024, 1964 };
+    for (int r = 0; r < 20; ++r)
+        for (int d : sizes) deliver (d);
+    check (proc.grHistory().available() - before2 == 20 * 7,
+           "grCadence: a variable block size whose mean is the prepared one publishes exactly the "
+           "entries its SAMPLES are worth, remainder carried across the calls");
+
+    // …and the display-facing statement the whole fix exists for: the window
+    // the view draws holds twenty seconds of audio, however the host delivers.
+    const double period = GrHistoryView::entryPeriod (48000.0, 512);
+    const int64_t window = GrHistoryView::windowEntries (48000.0, 512);
+    check (std::abs ((double) window * period - 20.0) < period,
+           "grCadence: (premise) the view's window is twenty seconds' worth of prepared blocks");
+    const double heldSeconds = (double) proc.grHistory().available() * period;
+    const double fedSeconds  = (double) t / 48000.0;
+    check (std::abs (heldSeconds - fedSeconds) < period,
+           juce::String ("grCadence: the history the view reads spans the duration of the audio that "
+                         "produced it (held " + juce::String (heldSeconds, 3) + " s, fed "
+                         + juce::String (fedSeconds, 3) + " s)").toRawUTF8());
+
+    // LOGIC'S CASE, END TO END. The AU wrapper prepares at the host's maximum
+    // — 1156 by default, not a power of two — and renders whatever arrives.
+    // Delivering 512 into it used to run the window out by 1156/512 = 2.26x.
+    {
+        const auto auStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& au = *auStorage;
+        au.setRateAndBufferSizeDetails (44100.0, 1156);
+        au.prepareToPlay (44100.0, 1156);
+        juce::AudioBuffer<float> b (2, 512);
+        b.clear();
+        const int calls = 1156 * 4 / 512;                       // 9 calls = 4608 samples
+        for (int i = 0; i < calls; ++i) au.processBlock (b, midi);
+        check (au.grHistory().available() == (int64_t) (calls * 512 / 1156),
+               "grCadence: an AU preparing at 1156 and rendering 512 publishes entries per 1156 "
+               "samples of audio, which is the pair the view maps them through");
+    }
+}
+
 
 static void testGrHistoryAndTheMeterLanesShareOneReductionSpan()
 {
@@ -10951,6 +11060,7 @@ int main (int argc, char** argv)
         testEveryKnobAndComboCarriesATooltip();
         testGrHistoryWindowNeverAsksForTheHeadSlot();
         testGrHistorySurvivesAHostBlockOfTenSeconds();
+        testTheGrHistoryScrollsAtThePreparedBlock();
         testTheOldestDrawnBucketKeepsItsValueUntilItLeaves();
         testTheGrHistoryIsCurrentTheFrameItBecomesVisible();
         testTheGrHistoryDoesNotResumeAnExpiredRamp();

@@ -6,7 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-07, round 13)** — the review's cross-configuration finding:
+**Last updated:** for **0.2.12 (2026-09-07, round 14)** — OQ-017 fix 1: a GR-history entry is one
+PREPARED block of processed audio rather than one host callback, so the display's time base no
+longer runs out by the ratio between the two (ADR-0011's publication clause narrowed, OQ-017's
+mis-sized half resolved and its burst half re-measured; entry below). Before that, for **0.2.12
+(2026-09-07, round 13)** — the review's cross-configuration finding:
 a published spectrum frame could hold one trace from each configuration, and the floor is now joint
 while the frame carries the identity of the configuration generation it belongs to (ADR-0039 amended
 by exception, KI-018's cross-ring variant removed; entry below). Before that, for **0.2.12
@@ -410,6 +414,38 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-07, round 14) — a history entry is one PREPARED block of processed audio.**
+OQ-017's first half, implemented on the owner's instruction after a full re-derivation. The ring was
+pushed once per `processBlock` CALL while `GrHistoryView` maps entries through the PREPARED
+`(rate, block)` pair, so the display's whole time base ran out by `B / D` for any host that does not
+deliver its declared maximum — which the format contract says to expect, and which the AU wrapper
+guarantees on a live Logic track. Measured on the real processor and the real paint path from
+0.125x to 8x: the window spanning `20 s · D / B` and the trace scrolling `B / D` times the design
+speed. The engine's chunk loop now breaks on the prepared-block boundary of the PROCESSED stream and
+pushes there, carrying the remainder across calls; a chunk therefore lies wholly inside one entry, so
+the per-sample folds already in the chain describe exactly the samples their entry represents.
+Rows engaged: **Accepted-ADR amendment** — ADR-0011's "one release-store per block" clause is
+narrowed to say which block, filed as a dated amendment with the owner's instruction named as the
+authority and flagged in the pull request as a gate item (`ARCHITECTURE_REVIEW_GATE.md` gates a
+change to an Accepted ADR whatever its size; the protocol, the producer thread, `push` itself and
+the reader contract are all unchanged — only the cadence). **Open question corrected**
+(`OPEN_QUESTIONS.md`: OQ-017's mis-sized half is Resolved and removed from the question; its
+early/late-stall sentence was wrong about which edge of `[head, head + 1]` does what and is replaced
+with the re-derived measurement — the clamp is inert under steady delivery at 0 bindings and
+≤ 0.00004 px, the LOWER edge snaps on data arriving early by exactly `(n − 1)` entry pitches, and a
+late block produces no snap at all; the jitter figures are re-stated with the configuration they were
+taken at). **Code comments corrected**: `GrHistoryView.h`'s time-base banner said an entry spans one
+HOST block and called the mapping an approximation "only in display width", and
+`AnabasisEngine.cpp`'s chunk-transparency note rested on a measurement taken without the limiter
+engaged — re-measured with it engaged over six delivery schedules and re-worded, including the
+§5.4 residue the delivered size legitimately causes. **User documentation** (`USER_MANUAL.md`: the
+twenty-second promise now says it holds whatever buffer size the host uses). **New/changed test**
+(`dsp_tests.cpp` — `testGrHistoryEntriesFollowThePreparedBlock`; `state_tests.cpp` —
+`testTheGrHistoryScrollsAtThePreparedBlock`, and `grBlank`'s stimulus now delivers what it prepares;
+`TESTING.md`, including the two mutants that survived the first suite and the in-place-buffer trap
+one of them exposed). **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total).
+Trail: `worklogs/2026-09-05-gr-history-tip.md` §20.
 
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly

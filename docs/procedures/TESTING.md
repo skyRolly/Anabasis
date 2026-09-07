@@ -419,6 +419,51 @@ count the stimulus, at 59 frames a run, before it was fixed. Measured on the shi
 reconfigurations, ~2500 lit frames, ~1000 of them floored by the guard, 0 lopsided, 0 mixed, 0
 identity switches.
 
+**THE TWO TESTS THAT PIN THE HISTORY'S CADENCE (round 14, OQ-017 fix 1).**
+`testGrHistoryEntriesFollowThePreparedBlock` (`dsp_tests.cpp`) drives the real engine with a real
+`GrHistoryBuffer` sink through `setGrHistorySink`, so the property is asserted where it is produced;
+`testTheGrHistoryScrollsAtThePreparedBlock` (`state_tests.cpp`) asserts the same thing through the
+wrapper's ring and `GrHistoryView`'s own `entryPeriod` / `windowEntries`, which is where the display
+reads it.
+
+The engine-level test's spine is **schedule-invariance asserted bit for bit**: the same audio is run
+through six delivery schedules — 64, 128, 512, 1024, 4096 and a variable one whose seven sizes
+(1, 3, 17, 63, 512, 1024, 1964) average the prepared block and none of which is a multiple of it —
+and every entry of every run must be bit-identical to the reference. That one statement is "no
+sample is lost", "none is counted twice" and "the statistics describe the entry's own span", and it
+needs no tolerance to argue about. Beside it: cadence over thirty rate × block × D/B configurations
+(44.1 / 48 / 96 kHz, 512 and the AU's 1156, D/B from 0.25 to 8); each entry's peak derived in CLOSED
+FORM from the input and `groupDelaySamples()`, which is available because defaults on sub-ceiling
+material are a bit-exact delay-aligned copy (`testNullWithDefaults`) — with a negative control
+asserting that neighbouring entries differ, so a delivered block assigned wholesale to one entry
+would fail it; a 64-sample transient inside a 4096-sample delivery landing in exactly ONE entry at
+the index the grid and the delay put it at; the remainder walked sample by sample across call
+boundaries; and D == B asserted BIT-IDENTICAL to the pre-0.2.12 wrapper expression itself
+(`gainToDecibels (lastBlockMinGain(), -60)` and `lastRenderPeak()`), not to a remembered number.
+
+**Two passes exist because mutation testing found the suite blind without them.** Deleting the
+per-chunk reset of `grMinChunk` turns it into a running GLOBAL minimum — which is STILL
+schedule-invariant (entry boundaries fall at the same absolute samples in every schedule) and STILL
+agrees with `lastBlockMinGain()` (the per-call fold reads the same running value), so the cadence,
+split and identity passes all stayed green while the GR trace would latch at the deepest reduction of
+the session and never recover. Only a stimulus whose reduction GOES AWAY sees it, which is what the
+loud-then-silent pass is for: it reads −3.62 dB in the passage and −3.62 dB after it with the reset
+deleted, against better than −0.02 dB with it. And the re-prepare pass passed for the wrong reason
+until it fed the pipeline first: `process` works IN PLACE, so re-using one buffer feeds the engine
+its own delayed output and three calls of that is digital silence — a partial entry that had
+survived a re-prepare would have carried silence either way. It now refills before every call and
+asserts the loud render is really in the accumulator before the re-prepare drops it.
+
+**The hot pass runs FROZEN, and that is a measured property of the chain rather than a
+convenience.** §5.4's `adaptiveEngine.finishBlock` runs once per `process()` CALL and its trims are
+adopted for that whole call, so the DELIVERED size — not the chunking — sets the adaptation cadence:
+a host running 64 adapts eight times as often as one running 512. That was true before this round and
+is untouched by it. With the trims live the six schedules part by at most **0.0032 dB** of GR and
+**0.00035** linear of peak, which a following pass asserts as a bound; frozen, they are identical,
+which is what isolates the accumulation. The same pair of results is what re-measured the chunk
+loop's transparency claim: moving a chunk boundary is bit-transparent WITH THE LIMITER ENGAGED, and
+`AnabasisEngine.cpp`'s note now says so on that evidence rather than on a run that never engaged it.
+
 **What the suite cannot see here, stated rather than implied.** `repaint()` is what carries a
 published frame to the screen, and a headless suite has no repaint region to inspect: the tests pin
 the published state and the painter's copy of it, so a mutant that deletes the `repaint()` call while

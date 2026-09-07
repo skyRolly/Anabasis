@@ -498,6 +498,54 @@ no atomics and no possibility of interleaving with a user gesture.
   > `ARCHITECTURE_REVIEW_GATE.md` gates and which ADR-0027 clause 4 and ADR-0038 clause 8 both name
   > explicitly as returning to that gate. **A green build does not clear it.** Nothing on the audio
   > thread changed.
+
+  > **Amended 2026-09-07 (0.2.12, OQ-017 fix 1) — for `GrHistoryBuffer` "per block" means one
+  > PREPARED block of processed audio, and the producer is the ENGINE. This narrows the "one
+  > release-store per block" clause above; it does not change the protocol it describes.**
+  >
+  > **What the clause used to mean, and why that was wrong.** `GrHistoryBuffer` was pushed once per
+  > `processBlock` CALL, from the wrapper. `GrHistoryView` maps entry k to `k · block / rate` and
+  > sizes its twenty-second window as `20 s · rate / block`, reading the PREPARED pair the ring
+  > publishes — so the two agreed only where the host delivered exactly its declared maximum. JUCE's
+  > own `prepareToPlay` contract says it will not ("completely variable block sizes can be expected
+  > from some hosts"), and the AU and VST3 wrappers prepare with the maximum and render with whatever
+  > arrives, with no re-prepare on a change. A host delivering D per call therefore ran the whole
+  > time base out by B / D: measured on the real processor and the real paint path from 0.125× to 8×,
+  > the window spanning `20 s · D / B` and the trace scrolling `B / D` times the design speed.
+  >
+  > **The narrowed clause.** One entry is one prepared block of PROCESSED AUDIO. The engine's chunk
+  > loop breaks on that boundary as well as on `maxBlock`, folds the entry's two statistics over the
+  > chunks that lie inside it, and pushes when it holds `maxBlock` samples, carrying the remainder
+  > across calls. A call publishes `⌊(carried + D) / B⌋` entries — zero for a host running under the
+  > prepared size, eight for one running 4096 against 512 — and the entry RATE is `rate / B` for
+  > every one of them.
+  >
+  > **What is unchanged, stated because this is a ring the gate watches.** One producer, one thread,
+  > the same audio thread; the same `push`, byte for byte, with its release fence and its single
+  > release-store of the monotonic index; the same reader contract, the same epoch bracket, the same
+  > `batchIntact`, the same `prepared()` metadata and the same clear-on-change gate. No new
+  > cross-thread path, no new atomic ordering, no blocking, no allocation. The realtime cost is the
+  > cadence only, and it is bounded by the delivered size: `⌈D / B⌉` pushes a call instead of one, at
+  > a release fence and three relaxed stores each — for a host delivering under the prepared size,
+  > FEWER pushes than before. `ScopeBuffer`'s two spectrum rings are untouched; they are pushed per
+  > CHUNK already and their reader reads frames, not a time series.
+  >
+  > **Owner-instructed.** `ARCHITECTURE_REVIEW_GATE.md` gates a change to an Accepted ADR whatever
+  > the agent thinks of its size, and this narrows a clause inside a block the owner has accepted.
+  > It was not self-ruled: the amendment is written because the owner instructed exactly this
+  > narrowing as part of OQ-017 fix 1, and it is flagged in the pull request as a gate item so the
+  > record shows where the authority came from.
+  >
+  > **Pinned by** `testGrHistoryEntriesFollowThePreparedBlock` (`tests/dsp_tests.cpp`: cadence over
+  > thirty rate × block × D/B configurations, schedule-invariance of the entry sequence bit for bit,
+  > each entry's peak derived in closed form from the input and the group delay, the remainder, and
+  > the D == B identity with the pre-0.2.12 wrapper expression) and by
+  > `testTheGrHistoryScrollsAtThePreparedBlock` (`tests/state_tests.cpp`, through the wrapper's ring
+  > and the view's own time base, including the AU's 1156-sample preparation).
+  >
+  > **OQ-017's other half is untouched and still `Open`**: a host delivering several blocks in one
+  > callback still makes the trace jump and stall at the burst cadence without changing its long-run
+  > rate. That needs a lag allowance whose size is a property of the host.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

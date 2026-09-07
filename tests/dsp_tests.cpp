@@ -10,6 +10,7 @@
 // ============================================================================
 
 #include <AnabasisEngine.h>
+#include <GrHistoryBuffer.h>
 #include <LoudnessMeter.h>
 #include <RmsMeter.h>
 #include <Latency.h>
@@ -4186,6 +4187,482 @@ static void testSpectrumRingsCarryTheTaps()
     }
 }
 
+// ===========================================================================
+//  OQ-017 FIX 1 — THE GR HISTORY'S CADENCE IS THE PREPARED BLOCK, NOT THE
+//  DELIVERED ONE (0.2.12).
+//
+//  `GrHistoryView` maps entry k to time k·block/rate, reading the pair the
+//  ring publishes — the PREPARED one. Until 0.2.12 the wrapper pushed one
+//  entry per processBlock CALL, so a host delivering D samples per call ran
+//  that time base out by B/D: JUCE's `prepareToPlay` contract says a host may
+//  deliver "completely variable block sizes", and the AU and VST3 wrappers
+//  both prepare with the maximum and render with whatever arrives. The engine
+//  now closes an entry when it has collected `maxBlock` samples of PROCESSED
+//  audio, carrying the remainder across calls.
+//
+//  What this pins, in the order the passes below assert it:
+//   1. CADENCE — entries = samples / B for every D, at every rate.
+//   2. CONSERVATION — the entry SEQUENCE is identical whatever the delivery
+//      schedule. That single statement is "no sample is lost and none is
+//      counted twice" and "the statistics describe the entry's own span", and
+//      it is asserted bit-exactly rather than within a tolerance.
+//   3. EXACTNESS — an entry's peak is the max of exactly the B rendered
+//      samples it spans, computed here from the input and the group delay
+//      with no reference to the implementation, which is what proves a large
+//      delivered block is SPLIT rather than assigned wholesale.
+//   4. REMAINDER — a partial entry is carried across calls, published on the
+//      sample that completes it and never before.
+//   5. D == B is BIT-IDENTICAL to the pair the wrapper pushed before 0.2.12.
+//   6. A re-prepare drops the partial rather than splicing across it, so no
+//      sample from the old configuration reaches a new one's entry.
+// ===========================================================================
+namespace grfix
+{
+    struct Run
+    {
+        std::vector<anabasis::GrHistoryBuffer::Entry> entries;
+        std::vector<float> callGrDb, callPeak;   // the PRE-0.2.12 per-call pair
+        int delay = 0;
+    };
+
+    // Prepare at (rate, B), deliver `in` in the sizes `schedule` cycles
+    // through, and collect every entry the engine pushes. The per-call pair
+    // the wrapper used to push is recorded beside them, so the D == B identity
+    // is asserted against the old EXPRESSION rather than a remembered number.
+    static Run run (double rate, int B, const std::vector<float>& in,
+                    const std::vector<int>& schedule, bool freeze = false)
+    {
+        Run r;
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        r.delay = engine.groupDelaySamples();
+
+        anabasis::EngineParameters p;                       // POD defaults
+        p.freeze = freeze;
+        int maxD = 1;
+        for (int d : schedule) maxD = juce::jmax (maxD, d);
+        juce::AudioBuffer<float> buf (2, maxD);
+
+        int pos = 0;
+        size_t si = 0;
+        int64_t taken = 0;
+        while (pos < (int) in.size())
+        {
+            const int d = juce::jmin (schedule[si++ % schedule.size()], (int) in.size() - pos);
+            for (int n = 0; n < d; ++n)
+            {
+                buf.setSample (0, n, in[(size_t) (pos + n)]);
+                buf.setSample (1, n, in[(size_t) (pos + n)]);
+            }
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, d);
+            engine.process (sub, p);
+            r.callGrDb.push_back (juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f));
+            r.callPeak.push_back (engine.lastRenderPeak());
+            // Drain inside the loop: a long run pushes more than the ring's
+            // 4096 slots, and one call never pushes more than eight.
+            for (int64_t k = taken; k < ring.available(); ++k)
+                r.entries.push_back (ring.peek (k));
+            taken = ring.available();
+            pos += d;
+        }
+        return r;
+    }
+}
+
+static void testGrHistoryEntriesFollowThePreparedBlock()
+{
+    using grfix::run;
+
+    // ---- 1. Cadence: entries = samples / B, whatever D is. ----
+    //
+    // Three rates, two prepared sizes (1156 is the AU default, which is not a
+    // power of two and is exactly the case the old code got wrong in Logic),
+    // and D/B from an eighth of a block to eight blocks a call.
+    {
+        const double rates[]  = { 44100.0, 48000.0, 96000.0 };
+        const int    blocks[] = { 512, 1156 };
+        const double ratios[] = { 0.25, 0.5, 1.0, 2.0, 8.0 };
+        bool cadenceHeld = true, durationHeld = true;
+        int  configs = 0;
+        for (double rate : rates)
+            for (int B : blocks)
+                for (double ratio : ratios)
+                {
+                    const int wanted = 24;
+                    const int total  = B * wanted;
+                    const int D      = (int) std::lround ((double) B * ratio);
+                    std::vector<float> in ((size_t) total);
+                    for (int t = 0; t < total; ++t)
+                        in[(size_t) t] = 0.5f * std::sin (0.017f * (float) t);
+                    const auto r = run (rate, B, in, { D });
+                    ++configs;
+                    if ((int) r.entries.size() != wanted) cadenceHeld = false;
+                    // …stated as the RATE the display reads it as, which is
+                    // the quantity OQ-017 measured running out by B/D.
+                    const double seconds = (double) total / rate;
+                    const double cadence = (double) r.entries.size() / seconds;
+                    if (std::abs (cadence - rate / (double) B) > 1.0e-9) cadenceHeld = false;
+                    // …and the history's DURATION, which is what the twenty
+                    // second window is a promise about.
+                    const double held = (double) r.entries.size() * (double) B / rate;
+                    if (std::abs (held - seconds) > 1.0e-9) durationHeld = false;
+                }
+        check (configs == 30, "grCadence: (premise) thirty rate x block x D/B configurations were run");
+        check (cadenceHeld,
+               "grCadence: the entry rate is rate/B at every rate, every prepared size and every "
+               "D/B from 0.25 to 8 — the delivered size does not enter it");
+        check (durationHeld,
+               "grCadence: …so the history spans the duration of the audio that produced it");
+    }
+
+    // ---- 2. Variable D whose mean is B, and repeated boundary crossings. ----
+    {
+        const double rate = 48000.0;
+        const int    B    = 512;
+        // Seven deliveries summing to 7·512: every one of them crosses,
+        // undershoots or overshoots a boundary, and none is a multiple of it.
+        const std::vector<int> schedule { 1, 3, 17, 63, 512, 1024, 1964 };
+        int sum = 0;
+        for (int d : schedule) sum += d;
+        check (sum == 7 * B, "grCadence: (premise) the variable schedule's mean delivery IS the prepared size");
+        const int total = sum * 30;
+        std::vector<float> in ((size_t) total);
+        for (int t = 0; t < total; ++t)
+            in[(size_t) t] = 0.5f * std::sin (0.017f * (float) t);
+        const auto r = run (rate, B, in, schedule);
+        check ((int) r.entries.size() == total / B,
+               "grCadence: a host with a variable block size whose mean is the prepared one still "
+               "publishes exactly one entry per prepared block");
+        check (r.callGrDb.size() == (size_t) (30 * schedule.size()),
+               "grCadence: (premise) …across far more CALLS than entries in the small deliveries "
+               "and far fewer in the large ones");
+    }
+
+    // ---- 3. The entry sequence does not depend on the delivery schedule. ----
+    //
+    // Same audio, six schedules — including one that puts a boundary inside
+    // every delivered block. Bit-exact equality is the strong form of "the
+    // statistics correspond to the samples the entry represents": if a sample
+    // were lost, double-counted, or folded into the wrong entry by any
+    // schedule, the sequences would part.
+    {
+        const double rate = 48000.0;
+        const int    B    = 512;
+        const int    total = B * 48;
+        const std::vector<std::vector<int>> schedules {
+            { B }, { 128 }, { 64 }, { 1024 }, { 4096 }, { 1, 3, 17, 63, 512, 1024, 1964 } };
+
+        // Two stimuli: one the chain passes through bit-exactly (defaults on
+        // sub-ceiling material), and one that drives real gain reduction, so
+        // BOTH statistics an entry carries are covered rather than only the
+        // peak. The amplitude steps every 97 samples — coprime with every
+        // block and every delivery below, so no pattern edge can hide behind
+        // a boundary.
+        //
+        // THE HOT PASS RUNS FROZEN, and the reason is a measured property of
+        // the chain rather than a convenience. §5.4's `finishBlock` runs once
+        // per `process()` CALL and the trims it produces are adopted for that
+        // whole call, so the DELIVERED size — not the chunking — sets the
+        // adaptation cadence, and a host running 64 adapts eight times as
+        // often as one running 512. That was true before this fix and is
+        // untouched by it; frozen, the trim vector is constant and what
+        // remains under test is the entry accumulation alone. The unfrozen
+        // divergence is measured and bounded by the pass that follows.
+        for (int hot = 0; hot < 2; ++hot)
+        {
+            std::vector<float> in ((size_t) total);
+            for (int t = 0; t < total; ++t)
+            {
+                const float amp = (hot != 0 ? 1.30f : 0.90f) * (0.13f + 0.037f * (float) ((t / 97) % 23));
+                in[(size_t) t] = amp * std::sin (0.31f * (float) t);
+            }
+            const auto ref = run (rate, B, in, schedules[0], hot != 0);
+            check ((int) ref.entries.size() == total / B,
+                   "grSplit: (premise) the reference run holds one entry per prepared block");
+
+            bool grSeen = false;
+            for (const auto& e : ref.entries) if (e.grDb < -0.5f) grSeen = true;
+            check (hot == 0 ? ! grSeen : grSeen,
+                   hot == 0 ? "grSplit: (premise) the transparent stimulus draws no gain reduction"
+                            : "grSplit: (premise) the hot stimulus DOES, so the grDb statistic is under test too");
+
+            bool same = true;
+            float worst = 0.0f;
+            for (size_t s = 1; s < schedules.size(); ++s)
+            {
+                const auto other = run (rate, B, in, schedules[s], hot != 0);
+                if (other.entries.size() != ref.entries.size()) { same = false; continue; }
+                for (size_t k = 0; k < ref.entries.size(); ++k)
+                {
+                    if (! juce::exactlyEqual (other.entries[k].grDb, ref.entries[k].grDb)
+                        || ! juce::exactlyEqual (other.entries[k].peak, ref.entries[k].peak))
+                        same = false;
+                    worst = juce::jmax (worst, std::abs (other.entries[k].grDb - ref.entries[k].grDb));
+                }
+            }
+            check (same,
+                   hot == 0 ? "grSplit: the entry sequence is bit-identical under every delivery "
+                              "schedule — 64, 128, 512, 1024, 4096 and a variable one"
+                            : "grSplit: …with gain reduction running, so neither statistic depends "
+                              "on how the host chopped the audio up");
+
+            if (hot == 0)
+            {
+                // The peak an entry MUST carry, in closed form: at defaults on
+                // sub-ceiling material the render is the input delayed by
+                // `groupDelaySamples()` exactly (`testNullWithDefaults`), so
+                // entry k's peak is the max of |in| over the B samples that
+                // land in [k·B, k·B+B). Nothing here reads the implementation.
+                bool exact = true;
+                for (size_t k = 0; k < ref.entries.size(); ++k)
+                {
+                    float want = 0.0f;
+                    for (int n = (int) k * B; n < (int) k * B + B; ++n)
+                    {
+                        const int src = n - ref.delay;
+                        if (src >= 0 && src < total)
+                            want = juce::jmax (want, std::abs (in[(size_t) src]));
+                    }
+                    if (! juce::exactlyEqual (ref.entries[k].peak, want)) exact = false;
+                }
+                check (exact,
+                       "grSplit: every entry's peak is the max of exactly the B rendered samples it "
+                       "spans, derived from the input and the group delay");
+                int steps = 0;
+                for (size_t k = 1; k < ref.entries.size(); ++k)
+                    if (! juce::exactlyEqual (ref.entries[k].peak, ref.entries[k - 1].peak)) ++steps;
+                check (steps > (int) ref.entries.size() / 2,
+                       "grSplit: (negative control) neighbouring entries carry DIFFERENT peaks, so a "
+                       "delivered block assigned wholesale to one entry would fail the check above");
+            }
+        }
+    }
+
+    // ---- 3b. …and UNFROZEN the sequences part only by §5.4's per-call
+    //          adaptation cadence, which is bounded and pre-existing. ----
+    //
+    // Recorded rather than left implicit: with the trims live, the delivered
+    // size changes how often `finishBlock` runs and therefore the release
+    // scale, stereo link and detector trim the whole call is processed with.
+    // The entries follow the audio, so they follow that too. The point of the
+    // measurement is the SIZE of it — hundredths of a decibel, against the
+    // B/D time-base error this fix removes, which was unbounded.
+    {
+        const double rate = 48000.0;
+        const int    B    = 512, total = B * 48;
+        std::vector<float> in ((size_t) total);
+        for (int t = 0; t < total; ++t)
+            in[(size_t) t] = 1.30f * (0.13f + 0.037f * (float) ((t / 97) % 23))
+                                   * std::sin (0.31f * (float) t);
+        const auto ref = run (rate, B, in, { B });
+        float worstGr = 0.0f, worstPeak = 0.0f;
+        for (const std::vector<int>& sched : std::vector<std::vector<int>> { { 64 }, { 4096 },
+                                                                            { 1, 3, 17, 63, 512, 1024, 1964 } })
+        {
+            const auto other = run (rate, B, in, sched);
+            if (other.entries.size() != ref.entries.size()) { worstGr = 1.0e9f; break; }
+            for (size_t k = 0; k < ref.entries.size(); ++k)
+            {
+                worstGr   = juce::jmax (worstGr,   std::abs (other.entries[k].grDb - ref.entries[k].grDb));
+                worstPeak = juce::jmax (worstPeak, std::abs (other.entries[k].peak - ref.entries[k].peak));
+            }
+        }
+        check (worstGr < 0.05f && worstPeak < 0.005f,
+               juce::String ("grSplit: with the §5.4 trims LIVE the delivery schedule moves an entry by "
+                             "at most hundredths of a decibel — the adaptation's per-call cadence, not "
+                             "the accumulation (worst " + juce::String (worstGr, 5) + " dB, "
+                             + juce::String (worstPeak, 6) + " linear)").toRawUTF8());
+    }
+
+    // ---- 4. A transient inside one large delivered block lands in the one
+    //         entry that spans it, not in the block's worth of entries. ----
+    {
+        const double rate = 48000.0;
+        const int    B    = 512, total = B * 32, hit = 2600, len = 64;
+        std::vector<float> in ((size_t) total, 0.0f);
+        for (int n = 0; n < len; ++n) in[(size_t) (hit + n)] = 0.9f;
+        const auto r = run (rate, B, in, { 4096 });
+        const int first = (hit + r.delay) / B;
+        const int last  = (hit + len - 1 + r.delay) / B;
+        check (first == last,
+               "grSplit: (premise) the burst is short enough and placed so that it lies wholly "
+               "inside one prepared block once the group delay has moved it");
+        int loud = 0, where = -1;
+        for (size_t k = 0; k < r.entries.size(); ++k)
+            if (r.entries[k].peak > 0.1f) { ++loud; where = (int) k; }
+        check ((int) r.entries.size() == total / B,
+               "grSplit: (premise) eight 4096-sample deliveries publish thirty-two 512-sample entries");
+        check (loud == 1 && where == first,
+               "grSplit: a 64-sample transient delivered inside a 4096-sample block occupies exactly "
+               "ONE entry, at the index the prepared grid and the group delay put it at");
+    }
+
+    // ---- 5. The remainder is carried: published on the sample that completes
+    //         an entry, never before, and never dropped at a call boundary. ----
+    {
+        const double rate = 48000.0;
+        const int    B    = 512;
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, 4096);
+        buf.clear();
+        auto deliver = [&] (int n)
+        {
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        deliver (100); check (ring.available() == 0, "grRemainder: 100 of 512 samples publishes nothing");
+        deliver (300); check (ring.available() == 0, "grRemainder: …400 of 512 still publishes nothing");
+        deliver (112); check (ring.available() == 1, "grRemainder: the entry closes ON its 512th sample");
+        deliver (1);   check (ring.available() == 1, "grRemainder: …and the 513th opens the next entry rather than closing it");
+        deliver (511); check (ring.available() == 2, "grRemainder: a partial entry is carried across a call boundary, not dropped");
+        deliver (5 * B + 7);
+        check (ring.available() == 7,
+               "grRemainder: one delivered block larger than several prepared blocks closes every one of them");
+        deliver (B - 7);
+        check (ring.available() == 8, "grRemainder: …and its remainder is completed by the next call's audio");
+        deliver (B - 1);
+        check (ring.available() == 8, "grRemainder: a final partial entry stays unpublished");
+    }
+
+    // ---- 6. D == B is bit-identical to the pre-0.2.12 wrapper pair. ----
+    {
+        const double rate = 48000.0;
+        const int    B    = 512, total = B * 40;
+        std::vector<float> in ((size_t) total);
+        for (int t = 0; t < total; ++t)
+            in[(size_t) t] = 1.3f * (0.13f + 0.037f * (float) ((t / 97) % 23)) * std::sin (0.31f * (float) t);
+        const auto r = run (rate, B, in, { B });
+        bool identical = r.entries.size() == r.callGrDb.size() && r.entries.size() == (size_t) (total / B);
+        for (size_t k = 0; identical && k < r.entries.size(); ++k)
+            identical = juce::exactlyEqual (r.entries[k].grDb, r.callGrDb[k])
+                     && juce::exactlyEqual (r.entries[k].peak, r.callPeak[k]);
+        check (identical,
+               "grIdentity: at D == B the engine's entry is bit-identical to the pair the wrapper "
+               "pushed before 0.2.12 — gainToDecibels (lastBlockMinGain(), -60) and lastRenderPeak()");
+    }
+
+    // ---- 6b. An entry's GR describes ITS OWN samples, not every sample since
+    //          the transport started. ----
+    //
+    // The per-chunk minima are reset at the top of every chunk, and this is
+    // what says so: leave that reset out and `grMinChunk` becomes a running
+    // global minimum, which is still schedule-invariant (the entry boundaries
+    // are at the same absolute samples in every schedule) and still agrees
+    // with `lastBlockMinGain()` (the per-call fold reads the same running
+    // value) — so passes 3 and 6 both stay green while the GR trace latches at
+    // the deepest reduction of the session and never recovers. Only a stimulus
+    // whose reduction GOES AWAY can see it.
+    {
+        const double rate = 48000.0;
+        const int    B    = 512, loud = 16, quiet = 512;
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+        int t = 0;
+        for (int b = 0; b < loud + quiet; ++b)
+        {
+            for (int n = 0; n < B; ++n, ++t)
+            {
+                const float v = b < loud ? 1.5f * std::sin (0.05f * (float) t) : 0.0f;
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+        }
+        check (ring.available() == loud + quiet, "grRecover: (premise) one entry a block");
+        float deepest = 0.0f;
+        for (int k = 0; k < loud; ++k) deepest = juce::jmin (deepest, ring.peek (k).grDb);
+        check (deepest < -0.5f, "grRecover: (premise) the loud passage draws real reduction");
+        float worstTail = -1000.0f;
+        for (int k = loud + quiet / 2; k < loud + quiet; ++k)
+            worstTail = juce::jmax (worstTail, ring.peek (k).grDb);
+        float shallowestTail = 0.0f;
+        for (int k = loud + quiet / 2; k < loud + quiet; ++k)
+            shallowestTail = juce::jmin (shallowestTail, ring.peek (k).grDb);
+        check (shallowestTail > -0.02f && shallowestTail > deepest + 1.0f,
+               juce::String ("grRecover: once the loud passage has passed, every entry reports the "
+                             "reduction of ITS OWN samples and the trace returns to zero (deepest "
+                             + juce::String (deepest, 2) + " dB in the passage, "
+                             + juce::String (shallowestTail, 4) + " dB after it)").toRawUTF8());
+        check (worstTail <= 0.0f,
+               "grRecover: (premise) the entries report reduction, never gain");
+        check (engine.lastBlockMinGain() > 0.9977f,
+               "grRecover: …and the per-call GR meter recovers with it");
+    }
+
+    // ---- 7. A re-prepare during a partial accumulation drops the partial. ----
+    {
+        const double rate = 48000.0;
+        const int    B    = 512;
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+
+        // TWO FULL ENTRIES OF LOUD AUDIO FIRST, and the reason is the group
+        // delay: the render is the input delayed by `groupDelaySamples()`, so a
+        // partial entry fed before the pipeline has filled would carry silence
+        // whether it survived a re-prepare or not, and the assertion below
+        // would pass for the wrong reason. Two entries put loud audio in the
+        // RENDER, and the 300 samples after them put it in the accumulator.
+        //
+        // THE BUFFER IS REFILLED BEFORE EVERY CALL because `process` works IN
+        // PLACE: reusing it would feed the engine its own delayed output, and
+        // three calls of that is digital silence — which is exactly how this
+        // test passed for the wrong reason before the refill was added.
+        const auto deliverLoud = [&] (int n)
+        {
+            for (int i = 0; i < n; ++i) { buf.setSample (0, i, 0.9f); buf.setSample (1, i, 0.9f); }
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        deliverLoud (B);
+        deliverLoud (B);
+        check (ring.available() == 2 && ring.peek (1).peak > 0.5f,
+               "grPrepared: (premise) the pipeline is full and the entries carry the loud render");
+        deliverLoud (300);
+        check (ring.available() == 2 && engine.lastRenderPeak() > 0.5f,
+               "grPrepared: (premise) 300 samples of LOUD RENDER are sitting in a partial entry");
+        check (ring.prepare (rate, B) == false,
+               "grPrepared: (premise) a re-prepare at an unchanged pair keeps the ring's timeline");
+        engine.prepare (rate, B, 2);
+        buf.clear();
+        { juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, B); engine.process (sub, p); }
+        check (ring.available() == 3,
+               "grPrepared: the first entry after a re-prepare closes on ITS OWN 512 samples");
+        check (juce::exactlyEqual (ring.peek (2).peak, 0.0f),
+               "grPrepared: …and carries none of the audio from before the re-prepare");
+
+        // A CHANGED pair clears the ring as well, and the new timeline's first
+        // entry is one block of the NEW prepared size.
+        deliverLoud (200);
+        check (ring.prepare (rate, 256) == true,
+               "grPrepared: (premise) a changed pair clears the ring");
+        engine.prepare (rate, 256, 2);
+        check (ring.available() == 0, "grPrepared: …so the old timeline's entries are gone");
+        buf.clear();
+        { juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, 256); engine.process (sub, p); }
+        check (ring.available() == 1 && juce::exactlyEqual (ring.peek (0).peak, 0.0f),
+               "grPrepared: the new configuration's first entry is one NEW prepared block of its own audio");
+    }
+}
+
+
 // ---------------------------------------------------------------------------
 // inv 9: non-finite input never leaves the engine, and it self-heals.
 static void testNoBadSamples()
@@ -5170,6 +5647,7 @@ int main()
     testAStagedFrozenVectorAlwaysGetsABottom();
     testMeterResetIgnoresTheStraddlingSubBlock();
     testSpectrumRingsCarryTheTaps();
+    testGrHistoryEntriesFollowThePreparedBlock();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();

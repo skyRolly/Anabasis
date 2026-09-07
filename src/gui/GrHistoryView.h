@@ -62,26 +62,31 @@ class AnabasisAudioProcessor;
 //  other memory. They are read as a PAIR, and the pairing is safe by value
 //  rather than by synchronisation — see `frameFor`.
 //
-//  Time base: one ring entry spans one HOST block (the recorded caveat), so
-//  the window is mapped through the prepared (rate, block) pair — an
-//  approximation that drifts only when the host's delivered blocks differ
-//  from its prepared size, and only in display width, never in data. The pair
+//  Time base: one ring entry spans one PREPARED block of PROCESSED AUDIO
+//  since 0.2.12 (OQ-017 fix 1), so mapping the window through the prepared
+//  (rate, block) pair is EXACT rather than an approximation — a host
+//  delivering any other size, or a variable one, still publishes entries at
+//  `rate / block`, the remainder carried across its calls
+//  (`AnabasisEngine::setGrHistorySink`). Until 0.2.12 an entry spanned one
+//  HOST CALL and the mapping ran out by block / delivered with nothing
+//  bounding it: at an eighth of the prepared size the window held 2.5 s
+//  instead of 20 and the trace ran eight times too fast. The pair
 //  is the RING's (`GrHistoryBuffer::prepared`, stored inside the clear that
 //  starts a timeline and read under the same epoch bracket as the entries),
 //  not `AudioProcessor`'s: those members are plain, the host writes them from
 //  its callback thread, and this view reads on two others. Since
 //  0.2.8 the same prepared pair also paces the SMOOTHED HEAD the trace's
 //  sub-entry phase is read from (`entryPeriod`, `smoothedHead`, `phaseOf`),
-//  held to within one entry of the real head — so a host whose cadence
-//  differs degrades the MOTION to per-entry stepping at the host's own
-//  cadence (a longer-than-prepared block parks the trace for the excess of
-//  each block; a shorter one pins the phase near 0), never behind the data
-//  and never more than one entry ahead of it. Bursty delivery — several
-//  blocks per callback, which hosts rendering ahead of real time do — is the
-//  same case at the burst rate; the worklog measures it and records the
-//  lag-buffer design that would absorb it as a display-latency trade for
-//  the owner, not taken here and filed as OQ-017 (0.2.11 re-measured both
-//  cases on the real paint path and left them by instruction).
+//  held to within one entry of the real head. What that band still cannot
+//  absorb is delivery in LUMPS: several blocks in one callback, which hosts
+//  rendering ahead of real time do, arrive as several entries at one instant,
+//  and the trace jumps `(n − 1)` entry pitches and then stands still until
+//  real time catches up — never behind the data and never more than one entry
+//  ahead of it. That is the whole of what OQ-017 still asks; the worklog
+//  measures it and records the lag-buffer design that would absorb it as a
+//  display-latency trade for the owner, not taken here (0.2.11 re-measured it
+//  on the real paint path and left it by instruction, and 0.2.12 re-derived
+//  it before fixing the OTHER half).
 //
 //  WHAT A FRAME DRAWS (0.2.11): complete buckets only, each created once at
 //  the value it keeps and moved as one rigid body with the rest — the newest

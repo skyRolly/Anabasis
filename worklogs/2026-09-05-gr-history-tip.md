@@ -2027,3 +2027,160 @@ OQ-017's bursty-host lurch; the input/output taps being index-aligned rather tha
 KI-018's remaining equal-count corner; the audio-path reservation index; `LoudnessMeterView`; and the
 spectrum reveal-smoothing limitation, whose premise this round did not touch. The memcheck job's
 wall-clock cost is a CI-performance question and not a reason to change product behaviour.
+
+---
+
+## 20. The history's cadence: one entry is one PREPARED block of processed audio (2026-09-07, round 14)
+
+**The instruction.** Implement OQ-017 **fix 1 only** — the mis-sized/variable-delivery half. The
+bursty-host half stays an open follow-up and is not implemented here; no lag allowance, no guessed
+`L`, no change to the rendering geometry, and nothing in the already-merged GR-history rendering
+work is touched. The decision to implement was taken by the owner after §19's investigation, which
+re-derived the two defects rather than accepting the three standing hypotheses.
+
+### 20.1 The defect, in one line
+
+`GrHistoryBuffer` was pushed **once per `processBlock` CALL** (from the wrapper), and
+`GrHistoryView` maps entry k to `k · block / rate` and sizes its window as `20 s · rate / block`,
+reading the **PREPARED** pair the ring publishes. The two agree only where the host delivers exactly
+its declared maximum. JUCE's own `prepareToPlay` contract says it will not — *"completely variable
+block sizes can be expected from some hosts"* — and the AU and VST3 wrappers both prepare with the
+maximum and render with whatever the host passes, with no re-prepare on a change. So the whole time
+base ran out by `B / D`, unbounded, measured from 0.125× to 8×.
+
+Restated as the two figures a user sees, at 48 kHz with 512 prepared (measured on the real
+processor; the pixel column is the same statement at the Simple well's 0.482372 px per entry and
+60 frames a second, where the design travel is 45.222 px/s):
+
+| delivered | entry rate before | window held before | entry rate after | window after |
+|---|---|---|---|---|
+| 128 | 375.00 /s (4× fast, 180.9 px/s) | 5.0 s | 93.75 /s | 20.0 s |
+| 512 | 93.75 /s | 20.0 s | 93.75 /s | 20.0 s |
+| 4096 | 11.72 /s (8× slow, 5.65 px/s) | 160.0 s | 93.75 /s | 20.0 s |
+
+### 20.2 Why the producer, and why the ENGINE
+
+The display cannot fix it without being told the delivered size, and telling it would mean either a
+new published scalar (a second time base to keep coherent with the entries, which is the coupling
+ADR-0038 exists to avoid) or a display that learns a number the host is free to change every
+callback. The wrapper cannot fix it either: a prepared-block boundary of the PROCESSED stream falls
+wherever the running total puts it — inside a delivered block whenever the host leaves a remainder —
+and the two statistics an entry carries are folded **per sample** inside the chain.
+
+The engine already chunks on exactly that grid. `AnabasisEngine::process` now takes the ring through
+`setGrHistorySink`, breaks its chunk loop on `maxBlock - histSamples` as well as on `maxBlock`, and
+pushes when the accumulator holds `maxBlock` samples, carrying the remainder across calls. A chunk
+therefore lies **wholly inside one entry**, so the per-sample folds already in `processChunk` are
+exact for the entry's own span: nothing is approximated, nothing is assigned wholesale, and a
+delivered block spanning several entries is split into as many, each with its own statistics. The
+`if (histSamples >= maxBlock)` is an `if` and not a `while` — the loop bound guarantees the
+accumulator never holds more than one entry, so there is no unbounded catch-up.
+
+Cost on the audio path: the per-sample folds moved from the per-CALL accumulators to per-CHUNK ones
+and are folded chunk-into-call afterwards, which is exactly equal (min and max are associative) and
+adds nothing per sample. `push` runs `⌈D / B⌉` times a call instead of once — **fewer** times than
+before for any host delivering under the prepared size. No allocation, no lock, no new cross-thread
+path, no new atomic ordering.
+
+### 20.3 What is bit-identical
+
+At **D == B** the entry the engine pushes is bit-identical to the pair the wrapper pushed before
+this round — `gainToDecibels (lastBlockMinGain(), -60)` and `lastRenderPeak()` — asserted against
+that expression itself rather than a remembered number
+(`testGrHistoryEntriesFollowThePreparedBlock`, pass 6). The GR METER is untouched: it is a per-call
+reading and stays one; only the history moved.
+
+### 20.4 The measurements
+
+Cadence, on the real processor with a real ring: exactly `rate / B` at 44.1 / 48 / 96 kHz, for
+B = 512 and B = 1156 (the AU default), at D/B = 0.25, 0.5, 1, 2 and 8 — thirty configurations, and
+the entry count equals `samples / B` in every one of them.
+
+Splitting, the property that says the statistics belong to their own samples:
+
+- Six delivery schedules — 64, 128, 512, 1024, 4096, and a variable one whose seven sizes
+  (1, 3, 17, 63, 512, 1024, 1964) average the prepared block and none of which is a multiple of it —
+  produce **bit-identical entry sequences**, with the limiter engaged.
+- Each entry's peak equals the max of exactly the B rendered samples it spans, derived in closed
+  form from the input and `groupDelaySamples()`, over all 48 entries of a run, with a negative
+  control proving neighbouring entries differ.
+- A 64-sample transient inside a 4096-sample delivered block lands in **exactly one** entry
+  (`entries with peak > 0.1` = 1), at the index the prepared grid and the group delay put it at.
+  Same at B = 256 with an 8192-sample delivery.
+
+### 20.5 The finding that changed a comment: §5.4 sets its cadence from the DELIVERED size
+
+The schedule-invariance above holds **frozen**. With the §5.4 trims live the six schedules part —
+worst **0.0032 dB** of GR and **0.00035** linear of peak, first difference at entry 6 — and the
+cause is not the accumulation: `adaptiveEngine.finishBlock` runs once per `process()` CALL and the
+trims it produces are adopted for that whole call, so a host running 64 adapts eight times as often
+as one running 512. That was true before this round and is untouched by it; it is now asserted as a
+bound (pass 3b) rather than left to be discovered.
+
+The same experiment re-measured a claim the first draft of this round's code comment carried over
+from the investigation: that chunking is transparent to the audio. It is — **including with the
+limiter engaged**, which the original measurement had not exercised — and the comment now rests on
+that run rather than on one that never engaged it.
+
+### 20.6 Reset and re-prepare
+
+The accumulator is dropped by `prepare` and by `reset`, never carried across either: a re-prepare is
+a discontinuity in the audio the entries describe, so at most `maxBlock - 1` samples of a partial
+entry are discarded rather than being spliced onto audio from the other side of it — less than one
+entry of a twenty-second window. The ring's own clear-on-change gate is unchanged, so a re-prepare
+at the same pair still keeps the timeline; pass 7 asserts that the first entry after such a
+re-prepare carries none of the audio from before it.
+
+### 20.7 What is untouched
+
+Limiter behaviour, gain and peak calculation, the chain's signal order, the FFT/spectrum path, the
+GR bucket geometry, bucket values once in the ring, `bucketX`, `visibleRight`, the smoothed head and
+its band, the reader contract, `push`, the epoch protocol, the prepared-pair metadata, and every
+merged GR-history and Spectrum fix. `ScopeBuffer`'s two rings are untouched — they are pushed per
+chunk already and their reader reads frames, not a time series.
+
+### 20.7b Mutation testing, and the two mutants that survived the first suite
+
+Nine mutants of the new code, each built and run against the DSP suite:
+
+| # | mutant | outcome |
+|---|---|---|
+| 1 | chunk loop stops breaking on the history boundary | killed (cadence, split, §5.4 bound) |
+| 2 | `histSamples >= maxBlock` → `>` (the entry never closes) | killed (eight checks) |
+| 3 | the peak accumulator is not cleared after a push | killed |
+| 4 | the gain accumulator is not cleared after a push | killed |
+| 5 | `histPeak = renderPeakChunk` (last chunk wins) | killed |
+| 6 | `histMinGain = grMinChunk` (last chunk wins) | killed |
+| 7 | the per-chunk minima are not reset at the top of a chunk | **survived**, then killed |
+| 8 | `prepare`/`reset` no longer clear the accumulator | **survived**, then killed |
+| 9 | the push is unconditional (one entry per chunk) | killed |
+
+**Mutant 7 is the interesting one.** Without the per-chunk reset, `grMinChunk` becomes a running
+GLOBAL minimum — and that is still schedule-invariant, because the entry boundaries fall at the same
+absolute samples in every schedule, and it still agrees with `lastBlockMinGain()`, because the
+per-call fold reads the same running value. Cadence, split and identity all stayed green while the
+GR trace would have latched at the session's deepest reduction and never recovered. The pass added
+for it feeds a loud passage and then silence: with the reset deleted the tail reads −3.62 dB, the
+same figure as the passage; with it, better than −0.02 dB.
+
+**Mutant 8 exposed a test that passed for the wrong reason.** `process` works IN PLACE, so the
+re-prepare pass — which reused one buffer across its calls — was feeding the engine its own delayed
+output, and three calls of that is digital silence: a partial entry carrying loud audio across a
+re-prepare would have been indistinguishable from one carrying nothing. The pass now refills before
+every call and asserts the loud render IS in the accumulator (`lastRenderPeak() > 0.5`) before the
+re-prepare is asked to drop it.
+
+**One code change came out of the same exercise.** Mutant 2 did not fail the suite, it HUNG it: with
+the accumulator never emptied, `maxBlock - histSamples` goes non-positive and `start += num` stops
+advancing — an infinite loop on the audio thread. The shipped code cannot reach that state, but the
+loop's termination rested on an invariant held elsewhere rather than on anything visible at the loop
+itself, so `num` is now `jmin (jmax (1, maxBlock - histSamples), totalSamples - start)`: identical on
+every reachable state, and terminating by inspection on all of them.
+
+### 20.8 Follow-ups, unchanged
+
+**OQ-017's bursty half stays Open** and this round is not a partial answer to it: the fix changes
+WHICH SAMPLES an entry stands for, and a burst delivers the same entries at the wrong INSTANTS,
+which no producer-side change can address. Also unchanged: the input/output taps being index-aligned
+rather than audio-time aligned; KI-018's remaining equal-count corner; the audio-path reservation
+index; `LoudnessMeterView`; and the spectrum reveal-smoothing limitation.

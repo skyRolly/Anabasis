@@ -242,7 +242,9 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   project, so it reopens on whichever you left it. The history draws at a fixed scale: a
   fresh instance grows its trace from the right edge, and the region to the left stays
   empty until twenty seconds of audio have actually been measured — nothing is estimated
-  or stretched. The trace scrolls continuously — it advances a fraction of a pixel with
+  or stretched. Twenty seconds means twenty seconds of audio whatever size of buffer your
+  host hands the plugin, and whether or not that size stays the same: the timeline follows
+  the audio rather than the callback rate (since 0.2.12). The trace scrolls continuously — it advances a fraction of a pixel with
   every processed block rather than stepping once per bucket (since 0.2.8). Each point of
   the trace is drawn once, when every block it summarises has been processed, and is never
   redrawn: a new point enters at the right edge as each group of blocks completes, and what

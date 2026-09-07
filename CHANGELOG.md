@@ -245,6 +245,28 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   [ADR-0039](docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md), amended by
   exception for this repair. Evidence: this release. [Verified]
 
+- **The GR history now spans twenty seconds of audio whatever buffer size your host uses.** The
+  trace advanced one point per callback while the graph's time axis was drawn from the buffer size
+  the plugin was PREPARED with, and hosts routinely deliver something else — a live or monitored
+  Logic track renders the I/O buffer against the larger maximum the AU wrapper prepared with, and a
+  host rendering ahead of real time hands over several buffers at a time. The two only agreed when
+  the delivered size happened to equal the prepared one; anywhere else the whole time base ran out
+  by the ratio between them, measured on the real processor and the real paint path from an eighth
+  of the prepared size to eight times it: at a quarter the window held five seconds instead of
+  twenty and the trace ran four times too fast, at eight times it held 160 seconds and crawled. A
+  point of the history is now one prepared buffer of PROCESSED AUDIO, closed on the sample that
+  completes it with the remainder carried into the next callback, so the entry rate is the same
+  whatever arrives and a variable buffer size — which the plugin format's own contract says to
+  expect — is covered by construction. Nothing in the display changed to fix it, and nothing about
+  the sound changed at all: with the delivered size equal to the prepared one every point is
+  bit-identical to the previous build's. The GR meter is unaffected — it is a per-callback reading
+  and stays one. Cross-links
+  [ADR-0011](docs/architecture/design-decisions/ADR-0011-threading-model.md), amended for the
+  publication cadence. The other half of
+  [OQ-017](docs/OPEN_QUESTIONS.md) — a host that hands over several buffers at once still makes the
+  trace jump and then stand still, at its own cadence — is unchanged and still the owner's call.
+  Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

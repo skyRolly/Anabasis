@@ -13,6 +13,7 @@
 #include "TruePeak.h"
 #include "AdaptiveEngine.h"
 #include "ScopeBuffer.h"
+#include "GrHistoryBuffer.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
@@ -71,6 +72,30 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize, int numChannels);
     void reset() noexcept;
+
+    // WHERE THE GR HISTORY'S ENTRIES ARE PUSHED (0.2.12, OQ-017 fix 1). Set
+    // once by the wrapper, which owns the ring; null until it is, and a null
+    // sink simply pushes nothing.
+    //
+    // WHY THE ENGINE AND NOT THE WRAPPER. One entry is one PREPARED BLOCK of
+    // processed audio, and the wrapper cannot see prepared-block boundaries: a
+    // host may deliver any number of samples per call (JUCE's own
+    // `prepareToPlay` contract — "completely variable block sizes can be
+    // expected from some hosts"), so a boundary falls wherever the running
+    // total says it does, which is inside a delivered block as often as not.
+    // The engine already chunks on exactly that grid and already folds the two
+    // statistics an entry carries per sample, so it is the only place where an
+    // entry's span and an entry's values can be made to describe the same
+    // samples. Until 0.2.12 the wrapper pushed one entry per processBlock CALL
+    // and the display mapped entries through the PREPARED size, so a host
+    // delivering D per call ran the display's time base out by B / D — the
+    // whole of OQ-017's mis-sized half, measured at 0.125x to 8x.
+    //
+    // The sink is the same ring, pushed by the same thread, through the same
+    // single-producer `push`: this moves WHO calls it and WHEN, and adds no
+    // cross-thread path. `specInRing`/`specOutRing` are pushed from the chunk
+    // loop already; this is that pattern with the wrapper's ring.
+    void setGrHistorySink (GrHistoryBuffer* sink) noexcept { grHistory = sink; }
 
     // Audio thread. Adopts the per-block POD snapshot (ADR-0011). Blocks
     // larger than the prepared maximum are processed in prepared-size chunks,
@@ -397,8 +422,15 @@ private:
     // published beside the combined ones, never instead of them.
     std::atomic<float> compGrDbCh[2] { 0.0f, 0.0f };
     std::atomic<float> limGrDbCh[2]  { 0.0f, 0.0f };
+    // PER CALL (the meters) and PER CHUNK (the history), folded chunk into
+    // call after every chunk. The per-SAMPLE folds inside `processChunk` now
+    // land in the chunk copies and the call copies are a `jmin`/`jmax` of
+    // those, which is exactly equal to folding every sample into the call
+    // directly — min and max are associative — and costs nothing per sample.
     float grMinThisCall = 1.0f;
     float grMinThisCallCh[2] = { 1.0f, 1.0f };
+    float grMinChunk = 1.0f;
+    float grMinChunkCh[2] = { 1.0f, 1.0f };
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;
@@ -483,6 +515,23 @@ private:
     RmsMeter          outRms;      // §2.9 stats row: 50 ms Hann RMS (ADR-0020)
     TruePeakEstimator outTp;
     float renderTpMaxCall = 0.0f, renderPeakCall = 0.0f;
+    float renderTpMaxChunk = 0.0f, renderPeakChunk = 0.0f;
+
+    // THE HISTORY ENTRY UNDER CONSTRUCTION (0.2.12, OQ-017 fix 1): the two
+    // statistics an entry carries, folded over the samples it has collected so
+    // far, and how many that is. `histSamples` is strictly less than
+    // `maxBlock` between chunks — the chunk loop breaks ON the boundary, so a
+    // chunk never straddles one and the fold above is exact for the entry's
+    // own span rather than for whatever the host happened to hand over.
+    //
+    // Reset by `prepare` and by `reset`, never carried across either: a
+    // re-prepare is a discontinuity in the audio the entries describe, so at
+    // most `maxBlock - 1` samples of a partial entry are discarded there
+    // rather than being spliced onto audio from the other side of it.
+    GrHistoryBuffer* grHistory = nullptr;
+    float histMinGain = 1.0f;
+    float histPeak    = 0.0f;
+    int   histSamples = 0;
 public:
     // §5.4 feature/trim readouts for the Advanced-view overlay and tests.
     const AdaptiveEngine& adaptive() const noexcept { return adaptiveEngine; }
