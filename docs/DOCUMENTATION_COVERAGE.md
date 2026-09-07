@@ -445,7 +445,9 @@ a Windows main thread's megabyte of stack in suites that build rings and whole p
 Rows engaged: **New ADR** — ADR-0040, with `ADR_INDEX.md`'s registry row; **User documentation** —
 `USER_MANUAL.md`'s twenty-second promise now names the buffer sizes it holds at; **Stale-figure
 correction** — `GrHistoryView.h`, ADR-0023's 2026-09-05 amendment and `CHANGELOG.md`'s 0.2.12 entry
-all carried the 4096-ring's saturation figures. Explicitly **not** a review-gate item: no parameter,
+all carried the 4096-ring's saturation figures; **Known issue** — KI-019 records the two spectrum
+concurrency PREMISES that were found to fail intermittently while this round's CI was being read,
+with the evidence for each and the reason neither may be answered by weakening what it guards. Explicitly **not** a review-gate item: no parameter,
 serialization, threading, signal-order or latency change — the SPSC contract, the reset epoch and the
 reader's window clamp are untouched, and the producer's per-entry cost is unchanged at 2.11 ns.
 Producer-side decimation, which would have held 20 s in 4096 slots and drawn an identical picture, was

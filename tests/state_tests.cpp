@@ -9177,7 +9177,7 @@ static void testAResetThatLandsInsideATickNeverReachesTheScreen()
 static void testTheOldestDrawnBucketKeepsItsValueUntilItLeaves()
 {
     using Ring = anabasis::GrHistoryBuffer;
-    const auto ringStorage = std::make_unique<Ring>();          // 32 KB: heap, not stack
+    const auto ringStorage = std::make_unique<Ring>();          // a megabyte: heap, never stack
     auto& ring = *ringStorage;
     const int     cols = 904;                                   // the Simple well
     const auto    want = GrHistoryView::windowEntries (48000.0, 512);
@@ -9840,7 +9840,7 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
 
         // The count really is ambiguous, measured on the real ring rather than
         // argued: fill it, clear it, refill to exactly the same count.
-        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        const auto ringStorage = std::make_unique<Ring>();   // a megabyte: heap, never stack
         auto& ring = *ringStorage;
         for (int i = 0; i < 250; ++i) ring.push (-1.0f, 0.5f);
         const auto countBefore = ring.available();
@@ -9883,7 +9883,7 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         // The guard's two inputs are the ring's synchronised accessors, and
         // they answer DIFFERENT questions: the epoch sees a host-thread clear,
         // the index sees the producer advancing. Neither reads the payload.
-        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        const auto ringStorage = std::make_unique<Ring>();   // a megabyte: heap, never stack
         auto& ring = *ringStorage;
         for (int i = 0; i < 40; ++i)
             ring.push (-3.0f, 0.4f);
@@ -9981,7 +9981,7 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
                "grResetPhase: …and the live one still does, so the rule anchors resets rather than every frame");
 
         // The ring's own epoch arithmetic is what feeds this, end to end.
-        const auto ringStorage = std::make_unique<Ring>();   // 32 KB: heap, not stack
+        const auto ringStorage = std::make_unique<Ring>();   // a megabyte: heap, never stack
         auto& ring = *ringStorage;
         for (int i = 0; i < 40; ++i) ring.push (-1.0f, 0.5f);
         const auto live0 = ring.resetEpoch();

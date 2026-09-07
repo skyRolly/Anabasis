@@ -1374,6 +1374,51 @@ Evidence [Verified]:
 - Related: ADR-0011's first and third dated 2026-09-02 amendments; KI-015
 - Worklog: `worklogs/2026-09-02-round6-concurrency.md`
 
+### KI-019 — Two spectrum concurrency PREMISES are environment-dependent and fail intermittently in CI (2026-09-07)
+
+Neither is a defect in the product. Both are assertions in `tests/state_tests.cpp` that require a
+particular INTERLEAVING to be observed, and each has now been seen to fail in one execution
+environment while passing in every other — including, in one case, on the same commit in two runs an
+hour apart. They are recorded together because they are one failure mode: **a premise that hopes for
+a race rather than establishing one.** `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames`'s own
+banner records the round that learned this lesson for two of its other premises ("THE OVERLAP IS
+ESTABLISHED, NOT HOPED FOR"); these two were not given the same treatment.
+
+**(a) `specFrame`'s `mixed == 0`, on the macOS x86_64 slice under Rosetta only.** Observed FAIL at
+`abd209e3` and `ee32738d`, PASS at `f7fea2a7`, `20a9bd19` and twice at `50cc099d`. The same universal
+binary's arm64 slice passes in the same job every time, native Intel (`macos-15-intel`) passes every
+time, and Linux passes under gcc, clang, LTO, ASan+UBSan and valgrind. A dedicated harness on the
+real view ran 6.5 million successful reads across one to eight concurrent readers, pinned and
+unpinned, with no mixed frame. The publication bracket is the textbook sequence-counter form and its
+reader cannot accept a torn payload under the C++ memory model — the writer's release fence orders
+the odd marker before the payload stores, and the reader's acquire fence forces its closing re-read
+to observe any publication whose payload it saw — so a failure here is either an ordering anomaly
+under translation or an analysis that is not bit-identical on that slice. **The test now says which**
+(round 17): the writer's own trace pair is compared after every tick, a reading thread that sees an
+inequality re-reads the same bin at once, and the counts are printed on every run whether it passes
+or fails. On the three passes since, the Rosetta slice exercised the property over 204953, 242557 and
+222384 reads with `0 mixed, 0 working-pair splits`.
+
+**(b) `specStraddle`'s `guardFired > 0`, under valgrind memcheck.** The premise is that a ring rewind
+becoming visible INSIDE a tick must be observed at least once; the test calibrates for it with a spin
+sweep that doubles until a straddle lands. That converges natively and it converged under memcheck on
+one machine (19033 ticks, 99 reconfigurations, **1** guard-floored). On a GitHub `ubuntu-latest`
+runner it did not: 3 261 238 ticks and 6000 reconfigurations — the round cap — with **0**
+guard-floored, in run 34134239185 attempt 2. The same commit's attempt 1 passed memcheck. memcheck
+serialises threads, which is the same reason the same test's sibling premises were rewritten once
+before; `specFrame`'s reader gets 2 distinct frames there against 3246 natively.
+
+Neither failure indicates a product defect and neither may be answered by weakening the property it
+guards: `mixed == 0` and `lopsided == 0` are the invariants ADR-0039 exists for. What (b) needs is
+what (a)'s siblings already have — the interleaving MADE to happen rather than swept for — and that
+is a change to a Spectrum concurrency test, out of scope for the GR-history round that surfaced it.
+
+Evidence [Verified]:
+- Source: `tests/state_tests.cpp` (`testTheSpectrumsRendererNeverSeesHalfOfTwoFrames`,
+  `testAResetThatLandsInsideATickNeverReachesTheScreen`)
+- Test:   the two assertions named above, and the diagnostic lines both tests now print
+- Related: ADR-0039; the `specFrame` diagnostic added 2026-09-07 (round 17)
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's
