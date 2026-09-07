@@ -8739,6 +8739,11 @@ static void testAPaintThatLosesTheRaceKeepsTheFrameItAlreadyHad()
     check (darkFrames.load() > 0, "specPaint: (premise) …and one with every bin at the floor, so the pair really moved under it");
     check (torn.load() == 0,
            "specPaint: every painted frame was one publication end to end — a read the painter loses leaves the frame it already had, never a prefix of one and a suffix of another");
+    // The same diagnostic contract the other two threaded spectrum tests carry:
+    // the counts a failure would need, printed on the passing path too, so the
+    // documented figures come from a run rather than from memory.
+    std::printf ("      specPaint: %ld paints, %ld lit frames, %ld floored frames, %ld torn\n",
+                 paints.load(), litFrames.load(), darkFrames.load(), torn.load());
 }
 
 // ONE FRAME, ONE CONFIGURATION. The test above establishes that a frame's two
@@ -9225,8 +9230,11 @@ static void testAResetThatLandsInsideATickNeverReachesTheScreen()
     std::atomic<bool> stop { false }, starved { false };
     std::atomic<int>  starvedAt { 0 };
     std::atomic<long> resets { 0 };
-    // How many ticks had a rewind become visible inside them. The reader counts
-    // it and the producer calibrates its hold against it.
+    // How many ticks had a rewind become visible inside them. A DIAGNOSTIC about
+    // this machine's scheduler and nothing more: the straddle this test asserts
+    // on is forced above, and nothing in this phase calibrates itself against
+    // this counter or requires it to be non-zero. Until round 18 the producer
+    // swept its hold against it, which is the search this round deleted.
     std::atomic<long> guardFired { 0 };
 
     // THE HANDSHAKE IS A CONDITION VARIABLE, NOT A SPIN. Two threads polling

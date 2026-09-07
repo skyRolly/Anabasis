@@ -376,13 +376,19 @@ could see what a renderer does with a read it LOSES. `readPublishedFrame` cannot
 on failure — the 4096-bin copy has already happened by the time the bracket can be checked — so a
 caller that reads into its drawing buffers and ignores the result draws a mixture of two
 publications. That is a broken invariant with no race in it, so ASan, UBSan and memcheck are all
-silent on it by construction, and it took a test that paints. The marker is three-part: one whole
-window of one tone per tick (so the analysed window is never a blend), `dt = 1 s` (so the EMA is the
-analysis rather than the last second's), and the two tones at OPPOSITE ends of the spectrum (so the
-stretch a tear must fall in is 82 % of the trace). The rule is then exact — a coherent frame has
-exactly one of the two marker bins lit, a torn one has both or neither — and `lit(low) == lit(high)`
-catches both directions. Measured on the shipped build: 4274 paints, 95 lost reads, 44 of which had
-already copied.
+silent on it by construction, and it took a test that paints. **The marker has to be
+position-independent, and the first one was not.** A torn copy is a PREFIX of one publication and a
+SUFFIX of another, and where the two sweeps cross depends on their relative speed, so two marker
+tones catch only a tear that falls between them: measured, with tones at bins 21 and 1707 the defect
+was caught in some runs and missed in others. The two publications therefore differ in EVERY bin —
+one is white noise, the next is digital silence — so a clean frame has its first and last bins both
+lit or both at the −120 floor and a torn one has one of each. `lit(first) != lit(last)` is the
+detector, the crossing can be anywhere in the array, and there is no threshold to argue about, since
+noise reads tens of dB above the floor and silence reads exactly the floor. `dt = 1 s` drives the
+EMA's decay to 0.9998 and one whole window per tick keeps the analysed span from being a blend of
+the two. The premises are established rather than assumed: the run must have painted, and must have
+drawn a fully lit frame AND a fully floored one, before "no painted frame was torn" means anything.
+Measured on the shipped build: 6395 paints, 2966 fully lit frames, 3429 fully floored ones, 0 torn.
 
 **THE TWO TESTS THAT BUILD A SPLIT RESET.** `specGen`
 (`testNoSpectrumFrameEverPairsTwoConfigurationGenerations`) and `specStraddle`

@@ -427,11 +427,15 @@ Evidence [Verified]:
   publishes carries its configuration; a never-prepared view falls back to 48 kHz rather than
   dividing by zero; and a reading thread watching a 48 kHz ⇄ 96 kHz churn never sees the tone
   anywhere but where its own frame's rate puts it.
-- Test (round 11): `specPaint` — a thread that PAINTS while the analyser publishes, with two tones at
-  opposite ends of the spectrum and a `dt` that makes every frame its own analysis, so a coherent
-  frame has exactly one of the two marker bins lit and a torn one has both or neither. Measured on the
-  shipped build: 4274 paints, 95 reads the painter lost, 44 of which had already copied — the state
-  the test looks for is reached tens of times per run.
+- Test (round 11, marker replaced in round 18): `specPaint` — a thread that PAINTS while the analyser
+  publishes, and a `dt` that makes every frame its own analysis. The marker is now
+  POSITION-INDEPENDENT, because two marker tones catch only a tear that falls between them and the
+  crossing point moves with the two sweeps' relative speed (with tones at bins 21 and 1707 the defect
+  was caught in some runs and missed in others): the alternating publications are white noise and
+  digital silence, differing in every bin, so a clean frame has its first and last bins both lit or
+  both floored and `lit(first) != lit(last)` catches a crossing anywhere in the array. Measured on the
+  shipped build: 6395 paints, of which 2966 were fully lit and 3429 fully floored — 6395 in total, so
+  every painted frame is accounted for — and 0 torn.
 - Mutants killed: the renderer reading the tick's working vectors (1 161 778 of 1 321 607 mixed
   reads); each trace published as it is computed (277 334 of 416 230); the sequence bracket removed;
   the painter reading the working vectors; the reset publishing nothing; the reader-side reserve
