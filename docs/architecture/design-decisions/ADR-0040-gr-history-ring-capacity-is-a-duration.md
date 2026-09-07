@@ -83,8 +83,8 @@ window a promise at every pair a host can prepare, without changing what an entr
 2. The ring's slots live in **one heap block taken at construction**, not in a member array.
    Nothing on the audio path allocates. This is load-bearing rather than tidy: at this capacity the
    array is a megabyte, and the suites build both rings and whole `AnabasisAudioProcessor`s as
-   locals — three in one scope in places — against a Windows main thread whose default stack is a
-   megabyte in total.
+   locals — two of the latter live at once in places, eight in one function — against a Windows
+   main thread whose default stack is a megabyte in total.
 3. The capacity is **fixed for the life of the ring** (option C's reasoning).
 4. The duration contract is stated in code as `GrHistoryView::windowSeconds (rate, block)` —
    `windowEntries · block / rate` — and it is this:

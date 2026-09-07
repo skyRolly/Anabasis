@@ -8083,10 +8083,11 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     std::atomic<int>   mixedBin { -1 };
     std::atomic<float> mixedIn { 0.0f }, mixedOut { 0.0f };
     std::atomic<uint64_t> mixedFirst { 0 };
+    std::atomic<int>   mixedAgain { -1 };      // the same bin, re-read at once
     std::thread renderer ([&]
     {
-        std::vector<float> ri (kBins), ro (kBins);
-        SpectrumView::Frame rw {};
+        std::vector<float> ri (kBins), ro (kBins), qi (kBins), qo (kBins);
+        SpectrumView::Frame rw {}, qw {};
         uint64_t lastFirst = ~(uint64_t) 0;
         while (! stop.load (std::memory_order_relaxed))
         {
@@ -8110,6 +8111,15 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
                         mixedIn  .store (ri[b]);
                         mixedOut .store (ro[b]);
                         mixedFirst.store (rw.first);
+                        // AND THE SAME BIN AGAIN, IMMEDIATELY. This is the
+                        // discriminator: a TORN read is a property of the copy,
+                        // so the pair standing in the publication is equal and a
+                        // fresh read of it comes back equal; a published pair
+                        // that genuinely disagrees comes back unequal however
+                        // often it is read. 1 means it disagreed again, 0 that
+                        // it did not, -1 that the re-read was itself overtaken.
+                        if (view.readPublishedFrame (qi, qo, qw))
+                            mixedAgain.store (juce::exactlyEqual (qi[b], qo[b]) ? 0 : 1);
                     }
                     break;
                 }
@@ -8198,9 +8208,9 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     std::printf ("      specFrame: %ld reads, %ld distinct, %ld mixed, %ld working-pair splits",
                  reads.load(), distinct.load(), mixed.load(), workingSplit);
     if (mixedBin.load() >= 0)
-        std::printf ("; first mixed bin %d in=%.9g out=%.9g on frame %llu",
+        std::printf ("; first mixed bin %d in=%.9g out=%.9g on frame %llu, re-read %d",
                      mixedBin.load(), (double) mixedIn.load(), (double) mixedOut.load(),
-                     (unsigned long long) mixedFirst.load());
+                     (unsigned long long) mixedFirst.load(), mixedAgain.load());
     if (splitBin >= 0)
         std::printf ("; first split bin %d in=%.9g out=%.9g",
                      splitBin, (double) splitIn, (double) splitOut);

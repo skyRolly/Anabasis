@@ -416,8 +416,9 @@ private:
     // ON THE HEAP, ONE ALLOCATION AT CONSTRUCTION, AND THAT IS NOT AN
     // AESTHETIC CHOICE. At `kSize` entries this array is a megabyte, and the
     // suites build both this ring and whole `AnabasisAudioProcessor`s as
-    // LOCALS — three in one scope in places — against a Windows main thread
-    // whose default stack is one megabyte in total. A member array would put
+    // LOCALS — two of the latter live at once in places, eight in one
+    // function — against a Windows main thread whose default stack is one
+    // megabyte in total. A member array would put
     // the capacity decision and a stack overflow on the same line, with no
     // diagnostic between them. Nothing on the audio path allocates: the block
     // is taken once here, on the message thread, and lives as long as the
