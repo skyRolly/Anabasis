@@ -6,7 +6,13 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-07, round 17)** — the PR review's third blocking finding:
+**Last updated:** for **0.2.12 (2026-09-07, round 18)** — the PR review's fourth finding, and the
+only one that was never a product defect: the two spectrum concurrency gates asserted on
+interleavings they SEARCHED for rather than established, so Rosetta and valgrind could fail them
+intermittently. Both now ENTER their states through rendezvous points inside the production
+functions and count the entry, `SpectrumView` carries the three seams that make that possible
+(ADR-0039 clause 12, flagged for the owner), and KI-019 closes on the test design while separating
+the environment fault that remains. Before that, for **0.2.12 (2026-09-07, round 17)** — the PR review's third blocking finding:
 the GR history ring was sized as an ENTRY COUNT (4096) against a 512-sample block, while an entry is
 one PREPARED block, so its capacity was really a duration of `kSize · block / rate` seconds — 0.6825 s
 at 192 kHz / 32, 5.46 s at 48 kHz / 64, below DESIGN §2.9's ten-second floor and not merely below
@@ -429,6 +435,25 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-07, round 18) — the concurrency gates enter their states instead of searching
+for them.** The review's fourth finding, and the only one in this sequence that was never a defect in
+the product. `specFrame` ran a renderer thread against four thousand publications and asserted that
+nothing it accepted was mixed — while not one assertion in the function required the reader to have
+overlapped a publication even once, so two hundred thousand reads could pass without entering the
+state the bracket exists for. `specStraddle` needed a rewind to land in `tick`'s interior and swept
+for it with a doubling spin and a yield count whose feedback only goes non-zero after the search has
+already succeeded: it converged natively and produced 3 261 238 ticks and 6000 rewinds with zero
+straddles under valgrind. Neither window is reachable from outside the class, so `SpectrumView` gains
+three rendezvous points — `std::function`s called at one place each, empty in every shipped build,
+between two existing operations, adding no store, fence, ordering or field — and the tests block the
+thread inside the bracket until the other has done its half. Rows engaged: **Accepted-ADR amendment**
+— ADR-0039 gains clause 12, with `ADR_INDEX.md`'s row updated, and the clause is put to the owner
+rather than assumed not to be an `ARCHITECTURE_REVIEW_GATE.md` item; **Known issue** — KI-019 closes
+on the test design and separately records the two things it does NOT close (the Rosetta environment
+fault, and that a mutex-based rendezvous cannot exercise the memory-model half of the bracket);
+**Procedures** — `TESTING.md`'s two passages described the sweep as the mechanism and the straddle as
+"observed, not assumed", both now rewritten to what the tests do.
 
 **Addendum (2026-09-07, round 17) — the ring's capacity is a DURATION, and it is now derived from
 one.** The review's third blocking finding. `GrHistoryBuffer::kSize` was 4096, argued in the ring's
