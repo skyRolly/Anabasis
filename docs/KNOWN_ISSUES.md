@@ -1392,12 +1392,34 @@ real view ran 6.5 million successful reads across one to eight concurrent reader
 unpinned, with no mixed frame. The publication bracket is the textbook sequence-counter form and its
 reader cannot accept a torn payload under the C++ memory model — the writer's release fence orders
 the odd marker before the payload stores, and the reader's acquire fence forces its closing re-read
-to observe any publication whose payload it saw — so a failure here is either an ordering anomaly
-under translation or an analysis that is not bit-identical on that slice. **The test now says which**
-(round 17): the writer's own trace pair is compared after every tick, a reading thread that sees an
-inequality re-reads the same bin at once, and the counts are printed on every run whether it passes
-or fails. On the three passes since, the Rosetta slice exercised the property over 204953, 242557 and
-222384 reads with `0 mixed, 0 working-pair splits`.
+to observe any publication whose payload it saw.
+
+**The instrumentation added in round 17 caught it, and the answer is the environment.** At
+`f2babdc8` (run 34140061828) the Rosetta slice reported:
+
+    specFrame: 202760 reads, 3861 distinct, 1 mixed, 0 working-pair splits;
+               first mixed bin 202 in=-112.685745 out=-112.685745 on frame 15073280, re-read 0
+
+Four things in one line. **`0 working-pair splits`**: the writer's own two traces were bit-identical
+after every one of ~4000 ticks on that slice, so the marker the test reads an inequality through
+holds and the published pair was never unequal — an analysis that is not bit-identical there is
+ruled out. **`re-read 0`**: reading the published frame again at once returned the same bin equal, so
+the pair standing in the publication was coherent. **The two recorded values are themselves
+identical** — `%.9g` round-trips a `float` exactly, so two distinct floats cannot print alike — which
+means the two operands were equal when read back a few instructions after the comparison that
+called them different, on a thread that owns both buffers and with nothing else able to write them.
+**One event in 202760 reads**, each read comparing 2048 bins: roughly one in 4 x 10^8 comparisons.
+
+A comparison that disagrees with a reload of its own operands is not a state this program can be in,
+and nothing in the product can produce one: both operands live in thread-local storage, the compare
+and the reload are on one thread microseconds apart, and no store separates them. On the three
+passes either side of it the same slice exercised the same property over 204953, 242557 and 222384
+reads with `0 mixed`. The conclusion is a fault in the execution environment — an `-O3` compare loop
+under binary translation — and the correct response is to record it rather than to change product
+behaviour or weaken the assertion. Round 17 added one further diagnostic so the next occurrence also
+rules out a mis-reported index: the number of bins that differ, then and on the re-read. A frame
+genuinely assembled from two publications disagrees in HUNDREDS of bins, because the test alternates
+two tones a whole window apart; one bin is not a frame at all.
 
 **(b) `specStraddle`'s `guardFired > 0`, under valgrind memcheck.** The premise is that a ring rewind
 becoming visible INSIDE a tick must be observed at least once; the test calibrates for it with a spin

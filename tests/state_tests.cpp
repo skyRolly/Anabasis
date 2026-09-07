@@ -8084,6 +8084,7 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     std::atomic<float> mixedIn { 0.0f }, mixedOut { 0.0f };
     std::atomic<uint64_t> mixedFirst { 0 };
     std::atomic<int>   mixedAgain { -1 };      // the same bin, re-read at once
+    std::atomic<int>   mixedSpread { -1 }, mixedSpreadAgain { -1 };  // how many bins, then and again
     std::thread renderer ([&]
     {
         std::vector<float> ri (kBins), ro (kBins), qi (kBins), qo (kBins);
@@ -8118,8 +8119,23 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
                         // that genuinely disagrees comes back unequal however
                         // often it is read. 1 means it disagreed again, 0 that
                         // it did not, -1 that the re-read was itself overtaken.
+                        // …AND HOW MANY BINS, which is what separates a torn
+                        // copy from a comparison that disagreed with itself.
+                        // The two tones differ across the spectrum, so a frame
+                        // assembled from two publications disagrees in HUNDREDS
+                        // of bins; one is not a frame at all.
+                        int spread = 0;
+                        for (size_t k = 0; k < kBins; ++k)
+                            if (! juce::exactlyEqual (ri[k], ro[k])) ++spread;
+                        mixedSpread.store (spread);
                         if (view.readPublishedFrame (qi, qo, qw))
+                        {
                             mixedAgain.store (juce::exactlyEqual (qi[b], qo[b]) ? 0 : 1);
+                            int again = 0;
+                            for (size_t k = 0; k < kBins; ++k)
+                                if (! juce::exactlyEqual (qi[k], qo[k])) ++again;
+                            mixedSpreadAgain.store (again);
+                        }
                     }
                     break;
                 }
@@ -8208,9 +8224,11 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
     std::printf ("      specFrame: %ld reads, %ld distinct, %ld mixed, %ld working-pair splits",
                  reads.load(), distinct.load(), mixed.load(), workingSplit);
     if (mixedBin.load() >= 0)
-        std::printf ("; first mixed bin %d in=%.9g out=%.9g on frame %llu, re-read %d",
+        std::printf ("; first mixed bin %d in=%.9g out=%.9g on frame %llu, re-read %d,"
+                     " %d of %d bins differed (%d on the re-read)",
                      mixedBin.load(), (double) mixedIn.load(), (double) mixedOut.load(),
-                     (unsigned long long) mixedFirst.load(), mixedAgain.load());
+                     (unsigned long long) mixedFirst.load(), mixedAgain.load(),
+                     mixedSpread.load(), (int) kBins, mixedSpreadAgain.load());
     if (splitBin >= 0)
         std::printf ("; first split bin %d in=%.9g out=%.9g",
                      splitBin, (double) splitIn, (double) splitOut);
