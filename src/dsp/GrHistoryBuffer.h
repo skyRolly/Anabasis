@@ -9,7 +9,8 @@
 //  the ScopeBuffer idiom ADR-0011 cites):
 //
 //  - power-of-two storage, ONE producer (the audio thread, one entry per
-//    processed block), ONE reader side (whatever paints);
+//    PREPARED block of processed audio — see `push`), ONE reader side
+//    (whatever paints);
 //  - the monotonic write index is release-STORED once per entry, acquire-
 //    loaded by readers, so a reader that sees index N sees entry N−1's data
 //    complete;
@@ -17,7 +18,10 @@
 //    message-thread/GL-paint read sites stay safe (THREADING_POLICY's ring
 //    rule and its OpenGL nuance);
 //  - THE PREPARED PAIR IS RING METADATA (0.2.8 final review). One entry spans
-//    one host block, so the entries only mean anything mapped through the
+//    one PREPARED block (0.2.12 — see the first bullet and `push`; it used to
+//    say "one host block", which was the same thing only for a host that
+//    delivered exactly its declared maximum), so the entries only mean
+//    anything mapped through the
 //    (rate, block) they were recorded under — and that pair lives HERE, stored
 //    inside the same clear that starts a new timeline, rather than being read
 //    back from `AudioProcessor`'s plain `getSampleRate()`/`getBlockSize()`,
@@ -48,7 +52,8 @@
 //    [atomics.fences] and forces the re-read to observe the lapping push.
 //    THE INVARIANT IS THEREFORE: either the batch read clean data, or the
 //    discard is guaranteed — there is no third case. It costs the audio thread
-//    zero instructions on x86-64 and one `dmb ish` per HOST BLOCK on AArch64.
+//    zero instructions on x86-64 and one `dmb ish` per PUBLISHED ENTRY on
+//    AArch64 (`push`'s own note has the cadence that unit implies).
 //  - THE PAYLOAD ITSELF IS ATOMIC (0.2.8 review). The index ordering above
 //    settles what a reader SEES; it does not make a read that lands on the
 //    slot the producer is writing legal. That read is exactly what this
@@ -256,7 +261,8 @@ public:
     uint32_t resetEpoch() const noexcept
     { return resetGuard.load (std::memory_order_acquire); }
 
-    // Audio thread, once per block. The entry is written FIRST, the index
+    // Audio thread, once per PUBLISHED ENTRY — see the cadence note inside.
+    // The entry is written FIRST, the index
     // release-stored AFTER — that ordering is the whole synchronisation, and
     // it is unchanged by the fields being atomic: the release store still
     // orders both relaxed payload stores before the index a reader acquires,
@@ -299,8 +305,19 @@ public:
         // Cost, measured rather than asserted: **zero instructions on x86-64**
         // (clang-22 `-O3` emits `#MEMBARRIER`, a compiler barrier — the
         // previous amendment's two-`movss`-one-`movq` sequence is unchanged),
-        // and one `dmb ish` on AArch64 — once per HOST BLOCK, since `push`
-        // runs once per `processBlock` and never per sample.
+        // and one `dmb ish` on AArch64, PER CALL TO THIS FUNCTION.
+        //
+        // WHAT THAT UNIT IS, since it stopped being "one per `processBlock`"
+        // in 0.2.12 (OQ-017 fix 1; ADR-0011 amended 2026-09-07). The producer
+        // is `AnabasisEngine`, and one entry is one PREPARED block of
+        // processed audio, so a `processBlock` call publishes
+        // `floor((carried + delivered) / prepared)` entries — none when the
+        // host delivers less than the prepared size, one when it delivers
+        // exactly it, several when it delivers a multiple — with the remainder
+        // carried into the next call. What is guaranteed is the LONG-RUN rate,
+        // `sampleRate / preparedBlock`, and the bound: never more than
+        // `ceil(delivered / prepared)` calls to this function per host block,
+        // and never per sample.
         std::atomic_thread_fence (std::memory_order_release);
         slot.grDb.store (grDb, std::memory_order_relaxed);
         slot.peak.store (peak, std::memory_order_relaxed);

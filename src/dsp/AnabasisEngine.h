@@ -524,14 +524,41 @@ private:
     // chunk never straddles one and the fold above is exact for the entry's
     // own span rather than for whatever the host happened to hand over.
     //
-    // Reset by `prepare` and by `reset`, never carried across either: a
-    // re-prepare is a discontinuity in the audio the entries describe, so at
-    // most `maxBlock - 1` samples of a partial entry are discarded there
-    // rather than being spliced onto audio from the other side of it.
+    // ONE WRITER OUTSIDE THE CHUNK LOOP: `prepare`'s CHANGED-PAIR branch, and
+    // not `reset()` (round 15). Round 14 dropped it on every prepare, on
+    // the argument that a re-prepare is a discontinuity in the audio the
+    // entries describe — but the ring does not treat it that way, and the
+    // product does not either: `GrHistoryBuffer::prepare` keeps the entries at
+    // an unchanged (rate, block) pair because hosts re-prepare on transport
+    // start (ADR-0023 item 6), and `USER_MANUAL.md` promises the user that
+    // "pausing and resuming continues the timeline; it restarts only when the
+    // sample rate or block size changes". Dropping the partial there put up to
+    // `maxBlock - 1` samples of already-rendered audio into no entry at all
+    // while the ring kept every entry around them. It is now dropped across
+    // exactly the re-prepares that CLEAR the ring's entries and carried across
+    // every other — one decision, taken from `preparedRateRaw`/
+    // `preparedBlockRaw` below. `reset()` is out of it because it touches no
+    // ring state at all, so a drop there would be the same loss at a different
+    // door; the accumulator is publication state, not audio memory.
     GrHistoryBuffer* grHistory = nullptr;
     float histMinGain = 1.0f;
     float histPeak    = 0.0f;
     int   histSamples = 0;
+
+    // THE PAIR THIS ENGINE WAS LAST PREPARED WITH, AS THE HOST GAVE IT — not
+    // `sr`/`maxBlock`, which are the RAILED copies (`jmax (0, …)` on the
+    // derived delay, `jmax (1, …)` on the block). `prepare` uses it for one
+    // question only: did this re-prepare END the history's timeline or
+    // CONTINUE it? That has to be the SAME answer `GrHistoryBuffer::prepare`
+    // reaches, because the ring keeps its entries exactly when the answer is
+    // "continue" — and the ring compares the RAW `(sampleRate,
+    // samplesPerBlock)` the wrapper hands both of them. Comparing the railed
+    // copies instead would call (48000, 0) and (48000, 1) one configuration
+    // while the ring called them two, and a carried partial would land in a
+    // cleared ring's first entry. Initialised to the ring's own initial pair,
+    // so the two agree from the first `prepare` as well.
+    double preparedRateRaw  = 0.0;
+    int    preparedBlockRaw = 0;
 public:
     // §5.4 feature/trim readouts for the Advanced-view overlay and tests.
     const AdaptiveEngine& adaptive() const noexcept { return adaptiveEngine; }

@@ -344,7 +344,10 @@ no atomics and no possibility of interleaving with a user gesture.
   > **Cost, measured independently of the patch's own comment:** `push` compiled at `-O3` is
   > **instruction-for-instruction identical on x86-64** — the fence emits `#MEMBARRIER`, a directive,
   > not an instruction — and adds **exactly one `dmb ish` on AArch64**, once per HOST BLOCK, since
-  > `push` runs once per `processBlock` and never per sample.
+  > `push` runs once per `processBlock` and never per sample. *(The measurement stands; the UNIT is
+  > narrowed by the 2026-09-07 amendment below — `push` runs once per PUBLISHED ENTRY, so a host
+  > call costs `⌊(carried + delivered) / prepared⌋` of them rather than exactly one. Still never per
+  > sample.)*
   >
   > **Pinned where it can be pinned.** No deterministic suite can distinguish the two builds: the
   > difference is a synchronises-with edge, orderings are not introspectable, and unlike the first
@@ -546,6 +549,61 @@ no atomics and no possibility of interleaving with a user gesture.
   > **OQ-017's other half is untouched and still `Open`**: a host delivering several blocks in one
   > callback still makes the trace jump and stall at the burst cadence without changing its long-run
   > rate. That needs a lag allowance whose size is a property of the host.
+  >
+  > **Amended again 2026-09-07 (round 15, the PR review's blocking finding) — the PARTIAL entry's
+  > lifecycle, which the paragraphs above left unstated.** They describe the cadence and say the
+  > remainder is "carried across calls"; they say nothing about what happens to it across a
+  > `prepare`, and round 14's code dropped it on every one. That contradicted a rule this project
+  > had already taken: `GrHistoryBuffer::prepare` keeps the ring's entries at an unchanged
+  > `(rate, block)` pair under **ADR-0023 item 6** — *"a transport-start re-prepare keeps the
+  > timeline"* — which `USER_MANUAL.md` restates to users as *"pausing and resuming continues the
+  > timeline; it restarts only when the sample rate or block size changes."* So the ring continued a
+  > timeline that the producer had just punched a hole in: up to `preparedBlock − 1` samples of
+  > already-rendered audio reached no entry at all. Measured at 48 kHz / 512, forty pause/resume
+  > cycles over 8.783 s of audio published **800 entries where the audio was worth 823**.
+  >
+  > **The clause, stated so it cannot be left unstated again.** The partial entry follows the RING:
+  > it is carried across exactly the re-prepares that keep the ring's entries, and dropped across
+  > exactly the ones that clear them. The two are the same comparison on the same two raw
+  > `(sampleRate, samplesPerBlock)` values the wrapper hands both — `AnabasisEngine` keeps
+  > `preparedRateRaw`/`preparedBlockRaw` for it rather than its railed `sr`/`maxBlock`, so the
+  > predicates are provably one function and not two that agree in practice. That branch is the
+  > accumulator's ONLY writer outside the chunk loop: the engine's `reset()` no longer clears it,
+  > because `reset()` touches no ring state at all — no epoch, no write index, no slot, no prepared
+  > pair — so a drop there would take samples out of a timeline the ring is still keeping, which is
+  > this defect at a different door. The accumulator is publication state, not audio memory, and it
+  > is the only such item `reset()` used to carry. Nothing a host can observe changes:
+  > `AnabasisAudioProcessor` does not override `AudioProcessor::reset()`, so `prepare`'s own tail is
+  > that function's only caller in the tree.
+  >
+  > **NOT A GATE ITEM, and the reason is worth stating.** This does not conflict with an Accepted
+  > ADR — it removes a conflict with one. Nothing in the ring protocol moves: a same-pair
+  > `GrHistoryBuffer::prepare` is a total no-op (it returns before touching `writeIndex`,
+  > `resetGuard`, the stored pair or any slot), so the carried entry is published under the same
+  > epoch, at the next monotonic index, through an unchanged `push`; the reader cannot distinguish
+  > it from any other entry. No new cross-thread path, no new ordering, no allocation and no lock;
+  > on the common path the host thread now touches the accumulator zero times, where round 14 wrote
+  > it twice per prepare. The realtime figure is stated as a BOUND rather than as "unchanged": an
+  > individual call can publish an entry it would previously have discarded, while the per-call
+  > bound stays `⌈delivered / prepared⌉` pushes (the carry is strictly less than one entry, so it
+  > cannot add one to the ceiling) and the long-run rate stays `rate / preparedBlock`. What this
+  > DOES change is a behaviour round 14 documented and pinned by a test, so it is filed here rather
+  > than treated as a silent repair.
+  >
+  > **The residual, bounded and stated.** The first entry after a resume needs only
+  > `preparedBlock − carried` new samples, so it is published up to `(preparedBlock − 1) / rate`
+  > seconds early — 10.6 ms at 48 kHz / 512 — which `GrHistoryView::smoothedHead`'s `[head, head+1]`
+  > clamp absorbs as at most ONE entry pitch of travel in a single frame (0.482 px, Simple well),
+  > once per resume. That is the magnitude OQ-017 already records as accepted for a two-block burst,
+  > and it replaces a content loss that was permanent and cumulative.
+  >
+  > **Pinned by** `testTheHistorySurvivesASameConfigurationRePrepare` (`tests/dsp_tests.cpp`: the
+  > partial at 0, 1, 100, 300 and `B − 1`; forty pause/resume cycles asserted as
+  > `entries × B == samples`; a rate change, a block-size change and an explicit `reset()` each
+  > dropping it; and the JOINT statement that the partial reaches an entry exactly when the ring
+  > kept its timeline) and by `testTheGrHistoryScrollsAtThePreparedBlock` (`tests/state_tests.cpp`,
+  > eight `prepareToPlay` cycles through the real wrapper). Ten checks fail against round 14's
+  > engine.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the

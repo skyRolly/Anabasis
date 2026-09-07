@@ -9181,6 +9181,56 @@ static void testTheGrHistoryScrollsAtThePreparedBlock()
                          "produced it (held " + juce::String (heldSeconds, 3) + " s, fed "
                          + juce::String (fedSeconds, 3) + " s)").toRawUTF8());
 
+    // PAUSE AND RESUME, THROUGH THE HOST CALLBACK THAT ACTUALLY DOES IT
+    // (round 15, the PR review's blocking finding). A host re-prepares on
+    // every transport start, and `GrHistoryBuffer::prepare` keeps the ring's
+    // entries when the pair is unchanged so the display continues rather than
+    // restarting (0.1.2 item 6). Round 14's producer-side accumulator did not
+    // follow that rule and dropped up to a prepared block of already-rendered
+    // audio on each one. Asserted here as CONSERVATION through the wrapper:
+    // the audio delivered across the re-prepare is an exact multiple of the
+    // prepared block, so the entry count is an equality with no floor to hide
+    // in.
+    {
+        const auto pauseStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& pp = *pauseStorage;
+        pp.setRateAndBufferSizeDetails (48000.0, 512);
+        pp.prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> b (2, 512);
+        int64_t fed = 0;
+        const auto feed = [&] (int n)
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                const float v = 0.30f * std::sin (0.05f * (float) (fed + i));
+                b.setSample (0, i, v);
+                b.setSample (1, i, v);
+            }
+            juce::AudioBuffer<float> sub (b.getArrayOfWritePointers(), 2, n);
+            pp.processBlock (sub, midi);
+            fed += n;
+        };
+        // No top-up: a cycle that is an exact multiple of the entry size leaves
+        // nothing in flight at every break after the first, and the repetition
+        // would prove nothing. 1836 samples a cycle re-phases the grid at every
+        // one of them, which is what makes the loss cumulative.
+        for (int r = 0; r < 8; ++r)
+        {
+            for (int k = 0; k < 3; ++k) feed (512);
+            feed (300);                       // …leaves samples in the entry in flight
+            pp.prepareToPlay (48000.0, 512);  // the pause/resume
+        }
+        check (pp.grHistory().prepared().block == 512
+               && juce::exactlyEqual (pp.grHistory().prepared().rate, 48000.0),
+               "grCadence: (premise) eight pause/resume cycles at an unchanged pair keep the ring's "
+               "timeline — the pair is still the one the entries were recorded under");
+        check (pp.grHistory().available() == fed / 512,
+               juce::String ("grCadence: …and the entries account for every sample delivered across "
+                             "them (" + juce::String ((int) pp.grHistory().available()) + " entries for "
+                             + juce::String ((int) fed) + " samples), so a transport start no longer "
+                             "loses the audio that was in flight").toRawUTF8());
+    }
+
     // LOGIC'S CASE, END TO END. The AU wrapper prepares at the host's maximum
     // — 1156 by default, not a power of two — and renders whatever arrives.
     // Delivering 512 into it used to run the window out by 1156/512 = 2.26x.

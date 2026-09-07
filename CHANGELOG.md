@@ -267,6 +267,22 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   trace jump and then stand still, at its own cadence — is unchanged and still the owner's call.
   Evidence: this release. [Verified]
 
+- **Pausing and resuming no longer loses the most recent moment of GR history.** The graph's
+  timeline is meant to continue across a transport start — it restarts only when the sample rate or
+  buffer size changes — and it did, for every point already on screen. The point still being
+  collected did not: the plugin threw it away every time the host re-armed, so up to one buffer of
+  audio that had already been processed and played was summarised into nothing and simply fell out
+  of the history. Nothing on screen moved when it happened, which is why it was invisible: the trace
+  carried on scrolling from where it stopped, one moment shorter than the audio it claimed to show,
+  and a little shorter again after every pause. Measured at 48 kHz with a 512-sample buffer, forty
+  pause/resume cycles over 8.783 seconds of audio drew 800 points where the audio was worth 823 — a
+  quarter of a second of history gone. The point in progress is now carried across a pause and
+  finished when playback resumes, so the history accounts for every sample it was given. A change of
+  sample rate or buffer size still discards it, because those samples belong to the timeline that
+  ended and the graph starts a fresh one there. Cross-links
+  [ADR-0011](docs/architecture/design-decisions/ADR-0011-threading-model.md), amended for the
+  partial point's lifecycle. Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

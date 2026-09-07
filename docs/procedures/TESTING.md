@@ -452,7 +452,23 @@ deleted, against better than −0.02 dB with it. And the re-prepare pass passed 
 until it fed the pipeline first: `process` works IN PLACE, so re-using one buffer feeds the engine
 its own delayed output and three calls of that is digital silence — a partial entry that had
 survived a re-prepare would have carried silence either way. It now refills before every call and
-asserts the loud render is really in the accumulator before the re-prepare drops it.
+asserts the loud render is really in the accumulator before the re-prepare decides its fate.
+
+**Round 15 inverted half of that pass, and added the matrix behind it.** The PR review found that
+`AnabasisEngine::prepare` dropped the partial on EVERY re-prepare while the ring keeps its entries
+at an unchanged `(rate, block)` pair — so a transport start lost up to a prepared block of
+already-rendered audio from a timeline that went on running, which is what ADR-0023 item 6 and
+`USER_MANUAL.md` promise it will not. The partial now follows the ring's own gate.
+`testTheHistorySurvivesASameConfigurationRePrepare` is the matrix: every pass is written against
+SAMPLE CONSERVATION — the audio delivered is an exact multiple of the prepared block, so
+`entries × B == samples` is an equality with no floor to hide in — and against a MARKER burst whose
+render falls inside the partial, so which entry received those samples is a fact rather than an
+inference. It covers a partial of 0, 1, 100, 300 and `B − 1`, forty pause/resume cycles, a
+sample-rate change, a prepared-block-size change and an explicit `reset()` — which does NOT drop it, because `reset()` clears nothing in the ring and so has nothing to discard from the ring's timeline — and it closes with the
+JOINT statement — the partial reaches an entry exactly when the ring kept its timeline — because the
+defect was those two decisions disagreeing. `testTheGrHistoryScrollsAtThePreparedBlock` asserts the
+same conservation through eight `prepareToPlay` cycles on the real wrapper. Ten checks fail against
+the pre-round-15 engine.
 
 **The hot pass runs FROZEN, and that is a measured property of the chain rather than a
 convenience.** §5.4's `adaptiveEngine.finishBlock` runs once per `process()` CALL and its trims are

@@ -6,7 +6,12 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-07, round 14)** — OQ-017 fix 1: a GR-history entry is one
+**Last updated:** for **0.2.12 (2026-09-07, round 15)** — the PR review's blocking finding: the
+producer dropped the partial history entry on every re-prepare while the ring keeps its entries at
+an unchanged pair, so a transport start lost up to a prepared block of already-rendered audio
+(ADR-0011 amended again for the accumulator's lifecycle, and the stale per-host-block cadence
+contract corrected in four places; entry below). Before that, for **0.2.12 (2026-09-07, round 14)**
+— OQ-017 fix 1: a GR-history entry is one
 PREPARED block of processed audio rather than one host callback, so the display's time base no
 longer runs out by the ratio between the two (ADR-0011's publication clause narrowed, OQ-017's
 mis-sized half resolved and its burst half re-measured; entry below). Before that, for **0.2.12
@@ -414,6 +419,36 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-07, round 15) — the partial entry follows the ring, and the cadence contract
+says which unit.** The PR review's blocking finding: `AnabasisEngine::prepare` dropped the
+accumulator on EVERY re-prepare while `GrHistoryBuffer::prepare` keeps the ring's entries at an
+unchanged `(rate, block)` pair, so a transport start — the commonest host event there is — punched a
+hole of up to `preparedBlock − 1` samples in a timeline that went on running. Measured on the real
+engine and a real ring: forty pause/resume cycles at 48 kHz / 512 over 8.783 s of audio published
+**800 entries where the audio was worth 823**, and a marker burst inside the partial reached no
+entry while the ring kept every entry around it. The partial now follows the ring's own
+clear-on-change gate — the same comparison on the same two raw values. Rows engaged:
+**Accepted-ADR amendment** — ADR-0011 gains the accumulator's lifecycle, which round 14's amendment
+left unstated; registered in `ADR_INDEX.md`'s amendment registry, which had no row for round 14's
+amendment either (found by this round's reading and added with it). Explicitly **not** a review-gate
+item: it removes a conflict with ADR-0023 item 6 (*"a transport-start re-prepare keeps the
+timeline"*) and with `USER_MANUAL.md`'s promise to the user, rather than creating one, and no ring
+protocol, ordering or cross-thread path moves — but it does change a behaviour round 14 documented
+and test-pinned, so it is filed rather than treated as a silent repair. **Policy corrected**
+(`THREADING_POLICY.md`'s Audio → GUI row still said the GR history commits "a whole host block" and
+costs "one `dmb ish` per host block"). **Code comments corrected**: `GrHistoryBuffer.h`'s `push`
+still promised "once per HOST BLOCK, since `push` runs once per `processBlock` and never per sample"
+— the review's second, non-blocking finding — with the same claim in the file banner twice;
+`AnabasisEngine.h`'s accumulator banner still said "never carried across either";
+`PluginProcessor.cpp`'s `prepareToPlay` comment still described the ring's time base as
+entries-per-host-block; and `SpectrumView.cpp`'s prose citation of the two prepare sites had drifted
+by seven lines. **New/changed test** (`dsp_tests.cpp` —
+`testTheHistorySurvivesASameConfigurationRePrepare`, and pass 7 of
+`testGrHistoryEntriesFollowThePreparedBlock` inverted, since it had pinned the defect as an
+expectation; `state_tests.cpp` — eight `prepareToPlay` cycles asserted as conservation;
+`TESTING.md`). **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total).
+Trail: `worklogs/2026-09-05-gr-history-tip.md` §21.
 
 **Addendum (2026-09-07, round 14) — a history entry is one PREPARED block of processed audio.**
 OQ-017's first half, implemented on the owner's instruction after a full re-derivation. The ring was

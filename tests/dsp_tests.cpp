@@ -4213,8 +4213,12 @@ static void testSpectrumRingsCarryTheTaps()
 //   4. REMAINDER — a partial entry is carried across calls, published on the
 //      sample that completes it and never before.
 //   5. D == B is BIT-IDENTICAL to the pair the wrapper pushed before 0.2.12.
-//   6. A re-prepare drops the partial rather than splicing across it, so no
-//      sample from the old configuration reaches a new one's entry.
+//   6. A re-prepare that CLEARS the ring drops the partial, so no sample from
+//      the old configuration reaches a new one's entry; one that keeps the
+//      ring's entries keeps the partial with them (round 15 — this item read
+//      "a re-prepare drops the partial" until the PR review found that it
+//      dropped it across a pause/resume too, which the ring does not).
+//      `testTheHistorySurvivesASameConfigurationRePrepare` is the matrix.
 // ===========================================================================
 namespace grfix
 {
@@ -4602,7 +4606,14 @@ static void testGrHistoryEntriesFollowThePreparedBlock()
                "grRecover: …and the per-call GR meter recovers with it");
     }
 
-    // ---- 7. A re-prepare during a partial accumulation drops the partial. ----
+    // ---- 7. A re-prepare during a partial accumulation: the partial follows
+    //         the RING. Kept when the pair is unchanged, dropped when it
+    //         changes. (Round 15 inverted the first half of this pass: it used
+    //         to assert the drop in both cases, which was the review's
+    //         blocking finding written down as an expectation.
+    //         `testTheHistorySurvivesASameConfigurationRePrepare` is the full
+    //         matrix; this stays here because the two halves belong beside the
+    //         accumulation passes above them.) ----
     {
         const double rate = 48000.0;
         const int    B    = 512;
@@ -4643,10 +4654,25 @@ static void testGrHistoryEntriesFollowThePreparedBlock()
         engine.prepare (rate, B, 2);
         buf.clear();
         { juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, B); engine.process (sub, p); }
+        // The COUNT does not discriminate here and the message says so: 300
+        // carried plus 212 closes entry 2 and leaves 300, while 0 carried plus
+        // 512 closes it and leaves 0 — both read 3. It earns its place against
+        // a different mutant (one that publishes the partial early), and the
+        // two checks after it are what separate carried from dropped.
         check (ring.available() == 3,
-               "grPrepared: the first entry after a re-prepare closes on ITS OWN 512 samples");
-        check (juce::exactlyEqual (ring.peek (2).peak, 0.0f),
-               "grPrepared: …and carries none of the audio from before the re-prepare");
+               "grPrepared: (premise) one more entry has closed, whichever samples closed it");
+        check (ring.peek (2).peak > 0.5f,
+               "grPrepared: it CARRIES the samples that were in flight — the ring kept this timeline, "
+               "so the audio already folded into the unpublished entry is not thrown away with the "
+               "run state");
+        // …and the REMAINDER is carried with them, which the count above cannot
+        // see: 300 of the 512 silent samples are still in the accumulator, so
+        // 300 more close another entry. Dropped, they would not.
+        buf.clear();
+        { juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, 300); engine.process (sub, p); }
+        check (ring.available() == 4,
+               "grPrepared: …and so is the count they came with — 300 more samples close the next "
+               "entry, which they could not if the accumulator had been zeroed and refilled");
 
         // A CHANGED pair clears the ring as well, and the new timeline's first
         // entry is one block of the NEW prepared size.
@@ -4658,9 +4684,295 @@ static void testGrHistoryEntriesFollowThePreparedBlock()
         buf.clear();
         { juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, 256); engine.process (sub, p); }
         check (ring.available() == 1 && juce::exactlyEqual (ring.peek (0).peak, 0.0f),
-               "grPrepared: the new configuration's first entry is one NEW prepared block of its own audio");
+               "grPrepared: the new configuration's first entry is one NEW prepared block of its own "
+               "audio — the partial in flight was dropped with the timeline that ended, so nothing "
+               "counted against a 512-sample entry part-fills a 256-sample one");
     }
 }
+
+// ===========================================================================
+//  THE PARTIAL HISTORY ENTRY SURVIVES A SAME-CONFIGURATION RE-PREPARE
+//  (0.2.12 round 15 — the PR review's blocking finding).
+//
+//  `GrHistoryBuffer::prepare` keeps the ring's entries when the (rate, block)
+//  pair is unchanged, because hosts re-prepare on every transport start and
+//  the display must continue rather than restart (0.1.2 item 6). Round 14's
+//  producer-side accumulator did not follow that rule: `AnabasisEngine::
+//  prepare` zeroed it unconditionally, so every pause/resume dropped up to
+//  `maxBlock - 1` samples of already-rendered audio into a timeline that went
+//  on running. Measured at 48 kHz / 512 before the repair: forty pause/resume
+//  cycles over 8.783 s of audio published 800 entries where the audio was
+//  worth 823 — 0.245 s of history gone — and a marker burst inside the partial
+//  reached no entry at all while the ring kept every entry around it.
+//
+//  The rule is now the ring's own: the partial is carried when the pair is
+//  unchanged and dropped when it changes, decided by the same comparison on
+//  the same two raw values, so "the ring kept its entries" and "the engine
+//  kept its partial" are one condition.
+//
+//  Every pass below is written against SAMPLE CONSERVATION — total samples
+//  delivered is an exact multiple of B, so `entries * B == samples` is an
+//  equality with no floor to hide behind — and against a MARKER whose render
+//  falls inside the partial, so which entry received those samples is a fact
+//  rather than an inference.
+// ===========================================================================
+namespace grpause
+{
+    struct Run
+    {
+        int64_t entries = 0;
+        int64_t samples = 0;      // samples DELIVERED (== samples rendered)
+        int     markerEntries = 0;
+        int     markerIndex = -1;
+        float   markerPeak = 0.0f;
+        int     delay = 0;
+        bool    ringCleared = false;   // what the RING decided at the break
+    };
+
+    enum class Break { none, samePair, rateChange, blockChange, explicitReset };
+
+    // Prime with `pre` full blocks, deliver `partial` samples carrying a marker
+    // in their RENDER, take the break, then deliver enough to bring the total
+    // to an exact multiple of the (possibly new) block size.
+    static Run run (double rate, int B, int pre, int partial, int post, Break brk,
+                    int cycles = 1)
+    {
+        Run r;
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        r.delay = engine.groupDelaySamples();
+        anabasis::EngineParameters p;
+
+        const int   markerLen = 64;
+        const float baseAmp   = 0.20f;
+        const float markerAmp = 0.85f;
+        // The render is the input delayed by the group delay, so a burst that
+        // must be HEARD ten samples into the partial is fed that much earlier.
+        const int   markerIn  = pre * B - r.delay + 10;
+
+        int t = 0;                                     // global INPUT index
+        juce::AudioBuffer<float> buf (2, juce::jmax (B, 1));
+        // Refilled before every call: `process` works IN PLACE, so a re-used
+        // buffer feeds the engine its own delayed output.
+        const auto deliver = [&] (int n)
+        {
+            for (int i = 0; i < n; ++i, ++t)
+            {
+                const bool marked = t >= markerIn && t < markerIn + markerLen;
+                const float v = marked ? markerAmp : baseAmp;
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+            r.samples += n;
+        };
+
+        for (int c = 0; c < cycles; ++c)
+        {
+            for (int b = 0; b < pre; ++b) deliver (B);
+            if (partial > 0) deliver (partial);
+            switch (brk)
+            {
+                case Break::none:          break;
+                case Break::samePair:      engine.prepare (rate, B, 2);
+                                           r.ringCleared = ring.prepare (rate, B);       break;
+                case Break::rateChange:    engine.prepare (rate * 2.0, B, 2);
+                                           r.ringCleared = ring.prepare (rate * 2.0, B); break;
+                case Break::blockChange:   engine.prepare (rate, B / 2, 2);
+                                           r.ringCleared = ring.prepare (rate, B / 2);   break;
+                case Break::explicitReset: engine.reset();                      break;
+            }
+            const int nowB = brk == Break::blockChange ? B / 2 : B;
+            for (int b = 0; b < post; ++b) deliver (nowB);
+            // …and, for a SINGLE-cycle run, top the total up to a whole number
+            // of the current entry size so the conservation check is an
+            // equality with no floor in it. A REPEATED run must not do that:
+            // a cycle that is an exact multiple of the entry size leaves the
+            // accumulator empty at every break after the first, so at most one
+            // prepared block could ever be lost however many times it repeats,
+            // and the repetition would prove nothing. Without the top-up the
+            // grid re-phases at every break, which is what makes the loss
+            // cumulative and the count below worth taking.
+            if (partial > 0 && cycles == 1) deliver (nowB - (partial % nowB));
+        }
+
+        r.entries = ring.available();
+        for (int64_t k = 0; k < r.entries; ++k)
+        {
+            const auto e = ring.peek (k);
+            if (e.peak > 0.5f) { ++r.markerEntries; r.markerIndex = (int) k; r.markerPeak = e.peak; }
+        }
+        return r;
+    }
+}
+
+static void testTheHistorySurvivesASameConfigurationRePrepare()
+{
+    using grpause::run;
+    using Break = grpause::Break;
+    const double rate = 48000.0;
+    const int    B    = 512;
+
+    // ---- 1. The control: no break at all. Everything below is measured
+    //         against this, so "unchanged" is a comparison and not a guess. ----
+    const auto control = run (rate, B, 4, 300, 6, Break::none);
+    check (control.samples % B == 0 && control.entries == control.samples / B,
+           "grPause: (premise) with no break the entries account for every sample delivered");
+    check (control.markerEntries == 1,
+           "grPause: (premise) the marker's render lands in exactly one entry");
+
+    // ---- 2. Same-configuration re-prepare: zero, small, and nearly-full
+    //         partials, and one taken immediately before a boundary. ----
+    for (int partial : { 0, 1, 100, 300, B - 1 })
+    {
+        const auto r = run (rate, B, 4, partial, 6, Break::samePair);
+        check (r.samples % B == 0 && r.entries == r.samples / B,
+               juce::String ("grPause: a same-configuration re-prepare with " + juce::String (partial)
+                             + " samples in the partial entry loses none of them — the entries still "
+                               "account for every sample delivered").toRawUTF8());
+        if (partial > 10)   // …below that the marker has not been rendered yet
+            check (r.markerEntries == 1 && r.markerIndex == control.markerIndex,
+                   juce::String ("grPause: …and the marker reaches the SAME entry it reaches with no "
+                                 "break at all (partial " + juce::String (partial) + ")").toRawUTF8());
+    }
+
+    // ---- 2b. THE BOUNDARY CASE, asserted exactly rather than in aggregate.
+    //          With `B - 1` samples in flight the very next sample must close
+    //          the entry; zero the accumulator instead and it takes `B`. One
+    //          sample is the whole difference, and nothing else in this test
+    //          measures it that sharply. ----
+    {
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+        buf.clear();
+        const auto feed = [&] (int n)
+        {
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        feed (B);                       // one whole entry, so the ring is non-empty
+        feed (B - 1);                   // …and the next is one sample short
+        check (ring.available() == 1, "grPause: (premise) the entry in flight is one sample short");
+        check (ring.prepare (rate, B) == false, "grPause: (premise) the ring keeps this timeline");
+        engine.prepare (rate, B, 2);
+        feed (1);
+        check (ring.available() == 2,
+               "grPause: a re-prepare taken one sample before an entry boundary still lets the NEXT "
+               "sample close that entry — the count in flight is carried, not just the statistics");
+    }
+
+    // ---- 3. Repeated pause/resume, which is what a session actually does —
+    //         and it is the CUMULATIVE loss that makes this a defect rather
+    //         than a rounding error. This is the stimulus the round's quoted
+    //         figures come from: forty cycles of twenty 512-sample blocks and
+    //         one 300-sample block, 421 600 samples, 8.783 s. Round 14's
+    //         engine publishes 800 entries here; the audio is worth 823. ----
+    {
+        const auto r = run (rate, B, 20, 300, 0, Break::samePair, 40);
+        check (r.samples == 421600 && r.samples / B == 823,
+               "grPause: (premise) the repeated stimulus is the one the round's figures quote");
+        check (r.entries == r.samples / B,
+               juce::String ("grPause: forty pause/resume cycles lose nothing — " + juce::String ((int) r.entries)
+                             + " entries for " + juce::String ((double) r.samples / rate, 3)
+                             + " s of audio, against the " + juce::String ((int) (r.samples / B))
+                             + " the audio is worth").toRawUTF8());
+    }
+
+    // ---- 4. A CHANGED pair must still drop it: those samples were recorded
+    //         under a time base the new timeline does not have, and the ring
+    //         clears at exactly that prepare. ----
+    for (Break brk : { Break::rateChange, Break::blockChange })
+    {
+        const auto r = run (rate, B, 4, 300, 6, brk);
+        check (r.markerEntries == 0,
+               brk == Break::rateChange
+                   ? "grPause: a sample-rate change drops the partial — no audio recorded under the old "
+                     "rate reaches the new timeline's first entry"
+                   : "grPause: a prepared-block-size change drops the partial — an entry of the new size "
+                     "cannot be part-filled with samples counted against the old one");
+        check (r.entries > 0,
+               "grPause: (premise) the new configuration does publish entries of its own");
+    }
+    // …and the COUNT in flight is dropped with the statistics, which the marker
+    // alone cannot see: leave `histSamples` behind across a 512 -> 256 change
+    // and it already exceeds the new entry size, so the very first sample of
+    // the new timeline closes an entry that stands for one sample.
+    {
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+        buf.clear();
+        const auto feed = [&] (int n)
+        {
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        feed (B);
+        feed (300);                                   // 300 in flight against a 512 entry
+        check (ring.prepare (rate, B / 2) && ring.available() == 0,
+               "grPause: (premise) the block change cleared the ring");
+        engine.prepare (rate, B / 2, 2);
+        feed (B / 2 - 1);
+        check (ring.available() == 0,
+               "grPause: 255 samples of a 256-sample timeline publish nothing — the count in flight "
+               "was dropped with the statistics, so the new configuration's first entry is a whole "
+               "one and not a stub left over from the old entry size");
+        feed (1);
+        check (ring.available() == 1,
+               "grPause: …and the 256th sample closes it");
+    }
+
+    // ---- 5. An explicit `reset()` does NOT drop it, and that is the same
+    //         rule as everywhere else rather than a special case: `reset()`
+    //         touches no ring state at all — no epoch, no write index, no
+    //         slot, no prepared pair — so a drop there would take samples out
+    //         of a timeline the ring is still keeping, undetectably. Round 15
+    //         moved the clear out of `reset()` for that reason, leaving the
+    //         accumulator one writer. `AnabasisAudioProcessor` does not
+    //         override `AudioProcessor::reset()`, so `prepare`'s own tail is
+    //         its only caller today; this pins the rule for whoever gives it
+    //         a second one. ----
+    {
+        const auto r = run (rate, B, 4, 300, 6, Break::explicitReset);
+        check (r.markerEntries == 1 && r.markerIndex == control.markerIndex,
+               "grPause: an explicit reset() clears the run state and leaves the partial history entry "
+               "alone — it clears nothing in the ring, so it discards nothing from the ring's timeline");
+        check (r.samples % B == 0 && r.entries == r.samples / B,
+               "grPause: …so a reset conserves samples exactly as a same-configuration re-prepare does");
+    }
+
+    // ---- 6. ONE DECISION, NOT TWO. The engine keeps its partial exactly when
+    //         the ring keeps its entries — asserted as the joint statement
+    //         rather than as two behaviours that happen to line up, because
+    //         the failure this round repaired was precisely the two of them
+    //         disagreeing. `reset()` is excluded and stated separately above:
+    //         it does not touch the ring at all. ----
+    {
+        bool joint = true;
+        for (Break brk : { Break::samePair, Break::rateChange, Break::blockChange })
+        {
+            const auto r = run (rate, B, 4, 300, 6, brk);
+            if ((r.markerEntries > 0) != ! r.ringCleared) joint = false;
+        }
+        check (joint,
+               "grPause: the partial entry reaches an entry exactly when the ring kept its timeline — "
+               "the engine's gate and the ring's clear-on-change gate are one decision on one pair");
+    }
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -5648,6 +5960,7 @@ int main()
     testMeterResetIgnoresTheStraddlingSubBlock();
     testSpectrumRingsCarryTheTaps();
     testGrHistoryEntriesFollowThePreparedBlock();
+    testTheHistorySurvivesASameConfigurationRePrepare();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();

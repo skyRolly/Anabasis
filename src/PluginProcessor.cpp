@@ -532,8 +532,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1636` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1706` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1645` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1715` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -779,11 +779,16 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // size (0.1.2 item 6). Hosts re-prepare on transport start, and an
     // unconditional clear here wiped the scrolling timeline on every
     // pause/resume — the display then restarted instead of continuing from
-    // where it stopped. The ring's time base is entries-per-host-block mapped
-    // through the PREPARED rate and size (GrHistoryView's banner), so history
-    // recorded under the same pair is still drawn true; a changed pair is the
-    // case the clear has always existed for (stale entries would be mapped
-    // through the wrong time base) and still clears. The gate and the pair it
+    // where it stopped. An entry is one PREPARED block of processed audio
+    // (0.2.12, OQ-017 fix 1) mapped through the PREPARED rate and size
+    // (GrHistoryView's banner), so history recorded under the same pair is
+    // still drawn true; a changed pair is the case the clear has always
+    // existed for (stale entries would be mapped through the wrong time base)
+    // and still clears. THE ENGINE'S PARTIAL ENTRY FOLLOWS THIS GATE, not the
+    // call: `engine.prepare` above carries the samples already folded into the
+    // unpublished entry across exactly the re-prepares this line keeps its
+    // entries across, so a transport start no longer loses the audio that was
+    // in flight (`AnabasisEngine::prepare`'s closing block). The gate and the pair it
     // keeps live in the ring since the 0.2.8 final review: the view used to
     // read the time base back from `getSampleRate()`/`getBlockSize()`, which
     // this callback's thread writes while the view's threads read — the ring
@@ -937,11 +942,15 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (getMainBusNumInputChannels() == 1 && buffer.getNumChannels() >= 2)
         buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
 
-    // A block the engine short-circuited produced no render-tap values:
-    // publishing anyway would re-report the previous block's peaks and push a
-    // duplicate GR-history entry, breaking the one-entry-per-processed-block
-    // property the ring's readers rely on. The engine reports the fact rather
-    // than the wrapper re-deriving its early-return condition.
+    // A block the engine short-circuited produced no render-tap values, so
+    // publishing anyway would re-report the previous block's peaks. It can no
+    // longer push a duplicate history entry — the engine owns that since
+    // 0.2.12 and a short-circuited call folds nothing, so the accumulator does
+    // not move — but the meter half of the reason stands, and returning here
+    // is also what keeps `entries x preparedBlock == samples processed`
+    // honest: a call that processed nothing must contribute nothing to either.
+    // The engine reports the fact rather than the wrapper re-deriving its
+    // early-return condition.
     if (! engine.process (buffer, snapshot))
         return;
 

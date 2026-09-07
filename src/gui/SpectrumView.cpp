@@ -618,8 +618,8 @@ void SpectrumView::tick (double dt)
 // in `GrHistoryBuffer`, the frames in two `ScopeBuffer`s — and a relaxed load of
 // one is unordered against an acquire load of the other. `prepareToPlay` writes
 // them in one thread in one sequence (`engine.prepare` rewinds both rings at
-// `PluginProcessor.cpp:769`, `grHistoryRing.prepare` republishes the pair at
-// `:785`), and this bracket is what lets a reader use that sequence.
+// `PluginProcessor.cpp:776`, `grHistoryRing.prepare` republishes the pair at
+// `:792`), and this bracket is what lets a reader use that sequence.
 //
 // THE CASES ARE A SPLIT OVER WHERE `epoch0` FELL IN `resetGuard`'s MODIFICATION
 // ORDER, which is what makes them exhaustive — not over the direction of the
