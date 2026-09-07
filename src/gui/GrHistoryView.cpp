@@ -49,9 +49,78 @@ void GrHistoryView::mouseDown (const juce::MouseEvent& e)
 void GrHistoryView::visibilityChanged()
 {
     if (isVisible())
+    {
+        // RE-DERIVE BEFORE ANYONE CAN PAINT, FOR THE TIME THAT ACTUALLY PASSED
+        // (0.2.12: the owner's view-switch report, then the review finding under
+        // the first fix). What a frame DRAWS is the pair the tick published
+        // (`paintHead`: the tick's head, deliberately, so the frame's phase
+        // belongs to the head it is the phase OF), and nothing publishes while
+        // this view is hidden — the branch below stops the clock, and the
+        // spectrum owns the well until the pill is pressed again. Neither of
+        // the two things that make that pair stale stops with it: the audio
+        // thread keeps filling the ring, and the seconds the smoothed head
+        // ramps through keep passing.
+        //
+        // So the pair has TWO stale halves, and they fail differently.
+        //
+        //   THE HEAD. `paintHead` only asks that it be positive and not ahead
+        //   of the producer, which a head from before the switch satisfies, so
+        //   the first visible frame drew every bucket one entry-pitch further
+        //   RIGHT for each entry that had arrived while the view was away
+        //   (`bucketX` places by `head + phase`): measured 2.2 px after 50 ms
+        //   on the spectrum, 45.6 px after a second, 91.2 px after two, at
+        //   48 kHz / 512 on the Simple well.
+        //
+        //   THE PHASE. The sub-entry offset is a WALL-CLOCK ramp — `smoothedHead`
+        //   advances the previous value by the frame's seconds and clamps it to
+        //   [head, head + 1] — and the clamp that repairs the head is the LOWER
+        //   bound, which bites only when the head has moved. Publish a tick of
+        //   zero seconds and a producer that made no progress leaves the phase
+        //   exactly where the switch caught it, mid-ramp; the clock then replays
+        //   the remainder of a step whose time expired while the spectrum was up.
+        //   That is at most one entry-pitch — 0.48 px Simple, 0.32 px Advanced at
+        //   48 kHz / 512, 4.2 px at 44.1 kHz / 4096 — of position the first frame
+        //   is out by, and of motion with no new audio behind it.
+        //
+        // Both halves are the same missing quantity: the seconds this view did
+        // not tick for. `HiddenInterval` measures them and `smoothedHead` then
+        // resolves every case through the clamp it already has — the producer
+        // advanced, so the lower bound gives the live head carrying the offset
+        // the ramp really has by now; nothing arrived and the gap outlasts the
+        // remaining ramp, so the upper bound parks the trace one entry on, which
+        // is where a view that was never hidden would already be sitting; the
+        // gap is shorter than the remaining ramp, so the estimate lands part way
+        // along it, exactly as an unhidden view's would have. A view already
+        // parked publishes nothing at all (`parked`), and a ring cleared while
+        // the view was away takes the `cleared` re-anchor to phase 0 as before,
+        // gap or no gap.
+        //
+        // NOT phase 0 for every reveal: that moves the trace RIGHT by the offset
+        // it discards, which is the one direction `bucketX` guarantees no vertex
+        // ever moves. NOT a straight saturation to the parked value either: it is
+        // right only because the flip is driven by a 24 Hz timer, so it would be
+        // wrong for the first caller whose gap is genuinely shorter than an entry.
+        //
+        // Publishing HERE is what closes the window rather than papering over it.
+        // JUCE repaints a component the moment it becomes visible — `setVisible`
+        // marks it dirty before it sends the visibility change — and that repaint
+        // is asynchronous, so it lands after this function and reads what this
+        // function published. Before the first fix, whichever of the repaint and
+        // the clock's first callback ran first decided the frame, which is why
+        // the owner saw the bad frame only sometimes. `tick` is this thread's own
+        // function and the publication is the one it always makes; nothing about
+        // the geometry, the buckets or the timing changes.
+        tick (hidden.resumedSeconds (juce::Time::getMillisecondCounterHiRes()));
         clock.start (*this, [this] (double dt) { tick (dt); });
+    }
     else
+    {
         clock.stop();
+        // The stamp the next reveal subtracts from — taken AFTER the clock is
+        // stopped, so the interval it measures is exactly the interval in which
+        // no tick could run.
+        hidden.stopped (juce::Time::getMillisecondCounterHiRes());
+    }
 }
 
 void GrHistoryView::tick (double dt)
@@ -136,6 +205,17 @@ void GrHistoryView::paint (juce::Graphics& g)
     // here it floats over the waveform's oldest end — the empty zero region
     // until a full window has played.
     graph_switch::paint (g, getWidth(), getHeight(), false);
+}
+
+GrHistoryView::Frame GrHistoryView::drawnFrame() const noexcept
+{
+    const auto& ring = processor.grHistory();
+    const auto  epoch = ring.resetEpoch();
+    const int64_t live = ring.available();
+    const auto  pubEpoch = publishedEpoch.load (std::memory_order_acquire);
+    return frameFor (shownHead.load (std::memory_order_relaxed),
+                     smoothHead.load (std::memory_order_relaxed),
+                     pubEpoch, live, epoch);
 }
 
 void GrHistoryView::paintHistory (juce::Graphics& g)

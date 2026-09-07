@@ -563,6 +563,21 @@ public:
     // the atomic twice and can mix two configurations in one expression.
     double preparedSampleRate() const noexcept { return grHistoryRing.prepared().rate; }
 
+    // THE BLOCK HALF OF THE SAME PUBLISHED PAIR, forwarded for the same reason
+    // and under the same rules (0.2.12). `SpectrumView` needs it for a bound it
+    // cannot take from the scope rings: `ScopeBuffer::pushBlock` writes its
+    // payload before it publishes its index, so a push that is UNDERWAY is
+    // invisible in that ring's own head, and the size of the largest push —
+    // `samplesPerBlock`, the engine's `maxBlock`, which `processChunk`'s
+    // `jmin (maxBlock, …)` makes an upper bound on every push — is what lets a
+    // reader hold history back far enough to be out of its way. Adding that
+    // number to `ScopeBuffer` as a second atomic was the draft this replaces:
+    // the fact is already published here, and the comment above says why a
+    // second home for it is the thing to avoid. Zero before the first
+    // `prepareToPlay`, exactly as the rate is, and to be taken ONCE into a
+    // local for the same reason.
+    int preparedBlockSize() const noexcept { return grHistoryRing.prepared().block; }
+
     // THE OUTPUT CHANNEL COUNT, PUBLISHED (KI-017's third read, round 7). The
     // editor's timer used `getTotalNumOutputChannels()`, which returns JUCE's
     // plain `cachedTotalOuts` — written by `AudioProcessor::audioIOChanged` on

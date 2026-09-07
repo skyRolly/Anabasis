@@ -63,6 +63,15 @@ Two facts about when this arrived, because they are not the same:
 
    > **Amended 2026-09-02 by [ADR-0038](ADR-0038-gr-history-display-scalars-cross-the-painting-boundary.md)
    > (Accepted), which came back to this gate exactly as this clause instructs and was approved.**
+>
+> **Amended again 2026-09-06 by [ADR-0039](ADR-0039-spectrum-frame-publication.md) (Accepted), which
+> came back to this gate for the other half of what this clause excludes — a PAYLOAD.** The
+> `SpectrumView` spectrum publishes two 2048-bin traces plus the window and sample rate that make
+> them readable, and every stale/fresh cross-pairing of those is an illegal frame, so ADR-0038's
+> safe-by-value argument was unavailable and was not claimed. The boundary this clause draws is
+> unchanged for every site it covers; ONE site is added where a mechanism — a sequence bracket with a
+> bounded reader that stages and commits only on success — supplies the consistency instead of an
+> argument. Anything the paint path WRITES is still excluded, and so is a second payload site.
    > The clause did its job and its text stands; what moves is the boundary it draws. "ONE scalar"
    > becomes **scalars whose every stale/fresh pairing is a frame the writer was itself about to
    > produce** — a property to demonstrate, not a count to check. `GrHistoryView` publishes two

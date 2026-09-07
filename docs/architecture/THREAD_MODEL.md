@@ -183,6 +183,49 @@ constraint no caller currently violates is an API change this record does not re
 per block, and they exist for this purpose. Reaching past them into the meter is the mistake this
 section is here to prevent.
 
+**0.2.12 adds the third such read, and the first that carries a PAYLOAD — `SpectrumView`'s two
+traces** ([ADR-0039](design-decisions/ADR-0039-spectrum-frame-publication.md), **Accepted 2026-09-06;
+the Architecture Review Gate is cleared**). `tick` computes
+2048 smoothed dB values per trace on the message thread and `paint` walked them directly: an
+unsynchronised read of plain floats on exactly the two platforms where the context attaches, and —
+separately from the memory model — a frame that could hold the input trace of one tick beside the
+output trace of the next. Measured with a reading thread standing in for the renderer and identical
+audio in both rings, so a coherent frame's traces are bit-identical: **1 161 778 of 1 321 607 reads
+(87.9 %) held two different ticks; 0 of 306 485 after.** Both traces and the window they were
+analysed over are now published together inside a sequence bracket — the counter odd, a release
+fence, relaxed per-bin `std::atomic<float>` stores, the counter even with release — and read back
+whole or not at all, at most twice, into buffers only `paint` touches.
+**Round 11 widened the same record before it was answered:** the frame carries the SAMPLE RATE its
+bins are read through as well, because `paint` had been reading that for itself while the trace came
+from the frame, so a rendered frame could pair one configuration's trace with another's bin mapping.
+The x axis is a fixed 20 Hz–20 kHz log sweep with no rate term, so the mismatch does not move the
+axis — it moves the DATA under it, through `binHz = rate / kSize`. Measured at 6 kHz, which is bin
+512 at 48 kHz and bin 256 at 96 kHz: −0.00 dB paired, **−116.80 dB** as an old trace under the new
+rate, **−120.00 dB** as a new trace under the old one. The rate is now taken under
+`GrHistoryBuffer`'s reset epoch — the bracket its banner already required of any reader that maps
+entries through the prepared pair, and which `GrHistoryView` has always taken — so the rate a frame
+publishes and the ring frames it publishes belong to one configuration, and `paint` reads no
+processor state at all. This is the case ADR-0027
+clause 4 and ADR-0038 clause 8 both exclude by name ("anything carrying a payload… is a new path
+again and returns to this gate"), so it was filed as a gated decision rather than claimed under
+either, and both clauses now carry a dated by-exception amendment. Nothing on the audio thread
+changed.
+
+**A NUANCE THE ROW ABOVE HAS ALWAYS LEFT OUT, and round 11 measured it: JUCE paints components on
+the GL render thread UNDER THE MESSAGE-MANAGER LOCK.** At the ADR-0028-pinned JUCE 9.0.1,
+`OpenGLContext::CachedImage::renderFrame` takes a `MessageManager::Lock::ScopedTryLockType`
+(`juce_OpenGLContext.cpp:372`, `scopedLock.emplace (mmLock)`), returns early if it cannot get it, and
+releases it only after `paintComponent` — which itself opens with
+`JUCE_ASSERT_MESSAGE_MANAGER_IS_LOCKED`. So a component paint on the render thread is mutually
+exclusive with the message thread, and the interleavings ADR-0027, ADR-0038 and ADR-0039 defend
+against are prevented, on that path, by a lock none of this code owns. That is why all three records
+say the race is **argued rather than measured**. It changes none of them: a correctness argument that
+rests on an undocumented try-lock inside a vendored renderer is the "safe by ordering" reasoning this
+tree already refuses elsewhere (`~AnabasisAudioProcessorEditor`, `~SpectrumView`), the lock is absent
+from the other paths that reach `paint` (`createComponentSnapshot`, the test suites), and the pin can
+move. Recorded so the next reader does not mistake the synchronisation for the only thing standing
+between the display and a race.
+
 **Adding a second reader thread to these two getters is a threading-model change**, and therefore
 an Architecture Review Gate item (`CLAUDE.md`'s Hard Stop list): it needs atomics on the cache or
 a different mechanism, decided in an ADR and not at the call site.
@@ -197,8 +240,27 @@ above records a nuance without amending the ring rule.
   instances in the engine (post-input-gain and post-chain/render taps), each filled into
   preallocated scratch during stages A/E and published with ONE release-store per processed
   chunk — the SPSC ring row, same discipline as `GrHistoryBuffer` INCLUDING the atomic payload since the KI-015 follow-up (ADR-0011 amended a third time, 2026-09-02): the element is a `Sample` wrapper over one relaxed `std::atomic<float>`, the producer stores per sample instead of `memcpy`ing, and the ring takes no reader-side acquire fence because its `reset()` touches no sample. The FFT runs GUI-side
-  (`SpectrumView`), reading stateless `readLatest` peeks; nothing on the audio thread windows,
-  transforms or allocates. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
+  (`SpectrumView`), reading stateless peeks; nothing on the audio thread windows,
+  transforms or allocates. Since 0.2.12 the two peeks END AT ONE INDEX — `min` of the two published
+  write counts, the newest frame BOTH taps have committed (`ScopeBuffer::readEndingAt`) — because
+  the two rings are published by one producer with one release-store each and a reader that asks
+  each ring for its own newest window draws the input spectrum of one chunk beside the output
+  spectrum of another. Measured before the change: the two analysed windows ended at different
+  indices on 1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128, the OUTPUT trace leading, because
+  the 4096-point FFT between the two reads (132 µs) gives the producer room to publish. The LENGTH
+  is chosen with the same care: a ring serves `[w − capacity, w)` and no more — and less than that
+  while a push is UNDERWAY, since `pushBlock` writes its payload before it publishes its index, so
+  the READER's floor reserves one push of the size the host prepared
+  (`SpectrumView::reservedFloor`, from `AnabasisAudioProcessor::preparedBlockSize` — the block half
+  of the pair `GrHistoryBuffer::prepared` already publishes; the ring's own protocol is unchanged and
+  `oldestReadable()` still promises exactly what the published index proves). The pair reads
+  `min (kSize, committed − max (in.oldestReadable(), out.oldestReadable()))` frames — full in every
+  configuration a real-time host presents, shorter (for both traces together) at larger blocks, and
+  nothing at all where no such window is left. **And a chosen span is not a held span:** both
+  windows are read BEFORE either is transformed, and the frame is drawn only if both reads served
+  the whole span and neither ring's floor has since passed its start (`SpectrumView::onePairOneSpan`)
+  — the before-and-after discipline the reset generations already use, applied to the lapping bound.
+  A frame that cannot show that is held whole; the next tick re-derives from a settled producer. Guarded by `testSpectrumRingsCarryTheTaps` (count-per-chunk and
   tap-content equality).
   **`prepare` rewinds both rings, and the rewind is ANNOUNCED on a generation counter**
   (`ScopeBuffer::resetGeneration()`, bumped release-after the index store; the generation-counter

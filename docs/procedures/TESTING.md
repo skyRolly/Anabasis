@@ -244,7 +244,197 @@ static stayed green. The review's second finding needed neither a render nor the
 `GrHistoryBuffer` walked past 400 heads with a pattern whose minimum sits on the first entry of
 every bucket makes a one-entry truncation move a drawn value by 11 dB, so
 `testTheOldestDrawnBucketKeepsItsValueUntilItLeaves` can assert the invariant itself — no drawn
-bucket changes value while it is drawn — rather than a pixel consequence of it.
+bucket changes value while it is drawn — rather than a pixel consequence of it. The view-switch
+defect needed a render again, and a THIRD frame to compare against:
+`testTheGrHistoryIsCurrentTheFrameItBecomesVisible` snapshots the view before the spectrum takes the
+well, again the instant it gets it back, and once more from a view that has never been stale, and
+holds the middle one to the last rather than the first — the defect was a frame that was *valid*,
+just not current, so only a comparison between two states can see it. The review finding under that
+fix moved the same question OFF the pixels, because its amplitude is sub-pixel: what a reveal has to
+get right is the published pair, so `GrHistoryView::drawnFrame` was made public (the reason `tick`
+is) and `testTheGrHistoryDoesNotResumeAnExpiredRamp` asserts the pair directly — hidden mid-ramp
+with the transport stopped, the reveal must publish the parked value, and nothing may move for
+thirty frames after it. `testTogglingTheGraphWellNeverMovesTheGrHistoryBackwards` pins the direction
+the other candidate repair would have broken (`head + phase` may only grow across fifty switches).
+The same round pins the spectrum's half of the lifecycle through its own state rather than a render
+too, `analysedInDb()` being public for the same reason: a bin that was falling must have decayed by
+the seconds the view was away (`testTheSpectrumIsCurrentTheFrameItBecomesVisible`), a view that came
+back to rings nothing was written to must hold its trace bit-identically
+(`testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden`), and a re-prepare during the switch
+must reach the first visible frame as the floor
+(`testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame`).
+
+The 0.2.12 review round added one more thing the suite could not previously see: a defect that is
+not in either trace but in the PAIR. `SpectrumView` draws two traces from two rings the audio thread
+publishes with one release-store each, and the question — do the two traces describe the same span
+of audio? — is invisible to a test that can read one of them, so `analysedOutDb()` joins
+`analysedInDb()`. `testTheSpectrumsTwoTracesAlwaysDescribeTheSameSpan` then constructs the split
+state directly rather than racing for it: a chunk pushed into one ring and not the other IS the
+state the producer holds between its two publications, and it is reached with a `const_cast` on the
+processor's own ring, the test standing in for the producer. Its two halves are pinned separately
+because the repair has two — the READ cases advance the pair first so the tick actually runs and the
+read is what decides, and the GATE case leaves the EMA mid-fall so that "the gate held" is
+distinguishable from "the gate opened and the analysis landed on the same numbers". The ring's own
+new entry point is pinned in the DSP suite beside the other `specSync` checks, the clamp included:
+an end past this ring's head must read the head's own window, which is what makes a stale index from
+the OTHER ring safe. The review round that followed added the other half — a window ending inside the
+ring can still BEGIN outside it once a chunk longer than `capacity − kSize` has run past the
+endpoint — and it is pinned BY VALUE rather than by count: the ring is filled with a ramp whose
+sample IS its absolute index, so a frame the producer took back reads as something else and the
+assertion sees it. `testTheSpectrumNeverDrawsAFrameTheProducerTookBack` then drives the same
+boundary through the real analyser at four host block sizes (at the threshold, past it, a whole
+ring, and far past it) in both publication orders and three times each, asserting that the two
+traces agree and that a block leaving no common span holds the last coherent pair rather than
+drawing half of one.
+
+The round after that had to pin something the suite had never had to pin: a property that only
+exists WHILE another thread runs. The analyser chooses its window from a snapshot of two rings and
+then copies from both, and the defect was that a producer publishing in between made only ONE copy
+come back short. That is pinned in two halves, which is the shape to copy for anything similar. The
+DECISION is a pure static (`SpectrumView::onePairOneSpan`) with a seven-row truth table — both reads
+whole, either one short, either floor past the window's start, and the empty span that is coherent by
+definition — so the rule is mutation-killable without a thread. The STIMULUS is a thread:
+`testTheSpectrumsPairSurvivesAProducerRunningDuringTheFrame` runs a producer publishing 13000-frame
+chunks flat out beside 5000 drawn frames, with IDENTICAL audio in both rings, so that a frame whose
+two traces differ at all is a frame whose two windows were not the same span — one assertion, one
+direction, and no schedule to depend on: the fixed code cannot fail it and the unfixed code fails it
+on every run measured. A thread is what this needed and a sleep is not: the property is "no
+interleaving produces a mismatched pair", which more interleavings can only test harder.
+
+The round after THAT had to reach one layer further out, and it changed what the suite is allowed
+to look at. The two defects were in the hand-over from `tick` to `paint` — a boundary that is TWO
+THREADS on macOS and Windows and one on Linux — so `SpectrumView::readPublishedFrame` and
+`paintedWindow()` are public for the same reason `analysedOutDb()` is: the property at stake is what
+a SECOND thread can see, and a test that can only read the message thread's own state cannot say it.
+`testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` pins the deterministic half first (what a tick
+publishes is the frame it committed; an idle tick disturbs nothing; a paint takes the published
+window and follows it across publications) and then runs the threaded half with a MARKER made of the
+audio itself: both rings get identical blocks, so a coherent frame's two traces are bit-identical,
+and the tone alternates over a whole 4096-frame window per tick, so a frame assembled from two ticks
+disagrees across the spectrum. Any inequality at all is therefore a mixed frame and there is no
+threshold to argue about — 0 of 306 485 reads on the fixed tree, 1 161 778 of 1 321 607 with the
+renderer reading the tick's working vectors. `testAReconfiguredSpectrumNeverKeepsThePreviousMapping`
+pins the other defect across the ring-capacity boundary (8192, 13000, 16384, 32768 samples, with and
+without new audio, re-preparing 48 kHz → 96 kHz so the same tone moves from bin 512 to bin 256):
+where a window survives, the first frame after the change is the new configuration's; where none can
+(at or above a whole ring, where none ever will) the view publishes the empty frame rather than
+leaving the old rate's spectrum under the new rate's axis. The reader-side in-flight reserve that
+replaced the withdrawn ring-side one is pinned by `specReserve` — the arithmetic on its own, and
+that a drawn frame's window obeys it at the block the host prepared.
+
+Round 11 added the third fact a frame has to carry, and it is not in the trace at all: the SAMPLE
+RATE its bins are read through. `testASpectrumFrameCarriesTheRateItsBinsAreReadThrough` uses the
+audio as its own marker — 6 kHz is bin 512 at 48 kHz and bin 256 at 96 kHz, so the peak bin of a
+published trace says which configuration produced it — and its load-bearing case is the one that
+needs no thread at all: reconfigure and refill with NO tick in between, so the processor has already
+moved to the new rate while the newest frame any renderer can pick up is still the old one, then
+paint. The frame must be drawn through the rate that produced it. `paintedFrame().rate` is what makes
+that observable: `paint` writes the rate it actually resolved back into the frame it drew, so a
+renderer reading the processor behind the frame's back is visible from outside rather than only in
+the pixels. `testNoFrameARendererPicksUpEverMixesTwoConfigurations` then runs the same marker past a
+reading thread while the main thread churns 48 kHz ⇄ 96 kHz, which is what kills a rate published on
+the tick's schedule rather than the frame's — the deterministic cases cannot see that one, because
+single-threaded there is no window between the two publications to observe.
+
+**THE PREMISE OF A THREADED TEST IS ESTABLISHED, NOT ASSERTED — and CI taught this file the same
+lesson twice.** `testTheFrozenLatchNeedsNoThreadCrossing` learned it on 2026-08-14 (run
+31801408265). `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` learned it on 2026-09-06, in the
+same `sanitizers` job and in the same shape: the suite reported 1248 checks / 1 failure while
+memcheck reported 0 errors from 0 contexts, and the one failure was the premise — `distinct > 1`,
+i.e. the reading thread got exactly ONE productive turn in 4000 ticks. The mechanism is valgrind's
+serialised scheduler: while the reader holds the CPU the published frame cannot move, so every
+iteration of a reader quantum returns the same frame and `distinct` counts reader quanta that
+straddled a publication rather than reads. MEASURED under memcheck pinned to one CPU, 500 ticks: 481
+distinct frames idle, 221 under 8 competing spin loops, 219 under 24 — the reader's share of frames
+is the scheduler's to decide. The fix is the one the older test already prescribes, "remove the
+dependency rather than tune it": wait for the reader to be RUNNING and to have taken a whole frame
+before the measured section begins (guaranteed, because nothing publishes during that wait, so the
+counter is even and stable), and keep publishing and yielding until it has taken a second, different
+one. A stronger stimulus than the original, not a weaker one — the frame count the property is
+measured over becomes a floor rather than a hope. Re-run under memcheck on one CPU: 1261 checks, 0
+failures, 0 errors from 0 contexts.
+
+**AND CI TAUGHT IT A THIRD TIME, in the round that quoted the lesson.** The repair above was applied
+to `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` and NOT to
+`testNoFrameARendererPicksUpEverMixesTwoConfigurations`, written in the same round: that one ran a
+bounded churn and then asserted that the reading thread had seen a frame at both rates. The
+`sanitizers` job failed on it — 1261 checks, 1 failure, memcheck itself reporting 0 errors from 0
+contexts — for exactly the reason the paragraph above gives. Two things follow, and both are now in
+force across every threaded test in this file. **A premise is established, never asserted after the
+fact**: each rate is confirmed by waiting for the reader to have seen it, and the wait terminates
+because the published frame is that rate's and stays it while the wait spins. **And every such wait
+is BOUNDED**, because a wait that can only end when the property holds turns a LIVENESS defect into a
+CI timeout, which reports nothing — bounded, the same defect fails the premise and names itself. The
+caps are far above what any working scheduler needs. A conjunction is also split into one check per
+conjunct, so a failure says which half broke; the round-10 form did not, and its log could not
+distinguish "the reader never ran" from "the reader never saw the second rate".
+
+**THE TEST THAT ACTUALLY PAINTS.** `specPaint`
+(`testAPaintThatLosesTheRaceKeepsTheFrameItAlreadyHad`) is the only test in the tree that calls
+`SpectrumView::paint` from a thread that is not the one ticking, and it exists because nothing else
+could see what a renderer does with a read it LOSES. `readPublishedFrame` cannot preserve its output
+on failure — the 4096-bin copy has already happened by the time the bracket can be checked — so a
+caller that reads into its drawing buffers and ignores the result draws a mixture of two
+publications. That is a broken invariant with no race in it, so ASan, UBSan and memcheck are all
+silent on it by construction, and it took a test that paints. The marker is three-part: one whole
+window of one tone per tick (so the analysed window is never a blend), `dt = 1 s` (so the EMA is the
+analysis rather than the last second's), and the two tones at OPPOSITE ends of the spectrum (so the
+stretch a tear must fall in is 82 % of the trace). The rule is then exact — a coherent frame has
+exactly one of the two marker bins lit, a torn one has both or neither — and `lit(low) == lit(high)`
+catches both directions. Measured on the shipped build: 4274 paints, 95 lost reads, 44 of which had
+already copied.
+
+**THE TWO TESTS THAT BUILD A SPLIT RESET.** `specGen`
+(`testNoSpectrumFrameEverPairsTwoConfigurationGenerations`) and `specStraddle`
+(`testAResetThatLandsInsideATickNeverReachesTheScreen`) pin the round-13 half of the frame
+invariant: one frame is one span AND one configuration generation. Neither can be built through
+`processBlock`, which publishes to both taps with one `num` and so can never put one ring a
+configuration ahead of the other, so both reach past it — the `const_cast` handles on
+`AnabasisAudioProcessor::spectrumInRing()`/`spectrumOutRing()` that `specLap` already uses.
+
+`specGen` is single-threaded and exact. It settles both traces on one configuration, rewinds ONE
+ring and refills BOTH — which is precisely the state a reader is in when it has accounted for one of
+`AnabasisEngine::prepare`'s two back-to-back rewinds and not the other, since a rewind sends the
+producer back to slot 0 and the frames it writes next overwrite exactly the slots the shared window
+reads. The assertion is made at the bin the PREVIOUS configuration's marker occupied, which the new
+configuration's audio has nothing at: the two traces must agree there, and must agree that it is
+gone. Before the repair they were 104.3 dB apart at a 512-frame block and 69.0 dB at 4096. Three
+markers at three bins (5 kHz at 48 kHz = 427, 7 kHz at 96 kHz = 299, 12 kHz at 96 kHz = 512) mean a
+trace says in its own numbers which configuration it belongs to, with no threshold to argue about,
+and the test walks the four required cases, both split directions, the reset edge at a whole-ring
+block, one and eight blocks after a reset, and a 48 → 96 → 48 → 44.1 → 88.2 → 44.1 sweep.
+
+`specStraddle` covers the half a single thread cannot reach: a rewind that becomes visible AFTER the
+tick sampled the two generations and BEFORE it re-samples them, so the reset edge is silent and the
+post-batch re-read is the only guard. Its producer is paced by the reader's own publications — a
+bounded spin, so a reader that stops publishing fails the test rather than hanging it — and the
+rewind's landing point is swept with a delay drawn from a plain LCG rather than a clock, so the same
+sweep runs on every machine even though the batch does not. **The interleaving is observed, not
+assumed**: a published frame with a full span and both traces entirely at the floor can only come
+from that re-read, and the test requires such frames to exist before it believes its own negative
+results. Both markers complete a whole number of cycles in one pushed chunk (96000 / 512 = 187.5 Hz;
+6937.5 = 37 × 187.5 and 12000 = 64 × 187.5), because a repeated chunk that does not is a pulse train
+whose splatter puts real energy in the other marker's bin — that mistake made the mixture detector
+count the stimulus, at 59 frames a run, before it was fixed. Measured on the shipped build: ~1200
+reconfigurations, ~2500 lit frames, ~1000 of them floored by the guard, 0 lopsided, 0 mixed, 0
+identity switches.
+
+**What the suite cannot see here, stated rather than implied.** `repaint()` is what carries a
+published frame to the screen, and a headless suite has no repaint region to inspect: the tests pin
+the published state and the painter's copy of it, so a mutant that deletes the `repaint()` call while
+leaving the publication survives. The same limit applies to the data race itself, which is argued
+from the memory model rather than measured (ADR-0038 records it the same way).
+
+**The two tests that sleep, and why they are the only ones.** `testTheGrHistoryDoesNotResumeAnExpiredRamp`
+and `testTheSpectrumIsCurrentTheFrameItBecomesVisible` each block for 40 ms between hiding a view and
+showing it again. The quantity under test IS real elapsed time — the seconds a view's frame clock was
+stopped for, which the views measure from the wall clock because neither the ring (it stops with the
+transport) nor the `FrameClock` (its pacing state is reset on restart, deliberately) can report it —
+so no injected `dt` can stand in for it without bypassing the code under test. They stay
+deterministic because only a LOWER bound is asserted and `sleep_for` guarantees exactly that: it
+blocks for at least the requested duration, 40 ms is 3.75 entry periods at 48 kHz / 512, and more
+elapsed time only saturates the same clamp harder. A test that needs an UPPER bound on elapsed time
+would not be admissible here.
 `testGrHistoryAndTheMeterLanesShareOneReductionSpan` pins that mapping through the statics **and**
 renders a standalone `GrMiniMeter` into an image (`createComponentSnapshot`, no editor and no
 window) to check the OTHER readout of the same quantity independently — a test that quoted the

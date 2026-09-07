@@ -6,7 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-05)** — the owner's third GR-history report, reproduced
+**Last updated:** for **0.2.12 (2026-09-07, round 13)** — the review's cross-configuration finding:
+a published spectrum frame could hold one trace from each configuration, and the floor is now joint
+while the frame carries the identity of the configuration generation it belongs to (ADR-0039 amended
+by exception, KI-018's cross-ring variant removed; entry below). Before that, for **0.2.12
+(2026-09-05)** — the owner's third GR-history report, reproduced
 frame by frame on the real paint path, confirmed by the owner, and fixed by a clip and nothing else:
 the strip beyond the newest complete vertex is no longer shown; then two PR review findings on that
 fix, both reproduced on the same harness before any change — a ten-second host block blanked the
@@ -208,7 +212,12 @@ right, so the boundary lands on the plot's own right edge and the GR history sho
 the spectrum view of the same well (painted columns 10…909 → 10…913 on the Simple well), with the
 freed columns filled by the `leadBuckets` extra buckets of earlier history the window now covers —
 moved, not scaled: every rendered column is the previous build's translated by exactly four pixels.
-Nothing
+Last in the round, the owner's view-switch report: the pair a frame draws is published by the tick,
+nothing ticks while the spectrum owns the graph well, and JUCE's repaint of the newly visible view
+can beat the clock's first callback — so the first visible frame could draw the pre-switch history,
+shifted right by an entry-pitch per block missed (148 of 248 transitions, up to 91.7 px), snapping
+back on the next frame. `visibilityChanged` now re-derives before any repaint can read it (0 of 248
+after), with the drawing path untouched. Nothing
 else moved, and every column still shown is pixel-identical to 0.2.11 in 480 of 480 frames on every
 configuration. Validated old against new on the same frames (fill top-edge movement in the
 rightmost visible columns 0.52 → 0.07 px mean, 25 → 0.44 px max; stroke 0.24 → 0.04, 18 → 0.16; last
@@ -222,6 +231,185 @@ wells, and the rendered `grPaint` snapshot re-pinned on both halves of the contr
 (`CHANGELOG.md`, `HANDOVER.md`). No **State serialization schema** row: nothing serialised changed.
 `OPEN_QUESTIONS.md` untouched (OQ-017 unchanged). Trail: `worklogs/2026-09-05-gr-history-tip.md`
 §7 (the measurement trail, the boundary sweep, the old-against-new identity check, the mutants).
+
+**Addendum (2026-09-06) — the review finding under the view-switch fix, and the spectrum's half of
+the same lifecycle.** The fix above re-derives with NO elapsed time, and the review found what that
+cannot repair: the smoothed head's clamp re-anchors only where its lower bound bites, i.e. only when
+the producer advanced, so a switch that caught the ramp mid-flight over a stopped transport
+republished the pre-switch sub-entry phase and the clock then replayed the rest of a step whose
+seconds had already passed (measured: 48 of 60 stopped-transport transitions per configuration, up
+to one entry-pitch — 0.48 px on the Simple well, 0.32 on the Advanced, 4.2 px at 4096-sample
+blocks). `SpectrumView` was then investigated on its own terms rather than by analogy and is NOT the
+same defect: it has no head and no phase, so nothing replays; what it retains is the two per-bin
+EMAs `paint` reads directly, and because the frame clock restarts with a neutral 1/60 s dt by
+design, 87 % of every FALLING bin survived into the first analysed frame (measured 5.1 dB mean per
+bin from the current analysis, up to 55 dB on one bin). Both are one missing measurement —
+`abgui::HiddenInterval` (new file, `src/gui/HiddenInterval.h`), a wall-clock stamp beside
+`clock.stop()` whose elapsed seconds are handed to the view's own tick beside `clock.start()` — and
+each view then applies its OWN model to them: the GR ramp resolves through the clamp it already has
+(0 of 60 stopped-transport transitions differ afterwards, in all three configurations), and the
+spectrum's `decay` re-anchors the trace outright for any switch of about half a second (1.23 dB mean
+from the current analysis, exact beyond ~2.1 s where the float decay saturates), while a switch with
+no new frames stays a bit-exact no-op — KI-007 item 6's listening-pass question is deliberately NOT
+answered here. One further defect closes with it: a re-prepare during the switch used to put one
+frame of the pre-reset EMA on screen through the new rate's bin mapping, the reset floors living in
+`tick`. It is NOT in `FrameClock`: that file is a verbatim Anamorph copy (ADR-0009), its restart
+semantics are correct as they stand, and it is shared with `LoudnessMeterView`, which is never
+hidden. Rows engaged: **ADR** (ADR-0023 item 6 amended in place, dated), **New/changed test**
+(`state_tests.cpp`: five new tests plus the shared measurement's truth table, and the 0.2.12
+view-switch test restated to assert the published pair through the new public
+`GrHistoryView::drawnFrame` so it no longer depends on how long the hide took; `TESTING.md` — the
+new pins and the two tests that sleep, with the argument for why a lower bound keeps them
+deterministic; this file), **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`), and the architecture
+file table (`DESIGN.md` gains the new header's row). No **Threading / cross-thread path** row:
+the new member is written and read on the message thread only, inside `visibilityChanged`, and
+publishes nothing the painting side reads — ADR-0038's atomic set is untouched. Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §12 (both read-offs, the 450-transition before/after sweep
+on the real paint paths, the nine mutants and the one that survives, and what is left).
+
+**Addendum (2026-09-06) — the review's split-publication finding, disproved as stated and fixed as
+found.** The finding says the reveal can apply the hidden-interval decay to two traces when only one
+ring has advanced. The stated chain is false at its second link — the counts `tick` loads never
+selected either analysis window, since each `analyse` took its own acquire load inside `readLatest`
+— and its stated symptom cannot be carried by the decay at all, the EMA's target being the analysis
+of whatever the ring holds NOW. What it points at is real and larger: the skew that reaches the
+screen is between the reader's two READS, which a 132 µs FFT separates, so the OUTPUT trace led the
+input one on **1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128** — against 0.015 % / 0.029 % for
+the producer's own store window — and a frame drew the input spectrum of one chunk beside the output
+spectrum of another, in the display whose purpose is comparing them (measured: 87 dB apart in a
+marker bin). The rule now is **one frame, one span**: both traces are analysed over the window ending
+at `min` of the two published indices (`ScopeBuffer::readEndingAt`, the fourth functional delta on
+that copied file, with a clamp that keeps every one of `readLatest`'s safety arguments), the idle
+gate keys on the same head, and a chunk one tap has published alone is drawn on the first frame where
+both have. Rows engaged: **Threading / cross-thread path** (`THREAD_MODEL.md` — the reader's peek is
+now bounded by the committed head; **ADR-0011 amended a fourth time, dated**, stating the pairing
+rule and what it does NOT change — no new atomic, no producer change, the lapping margin narrowed by
+the skew; `THREADING_POLICY.md` needs nothing: no row changes, the SPSC contract is the one it
+already states), **New/changed test** (`state_tests.cpp` + `dsp_tests.cpp`; `TESTING.md`; this file),
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`), and `KNOWN_ISSUES.md` (KI-007 item 6's predicate
+corrected — the behaviour it documents is unchanged; KI-018's cross-ring variant **narrowed**, its
+equal-count corner untouched). Trail: `worklogs/2026-09-05-gr-history-tip.md` §13.
+
+**Addendum (2026-09-06, same round) — the large-block half of that rule.** A shared ENDPOINT is only
+half of a shared SPAN: a ring serves `[w − capacity, w)` and no more, so a chunk longer than
+`capacity − kSize` = 12288 frames takes back the oldest frame of the window ending at the committed
+endpoint — 1 frame at 12289, 712 at 13000, all 4096 at 16384 — and the analyser was still asking for
+4096, so one trace drew what had replaced the history (measured: the traces disagreed by 15.6 dB at
+13000 and 21.4 dB at 20000, where the two taps genuinely differ by 0.3). The pair now agrees on the
+LENGTH as well as the end — `min (kSize, committed − max (oldestReadable))` — so the window shortens
+for both traces together, `readEndingAt` clamps its own start to the same floor as a backstop, and
+where a chunk of a whole ring leaves no common span the last coherent pair is held rather than half
+redrawn. Buffers up to 12288 frames are bit-identical to before. Rows engaged: **Threading /
+cross-thread path** (ADR-0011's 0.2.12 amendment extended in place, dated; `THREAD_MODEL.md`),
+**New/changed test** (`state_tests.cpp` + `dsp_tests.cpp` — the ring's floor pinned by VALUE with a
+ramp whose sample is its own index; `TESTING.md`; this file), **Ship a version** (`CHANGELOG.md`,
+`HANDOVER.md`). `KNOWN_ISSUES.md` unchanged: KI-018's remaining corner is a reset/refill question and
+this is a lapping one, and KI-007 item 6's predicate already reads "the committed head". Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §14.
+
+**Addendum (2026-09-06, same round) — and a chosen span is not a held span.** The window is chosen
+from a snapshot of the two floors, and the producer does not stop for it: publishing between the
+snapshot and the first read, between the two reads, or during either copy makes `readEndingAt`
+protect each ring on its own, which is what breaks the pair — only ONE read comes back short.
+Measured beside a producer running flat out at a 13000-frame chunk: 1441 of 3000 drawn frames held
+two windows that were not the same audio; **0 of 873** after. The frame now reads both windows before
+transforming either and draws only if `SpectrumView::onePairOneSpan` — both reads served the whole
+span, and neither ring's floor has since passed its start — else it holds whole. One further term is
+not a reader's to see: `pushBlock` writes its payload BEFORE publishing its index, so a push
+UNDERWAY is invisible in `write` (17 of 2269 drawn frames still mismatched with the pair proved
+against the published index alone), and the bound needed is the size of the largest push — which is
+`samplesPerBlock`, already published for the whole plugin, so the READER reserves it
+(`SpectrumView::reservedFloor`, from `AnabasisAudioProcessor::preparedBlockSize`) and the ring's
+protocol is byte-identical. **The audio path is untouched**, which is also why this was preferred to
+a reservation index published before the payload writes (a store on the audio path, an
+`ARCHITECTURE_REVIEW_GATE` item, recorded as the follow-up). *(Corrected 2026-09-06, same round: the
+draft put a `maxPush` atomic INSIDE `ScopeBuffer` and this paragraph described it. It was withdrawn
+rather than sent to review — a second home for a published fact — and the sentence above records
+what shipped.)* Costs nothing at real-time rates: 0 of 360 frames refused to draw audio that had
+arrived, across 512-, 4096- and 13000-frame blocks. Rows engaged: **Threading / cross-thread path**
+(ADR-0011's 0.2.12 amendment extended in place, dated — the proof, the reserve, what the audio path
+does and does not pay, and the rejected alternative; `THREAD_MODEL.md`), **New/changed test**
+(`state_tests.cpp` + `dsp_tests.cpp`; `TESTING.md` gains the two-halves shape for a property that
+only exists while another thread runs; this file), **Ship a version** (`CHANGELOG.md`,
+`HANDOVER.md`). `KNOWN_ISSUES.md` unchanged — KI-018's corner is a reset-identity question and this
+is a publication-timing one. Trail: `worklogs/2026-09-05-gr-history-tip.md` §15.
+
+**Addendum (2026-09-06, same round) — the pair reaches the SCREEN as a pair, and a reset reaches it
+at all.** Two findings one layer out from the ring. (1) `tick` computes `inDb`/`outDb` on the message
+thread and `paint` walked them on the GL render thread (macOS/Windows, "Which context paints"): an
+unsynchronised payload read, and a frame that could hold the input trace of tick N beside the output
+trace of tick N + 1 — **1 161 778 of 1 321 607 reads, measured; 0 of 306 485 after**. Both traces and
+the window they describe are now published inside a sequence bracket and read whole or not at all,
+into buffers only `paint` touches. (2) The reset edge floored the EMA and then returned before
+publishing, so where the host's block is at least a whole ring — the span is 0 on every tick there,
+not one — the previous rate's spectrum stayed on screen under the new rate's bin mapping; the reset
+now publishes the empty frame and commits its accounting. Rows engaged: **Threading / cross-thread
+path** — and this one is GATED: [ADR-0039](architecture/design-decisions/ADR-0039-spectrum-frame-publication.md)
+is filed **`Proposed`**, a new cross-thread path carrying a payload and a new atomic ordering, which
+ADR-0027 clause 4 and ADR-0038 clause 8 both name as returning to `ARCHITECTURE_REVIEW_GATE.md`; a
+green build does not clear it and `HANDOVER.md`'s Pending Tasks row carries it. Also **New ADR**
+(`ADR_INDEX.md`), ADR-0011's 0.2.12 amendment extended in place and dated, `THREAD_MODEL.md`'s
+"Which context paints" gaining its third — and first payload-carrying — site, **New/changed test**
+(`state_tests.cpp`; `TESTING.md`, including what a headless suite cannot see), **Ship a version**
+(`CHANGELOG.md`, `HANDOVER.md`). `KNOWN_ISSUES.md` unchanged. Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §16.
+
+**Addendum (2026-09-06, round 11) — the frame carries the configuration that makes it readable.**
+A trace is a row of BIN indices; `binHz = rate / kSize` is what turns one into a frequency, and
+`paint` read that rate from the processor while the trace came from the published frame — two
+independent reads of two objects, free to disagree, and round 10's frame publication widened the
+window rather than closing it. Measured at 6 kHz (bin 512 at 48 kHz, bin 256 at 96 kHz): −0.00 dB
+paired, **−116.80 dB** as an old trace under the new rate, **−120.00 dB** as a new trace under the
+old one. The rate now travels inside the frame and is taken under `GrHistoryBuffer`'s reset epoch —
+the bracket that ring's banner already required of any reader mapping entries through the prepared
+pair — so `SpectrumView` moves from the banner's unbracketed discipline to its bracketed one and
+`paint` reads no processor state at all. Rows engaged: **Threading / cross-thread path** — still
+GATED, [ADR-0039](architecture/design-decisions/ADR-0039-spectrum-frame-publication.md) WIDENED
+before approval and still **`Proposed`** (amending a record that is not signed off is what puts one
+coherent design in front of the reviewer; the index's warning about widening is about signed-off
+records); `THREAD_MODEL.md` and — the gap round 10 left — `THREADING_POLICY.md`'s Message → Painting
+row, which `DOCUMENTATION_LIFECYCLE_POLICY.md` requires alongside it and which had not been touched.
+**CLEARED 2026-09-06 (round 12): the owner approved ADR-0039 and it is now `Accepted`** — the fifth
+gated record cleared here. Recorded where this repository's process puts it: the ADR's Status banner
+and Status line, `ADR_INDEX.md`'s row and its amendment registry, dated by-exception amendment
+banners on ADR-0027 clause 4 and ADR-0038 clause 8, `THREAD_MODEL.md`, `THREADING_POLICY.md`'s
+Message → Painting row (header included), `HANDOVER.md`'s Pending Tasks row and `CHANGELOG.md`'s
+cross-link. `RELEASE_COMPATIBILITY_CHECKLIST.md` does not bind: the change is display-only and the
+checklist is a release-time gate with no tag cut. The same round fixed a REAL defect in the same
+path that no sanitizer can see — `paint` read the published frame into its drawing buffers and
+ignored the result, so a read it lost drew a mixture of two publications through the previous
+frame's rate; it now stages and commits on success only (`specPaint`). Also **Known issue corrected**
+(`KNOWN_ISSUES.md`: KI-017's `prepareToPlay` publication-lag audit
+covered the window INSIDE `engine.prepare` and not the one after it, which is where the mismatch
+lived; KI-018's one-tick cross-ring residual gains a rate consequence, not a wider window),
+**New/changed test** (`state_tests.cpp`; `TESTING.md`, including the valgrind premise lesson),
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`). Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §17.
+
+**Addendum (2026-09-07, round 13) — one frame is one span AND one configuration generation.** The
+review found a published pair holding one trace from each configuration: `tick` floored the EMA of
+the ring whose rewind it had observed and left the other's alone, so a reader that had accounted for
+one of `AnabasisEngine::prepare`'s two back-to-back rewinds and not the other drew a freshly refilled
+trace beside one still carrying the configuration that ended — **104.3 dB apart** at the old marker
+bin at a 512-frame block, 69.0 dB at 4096, measured on the real processor through the real analysis
+and rendering path. The repair is inside ADR-0039's own mechanism and adds none: the floor is now
+JOINT (detection stays per ring, because a rewind is a property of one ring's index; the consequence
+is the whole view's, because `prepare` rewinds both rings unconditionally), and the frame carries a
+`uint32_t` configuration identity beside the window and the rate it already carried. Rows engaged:
+**Accepted-ADR conflict** — ADR-0039 clause 10's second bullet had ratified the removed behaviour in
+as many words (*"The residual is bounded, not removed, and the property claimed is the bounded
+one"*), so the change is filed as a dated **by-exception amendment** to clauses 1 and 10 rather than
+assumed, with a self-row added to `ADR_INDEX.md`'s amendment registry — a green build does not clear
+a conflict with an Accepted ADR even when the conflict is the code being stronger than the record.
+Clause 11's trigger list is NOT tripped: same site, same single writer, same bracket, same ordering,
+one scalar more. **Known issue corrected** (`KNOWN_ISSUES.md`: KI-018's cross-ring variant is
+REMOVED rather than narrowed, and its "reading in force is PER RING" line is corrected to per ring
+for detection and per display for the consequence; what remains is a reconfiguration NEITHER ring has
+made visible, which no flooring rule can answer). **Code comment corrected**: `SpectrumView.cpp`'s
+"PER RING, and the scope is deliberate" banner contradicted the code in its own file and is
+rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
+stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly

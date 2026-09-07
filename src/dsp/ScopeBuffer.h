@@ -2,14 +2,29 @@
 
 // Provenance (ADR-0009): copied from Anamorph src/dsp/ScopeBuffer.h:1-93 @ b6a3db8.
 // The §2.9 spectrum capture rings instantiate it — the THREAD_MODEL planned
-// edge, now implemented on the SPSC ring row. THREE functional deltas beyond
+// edge, now implemented on the SPSC ring row. FOUR functional deltas beyond
 // the namespace, each stated where it lives: heap storage instead of inline
-// arrays (the ctor, below); an ATOMIC payload; and, following from it, the
+// arrays (the ctor, below); an ATOMIC payload; following from it, the
 // reversion of the sibling's Wave-4 two-segment `memcpy` to two store loops
-// (`pushBlock`). ADR-0009 item 8 makes divergence accepted and one-way — there
-// is no upstream-sync obligation and no backport path, and Anamorph is
-// read-only from here (CLAUDE.md §3) — so the sibling keeps the unrepaired
-// shape. That instance is recorded in `docs/KNOWN_ISSUES.md` (KI-016) rather
+// (`pushBlock`); and the reader side needed to serve TWO rings as one — an
+// entry point that takes the END of the window rather than always taking this
+// ring's own head, a start clamped to the frames the producer has not taken
+// back, and the floor query a caller needs to choose a length both rings can
+// honour (`readEndingAt`, `oldestReadable`, 0.2.12). The sibling has ONE ring
+// and no pairing question; this product has two, and its analyser must read
+// both over one committed span. NOTHING about the producer's protocol changed:
+// the same single release-store publication, the same reset generation, the
+// same members. A draft of this round added a `maxPush` atomic here so the
+// floor could account for a push that is UNDERWAY; it was removed rather than
+// reviewed, because the size of the largest push is `samplesPerBlock`, which
+// `GrHistoryBuffer::prepared` ALREADY publishes to the GUI under a settled
+// discipline — "one atomic, one publication discipline, no second home for the
+// same fact" (`AnabasisAudioProcessor::preparedSampleRate`). The reserve is the
+// READER's, computed where the two rings are paired —
+// `SpectrumView::reservedFloor`, from `AnabasisAudioProcessor::preparedBlockSize`.
+// ADR-0009 item 8 makes divergence accepted and one-way — there is no
+// upstream-sync obligation and no backport path, and Anamorph is read-only from
+// here (CLAUDE.md §3) — so the sibling keeps the unrepaired shape. That instance is recorded in `docs/KNOWN_ISSUES.md` (KI-016) rather
 // than left as an undocumented difference.
 
 #include <atomic>
@@ -281,14 +296,96 @@ public:
     // A future capacity reduction or window widening narrows the DISPLAY
     // margin, not the legality; `count > capacity` alone would not catch it.
     int readLatest (float* dstL, float* dstR, int count) const noexcept
+    { return readEndingAt (dstL, dstR, count, kNewest); }
+
+    // THE SAME READ, ENDING WHERE THE CALLER SAYS (the fourth provenance delta,
+    // 0.2.12). `readLatest` answers "the newest `count` frames THIS ring has",
+    // which is the right question for a display with one ring and the wrong one
+    // for a display with two: the engine publishes the input tap and the output
+    // tap with one release-store each, back to back, so a reader can observe one
+    // ring a chunk past the other and pair the input spectrum of chunk k with
+    // the output spectrum of chunk k−1. `SpectrumView` therefore takes the
+    // COMMON COMMITTED HEAD — `min` of the two indices, the newest frame both
+    // taps have published — and asks each ring for the window ending there.
+    // Measured before it did: the two analysed windows ended at different
+    // indices on 1.28 % of ticks at 48 kHz / 512 and 4.70 % at 128 — the
+    // producer publishing during the 132 µs FFT that sits between the two
+    // reads — and a chunk of audio one tap had published alone reached one
+    // trace and not the other.
+    //
+    // EVERY SAFETY ARGUMENT OF `readLatest` SURVIVES, because this is that
+    // function with an upper bound on where the window ends:
+    //   * The acquire load is the same load, taken here rather than by the
+    //     caller, and `end` is CLAMPED to it. A caller's index can only be
+    //     stale-LARGE — the other ring's head, or an index this ring has since
+    //     rewound (`reset`) — and the clamp makes both cases read what this
+    //     ring has actually published, never past it. That is what keeps the
+    //     "copies strictly below the acquired index" contract true for an index
+    //     the caller supplied.
+    //   * The window is [e − count, e) with e ≤ w, so it stays disjoint from the
+    //     slot the producer is filling at w. The DISPLAY margin against a lap
+    //     narrows by exactly `w − e`: 12288 frames become 12288 − skew for the
+    //     only caller's 4096 of 16384 — AND THAT SUBTRACTION REACHES ZERO,
+    //     which the first draft of this comment named without following. A
+    //     chunk longer than the margin laps the window the caller asked for:
+    //     at `w − e ≥ 12289` the oldest requested frame is already overwritten,
+    //     at `w − e ≥ 16384` all of it is. Reproduced exactly there — 0
+    //     overwritten frames at a 12288-frame chunk, 1 at 12289, 712 at 13000,
+    //     4096 at 16384 — so the read now CLAMPS ITS OWN START as well as its
+    //     end (`oldestReadable`), and returns the shorter count rather than
+    //     frames the producer has taken back. The caller that reads two rings
+    //     as one span asks both for a length neither has to shorten, so the
+    //     clamp is a backstop rather than the mechanism; see `SpectrumView::tick`.
+    //   * Nothing else is touched: same mask, same relaxed payload loads, same
+    //     oldest-first order, same short-read return.
+    static constexpr uint64_t kNewest = ~(uint64_t) 0;   // "wherever this ring is"
+
+    // THE OLDEST ABSOLUTE INDEX THIS RING CAN STILL SERVE, as far as its own
+    // PUBLISHED index can say. Slot `i & mask` holds index `i` until the
+    // producer writes `i + capacity`, so a completed push leaves everything from
+    // `w − capacity` intact. One acquire load, no payload touched.
+    //
+    // IT IS NOT THE WHOLE BOUND, and the missing half is not this ring's to
+    // supply. `pushBlock` writes its payload FIRST and publishes the index
+    // AFTER, so a push that has not published yet is invisible here while its
+    // stores are already landing on slots a reader is copying — a reader
+    // checking this before and after its copy sees a ring that never moved.
+    // MEASURED: with a pair of rings proved against the published index alone,
+    // 17 of 2269 drawn frames still held two windows that were not the same
+    // audio at a 13000-frame push (0 of 2998 at 512, where no single push can
+    // reach the window). The bound that closes it is the SIZE of the largest
+    // push, i.e. `samplesPerBlock` — which the GUI already has, published by
+    // `GrHistoryBuffer::prepared` and forwarded as
+    // `AnabasisAudioProcessor::preparedBlockSize`. The reader adds that reserve
+    // itself (`SpectrumView::tick`); this ring gains no new state for it.
+    uint64_t oldestReadable() const noexcept
     {
         const auto w = write.load (std::memory_order_acquire);
+        return w > (uint64_t) capacity ? w - (uint64_t) capacity : 0;
+    }
+
+    int readEndingAt (float* dstL, float* dstR, int count, uint64_t end) const noexcept
+    {
+        const auto w = write.load (std::memory_order_acquire);
+        const uint64_t e = end < w ? end : w;
         if (count > capacity) count = capacity;
         // Adapted (beyond the namespace): both ternary arms made unsigned —
         // the original's int arm trips -Wsign-conversion under this repo's
         // warning gate; the value range is unchanged (count ≤ capacity).
-        const uint64_t available = (w < (uint64_t) count) ? w : (uint64_t) count;
-        const uint64_t start = w - available;
+        uint64_t available = (e < (uint64_t) count) ? e : (uint64_t) count;
+        uint64_t start = e - available;
+        // …and the START is clamped to what the producer has not taken back, from
+        // the SAME acquired index: a window ending inside the ring can still begin
+        // outside it (a chunk longer than `capacity − count`), and returning those
+        // frames would hand the caller audio it did not ask for while telling it
+        // the count it wanted. Shortening is the honest answer and the one the
+        // short-read contract already covers — `analyse` zero-pads a short read.
+        const uint64_t oldest = w > (uint64_t) capacity ? w - (uint64_t) capacity : 0;
+        if (start < oldest)
+        {
+            start     = oldest;
+            available = e > start ? e - start : 0;
+        }
         for (uint64_t i = 0; i < available; ++i)
         {
             const auto idx = (start + i) & mask;

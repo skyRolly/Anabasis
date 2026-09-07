@@ -107,6 +107,144 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   all of it off the left edge; at host blocks of about 234 samples or fewer the window holds one
   point fewer, so that the buffer can hold every point's blocks. Evidence: this release. [Verified]
 
+- **Switching back from the spectrum no longer shows one frame of the old history.** The GR history
+  publishes what it draws once per frame, and it stops publishing while the spectrum has the graph
+  well — so the pair describing "where the history is" went stale by one block for every block that
+  arrived meanwhile. The host repaints a view the moment it becomes visible, and that repaint can
+  reach the screen before the view's first frame callback: when it did, the first visible frame drew
+  the history as it was before the switch — the whole trace, and the level fill behind it, shifted
+  to the right — and the next frame snapped it back. Measured on the real paint path: with the
+  repaint landing first, 148 of 248 switches drew that stale frame, up to 91.7 px out after two
+  seconds on the spectrum (2.2 px after 50 ms); the view now re-derives its state the instant it
+  becomes visible, before any repaint can read it, and the same 248 switches — including 200 with no
+  recovery time between them — draw the current state on the first visible frame every time.
+  Evidence: this release. [Verified]
+
+- **A GR history that comes back to a stopped transport no longer drifts.** The first fix above
+  re-derived the view's state the instant it became visible, which repairs the position when blocks
+  arrived while the spectrum had the well. It could not repair the sub-block one: between blocks the
+  trace advances by real time, and re-deriving with no elapsed time kept whatever fraction of a block
+  the switch happened to catch — so a history that came back to a transport that had stopped resumed
+  the rest of a movement whose time had already passed, and the first frame sat up to one block-step
+  from where a view that had never been hidden would have drawn it (0.48 px at 48 kHz / 512 on the
+  Simple well, 4.2 px at 4096-sample blocks). The view now re-derives for the seconds it was actually
+  away. Measured over 450 switches on the real paint path, with the transport stopped: the first
+  visible frame is where a never-hidden view would have it on every one of them (it was wrong on all
+  150 of the stopped-transport cases before), and nothing moves afterwards until audio arrives.
+  Evidence: this release. [Verified]
+
+- **The spectrum is current the frame it comes back, too.** It has no scrolling trace, so the same
+  lifecycle showed up as levels rather than positions: the analyser stops while the GR history has
+  the well, the first frame after the switch back drew the analysis of audio that had already gone
+  by, and because the per-bin smoothing is a time constant rather than a step, the trace kept 87 % of
+  every falling bin for a further tenth of a second of watching. Measured against a view that was
+  never hidden: mean 4.1–5.7 dB per bin off, up to 55 dB on one, for switches from one frame to two
+  seconds. The analyser now runs once for the seconds it was away before the first frame can be
+  painted, which lands the trace on the current spectrum outright for any switch of about half a
+  second or more (0.07 dB at 500 ms, exact at two seconds) and keeps exactly the peaks a never-hidden
+  view would still be holding for a brief one. A view that comes back to a ring nothing has been
+  written to still holds the trace it had, unchanged, which is what a visible analyser does with an
+  idle ring. One further case closes with it: a sample-rate or block-size change during the switch
+  used to put one frame of the previous configuration's analysis on screen through the new
+  configuration's frequency mapping. Evidence: this release. [Verified]
+
+- **The spectrum's two traces always describe the same moment.** The input and the output trace are
+  drawn from two separate captures that the audio engine hands over one after the other, and each
+  trace used to be read at whichever point its own capture had reached — with a 4096-point transform
+  running between the two reads, which is long enough for a new block to arrive in between. The
+  result was a frame showing the input of one block beside the output of another, in the one display
+  whose purpose is comparing them: measured on 1.3 % of frames at 48 kHz / 512 and 4.7 % at 128 —
+  roughly once a second — with a transient reaching one trace 87 dB above where the other still read
+  it as silence. Both traces are now read at the newest point BOTH captures have reached, so a block
+  only one of them has handed over is drawn on the first frame where both have, at most one block
+  later. Measured after: 0 of 15 000 frames at either block size, and a marker block published to one
+  capture alone reaches neither trace until the other publishes it too. Evidence: this release.
+  [Verified]
+
+- **…and a very large audio buffer cannot break that.** Each capture holds about a third of a second
+  of audio at 48 kHz, so a single buffer longer than 12 288 samples can overwrite the very history
+  the two traces were about to be drawn from — one sample of it at 12 289, all of it at 16 384 and
+  above — and the analyser would have drawn whatever had replaced it: the two traces disagreed by
+  15.6 dB at a 13 000-sample buffer and 21.4 dB at 20 000, in a place where the input and the output
+  genuinely differ by 0.3. The pair now also agrees on the LENGTH it reads — whatever both captures
+  can still supply — so the window shortens for both traces together instead of one of them reading
+  audio that has been taken back, and where a buffer as long as the whole capture leaves nothing in
+  common, the last coherent pair stays on screen for that frame rather than half of it being
+  redrawn. Measured after: no overwritten sample is read at any buffer size from 512 to 32 768, the
+  two traces agree everywhere, and buffers up to 12 288 samples are bit-identical to before.
+  Evidence: this release. [Verified]
+
+- **…and neither can audio arriving while the frame is being drawn.** Choosing the window is not the
+  same as getting it: the audio thread keeps writing while the analyser copies, and each capture
+  protected itself alone — which is what broke the pair, since only one of the two copies would come
+  back short. Beside a producer running flat out at a 13 000-sample block, 1 441 of 3 000 drawn
+  frames held two windows that were not the same audio. The analyser now copies both windows before
+  it transforms either and draws the frame only if both came back whole and neither capture has
+  since overwritten the start of the window; a frame that cannot show that is held, and the next one
+  redraws from a settled state. It also accounts for a write that is still in progress — the audio
+  thread fills a capture before it announces it, so the analyser holds back one block's worth of the
+  oldest history, using the block size the plugin already publishes when the host prepares it.
+  Measured after: 0 of 873 drawn frames disagreed, and
+  at the rate a host actually delivers audio not one frame in 360 declined to draw what had arrived.
+  Evidence: this release. [Verified]
+
+- **…and neither can the drawing itself.** On macOS and Windows the display is drawn on a different
+  thread from the one that computes it, and the two traces were handed over one after the other — so
+  a drawn frame could pair the input trace of one update with the output trace of the next, in the
+  one display whose purpose is comparing them. Measured with a second thread reading as fast as it
+  could while the analyser updated 4 000 times, each update carrying a whole window of one of two
+  alternating tones: 1 161 778 of 1 321 607 reads held two different updates. Both traces and the
+  stretch of audio they describe are now handed over together, and the drawing takes them whole or
+  keeps the pair it already had — never a mixture. Measured after: 0 of 306 485.
+  Evidence: this release. [Verified]
+
+- **The spectrum display can no longer draw a mixture of two updates.** The drawing takes the
+  display's two traces through a hand-over that can be overtaken by an update in progress; when that
+  happens it must keep the pair it already had. It was instead reading the new pair into the buffers
+  it draws from and then finding out the read had failed — leaving up to two updates' worth of
+  content mixed together on screen, read through the previous update's frequency scale. Measured on
+  the shipped build: of 4274 drawings, 95 lost the hand-over and 44 of those had already overwritten
+  what they draw. The read now lands in its own buffers and is taken up only when it succeeded.
+  Evidence: this release. [Verified]
+
+- **The spectrum's frequency scale can no longer belong to a different moment than the trace.** A
+  trace is a row of analysis bins; what turns a bin into a frequency is the sample rate, and the
+  display used to fetch that rate for itself while the trace came from the update that produced it.
+  Across a rate change the two could disagree for as long as it took the next update to arrive, so a
+  6 kHz tone captured at 48 kHz was drawn where 12 kHz belongs after a change to 96 kHz — and where
+  the tone actually was, the display showed nothing: measured at that point on the scale, −0.00 dB
+  when the two agree and −116.8 dB and −120.0 dB when they do not, i.e. the tone gone from the
+  display either way. The trace and the scale it is read through are now handed to the drawing as one
+  thing, taken from one configuration, so a frame either shows both or keeps the pair it already had.
+  This widens the threading decision ADR-0038 took, so it went to architecture review and was
+  **approved** ([ADR-0039](docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md),
+  Accepted 2026-09-06). Evidence: this release. [Verified]
+
+- **A change of sample rate or buffer size can no longer leave the previous spectrum on screen.**
+  Re-preparing the plugin clears both captures and re-maps every frequency, and the analyser drops
+  its trace to the floor when that happens — but where the host's buffer is as large as a capture
+  (16 384 samples, a third of a second at 48 kHz) no window is ever left to draw, and the cleared
+  trace never reached the screen: the old spectrum stayed up, now stretched across a different
+  frequency axis, indefinitely. A 6 kHz tone drawn at 48 kHz sits where 12 kHz belongs after a
+  change to 96 kHz. The reset now puts the empty display up instead, and holds it until a frame it
+  can vouch for exists. Nothing is invented and the smaller buffer sizes are unaffected: there the
+  first frame after the change is the new configuration's, as before.
+  Evidence: this release. [Verified]
+- **The spectrum's two traces can no longer belong to two different configurations.** Re-preparing
+  the plugin clears both captures, and the analyser dropped the trace of whichever capture it had
+  noticed being cleared — one at a time. A display that had noticed one and not the other therefore
+  drew one trace freshly built from the new configuration beside one still holding the previous
+  one's, in a display whose whole purpose is comparing the two: with a 5 kHz tone at 48 kHz and a
+  change to 96 kHz, the pair read **104.3 dB apart** at the bin the old rate put the tone in — a
+  frequency the new configuration's audio has nothing at — at a 512-sample buffer, and 69.0 dB at
+  4096. Either capture being cleared now drops BOTH traces, because re-preparing clears both, and
+  every published frame carries the identity of the configuration it belongs to alongside the window
+  and the sample rate it already carried. Nothing else about the display changes: the same frames,
+  the same smoothing, the same axis, and a display with nothing to show yet still shows the empty
+  panel rather than the previous configuration's. Cross-links
+  [ADR-0039](docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md), amended by
+  exception for this repair. Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

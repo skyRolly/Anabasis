@@ -353,6 +353,151 @@ no atomics and no possibility of interleaving with a user gesture.
   > the fence has drifted below the payload stores, when it is the wrong fence, when it is only in a
   > comment, and when the function has been renamed out from under the rule. Six self-test cases,
   > both directions.
+
+  > **Amended 2026-09-06 (0.2.12, the PR review's split-publication finding) — the two SPECTRUM
+  > rings are one publication, and the reader now treats them as one.** The rows above settle how a
+  > reader reads ONE ring safely. `SpectrumView` reads TWO, and the pairing was never stated: the
+  > engine publishes the post-input-gain tap and the post-chain tap with one release-store each,
+  > back to back in `processChunk`, and until this amendment each trace was analysed at ITS OWN
+  > ring's head — two independent acquire loads separated by a whole 4096-point FFT. A chunk
+  > published between those two reads therefore reached one trace and not the other, and the frame
+  > drew the input spectrum of chunk k beside the output spectrum of chunk k ± 1, in the one display
+  > whose purpose is comparing them. MEASURED on the real processor with a real audio thread: the
+  > two analysed windows ended at different indices on **1.28 % of ticks at 48 kHz / 512 and 4.70 %
+  > at 128** — the OUTPUT trace leading, because its read is the later one — against 0.015 % /
+  > 0.029 % for the window between the producer's two stores, which is the window the review named
+  > and two orders of magnitude the smaller of the two.
+  >
+  > **The rule.** A frame's two traces describe the SAME committed span: the reader takes
+  > `E = min (w_in, w_out)` — the newest frame index BOTH taps have published — once per tick, and
+  > each trace is analysed over the window ENDING at E (`ScopeBuffer::readEndingAt`, the fourth
+  > delta on that copied file). A chunk one tap has published alone is not yet a state the PAIR can
+  > represent; it is drawn on the first frame where both have, at most one chunk later. The idle
+  > gate keys on the same E, so "new frames" means frames the pair can be drawn from.
+  >
+  > **What it does NOT change, and this is the half worth stating.** No new atomic, no new ordering,
+  > nothing added to the audio path: the producer is untouched and the reader still takes the same
+  > acquire loads it always did. `readEndingAt` CLAMPS the caller's index to its own ring's acquired
+  > head, so every safety argument above survives verbatim — the window stays strictly below the
+  > slot the producer is filling, and a caller's index that is stale-large (the other ring's head,
+  > or one this ring has since rewound) reads exactly what `readLatest` would have. The lapping
+  > MARGIN narrows by the skew, bounded by one chunk: 12288 frames become 12288 − skew for the
+  > analyser's 4096 of 16384. The per-ring `shownInCount`/`shownOutCount` stay exactly as they were,
+  > because `resetObserved`'s count term is a claim about ONE ring's modification order and does not
+  > transfer to a minimum of two. KI-018's cross-ring variant is narrowed rather than closed (see
+  > that entry); its equal-count corner is untouched.
+  >
+  > **Amended again 2026-09-06 (same round, the review's large-block finding) — a shared END is only
+  > half of a shared SPAN.** The rule above is right and was under-specified: a ring can serve
+  > `[w − capacity, w)` and no more, so a ring whose head has run `capacity − kSize` = **12288**
+  > frames past the committed endpoint has already taken back the oldest frame of the window ending
+  > there. One chunk does it — `num` is the host's prepared block with no upper clamp — and the
+  > reader was still asking for 4096 frames. Reproduced at the boundary, one tap published and the
+  > other not: **0** overwritten frames of the 4096 requested at a 12288-frame chunk, **1** at 12289,
+  > **712** at 13000, **4095** at 16383, **all 4096** at 16384 and above; the traces that came back
+  > disagreed by 15.6 dB at 13000 and 21.4 dB at 20000, in a bin where the two taps genuinely differ
+  > by 0.3.
+  >
+  > **The completed rule.** The pair's floor is the HIGHER of the two rings' `oldestReadable()` — a
+  > span is common only if BOTH still hold it — and the span is `min (kSize, committed − floor)`,
+  > chosen once by the reader so that neither read has to shorten itself and the two windows cannot
+  > end up different lengths. It is `kSize` in every configuration a real-time host presents (the
+  > shrink begins only above a 12288-frame chunk, 256 ms at 48 kHz), and where it shrinks, both
+  > traces shrink together — a shorter window zero-padded at the front, which is exactly what the
+  > short-read path already does at start-up and after a rewind. `readEndingAt` additionally clamps
+  > its own START to the same floor, re-derived from its own acquired index: a backstop for the
+  > caller that does not ask, and for the producer that advances during the transform.
+  >
+  > **When no common span survives** — a chunk of a whole ring (16384 frames, 341 ms at 48 kHz)
+  > landing between the two publications — the tick draws nothing and the last coherent pair stays on
+  > screen: the split closes on the producer's next store, and the following tick draws the new span
+  > in full. Flooring would put silence where there is audio; reading anyway would put one trace's
+  > newest chunk where the other's history is. `committed == 0` is NOT that case: empty or rewound
+  > rings still take the zero-length read, which is how "nothing to analyse" is already expressed.
+  >
+  > **Amended again 2026-09-06 (same round, the review's concurrent-publication finding) — a chosen
+  > span is not a held span.** The two amendments above settle WHICH window a frame asks for. Neither
+  > settles that it got it: the span is chosen from a SNAPSHOT of the two floors, and the producer
+  > does not stop for it. Publishing between the snapshot and the first read, between the two reads,
+  > or during either copy makes `readEndingAt` protect each ring on its own — which is exactly what
+  > breaks the pair, because only ONE read comes back short. MEASURED beside a producer running flat
+  > out at a 13000-frame chunk: 1802 of 3000 frames had one read short, 3000 of 3000 had a copy
+  > lapped, and **1441 of 3000 drawn frames held two windows that were not the same audio**; 0 of 873
+  > after.
+  >
+  > **The proof.** Both windows are read while nothing is committed, and the frame is drawn only if
+  > `onePairOneSpan`: both reads served the whole span, and neither ring's floor has since passed the
+  > window's start. The first term rejects a read the producer shortened; the second is the
+  > before-and-after discipline the reset generations already use, applied to the lapping bound —
+  > the floor is monotone, so a floor still at or below the start after both copies means no slot in
+  > the window was overwritten at any point during either. A frame that cannot show this is HELD
+  > whole: nothing folded into either EMA, nothing committed, and the next tick re-derives from a
+  > settled producer. There is no retry loop and no lock; the invalidation needs the producer to
+  > publish `capacity − span` frames inside two 4096-frame copies, so a retry would be a second draw
+  > of the same lottery on a thread that has a frame to paint.
+  >
+  > **And one thing no reader can see for itself.** `pushBlock` writes its payload BEFORE it
+  > publishes its index, so a push that has not published yet is invisible in `write` while its
+  > stores are already landing on slots a reader is copying — a reader checking the index before and
+  > after sees a ring that never moved. Measured with the pair proved against the published index
+  > alone: 17 of 2269 drawn frames still held two windows that were not the same audio at a
+  > 13000-frame push. The bound a reader needs is the SIZE of the largest push, and the reserve is
+  > `SpectrumView::reservedFloor` — `w + samplesPerBlock − capacity` — applied where the two rings
+  > are paired, both when the span is chosen and in the post-read proof.
+  >
+  > **The RING's protocol is unchanged, and that is deliberate — CORRECTED 2026-09-06, same round.**
+  > This paragraph first recorded a `ScopeBuffer::prepare (maxPushFrames)` and a `maxPush` atomic
+  > INSIDE the ring, set by the engine at `prepare`. That draft was **withdrawn rather than sent to
+  > review**, because it added a field to the shared producer/consumer protocol for a fact the
+  > protocol already carried: the largest push is `samplesPerBlock`, which `GrHistoryBuffer::prepared`
+  > publishes to the GUI under a settled discipline and `AnabasisAudioProcessor::preparedBlockSize`
+  > forwards — "one atomic, one publication discipline, no second home for the same fact", the rule
+  > `preparedSampleRate` already states one line above it. A second home would have been an
+  > `ARCHITECTURE_REVIEW_GATE` Thread Model item (new shared state on the producer/consumer boundary)
+  > bought for nothing; the reader-side floor needs no clearance because it adds no shared state at
+  > all, reads only what is already published, and leaves `oldestReadable()` promising exactly what
+  > the PUBLISHED index proves. What both spellings give up is identical and is stated here rather
+  > than lost with the draft: a host preparing blocks of a whole ring or more (16384 frames, 341 ms
+  > at 48 kHz) leaves no window a reader can vouch for at any instant, so the analyser holds rather
+  > than drawing one it cannot. The alternative that would close even that — a reservation index
+  > published BEFORE the payload writes — is a store on the AUDIO path and remains a gated follow-up,
+  > not taken.
+  >
+  > **What it costs at real-time rates: nothing measurable.** With the producer delivering at its
+  > cadence and the analyser ticking at 60 Hz, 0 of 360 frames across 512-, 4096- and 13000-frame
+  > blocks refused to draw audio that had arrived; the reserve leaves the whole 4096-frame window up
+  > to a 12288-frame block, and the extra work per frame is two atomic loads and a branch.
+  >
+  > **Out of scope, recorded so it is not mistaken for solved.** The two taps are now INDEX-aligned;
+  > they are not AUDIO-TIME aligned. The output tap carries the chain's latency, so frame k of the
+  > output ring is the processed form of input audio roughly 10 ms earlier at 48 kHz. Aligning them
+  > would mean delaying the input tap by the reported latency — a display decision with its own
+  > cost, not a correctness repair, and nobody has asked for it.
+  > `worklogs/2026-09-05-gr-history-tip.md` §13 carries the measurements, the disproof of the
+  > review's own causal chain, and the mutants.
+
+  > **Amended again 2026-09-06 (same round, the review's concurrent-painting and large-block-reset
+  > findings) — the analysed pair is PUBLISHED to the painting thread, and that is a GATED change.**
+  > Everything above concerns how the reader reads the rings. It says nothing about how the reader's
+  > RESULT reaches the screen, and until this amendment the answer was: two plain
+  > `std::vector<float>` written by `tick` on the message thread and read by `paint` on the GL render
+  > thread (macOS/Windows — "Which context paints"). That is an unsynchronised cross-thread read of a
+  > payload, and a frame could hold the input trace of tick N beside the output trace of tick N + 1 —
+  > the split the amendments above remove from the ANALYSIS, re-entering at the display.
+  > **MEASURED with a reading thread standing in for the renderer, identical audio in both rings and
+  > a whole 4096-frame window of one of two alternating tones per tick: 1 161 778 of 1 321 607 reads
+  > (87.9 %) held two different ticks; 0 of 306 485 after.** A reset is the same story one step on: a
+  > held pair describes a configuration that no longer exists, and where the host's block is at least
+  > a whole ring the hold never ends, so the previous rate's spectrum stayed on screen under the new
+  > rate's bin mapping.
+  >
+  > The mechanism — a sequence bracket over per-bin `std::atomic<float>` storage carrying both traces
+  > and the window they describe, a painter-owned copy, two attempts and no more, and an empty frame
+  > published on the reset edge — is **[ADR-0039](ADR-0039-spectrum-frame-publication.md), filed
+  > `Proposed`**. It is a new cross-thread path carrying a PAYLOAD and a new atomic ordering, which
+  > `ARCHITECTURE_REVIEW_GATE.md` gates and which ADR-0027 clause 4 and ADR-0038 clause 8 both name
+  > explicitly as returning to that gate. **A green build does not clear it.** Nothing on the audio
+  > thread changed.
 - **Staleness hints** — relaxed monotonic generation counters carrying no payload.
 
 **Commands, message → audio** — one `std::atomic` per request, consumed with `exchange` at the
