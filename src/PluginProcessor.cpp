@@ -532,8 +532,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1645` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1715` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1654` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1724` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -784,17 +784,26 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // (GrHistoryView's banner), so history recorded under the same pair is
     // still drawn true; a changed pair is the case the clear has always
     // existed for (stale entries would be mapped through the wrong time base)
-    // and still clears. THE ENGINE'S PARTIAL ENTRY FOLLOWS THIS GATE, not the
-    // call: `engine.prepare` above carries the samples already folded into the
-    // unpublished entry across exactly the re-prepares this line keeps its
-    // entries across, so a transport start no longer loses the audio that was
-    // in flight (`AnabasisEngine::prepare`'s closing block). The gate and the pair it
+    // and still clears. THE ENGINE'S PARTIAL ENTRY FOLLOWS THE RING, not this
+    // call and not `engine.prepare` above: the engine reads the epoch this
+    // clear bumps (`AnabasisEngine::syncHistoryTimeline`), so the samples
+    // already folded into the unpublished entry survive exactly the
+    // re-prepares that keep the entries — a transport start no longer loses
+    // the audio that was in flight — and go with exactly the clears that
+    // discard them, including any that never reach this line at all. The gate and the pair it
     // keeps live in the ring since the 0.2.8 final review: the view used to
     // read the time base back from `getSampleRate()`/`getBlockSize()`, which
     // this callback's thread writes while the view's threads read — the ring
     // publishes the pair inside the clear's own epoch window instead, so a
     // frame maps its entries through the pair they were recorded under.
-    grHistoryRing.prepare (sampleRate, samplesPerBlock);
+    // ONE CALL, and that is deliberate: it is `grHistoryRing.prepare (rate,
+    // block)` with the engine's timeline sync welded to it. The engine's
+    // PARTIAL entry has to follow whatever that gate just decided — it asks
+    // the ring's reset epoch rather than being told — and a clear followed by
+    // no sync completes the new timeline's first entry with the old one's
+    // statistics. Splitting them here is what made that possible, so they are
+    // not splittable here any more.
+    engine.prepareHistoryTimeline (sampleRate, samplesPerBlock);
     dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a

@@ -118,6 +118,23 @@ ANCHOR = re.compile(r"(\d+)(?:-(\d+))?")
 # reporting a clean run. The list going empty is the expected end state of every
 # entry here, so it must be the boring case.
 DELIBERATE_REAIMS = set([
+    # 0.2.12 ROUND 16 — the GR history ring's prepare moved behind a welded
+    # engine entry point. `AnabasisAudioProcessor::prepareToPlay` called
+    # `grHistoryRing.prepare (sampleRate, samplesPerBlock)` directly; it now
+    # calls `engine.prepareHistoryTimeline (sampleRate, samplesPerBlock)`,
+    # which IS that call with the producer's timeline sync attached, so a clear
+    # cannot happen without the engine re-reading the ring's reset epoch.
+    # ADR-0039's proof rests on the ORDER of the two prepares in that callback,
+    # and the order is unchanged — but the cited LINE's text changed, so the
+    # gate cannot follow it and asks for a hand re-aim. Both anchors below were
+    # re-derived from the symbol the prose names and verified by reading the
+    # line they now point at.
+    ("docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md",
+     "src/PluginProcessor.cpp:806"),                     # engine.prepareHistoryTimeline
+    ("docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md",
+     "src/PluginProcessor.cpp:776, 806"),                # engine.prepare, then the ring's
+
+
     # ROUND 8 (2026-09-02) — nine spellings, fifteen occurrences, and the entry
     # exists because of a PROCESS mistake worth recording rather than a code one.
     #

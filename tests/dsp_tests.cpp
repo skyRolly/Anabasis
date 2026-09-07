@@ -4652,6 +4652,7 @@ static void testGrHistoryEntriesFollowThePreparedBlock()
         check (ring.prepare (rate, B) == false,
                "grPrepared: (premise) a re-prepare at an unchanged pair keeps the ring's timeline");
         engine.prepare (rate, B, 2);
+        engine.syncHistoryTimeline();   // …and the sync is a no-op, as it must be
         buf.clear();
         { juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, B); engine.process (sub, p); }
         // The COUNT does not discriminate here and the message says so: 300
@@ -4680,6 +4681,7 @@ static void testGrHistoryEntriesFollowThePreparedBlock()
         check (ring.prepare (rate, 256) == true,
                "grPrepared: (premise) a changed pair clears the ring");
         engine.prepare (rate, 256, 2);
+        engine.syncHistoryTimeline();
         check (ring.available() == 0, "grPrepared: …so the old timeline's entries are gone");
         buf.clear();
         { juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, 256); engine.process (sub, p); }
@@ -4786,6 +4788,11 @@ namespace grpause
                                            r.ringCleared = ring.prepare (rate, B / 2);   break;
                 case Break::explicitReset: engine.reset();                      break;
             }
+            // What the wrapper does after anything that can clear the ring
+            // (`AnabasisAudioProcessor::prepareToPlay`): give the engine the
+            // moment to ask the ring which timeline it is on. A no-op when the
+            // epoch has not moved, which is every case but the two changes.
+            engine.syncHistoryTimeline();
             const int nowB = brk == Break::blockChange ? B / 2 : B;
             for (int b = 0; b < post; ++b) deliver (nowB);
             // …and, for a SINGLE-cycle run, top the total up to a whole number
@@ -4864,6 +4871,7 @@ static void testTheHistorySurvivesASameConfigurationRePrepare()
         check (ring.available() == 1, "grPause: (premise) the entry in flight is one sample short");
         check (ring.prepare (rate, B) == false, "grPause: (premise) the ring keeps this timeline");
         engine.prepare (rate, B, 2);
+        engine.syncHistoryTimeline();
         feed (1);
         check (ring.available() == 2,
                "grPause: a re-prepare taken one sample before an entry boundary still lets the NEXT "
@@ -4925,6 +4933,7 @@ static void testTheHistorySurvivesASameConfigurationRePrepare()
         check (ring.prepare (rate, B / 2) && ring.available() == 0,
                "grPause: (premise) the block change cleared the ring");
         engine.prepare (rate, B / 2, 2);
+        engine.syncHistoryTimeline();
         feed (B / 2 - 1);
         check (ring.available() == 0,
                "grPause: 255 samples of a 256-sample timeline publish nothing — the count in flight "
@@ -4935,16 +4944,14 @@ static void testTheHistorySurvivesASameConfigurationRePrepare()
                "grPause: …and the 256th sample closes it");
     }
 
-    // ---- 5. An explicit `reset()` does NOT drop it, and that is the same
-    //         rule as everywhere else rather than a special case: `reset()`
-    //         touches no ring state at all — no epoch, no write index, no
-    //         slot, no prepared pair — so a drop there would take samples out
-    //         of a timeline the ring is still keeping, undetectably. Round 15
-    //         moved the clear out of `reset()` for that reason, leaving the
-    //         accumulator one writer. `AnabasisAudioProcessor` does not
-    //         override `AudioProcessor::reset()`, so `prepare`'s own tail is
-    //         its only caller today; this pins the rule for whoever gives it
-    //         a second one. ----
+    // ---- 5. An explicit `reset()` that clears NO ring state does not drop the
+    //         partial: the ring's timeline is still running, so the samples in
+    //         flight still belong to it. That is not a special case for
+    //         `reset()` — round 16 made it the general rule by having the
+    //         engine read the ring's epoch, so what matters is whether the
+    //         RING restarted, not which function was called.
+    //         `testTheHistoryTimelineIsTheRingsTimeline` covers the other
+    //         side: a reset that DOES clear the ring drops it. ----
     {
         const auto r = run (rate, B, 4, 300, 6, Break::explicitReset);
         check (r.markerEntries == 1 && r.markerIndex == control.markerIndex,
@@ -4972,6 +4979,356 @@ static void testTheHistorySurvivesASameConfigurationRePrepare()
                "the engine's gate and the ring's clear-on-change gate are one decision on one pair");
     }
 }
+
+// ===========================================================================
+//  THE PARTIAL ENTRY'S TIMELINE IS THE RING'S TIMELINE (0.2.12 round 16 — the
+//  PR review's second blocking finding, "explicit resets leak old history").
+//
+//  Rounds 14 and 15 both had the ENGINE decide the partial entry's fate, and
+//  got it wrong in opposite directions. Round 14 dropped it on every `prepare`,
+//  losing a prepared block of rendered audio on every transport start. Round 15
+//  mirrored `GrHistoryBuffer::prepare`'s clear-on-change comparison so the two
+//  agreed — and they did, for `prepare`. They did not agree for a ring cleared
+//  any OTHER way: `GrHistoryBuffer::reset()` rewinds the ring to a fresh
+//  timeline without going through `prepare` at all, and a partial accumulated
+//  under the old one survived into it. Measured before the repair, 48 kHz/512
+//  with 511 samples in flight: the new timeline's FIRST entry closed on ONE
+//  post-reset sample and carried the previous timeline's peak.
+//
+//  The engine no longer decides. `resetGuard` — the epoch the ring already
+//  publishes — changes on every `clear` and on nothing else, so it IS the
+//  timeline's identity; the engine records the epoch its partial was
+//  accumulated under and discards the partial when they part company.
+//
+//  EVERY PASS BELOW MEASURES THE SAME STRUCTURAL FACT: how many POST-break
+//  samples the first entry after the break stands for. That number is `B` for
+//  a new timeline and `B - carried` for a continued one, it is exact, and it
+//  does not depend on what the render pipeline happens to hold — which the
+//  peak alone does, since an engine that is NOT reset keeps rendering
+//  pre-break audio out of its lookahead line quite legitimately.
+// ===========================================================================
+namespace grepoch
+{
+    enum class Break { none, engineReset, ringReset, bothReset, samePair, changedPair };
+
+    struct Run
+    {
+        int      firstEntryNewSamples = -1;   // post-break samples the first new entry took
+        float    firstPeak = 0.0f;            // …and the statistics it carried
+        int64_t  entriesBefore = 0, entriesAtBreak = 0, entriesAfter = 0;
+        uint32_t epochBefore = 0, epochAfter = 0;
+        int      delay = 0;
+    };
+
+    // Prime `pre` whole entries, leave `partial` samples in flight carrying a
+    // LOUD marker in their render, take the break, then feed post-break audio
+    // ONE SAMPLE AT A TIME until the first entry closes.
+    static Run run (double rate, int B, int pre, int partial, Break brk)
+    {
+        Run r;
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        r.delay = engine.groupDelaySamples();
+        anabasis::EngineParameters p;
+
+        const float base = 0.20f, preAmp = 0.85f;
+        const int   markerLen = 64;
+        const int   markerIn  = pre * B - r.delay + 10;   // renders inside the partial
+        int t = 0;
+        juce::AudioBuffer<float> buf (2, B);
+        const auto deliver = [&] (int n)
+        {
+            for (int i = 0; i < n; ++i, ++t)
+            {
+                const bool marked = t >= markerIn && t < markerIn + markerLen;
+                buf.setSample (0, i, marked ? preAmp : base);
+                buf.setSample (1, i, marked ? preAmp : base);
+            }
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+
+        for (int b = 0; b < pre; ++b) deliver (B);
+        if (partial > 0) deliver (partial);
+        r.entriesBefore = ring.available();
+        r.epochBefore   = ring.resetEpoch();
+
+        const int newB = brk == Break::changedPair ? B / 2 : B;
+        switch (brk)
+        {
+            // The welded entry points, which are what production uses: the
+            // ring's own call with the engine's timeline sync attached, so a
+            // clear cannot happen without the engine re-reading the epoch.
+            case Break::none:        break;
+            case Break::engineReset: engine.reset(); engine.syncHistoryTimeline();       break;
+            case Break::ringReset:   engine.resetHistoryTimeline();                      break;
+            case Break::bothReset:   engine.reset(); engine.resetHistoryTimeline();      break;
+            case Break::samePair:    engine.prepare (rate, B, 2);
+                                     engine.prepareHistoryTimeline (rate, B);            break;
+            case Break::changedPair: engine.prepare (rate, newB, 2);
+                                     engine.prepareHistoryTimeline (rate, newB);         break;
+        }
+        r.epochAfter    = ring.resetEpoch();
+        r.entriesAtBreak = ring.available();
+        const int64_t floor0 = r.entriesAtBreak;
+
+        for (int n = 0; n < 4 * newB; ++n)
+        {
+            deliver (1);
+            if (ring.available() > floor0)
+            {
+                r.firstEntryNewSamples = n + 1;
+                r.firstPeak = ring.peek (floor0).peak;
+                break;
+            }
+        }
+        r.entriesAfter = ring.available();
+        return r;
+    }
+}
+
+static void testTheHistoryTimelineIsTheRingsTimeline()
+{
+    using grepoch::run;
+    using Break = grepoch::Break;
+    const double rate = 48000.0;
+    const int    B    = 512;
+
+    // ---- A. NO PARTIAL ENTRY: a break taken exactly on a boundary is
+    //         indistinguishable from no break at all, however it is taken. ----
+    for (Break brk : { Break::none, Break::engineReset, Break::ringReset,
+                       Break::bothReset, Break::samePair })
+    {
+        const auto r = run (rate, B, 4, 0, brk);
+        check (r.firstEntryNewSamples == B,
+               "grEpoch: with nothing in flight, the first entry after ANY break stands for a whole "
+               "prepared block of post-break audio");
+    }
+
+    // ---- B and C. A PARTIAL EXISTS and the ring starts a fresh timeline: the
+    //         first entry of that timeline must stand for B of ITS OWN samples
+    //         and carry none of the previous timeline's statistics. `B - 1` is
+    //         the sharpest case — before the repair that entry closed on ONE
+    //         post-reset sample. ----
+    for (int partial : { 1, 100, 300, B - 1 })
+        for (Break brk : { Break::ringReset, Break::bothReset })
+        {
+            const auto r = run (rate, B, 4, partial, brk);
+            check (r.epochAfter != r.epochBefore && r.entriesBefore > 0 && r.entriesAtBreak == 0,
+                   "grEpoch: (premise) the ring started a fresh timeline — new epoch, index rewound");
+            check (r.firstEntryNewSamples == B,
+                   juce::String ("grEpoch: …so its first entry stands for a whole prepared block of "
+                                 "post-reset audio, not for the " + juce::String (B - partial)
+                                 + " it would need if the partial had crossed").toRawUTF8());
+        }
+
+    // …and the statistics with it, asserted where the engine was reset too so
+    // the render pipeline cannot supply the marker by legitimate means.
+    for (int partial : { 300, B - 1 })
+    {
+        const auto r = run (rate, B, 4, partial, Break::bothReset);
+        check (r.firstPeak < 0.5f,
+               "grEpoch: …and it carries none of the previous timeline's statistics — the loud "
+               "marker folded into the partial before the reset is gone with it");
+    }
+
+    // …BOTH statistics, not just the peak. The passes above run on sub-ceiling
+    // material, where every entry's grDb is 0 and a leaked one would look
+    // exactly like a fresh one. This drives real reduction into the partial and
+    // then resets: the new timeline's first entry must report none of it.
+    {
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+        int t = 0;
+        const auto feedHot = [&] (int n)
+        {
+            for (int i = 0; i < n; ++i, ++t)
+            {
+                const float v = 1.60f * std::sin (0.05f * (float) t);   // well over the ceiling
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        feedHot (B);
+        feedHot (B);
+        feedHot (400);                       // …400 samples of deep reduction in flight
+        check (ring.available() == 2 && ring.peek (1).grDb < -0.5f,
+               "grEpoch: (premise) the partial in flight carries real gain reduction");
+        engine.reset();
+        engine.resetHistoryTimeline();
+        buf.clear();
+        int n = 0;
+        for (; n < 2 * B; ++n)
+        {
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, 1);
+            engine.process (sub, p);
+            if (ring.available() > 0) break;
+        }
+        check (n + 1 == B && ring.peek (0).grDb > -0.01f,
+               "grEpoch: the reduction folded into the partial before a reset does not reach the new "
+               "timeline's first entry either — the grDb statistic goes with the peak");
+    }
+
+    // ---- H. THE ACCUMULATOR'S OWN WELL-FORMEDNESS. A caller that shrinks the
+    //         engine's prepared block without touching the ring leaves a count
+    //         that no entry of the new size can hold. The wrapper never does
+    //         this — it prepares both — but `prepare` keeps the invariant
+    //         rather than letting the chunk loop publish an entry standing for
+    //         more audio than its own size. ----
+    {
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+        buf.clear();
+        const auto feed = [&] (int n)
+        {
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        feed (B);
+        feed (300);                          // 300 counted against a 512-sample entry
+        engine.prepare (rate, 256, 2);       // …and the ring is deliberately left alone
+        engine.syncHistoryTimeline();        // a no-op: the ring's epoch did not move
+        int n = 0;
+        for (; n < 2 * 256; ++n) { feed (1); if (ring.available() > 1) break; }
+        check (n + 1 == 256,
+               "grEpoch: shrinking the prepared block without touching the ring drops the partial "
+               "rather than publishing an entry that stands for more audio than its own size");
+    }
+
+    // ---- D. A RESET IMMEDIATELY AFTER AN ENTRY WAS PUBLISHED. Nothing is in
+    //         flight, so nothing can cross; the ring's own contract governs the
+    //         completed entries and is unchanged. ----
+    {
+        const auto r = run (rate, B, 4, 0, Break::bothReset);
+        check (r.entriesBefore == 4,
+               "grEpoch: (premise) four whole entries were published before the reset");
+        check (r.firstEntryNewSamples == B && r.firstPeak < 0.5f,
+               "grEpoch: a reset taken immediately after an entry was published leaks nothing, and "
+               "the new timeline's first entry is a whole one");
+    }
+
+    // ---- E. SAME-CONFIGURATION RE-PREPARE — round 15's repair, unchanged. A
+    //         same-pair `GrHistoryBuffer::prepare` is a total no-op, so the
+    //         timeline continues and the partial completes it. ----
+    for (int partial : { 1, 300, B - 1 })
+    {
+        const auto r = run (rate, B, 4, partial, Break::samePair);
+        check (r.epochAfter == r.epochBefore,
+               "grEpoch: (premise) a same-pair re-prepare does not touch the ring's epoch");
+        check (r.firstEntryNewSamples == B - partial,
+               juce::String ("grEpoch: …so the entry in flight completes on its remaining "
+                             + juce::String (B - partial) + " samples — a transport start still "
+                             "loses nothing").toRawUTF8());
+    }
+
+    // ---- E2. AN ENGINE reset that does NOT accompany a ring clear. The ring's
+    //          timeline continued, so the partial belongs to it and stays. This
+    //          is the case round 15 established and this round must not undo. ----
+    for (int partial : { 300, B - 1 })
+    {
+        const auto r = run (rate, B, 4, partial, Break::engineReset);
+        check (r.epochAfter == r.epochBefore && r.firstEntryNewSamples == B - partial,
+               "grEpoch: an engine reset that clears no ring state leaves the partial with the "
+               "timeline that is still running");
+    }
+
+    // ---- F. CONFIGURATION-CHANGING PREPARE — the old partial is discarded and
+    //         the new timeline's first entry is a whole entry of the NEW size. ----
+    for (int partial : { 300, B - 1 })
+    {
+        const auto r = run (rate, B, 4, partial, Break::changedPair);
+        check (r.epochAfter != r.epochBefore && r.firstEntryNewSamples == B / 2 && r.firstPeak < 0.5f,
+               "grEpoch: a prepared-block-size change discards the old partial — the new timeline's "
+               "first entry is a whole 256-sample one carrying only its own audio");
+    }
+
+    // ---- F2. ATTACHING A SINK is a timeline boundary of its own. An engine
+    //          with no ring accumulates all the same — only `push` is guarded —
+    //          so audio processed before a sink existed belongs to no timeline
+    //          and must not complete the first entry of the one it is given. ----
+    {
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+        buf.clear();
+        const auto feed = [&] (int n)
+        {
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        feed (B);
+        feed (B - 1);                       // …accumulated with nowhere to go
+        check (ring.available() == 0, "grEpoch: (premise) an engine with no sink publishes nothing");
+        engine.setGrHistorySink (&ring);   // adopts the ring's timeline by itself
+        int n = 0;
+        for (; n < 2 * B; ++n) { feed (1); if (ring.available() > 0) break; }
+        check (n + 1 == B,
+               "grEpoch: the first entry after a sink is attached stands for a whole prepared block "
+               "of audio processed SINCE the attachment — what came before belonged to no timeline");
+    }
+
+    // ---- G. REPEATED TRANSITIONS, ownership checked after every one. ----
+    {
+        anabasis::AnabasisEngine engine;
+        anabasis::GrHistoryBuffer ring;
+        ring.prepare (rate, B);
+        engine.prepare (rate, B, 2);
+        engine.setGrHistorySink (&ring);
+        anabasis::EngineParameters p;
+        juce::AudioBuffer<float> buf (2, B);
+        buf.clear();
+        const auto feed = [&] (int n)
+        {
+            juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+            engine.process (sub, p);
+        };
+        // Each step leaves 300 samples in flight, then takes a transition, then
+        // asks how many post-transition samples the next entry needs: 512 if the
+        // transition started a new timeline, 212 if it continued the old one.
+        const auto probe = [&] (int expectNew, const char* what)
+        {
+            const int64_t before = ring.available();
+            int n = 0;
+            for (; n < 2 * B; ++n) { feed (1); if (ring.available() > before) break; }
+            check (n + 1 == expectNew, what);
+        };
+        const auto sync = [&] { engine.syncHistoryTimeline(); };
+        feed (B); feed (300);
+        engine.reset(); sync();                           // ring untouched -> continues
+        probe (B - 300, "grEpoch: (G) an engine reset alone continues the timeline");
+        feed (300);
+        engine.prepare (rate, B, 2); engine.prepareHistoryTimeline (rate, B);   // same pair
+        probe (B - 300, "grEpoch: (G) a same-configuration re-prepare continues it too");
+        feed (300);
+        engine.reset(); engine.resetHistoryTimeline();    // ring cleared -> new timeline
+        probe (B, "grEpoch: (G) a reset that clears the ring starts a new one");
+        feed (300);
+        engine.prepare (rate, 256, 2); engine.prepareHistoryTimeline (rate, 256);  // changed
+        probe (256, "grEpoch: (G) …and so does a configuration change, at the new entry size");
+        feed (100);
+        engine.resetHistoryTimeline();                    // the ring alone, no engine reconfigure
+        probe (256, "grEpoch: (G) …and a ring reset with no engine reconfiguration at all");
+    }
+}
+
 
 
 
@@ -5961,6 +6318,7 @@ int main()
     testSpectrumRingsCarryTheTaps();
     testGrHistoryEntriesFollowThePreparedBlock();
     testTheHistorySurvivesASameConfigurationRePrepare();
+    testTheHistoryTimelineIsTheRingsTimeline();
     testNoBadSamples();
     testExtremeLevelDoesNotSilencePermanently();
     testExtremeLevelDoesNotBreakTheMetersOrAdaptation();

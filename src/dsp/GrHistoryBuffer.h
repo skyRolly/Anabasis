@@ -131,6 +131,16 @@ public:
     // dropped at worst, on an event (re-prepare) that already blanks the
     // programme. Readers must therefore never cache `available()` across an
     // epoch change; within one epoch the existing SPSC contract is unchanged.
+    //
+    // CALL `AnabasisEngine::resetHistoryTimeline()` INSTEAD when this ring has
+    // a producer (0.2.12 round 16). This starts a NEW TIMELINE, and the
+    // producer carries an unpublished partial entry belonging to the old one:
+    // clear without telling the engine to re-read the epoch and the new
+    // timeline's first entry is completed with the previous one's statistics,
+    // standing for as little as one sample. That wrapper is this call plus the
+    // sync, so it cannot be got wrong; the same is true of
+    // `prepareHistoryTimeline` for the gate below. This entry point stays
+    // public for rings with no producer attached, which is what the tests use.
     void reset() noexcept
     {
         clear (preparedRate.load (std::memory_order_relaxed),
@@ -258,6 +268,20 @@ public:
     // Reader side of the contract above. Even = stable; sample before a batch
     // of peeks, and close the batch with `batchIntact` — which is the fence
     // plus the re-read, and not this load again.
+    //
+    // THE PRODUCER'S OWNER READS IT TOO, since 0.2.12 round 16, and for a
+    // different question: not "did my batch survive a clear?" but "is the
+    // partial entry the engine is carrying still on this ring's timeline?". A
+    // clear is the only thing that moves this value, so a change in it IS the
+    // event "a new timeline started", whichever call caused it, and
+    // `AnabasisEngine::syncHistoryTimeline` throws the unpublished partial
+    // away when it sees one — welded to the two calls that can clear, as
+    // `prepareHistoryTimeline`/`resetHistoryTimeline`. That read takes no
+    // batch and needs no bracket —
+    // it compares one epoch against the one it recorded — and it happens on
+    // the HOST thread, right after the call that may have cleared, so it is
+    // not a read of this ring off the message thread and adds no path to
+    // `THREADING_POLICY.md`'s table.
     uint32_t resetEpoch() const noexcept
     { return resetGuard.load (std::memory_order_acquire); }
 

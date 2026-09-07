@@ -283,6 +283,20 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   [ADR-0011](docs/architecture/design-decisions/ADR-0011-threading-model.md), amended for the
   partial point's lifecycle. Evidence: this release. [Verified]
 
+- **A history point can no longer be built from two different recordings.** When the graph starts a
+  fresh timeline — a change of sample rate or buffer size, or anything else that clears it — the
+  point still being collected belonged to the recording that just ended, and it was being finished
+  off with the new one's audio. The result was a full-width point on the new trace standing for as
+  little as a single sample, carrying the level and reduction of audio from before the restart:
+  measured at 48 kHz with a 512-sample buffer and 511 samples in flight, the first point of the new
+  timeline was drawn from 20 microseconds of new audio and the previous timeline's peak. The point
+  in progress now belongs to the recording it was started in, and is discarded whenever the graph
+  starts a new one — so the first point of any new timeline is always a whole buffer of that
+  timeline's own audio. Pausing and resuming is unaffected: that does not start a new recording, and
+  the point in progress is still carried across it. Cross-links
+  [ADR-0011](docs/architecture/design-decisions/ADR-0011-threading-model.md), amended for where that
+  decision is taken. Evidence: this release. [Verified]
+
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**
   The boundary above would otherwise have cost the panel its four rightmost columns, leaving the GR

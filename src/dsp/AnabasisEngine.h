@@ -73,6 +73,48 @@ public:
     void prepare (double sampleRate, int maxBlockSize, int numChannels);
     void reset() noexcept;
 
+    // HOST THREAD, AUDIO STOPPED — call immediately after anything that may
+    // have cleared the sink ring, which in production is the wrapper's
+    // `grHistoryRing.prepare` inside `prepareToPlay`. Reads the ring's reset
+    // epoch and drops the partial entry if the ring has started a new
+    // timeline; keeps it if the ring's timeline is still running.
+    //
+    // WHY THE HOST THREAD AND NOT `process`. Asking on the audio thread would
+    // be airtight against callers — the engine would notice any clear by
+    // itself — but it would put an audio-thread READ on a ring whose reader
+    // contract `THREADING_POLICY.md` confines to the message and painting
+    // threads ("no reads off the message thread"), and that policy's table
+    // makes any path not in it an Architecture Review Gate item. The read
+    // happens on the thread that WROTE the epoch instead, with processing
+    // suspended, which is no cross-thread access at all. The cost is that a
+    // clear must be followed by this call: there is exactly one such site
+    // today and `GrHistoryBuffer`'s header carries the obligation beside the
+    // functions that can clear.
+    void syncHistoryTimeline() noexcept;
+
+    // THE ONLY SUPPORTED WAYS TO MOVE THE HISTORY RING'S TIMELINE, host thread,
+    // audio stopped. They are the ring's own `prepare`/`reset` with the sync
+    // that must follow them welded on, so the production path cannot be split
+    // — which is the difference between an obligation a caller has to
+    // remember and one it cannot express otherwise. The raw ring calls remain
+    // reachable (it is the wrapper's member), and `GrHistoryBuffer`'s header
+    // points at these from beside both of them.
+    void prepareHistoryTimeline (double rate, int block) noexcept
+    {
+        if (grHistory != nullptr)
+            grHistory->prepare (rate, block);
+        syncHistoryTimeline();
+    }
+
+    void resetHistoryTimeline() noexcept
+    {
+        if (grHistory != nullptr)
+            grHistory->reset();
+        syncHistoryTimeline();
+    }
+
+public:
+
     // WHERE THE GR HISTORY'S ENTRIES ARE PUSHED (0.2.12, OQ-017 fix 1). Set
     // once by the wrapper, which owns the ring; null until it is, and a null
     // sink simply pushes nothing.
@@ -95,7 +137,23 @@ public:
     // single-producer `push`: this moves WHO calls it and WHEN, and adds no
     // cross-thread path. `specInRing`/`specOutRing` are pushed from the chunk
     // loop already; this is that pattern with the wrapper's ring.
-    void setGrHistorySink (GrHistoryBuffer* sink) noexcept { grHistory = sink; }
+    void setGrHistorySink (GrHistoryBuffer* sink) noexcept
+    {
+        // Attaching a sink IS a timeline boundary: whatever the accumulator
+        // held belonged to no ring, so it starts empty on the one it is now
+        // publishing into, and adopts that ring's current epoch. Belt and
+        // braces rather than load-bearing — a ring that has ever been prepared
+        // has a non-zero epoch, so `adoptHistoryTimeline` would drop the
+        // partial at the first `process` anyway. What this closes is the
+        // collision: attaching a ring whose epoch happens to equal the one the
+        // accumulator was recorded under, which no caller in this tree
+        // creates and which costs three stores to make impossible.
+        grHistory   = sink;
+        histMinGain = 1.0f;
+        histPeak    = 0.0f;
+        histSamples = 0;
+        histEpoch   = sink != nullptr ? sink->resetEpoch() : 0;
+    }
 
     // Audio thread. Adopts the per-block POD snapshot (ADR-0011). Blocks
     // larger than the prepared maximum are processed in prepared-size chunks,
@@ -524,41 +582,34 @@ private:
     // chunk never straddles one and the fold above is exact for the entry's
     // own span rather than for whatever the host happened to hand over.
     //
-    // ONE WRITER OUTSIDE THE CHUNK LOOP: `prepare`'s CHANGED-PAIR branch, and
-    // not `reset()` (round 15). Round 14 dropped it on every prepare, on
-    // the argument that a re-prepare is a discontinuity in the audio the
-    // entries describe — but the ring does not treat it that way, and the
-    // product does not either: `GrHistoryBuffer::prepare` keeps the entries at
-    // an unchanged (rate, block) pair because hosts re-prepare on transport
-    // start (ADR-0023 item 6), and `USER_MANUAL.md` promises the user that
-    // "pausing and resuming continues the timeline; it restarts only when the
-    // sample rate or block size changes". Dropping the partial there put up to
-    // `maxBlock - 1` samples of already-rendered audio into no entry at all
-    // while the ring kept every entry around them. It is now dropped across
-    // exactly the re-prepares that CLEAR the ring's entries and carried across
-    // every other — one decision, taken from `preparedRateRaw`/
-    // `preparedBlockRaw` below. `reset()` is out of it because it touches no
-    // ring state at all, so a drop there would be the same loss at a different
-    // door; the accumulator is publication state, not audio memory.
+    // THE PARTIAL BELONGS TO A TIMELINE, AND THE RING SAYS WHICH ONE.
+    //
+    // Two rounds got this wrong in opposite directions by having the ENGINE
+    // decide. Round 14 dropped the partial on every `prepare`, which lost up to
+    // `maxBlock - 1` samples of already-rendered audio every time a host
+    // re-armed the transport — `GrHistoryBuffer::prepare` keeps its entries at
+    // an unchanged (rate, block) pair (ADR-0023 item 6; `USER_MANUAL.md`:
+    // "pausing and resuming continues the timeline"). Round 15 mirrored that
+    // pair comparison here so the two agreed — and they did, for `prepare`.
+    // They did not agree for a ring cleared any OTHER way: measured, a
+    // `GrHistoryBuffer::reset()` rewinds the ring to a fresh timeline while a
+    // partial accumulated under the old one survives, so the new timeline's
+    // FIRST entry closes on as little as one sample of new audio and carries
+    // the previous timeline's statistics.
+    //
+    // The engine no longer decides. `resetGuard` — the ring's reset epoch,
+    // already published for readers — changes on every `clear` and on nothing
+    // else, so it IS the timeline's identity. `histEpoch` is the epoch this
+    // partial was accumulated under; `adoptHistoryTimeline` compares them once
+    // per `process` call and discards the partial when they differ. Same-pair
+    // `prepare` is a total no-op on the ring, so the epoch holds and the
+    // partial is kept; every clear moves it, so the partial goes. One
+    // definition of "which timeline is this", owned by the object that has it.
     GrHistoryBuffer* grHistory = nullptr;
-    float histMinGain = 1.0f;
-    float histPeak    = 0.0f;
-    int   histSamples = 0;
-
-    // THE PAIR THIS ENGINE WAS LAST PREPARED WITH, AS THE HOST GAVE IT — not
-    // `sr`/`maxBlock`, which are the RAILED copies (`jmax (0, …)` on the
-    // derived delay, `jmax (1, …)` on the block). `prepare` uses it for one
-    // question only: did this re-prepare END the history's timeline or
-    // CONTINUE it? That has to be the SAME answer `GrHistoryBuffer::prepare`
-    // reaches, because the ring keeps its entries exactly when the answer is
-    // "continue" — and the ring compares the RAW `(sampleRate,
-    // samplesPerBlock)` the wrapper hands both of them. Comparing the railed
-    // copies instead would call (48000, 0) and (48000, 1) one configuration
-    // while the ring called them two, and a carried partial would land in a
-    // cleared ring's first entry. Initialised to the ring's own initial pair,
-    // so the two agree from the first `prepare` as well.
-    double preparedRateRaw  = 0.0;
-    int    preparedBlockRaw = 0;
+    float    histMinGain = 1.0f;
+    float    histPeak    = 0.0f;
+    int      histSamples = 0;
+    uint32_t histEpoch   = 0;
 public:
     // §5.4 feature/trim readouts for the Advanced-view overlay and tests.
     const AdaptiveEngine& adaptive() const noexcept { return adaptiveEngine; }

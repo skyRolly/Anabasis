@@ -6,7 +6,12 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-07, round 15)** — the PR review's blocking finding: the
+**Last updated:** for **0.2.12 (2026-09-07, round 16)** — the PR review's second blocking finding:
+round 15's engine MIRRORED the ring's clear-on-change comparison, so a ring cleared any other way
+(`GrHistoryBuffer::reset()`) restarted its timeline while a partial from the old one survived into
+it — the new timeline's first entry closing on as little as one sample. The engine now READS the
+ring's reset epoch and the mirrored predicate is deleted (ADR-0011 amended a third time; entry
+below). Before that, for **0.2.12 (2026-09-07, round 15)** — the PR review's blocking finding: the
 producer dropped the partial history entry on every re-prepare while the ring keeps its entries at
 an unchanged pair, so a transport start lost up to a prepared block of already-rendered audio
 (ADR-0011 amended again for the accumulator's lifecycle, and the stale per-host-block cadence
@@ -419,6 +424,37 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-07, round 16) — the partial entry's timeline is READ from the ring, not
+mirrored.** The review's second blocking finding. Round 15 reproduced `GrHistoryBuffer::prepare`'s
+clear-on-change comparison inside the engine so the two agreed; they agreed for `prepare` and for
+nothing else, and `GrHistoryBuffer::reset()` restarts the ring's timeline without going through
+`prepare` at all. Measured on the real engine and a real ring at 48 kHz / 512 with 511 samples in
+flight: the new timeline's FIRST entry closed on **one** post-reset sample and carried the previous
+timeline's peak. `resetGuard` moves on every `clear` and on nothing else, so the engine now records
+the epoch its partial was accumulated under and discards the partial when they differ, once per
+`process` call before any audio is folded; `preparedRateRaw`/`preparedBlockRaw` are deleted. Rows
+engaged: **Accepted-ADR amendment** — ADR-0011 gains a third 2026-09-07 amendment, with
+`ADR_INDEX.md`'s registry row updated to carry all three. Explicitly **not** a review-gate item, and
+the reason is a design choice rather than a claim: the read was FIRST implemented on the audio
+thread, once per `process` call, which would have been airtight against callers but is at best
+arguable against this policy's own "no reads off the message thread" bullet for a scope/GR ring —
+so it moved to the HOST thread, right after the call that may have cleared, where it is not a
+cross-thread access at all and adds nothing to the audio path. The cost, recorded: a clear must be
+followed by the sync, and `GrHistoryBuffer`'s header carries that obligation beside both functions
+that can clear. **Reachability recorded rather than implied**: against round 15 the leak was latent, since `AnabasisAudioProcessor` does not override
+`AudioProcessor::reset()` and `GrHistoryBuffer::reset()` has no production caller — which is the
+argument for changing the design rather than patching the symptom, because round 15's correctness
+depended on that accident and the obvious small fix (restore the clear in `AnabasisEngine::reset()`)
+would not have fixed the measured case at all. **Code comments corrected**: `GrHistoryBuffer.h`'s
+`resetEpoch` said "reader side" and now names the host-thread read as well, with the caller
+obligation stated beside `reset()`; `AnabasisEngine`'s member banner,
+`prepare`'s two comment blocks and `reset()`'s block all described the mirrored predicate; and
+`PluginProcessor.cpp`'s `prepareToPlay` comment pointed at a closing block of `prepare` that no
+longer exists. **New/changed test** (`dsp_tests.cpp` — `testTheHistoryTimelineIsTheRingsTimeline`,
+cases A–G; pass 5 of `testTheHistorySurvivesASameConfigurationRePrepare` re-worded; `TESTING.md`).
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total). Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §22.
 
 **Addendum (2026-09-07, round 15) — the partial entry follows the ring, and the cadence contract
 says which unit.** The PR review's blocking finding: `AnabasisEngine::prepare` dropped the

@@ -9231,6 +9231,53 @@ static void testTheGrHistoryScrollsAtThePreparedBlock()
                              "loses the audio that was in flight").toRawUTF8());
     }
 
+    // A CONFIGURATION CHANGE THROUGH THE HOST CALLBACK, which is the only place
+    // in production where the history ring starts a new timeline (round 16).
+    // `prepareToPlay` clears the ring on a changed pair and then gives the
+    // engine the moment to notice — without that second call the partial from
+    // the old configuration completes the NEW timeline's first entry, which
+    // would then stand for as little as one sample. Asserted structurally: how
+    // many post-change samples the first new entry takes. It must be a whole
+    // block of the new size.
+    {
+        const auto cfgStorage = std::make_unique<AnabasisAudioProcessor>();
+        auto& cp = *cfgStorage;
+        cp.setRateAndBufferSizeDetails (48000.0, 512);
+        cp.prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> b (2, 512);
+        int64_t fed = 0;
+        const auto feed = [&] (int n)
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                const float v = 0.30f * std::sin (0.05f * (float) (fed + i));
+                b.setSample (0, i, v);
+                b.setSample (1, i, v);
+            }
+            juce::AudioBuffer<float> sub (b.getArrayOfWritePointers(), 2, n);
+            cp.processBlock (sub, midi);
+            fed += n;
+        };
+        for (int k = 0; k < 3; ++k) feed (512);
+        // 100 in flight, deliberately FEWER than the block it is about to be
+        // re-prepared at: a partial larger than the new size is dropped by
+        // `prepare`'s well-formedness guard, which would mask the question
+        // this pass asks — whether the callback gives the engine the moment to
+        // notice that the ring's timeline restarted.
+        feed (100);
+        check (cp.grHistory().available() == 3,
+               "grEpoch: (premise) three entries published, a partial in flight");
+        cp.setRateAndBufferSizeDetails (48000.0, 256);
+        cp.prepareToPlay (48000.0, 256);               // changed pair: the ring clears
+        check (cp.grHistory().available() == 0,
+               "grEpoch: (premise) …and the host callback started a new timeline");
+        int n = 0;
+        for (; n < 1024; ++n) { feed (1); if (cp.grHistory().available() > 0) break; }
+        check (n + 1 == 256,
+               "grEpoch: the first entry of the new timeline stands for a whole 256-sample block of "
+               "ITS OWN audio — the 100 samples counted against the old timeline do not complete it");
+    }
+
     // LOGIC'S CASE, END TO END. The AU wrapper prepares at the host's maximum
     // — 1156 by default, not a power of two — and renders whatever arrives.
     // Delivering 512 into it used to run the window out by 1156/512 = 2.26x.

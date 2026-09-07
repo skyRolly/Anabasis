@@ -6,17 +6,6 @@ namespace anabasis
 
 void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChannels)
 {
-    // DOES THIS PREPARE END THE GR HISTORY'S TIMELINE, OR CONTINUE IT? Asked
-    // FIRST, before `sr` and `maxBlock` are overwritten, and answered by the
-    // same comparison on the same two raw values that `GrHistoryBuffer::
-    // prepare` makes — so the engine and the ring cannot disagree about it.
-    // The partial entry under construction is carried across a re-prepare that
-    // CONTINUES the timeline and dropped by one that ends it; the drop is the
-    // last statement of this function, and it is the accumulator's ONLY writer
-    // outside the chunk loop — `reset()` deliberately leaves it alone.
-    const bool sameConfiguration = juce::exactlyEqual (preparedRateRaw, sampleRate)
-                                && preparedBlockRaw == maxBlockSize;
-
     sr           = sampleRate;
     // THE THIRD HOST-SUPPLIED QUANTITY, railed like the two below it. This is
     // the ONLY route from the sample rate into an allocation: `wetRing` and
@@ -79,11 +68,11 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     specInRing.reset();
     specOutRing.reset();
     // The GR history's ring and its partial entry are NOT in that list, and the
-    // difference is the point (0.2.12 round 15). These two rings are analyser
-    // captures with no timeline of their own — a rewind costs a refill and
-    // nothing else. The history IS a timeline, the wrapper keeps it across a
-    // re-prepare at an unchanged pair, and the partial entry follows the same
-    // rule; see the tail of this function.
+    // difference is the point. These two rings are analyser captures with no
+    // timeline of their own — a rewind costs a refill and nothing else. The
+    // history IS a timeline: the wrapper keeps it across a re-prepare at an
+    // unchanged pair, and the partial entry follows the ring rather than this
+    // function (`adoptHistoryTimeline`).
 
     using OS = juce::dsp::Oversampling<float>;
     osTableMatchesJuce = true;
@@ -154,100 +143,35 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     latchOsConfig (-1, 0);
     reset();
 
-    // THE PARTIAL HISTORY ENTRY SURVIVES A SAME-CONFIGURATION RE-PREPARE.
-    //
-    // Round 14 dropped it on EVERY prepare, which is right for a prepare that
-    // starts a new timeline and WRONG for one that continues an old one — and
-    // hosts re-prepare on every transport start. The wrapper keeps the ring's
-    // entries at an unchanged `(rate, block)` pair for exactly that reason
-    // (ADR-0023 item 6, the 0.1.2 field-fix directive: "a transport-start
-    // re-prepare keeps the timeline" — and `USER_MANUAL.md` promises the user
-    // "pausing and resuming continues the timeline; it restarts only when the
-    // sample rate or block size changes"), so the samples already folded into
-    // the unpublished
-    // entry belong to a timeline that is still running. Zeroing them made up
-    // to `maxBlock - 1` samples of already-rendered audio reach no entry at
-    // all. Measured at 48 kHz / 512 on forty cycles of twenty 512-sample
-    // blocks followed by a 300-sample one — 421 600 samples, 8.783 s: 800
-    // entries published where the audio was worth 823, a quarter of a second
-    // of history gone, and it accumulates with every transport start. A marker
-    // burst inside the partial vanished from a ring that kept every entry
-    // around it.
-    //
-    // A CHANGED pair still drops it, and must: that prepare is where the ring
-    // clears, so a carried partial would put audio recorded under the old rate
-    // or the old entry size into the new timeline's first entry, mapped
-    // through a time base it was never recorded under. The two decisions are
-    // the same comparison on the same two raw values (see `sameConfiguration`
-    // at the top), so "the ring kept its entries" and "the engine kept its
-    // partial" are one condition, not two that have to be kept in step.
-    //
-    // WHAT THIS DOES NOT DO. It publishes nothing early — the entry still
-    // completes at exactly `maxBlock` samples, so no short entry ever reaches
-    // the ring and the display's time base is untouched. It re-processes
-    // nothing, so no sample is counted twice. And on the common path — a
-    // re-prepare that keeps the timeline — the host thread now touches the
-    // accumulator ZERO times, where round 14 wrote it twice.
-    //
-    // THE REALTIME CLAIM, stated as the bound it actually is rather than as
-    // "unchanged". A call that carried samples in can now publish an entry
-    // where before the prepare would have thrown them away, so the count on an
-    // INDIVIDUAL call can differ. What is unchanged is what a realtime
-    // argument can use: the per-call bound stays `ceil(delivered / prepared)`
-    // pushes (the carry is strictly less than one entry, so it can never add
-    // one to the ceiling), the long-run rate stays `rate / preparedBlock`, and
-    // the chunk count per call stays `ceil((carried + delivered) / prepared)`
-    // — which is round 14's figure, since the remainder was already carried
-    // across CALLS. Nothing here is per sample.
-    //
-    // THE ONE RESIDUAL, STATED RATHER THAN LEFT TO BE FOUND. The first entry
-    // after a resume needs only `maxBlock - carried` new samples, so it is
-    // published up to `(maxBlock - 1) / rate` seconds early — 10.6 ms at
-    // 48 kHz / 512. `GrHistoryView::smoothedHead` holds its estimate to
-    // `[head, head + 1]`, so an early head advances the trace by at most ONE
-    // entry pitch in a single frame (0.482 px on the Simple well at that
-    // configuration), once per resume. That is the same magnitude as the two-block burst
-    // OQ-017 already records as accepted, and it is bounded, whereas the
-    // alternative — dropping the samples — is a permanent loss of content that
-    // accumulates over a session.
-    //
-    // WHY THE CLEAR IS HERE AND NOT IN `reset()`, which is where round 14 put
-    // it (twice — inline in this function AND in `reset`, sixty lines apart).
-    // The accumulator is not audio memory and not an edge detector; it is
-    // PUBLICATION state, and `reset()` touches no ring state whatsoever. A
-    // reset that dropped the partial would therefore take samples out of a
-    // timeline the ring is still keeping — this round's defect exactly, at a
-    // different door — and no reader guard could fire, because nothing in the
-    // ring moved. `AnabasisAudioProcessor` does not override
-    // `AudioProcessor::reset()`, so `prepare`'s own tail is that function's
-    // only caller today and this changes nothing a host can observe; what it
-    // changes is that the accumulator has ONE writer whose rule is the ring's,
-    // rather than two that contradict each other.
-    //
-    // THE CHANNEL COUNT IS DELIBERATELY NOT IN THE GATE. A host that
-    // renegotiates its layout and re-prepares at the same rate and block size
-    // keeps the ring's entries, so it must keep the partial too or lose those
-    // samples for the same reason; the cost is one entry whose min-gain and
-    // peak are folded over both counts, which is defined for either.
-    if (! sameConfiguration)
+    // THE ACCUMULATOR'S OWN WELL-FORMEDNESS, which is not a timeline question
+    // and is the one thing `prepare` still owes it. `histSamples < maxBlock`
+    // holds everywhere else by construction — the chunk loop empties the
+    // accumulator the instant it fills — but `maxBlock` can SHRINK here, and a
+    // partial counted against a 512-sample entry cannot be completed as a
+    // 256-sample one: it would publish an entry standing for more audio than
+    // its own size. Dropping is the only correct option, and it is not a
+    // decision about which timeline anything belongs to. Unreachable through
+    // the wrapper, which never reconfigures the engine without the ring, and
+    // one comparison to keep it unreachable at all.
+    if (histSamples >= maxBlock)
     {
         histMinGain = 1.0f;
         histPeak    = 0.0f;
         histSamples = 0;
     }
-    // COMMITTED LAST, not beside the comparison at the top, and the difference
-    // is exception safety. This function allocates — `wetRing.setSize`, the
-    // dry ring, the staging buffer, seven `resize`s and eight oversamplers —
-    // and the rail at the top of it exists because a `std::bad_alloc` here
-    // crosses the wrapper's C ABI. Commit the pair first and a prepare that
-    // throws leaves the ENGINE holding the new pair while the ring, whose own
-    // `prepare` never ran, still holds the old one: the host's retry would
-    // then have the engine answer "same" and carry while the ring answered
-    // "changed" and cleared, which is the one route by which these two stop
-    // being one decision. Committed here, a throw leaves the pair OLD, the
-    // retry answers "changed" on both sides, and the drop matches the clear.
-    preparedRateRaw  = sampleRate;
-    preparedBlockRaw = maxBlockSize;
+
+    // THE PARTIAL HISTORY ENTRY IS OTHERWISE NOT TOUCHED HERE, and that is the
+    // round-16 repair. `prepare` used to decide its fate by mirroring
+    // `GrHistoryBuffer::prepare`'s clear-on-change comparison — which was
+    // right for `prepare` and wrong for every other way the ring can start a
+    // fresh timeline. The decision moved to `adoptHistoryTimeline`, which
+    // reads the ring's own epoch: a same-pair `prepare` leaves the ring
+    // untouched so the partial is kept (a transport start no longer loses the
+    // audio in flight — ADR-0023 item 6, and `USER_MANUAL.md`'s promise that
+    // pausing and resuming continues the timeline), a changed pair clears the
+    // ring so the partial goes, and so does any other clear. The drop lands
+    // before a single new sample is folded, because the adoption runs at the
+    // top of `process`.
 }
 
 void AnabasisEngine::latchOsConfig (int factorIdx, int phaseIdx) noexcept
@@ -338,16 +262,22 @@ void AnabasisEngine::reset() noexcept
     renderTpMaxChunk = renderPeakChunk = 0.0f;
     grMinChunk = 1.0f;
     grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
-    // THE HISTORY ACCUMULATOR IS DELIBERATELY NOT IN THIS LIST (round 15).
-    // Everything else here is audio memory (delay lines, filters, rings) or an
-    // edge detector; the accumulator is neither — it is PUBLICATION state, and
-    // its lifecycle belongs to the ring it publishes into. `reset()` touches no
-    // ring state at all: no epoch, no write index, no slot, no prepared pair.
-    // So a reset that dropped the partial would take up to `maxBlock - 1`
-    // samples of already-rendered audio out of a timeline the ring is still
-    // keeping, undetectably — the same defect this round removed from
-    // `prepare`, at a different door. The accumulator has ONE writer instead,
-    // `prepare`'s changed-pair branch, whose rule is literally the ring's.
+    // THE HISTORY ACCUMULATOR IS DELIBERATELY NOT IN THIS LIST, and round 16
+    // is the second round to say so for a DIFFERENT reason — the first one was
+    // half right. Everything else here is audio memory (delay lines, filters,
+    // rings) or an edge detector; the accumulator is neither. It is
+    // PUBLICATION state, and it belongs to whichever timeline the ring is on.
+    //
+    // Round 15 argued from `reset()` alone: this function touches no ring
+    // state, so it should discard nothing from a timeline the ring is still
+    // keeping — true, and the case it was written for (a host re-arming the
+    // transport) still behaves that way. What it missed is that `reset()` says
+    // nothing about whether some OTHER call has just started a fresh timeline.
+    // Clearing here would be wrong when it has not; NOT clearing here would be
+    // wrong when it has. `reset()` is not the place the question can be
+    // answered, so it does not try: `adoptHistoryTimeline` answers it from the
+    // ring's epoch, once per `process` call, and a reset that accompanies a
+    // ring clear therefore drops the partial before any new audio is folded.
     adaptiveEngine.reset();
     compMeasureDb = 0.0f;
     monitorGain.setCurrentAndTargetValue (1.0f);
@@ -357,6 +287,46 @@ void AnabasisEngine::reset() noexcept
     // The crossfade is reset state too: landing ON the target is the "no
     // fade in progress" state; the next block re-reads bypassTarget.
     bypassMix = bypassTarget ? 1.0f : 0.0f;
+}
+
+// THE PARTIAL ENTRY AND THE RING ADVANCE AS ONE TIMELINE (round 16).
+//
+// `resetGuard` is bumped by `GrHistoryBuffer::clear` and by nothing else, so a
+// change in it is exactly the event "the ring started a fresh timeline" —
+// whether that came from a changed-pair `prepare`, from `reset()`, or from any
+// clear a later round adds. The engine records the epoch its partial was
+// accumulated under and throws the partial away the moment they part company,
+// which is the whole of the invariant: an entry never combines statistics from
+// two timelines, and the first entry of a new one always stands for a full
+// prepared block of that timeline's own audio.
+//
+// Rounds 14 and 15 both had the ENGINE decide this and got it wrong in
+// opposite directions — 14 dropped the partial at every `prepare`, 15 mirrored
+// `GrHistoryBuffer::prepare`'s clear-on-change comparison, which agreed for
+// `prepare` and for no other clear. The engine no longer decides: it reads the
+// ring's own answer. What the caller supplies is only the MOMENT to look.
+//
+// THREAD: the host thread, with processing suspended — the same premise every
+// reallocation in `prepare` already rests on. That is deliberate and it is the
+// reason this is not called from `process`: the epoch is part of the ring's
+// READER contract, which `THREADING_POLICY.md` confines to the message and
+// painting threads, and its table makes any path not in it an Architecture
+// Review Gate item. Reading it on the thread that wrote it is not a
+// cross-thread access, adds no atomic, no ordering and no protocol, and costs
+// one load per re-prepare rather than one per block.
+void AnabasisEngine::syncHistoryTimeline() noexcept
+{
+    if (grHistory == nullptr)
+        return;                       // no ring, no timeline, nothing to own
+
+    const auto epoch = grHistory->resetEpoch();
+    if (epoch == histEpoch)
+        return;                       // same timeline: the partial belongs to it
+
+    histMinGain = 1.0f;
+    histPeak    = 0.0f;
+    histSamples = 0;
+    histEpoch   = epoch;
 }
 
 bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept ANABASIS_NONBLOCKING

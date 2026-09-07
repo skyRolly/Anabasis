@@ -470,6 +470,35 @@ defect was those two decisions disagreeing. `testTheGrHistoryScrollsAtThePrepare
 same conservation through eight `prepareToPlay` cycles on the real wrapper. Ten checks fail against
 the pre-round-15 engine.
 
+**Round 16 replaced the decision those passes rest on, and `testTheHistoryTimelineIsTheRingsTimeline`
+pins the replacement.** Round 15 had the engine MIRROR `GrHistoryBuffer::prepare`'s clear-on-change
+comparison; that agreed for `prepare` and for nothing else, so a `GrHistoryBuffer::reset()` restarted
+the ring's timeline while a partial from the old one survived into it — measured at 48 kHz / 512 with
+511 samples in flight, the new timeline's first entry closed on ONE post-reset sample and carried the
+previous timeline's peak. The engine now reads the ring's reset epoch instead.
+
+**The measurement every pass makes is structural, and deliberately not the peak.** An engine that is
+not reset keeps rendering pre-break audio out of its lookahead line quite legitimately, so a peak
+alone cannot tell a leak from ordinary audio continuity. What can is **how many POST-break samples
+the first entry after the break stands for**: `B` for a new timeline, `B − carried` for a continued
+one — exact, and independent of what the pipeline holds. The test feeds post-break audio one sample
+at a time to read that number off directly. Cases: a break on an entry boundary (five kinds, all
+identical); a ring reset at 1, 100, 300 and `B − 1` in flight; the statistics assertion taken where
+the engine is reset too, so the pipeline cannot supply the marker; a reset straight after a
+publication; a same-configuration re-prepare; an engine reset that clears nothing; a configuration
+change; attaching a sink to an engine that had already accumulated without one; and a
+five-transition sequence. Twelve checks fail against round 15's engine, and all nine mutants of the
+new mechanism are killed.
+
+**One of those nine is worth its own paragraph, because it survived until a test was written for the
+WRAPPER rather than the engine.** Deleting the sync from `AnabasisEngine::prepareHistoryTimeline`
+passed both suites: every engine-level pass calls the timeline API itself, so none of them can see
+the one production site forgetting it. `testTheGrHistoryScrollsAtThePreparedBlock` now re-prepares
+the real processor at a changed block size with a partial in flight and measures the first new
+entry's span through `processBlock`. It leaves 100 samples in flight rather than 300 deliberately: a
+partial LARGER than the new block is dropped by `prepare`'s span guard — a well-formedness rule, not
+a timeline decision — which would have masked the question the pass exists to ask.
+
 **The hot pass runs FROZEN, and that is a measured property of the chain rather than a
 convenience.** §5.4's `adaptiveEngine.finishBlock` runs once per `process()` CALL and its trims are
 adopted for that whole call, so the DELIVERED size — not the chunking — sets the adaptation cadence:
