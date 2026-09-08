@@ -6300,19 +6300,39 @@ static void testTheSettingsPanelFollowsAProjectLoad()
 static void testGrHistoryWindowNeverAsksForTheHeadSlot()
 {
     using Ring = anabasis::GrHistoryBuffer;
-    check (GrHistoryView::windowEntries (192000.0, 16) == Ring::kSize - 1,
+    // THE SATURATING PAIRS MOVE WITH THE CAPACITY, so they are named at the
+    // entry rate the clamp is written in rather than pinned to one (rate,
+    // block): both of these are 24000 entries a second, past `1 << 18`'s
+    // 13107. Round 19 re-aimed them from 192 kHz / 16 and 96 kHz / 8, which
+    // saturated at `1 << 17` and now sit inside the band — an assertion that
+    // reads "saturates" and stops saturating is a test that quietly stops
+    // testing, so the pair is chosen by arithmetic here and the arithmetic is
+    // asserted with it.
+    check (192000.0 / 8.0 > (double) (Ring::kSize - 1) / GrHistoryView::kWindowSeconds
+             && 384000.0 / 16.0 > (double) (Ring::kSize - 1) / GrHistoryView::kWindowSeconds,
+           "grWindow: (premise) both pairs below are past the clamp at this capacity, so 'saturates' is a claim about them");
+    check (GrHistoryView::windowEntries (384000.0, 16) == Ring::kSize - 1,
            "grWindow: a pair that would overflow the ring saturates at kSize - 1, never kSize");
-    check (GrHistoryView::windowEntries (96000.0, 8) == Ring::kSize - 1,
+    check (GrHistoryView::windowEntries (192000.0, 8) == Ring::kSize - 1,
            "grWindow: …and so does every other one of them");
-    // …AND THE PAIRS THAT USED TO SATURATE NO LONGER DO (0.2.12 round 17).
-    // These two are the review's case and the block size a 48 kHz host most
-    // often runs at; at 4096 entries the clamp bound at both and the window
-    // was 0.6825 s and 5.46 s rather than the twenty it claimed.
+    // …AND THE PAIRS THAT USED TO SATURATE NO LONGER DO (0.2.12 round 17, and
+    // one octave further in round 19). The first two are the round-17 review's
+    // case and the block size a 48 kHz host most often runs at; at 4096
+    // entries the clamp bound at both and the window was 0.6825 s and 5.46 s
+    // rather than the twenty it claimed. The second two are round 19's: at
+    // `1 << 17` they were the band's edge and its first step down, and they
+    // now get the whole window at a rate this product never promised to stop
+    // at.
     check (GrHistoryView::windowEntries (192000.0, 32)
                == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 192000.0 / 32.0)
              && GrHistoryView::windowEntries (48000.0, 64)
                == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 48000.0 / 64.0),
            "grWindow: …and the pairs the ring used to clamp — 192 kHz / 32, 48 kHz / 64 — now get the whole window");
+    check (GrHistoryView::windowEntries (384000.0, 32)
+               == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 384000.0 / 32.0)
+             && GrHistoryView::windowEntries (192000.0, 16)
+               == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 192000.0 / 16.0),
+           "grWindow: …and so do 384 kHz / 32 and 192 kHz / 16, which `1 << 17` clamped to 10.92 s");
     check (GrHistoryView::windowEntries (48000.0, 512)
                == (int64_t) std::ceil (GrHistoryView::kWindowSeconds * 48000.0 / 512.0),
            "grWindow: below the clamp the window is the whole 20 s");
@@ -6351,8 +6371,9 @@ static void testGrHistoryWindowNeverAsksForTheHeadSlot()
             { 48000.0, 2048, 904, "…and a block big enough that entries are SCARCER than columns" },
             { 48000.0,  512, 604, "Advanced well, 48 kHz / 512" },
             { 44100.0,  256, 904, "44.1 kHz / 256 — want mod stride is 2, the alignment case" },
-            { 192000.0,  32, 604, "192 kHz / 32 — 120000 entries, the widest window the ring holds whole" },
-            { 192000.0,  16, 604, "192 kHz / 16 — the window saturates at the ring clamp" },
+            { 192000.0,  32, 604, "192 kHz / 32 — 120000 entries" },
+            { 192000.0,  16, 604, "192 kHz / 16 — 240000 entries, the widest window the ring holds whole" },
+            { 384000.0,  16, 604, "384 kHz / 16 — the window saturates at the ring clamp" },
         };
         for (const auto& c : cases)
         {
@@ -6892,6 +6913,18 @@ static void testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs()
         {  96000.0,   16 }, {  96000.0,   32 }, {  96000.0,   64 }, {  96000.0,  128 },
         {  96000.0,  512 }, { 176400.0,   32 }, { 192000.0,   32 }, { 192000.0,   64 },
         { 192000.0,  128 }, { 192000.0,  512 }, { 192000.0, 1024 },
+        // ROUND 19: THE CLAMPED BAND, WHICH NO PAIR ABOVE ENTERS. Every pair
+        // in the table before this line sits at or below 6000 entries a
+        // second, so `windowEntries`' clamp is slack at all of them and the
+        // two bounds below were satisfied by the same arithmetic — the sweep
+        // could not tell a ring that shortens gracefully from one that does
+        // not shorten at all. These six enter it: 96 kHz / 8, 192 kHz / 16 and
+        // 384 kHz / 32 are the densest pairs the whole window still fits at,
+        // 192 kHz / 8 and 384 kHz / 16 are past the clamp and inside §2.9's
+        // floor, and 384 kHz / 8 is past the floor, where the window is
+        // whatever the ring holds and the manual promises exactly that.
+        {  96000.0,    8 }, { 192000.0,   16 }, { 384000.0,   32 },
+        { 192000.0,    8 }, { 384000.0,   16 }, { 384000.0,    8 },
     };
     bool arithmeticHolds = true, wholeWindowWhereItFits = true, floorEverywhere = true;
     double worstWhole = 1.0e9, worstAny = 1.0e9;
@@ -6932,20 +6965,35 @@ static void testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs()
              && V::windowSeconds (48000.0, 8) >= V::kWindowSeconds - 1.0e-9,
            "grSeconds: …and so does every block size a 48 kHz host can offer, down to eight samples");
 
-    // THE BOUNDARY, from both sides. The clamp binds at `fullRate` entries a
-    // second and the window shortens in exact proportion past it; the first
-    // pair over the line is below any host's smallest buffer at that rate, and
-    // it still clears the floor.
-    check (192000.0 / 32.0 <= fullRate && 192000.0 / 16.0 > fullRate,
-           "grSeconds: (premise) 192 kHz / 16 is the first pair past the clamp — half the smallest buffer a host offers there");
-    check (V::windowSeconds (192000.0, 16) < V::kWindowSeconds
-             && V::windowSeconds (192000.0, 16) >= 10.0
-             && juce::exactlyEqual (V::windowSeconds (192000.0, 16),
-                                    (double) (Ring::kSize - 1) * 16.0 / 192000.0),
-           "grSeconds: …and past it the window is exactly what the ring holds, still inside the band");
-    check (V::windowSeconds (192000.0, 8) < 10.0
-             && juce::exactlyEqual (V::windowSeconds (192000.0, 8),
-                                    (double) (Ring::kSize - 1) * 8.0 / 192000.0),
+    // THE BOUNDARY, FROM BOTH SIDES OF BOTH BOUNDS. The clamp binds at
+    // `fullRate` entries a second and the window shortens in exact proportion
+    // past it; §2.9's floor is the last thing left until `floorRate`. All four
+    // rungs are DERIVED from `kSize` rather than quoted, so a capacity change
+    // moves them together and none of them can silently become vacuous — which
+    // is what happened to this block at round 19, when `1 << 18` moved the
+    // clamp past the pairs the round-17 version had pinned as its examples.
+    //
+    // Round 19 also removes the last "below anything a host offers" from these
+    // assertions. That clause was doing load-bearing work for a ceiling this
+    // product does not declare — `AnabasisEngine::prepare` rails the derived
+    // lookahead and not `sr`, and `DSP_POLICY.md` invariant 4 claims the
+    // ceiling holds at "any sample rate" — so the band is stated as an entry
+    // RATE and the pairs are consequences of it.
+    check (384000.0 / 32.0 <= fullRate && 192000.0 / 16.0 <= fullRate
+             && 384000.0 / 16.0 > fullRate,
+           "grSeconds: (premise) the whole window still fits at 384 kHz / 32 and 192 kHz / 16, and 384 kHz / 16 is the first pair past the clamp");
+    check (V::windowSeconds (384000.0, 32) >= V::kWindowSeconds - 1.0e-9
+             && V::windowSeconds (192000.0, 16) >= V::kWindowSeconds - 1.0e-9,
+           "grSeconds: …so both of those hold the whole twenty seconds — the octave round 19 bought, at the rate the review named");
+    check (V::windowSeconds (384000.0, 16) < V::kWindowSeconds
+             && V::windowSeconds (384000.0, 16) >= 10.0
+             && juce::exactlyEqual (V::windowSeconds (384000.0, 16),
+                                    (double) (Ring::kSize - 1) * 16.0 / 384000.0),
+           "grSeconds: …and past the clamp the window is exactly what the ring holds, still inside §2.9's band");
+    check (384000.0 / 8.0 > floorRate
+             && V::windowSeconds (384000.0, 8) < 10.0
+             && juce::exactlyEqual (V::windowSeconds (384000.0, 8),
+                                    (double) (Ring::kSize - 1) * 8.0 / 384000.0),
            "grSeconds: …and only below THAT does the band's floor go, in exact proportion and nowhere abruptly");
 
     // …AND THROUGH THE REAL RING AND THE REAL READ WINDOW, because everything
@@ -6954,7 +7002,7 @@ static void testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs()
     // reads them, and the frame reads through `Buckets::first`.
     {
         const double rate = 192000.0; const int block = 32; const int cols = 604;
-        const auto ringStorage = std::make_unique<Ring>();       // a megabyte: heap, never stack
+        const auto ringStorage = std::make_unique<Ring>();       // two megabytes: heap, never stack
         auto& ring = *ringStorage;
         ring.prepare (rate, block);
         const auto want = V::windowEntries (rate, block);
@@ -6969,6 +7017,64 @@ static void testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs()
         check ((double) b.window * (double) block / rate
                    >= V::kWindowSeconds - (double) b.stride * (double) block / rate,
                "grSeconds: …and the window that frame reads spans the twenty seconds, to within the bucket it rounds to");
+    }
+
+    // …AND AT A PAIR WHERE THE CLAMP BINDS, which no test entered before round
+    // 19. Everything above the previous block is arithmetic on a pure
+    // function; this is the ring at its own limit, where `want` IS `kSize - 1`
+    // and the frame's oldest read sits one slot off the head's lap. That
+    // one-slot margin is the whole reason the clamp is `kSize - 1` rather than
+    // `kSize` (see `windowEntries`), and until now nothing exercised the case
+    // it exists for: at every pair the suite ran, `want` was thousands of
+    // entries short of the capacity and the margin was never approached.
+    {
+        const double rate = 384000.0; const int block = 16; const int cols = 604;
+        const auto ringStorage = std::make_unique<Ring>();       // two megabytes: heap, never stack
+        auto& ring = *ringStorage;
+        ring.prepare (rate, block);
+        const auto want = V::windowEntries (rate, block);
+        check (want == (int64_t) Ring::kSize - 1,
+               "grSeconds: (premise) 384 kHz / 16 saturates the clamp, so this is the ring at its limit and not a short window");
+        for (int64_t i = 0; i < want - 1; ++i)
+            ring.push (-1.0f, 0.25f);
+        ring.push (-42.0f, 0.75f);                               // the newest entry, at the head
+        {
+            const auto b = V::buckets (ring.available(), want, cols);
+            // THE SAFE LAP IS THE BOUND HERE, NOT `first == 0`. At a saturated
+            // pair `kFull` is capped by `kRing` rather than by `want`, so the
+            // frame deliberately drops its oldest buckets — that IS the
+            // ring-safety cap doing its job, and asserting `first == 0` would
+            // assert it away. What must hold is that every entry the frame
+            // reads is one the producer has not lapped into.
+            check (ring.available() == want
+                     && b.first >= 0
+                     && ring.available() - b.first <= (int64_t) Ring::kSize - 1,
+                   "grSeconds: a saturated window keeps the frame's whole read inside one safe lap of the head");
+            check (b.window <= want
+                     && b.window >= want - (V::kMaxLead + 2) * b.stride,
+                   "grSeconds: …and it still spans the seconds the ring holds at that pair, short only by the buckets the lap cap drops");
+            // …AND THE ENTRIES IT READS ARE THE ONES THAT WERE PUSHED. A
+            // capacity change that mis-sized the storage or the mask would
+            // show here as a value from the wrong slot, not as a wrong count.
+            const auto oldestDrawn = ring.peek (b.first);
+            const auto newest      = ring.peek (ring.available() - 1);
+            check (juce::exactlyEqual (oldestDrawn.grDb, -1.0f)
+                     && juce::exactlyEqual (oldestDrawn.peak, 0.25f)
+                     && juce::exactlyEqual (newest.grDb, -42.0f)
+                     && juce::exactlyEqual (newest.peak, 0.75f),
+                   "grSeconds: …and every entry it reads is the one that was pushed there, at both ends of a saturated window");
+        }
+        // ONE PUSH PAST THE LAP. The producer now owns a slot the previous
+        // frame could read, and the next frame must not: `first` has to move
+        // with the head, never further back than one safe lap.
+        ring.push (-7.0f, 0.5f);
+        {
+            const auto b = V::buckets (ring.available(), want, cols);
+            check (ring.available() == want + 1
+                     && ring.available() - b.first <= (int64_t) Ring::kSize - 1
+                     && juce::exactlyEqual (ring.peek (ring.available() - 1).grDb, -7.0f),
+                   "grSeconds: …and one push past the lap moves the frame's oldest read with the head, never into the slot the producer holds");
+        }
     }
 }
 
@@ -9843,9 +9949,12 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
     //        the fills either side) and every staleness a frame can carry.
     {
         const int    cols = 604;                       // the Advanced well
-        const auto   want = V::windowEntries (192000.0, 16);
+        // 384 kHz / 16 rather than 192 kHz / 16 since round 19: the pair has to
+        // SATURATE for this to be the no-spare-slot shape, and `1 << 18` moved
+        // the clamp past the old one. Same 24000 entries a second either way.
+        const auto   want = V::windowEntries (384000.0, 16);
         check (want == (int64_t) Ring::kSize - 1,
-               "grRace: (premise) 192 kHz / 16 saturates the read window — the shape with no spare slot");
+               "grRace: (premise) 384 kHz / 16 saturates the read window — the shape with no spare slot");
 
         bool floorHolds = true, everyReadInside = true, slotClear = true, unfixedRaces = false,
              spansComplete = true;
@@ -9917,7 +10026,7 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         const int64_t live    = ring.available();
         const int64_t writing = live & kMaskI;         // the slot `push` fills next
         const int     cols    = 604;
-        const auto    want    = V::windowEntries (192000.0, 16);
+        const auto    want    = V::windowEntries (384000.0, 16);   // saturating; see 1a
 
         bool touchesWriteSlot = false, spansComplete = true;
         int64_t reads = 0, oldest = live;
@@ -9979,7 +10088,7 @@ static void testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset()
         for (const auto& c : { Case { 48000.0, 512, 904 }, Case { 48000.0, 1024, 904 },
                                Case { 44100.0, 256, 904 }, Case { 48000.0, 2048, 904 },
                                Case { 48000.0, 512, 604 }, Case { 192000.0, 32, 604 },
-                               Case { 192000.0, 16, 604 } })
+                               Case { 192000.0, 16, 604 }, Case { 384000.0, 16, 604 } })
         {
             const auto want = V::windowEntries (c.sr, c.bs);
             const bool saturated = want == (int64_t) Ring::kSize - 1;

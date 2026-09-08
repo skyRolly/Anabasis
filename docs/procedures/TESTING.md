@@ -520,14 +520,27 @@ a timeline decision — which would have masked the question the pass exists to 
 Because an entry is one prepared block, `kSize` decides `kSize · block / rate` seconds — and no test
 in the tree had ever asserted a number of seconds, so a ring sized against a 512-sample block passed
 everything while retaining 0.6825 s at 192 kHz / 32.
-`testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` sweeps twenty-six prepared pairs and
+`testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` sweeps thirty-two prepared pairs and
 asserts the quantity the contract is written in — retained entries × prepared block ÷ sample rate.
 Its bounds are **derived from `kSize`** rather than quoted, so the sweep pins the SHAPE of the
 contract at any capacity (the whole window wherever the ring can hold one, never below §2.9's floor
-down to the ring's own bound, and the exact proportion past it) while the named cases — 192 kHz / 32,
-48 kHz / 64, 48 kHz / 8, and 192 kHz / 16 and / 8 either side of the boundary — pin its VALUE. It
-closes on the real ring: a whole window's entries pushed at 192 kHz / 32, and the frame's own
-`Buckets::first` used to find the oldest of them.
+down to the ring's own bound, and the exact proportion past it) while the named cases pin its VALUE.
+
+**Round 19 made the sweep enter the band it exists for.** Until then every pair in it sat at or
+below 6000 entries a second — `windowEntries`' clamp was slack at all twenty-six, so both bounds
+were satisfied by the same arithmetic and the test could not tell a ring that shortens gracefully
+from one that never shortens at all. Six pairs now enter it: 96 kHz / 8, 192 kHz / 16 and
+384 kHz / 32 are the densest at which the whole window still fits, 192 kHz / 8 and 384 kHz / 16 are
+past the clamp and inside §2.9's floor, and 384 kHz / 8 is past the floor. The named cases became a
+four-rung ladder crossing both bounds from both sides, each rung derived from `kSize` — which is
+what caught the round-17 version's own examples going vacuous when the capacity doubled, since
+192 kHz / 16 had been pinned as "the first pair past the clamp" and is now inside it. It closes on
+the real ring twice: a whole window's entries pushed at 192 kHz / 32, and a SATURATED window at
+384 kHz / 16 where `want` IS `kSize − 1` — the frame's read bounded by one safe lap rather than
+starting at zero, the values checked at both ends of the window, and one push past the lap to see
+the oldest read move with the head. That last case is what the `kSize − 1` clamp exists for, and
+nothing had exercised it: at every pair the suite ran, `want` was thousands of entries short of the
+capacity.
 `testTheRingKeepsASecondOfEntriesAtTheSmallestPreparedBlock` adds the producer's half in the DSP
 suite, where the engine can be driven: one second of audio at 192 kHz / 32 is 6000 entries, half
 again what the whole 4096-entry ring held, and the marker in the first six blocks is looked for at

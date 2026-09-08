@@ -246,10 +246,19 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
 
     // The clamp lives in `windowEntries` (header) so it is testable without a
     // graphics context; `kSize - 1` and the reason for it are stated there.
-    // Reachable at ordinary block sizes: 20 s at 48 kHz / 64 samples is 15000
-    // entries, so `want` saturates for anything up to ~234 samples per block.
-    // The pair is the RING's (`prepared`), read under this batch's epoch like
-    // everything else the frame maps — see `tick` for what it replaced.
+    // THIS SCAN COSTS THE WINDOW, NOT THE CAPACITY: `want` is
+    // `ceil (20 · rate / block)` and only the clamp below it mentions `kSize`,
+    // so every pair inside the band reads exactly the entries its own twenty
+    // seconds needs and a capacity change moves nothing here. The sentence
+    // that stood in this place said the opposite — "20 s at 48 kHz / 64
+    // samples is 15000 entries, so `want` saturates for anything up to ~234
+    // samples per block" — which was the 4096-entry ring's arithmetic and
+    // survived ADR-0040's sweep of that figure. At `1 << 18` the clamp binds
+    // at blocks of 3 samples or fewer at 48 kHz, 14 at 192 kHz and 29 at
+    // 384 kHz; 48 kHz / 64 wants 15000 of the 262143 available and saturates
+    // nothing. The pair is the RING's (`prepared`), read under this batch's
+    // epoch like everything else the frame maps — see `tick` for what it
+    // replaced.
     const auto    prepared = ring.prepared();
     const int64_t want = windowEntries (prepared.rate, prepared.block);
     if (head <= 0)

@@ -244,8 +244,18 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   empty until twenty seconds of audio have actually been measured — nothing is estimated
   or stretched. Twenty seconds means twenty seconds of audio whatever size of buffer your
   host hands the plugin, and whether or not that size stays the same: the timeline follows
-  the audio rather than the callback rate (since 0.2.12). That holds at every buffer size a
-  host offers — down to 32 samples at 192 kHz and 8 samples at 48 kHz. The trace scrolls continuously — it advances a fraction of a pixel with
+  the audio rather than the callback rate (since 0.2.12). What decides whether the full
+  twenty seconds fit is how many buffers a second your host runs — sample rate divided by
+  buffer size — because the history records one point per buffer of processed audio. Up to
+  about **13 000 buffers a second** you get the whole twenty seconds, and every ordinary
+  configuration is far below that: 48 kHz at 8 samples is 6000, 192 kHz at 16 is 12 000,
+  and 384 kHz at 32 is 12 000 (since 0.2.12 round 19 — it was half that before, so
+  192 kHz at 16 and 384 kHz at 32 used to show about eleven seconds). Past that point the
+  history holds as much as it can rather than twenty seconds, shortening smoothly in
+  proportion — around eleven seconds at 384 kHz with 16-sample buffers — and the trace
+  still draws the audio it holds, to scale, with nothing estimated or stretched. Anabasis
+  does not refuse or alter any sample rate to keep this promise; the promise is stated in
+  buffers a second so that it stays true at rates faster than any of these. The trace scrolls continuously — it advances a fraction of a pixel with
   every processed block rather than stepping once per bucket (since 0.2.8). Each point of
   the trace is drawn once, when every block it summarises has been processed, and is never
   redrawn: a new point enters at the right edge as each group of blocks completes, and what

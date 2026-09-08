@@ -185,7 +185,10 @@ public:
     // this publication is FOR happens inside two functions and one tick: a
     // reader that lands while the counter is odd, a reader whose copy is
     // overtaken, a rewind that becomes visible between a tick's two generation
-    // samples. None of those states is reachable from outside the class — the
+    // samples. None of those states is DETERMINISTICALLY reachable from
+    // outside the class — an incidental race reaches them, which is exactly
+    // what the old tests lived on and why they passed at all, but nothing
+    // outside can put a thread in one ON DEMAND — the
     // windows are a few hundred instructions long, they sit in the middle of
     // `publishFrame`, `readPublishedFrame` and `tick`, and no public call ends
     // inside one. Until 0.2.12 round 18 the two concurrency tests therefore
@@ -228,9 +231,26 @@ public:
     // generations not yet re-read, which is the only instant at which a rewind
     // can become visible INSIDE a tick.
     //
+    // WHICH THREAD READS WHICH, because only one of the three is on a
+    // boundary at all. `whileHalfPublished` and `whileBatchAnalysed` are read
+    // on the MESSAGE THREAD and nowhere else: `publishFrame` is private and
+    // called only from `tick`, and `tick` is a `FrameClock` /
+    // `juce::VBlankAttachment` callback, which arrives on the message thread.
+    // A message-thread read of a message-thread-written member crosses
+    // nothing. `whileReadUncommitted` is the one that does: it is read inside
+    // `readPublishedFrame`, whose only production caller is `paint`, and paint
+    // runs on the GL render thread wherever a context is attached.
+    //
+    // THAT SHAPE IS ALREADY ADMITTED, and by name. `THREADING_POLICY.md`'s
+    // Message -> Painting row (ADR-0027) says of exactly this kind of member:
+    // "A hook the paint path invokes is torn down only AFTER that thread is
+    // joined (`glContext.detach()` first), because assigning to a live
+    // `std::function` races on the callable regardless of what it reads." The
+    // rule below is that rule, not a new one — see ADR-0039 clause 12.
+    //
     // THE ONE RULE FOR ASSIGNING THEM, and it is the ordinary one for a
-    // non-atomic member two threads can reach: assign a rendezvous only while
-    // NO thread can be inside the function that reads it. `readPublishedFrame`
+    // non-atomic member the painting thread can reach: assign a rendezvous
+    // only while NO thread can be inside the function that reads it. `readPublishedFrame`
     // is `const` and runs on whichever thread paints, so arming
     // `whileReadUncommitted` after a reading thread has started — or clearing it
     // before that thread is JOINED — is a data race on the `std::function`

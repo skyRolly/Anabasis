@@ -85,9 +85,11 @@
 //  the real view: 20 s held at 48 kHz / 256 and above, then 10.92 s at
 //  48 kHz / 128, 5.46 s at 48 kHz / 64, 2.73 s at 48 kHz / 32 and 0.6825 s at
 //  192 kHz / 32 — against the twenty seconds USER_MANUAL.md promises and the
-//  ten DESIGN §2.9 floors at. The capacity below is chosen from the worst
-//  prepared pair this product costs itself against instead; the GUI decimates
-//  for display.
+//  ten DESIGN §2.9 floors at. Round 17 replaced that with a capacity derived
+//  from the worst prepared PAIR it costed against; round 19 replaced THAT with
+//  one derived from an ENTRY RATE, because a pair is a ceiling and this
+//  product declares none. See the constant below for the band and its cost;
+//  the GUI decimates for display.
 // ============================================================================
 
 namespace anabasis
@@ -126,17 +128,42 @@ public:
         int    block = 0;
     };
 
-    // CHOSEN FROM THE WORST PREPARED PAIR, NOT FROM A NOMINAL BLOCK (0.2.12
-    // round 17). An entry is one prepared block, so `N` slots are
-    // `N · block / rate` seconds and the entries a 20 s window needs are
-    // `ceil (20 · rate / block)`: 120000 at 192 kHz / 32, the cell ADR-0020 §1
-    // and ADR-0011's 2026-09-07 amendment already cost this product against
-    // and the state suite already exercises. The next power of two is this,
-    // which holds the whole 20 s at every pair up to 6553 entries a second
-    // and stays inside DESIGN §2.9's 10 s floor up to 13107 — 192 kHz / 16,
-    // below anything a host offers. Below THAT the window is
-    // `(kSize - 1) · block / rate` and shortens in proportion, which is what
-    // `GrHistoryView::windowSeconds` states and a test pins.
+    // CHOSEN FROM AN ENTRY RATE, NOT FROM A NOMINAL BLOCK AND NOT FROM A
+    // NOMINAL SAMPLE RATE (0.2.12 round 17, raised in round 19). An entry is
+    // one prepared block, so `N` slots are `N · block / rate` seconds and the
+    // entries a 20 s window needs are `ceil (20 · rate / block)` — a quantity
+    // in ENTRIES A SECOND (`rate / block`), which is the only variable this
+    // capacity has ever been about. Round 17 derived it from one pair,
+    // 192 kHz / 32 = 6000 entries a second, and `1 << 17` was the next power
+    // of two above the 120000 that pair needs. That derivation assumed
+    // 192 kHz was the top of the range, and NOTHING IN THIS PRODUCT SAYS SO:
+    // `AnabasisEngine::prepare` rails the derived lookahead and deliberately
+    // not `sr` itself, `COMPATIBILITY_MATRIX.md` has no rate row, and
+    // `DSP_POLICY.md` invariant 4 claims the ceiling holds at "any sample
+    // rate". A capacity derived from an unstated ceiling is the same defect
+    // round 17 fixed, one octave up — so it is derived from the entry rate
+    // instead, and the pairs below are consequences rather than the premise.
+    //
+    // `1 << 18` holds the whole 20 s at every pair up to `(kSize - 1) / 20` =
+    // 13107 entries a second — 384 kHz / 32, 192 kHz / 16, 96 kHz / 8 and
+    // everything with a larger block — and stays inside DESIGN §2.9's 10 s
+    // floor up to `(kSize - 1) / 10` = 26214, i.e. 384 kHz / 16 and
+    // 192 kHz / 8. Below THAT the window is `(kSize - 1) · block / rate` and
+    // shortens in exact proportion, which is what `GrHistoryView::windowSeconds`
+    // states, what `USER_MANUAL.md` promises in those terms, and what
+    // `testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` pins on both
+    // sides of the clamp. No rate is rejected to make this true: the shortfall
+    // above the band is documented, not clamped away.
+    //
+    // WHAT THE OCTAVE COSTS, measured (ADR-0040's 2026-09-08 amendment):
+    // +1.00 MiB per instance (2.00 MiB of slots against 1.00), `clear` at
+    // `prepare` 0.081 ms -> 0.178 ms on the host thread with the audio
+    // stopped, construction 0.44 ms -> 0.72 ms once per instance, and a GUI
+    // decimation scan that grows ONLY where the clamp was binding — the scan
+    // is O(window in entries) and every pair inside the band reads exactly the
+    // entries its own 20 s needs, unchanged. Nothing on the audio path moves:
+    // `push` is O(1) in `kSize` and the slots are heap, so `sizeof` this class
+    // is unchanged and no local grows a stack frame.
     //
     // FIXED, not sized at `prepare`. A reader can be inside `peek` when the
     // host re-prepares: the epoch bracket makes a torn READ safe, and no
@@ -144,7 +171,7 @@ public:
     // pair would need a reclamation protocol this ring deliberately does not
     // have, so the capacity is a constant and the shortfall below it is
     // documented rather than allocated away.
-    static constexpr int kSize = 1 << 17;         // 131072 entries, power of two
+    static constexpr int kSize = 1 << 18;         // 262144 entries, power of two
     static constexpr int kMask = kSize - 1;
 
     GrHistoryBuffer() = default;
@@ -414,7 +441,7 @@ public:
 
 private:
     // ON THE HEAP, ONE ALLOCATION AT CONSTRUCTION, AND THAT IS NOT AN
-    // AESTHETIC CHOICE. At `kSize` entries this array is a megabyte, and the
+    // AESTHETIC CHOICE. At `kSize` entries this array is two megabytes, and the
     // suites build both this ring and whole `AnabasisAudioProcessor`s as
     // LOCALS — two of the latter live at once in places, eight in one
     // function — against a Windows main thread whose default stack is one

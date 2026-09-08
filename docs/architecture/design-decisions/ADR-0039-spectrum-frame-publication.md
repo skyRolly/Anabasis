@@ -119,7 +119,7 @@ widened it:
    banner had already drawn the line this view fell on the wrong side of: a reader that maps ENTRIES
    through the prepared pair *"must bracket it with the epoch exactly as it brackets `peek`"*, while
    only a reader with *"no entries in its question"* may take it unbracketed
-   (`src/dsp/GrHistoryBuffer.h:153-175`). `SpectrumView` has entries in its question.
+   (`src/dsp/GrHistoryBuffer.h:180-202`). `SpectrumView` has entries in its question.
 
 Measured, with the reading thread standing in for the renderer and identical audio in both rings so
 that a coherent frame's traces are bit-identical (`specFrame`, 4000 publications, a whole 4096-frame
@@ -273,7 +273,7 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
 
 10. **TWO THINGS THIS BRACKET IS NOT**, stated because the short version is wrong in both:
     * **It announces the RATE, not the ring reset.** `GrHistoryBuffer::prepare` clears only when the
-      (rate, block) pair CHANGED (`src/dsp/GrHistoryBuffer.h:144-151`) while `AnabasisEngine::prepare`
+      (rate, block) pair CHANGED (`src/dsp/GrHistoryBuffer.h:171-178`) while `AnabasisEngine::prepare`
       rewinds both rings UNCONDITIONALLY (`src/dsp/AnabasisEngine.cpp:68-69`), so the ordinary
       transport-start re-prepare at an unchanged pair rewinds with the epoch standing still. That case
       cannot move the rate, which is all this bracket is about, and the rings' own `resetGeneration`
@@ -308,13 +308,16 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    inside `tick` between the two `analyse` calls and the post-batch generation re-read.
 
    **Why.** Every state this record exists for lives inside one of those three functions, and no
-   public call ends inside one — so until this round the two concurrency tests SWEPT for the states
-   instead of entering them, and asserted that a counter of accidental hits was non-zero. That is a
-   test of the scheduler. CI proved it twice: `specFrame`'s invariant failed on the macOS x86_64
-   slice under Rosetta, and `specStraddle`'s straddle premise produced ZERO hits in six thousand
-   rounds under valgrind, whose cooperative scheduler will not slide one thread into another's
-   arithmetic on request (KI-019). Worse, the sweep was not even necessary for the assertions to
-   pass: every one of `specFrame`'s held for a reader that never once overlapped a publication.
+   public call ends inside one. They are not unreachable from outside — an incidental race reaches
+   them, and that is precisely what the old tests lived on — but nothing outside can enter one ON
+   DEMAND, which is the property a test needs. So until this round the two concurrency tests SWEPT
+   for the states instead of entering them, and asserted that a counter of accidental hits was
+   non-zero. That is a test of the scheduler. CI proved it twice: `specFrame`'s invariant failed on
+   the macOS x86_64 slice under Rosetta, and `specStraddle`'s straddle premise produced ZERO hits in
+   six thousand rounds under valgrind, whose cooperative scheduler will not slide one thread into
+   another's arithmetic on request (KI-019). Worse, the sweep was not even necessary for the
+   assertions to pass: every one of `specFrame`'s held for a reader that never once overlapped a
+   publication.
    The tests now BLOCK the thread inside the bracket on a condition variable until the other thread
    has done its half, so each state is entered on every run, on every scheduler, and each is counted
    so that a run which did not enter it fails. That the handshake is what does the work is measured
@@ -331,10 +334,69 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    none of them — so each is a null test and a not-taken branch on the message thread, never on the
    audio path. The one rule they carry is the ordinary one for a non-atomic member two threads can
    reach and it is stated in the header: assign only while no thread can be inside the function that
-   reads it. **This clause is put to the reviewer explicitly** rather than assumed: it is a
-   production edit inside the mechanism this record owns, and the round's position is that it is not
+   reads it. **This clause was put to the reviewer explicitly** rather than assumed: it is a
+   production edit inside the mechanism this record owns, and the round's position was that it is not
    an `ARCHITECTURE_REVIEW_GATE.md` thread-model change — no new thread, no new cross-thread path, no
-   new atomic and no new ordering — but that call is the owner's to make.
+   new atomic and no new ordering — but that call was the owner's to make.
+
+   **Amended 2026-09-08 (0.2.12 round 19) — accepted on the owner's decision, and the argument is
+   replaced by a citation.** The seam mechanism is unchanged: three `std::function` members, three
+   call sites, no atomics, no translation-unit split, no threading-model change. What changes is
+   that the clause no longer argues the case from first principles when the repository has already
+   decided it.
+
+   *Which seam runs on which thread — the distinction the original clause did not draw.*
+   `whileHalfPublished` and `whileBatchAnalysed` are read on the **message thread and nowhere
+   else**: `publishFrame` is private (`src/gui/SpectrumView.h:374`) and its only caller is `tick`,
+   and `tick` is a `FrameClock` / `juce::VBlankAttachment` callback, whose "callbacks arrive on the
+   message thread, exactly like the `juce::Timer` ticks they replace" (`src/gui/FrameClock.h:33-34`).
+   A message-thread read of a message-thread-written member is not a cross-thread path under any
+   reading of `ARCHITECTURE_REVIEW_GATE.md:13`. `whileReadUncommitted` is the only one that touches
+   a boundary: it is read inside `readPublishedFrame`, whose sole production caller is `paint`
+   (`src/gui/SpectrumView.cpp:805`), and paint runs on the GL render thread wherever a context is
+   attached (`THREAD_MODEL.md` §"Which context paints").
+
+   *And that shape is already admitted, by name.* `THREADING_POLICY.md`'s Message → Painting row —
+   ADR-0027, Accepted 2026-08-14 — governs exactly this kind of member: *"A hook the paint path
+   invokes is torn down only AFTER that thread is joined (`glContext.detach()` first), because
+   assigning to a live `std::function` races on the callable regardless of what it reads."*
+   ADR-0027 clause 3 states it as the decision. The editor's own `isPopupMenuOnScreen` and
+   `onPopupMenuWindowCreated` are that hook; `whileReadUncommitted` is another instance of it, and
+   the "assign before the thread starts, clear after the join" rule in the header **is that rule
+   restated**, not a bespoke caution invented for this seam. The round-18 clause carried the rule
+   and not its provenance, which is what made it read as unenforced novelty.
+
+   *Why no new production threading path exists.* Nothing in `src/` assigns any of the three
+   (`specFrame` asserts that on a freshly built view), so in every shipped build the members are
+   written once at construction and only read thereafter — there is no communication across the
+   boundary to regulate. The path the policy row admits is the one the seam occupies when a TEST
+   arms it, under the teardown rule that row states.
+
+   *Why no new atomic ordering exists.* The seams add no atomic operation, no fence and no
+   `memory_order`. `publishFrame`'s sequence is unchanged — counter odd (relaxed), release fence,
+   relaxed per-bin stores, counter even (release) — and the reader's is unchanged — acquire the
+   counter, copy relaxed, acquire fence, re-read. Each call site sits BETWEEN two existing
+   operations and can move neither. An atomic-pointer seam was considered and rejected for this
+   reason: it would satisfy the policy's "no non-atomic shared state across threads" sentence
+   literally while adding three atomics to a boundary that ADR-0038 clause 7 shows is widened one
+   scalar at a time under review — a larger gate item than the hook the row already permits.
+
+   *Alternatives, and why each is worse here.* A preprocessor-gated seam is mechanically possible
+   (the state suite compiles its own object of `SpectrumView.cpp`), but it makes the tested
+   `publishFrame`/`readPublishedFrame`/`tick` a different translation from the shipped one, in a
+   defect class KI-019 already records as execution-environment-sensitive, and it is itself a Build
+   System change under the gate. `friend` cannot bind: all 103 suite functions have internal
+   linkage, so a friend declaration in a shipped header names a different entity. Dependency
+   injection cannot express what `specFrame` does — three different bodies armed on one view across
+   its phases. A runtime guard has no sound form: the class starts no thread, a thread-id check is
+   invalid at `readPublishedFrame`, the only sound guard is an in-flight counter, which is a
+   paint-path WRITE that clause 11 sends back to this gate, and every CI job builds with `NDEBUG`
+   so a `jassert` would execute in no gated binary.
+
+   *Mutation evidence that the seam is load-bearing.* Removing the wait that holds the tick inside
+   `whileBatchAnalysed` fails `specStraddle` (2 assertions); removing the wait that holds the writer
+   inside `whileHalfPublished` fails `specFrame` (3, the four-placement coverage assertion among
+   them) — KI-019's mutation table, M6 and M7.
 
 ## Review package
 
@@ -390,7 +452,7 @@ Collected here so a reviewer does not have to assemble it from the prose above.
   `prepareToPlay` landing INSIDE a tick. The suite reconfigures from the thread that ticks, so a clear
   cannot overlap a tick there, and making one overlap needs a host thread reconfiguring while audio
   is present, which the named plugin-API premise forbids. The evenness test is required by
-  `GrHistoryBuffer`'s stated reader contract (`src/dsp/GrHistoryBuffer.h:122-127`) whether or not a
+  `GrHistoryBuffer`'s stated reader contract (`src/dsp/GrHistoryBuffer.h:124-129`) whether or not a
   test can see it, and `SOURCE_OF_TRUTH.md` puts that contract above a test's reach.
 - **`CurveView` is NOT covered by this record.** It reads `preparedSampleRate()` unbracketed from
   both the painting thread and the editor's timer (`src/gui/CurveView.cpp:27,35`), and it is the
@@ -405,7 +467,7 @@ Collected here so a reviewer does not have to assemble it from the prose above.
 - `src/gui/SpectrumView.cpp` (`tick` — the configuration sample at its top, the reset-edge
   publication, the bracket close before each commit; `publishFrame`; `readPublishedFrame`;
   `configurationHeld`; `paint`)
-- `src/dsp/GrHistoryBuffer.h:144-151` (the clear-on-change gate), `:153-175` (the two-discipline
+- `src/dsp/GrHistoryBuffer.h:171-178` (the clear-on-change gate), `:180-202` (the two-discipline
   rule this view now sits on the other side of), `:189-193` (`batchIntact`), `:217-235` (`clear`)
 - `src/PluginProcessor.cpp:776, 806` (the order the bracket's proof rests on),
   `src/PluginProcessor.h:560-564`

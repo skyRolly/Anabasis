@@ -223,17 +223,19 @@ public:
         // from `kFull`, and a window shorter than that would put the oldest
         // DRAWN bucket a pitch inside the left edge with the flat lead-in
         // behind it, which is the bucket-rate walk 0.2.8 removed. It binds
-        // only at a saturated window — `want` at `windowEntries`' clamp,
-        // which since round 17's capacity means blocks of about 7 samples or
-        // fewer at 48 kHz and 29 at 192 kHz, below anything a host offers —
-        // and there the window is what the ring's safe lap allows rather than
-        // the whole `want`: measured at 192 kHz / 16 on the Advanced well,
-        // 130800 entries of the 131071 the clamp permits, 0.023 s of the
-        // 10.92 s the ring holds at that pair. Every ordinary window sits far
-        // below the cap (1877 against 131071 at 48 kHz / 512), and the figure
-        // this sentence used to quote — one bucket of the twenty seconds at
-        // blocks of 234 samples or fewer — was the 4096-entry ring's, where
-        // the clamp bound at ordinary block sizes. A panel so narrow that even two buckets
+        // only at a saturated window — `want` at `windowEntries`' clamp, which
+        // since round 19's capacity means blocks of 3 samples or fewer at
+        // 48 kHz, 14 at 192 kHz and 29 at 384 kHz (`20 · rate / (kSize - 1)`),
+        // below anything a host offers — and there the window is what the
+        // ring's safe lap allows rather than the whole `want`: at 192 kHz / 8
+        // on the Advanced well, 260420 entries of the 262143 the clamp
+        // permits, 0.072 s of the 10.92 s the ring holds at that pair. Every
+        // ordinary window sits far below the cap (1875 against 262143 at
+        // 48 kHz / 512), and BOTH figures this sentence used to quote have
+        // been retired by a capacity change: one bucket of the twenty seconds
+        // at blocks of 234 samples or fewer was the 4096-entry ring's, where
+        // the clamp bound at ordinary block sizes, and 7-at-48 kHz / 29-at-192
+        // was `1 << 17`'s. A panel so narrow that even two buckets
         // overflow the ring keeps its two and leaves the ring to
         // `firstDrawn`, which is where safety is enforced in any case.
         const int64_t kRing  = ((int64_t) anabasis::GrHistoryBuffer::kSize - stride) / stride;

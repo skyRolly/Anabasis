@@ -73,11 +73,18 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   real plugin before the fix: 20 s at 48 kHz with 256-sample buffers and larger, then 10.9 s at 128,
   5.5 s at 64, 2.7 s at 32, and 0.7 s at 192 kHz with 32-sample buffers — the display quietly showing
   a fraction of the twenty seconds it draws a scale for, with nothing on screen saying so. The ring
-  now holds 131072 points, taken from the 120000 a twenty-second window needs at 192 kHz with a
-  32-sample buffer, and the same measurements return 20.00 s at all twenty-six rate/buffer
-  combinations swept. It costs about 0.9 MB per instance and nothing on the audio thread (2.11 ns per
-  point, unchanged); the extra reading a wider window needs is done only by the sessions that have
-  one. Cross-links [ADR-0040](docs/architecture/design-decisions/ADR-0040-gr-history-ring-capacity-is-a-duration.md).
+  now holds 262144 points. That figure is taken from how many buffers a second the host runs — sample
+  rate divided by buffer size, which is the only thing the window's length depends on — and it holds
+  the whole twenty seconds up to about 13 000 buffers a second, which covers 48 kHz at 8 samples,
+  192 kHz at 16 and 384 kHz at 32. An earlier draft of this fix took the figure from one
+  rate/buffer pair instead (192 kHz with a 32-sample buffer, 131072 points), which quietly assumed
+  192 kHz was the fastest rate the plugin would ever see; it does not clamp or refuse any rate, so
+  the assumption was the same one this entry is about, one octave up. Past that point the history
+  holds as much as it can and says so, shortening smoothly rather than pretending. The same
+  measurements return 20.00 s at every rate/buffer combination swept. It costs about 2 MB per
+  instance and nothing on the audio thread (2.11 ns per point, unchanged); the extra reading a wider
+  window needs is done only by the sessions that have one.
+  Cross-links [ADR-0040](docs/architecture/design-decisions/ADR-0040-gr-history-ring-capacity-is-a-duration.md).
   Evidence: this release. [Verified]
 
 - **The right edge of the GR history no longer shows the strip that is still being generated.** The

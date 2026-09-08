@@ -469,13 +469,21 @@ real view: 10.92 s at 48 kHz / 128, 5.46 s at 48 kHz / 64, 2.73 s at 48 kHz / 32
 192 kHz / 32. The entry-count saturation was recorded in five places and the duration in none, and the
 two places that quantified its cost ("one bucket of the twenty seconds and 0.2 % of the pitch";
 "the window holds one point fewer") were exact at the saturation threshold and understated it by ~29×
-at 192 kHz / 32. Capacity is now `1 << 17` — the 120000 entries a 20 s window needs at 192 kHz / 32,
+at 192 kHz / 32. Capacity became `1 << 17` — the 120000 entries a 20 s window needs at 192 kHz / 32,
 rounded to a power of two — with the slots on the heap, since a megabyte-sized member array would meet
 a Windows main thread's megabyte of stack in suites that build rings and whole processors as locals.
-Rows engaged: **New ADR** — ADR-0040, with `ADR_INDEX.md`'s registry row; **User documentation** —
-`USER_MANUAL.md`'s twenty-second promise now names the buffer sizes it holds at; **Stale-figure
+**Round 19 (2026-09-08) raised it again, to `1 << 18`, on the owner's decision**: deriving the
+capacity from 192 kHz / 32 assumed a maximum sample rate the product does not declare, which is the
+defence ADR-0040 had already refused for the 4096-entry ring. The band is now stated in ENTRIES A
+SECOND — the whole twenty to 13107, never below §2.9's floor to 26214 — and no rate is clamped to
+buy it.
+Rows engaged: **New ADR** — ADR-0040, with `ADR_INDEX.md`'s registry row, amended in round 19;
+**User documentation** — `USER_MANUAL.md`'s twenty-second promise named the buffer sizes it holds
+at, and round 19 restates it in buffers a second so it stays true at any rate; **Stale-figure
 correction** — `GrHistoryView.h`, ADR-0023's 2026-09-05 amendment and `CHANGELOG.md`'s 0.2.12 entry
-all carried the 4096-ring's saturation figures; **Known issue** — KI-019 records the two spectrum
+all carried the 4096-ring's saturation figures, and round 19 caught the one site that escaped that
+sweep (`GrHistoryView.cpp`'s `paintHistory` comment) plus the figures its own capacity change
+retired; **Known issue** — KI-019 records the two spectrum
 concurrency PREMISES that were found to fail intermittently while this round's CI was being read,
 with the evidence for each and the reason neither may be answered by weakening what it guards. Explicitly **not** a review-gate item: no parameter,
 serialization, threading, signal-order or latency change — the SPSC contract, the reset epoch and the
