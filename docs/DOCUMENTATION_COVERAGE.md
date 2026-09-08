@@ -6,7 +6,13 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-07, round 18)** — the PR review's fourth finding, and the
+**Last updated:** for **0.2.12 (2026-09-08, round 19)** — the GR history ring's capacity is derived
+from an ENTRY RATE rather than from one prepared pair, because a pair carries a sample-rate ceiling
+this product does not declare (`kSize` `1 << 17` → `1 << 18`; entry in the round-17 addendum, where
+the constant is argued), and the documentation-only anchor hygiene that followed it: ADR-0014's
+Related-code row re-aimed, the `2026-09-05` worklog's ring anchors re-aimed, the two static-analyser
+anchors PINNED to revisions rather than re-numbered, and two claims in those pins corrected to what
+had actually been checked (addendum below). Before that, for **0.2.12 (2026-09-07, round 18)** — the PR review's fourth finding, and the
 only one that was never a product defect: the two spectrum concurrency gates asserted on
 interleavings they SEARCHED for rather than established, so Rosetta and valgrind could fail them
 intermittently. Both now ENTER their states through rendezvous points inside the production
@@ -435,6 +441,35 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-08, round 19) — the anchors a growing tree had left behind, and the audit
+obligation this entry discharges.** Round 19's capacity work is recorded in the round-17 addendum
+below, where the constant it changes is argued. What had no entry at all is the ANCHOR HYGIENE that
+followed it, four documentation-only commits in a row, and the omission was itself the review's next
+finding: `DOCUMENTATION_LIFECYCLE_POLICY.md`'s audit obligation says "on every documentation-affecting
+change, update `DOCUMENTATION_COVERAGE.md`", with no exemption for a change that touches only
+documentation, and each of those commits was exactly that. Rows engaged:
+**Accepted-ADR stale anchor** — ADR-0014's Related-code row had four of five line numbers drifted as
+the two engine files grew around them (`injectTrims` 161-168 → 224-263; `restoreFrozenTrims`
+158-167 → 243-265, with `frozenRestorePending` now forty lines away at 287-291 and cited separately;
+the direct-adopt and duck-bottom application sites 350/400 → 461/511). The block-top consume at
+`AnabasisEngine.cpp:373-389` still resolved and is unchanged. Only the pointers moved: the decision,
+the reasoning and the evidence rows are as accepted, and a note above the list says so.
+**Worklog anchors** — `2026-09-05-gr-history-tip.md` traced `preparedRate` through four
+`GrHistoryBuffer.h` numbers that were correct against `8d5738f` and had drifted since, most recently
+by this round's capacity amendment; they are re-aimed. The two ANALYSER anchors are treated
+differently on purpose: a PREfast C6262 line and a CodeQL alert-#192 line are records of what a tool
+reported, so re-numbering them to today's tree would falsify the report. They are PINNED instead, in
+the idiom already used at `bcebfaf:tests/state_tests.cpp:5694` — the tool's own figure, the revision
+it resolves against, and the current location beside it.
+**Two corrections to those pins, both the same defect** — a claim asserted beyond what had been
+checked. `33b5842` was described as "the last revision at which" line 6435 held its function; it is
+not (`821fa5c` is a descendant that still does), because the search behind the claim only walked
+commits that TOUCHED the test file. And `e821c94` was described as "the revision this audit read",
+which was never established — that audit reproduced the scanning surface locally and names no tree.
+Both now read "the revision used for this record", which is what a pin is and all it needs to be.
+No historical evidence is rewritten anywhere in this row: no alert, byte figure, stack measurement,
+date or conclusion changes.
 
 **Addendum (2026-09-07, round 18) — the concurrency gates enter their states instead of searching
 for them.** The review's fourth finding, and the only one in this sequence that was never a defect in
