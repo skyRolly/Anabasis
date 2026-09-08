@@ -1608,13 +1608,20 @@ out to be neither.
 ### 17.1 Mismatched frequency axes — reproduced, and not quite where the finding said
 
 **The lifecycle, traced rather than assumed.** The rate the display uses lives in
-`GrHistoryBuffer::preparedRate` (`src/dsp/GrHistoryBuffer.h:338`), written relaxed inside `clear`
-(`:232`) between a release-fenced odd guard increment and a release even one (`:217-235`), read
-relaxed through `prepared()` (`:176-180`) and forwarded as
+`GrHistoryBuffer::preparedRate` (`src/dsp/GrHistoryBuffer.h:462`), written relaxed inside `clear`
+(`:319`) between a release-fenced odd guard increment and a release even one (`:304-322`), read
+relaxed through `prepared()` (`:263-267`) and forwarded as
 `AnabasisAudioProcessor::preparedSampleRate` (`src/PluginProcessor.h:564`). One writer: the host's
 reconfiguration thread, through `prepareToPlay` (`src/PluginProcessor.cpp:748,785`). Three readers:
 `GrHistoryView` (bracketed), `CurveView` (unbracketed), `SpectrumView::paint` (unbracketed,
 `src/gui/SpectrumView.cpp:575` before this round).
+
+> *Anchors re-aimed 2026-09-08, nothing else touched.* The four `GrHistoryBuffer.h` line numbers
+> above were correct against `8d5738f`, the file as it stood when this log was written, and have
+> drifted since — most recently by ADR-0040's 2026-09-08 capacity amendment, which added lines above
+> them. They now point at the same four things: the `preparedRate` member, its relaxed store inside
+> `clear`, the odd/even `resetGuard` bracket around it, and `prepared()`. The finding, the
+> measurements and the conclusions below are as recorded on 2026-09-05.
 
 **What it affects, corrected.** Not the axis. The x axis is a fixed 20 Hz–20 kHz log sweep with no
 rate term (`:577,651-654,661`); the rate enters only as `binHz = rate / kSize` (`:619`) and from
