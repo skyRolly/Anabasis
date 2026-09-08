@@ -943,10 +943,15 @@ both suites green from the LTO'd binaries. `grep -c 'float-equal'` on that log: 
 
 ### 12.5 — PREfast C6262 at `state_tests.cpp:6435`
 
-Line 6435 is `testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` in every revision of the pull
-request, so the warning is this test's. MSVC's C6262 sums a function's block-scoped locals without
-the slot sharing clang and GCC perform, and the function held four `GrHistoryBuffer` fixtures
-(32,800 bytes each) and one `AnabasisAudioProcessor` (75,688) in sibling blocks. All five are
+*(Anchor pinned 2026-09-08. 6435 is the line PREfast cited and is left as the analyser reported it;
+it resolves against `33b5842:tests/state_tests.cpp:6435`, the last revision at which it did. The
+same function is at `tests/state_tests.cpp:9955` today. Nothing below is re-measured.)*
+
+Line 6435 was `testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` in every revision of the pull
+request through `33b5842`, so the warning is this test's. MSVC's C6262 sums a function's
+block-scoped locals without the slot sharing clang and GCC perform, and the function held four
+`GrHistoryBuffer` fixtures (32,800 bytes each) and one `AnabasisAudioProcessor` (75,688) in sibling
+blocks. All five are
 `std::make_unique`'d now, with a reference alias so every assertion reads as before; semantics and
 coverage are unchanged. PREfast runs only in the Windows lane, so the measurement here is clang's
 `-fstack-usage -fno-inline` (per-function frames, no inlining into `main`): this function
