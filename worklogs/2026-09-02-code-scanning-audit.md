@@ -82,7 +82,7 @@ Recording the reversal because the first answer was the defensible-sounding one.
   20-byte gap across two compilers on different platforms is the same five fixtures, not coincidence.
   *(Anchors pinned 2026-09-08. Both line numbers are the ones the scan reported and are left as it
   reported them; they resolve against `e821c94:tests/state_tests.cpp:6530` and `:7141`, the revision
-  this audit read. The two functions are at `tests/state_tests.cpp:9955` and `:10708` today. The
+  used for this record. The two functions are at `tests/state_tests.cpp:9955` and `:10708` today. The
   alert, the byte figures and the conclusion are as recorded on 2026-09-02.)*
 * **The C6262 class is test-only but not free.** `.github/workflows/build.yml:1126-1143` already
   raises the sanitizer lane to `ulimit -s 65536` because `testTeardownAndReengageInvariants`

@@ -1434,11 +1434,38 @@ condition to a diagnostic about the machine.
    in=-112.685745 out=-112.685745 … re-read 0`: the writer's pair was bit-identical on every tick,
    the published pair read back equal immediately, and the two recorded values are themselves
    identical (`%.9g` round-trips a `float`). A comparison that disagrees with a reload of its own
-   thread-local operands is not a state this program can be in. The redesign cuts the exposure from
-   ~4 x 10^8 float comparisons a run to ~5 x 10^4 — about four orders of magnitude — which makes the
-   symptom vanishingly unlikely without pretending the machine is sound. That is an environment
-   fact, not a test-design one, and it is why this entry is closed on the DESIGN and not on the
-   observation.
+   thread-local operands is not a state this program can be in. The redesign cuts `specFrame`'s own
+   exposure from ~4 x 10^8 float comparisons a run to ~5 x 10^4 — about four orders of magnitude.
+   That is an environment fact, not a test-design one, and it is why this entry is closed on the
+   DESIGN and not on the observation.
+
+   **Amended 2026-09-08 — that exposure figure is `specFrame`'s, and it does not bound the LANE.**
+   The sentence above used to end "which makes the symptom vanishingly unlikely", which read as
+   though the redesign had largely retired the fault. It had not, and the next occurrence proved it:
+   at `4a5b71c` the Rosetta slice failed a DIFFERENT test — `specSpan`'s
+   *"with neither tap advancing, both traces are held exactly"* — one check of 1423, in run
+   34220696244 attempt 1.
+
+   Everything about that failure says environment rather than defect, and one thing about it says
+   MORE than the original observation did. The five commits since the last green run of this lane
+   changed documentation only, so the bytes were the ones that had already passed it. The same run's
+   native arm64 slice passed 1423/0 two minutes earlier, `macos-intel` (native x86_64) passed, and
+   Linux, both LTO lanes, Windows, RealtimeSanitizer, ASan+UBSan and valgrind all passed. A re-run of
+   the identical bytes (attempt 2) passed, and the suite passed 25/25 locally. And the assertion has
+   no architecture-dependent path to fail on: the test pushes nothing to either ring between its
+   snapshot and its two ticks, so both ticks hit `tick`'s idle gate — `committed == shownCommitted
+   && gi0 == shownInGen && go0 == shownOutGen`, a `uint64_t` and two `uint32_t`s — and return before
+   `analyse`. Neither trace is written, so the check is `exactlyEqual (x, copy_of_x)` over 4096
+   float pairs with no store between them. **`specSpan` is single-threaded**, which is why this
+   observation is stronger than the first: there is no concurrency left to blame.
+
+   What follows for the record, and only this: the exposure reduction was a statement about ONE
+   test's sweep, and the lane's risk is a property of the lane. Any test that compares floats
+   bit-exactly carries some of it, and 117 `exactlyEqual` call sites in the state suite do. Nothing
+   here changes what is appropriate: **no code workaround, no weakened assertion, no added retry,
+   no skipped lane.** A test that reports a miscompare it cannot have produced is doing its job, and
+   the response is to investigate the occurrence — as this one was — not to arrange for it to be
+   unobservable.
 2. **The forced placements prove the control-flow half of ADR-0039 and not the memory-model half.**
    Each rendezvous parks a thread on a mutex, and mutex release/acquire supplies happens-before
    edges strictly stronger than the seqlock's own annotations — so deleting the writer's release
