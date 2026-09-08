@@ -8448,7 +8448,23 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
         }
     });
     long workingSplit = 0;
-    for (int f = 0; f < 200; ++f)
+    // THE WRITER CONFIRMS THE READER'S PREMISE BEFORE IT STOPS, which is this
+    // file's rule — "a premise is established, never asserted after the fact"
+    // — applied to the one premise here that was not. The reader's floor is
+    // that the pair MOVED under it (`distinct > 1`); the writer used to publish
+    // a flat two hundred times and then set `stop`, so whether the reader had
+    // seen the frame move by then was the scheduler's call. It holds easily
+    // when the two threads run at ordinary speed, and round 19 measured it
+    // failing under valgrind, where a slower suite left the reader with too
+    // little of the writer's two hundred publications to see a second frame.
+    // The writer now keeps publishing until the reader has confirmed it, and
+    // the cap is a LIVENESS bound in the same shape as the rendezvous waits
+    // above: a reader that never advances fails the named premise below rather
+    // than running forever. Nothing is retried and nothing is weakened — the
+    // assertion is the one that was there, and it is now reached in a state
+    // the writer established instead of one it hoped for.
+    const int kMinPublications = 200, kMaxPublications = 20000;
+    for (int f = 0; f < kMaxPublications; ++f)
     {
         const auto& src = (f & 1) ? toneA : toneB;
         fillBoth (src.data());
@@ -8457,6 +8473,8 @@ static void testTheSpectrumsRendererNeverSeesHalfOfTwoFrames()
         if (! juce::exactlyEqual (wIn[bA], wOut[bA]) || ! juce::exactlyEqual (wIn[bB], wOut[bB]))
             ++workingSplit;
         std::this_thread::yield();
+        if (f + 1 >= kMinPublications && distinct.load (std::memory_order_relaxed) > 1)
+            break;                                  // the premise is met; the stress has run its bound
     }
     stop.store (true);
     renderer.join();
