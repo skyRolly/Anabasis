@@ -12,7 +12,9 @@ this product does not declare (`kSize` `1 << 17` → `1 << 18`; entry in the rou
 the constant is argued), and the documentation-only anchor hygiene that followed it: ADR-0014's
 Related-code row re-aimed, the `2026-09-05` worklog's ring anchors re-aimed, the two static-analyser
 anchors PINNED to revisions rather than re-numbered, and two claims in those pins corrected to what
-had actually been checked (addendum below). Before that, for **0.2.12 (2026-09-07, round 18)** — the PR review's fourth finding, and the
+had actually been checked (addendum below). Also KI-019's open Rosetta item, which described a
+`specFrame`-specific exposure reduction in terms that read as retiring the lane's risk, corrected
+after that lane failed a different test. Before that, for **0.2.12 (2026-09-07, round 18)** — the PR review's fourth finding, and the
 only one that was never a product defect: the two spectrum concurrency gates asserted on
 interleavings they SEARCHED for rather than established, so Rosetta and valgrind could fail them
 intermittently. Both now ENTER their states through rendezvous points inside the production
@@ -441,6 +443,22 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-08, round 19) — a Rosetta failure that was not a defect, and the sentence it
+falsified.** The macOS x86_64 slice under Rosetta failed one check of 1423 at `4a5b71c` — `specSpan`'s
+held-traces assertion — while the same run's native arm64 slice, `macos-intel`, Linux, both LTO lanes,
+Windows, RealtimeSanitizer, ASan+UBSan and valgrind all passed, the five commits since that lane was
+last green changed documentation only, a re-run of the identical bytes passed, and the suite passed
+25/25 locally. The assertion has no architecture-dependent path: both of its ticks hit `tick`'s idle
+gate on integer comparisons and return before `analyse`, so it reduces to `exactlyEqual (x,
+copy_of_x)` with no store between — and `specSpan` is single-threaded, so unlike the round-17/18
+observations there is no concurrency to blame. Rows engaged: **Known issue** — KI-019's open item 1
+said the round-18 redesign made the symptom "vanishingly unlikely", which read as though the fault
+were largely retired; that exposure figure was `specFrame`'s own sweep and never bounded the lane, and
+a failure in a different test with its own bit-exact self-comparison is what showed it. The item now
+scopes the figure to the test it describes, records this occurrence and its evidence, and restates
+that no code workaround, weakened assertion, added retry or skipped lane is appropriate. No code,
+test, assertion or CI configuration changed.
 
 **Addendum (2026-09-08, round 19) — the anchors a growing tree had left behind, and the audit
 obligation this entry discharges.** Round 19's capacity work is recorded in the round-17 addendum
