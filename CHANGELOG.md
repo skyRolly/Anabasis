@@ -67,6 +67,26 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
 §7.
 
 ### Fixed
+- **The GR history holds twenty seconds at every buffer size, not only at large ones.** The history
+  ring stored 4096 points, and a point is one buffer of processed audio — so what the ring held was
+  `4096 × buffer ÷ sample rate` SECONDS, and only a large buffer made that twenty. Measured on the
+  real plugin before the fix: 20 s at 48 kHz with 256-sample buffers and larger, then 10.9 s at 128,
+  5.5 s at 64, 2.7 s at 32, and 0.7 s at 192 kHz with 32-sample buffers — the display quietly showing
+  a fraction of the twenty seconds it draws a scale for, with nothing on screen saying so. The ring
+  now holds 262144 points. That figure is taken from how many buffers a second the host runs — sample
+  rate divided by buffer size, which is the only thing the window's length depends on — and it holds
+  the whole twenty seconds up to about 13 000 buffers a second, which covers 48 kHz at 8 samples,
+  192 kHz at 16 and 384 kHz at 32. An earlier draft of this fix took the figure from one
+  rate/buffer pair instead (192 kHz with a 32-sample buffer, 131072 points), which quietly assumed
+  192 kHz was the fastest rate the plugin would ever see; it does not clamp or refuse any rate, so
+  the assumption was the same one this entry is about, one octave up. Past that point the history
+  holds as much as it can and says so, shortening smoothly rather than pretending. The same
+  measurements return 20.00 s at every rate/buffer combination swept. It costs about 2 MB per
+  instance and nothing on the audio thread (2.11 ns per point, unchanged); the extra reading a wider
+  window needs is done only by the sessions that have one.
+  Cross-links [ADR-0040](docs/architecture/design-decisions/ADR-0040-gr-history-ring-capacity-is-a-duration.md).
+  Evidence: this release. [Verified]
+
 - **The right edge of the GR history no longer shows the strip that is still being generated.** The
   trace and the level fill stop `ceil (pitch) + 2` columns short of where the newest bucket is
   anchored — four columns for every block size up to 1024 samples at every rate from 44.1 kHz, and
@@ -104,8 +124,10 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   defect). The left-hand eight columns' translation-compensated movement fell from 0.19 px mean and
   5.8 px max to 0.09 and 2.4 — the floor a single-block-per-point configuration shows. The display
   now reaches up to one group of blocks (32 ms at 48 kHz / 512) further back than twenty seconds,
-  all of it off the left edge; at host blocks of about 234 samples or fewer the window holds one
-  point fewer, so that the buffer can hold every point's blocks. Evidence: this release. [Verified]
+  all of it off the left edge; at prepared blocks small enough to saturate the ring the window
+  holds a few points fewer, so that the buffer can hold every point's blocks — since ADR-0040 that
+  is blocks of about 7 samples or fewer at 48 kHz and 29 at 192 kHz, sizes no host offers.
+  Evidence: this release. [Verified]
 
 - **Switching back from the spectrum no longer shows one frame of the old history.** The GR history
   publishes what it draws once per frame, and it stops publishing while the spectrum has the graph
@@ -244,6 +266,58 @@ Measurement trail: [`worklogs/2026-09-05-gr-history-tip.md`](worklogs/2026-09-05
   panel rather than the previous configuration's. Cross-links
   [ADR-0039](docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md), amended by
   exception for this repair. Evidence: this release. [Verified]
+
+- **The GR history now spans twenty seconds of audio whatever buffer size your host uses.** The
+  trace advanced one point per callback while the graph's time axis was drawn from the buffer size
+  the plugin was PREPARED with, and hosts routinely deliver something else — a live or monitored
+  Logic track renders the I/O buffer against the larger maximum the AU wrapper prepared with, and a
+  host rendering ahead of real time hands over several buffers at a time. The two only agreed when
+  the delivered size happened to equal the prepared one; anywhere else the whole time base ran out
+  by the ratio between them, measured on the real processor and the real paint path from an eighth
+  of the prepared size to eight times it: at a quarter the window held five seconds instead of
+  twenty and the trace ran four times too fast, at eight times it held 160 seconds and crawled. A
+  point of the history is now one prepared buffer of PROCESSED AUDIO, closed on the sample that
+  completes it with the remainder carried into the next callback, so the entry rate is the same
+  whatever arrives and a variable buffer size — which the plugin format's own contract says to
+  expect — is covered by construction. Nothing in the display changed to fix it, and nothing about
+  the sound changed at all: with the delivered size equal to the prepared one every point is
+  bit-identical to the previous build's. The GR meter is unaffected — it is a per-callback reading
+  and stays one. Cross-links
+  [ADR-0011](docs/architecture/design-decisions/ADR-0011-threading-model.md), amended for the
+  publication cadence. The other half of
+  [OQ-017](docs/OPEN_QUESTIONS.md) — a host that hands over several buffers at once still makes the
+  trace jump and then stand still, at its own cadence — is unchanged and still the owner's call.
+  Evidence: this release. [Verified]
+
+- **Pausing and resuming no longer loses the most recent moment of GR history.** The graph's
+  timeline is meant to continue across a transport start — it restarts only when the sample rate or
+  buffer size changes — and it did, for every point already on screen. The point still being
+  collected did not: the plugin threw it away every time the host re-armed, so up to one buffer of
+  audio that had already been processed and played was summarised into nothing and simply fell out
+  of the history. Nothing on screen moved when it happened, which is why it was invisible: the trace
+  carried on scrolling from where it stopped, one moment shorter than the audio it claimed to show,
+  and a little shorter again after every pause. Measured at 48 kHz with a 512-sample buffer, forty
+  pause/resume cycles over 8.783 seconds of audio drew 800 points where the audio was worth 823 — a
+  quarter of a second of history gone. The point in progress is now carried across a pause and
+  finished when playback resumes, so the history accounts for every sample it was given. A change of
+  sample rate or buffer size still discards it, because those samples belong to the timeline that
+  ended and the graph starts a fresh one there. Cross-links
+  [ADR-0011](docs/architecture/design-decisions/ADR-0011-threading-model.md), amended for the
+  partial point's lifecycle. Evidence: this release. [Verified]
+
+- **A history point can no longer be built from two different recordings.** When the graph starts a
+  fresh timeline — a change of sample rate or buffer size, or anything else that clears it — the
+  point still being collected belonged to the recording that just ended, and it was being finished
+  off with the new one's audio. The result was a full-width point on the new trace standing for as
+  little as a single sample, carrying the level and reduction of audio from before the restart:
+  measured at 48 kHz with a 512-sample buffer and 511 samples in flight, the first point of the new
+  timeline was drawn from 20 microseconds of new audio and the previous timeline's peak. The point
+  in progress now belongs to the recording it was started in, and is discarded whenever the graph
+  starts a new one — so the first point of any new timeline is always a whole buffer of that
+  timeline's own audio. Pausing and resuming is unaffected: that does not start a new recording, and
+  the point in progress is still carried across it. Cross-links
+  [ADR-0011](docs/architecture/design-decisions/ADR-0011-threading-model.md), amended for where that
+  decision is taken. Evidence: this release. [Verified]
 
 ### Changed
 - **The history graph is drawn a few columns further right, and shows that much more of the past.**

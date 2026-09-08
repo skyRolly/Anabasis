@@ -621,7 +621,7 @@ They are acquired in **both** orders:
 
 | Order | Path |
 |---|---|
-| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:214`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:221`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
@@ -678,7 +678,7 @@ observed against this plugin (the same standing caveat as KI-003).
 listener callback.
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:214` (the M0 → M1 edge); JUCE
+- Source: `src/PluginProcessor.cpp:221` (the M0 → M1 edge); JUCE
   `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
 - Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
   stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite
@@ -1373,6 +1373,115 @@ Evidence [Verified]:
   delivers were corrected in the same round rather than left standing
 - Related: ADR-0011's first and third dated 2026-09-02 amendments; KI-015
 - Worklog: `worklogs/2026-09-02-round6-concurrency.md`
+
+### KI-019 — Two spectrum concurrency tests asserted on interleavings they SEARCHED for rather than established (2026-09-07) — **CLOSED 2026-09-07 (0.2.12 round 18)**
+
+Neither failure was ever a defect in the product. Both were assertions in `tests/state_tests.cpp`
+that needed a particular interleaving to occur, and neither test made it occur: they ran the real
+threads, hoped the scheduler would put one inside the other, counted the times it did, and asserted
+the count was not zero. That is a test of the scheduler, and CI proved it twice in two different
+environments before the design was corrected.
+
+**What CI saw.** `specFrame`'s `mixed == 0` failed on the macOS x86_64 slice under Rosetta at
+`abd209e3` and `ee32738d` and again at `f2babdc8`, passing at `f7fea2a7`, `20a9bd19` and twice at
+`50cc099d`; the same universal binary's arm64 slice, native Intel (`macos-15-intel`) and Linux under
+gcc, clang, LTO, ASan+UBSan and valgrind never failed it. `specStraddle`'s `guardFired > 0` failed
+under valgrind memcheck on a GitHub `ubuntu-latest` runner in run 34134239185 attempt 2 —
+**3 261 238 ticks, 6000 rewinds, 0 straddles** — while the same commit's attempt 1 had passed
+memcheck an hour earlier and this container reaches the premise under memcheck in 99 rewinds with
+exactly one straddle.
+
+**Root cause, `specFrame`: the concurrent half was vacuous.** Its renderer thread read while four
+thousand ticks published, but not one assertion in the function required the reader to have
+overlapped a publication even once — every one of them holds for a reader that only ever reads
+quiesced frames, so the test could take two hundred thousand reads without entering the state it
+exists to check. `distinct > 1` measures publications BETWEEN reads, which is the opposite of the
+overlap it was standing in for. What the sweep did do at that scale was expose the run to the
+machine: ~4 x 10^8 float comparisons per run, against an environment that miscompares about one in
+4 x 10^8 (below).
+
+**Root cause, `specStraddle`: an open-loop search with a feedback signal that arrives too late.**
+The window a rewind must land in is `tick`'s interior — after both ring windows are read and folded,
+before the two generations are re-read. Land earlier and the reads come back short and
+`onePairOneSpan` rejects the frame; land later and the tick has already committed. The producer
+woke on "a tick has begun" and then swept a doubling spin and a yield count trying to land there,
+with `guardFired` as its feedback — a signal that only becomes non-zero after the search has already
+succeeded once. Natively the window is most of a tick and it converged on the first rounds; under a
+cooperative scheduler it never converged at all.
+
+**The deterministic architecture now used.** `SpectrumView` carries three rendezvous points, each
+called at one place, each empty in every shipped build (ADR-0039 clause 12):
+`whileHalfPublished` (counter odd, payload genuinely torn), `whileReadUncommitted` (a reader's copy
+taken, closing check not yet run) and `whileBatchAnalysed` (both windows folded, generations not yet
+re-read). The tests block the thread inside the bracket on a condition variable until the other
+thread has done its half, so the interleaving is FORCED rather than raced — identically under a
+preemptive scheduler, valgrind's cooperative one and binary translation.
+
+`specFrame` now places a reader at all four states a publication has — before it, inside it with the
+counter odd, across it, and after it — counts each placement separately in the branch that verified
+that placement's own observable, and asserts all four are non-zero. It also asserts what the odd
+marker actually buys: the refusal happens BEFORE the copy, so a reader's own buffers still hold the
+last coherent frame and the torn pair is unreadable rather than read and discarded. `specStraddle`
+forces exactly one straddle, on two real threads, and asserts the frame it produces has a full span
+and both traces at the floor; its concurrent phase is now a fixed sixty rounds of stress with the
+spin/yield sweep and the six-thousand-round hunt deleted, and `guardFired` demoted from a pass
+condition to a diagnostic about the machine.
+
+**What is NOT closed, and is not the same thing.**
+
+1. **The execution-environment fault behind the Rosetta failures is real and remains.** At
+   `f2babdc8` the instrumented test recorded `1 mixed, 0 working-pair splits; first mixed bin 202
+   in=-112.685745 out=-112.685745 … re-read 0`: the writer's pair was bit-identical on every tick,
+   the published pair read back equal immediately, and the two recorded values are themselves
+   identical (`%.9g` round-trips a `float`). A comparison that disagrees with a reload of its own
+   thread-local operands is not a state this program can be in. The redesign cuts the exposure from
+   ~4 x 10^8 float comparisons a run to ~5 x 10^4 — about four orders of magnitude — which makes the
+   symptom vanishingly unlikely without pretending the machine is sound. That is an environment
+   fact, not a test-design one, and it is why this entry is closed on the DESIGN and not on the
+   observation.
+2. **The forced placements prove the control-flow half of ADR-0039 and not the memory-model half.**
+   Each rendezvous parks a thread on a mutex, and mutex release/acquire supplies happens-before
+   edges strictly stronger than the seqlock's own annotations — so deleting the writer's release
+   fence, the reader's acquire fence or the closing store's `release` is invisible to the forced
+   phases. It is invisible to the stress too, and to every other test in the tree, and on x86-64 that
+   is not an argument but a measurement: compiling `SpectrumView.cpp` with each fence removed and
+   disassembling the two functions gives, for the writer's release fence and the reader's acquire
+   fence, **textually identical machine code** — the mutant is the same program, so no test on this
+   architecture can distinguish it. Demoting the closing store from `release` to `relaxed` changes
+   the emitted code by exactly one instruction's POSITION (`movq %xmm0,%rax` moves one slot), which
+   carries no ordering meaning under x86's TSO. On AArch64 the fences are real `dmb ish` instructions
+   and the mutants are real; observing the reordering they prevent still needs the luck this round
+   exists to stop depending on. Recorded as an unkillable mutant class rather than left to be
+   discovered — see the table below.
+
+**The round's mutation table.** Each mutant was compiled and the whole state suite run against it;
+"killed by" counts only failures NAMED `specFrame` or `specStraddle`, since a mutant that merely
+breaks some other test proves nothing about these two. `specPaint` — the round's other publication
+test — is listed separately where it also fired, because it reads the same protocol through `paint`
+and its agreement is corroboration rather than the claim.
+
+| # | Mutation | Outcome |
+| --- | --- | --- |
+| M1 | `publishFrame` never stores the odd marker, so the bracket never opens | **Killed** — 3 `specFrame` failures (refusal, untouched buffers, four-placement coverage); `specPaint` also fires |
+| M2 | `readPublishedFrame` copies the payload even with the bracket open | **Killed** — 4 `specFrame` failures, including the mixed-frame assertion itself; `specPaint` also fires |
+| M3 | the reader's closing re-read always accepts | **Killed** — 7 `specFrame` failures across phases B and C (overtaken-once recovery, overtaken-twice refusal, both premises); `specPaint` also fires |
+| M4 | the post-batch generation guard is deleted | **Killed** — 2 `specStraddle` failures (the floored straddle frame, and the premise that the run established it) |
+| M5 | the generation guard floors only the input trace | **Killed** — 2 `specStraddle` failures |
+| M6 | the straddle rendezvous no longer holds the tick — the MECHANISM that establishes the interleaving is removed, the rest of the test untouched | **Killed** — 2 `specStraddle` failures. This is the test failing because the ordering was not established, which is what makes the assertion non-vacuous |
+| M7 | `specFrame`'s half-publication rendezvous no longer holds the writer inside the bracket — same removal, on the other test | **Killed** — 3 `specFrame` failures, the coverage assertion among them |
+| M8 | the writer's release fence is deleted | **Survived** — and unkillable here: `objdump` of `publishFrame` is textually identical with and without it on x86-64 |
+| M9 | the reader's acquire fence is deleted | **Survived** — same measurement on `readPublishedFrame` |
+| M10 | the closing store is demoted from `release` to `relaxed` | **Survived** — the emitted code differs only by one instruction's position (`movq %xmm0,%rax`), which carries no ordering meaning under TSO |
+
+M6 and M7 are the two that answer "does the test still pass if the thing that makes it deterministic
+is taken away". They do not. M8-M10 are the class this entry declines to claim coverage of.
+
+Evidence [Verified]:
+- Source: `src/gui/SpectrumView.h` (the rendezvous banner and the assignment rule),
+  `src/gui/SpectrumView.cpp` (the three call sites), `tests/state_tests.cpp`
+- Test:   `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` (four placements, each counted),
+  `testAResetThatLandsInsideATickNeverReachesTheScreen` (one forced straddle)
+- Related: ADR-0039 clause 12 (2026-09-07)
 
 ## Standing note for P1 onward
 

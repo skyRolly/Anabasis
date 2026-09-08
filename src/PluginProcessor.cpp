@@ -36,6 +36,13 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // audio-thread state, so this is safe from any non-audio thread.
     internalState.onLatencyInputChanged = [this] { updateLatency(); };
 
+    // The GR history's producer (0.2.12, OQ-017 fix 1). The ring is the
+    // wrapper's, the entries are the ENGINE's to time: one per prepared block
+    // of processed audio, which only the chunk loop can see the boundaries of.
+    // Set here rather than at `prepareToPlay` so it is never null while audio
+    // runs, and once because the address is stable for this instance's life.
+    engine.setGrHistorySink (&grHistoryRing);
+
     // The fresh state IS the "Default" preset (factory index 0, empty
     // override table). Named BEFORE the default slot is captured so both
     // slots open carrying it; the dirty baseline is seeded right after, so
@@ -525,8 +532,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1605` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1675` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1654` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1724` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -772,17 +779,31 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // size (0.1.2 item 6). Hosts re-prepare on transport start, and an
     // unconditional clear here wiped the scrolling timeline on every
     // pause/resume — the display then restarted instead of continuing from
-    // where it stopped. The ring's time base is entries-per-host-block mapped
-    // through the PREPARED rate and size (GrHistoryView's banner), so history
-    // recorded under the same pair is still drawn true; a changed pair is the
-    // case the clear has always existed for (stale entries would be mapped
-    // through the wrong time base) and still clears. The gate and the pair it
+    // where it stopped. An entry is one PREPARED block of processed audio
+    // (0.2.12, OQ-017 fix 1) mapped through the PREPARED rate and size
+    // (GrHistoryView's banner), so history recorded under the same pair is
+    // still drawn true; a changed pair is the case the clear has always
+    // existed for (stale entries would be mapped through the wrong time base)
+    // and still clears. THE ENGINE'S PARTIAL ENTRY FOLLOWS THE RING, not this
+    // call and not `engine.prepare` above: the engine reads the epoch this
+    // clear bumps (`AnabasisEngine::syncHistoryTimeline`), so the samples
+    // already folded into the unpublished entry survive exactly the
+    // re-prepares that keep the entries — a transport start no longer loses
+    // the audio that was in flight — and go with exactly the clears that
+    // discard them, including any that never reach this line at all. The gate and the pair it
     // keeps live in the ring since the 0.2.8 final review: the view used to
     // read the time base back from `getSampleRate()`/`getBlockSize()`, which
     // this callback's thread writes while the view's threads read — the ring
     // publishes the pair inside the clear's own epoch window instead, so a
     // frame maps its entries through the pair they were recorded under.
-    grHistoryRing.prepare (sampleRate, samplesPerBlock);
+    // ONE CALL, and that is deliberate: it is `grHistoryRing.prepare (rate,
+    // block)` with the engine's timeline sync welded to it. The engine's
+    // PARTIAL entry has to follow whatever that gate just decided — it asks
+    // the ring's reset epoch rather than being told — and a clear followed by
+    // no sync completes the new timeline's first entry with the old one's
+    // statistics. Splitting them here is what made that possible, so they are
+    // not splittable here any more.
+    engine.prepareHistoryTimeline (sampleRate, samplesPerBlock);
     dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
     // this the six meter atomics keep the previous session's readings until a
@@ -930,11 +951,15 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (getMainBusNumInputChannels() == 1 && buffer.getNumChannels() >= 2)
         buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
 
-    // A block the engine short-circuited produced no render-tap values:
-    // publishing anyway would re-report the previous block's peaks and push a
-    // duplicate GR-history entry, breaking the one-entry-per-processed-block
-    // property the ring's readers rely on. The engine reports the fact rather
-    // than the wrapper re-deriving its early-return condition.
+    // A block the engine short-circuited produced no render-tap values, so
+    // publishing anyway would re-report the previous block's peaks. It can no
+    // longer push a duplicate history entry — the engine owns that since
+    // 0.2.12 and a short-circuited call folds nothing, so the accumulator does
+    // not move — but the meter half of the reason stands, and returning here
+    // is also what keeps `entries x preparedBlock == samples processed`
+    // honest: a call that processed nothing must contribute nothing to either.
+    // The engine reports the fact rather than the wrapper re-deriving its
+    // early-return condition.
     if (! engine.process (buffer, snapshot))
         return;
 
@@ -988,17 +1013,41 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     pubLufsIUngated.store (om.integratedUngatedLufs(), std::memory_order_relaxed);
     pubLra.store (om.lraLu(), std::memory_order_relaxed);
 
-    const float grDb = juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f);
-    pubGrDb.store (grDb, std::memory_order_relaxed);
-    // ONE entry per processBlock CALL, which is the ring's documented contract
-    // — and the span it covers is the HOST's block, not the prepared one. The
-    // engine chunks an oversize block internally while `grMinThisCall` and the
-    // render peak accumulate across every chunk, so a host running 4096 with
-    // 512 prepared publishes one entry describing 85 ms. Correct for a
-    // worst-case display and wrong for a time axis drawn as if entries were
-    // evenly spaced: the P5 GR-history renderer needs a time base, not an
-    // index count. Recorded here rather than in the ring, which cannot know.
-    grHistoryRing.push (grDb, engine.lastRenderPeak());
+    // The §2.9 GR METER — this block's deepest reduction, one figure per
+    // processBlock call, unchanged. It is a per-block reading and stays one;
+    // what moved below it is the HISTORY, which is a time series and needs a
+    // time base rather than a call count.
+    pubGrDb.store (juce::Decibels::gainToDecibels (engine.lastBlockMinGain(), -60.0f),
+                   std::memory_order_relaxed);
+    // THE GR HISTORY IS PUSHED BY THE ENGINE NOW (0.2.12, OQ-017 fix 1), one
+    // entry per PREPARED BLOCK of processed audio rather than one per call.
+    //
+    // Until 0.2.12 this line pushed one entry per processBlock CALL, and the
+    // display mapped entries through the PREPARED (rate, block) pair — so the
+    // two agreed only when the host delivered exactly its declared maximum.
+    // JUCE's own `prepareToPlay` contract says it will not: "completely
+    // variable block sizes can be expected from some hosts", and the AU and
+    // VST3 wrappers both prepare with the maximum and render with whatever the
+    // host passes, with no re-prepare on a change. A host delivering D samples
+    // per call therefore ran the whole time base out by B / D — the twenty
+    // second window spanning 20 s x D / B and the trace scrolling B / D times
+    // too fast, measured from 0.125x to 8x. That is OQ-017's mis-sized half,
+    // and it is a wrong reading rather than a rough one.
+    //
+    // The wrapper cannot fix it: a prepared-block boundary of the PROCESSED
+    // stream falls wherever the running total puts it, which is inside a
+    // delivered block whenever the host leaves a remainder, and the two
+    // statistics an entry carries are folded per sample inside the chain. The
+    // engine breaks its chunk loop on that boundary and pushes there
+    // (`AnabasisEngine::setGrHistorySink`). Nothing about the ring, its
+    // protocol, its reader or the display's arithmetic changes — only which
+    // samples one entry stands for, which is what the display always claimed.
+    //
+    // OQ-017's OTHER half — a host delivering several blocks in one callback,
+    // which makes the trace jump and stall without changing its long-run rate
+    // — is untouched and still open. It needs a lag allowance whose size is a
+    // property of the host, and no measurement in this repository can supply
+    // one.
 }
 
 juce::AudioProcessorEditor* AnabasisAudioProcessor::createEditor()

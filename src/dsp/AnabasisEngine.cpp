@@ -67,6 +67,12 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // were the analyser state that survived.
     specInRing.reset();
     specOutRing.reset();
+    // The GR history's ring and its partial entry are NOT in that list, and the
+    // difference is the point. These two rings are analyser captures with no
+    // timeline of their own — a rewind costs a refill and nothing else. The
+    // history IS a timeline: the wrapper keeps it across a re-prepare at an
+    // unchanged pair, and the partial entry follows the ring rather than this
+    // function (`adoptHistoryTimeline`).
 
     using OS = juce::dsp::Oversampling<float>;
     osTableMatchesJuce = true;
@@ -136,6 +142,36 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     latchedPhaseIdx  = 0;
     latchOsConfig (-1, 0);
     reset();
+
+    // THE ACCUMULATOR'S OWN WELL-FORMEDNESS, which is not a timeline question
+    // and is the one thing `prepare` still owes it. `histSamples < maxBlock`
+    // holds everywhere else by construction — the chunk loop empties the
+    // accumulator the instant it fills — but `maxBlock` can SHRINK here, and a
+    // partial counted against a 512-sample entry cannot be completed as a
+    // 256-sample one: it would publish an entry standing for more audio than
+    // its own size. Dropping is the only correct option, and it is not a
+    // decision about which timeline anything belongs to. Unreachable through
+    // the wrapper, which never reconfigures the engine without the ring, and
+    // one comparison to keep it unreachable at all.
+    if (histSamples >= maxBlock)
+    {
+        histMinGain = 1.0f;
+        histPeak    = 0.0f;
+        histSamples = 0;
+    }
+
+    // THE PARTIAL HISTORY ENTRY IS OTHERWISE NOT TOUCHED HERE, and that is the
+    // round-16 repair. `prepare` used to decide its fate by mirroring
+    // `GrHistoryBuffer::prepare`'s clear-on-change comparison — which was
+    // right for `prepare` and wrong for every other way the ring can start a
+    // fresh timeline. The decision moved to `adoptHistoryTimeline`, which
+    // reads the ring's own epoch: a same-pair `prepare` leaves the ring
+    // untouched so the partial is kept (a transport start no longer loses the
+    // audio in flight — ADR-0023 item 6, and `USER_MANUAL.md`'s promise that
+    // pausing and resuming continues the timeline), a changed pair clears the
+    // ring so the partial goes, and so does any other clear. The drop lands
+    // before a single new sample is folded, because the adoption runs at the
+    // top of `process`.
 }
 
 void AnabasisEngine::latchOsConfig (int factorIdx, int phaseIdx) noexcept
@@ -223,6 +259,25 @@ void AnabasisEngine::reset() noexcept
     outRms.reset();
     outTp.reset();
     renderTpMaxCall = renderPeakCall = 0.0f;
+    renderTpMaxChunk = renderPeakChunk = 0.0f;
+    grMinChunk = 1.0f;
+    grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
+    // THE HISTORY ACCUMULATOR IS DELIBERATELY NOT IN THIS LIST, and round 16
+    // is the second round to say so for a DIFFERENT reason — the first one was
+    // half right. Everything else here is audio memory (delay lines, filters,
+    // rings) or an edge detector; the accumulator is neither. It is
+    // PUBLICATION state, and it belongs to whichever timeline the ring is on.
+    //
+    // Round 15 argued from `reset()` alone: this function touches no ring
+    // state, so it should discard nothing from a timeline the ring is still
+    // keeping — true, and the case it was written for (a host re-arming the
+    // transport) still behaves that way. What it missed is that `reset()` says
+    // nothing about whether some OTHER call has just started a fresh timeline.
+    // Clearing here would be wrong when it has not; NOT clearing here would be
+    // wrong when it has. `reset()` is not the place the question can be
+    // answered, so it does not try: `adoptHistoryTimeline` answers it from the
+    // ring's epoch, once per `process` call, and a reset that accompanies a
+    // ring clear therefore drops the partial before any new audio is folded.
     adaptiveEngine.reset();
     compMeasureDb = 0.0f;
     monitorGain.setCurrentAndTargetValue (1.0f);
@@ -232,6 +287,46 @@ void AnabasisEngine::reset() noexcept
     // The crossfade is reset state too: landing ON the target is the "no
     // fade in progress" state; the next block re-reads bypassTarget.
     bypassMix = bypassTarget ? 1.0f : 0.0f;
+}
+
+// THE PARTIAL ENTRY AND THE RING ADVANCE AS ONE TIMELINE (round 16).
+//
+// `resetGuard` is bumped by `GrHistoryBuffer::clear` and by nothing else, so a
+// change in it is exactly the event "the ring started a fresh timeline" —
+// whether that came from a changed-pair `prepare`, from `reset()`, or from any
+// clear a later round adds. The engine records the epoch its partial was
+// accumulated under and throws the partial away the moment they part company,
+// which is the whole of the invariant: an entry never combines statistics from
+// two timelines, and the first entry of a new one always stands for a full
+// prepared block of that timeline's own audio.
+//
+// Rounds 14 and 15 both had the ENGINE decide this and got it wrong in
+// opposite directions — 14 dropped the partial at every `prepare`, 15 mirrored
+// `GrHistoryBuffer::prepare`'s clear-on-change comparison, which agreed for
+// `prepare` and for no other clear. The engine no longer decides: it reads the
+// ring's own answer. What the caller supplies is only the MOMENT to look.
+//
+// THREAD: the host thread, with processing suspended — the same premise every
+// reallocation in `prepare` already rests on. That is deliberate and it is the
+// reason this is not called from `process`: the epoch is part of the ring's
+// READER contract, which `THREADING_POLICY.md` confines to the message and
+// painting threads, and its table makes any path not in it an Architecture
+// Review Gate item. Reading it on the thread that wrote it is not a
+// cross-thread access, adds no atomic, no ordering and no protocol, and costs
+// one load per re-prepare rather than one per block.
+void AnabasisEngine::syncHistoryTimeline() noexcept
+{
+    if (grHistory == nullptr)
+        return;                       // no ring, no timeline, nothing to own
+
+    const auto epoch = grHistory->resetEpoch();
+    if (epoch == histEpoch)
+        return;                       // same timeline: the partial belongs to it
+
+    histMinGain = 1.0f;
+    histPeak    = 0.0f;
+    histSamples = 0;
+    histEpoch   = epoch;
 }
 
 bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EngineParameters& p) noexcept ANABASIS_NONBLOCKING
@@ -615,9 +710,75 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     grMinThisCallCh[0] = grMinThisCallCh[1] = 1.0f;
     renderTpMaxCall = 0.0f;
     renderPeakCall  = 0.0f;
-    for (int start = 0; start < totalSamples; start += maxBlock)
-        processChunk (buffer, start, juce::jmin (maxBlock, totalSamples - start),
-                      p, eqPre, eqPost);
+    // THE CHUNK LOOP BREAKS ON THE HISTORY'S BOUNDARY AS WELL AS ON `maxBlock`
+    // (0.2.12, OQ-017 fix 1). `maxBlock - histSamples` is the distance to the
+    // next prepared-block boundary of the PROCESSED-AUDIO stream, which is at
+    // most `maxBlock` and is exactly `maxBlock` whenever no partial entry is
+    // carried — so for every delivered block that is a whole multiple of the
+    // prepared size (D == B included) the chunking is byte-for-byte what it
+    // was, and only a host that leaves a remainder ever sees a shorter chunk.
+    // MOVING A CHUNK BOUNDARY IS BIT-TRANSPARENT, which is what makes breaking
+    // on this second grid free: every stage between this function's two ends
+    // is per-sample or a stateful FIR, so the same samples in the same order
+    // give the same render whatever lengths they arrived in. Measured WITH THE
+    // LIMITER ENGAGED over six delivery schedules — 64, 128, 512, 1024, 4096
+    // and a variable one whose every delivery crosses a boundary — all
+    // bit-identical (`testGrHistoryEntriesFollowThePreparedBlock`, pass 3).
+    //
+    // What the DELIVERED size does still change is §5.4: `adaptiveEngine.
+    // finishBlock` runs once per CALL, so the trim vector a whole call is
+    // processed with follows the host's block size. That was true before this
+    // loop and is untouched by it — the same test measures the residue at
+    // hundredths of a decibel (pass 3b), against the unbounded B/D time-base
+    // error the loop removes.
+    //
+    // A chunk therefore lies WHOLLY inside one history entry, and that is the
+    // whole mechanism: the per-sample folds below describe exactly the samples
+    // the entry they are folded into represents. Nothing is approximated and
+    // nothing is assigned wholesale — a delivered block spanning several
+    // entries is split into as many, each with its own statistics.
+    for (int start = 0; start < totalSamples; )
+    {
+        // `jmax (1, …)` is a TERMINATION guard, not arithmetic this loop needs.
+        // `histSamples < maxBlock` holds by construction — the branch below
+        // empties the accumulator the instant it fills, and `prepare`/`reset`
+        // are the only other writers — so on every reachable state this term is
+        // exactly `maxBlock - histSamples`. Without it the loop's progress
+        // depends on that invariant holding, and a future edit that let the
+        // accumulator reach `maxBlock` between chunks would give `num <= 0` and
+        // spin forever ON THE AUDIO THREAD. With it the step is at least one
+        // sample whatever the accumulator holds, so `start` strictly increases
+        // and the loop terminates by inspection.
+        const int num = juce::jmin (juce::jmax (1, maxBlock - histSamples),
+                                    totalSamples - start);
+        grMinChunk = 1.0f;
+        grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
+        renderTpMaxChunk = 0.0f;
+        renderPeakChunk  = 0.0f;
+        processChunk (buffer, start, num, p, eqPre, eqPost);
+        // Chunk into call — the meters' figures, unchanged in meaning because
+        // min and max are associative.
+        grMinThisCall      = juce::jmin (grMinThisCall, grMinChunk);
+        grMinThisCallCh[0] = juce::jmin (grMinThisCallCh[0], grMinChunkCh[0]);
+        grMinThisCallCh[1] = juce::jmin (grMinThisCallCh[1], grMinChunkCh[1]);
+        renderTpMaxCall    = juce::jmax (renderTpMaxCall, renderTpMaxChunk);
+        renderPeakCall     = juce::jmax (renderPeakCall, renderPeakChunk);
+        // …and chunk into the history entry, which completes exactly when it
+        // holds `maxBlock` samples. The loop above guarantees it never holds
+        // more, so this is an `if`, not a `while`: no unbounded catch-up.
+        histMinGain = juce::jmin (histMinGain, grMinChunk);
+        histPeak    = juce::jmax (histPeak, renderPeakChunk);
+        histSamples += num;
+        if (histSamples >= maxBlock)
+        {
+            if (grHistory != nullptr)
+                grHistory->push (juce::Decibels::gainToDecibels (histMinGain, -60.0f), histPeak);
+            histMinGain = 1.0f;
+            histPeak    = 0.0f;
+            histSamples = 0;
+        }
+        start += num;
+    }
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
     compGrDb.store (comp.currentGainReductionDb(), std::memory_order_relaxed);
     // Per-channel per-stage copies (0.1.2 item 12) — the same meter row, one
@@ -892,9 +1053,9 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // the only indexed read of `gains` outside a `ch < nCh` loop, and every
         // such loop is already empty-safe at nCh == 0.
         const int lastCh = juce::jmax (0, nCh - 1);
-        grMinThisCall = juce::jmin (grMinThisCall, gains[0], gains[lastCh]);
+        grMinChunk = juce::jmin (grMinChunk, gains[0], gains[lastCh]);
         for (int ch = 0; ch < nCh; ++ch)
-            grMinThisCallCh[ch] = juce::jmin (grMinThisCallCh[ch], gains[ch]);
+            grMinChunkCh[ch] = juce::jmin (grMinChunkCh[ch], gains[ch]);
 
         int readPos = writePosOs - delayOs;
         if (readPos < 0)
@@ -1143,8 +1304,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             outTp.processFrame (renderFrame, nCh, tp);
             for (int ch = 0; ch < nCh; ++ch)
             {
-                renderTpMaxCall = juce::jmax (renderTpMaxCall, tp[ch]);
-                renderPeakCall  = juce::jmax (renderPeakCall, std::abs (renderFrame[ch]));
+                renderTpMaxChunk = juce::jmax (renderTpMaxChunk, tp[ch]);
+                renderPeakChunk = juce::jmax (renderPeakChunk, std::abs (renderFrame[ch]));
             }
         }
         if (++dryReadPos >= dryRingSize)

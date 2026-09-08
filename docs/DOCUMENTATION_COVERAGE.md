@@ -6,7 +6,32 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-07, round 13)** — the review's cross-configuration finding:
+**Last updated:** for **0.2.12 (2026-09-07, round 18)** — the PR review's fourth finding, and the
+only one that was never a product defect: the two spectrum concurrency gates asserted on
+interleavings they SEARCHED for rather than established, so Rosetta and valgrind could fail them
+intermittently. Both now ENTER their states through rendezvous points inside the production
+functions and count the entry, `SpectrumView` carries the three seams that make that possible
+(ADR-0039 clause 12, flagged for the owner), and KI-019 closes on the test design while separating
+the environment fault that remains. Before that, for **0.2.12 (2026-09-07, round 17)** — the PR review's third blocking finding:
+the GR history ring was sized as an ENTRY COUNT (4096) against a 512-sample block, while an entry is
+one PREPARED block, so its capacity was really a duration of `kSize · block / rate` seconds — 0.6825 s
+at 192 kHz / 32, 5.46 s at 48 kHz / 64, below DESIGN §2.9's ten-second floor and not merely below
+`kWindowSeconds`. The capacity is now derived from the worst prepared pair and its slots live on the
+heap (ADR-0040, new; entry below). Before that, for **0.2.12 (2026-09-07, round 16)** — the PR review's second blocking finding:
+round 15's engine MIRRORED the ring's clear-on-change comparison, so a ring cleared any other way
+(`GrHistoryBuffer::reset()`) restarted its timeline while a partial from the old one survived into
+it — the new timeline's first entry closing on as little as one sample. The engine now READS the
+ring's reset epoch and the mirrored predicate is deleted (ADR-0011 amended a third time; entry
+below). Before that, for **0.2.12 (2026-09-07, round 15)** — the PR review's blocking finding: the
+producer dropped the partial history entry on every re-prepare while the ring keeps its entries at
+an unchanged pair, so a transport start lost up to a prepared block of already-rendered audio
+(ADR-0011 amended again for the accumulator's lifecycle, and the stale per-host-block cadence
+contract corrected in four places; entry below). Before that, for **0.2.12 (2026-09-07, round 14)**
+— OQ-017 fix 1: a GR-history entry is one
+PREPARED block of processed audio rather than one host callback, so the display's time base no
+longer runs out by the ratio between the two (ADR-0011's publication clause narrowed, OQ-017's
+mis-sized half resolved and its burst half re-measured; entry below). Before that, for **0.2.12
+(2026-09-07, round 13)** — the review's cross-configuration finding:
 a published spectrum frame could hold one trace from each configuration, and the floor is now joint
 while the frame carries the identity of the configuration generation it belongs to (ADR-0039 amended
 by exception, KI-018's cross-ring variant removed; entry below). Before that, for **0.2.12
@@ -410,6 +435,156 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-07, round 18) — the concurrency gates enter their states instead of searching
+for them.** The review's fourth finding, and the only one in this sequence that was never a defect in
+the product. `specFrame` ran a renderer thread against four thousand publications and asserted that
+nothing it accepted was mixed — while not one assertion in the function required the reader to have
+overlapped a publication even once, so two hundred thousand reads could pass without entering the
+state the bracket exists for. `specStraddle` needed a rewind to land in `tick`'s interior and swept
+for it with a doubling spin and a yield count whose feedback only goes non-zero after the search has
+already succeeded: it converged natively and produced 3 261 238 ticks and 6000 rewinds with zero
+straddles under valgrind. Neither window is reachable from outside the class, so `SpectrumView` gains
+three rendezvous points — `std::function`s called at one place each, empty in every shipped build,
+between two existing operations, adding no store, fence, ordering or field — and the tests block the
+thread inside the bracket until the other has done its half. Rows engaged: **Accepted-ADR amendment**
+— ADR-0039 gains clause 12, with `ADR_INDEX.md`'s row updated, and the clause is put to the owner
+rather than assumed not to be an `ARCHITECTURE_REVIEW_GATE.md` item; **Known issue** — KI-019 closes
+on the test design and separately records the two things it does NOT close (the Rosetta environment
+fault, and that a mutex-based rendezvous cannot exercise the memory-model half of the bracket);
+**Procedures** — `TESTING.md`'s two passages described the sweep as the mechanism and the straddle as
+"observed, not assumed", both now rewritten to what the tests do, and its `specStraddle` measurement
+line no longer quotes the deleted six-thousand-round hunt's counts (~1200 reconfigurations, ~1000
+guard-floored frames) but the forty-run battery's (60 reconfigurations, 0-2 guard-floored, the guard
+now a diagnostic rather than a pass condition); **Mutation record** — KI-019 carries the round's
+table, ten mutants, seven killed, and M6/M7 are the two that delete the rendezvous itself and fail
+the test that depended on it.
+
+**Addendum (2026-09-07, round 17) — the ring's capacity is a DURATION, and it is now derived from
+one.** The review's third blocking finding. `GrHistoryBuffer::kSize` was 4096, argued in the ring's
+banner from a single block size ("~43 s at 48 kHz" at 512 samples) and generalised to "every rate the
+product supports"; since an entry is one PREPARED block, the window a frame can show is
+`min (kWindowSeconds, (kSize − 1) · block / rate)`. Measured on the real engine, the real ring and the
+real view: 10.92 s at 48 kHz / 128, 5.46 s at 48 kHz / 64, 2.73 s at 48 kHz / 32, 0.6825 s at
+192 kHz / 32. The entry-count saturation was recorded in five places and the duration in none, and the
+two places that quantified its cost ("one bucket of the twenty seconds and 0.2 % of the pitch";
+"the window holds one point fewer") were exact at the saturation threshold and understated it by ~29×
+at 192 kHz / 32. Capacity became `1 << 17` — the 120000 entries a 20 s window needs at 192 kHz / 32,
+rounded to a power of two — with the slots on the heap, since a megabyte-sized member array would meet
+a Windows main thread's megabyte of stack in suites that build rings and whole processors as locals.
+**Round 19 (2026-09-08) raised it again, to `1 << 18`, on the owner's decision**: deriving the
+capacity from 192 kHz / 32 assumed a maximum sample rate the product does not declare, which is the
+defence ADR-0040 had already refused for the 4096-entry ring. The band is now stated in ENTRIES A
+SECOND — the whole twenty to 13107, never below §2.9's floor to 26214 — and no rate is clamped to
+buy it.
+Rows engaged: **New ADR** — ADR-0040, with `ADR_INDEX.md`'s registry row, amended in round 19;
+**User documentation** — `USER_MANUAL.md`'s twenty-second promise named the buffer sizes it holds
+at, and round 19 restates it in buffers a second so it stays true at any rate; **Stale-figure
+correction** — `GrHistoryView.h`, ADR-0023's 2026-09-05 amendment and `CHANGELOG.md`'s 0.2.12 entry
+all carried the 4096-ring's saturation figures, and round 19 caught the one site that escaped that
+sweep (`GrHistoryView.cpp`'s `paintHistory` comment) plus the figures its own capacity change
+retired; **Known issue** — KI-019 records the two spectrum
+concurrency PREMISES that were found to fail intermittently while this round's CI was being read,
+with the evidence for each and the reason neither may be answered by weakening what it guards. Explicitly **not** a review-gate item: no parameter,
+serialization, threading, signal-order or latency change — the SPSC contract, the reset epoch and the
+reader's window clamp are untouched, and the producer's per-entry cost is unchanged at 2.11 ns.
+Producer-side decimation, which would have held 20 s in 4096 slots and drawn an identical picture, was
+rejected because it changes what an entry IS and so conflicts with ADR-0011's 2026-09-07 amendment —
+a hard stop. `worklogs/2026-09-07-gr-history-duration.md` carries the measurements and the blast
+radius.
+
+**Addendum (2026-09-07, round 16) — the partial entry's timeline is READ from the ring, not
+mirrored.** The review's second blocking finding. Round 15 reproduced `GrHistoryBuffer::prepare`'s
+clear-on-change comparison inside the engine so the two agreed; they agreed for `prepare` and for
+nothing else, and `GrHistoryBuffer::reset()` restarts the ring's timeline without going through
+`prepare` at all. Measured on the real engine and a real ring at 48 kHz / 512 with 511 samples in
+flight: the new timeline's FIRST entry closed on **one** post-reset sample and carried the previous
+timeline's peak. `resetGuard` moves on every `clear` and on nothing else, so the engine now records
+the epoch its partial was accumulated under and discards the partial when they differ, once per
+`process` call before any audio is folded; `preparedRateRaw`/`preparedBlockRaw` are deleted. Rows
+engaged: **Accepted-ADR amendment** — ADR-0011 gains a third 2026-09-07 amendment, with
+`ADR_INDEX.md`'s registry row updated to carry all three. Explicitly **not** a review-gate item, and
+the reason is a design choice rather than a claim: the read was FIRST implemented on the audio
+thread, once per `process` call, which would have been airtight against callers but is at best
+arguable against this policy's own "no reads off the message thread" bullet for a scope/GR ring —
+so it moved to the HOST thread, right after the call that may have cleared, where it is not a
+cross-thread access at all and adds nothing to the audio path. The cost, recorded: a clear must be
+followed by the sync, and `GrHistoryBuffer`'s header carries that obligation beside both functions
+that can clear. **Reachability recorded rather than implied**: against round 15 the leak was latent, since `AnabasisAudioProcessor` does not override
+`AudioProcessor::reset()` and `GrHistoryBuffer::reset()` has no production caller — which is the
+argument for changing the design rather than patching the symptom, because round 15's correctness
+depended on that accident and the obvious small fix (restore the clear in `AnabasisEngine::reset()`)
+would not have fixed the measured case at all. **Code comments corrected**: `GrHistoryBuffer.h`'s
+`resetEpoch` said "reader side" and now names the host-thread read as well, with the caller
+obligation stated beside `reset()`; `AnabasisEngine`'s member banner,
+`prepare`'s two comment blocks and `reset()`'s block all described the mirrored predicate; and
+`PluginProcessor.cpp`'s `prepareToPlay` comment pointed at a closing block of `prepare` that no
+longer exists. **New/changed test** (`dsp_tests.cpp` — `testTheHistoryTimelineIsTheRingsTimeline`,
+cases A–G; pass 5 of `testTheHistorySurvivesASameConfigurationRePrepare` re-worded; `TESTING.md`).
+**Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total). Trail:
+`worklogs/2026-09-05-gr-history-tip.md` §22.
+
+**Addendum (2026-09-07, round 15) — the partial entry follows the ring, and the cadence contract
+says which unit.** The PR review's blocking finding: `AnabasisEngine::prepare` dropped the
+accumulator on EVERY re-prepare while `GrHistoryBuffer::prepare` keeps the ring's entries at an
+unchanged `(rate, block)` pair, so a transport start — the commonest host event there is — punched a
+hole of up to `preparedBlock − 1` samples in a timeline that went on running. Measured on the real
+engine and a real ring: forty pause/resume cycles at 48 kHz / 512 over 8.783 s of audio published
+**800 entries where the audio was worth 823**, and a marker burst inside the partial reached no
+entry while the ring kept every entry around it. The partial now follows the ring's own
+clear-on-change gate — the same comparison on the same two raw values. Rows engaged:
+**Accepted-ADR amendment** — ADR-0011 gains the accumulator's lifecycle, which round 14's amendment
+left unstated; registered in `ADR_INDEX.md`'s amendment registry, which had no row for round 14's
+amendment either (found by this round's reading and added with it). Explicitly **not** a review-gate
+item: it removes a conflict with ADR-0023 item 6 (*"a transport-start re-prepare keeps the
+timeline"*) and with `USER_MANUAL.md`'s promise to the user, rather than creating one, and no ring
+protocol, ordering or cross-thread path moves — but it does change a behaviour round 14 documented
+and test-pinned, so it is filed rather than treated as a silent repair. **Policy corrected**
+(`THREADING_POLICY.md`'s Audio → GUI row still said the GR history commits "a whole host block" and
+costs "one `dmb ish` per host block"). **Code comments corrected**: `GrHistoryBuffer.h`'s `push`
+still promised "once per HOST BLOCK, since `push` runs once per `processBlock` and never per sample"
+— the review's second, non-blocking finding — with the same claim in the file banner twice;
+`AnabasisEngine.h`'s accumulator banner still said "never carried across either";
+`PluginProcessor.cpp`'s `prepareToPlay` comment still described the ring's time base as
+entries-per-host-block; and `SpectrumView.cpp`'s prose citation of the two prepare sites had drifted
+by seven lines. **New/changed test** (`dsp_tests.cpp` —
+`testTheHistorySurvivesASameConfigurationRePrepare`, and pass 7 of
+`testGrHistoryEntriesFollowThePreparedBlock` inverted, since it had pinned the defect as an
+expectation; `state_tests.cpp` — eight `prepareToPlay` cycles asserted as conservation;
+`TESTING.md`). **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total).
+Trail: `worklogs/2026-09-05-gr-history-tip.md` §21.
+
+**Addendum (2026-09-07, round 14) — a history entry is one PREPARED block of processed audio.**
+OQ-017's first half, implemented on the owner's instruction after a full re-derivation. The ring was
+pushed once per `processBlock` CALL while `GrHistoryView` maps entries through the PREPARED
+`(rate, block)` pair, so the display's whole time base ran out by `B / D` for any host that does not
+deliver its declared maximum — which the format contract says to expect, and which the AU wrapper
+guarantees on a live Logic track. Measured on the real processor and the real paint path from
+0.125x to 8x: the window spanning `20 s · D / B` and the trace scrolling `B / D` times the design
+speed. The engine's chunk loop now breaks on the prepared-block boundary of the PROCESSED stream and
+pushes there, carrying the remainder across calls; a chunk therefore lies wholly inside one entry, so
+the per-sample folds already in the chain describe exactly the samples their entry represents.
+Rows engaged: **Accepted-ADR amendment** — ADR-0011's "one release-store per block" clause is
+narrowed to say which block, filed as a dated amendment with the owner's instruction named as the
+authority and flagged in the pull request as a gate item (`ARCHITECTURE_REVIEW_GATE.md` gates a
+change to an Accepted ADR whatever its size; the protocol, the producer thread, `push` itself and
+the reader contract are all unchanged — only the cadence). **Open question corrected**
+(`OPEN_QUESTIONS.md`: OQ-017's mis-sized half is Resolved and removed from the question; its
+early/late-stall sentence was wrong about which edge of `[head, head + 1]` does what and is replaced
+with the re-derived measurement — the clamp is inert under steady delivery at 0 bindings and
+≤ 0.00004 px, the LOWER edge snaps on data arriving early by exactly `(n − 1)` entry pitches, and a
+late block produces no snap at all; the jitter figures are re-stated with the configuration they were
+taken at). **Code comments corrected**: `GrHistoryView.h`'s time-base banner said an entry spans one
+HOST block and called the mapping an approximation "only in display width", and
+`AnabasisEngine.cpp`'s chunk-transparency note rested on a measurement taken without the limiter
+engaged — re-measured with it engaged over six delivery schedules and re-worded, including the
+§5.4 residue the delivered size legitimately causes. **User documentation** (`USER_MANUAL.md`: the
+twenty-second promise now says it holds whatever buffer size the host uses). **New/changed test**
+(`dsp_tests.cpp` — `testGrHistoryEntriesFollowThePreparedBlock`; `state_tests.cpp` —
+`testTheGrHistoryScrollsAtThePreparedBlock`, and `grBlank`'s stimulus now delivers what it prepares;
+`TESTING.md`, including the two mutants that survived the first suite and the in-place-buffer trap
+one of them exposed). **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total).
+Trail: `worklogs/2026-09-05-gr-history-tip.md` §20.
 
 **0.2.11 (2026-09-05) — the GR history's newest vertex is drawn once, when its bucket is
 complete.** The owner's second report on the display 0.2.8 had claimed to fix: *"the newly

@@ -13,6 +13,7 @@
 #include "TruePeak.h"
 #include "AdaptiveEngine.h"
 #include "ScopeBuffer.h"
+#include "GrHistoryBuffer.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
@@ -71,6 +72,88 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize, int numChannels);
     void reset() noexcept;
+
+    // HOST THREAD, AUDIO STOPPED — call immediately after anything that may
+    // have cleared the sink ring, which in production is the wrapper's
+    // `grHistoryRing.prepare` inside `prepareToPlay`. Reads the ring's reset
+    // epoch and drops the partial entry if the ring has started a new
+    // timeline; keeps it if the ring's timeline is still running.
+    //
+    // WHY THE HOST THREAD AND NOT `process`. Asking on the audio thread would
+    // be airtight against callers — the engine would notice any clear by
+    // itself — but it would put an audio-thread READ on a ring whose reader
+    // contract `THREADING_POLICY.md` confines to the message and painting
+    // threads ("no reads off the message thread"), and that policy's table
+    // makes any path not in it an Architecture Review Gate item. The read
+    // happens on the thread that WROTE the epoch instead, with processing
+    // suspended, which is no cross-thread access at all. The cost is that a
+    // clear must be followed by this call: there is exactly one such site
+    // today and `GrHistoryBuffer`'s header carries the obligation beside the
+    // functions that can clear.
+    void syncHistoryTimeline() noexcept;
+
+    // THE ONLY SUPPORTED WAYS TO MOVE THE HISTORY RING'S TIMELINE, host thread,
+    // audio stopped. They are the ring's own `prepare`/`reset` with the sync
+    // that must follow them welded on, so the production path cannot be split
+    // — which is the difference between an obligation a caller has to
+    // remember and one it cannot express otherwise. The raw ring calls remain
+    // reachable (it is the wrapper's member), and `GrHistoryBuffer`'s header
+    // points at these from beside both of them.
+    void prepareHistoryTimeline (double rate, int block) noexcept
+    {
+        if (grHistory != nullptr)
+            grHistory->prepare (rate, block);
+        syncHistoryTimeline();
+    }
+
+    void resetHistoryTimeline() noexcept
+    {
+        if (grHistory != nullptr)
+            grHistory->reset();
+        syncHistoryTimeline();
+    }
+
+public:
+
+    // WHERE THE GR HISTORY'S ENTRIES ARE PUSHED (0.2.12, OQ-017 fix 1). Set
+    // once by the wrapper, which owns the ring; null until it is, and a null
+    // sink simply pushes nothing.
+    //
+    // WHY THE ENGINE AND NOT THE WRAPPER. One entry is one PREPARED BLOCK of
+    // processed audio, and the wrapper cannot see prepared-block boundaries: a
+    // host may deliver any number of samples per call (JUCE's own
+    // `prepareToPlay` contract — "completely variable block sizes can be
+    // expected from some hosts"), so a boundary falls wherever the running
+    // total says it does, which is inside a delivered block as often as not.
+    // The engine already chunks on exactly that grid and already folds the two
+    // statistics an entry carries per sample, so it is the only place where an
+    // entry's span and an entry's values can be made to describe the same
+    // samples. Until 0.2.12 the wrapper pushed one entry per processBlock CALL
+    // and the display mapped entries through the PREPARED size, so a host
+    // delivering D per call ran the display's time base out by B / D — the
+    // whole of OQ-017's mis-sized half, measured at 0.125x to 8x.
+    //
+    // The sink is the same ring, pushed by the same thread, through the same
+    // single-producer `push`: this moves WHO calls it and WHEN, and adds no
+    // cross-thread path. `specInRing`/`specOutRing` are pushed from the chunk
+    // loop already; this is that pattern with the wrapper's ring.
+    void setGrHistorySink (GrHistoryBuffer* sink) noexcept
+    {
+        // Attaching a sink IS a timeline boundary: whatever the accumulator
+        // held belonged to no ring, so it starts empty on the one it is now
+        // publishing into, and adopts that ring's current epoch. Belt and
+        // braces rather than load-bearing — a ring that has ever been prepared
+        // has a non-zero epoch, so `adoptHistoryTimeline` would drop the
+        // partial at the first `process` anyway. What this closes is the
+        // collision: attaching a ring whose epoch happens to equal the one the
+        // accumulator was recorded under, which no caller in this tree
+        // creates and which costs three stores to make impossible.
+        grHistory   = sink;
+        histMinGain = 1.0f;
+        histPeak    = 0.0f;
+        histSamples = 0;
+        histEpoch   = sink != nullptr ? sink->resetEpoch() : 0;
+    }
 
     // Audio thread. Adopts the per-block POD snapshot (ADR-0011). Blocks
     // larger than the prepared maximum are processed in prepared-size chunks,
@@ -311,8 +394,13 @@ public:
     // session-cumulative half — the integrated histogram. Deliberately not
     // touched: the §2.7 dry/wet meters (they feed the loudness COMPENSATION,
     // a monitor function — clearing them would bounce the monitor gain, which
-    // is not what a meter-reset button means) and the GR ring (a rolling ~43 s
-    // window that clears itself; the wrapper owns it in any case).
+    // is not what a meter-reset button means) and the GR ring (a rolling
+    // display window that clears itself; the wrapper owns it in any case).
+    // The "~43 s" this sentence used to quote was the 4096-entry ring's
+    // headroom at one block size and has been wrong twice over since — the
+    // window is `GrHistoryView::windowSeconds (rate, block)`, twenty seconds
+    // wherever the ring holds them (ADR-0040), and nothing here depends on
+    // the figure.
     void resetMeterHolds() noexcept { outMeter.resetIntegrated(); }
 
     // The per-stage GR figures the panel meters read, cleared. Called by the
@@ -397,8 +485,15 @@ private:
     // published beside the combined ones, never instead of them.
     std::atomic<float> compGrDbCh[2] { 0.0f, 0.0f };
     std::atomic<float> limGrDbCh[2]  { 0.0f, 0.0f };
+    // PER CALL (the meters) and PER CHUNK (the history), folded chunk into
+    // call after every chunk. The per-SAMPLE folds inside `processChunk` now
+    // land in the chunk copies and the call copies are a `jmin`/`jmax` of
+    // those, which is exactly equal to folding every sample into the call
+    // directly — min and max are associative — and costs nothing per sample.
     float grMinThisCall = 1.0f;
     float grMinThisCallCh[2] = { 1.0f, 1.0f };
+    float grMinChunk = 1.0f;
+    float grMinChunkCh[2] = { 1.0f, 1.0f };
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;
@@ -483,6 +578,43 @@ private:
     RmsMeter          outRms;      // §2.9 stats row: 50 ms Hann RMS (ADR-0020)
     TruePeakEstimator outTp;
     float renderTpMaxCall = 0.0f, renderPeakCall = 0.0f;
+    float renderTpMaxChunk = 0.0f, renderPeakChunk = 0.0f;
+
+    // THE HISTORY ENTRY UNDER CONSTRUCTION (0.2.12, OQ-017 fix 1): the two
+    // statistics an entry carries, folded over the samples it has collected so
+    // far, and how many that is. `histSamples` is strictly less than
+    // `maxBlock` between chunks — the chunk loop breaks ON the boundary, so a
+    // chunk never straddles one and the fold above is exact for the entry's
+    // own span rather than for whatever the host happened to hand over.
+    //
+    // THE PARTIAL BELONGS TO A TIMELINE, AND THE RING SAYS WHICH ONE.
+    //
+    // Two rounds got this wrong in opposite directions by having the ENGINE
+    // decide. Round 14 dropped the partial on every `prepare`, which lost up to
+    // `maxBlock - 1` samples of already-rendered audio every time a host
+    // re-armed the transport — `GrHistoryBuffer::prepare` keeps its entries at
+    // an unchanged (rate, block) pair (ADR-0023 item 6; `USER_MANUAL.md`:
+    // "pausing and resuming continues the timeline"). Round 15 mirrored that
+    // pair comparison here so the two agreed — and they did, for `prepare`.
+    // They did not agree for a ring cleared any OTHER way: measured, a
+    // `GrHistoryBuffer::reset()` rewinds the ring to a fresh timeline while a
+    // partial accumulated under the old one survives, so the new timeline's
+    // FIRST entry closes on as little as one sample of new audio and carries
+    // the previous timeline's statistics.
+    //
+    // The engine no longer decides. `resetGuard` — the ring's reset epoch,
+    // already published for readers — changes on every `clear` and on nothing
+    // else, so it IS the timeline's identity. `histEpoch` is the epoch this
+    // partial was accumulated under; `adoptHistoryTimeline` compares them once
+    // per `process` call and discards the partial when they differ. Same-pair
+    // `prepare` is a total no-op on the ring, so the epoch holds and the
+    // partial is kept; every clear moves it, so the partial goes. One
+    // definition of "which timeline is this", owned by the object that has it.
+    GrHistoryBuffer* grHistory = nullptr;
+    float    histMinGain = 1.0f;
+    float    histPeak    = 0.0f;
+    int      histSamples = 0;
+    uint32_t histEpoch   = 0;
 public:
     // §5.4 feature/trim readouts for the Advanced-view overlay and tests.
     const AdaptiveEngine& adaptive() const noexcept { return adaptiveEngine; }

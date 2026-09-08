@@ -376,13 +376,19 @@ could see what a renderer does with a read it LOSES. `readPublishedFrame` cannot
 on failure — the 4096-bin copy has already happened by the time the bracket can be checked — so a
 caller that reads into its drawing buffers and ignores the result draws a mixture of two
 publications. That is a broken invariant with no race in it, so ASan, UBSan and memcheck are all
-silent on it by construction, and it took a test that paints. The marker is three-part: one whole
-window of one tone per tick (so the analysed window is never a blend), `dt = 1 s` (so the EMA is the
-analysis rather than the last second's), and the two tones at OPPOSITE ends of the spectrum (so the
-stretch a tear must fall in is 82 % of the trace). The rule is then exact — a coherent frame has
-exactly one of the two marker bins lit, a torn one has both or neither — and `lit(low) == lit(high)`
-catches both directions. Measured on the shipped build: 4274 paints, 95 lost reads, 44 of which had
-already copied.
+silent on it by construction, and it took a test that paints. **The marker has to be
+position-independent, and the first one was not.** A torn copy is a PREFIX of one publication and a
+SUFFIX of another, and where the two sweeps cross depends on their relative speed, so two marker
+tones catch only a tear that falls between them: measured, with tones at bins 21 and 1707 the defect
+was caught in some runs and missed in others. The two publications therefore differ in EVERY bin —
+one is white noise, the next is digital silence — so a clean frame has its first and last bins both
+lit or both at the −120 floor and a torn one has one of each. `lit(first) != lit(last)` is the
+detector, the crossing can be anywhere in the array, and there is no threshold to argue about, since
+noise reads tens of dB above the floor and silence reads exactly the floor. `dt = 1 s` drives the
+EMA's decay to 0.9998 and one whole window per tick keeps the analysed span from being a blend of
+the two. The premises are established rather than assumed: the run must have painted, and must have
+drawn a fully lit frame AND a fully floored one, before "no painted frame was torn" means anything.
+Measured on the shipped build: 6395 paints, 2966 fully lit frames, 3429 fully floored ones, 0 torn.
 
 **THE TWO TESTS THAT BUILD A SPLIT RESET.** `specGen`
 (`testNoSpectrumFrameEverPairsTwoConfigurationGenerations`) and `specStraddle`
@@ -406,18 +412,171 @@ block, one and eight blocks after a reset, and a 48 → 96 → 48 → 44.1 → 8
 
 `specStraddle` covers the half a single thread cannot reach: a rewind that becomes visible AFTER the
 tick sampled the two generations and BEFORE it re-samples them, so the reset edge is silent and the
-post-batch re-read is the only guard. Its producer is paced by the reader's own publications — a
-bounded spin, so a reader that stops publishing fails the test rather than hanging it — and the
-rewind's landing point is swept with a delay drawn from a plain LCG rather than a clock, so the same
-sweep runs on every machine even though the batch does not. **The interleaving is observed, not
-assumed**: a published frame with a full span and both traces entirely at the floor can only come
-from that re-read, and the test requires such frames to exist before it believes its own negative
-results. Both markers complete a whole number of cycles in one pushed chunk (96000 / 512 = 187.5 Hz;
+post-batch re-read is the only guard. **Round 18 made that interleaving ESTABLISHED rather than
+searched for.** Until then the producer swept the rewind's landing point with a doubling spin and a
+yield count and `guardFired` counted the hits — a feedback signal that only goes non-zero after the
+search has already succeeded, which converged natively on the first rounds and never converged at
+all under valgrind's cooperative scheduler: 3 261 238 ticks, 6000 rewinds, zero straddles on a
+GitHub runner (KI-019). The window is now ENTERED: the ticking thread blocks inside it at
+`SpectrumView::whileBatchAnalysed` while a second thread performs the two real
+`ScopeBuffer::reset` calls and the refill, so one straddle happens on every run on every scheduler,
+and the frame it produces — full span, both traces at the floor — is asserted directly. The sweep,
+the six-thousand-round hunt and `guardFired` as a pass condition are gone; what remains after the
+forced straddle is sixty rounds of stress, still paced by the reader's own publications through a
+condition variable, checking the invariants that need no particular interleaving (a floored trace
+never appears beside a lit one, no trace ever holds two markers, no identity ever spans two
+configurations). Both markers complete a whole number of cycles in one pushed chunk (96000 / 512 = 187.5 Hz;
 6937.5 = 37 × 187.5 and 12000 = 64 × 187.5), because a repeated chunk that does not is a pulse train
 whose splatter puts real energy in the other marker's bin — that mistake made the mixture detector
-count the stimulus, at 59 frames a run, before it was fixed. Measured on the shipped build: ~1200
-reconfigurations, ~2500 lit frames, ~1000 of them floored by the guard, 0 lopsided, 0 mixed, 0
-identity switches.
+count the stimulus, at 59 frames a run, before it was fixed. Measured on the shipped build across
+round 18's forty-run battery (twenty native, ten pinned to one core, ten under twelve competing spin
+loops): the forced straddle occurs exactly once in every run, and the sixty-round stress that follows
+it gives 60 reconfigurations, 234-246 lit frames, 0-2 of them floored by the guard — the guard
+firing is now a diagnostic about the machine and not a pass condition — 0 lopsided, 0 mixed and 0
+identity switches, with the premise counter `starvedAt` zero in all forty.
+
+**THE TWO TESTS THAT PIN THE HISTORY'S CADENCE (round 14, OQ-017 fix 1).**
+`testGrHistoryEntriesFollowThePreparedBlock` (`dsp_tests.cpp`) drives the real engine with a real
+`GrHistoryBuffer` sink through `setGrHistorySink`, so the property is asserted where it is produced;
+`testTheGrHistoryScrollsAtThePreparedBlock` (`state_tests.cpp`) asserts the same thing through the
+wrapper's ring and `GrHistoryView`'s own `entryPeriod` / `windowEntries`, which is where the display
+reads it.
+
+The engine-level test's spine is **schedule-invariance asserted bit for bit**: the same audio is run
+through six delivery schedules — 64, 128, 512, 1024, 4096 and a variable one whose seven sizes
+(1, 3, 17, 63, 512, 1024, 1964) average the prepared block and none of which is a multiple of it —
+and every entry of every run must be bit-identical to the reference. That one statement is "no
+sample is lost", "none is counted twice" and "the statistics describe the entry's own span", and it
+needs no tolerance to argue about. Beside it: cadence over thirty rate × block × D/B configurations
+(44.1 / 48 / 96 kHz, 512 and the AU's 1156, D/B from 0.25 to 8); each entry's peak derived in CLOSED
+FORM from the input and `groupDelaySamples()`, which is available because defaults on sub-ceiling
+material are a bit-exact delay-aligned copy (`testNullWithDefaults`) — with a negative control
+asserting that neighbouring entries differ, so a delivered block assigned wholesale to one entry
+would fail it; a 64-sample transient inside a 4096-sample delivery landing in exactly ONE entry at
+the index the grid and the delay put it at; the remainder walked sample by sample across call
+boundaries; and D == B asserted BIT-IDENTICAL to the pre-0.2.12 wrapper expression itself
+(`gainToDecibels (lastBlockMinGain(), -60)` and `lastRenderPeak()`), not to a remembered number.
+
+**Two passes exist because mutation testing found the suite blind without them.** Deleting the
+per-chunk reset of `grMinChunk` turns it into a running GLOBAL minimum — which is STILL
+schedule-invariant (entry boundaries fall at the same absolute samples in every schedule) and STILL
+agrees with `lastBlockMinGain()` (the per-call fold reads the same running value), so the cadence,
+split and identity passes all stayed green while the GR trace would latch at the deepest reduction of
+the session and never recover. Only a stimulus whose reduction GOES AWAY sees it, which is what the
+loud-then-silent pass is for: it reads −3.62 dB in the passage and −3.62 dB after it with the reset
+deleted, against better than −0.02 dB with it. And the re-prepare pass passed for the wrong reason
+until it fed the pipeline first: `process` works IN PLACE, so re-using one buffer feeds the engine
+its own delayed output and three calls of that is digital silence — a partial entry that had
+survived a re-prepare would have carried silence either way. It now refills before every call and
+asserts the loud render is really in the accumulator before the re-prepare decides its fate.
+
+**Round 15 inverted half of that pass, and added the matrix behind it.** The PR review found that
+`AnabasisEngine::prepare` dropped the partial on EVERY re-prepare while the ring keeps its entries
+at an unchanged `(rate, block)` pair — so a transport start lost up to a prepared block of
+already-rendered audio from a timeline that went on running, which is what ADR-0023 item 6 and
+`USER_MANUAL.md` promise it will not. The partial now follows the ring's own gate.
+`testTheHistorySurvivesASameConfigurationRePrepare` is the matrix: every pass is written against
+SAMPLE CONSERVATION — the audio delivered is an exact multiple of the prepared block, so
+`entries × B == samples` is an equality with no floor to hide in — and against a MARKER burst whose
+render falls inside the partial, so which entry received those samples is a fact rather than an
+inference. It covers a partial of 0, 1, 100, 300 and `B − 1`, forty pause/resume cycles, a
+sample-rate change, a prepared-block-size change and an explicit `reset()` — which does NOT drop it, because `reset()` clears nothing in the ring and so has nothing to discard from the ring's timeline — and it closes with the
+JOINT statement — the partial reaches an entry exactly when the ring kept its timeline — because the
+defect was those two decisions disagreeing. `testTheGrHistoryScrollsAtThePreparedBlock` asserts the
+same conservation through eight `prepareToPlay` cycles on the real wrapper. Ten checks fail against
+the pre-round-15 engine.
+
+**Round 16 replaced the decision those passes rest on, and `testTheHistoryTimelineIsTheRingsTimeline`
+pins the replacement.** Round 15 had the engine MIRROR `GrHistoryBuffer::prepare`'s clear-on-change
+comparison; that agreed for `prepare` and for nothing else, so a `GrHistoryBuffer::reset()` restarted
+the ring's timeline while a partial from the old one survived into it — measured at 48 kHz / 512 with
+511 samples in flight, the new timeline's first entry closed on ONE post-reset sample and carried the
+previous timeline's peak. The engine now reads the ring's reset epoch instead.
+
+**The measurement every pass makes is structural, and deliberately not the peak.** An engine that is
+not reset keeps rendering pre-break audio out of its lookahead line quite legitimately, so a peak
+alone cannot tell a leak from ordinary audio continuity. What can is **how many POST-break samples
+the first entry after the break stands for**: `B` for a new timeline, `B − carried` for a continued
+one — exact, and independent of what the pipeline holds. The test feeds post-break audio one sample
+at a time to read that number off directly. Cases: a break on an entry boundary (five kinds, all
+identical); a ring reset at 1, 100, 300 and `B − 1` in flight; the statistics assertion taken where
+the engine is reset too, so the pipeline cannot supply the marker; a reset straight after a
+publication; a same-configuration re-prepare; an engine reset that clears nothing; a configuration
+change; attaching a sink to an engine that had already accumulated without one; and a
+five-transition sequence. Twelve checks fail against round 15's engine, and all nine mutants of the
+new mechanism are killed.
+
+**One of those nine is worth its own paragraph, because it survived until a test was written for the
+WRAPPER rather than the engine.** Deleting the sync from `AnabasisEngine::prepareHistoryTimeline`
+passed both suites: every engine-level pass calls the timeline API itself, so none of them can see
+the one production site forgetting it. `testTheGrHistoryScrollsAtThePreparedBlock` now re-prepares
+the real processor at a changed block size with a partial in flight and measures the first new
+entry's span through `processBlock`. It leaves 100 samples in flight rather than 300 deliberately: a
+partial LARGER than the new block is dropped by `prepare`'s span guard — a well-formedness rule, not
+a timeline decision — which would have masked the question the pass exists to ask.
+
+**Round 17 pins what the ring's SIZE means, which is a duration rather than an entry count**
+([ADR-0040](../architecture/design-decisions/ADR-0040-gr-history-ring-capacity-is-a-duration.md)).
+Because an entry is one prepared block, `kSize` decides `kSize · block / rate` seconds — and no test
+in the tree had ever asserted a number of seconds, so a ring sized against a 512-sample block passed
+everything while retaining 0.6825 s at 192 kHz / 32.
+`testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` sweeps thirty-two prepared pairs and
+asserts the quantity the contract is written in — retained entries × prepared block ÷ sample rate.
+Its bounds are **derived from `kSize`** rather than quoted, so the sweep pins the SHAPE of the
+contract at any capacity (the whole window wherever the ring can hold one, never below §2.9's floor
+down to the ring's own bound, and the exact proportion past it) while the named cases pin its VALUE.
+
+**Round 19 made the sweep enter the band it exists for.** Until then every pair in it sat at or
+below 6000 entries a second — `windowEntries`' clamp was slack at all twenty-six, so both bounds
+were satisfied by the same arithmetic and the test could not tell a ring that shortens gracefully
+from one that never shortens at all. Six pairs now enter it: 96 kHz / 8, 192 kHz / 16 and
+384 kHz / 32 are the densest at which the whole window still fits, 192 kHz / 8 and 384 kHz / 16 are
+past the clamp and inside §2.9's floor, and 384 kHz / 8 is past the floor. The named cases became a
+four-rung ladder crossing both bounds from both sides, each rung derived from `kSize` — which is
+what caught the round-17 version's own examples going vacuous when the capacity doubled, since
+192 kHz / 16 had been pinned as "the first pair past the clamp" and is now inside it. It closes on
+the real ring twice: a whole window's entries pushed at 192 kHz / 32, and a SATURATED window at
+384 kHz / 16 where `want` IS `kSize − 1` — the frame's read bounded by one safe lap rather than
+starting at zero, the values checked at both ends of the window, and one push past the lap to see
+the oldest read move with the head. That last case is what the `kSize − 1` clamp exists for, and
+nothing had exercised it: at every pair the suite ran, `want` was thousands of entries short of the
+capacity.
+`testTheRingKeepsASecondOfEntriesAtTheSmallestPreparedBlock` adds the producer's half in the DSP
+suite, where the engine can be driven: one second of audio at 192 kHz / 32 is 6000 entries, half
+again what the whole 4096-entry ring held, and the marker in the first six blocks is looked for at
+`groupDelaySamples / B` — where the engine's own latency puts it — so finding it there is what says
+index 0 has not been re-used. Nine checks fail on the 4096-entry ring.
+
+**`specFrame` places its reader instead of hoping it lands (round 18).** Its concurrent half used to
+run a renderer thread against four thousand publications and assert that nothing it accepted was
+mixed — and not one assertion in the function required the reader to have overlapped a publication
+even once, so two hundred thousand reads could pass without entering the state the bracket exists
+for. The reader is now put at all four states a publication has — before it, inside it with the
+counter odd, across it, and after it — each through a rendezvous inside the production function,
+each counted in the branch that verified that placement's own observable, and all four asserted
+non-zero. The odd marker's real payoff is asserted directly rather than implied: the refusal happens
+BEFORE the copy, so a reader that arrives with the payload torn still holds the last coherent frame
+in its own buffers and the mixed pair is unreadable rather than read and discarded. What remains of
+the free-running phase is a bounded stress — two hundred publications, twenty thousand reads, two
+marker bins — whose value is coverage and not the proof.
+
+**`specFrame` gained the premise it had always rested on.** Its marker is that identical audio in
+both spectrum rings analyses to bit-identical traces, so any inequality a reading thread sees is a
+mixed frame; nothing checked that, and a failure could therefore point at the wrong side of the
+thread boundary. The writer's own pair is now compared on every tick, on the thread that produced
+it, and the test prints its counts — reads, distinct frames, mixed frames, working-pair splits, and
+the first offending bin with both values — so a failure carries its own evidence rather than needing
+a second run.
+
+**The hot pass runs FROZEN, and that is a measured property of the chain rather than a
+convenience.** §5.4's `adaptiveEngine.finishBlock` runs once per `process()` CALL and its trims are
+adopted for that whole call, so the DELIVERED size — not the chunking — sets the adaptation cadence:
+a host running 64 adapts eight times as often as one running 512. That was true before this round and
+is untouched by it. With the trims live the six schedules part by at most **0.0032 dB** of GR and
+**0.00035** linear of peak, which a following pass asserts as a bound; frozen, they are identical,
+which is what isolates the accumulation. The same pair of results is what re-measured the chunk
+loop's transparency claim: moving a chunk boundary is bit-transparent WITH THE LIMITER ENGAGED, and
+`AnabasisEngine.cpp`'s note now says so on that evidence rather than on a run that never engaged it.
 
 **What the suite cannot see here, stated rather than implied.** `repaint()` is what carries a
 published frame to the screen, and a headless suite has no repaint region to inspect: the tests pin

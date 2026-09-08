@@ -552,6 +552,11 @@ void SpectrumView::tick (double dt)
     analyse (scratchInL .data(), scratchInR .data(), gotIn,  inDb,  dt);
     analyse (scratchOutL.data(), scratchOutR.data(), gotOut, outDb, dt);
 
+    // BOTH WINDOWS ARE FOLDED AND THE GENERATIONS ARE UNRE-READ here, which is
+    // the only instant a rewind can become visible INSIDE a tick — see the
+    // header's rendezvous banner. Empty in every shipped build.
+    if (whileBatchAnalysed) whileBatchAnalysed();
+
     // The second sample. A generation that moved while the batch ran means the
     // frames just folded into the EMA may span the rewind, so the EMA is not a
     // description of either configuration — the post-reset state is the floor,
@@ -618,8 +623,8 @@ void SpectrumView::tick (double dt)
 // in `GrHistoryBuffer`, the frames in two `ScopeBuffer`s — and a relaxed load of
 // one is unordered against an acquire load of the other. `prepareToPlay` writes
 // them in one thread in one sequence (`engine.prepare` rewinds both rings at
-// `PluginProcessor.cpp:769`, `grHistoryRing.prepare` republishes the pair at
-// `:785`), and this bracket is what lets a reader use that sequence.
+// `PluginProcessor.cpp:776`, `grHistoryRing.prepare` republishes the pair at
+// `:792`), and this bracket is what lets a reader use that sequence.
 //
 // THE CASES ARE A SPLIT OVER WHERE `epoch0` FELL IN `resetGuard`'s MODIFICATION
 // ORDER, which is what makes them exhaustive — not over the direction of the
@@ -707,6 +712,9 @@ void SpectrumView::publishFrame (uint64_t first, int span, double rate, uint32_t
 
     for (int b = 0; b < kBins; ++b)
         pubIn [(size_t) b].store (inDb [(size_t) b], std::memory_order_relaxed);
+    // THE PAYLOAD IS TORN HERE and the counter says so — see the header's
+    // rendezvous banner. Empty in every shipped build.
+    if (whileHalfPublished) whileHalfPublished();
     for (int b = 0; b < kBins; ++b)
         pubOut[(size_t) b].store (outDb[(size_t) b], std::memory_order_relaxed);
     pubFirst.store (first, std::memory_order_relaxed);
@@ -756,6 +764,10 @@ bool SpectrumView::readPublishedFrame (std::vector<float>& inTrace,
         const auto span  = pubSpan .load (std::memory_order_relaxed);
         const auto rate  = pubRate .load (std::memory_order_relaxed);
         const auto cfg   = pubConfig.load (std::memory_order_relaxed);
+
+        // THE COPY IS IN HAND AND UNCHECKED here — see the header's rendezvous
+        // banner. Empty in every shipped build.
+        if (whileReadUncommitted) whileReadUncommitted();
 
         std::atomic_thread_fence (std::memory_order_acquire);
         if (frameSeq.load (std::memory_order_relaxed) == s0)

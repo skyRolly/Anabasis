@@ -155,10 +155,15 @@ generation pair by slot, which buys a per-slot counter to fix one window's worth
 
 ## Related code
 
-- `src/dsp/AdaptiveEngine.h:161-168` — `injectTrims` (clamp + publish)
-- `src/dsp/AnabasisEngine.h:158-167` — `restoreFrozenTrims` / `frozenRestorePending` (the staged
-  record); `src/dsp/AnabasisEngine.cpp:278-294` — block-top consume; `:350` (direct-adopt)
-  and `:400` (duck bottom) — the two application sites
+> *Anchors re-aimed 2026-09-08; the decision, the reasoning and the evidence above are unchanged.*
+> Four of the five line numbers in this row had drifted as the two engine files grew around them.
+> They point at the same five things; nothing else in this record moved.
+
+- `src/dsp/AdaptiveEngine.h:224-263` — `injectTrims` (clamp + publish)
+- `src/dsp/AnabasisEngine.h:243-265` — `restoreFrozenTrims`, and `:287-291` —
+  `frozenRestorePending` (the staged record; the two were adjacent when this row was written and
+  the header has grown between them since); `src/dsp/AnabasisEngine.cpp:373-389` — block-top
+  consume; `:461` (direct-adopt) and `:511` (duck bottom) — the two application sites
 - `src/PluginProcessor.cpp` — the capture in `saveSlotFromLive`, the stage in `applySlotToLive`
   and in `setStateInformation`
 

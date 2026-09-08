@@ -1608,13 +1608,20 @@ out to be neither.
 ### 17.1 Mismatched frequency axes — reproduced, and not quite where the finding said
 
 **The lifecycle, traced rather than assumed.** The rate the display uses lives in
-`GrHistoryBuffer::preparedRate` (`src/dsp/GrHistoryBuffer.h:338`), written relaxed inside `clear`
-(`:232`) between a release-fenced odd guard increment and a release even one (`:217-235`), read
-relaxed through `prepared()` (`:176-180`) and forwarded as
+`GrHistoryBuffer::preparedRate` (`src/dsp/GrHistoryBuffer.h:462`), written relaxed inside `clear`
+(`:319`) between a release-fenced odd guard increment and a release even one (`:304-322`), read
+relaxed through `prepared()` (`:263-267`) and forwarded as
 `AnabasisAudioProcessor::preparedSampleRate` (`src/PluginProcessor.h:564`). One writer: the host's
 reconfiguration thread, through `prepareToPlay` (`src/PluginProcessor.cpp:748,785`). Three readers:
 `GrHistoryView` (bracketed), `CurveView` (unbracketed), `SpectrumView::paint` (unbracketed,
 `src/gui/SpectrumView.cpp:575` before this round).
+
+> *Anchors re-aimed 2026-09-08, nothing else touched.* The four `GrHistoryBuffer.h` line numbers
+> above were correct against `8d5738f`, the file as it stood when this log was written, and have
+> drifted since — most recently by ADR-0040's 2026-09-08 capacity amendment, which added lines above
+> them. They now point at the same four things: the `preparedRate` member, its relaxed store inside
+> `clear`, the odd/even `resetGuard` bracket around it, and `prepared()`. The finding, the
+> measurements and the conclusions below are as recorded on 2026-09-05.
 
 **What it affects, corrected.** Not the axis. The x axis is a fixed 20 Hz–20 kHz log sweep with no
 rate term (`:577,651-654,661`); the rate enters only as `binHz = rate / kSize` (`:619`) and from
@@ -2027,3 +2034,497 @@ OQ-017's bursty-host lurch; the input/output taps being index-aligned rather tha
 KI-018's remaining equal-count corner; the audio-path reservation index; `LoudnessMeterView`; and the
 spectrum reveal-smoothing limitation, whose premise this round did not touch. The memcheck job's
 wall-clock cost is a CI-performance question and not a reason to change product behaviour.
+
+---
+
+## 20. The history's cadence: one entry is one PREPARED block of processed audio (2026-09-07, round 14)
+
+**The instruction.** Implement OQ-017 **fix 1 only** — the mis-sized/variable-delivery half. The
+bursty-host half stays an open follow-up and is not implemented here; no lag allowance, no guessed
+`L`, no change to the rendering geometry, and nothing in the already-merged GR-history rendering
+work is touched. The decision to implement was taken by the owner after §19's investigation, which
+re-derived the two defects rather than accepting the three standing hypotheses.
+
+### 20.1 The defect, in one line
+
+`GrHistoryBuffer` was pushed **once per `processBlock` CALL** (from the wrapper), and
+`GrHistoryView` maps entry k to `k · block / rate` and sizes its window as `20 s · rate / block`,
+reading the **PREPARED** pair the ring publishes. The two agree only where the host delivers exactly
+its declared maximum. JUCE's own `prepareToPlay` contract says it will not — *"completely variable
+block sizes can be expected from some hosts"* — and the AU and VST3 wrappers both prepare with the
+maximum and render with whatever the host passes, with no re-prepare on a change. So the whole time
+base ran out by `B / D`, unbounded, measured from 0.125× to 8×.
+
+Restated as the two figures a user sees, at 48 kHz with 512 prepared (measured on the real
+processor; the pixel column is the same statement at the Simple well's 0.482372 px per entry and
+60 frames a second, where the design travel is 45.222 px/s):
+
+| delivered | entry rate before | window held before | entry rate after | window after |
+|---|---|---|---|---|
+| 128 | 375.00 /s (4× fast, 180.9 px/s) | 5.0 s | 93.75 /s | 20.0 s |
+| 512 | 93.75 /s | 20.0 s | 93.75 /s | 20.0 s |
+| 4096 | 11.72 /s (8× slow, 5.65 px/s) | 160.0 s | 93.75 /s | 20.0 s |
+
+### 20.2 Why the producer, and why the ENGINE
+
+The display cannot fix it without being told the delivered size, and telling it would mean either a
+new published scalar (a second time base to keep coherent with the entries, which is the coupling
+ADR-0038 exists to avoid) or a display that learns a number the host is free to change every
+callback. The wrapper cannot fix it either: a prepared-block boundary of the PROCESSED stream falls
+wherever the running total puts it — inside a delivered block whenever the host leaves a remainder —
+and the two statistics an entry carries are folded **per sample** inside the chain.
+
+The engine already chunks on exactly that grid. `AnabasisEngine::process` now takes the ring through
+`setGrHistorySink`, breaks its chunk loop on `maxBlock - histSamples` as well as on `maxBlock`, and
+pushes when the accumulator holds `maxBlock` samples, carrying the remainder across calls. A chunk
+therefore lies **wholly inside one entry**, so the per-sample folds already in `processChunk` are
+exact for the entry's own span: nothing is approximated, nothing is assigned wholesale, and a
+delivered block spanning several entries is split into as many, each with its own statistics. The
+`if (histSamples >= maxBlock)` is an `if` and not a `while` — the loop bound guarantees the
+accumulator never holds more than one entry, so there is no unbounded catch-up.
+
+Cost on the audio path: the per-sample folds moved from the per-CALL accumulators to per-CHUNK ones
+and are folded chunk-into-call afterwards, which is exactly equal (min and max are associative) and
+adds nothing per sample. `push` runs `⌈D / B⌉` times a call instead of once — **fewer** times than
+before for any host delivering under the prepared size. No allocation, no lock, no new cross-thread
+path, no new atomic ordering.
+
+### 20.3 What is bit-identical
+
+At **D == B** the entry the engine pushes is bit-identical to the pair the wrapper pushed before
+this round — `gainToDecibels (lastBlockMinGain(), -60)` and `lastRenderPeak()` — asserted against
+that expression itself rather than a remembered number
+(`testGrHistoryEntriesFollowThePreparedBlock`, pass 6). The GR METER is untouched: it is a per-call
+reading and stays one; only the history moved.
+
+### 20.4 The measurements
+
+Cadence, on the real processor with a real ring: exactly `rate / B` at 44.1 / 48 / 96 kHz, for
+B = 512 and B = 1156 (the AU default), at D/B = 0.25, 0.5, 1, 2 and 8 — thirty configurations, and
+the entry count equals `samples / B` in every one of them.
+
+Splitting, the property that says the statistics belong to their own samples:
+
+- Six delivery schedules — 64, 128, 512, 1024, 4096, and a variable one whose seven sizes
+  (1, 3, 17, 63, 512, 1024, 1964) average the prepared block and none of which is a multiple of it —
+  produce **bit-identical entry sequences**, with the limiter engaged.
+- Each entry's peak equals the max of exactly the B rendered samples it spans, derived in closed
+  form from the input and `groupDelaySamples()`, over all 48 entries of a run, with a negative
+  control proving neighbouring entries differ.
+- A 64-sample transient inside a 4096-sample delivered block lands in **exactly one** entry
+  (`entries with peak > 0.1` = 1), at the index the prepared grid and the group delay put it at.
+  Same at B = 256 with an 8192-sample delivery.
+
+### 20.5 The finding that changed a comment: §5.4 sets its cadence from the DELIVERED size
+
+The schedule-invariance above holds **frozen**. With the §5.4 trims live the six schedules part —
+worst **0.0032 dB** of GR and **0.00035** linear of peak, first difference at entry 6 — and the
+cause is not the accumulation: `adaptiveEngine.finishBlock` runs once per `process()` CALL and the
+trims it produces are adopted for that whole call, so a host running 64 adapts eight times as often
+as one running 512. That was true before this round and is untouched by it; it is now asserted as a
+bound (pass 3b) rather than left to be discovered.
+
+The same experiment re-measured a claim the first draft of this round's code comment carried over
+from the investigation: that chunking is transparent to the audio. It is — **including with the
+limiter engaged**, which the original measurement had not exercised — and the comment now rests on
+that run rather than on one that never engaged it.
+
+### 20.6 Reset and re-prepare
+
+> **SUPERSEDED BY §21 (round 15).** The paragraph below describes what round 14 shipped. The PR
+> review found it wrong for the same-configuration case, and the partial now follows the ring's own
+> clear-on-change gate. Kept as written because the reasoning it records is the reasoning that had
+> to be corrected.
+
+The accumulator is dropped by `prepare` and by `reset`, never carried across either: a re-prepare is
+a discontinuity in the audio the entries describe, so at most `maxBlock - 1` samples of a partial
+entry are discarded rather than being spliced onto audio from the other side of it — less than one
+entry of a twenty-second window. The ring's own clear-on-change gate is unchanged, so a re-prepare
+at the same pair still keeps the timeline; pass 7 asserts that the first entry after such a
+re-prepare carries none of the audio from before it.
+
+### 20.7 What is untouched
+
+Limiter behaviour, gain and peak calculation, the chain's signal order, the FFT/spectrum path, the
+GR bucket geometry, bucket values once in the ring, `bucketX`, `visibleRight`, the smoothed head and
+its band, the reader contract, `push`, the epoch protocol, the prepared-pair metadata, and every
+merged GR-history and Spectrum fix. `ScopeBuffer`'s two rings are untouched — they are pushed per
+chunk already and their reader reads frames, not a time series.
+
+### 20.7b Mutation testing, and the two mutants that survived the first suite
+
+Nine mutants of the new code, each built and run against the DSP suite:
+
+| # | mutant | outcome |
+|---|---|---|
+| 1 | chunk loop stops breaking on the history boundary | killed (cadence, split, §5.4 bound) |
+| 2 | `histSamples >= maxBlock` → `>` (the entry never closes) | killed (eight checks) |
+| 3 | the peak accumulator is not cleared after a push | killed |
+| 4 | the gain accumulator is not cleared after a push | killed |
+| 5 | `histPeak = renderPeakChunk` (last chunk wins) | killed |
+| 6 | `histMinGain = grMinChunk` (last chunk wins) | killed |
+| 7 | the per-chunk minima are not reset at the top of a chunk | **survived**, then killed |
+| 8 | `prepare`/`reset` no longer clear the accumulator | **survived**, then killed |
+| 9 | the push is unconditional (one entry per chunk) | killed |
+
+**Mutant 7 is the interesting one.** Without the per-chunk reset, `grMinChunk` becomes a running
+GLOBAL minimum — and that is still schedule-invariant, because the entry boundaries fall at the same
+absolute samples in every schedule, and it still agrees with `lastBlockMinGain()`, because the
+per-call fold reads the same running value. Cadence, split and identity all stayed green while the
+GR trace would have latched at the session's deepest reduction and never recovered. The pass added
+for it feeds a loud passage and then silence: with the reset deleted the tail reads −3.62 dB, the
+same figure as the passage; with it, better than −0.02 dB.
+
+**Mutant 8 exposed a test that passed for the wrong reason.** `process` works IN PLACE, so the
+re-prepare pass — which reused one buffer across its calls — was feeding the engine its own delayed
+output, and three calls of that is digital silence: a partial entry carrying loud audio across a
+re-prepare would have been indistinguishable from one carrying nothing. The pass now refills before
+every call and asserts the loud render IS in the accumulator (`lastRenderPeak() > 0.5`) before the
+re-prepare is asked to drop it.
+
+**One code change came out of the same exercise.** Mutant 2 did not fail the suite, it HUNG it: with
+the accumulator never emptied, `maxBlock - histSamples` goes non-positive and `start += num` stops
+advancing — an infinite loop on the audio thread. The shipped code cannot reach that state, but the
+loop's termination rested on an invariant held elsewhere rather than on anything visible at the loop
+itself, so `num` is now `jmin (jmax (1, maxBlock - histSamples), totalSamples - start)`: identical on
+every reachable state, and terminating by inspection on all of them.
+
+### 20.8 Follow-ups, unchanged
+
+**OQ-017's bursty half stays Open** and this round is not a partial answer to it: the fix changes
+WHICH SAMPLES an entry stands for, and a burst delivers the same entries at the wrong INSTANTS,
+which no producer-side change can address. Also unchanged: the input/output taps being index-aligned
+rather than audio-time aligned; KI-018's remaining equal-count corner; the audio-path reservation
+index; `LoudnessMeterView`; and the spectrum reveal-smoothing limitation.
+
+---
+
+## 21. The partial entry follows the ring, not the call (2026-09-07, round 15)
+
+**The PR review's blocking finding**, at the line round 14 had written: *"Pause-resume drops recent
+history. On each same-configuration re-prepare, `prepare` clears a partial history entry while the
+history ring preserves earlier completed entries."*
+
+### 21.1 The root cause, and why it is not the one the comment claimed
+
+Round 14 gave the engine an accumulator and dropped it on every `prepare`, arguing that *"a
+re-prepare is a break in the audio an entry describes — a transport stop, a rate change, a
+rescan"*. That sentence puts a transport stop and a rate change in the same class, and the product
+does not: `GrHistoryBuffer::prepare` keeps the ring's entries when the `(rate, block)` pair is
+unchanged, and it does so under an **Accepted ADR** — ADR-0023 item 6, *"a transport-start
+re-prepare keeps the timeline"* — restated to users in `USER_MANUAL.md` as *"pausing and resuming
+continues the timeline; it restarts only when the sample rate or block size changes."* So the ring
+and the accumulator were following opposite rules across the one event hosts generate most often,
+and the samples in the unpublished entry fell between them.
+
+Nothing in the record reconciled the two. ADR-0011's 2026-09-07 amendment, the only Accepted-ADR
+record of round 14, is silent on the accumulator's lifecycle across a prepare; ADR-0023 item 6 and
+its amendments never mention the accumulator. The drop was documented in four code comments, §20.6
+above, `TESTING.md` and one test pass — so it was deliberate rather than accidental — but it was
+never checked against the contract it contradicts, and round 14's own mutation set hunted the
+opposite behaviour (mutant 8) and killed it.
+
+### 21.2 The state that was discarded
+
+Three plain members of `AnabasisEngine`: `histMinGain`, `histPeak` (the two statistics an entry
+carries, folded over the samples collected so far) and `histSamples` (how many that is, always
+strictly less than `maxBlock`). They describe audio the plugin had **already rendered and already
+emitted to the host**; only their publication was outstanding. Everything else `reset()` clears is
+either audio memory or an edge detector — this was the only piece of *publication* state on that
+list.
+
+### 21.3 Measured, on the real engine and a real ring
+
+Marker material: a 64-sample burst at 0.85 against a 0.20 base, fed early enough that its RENDER
+falls ten samples inside the partial. 48 kHz, 512 prepared, four blocks primed, a 300-sample partial,
+then the break.
+
+| break | before | after |
+|---|---|---|
+| none (control) | marker in entry 4, peak 0.850 | same |
+| same pair | **marker in no entry at all** | marker in entry 4, peak 0.850 |
+| rate 48 → 96 kHz | marker dropped | marker dropped |
+| block 512 → 256 | marker dropped | marker dropped |
+| explicit `reset()` | marker dropped | marker dropped |
+
+Cumulatively, forty cycles of twenty 512-sample blocks followed by a 300-sample one — 421 600
+samples, **8.783 s** at 48 kHz / 512, with a same-configuration re-prepare at the end of each:
+**800 entries before, 823 after, against the 823 the audio is worth** — a quarter of a second of
+history that reached no entry, and it accumulates with every transport start.
+
+The per-event loss is exactly `histSamples` at the moment of the call, so 0 … `maxBlock − 1`
+samples: 511 at 48 kHz / 512 (10.6 ms), 1155 at Logic's 44.1 kHz / 1156 (26.2 ms). It is not a
+per-pause constant — the drop re-phases the entry grid to the resume point, so the total after k
+re-prepares is Σ (Sᵢ − Sᵢ₋₁) mod B, and pauses spaced an exact multiple of B apart cost nothing
+after the first.
+
+### 21.4 The invariant, and the mechanism
+
+> **THE INVARIANT STANDS; THE MECHANISM IS SUPERSEDED BY §22 (round 16).** Mirroring the ring's
+> comparison inside the engine agreed for `prepare` and for no other clear.
+> `preparedRateRaw`/`preparedBlockRaw` no longer exist. Kept as written for the same reason §20.6 is.
+
+> For one `(rate, block)` timeline, every processed sample either reaches exactly one history entry
+> or is discarded by the same event that clears the ring. There is no third case.
+
+`AnabasisEngine::prepare` now asks one question first, before `sr` and `maxBlock` are overwritten:
+does this prepare END the timeline or CONTINUE it? It answers with the same comparison, on the same
+two RAW values, that `GrHistoryBuffer::prepare` makes sixteen lines later in `prepareToPlay` — for
+which the engine keeps a second pair, `preparedRateRaw`/`preparedBlockRaw`, rather than its railed
+`sr`/`maxBlock` copies, so the two predicates are provably the same function and not merely equal in
+practice. The accumulator is captured before the body runs and restored after `reset()`, which is
+where it has to go: `reset()` is `prepare`'s own last statement and zeroes the same three members, so
+gating only the in-prepare clear would have been a no-op — round 14 cleared the accumulator twice per
+prepare.
+
+The engine's raw pair is committed as the **last** statement of `prepare`, not beside the comparison
+at the top, and that is exception safety rather than style: this function allocates eight
+oversamplers and half a dozen buffers, and the rail at the top of it exists because a `bad_alloc`
+here crosses the wrapper's C ABI. Commit the pair first and a prepare that throws leaves the engine
+holding the new pair while the ring — whose own `prepare`, sixteen lines later in `prepareToPlay`,
+never ran — still holds the old one; the host's retry would then have the engine answer "same" and
+carry while the ring answered "changed" and cleared. Committed last, a throw leaves the pair OLD and
+the retry answers "changed" on both sides.
+
+Nothing else changes. No entry is published early or short — the entry still completes at exactly
+`maxBlock` samples, so the display's time base is untouched. Nothing is re-processed, so no sample is
+counted twice. A same-pair `GrHistoryBuffer::prepare` is a **total no-op** — it returns before
+touching `writeIndex`, `resetGuard`, the stored pair or any slot — so the carried entry is published
+under the same epoch, at the next monotonic index, through the same `push`; the reader cannot
+distinguish it from any other entry. On the common path the host thread now touches the accumulator
+**zero** times, where round 14 wrote it twice per prepare.
+
+**The realtime claim, as the bound it is rather than as "unchanged".** A call that carried samples in
+can publish an entry where the prepare would previously have discarded them, so the count on an
+individual call can differ. What is unchanged is what a realtime argument can use: the per-call bound
+stays `ceil(delivered / prepared)` pushes — the carry is strictly less than one entry, so it cannot
+add one to the ceiling — the long-run rate stays `rate / preparedBlock`, and chunks per call stay
+`ceil((carried + delivered) / prepared)`, which is round 14's figure, since the remainder was already
+carried across calls. No allocation, no lock, no atomic, nothing per sample.
+
+### 21.5 The one residual, stated
+
+The first entry after a resume needs only `maxBlock − carried` new samples, so it is published up to
+`(maxBlock − 1) / rate` seconds early — 10.6 ms at 48 kHz / 512. `smoothedHead` holds its estimate to
+`[head, head + 1]`, so an early head advances the trace by at most **one entry pitch in a single
+frame** (0.482 px on the Simple well at that configuration), once per resume. That is the magnitude
+of the two-block burst OQ-017 already records as accepted, it is bounded, and it replaces a loss of
+content that was permanent and cumulative.
+
+### 21.6 A changed configuration still drops it — and `reset()` stopped being a second door
+
+A rate or block change is where the ring clears, so a carried partial would put audio recorded under
+the old time base into the new timeline's first entry. It is dropped there, and the changed-pair half
+of pass 7 pins that an entry of the new size is never part-filled with samples counted against the
+old one.
+
+**`reset()` no longer clears the accumulator, and the evidence for changing that is the same evidence
+the rest of this round rests on.** The first draft of this repair left `reset()`'s clear alone and
+restored the accumulator after it, on the principle that reset semantics should not move without
+cause. Adversarial review found the cause: `reset()` touches **no ring state whatsoever** — no epoch,
+no write index, no slot, no prepared pair — so a reset that dropped the partial would take up to
+`maxBlock − 1` samples out of a timeline the ring is still keeping, with no guard able to fire
+because nothing in the ring moved. That is this round's defect exactly, at a different door, and the
+first draft's own test asserted it as correct. The accumulator is not audio memory and not an edge
+detector — it is the only piece of PUBLICATION state on `reset()`'s list — so it does not belong
+there. It now has ONE writer outside the chunk loop, `prepare`'s changed-pair branch, whose rule is
+literally the ring's, instead of two writers sixty lines apart that contradicted each other. (Round
+14 cleared it twice per prepare, inline and again inside `reset()`; that is also why the review
+finding's implied one-line remedy — gate the inline clear — would have been a no-op.)
+
+Nothing a host can observe changes: `AnabasisAudioProcessor` does not override
+`AudioProcessor::reset()`, so `prepare`'s own tail is that function's only caller in the tree. The
+rule is pinned for whoever gives it a second one.
+
+### 21.7 Mutation testing
+
+Nine mutants, built and run against the DSP suite:
+
+| mutant | failures |
+|---|---|
+| always drop (round 14's behaviour) | 12 |
+| never drop, even on a configuration change | 4 |
+| the stored raw pair never advances | 12 |
+| drop the count but not the statistics | 3 |
+| drop the statistics but not the count | 1 |
+| ignore the rate in the gate | 3 |
+| ignore the block in the gate | 2 |
+| put the clear back into `reset()` | 14 |
+| compare the RAILED copies instead of the raw pair | **0 — survives** |
+
+The "statistics but not the count" mutant is the one that needed a test written for it: dropping only
+`histMinGain`/`histPeak` across a 512 → 256 change leaves `histSamples` at 300, which already exceeds
+the new entry size, so the very first sample of the new timeline closes an entry standing for one
+sample. The marker checks cannot see that — the statistics WERE cleared — so the pass now feeds 255
+samples of the new configuration and requires the ring to be empty, then one more and requires it not
+to be.
+
+The survivor survives for a reason worth recording rather than papering over. Comparing the RAILED
+copies (`sr`, `maxBlock`) instead of the raw arguments differs only where `jmax (1, maxBlockSize)`
+collapses distinct arguments — block sizes of 0, 1 or negative — and at an effective block of 1 every
+sample completes an entry, so the accumulator is always empty and there is nothing to carry either
+way. The raw pair is kept because it makes the engine's predicate provably the ring's, not because a
+test can tell them apart.
+
+### 21.8 The stale cadence contract (the review's second, non-blocking finding)
+
+`GrHistoryBuffer::push` still promised *"once per HOST BLOCK, since `push` runs once per
+`processBlock` and never per sample"* — true until round 14 and not since. The corrected wording
+states the unit (per published entry), what a call actually publishes
+(`floor((carried + delivered) / prepared)` — none, one, or several), what is guaranteed (the
+long-run rate `rate / block`, and the bound of `ceil(delivered / prepared)` calls per host block,
+never per sample), and leaves the measured x86-64/AArch64 figures attached to the call rather than
+to a unit they no longer describe. The same claim was corrected in the ring's file banner, in
+`THREADING_POLICY.md`'s Audio → GUI row, and in `PluginProcessor.cpp`'s `prepareToPlay` comment,
+which still described the ring's time base as entries-per-host-block.
+
+### 21.9 Follow-ups, not taken here
+
+`GrHistoryBuffer::reset()` has no production caller, yet several comments attribute the production
+rewind to it rather than to `prepare` → `clear`; and `latchOsConfig` tears down the wet ring, the
+limiter and the oversampler mid-stream without touching the accumulator, which is consistent with
+this round's rule but was inconsistent with round 14's. Both are wording/consistency items, not
+defects. OQ-017's bursty half is untouched.
+
+---
+
+## 22. The partial entry's timeline is READ from the ring (2026-09-07, round 16)
+
+**The PR review's second blocking finding**, at the line round 15 had written: *"Explicit resets
+leak old history. After both attached objects are reset, the history ring starts a fresh timeline
+while the engine still preserves `histMinGain`, `histPeak`, `histSamples`."*
+
+### 22.1 What the two previous rounds had in common
+
+Round 14 dropped the partial on every `prepare` — losing a prepared block of already-rendered audio
+on every transport start. Round 15 kept it across a same-configuration re-prepare by **mirroring**
+`GrHistoryBuffer::prepare`'s clear-on-change comparison inside the engine. Both had the ENGINE
+decide which timeline the partial belonged to, and the mirror only covers the door it was cut for.
+
+`GrHistoryBuffer::reset()` restarts the ring's timeline — odd epoch, every slot zeroed, write index
+rewound to 0, even epoch — without going through `prepare` at all. Round 15's engine saw no change
+in the raw `(rate, block)` pair and kept its partial, which then completed the **first entry of the
+ring's new timeline**.
+
+### 22.2 Reproduced, and measured as a structural fact
+
+Marker: a 64-sample burst at 0.85 over a 0.20 bed, fed so its RENDER lands ten samples inside the
+partial. The measurement that settles it is not the peak — an engine that is not reset keeps
+rendering pre-break audio out of its lookahead line quite legitimately — but **how many post-break
+samples the first entry after the break stands for**. It is `B` for a new timeline and `B − carried`
+for a continued one, exactly.
+
+At 48 kHz / 512, four whole entries primed, then the break:
+
+| break | ring epoch | before: 1st entry stands for | after |
+|---|---|---|---|
+| `ring.reset()`, 300 in flight | 2 → 4, index rewound | **212** post-reset samples, peak 0.850 | 512, peak 0.200 |
+| `ring.reset()`, 511 in flight | 2 → 4, index rewound | **1** post-reset sample, peak 0.850 | 512, peak 0.200 |
+| engine + ring reset, 511 in flight | 2 → 4, index rewound | **1**, peak 0.850 | 512, peak 0.200 |
+| `engine.reset()` alone, 300 | 2 → 2, entries kept | 212 | **212 — unchanged** |
+| same-pair `prepare`, 300 | 2 → 2, entries kept | 212 | **212 — unchanged** |
+| changed-pair `prepare`, 300 | 2 → 4 | 256 (whole new-size entry) | **256 — unchanged** |
+
+A full-width point standing for one sample of audio, carrying the previous timeline's statistics.
+
+### 22.3 Reachability, stated plainly
+
+Against round 15's code this was a **latent hazard, not a host-reachable defect**.
+`AnabasisAudioProcessor` does not override `juce::AudioProcessor::reset()` — whose base body is
+empty, and which the VST3, AU, AUv3 and Unity wrappers all call — so the only host route into
+`AnabasisEngine::reset` is `prepare`'s own tail, and `GrHistoryBuffer::reset()` has no production
+caller. That is the argument for changing the DESIGN rather than patching the symptom: round 15's
+correctness depended on an accident of the call graph. Restoring the clear inside
+`AnabasisEngine::reset()` — the obvious small fix — would not have fixed the case measured above at
+all, because `ring.reset()` alone leaks without the engine's reset being called.
+
+### 22.4 The invariant, and the mechanism
+
+> A history entry never combines statistics from two timelines. For each timeline, every processed
+> sample that contributes to a partial entry either reaches exactly one entry in that same
+> timeline, or is discarded by the operation that started the next one.
+
+`resetGuard` is bumped by `GrHistoryBuffer::clear` and by nothing else, so a change in it IS the
+event "a new timeline started", whichever call caused it. `AnabasisEngine` records the epoch its
+partial was accumulated under (`histEpoch`) and discards the partial the moment they differ —
+`syncHistoryTimeline`, called by the wrapper immediately after `grHistoryRing.prepare` and long
+before any audio is folded. The mirrored
+predicate (`preparedRateRaw`/`preparedBlockRaw`) is **deleted**: one definition of "which timeline
+is this", owned by the object that has one.
+
+Every case now follows rather than being enumerated:
+
+- same-pair `prepare` — a total no-op on the ring, epoch holds, partial **kept** (round 15's repair);
+- changed-pair `prepare` — clears, epoch moves, partial **dropped** before a new sample is folded;
+- `reset()` that accompanies a clear — **dropped**;
+- `reset()` that clears nothing — **kept**, because the ring's timeline is still running;
+- any clear a later round adds — handled, without that round having to remember this one.
+
+### 22.5 Which thread asks, and why it is the host one
+
+The first implementation asked on the AUDIO thread, once per `process` call — airtight against
+callers, since the engine would notice any clear by itself. That is not what shipped.
+`THREADING_POLICY.md`'s "Forbidden cross-thread access" bullet confines reads of a scope/GR ring to
+the message and painting threads ("no reads off the message thread"), and its table makes any path
+not in it an Architecture Review Gate item. A producer-side read of `resetGuard` is at best arguable
+under that — the audio thread already reads `writeIndex`, which `clear` also writes — and this
+repository's convention for arguable is to raise rather than self-rule.
+
+So the read moved to the thread that WROTE the epoch, with processing suspended: the wrapper calls
+`engine.syncHistoryTimeline()` immediately after `grHistoryRing.prepare(...)` in `prepareToPlay`.
+That is not a cross-thread access at all. No new atomic, no new ordering, no new path, no lock, no
+allocation, and nothing added to the audio thread — one load per re-prepare instead of one per
+block.
+
+**The cost of the choice, and how it is paid.** A clear must be followed by the sync — an
+obligation, where the audio-thread read would have been a guarantee. Adversarial review put the
+price precisely: as prose in a header, "the compiler, the type system and every test in the tree are
+silent", and a contributor answering the VST3 `setProcessing(false)` route with the obvious
+`void reset() override { engine.reset(); grHistoryRing.reset(); }` would reinstate the leak. So it is
+not prose. The two calls are WELDED — `AnabasisEngine::prepareHistoryTimeline` and
+`resetHistoryTimeline`, the ring's own call with the sync attached — and `prepareToPlay` uses the
+first, so the one production site cannot be split. The raw ring entry points stay reachable, because
+the ring is the wrapper's member and the tests drive standalone rings, and `GrHistoryBuffer`'s header
+points at the welded pair from beside both of them.
+
+**What is deliberately not claimed.** With the read on the host thread this is not "one thing by
+construction" for a clear site nobody has written yet. The audio-thread version WOULD be, and is
+recorded as the alternative together with the gate it needs, so that decision stays the owner's.
+
+### 22.6 Tests and mutants
+
+`testTheHistoryTimelineIsTheRingsTimeline` covers the review's cases A–G, every pass measuring the
+post-break sample count above: a break on an entry boundary (five kinds, all identical); a ring
+reset with 1, 100, 300 and `B − 1` in flight; the statistics assertion where the engine is reset too
+so the pipeline cannot supply the marker legitimately; a reset straight after a publication; a
+same-configuration re-prepare; an engine reset that clears nothing; a configuration change;
+attaching a sink to an engine that had accumulated without one; and a five-transition sequence
+(engine reset → same-config prepare → ring reset → changed-config prepare → ring reset alone).
+**Twelve checks fail against round 15's engine.**
+
+Nine mutants, **all nine killed**:
+
+| mutant | caught by |
+|---|---|
+| carry the partial across a ring reset (round 15's behaviour) | both suites |
+| drop unconditionally, so a same-config re-prepare loses it | both suites |
+| drop the statistics but not the count | both suites |
+| drop the count but not the statistics | DSP |
+| adopt the epoch without dropping anything | both suites |
+| `prepareHistoryTimeline` without the welded sync | **state suite only** |
+| `resetHistoryTimeline` without the welded sync | DSP |
+| `setGrHistorySink` no longer adopting | DSP |
+| `prepare` without the span guard | DSP |
+
+The sixth is the one that mattered to get right. Before the wrapper-level pass existed it survived
+both suites — the engine-level tests call the timeline API themselves, so none of them could see the
+one production site forgetting the sync. The pass that kills it re-prepares the real processor at a
+changed block size with a partial in flight and measures the first new entry's span through
+`processBlock`. It leaves 100 samples in flight rather than 300 on purpose: a partial LARGER than the
+new block is dropped by `prepare`'s span guard, which would have masked the question.
+
+### 22.7 Follow-ups, not taken
+
+OQ-017's bursty half is untouched. `GrHistoryBuffer::reset()` still has no production caller, and
+several comments elsewhere attribute the production rewind to it rather than to `prepare` → `clear`;
+that is a wording sweep, not a defect.

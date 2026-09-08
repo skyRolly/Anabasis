@@ -541,52 +541,72 @@ unproven — it becomes Verified at the first Level-5 check (P1).
 
 ---
 
-## OQ-017 — Should the GR history absorb bursty or mis-sized host delivery with a lag allowance? · `Open`
+## OQ-017 — Should the GR history absorb BURSTY host delivery with a lag allowance? · `Open (the mis-sized half is Resolved 2026-09-07, 0.2.12)`
 
 **Question.** The GR history scrolls by a head smoothed at the nominal entry rate and held to
-`[head, head + 1]` (`GrHistoryView::smoothedHead`, 0.2.8). That band has no slack: the ideal
-trajectory rides both of its edges, so any block that arrives a whole entry early or late becomes a
-visible snap or stall of the entire trace. Millisecond callback jitter is sub-pixel (measured σ
-0.017 px at 1 ms, 0.069 px at 3 ms). Two delivery patterns are not:
+`[head, head + 1]` (`GrHistoryView::smoothedHead`, 0.2.8). The band has no slack BELOW `head`, so
+the estimate can never fall behind the data — and cannot ride out a delivery that arrives in
+lumps. Re-measured 2026-09-07 on the real processor and the real paint path (48 kHz / 512, Simple
+well, 60 frames a second, one entry = 0.482372 px, design travel 0.75371 px a frame):
 
-- **Bursts** — several `processBlock` calls per callback, as hosts that render ahead of real time
-  do (REAPER's anticipative FX processing on prefill, seek, loop and catch-up; Cubase ASIO-Guard).
-  Measured at 48 kHz / 512 on the Simple well with bursts of four: the whole trace jumps 1.45 px,
-  creeps 0.48 px, then stands still, at the burst cadence, with one frame in five never repainted
-  — 0.2.7-scale motion.
-- **A delivered block shorter than the prepared one** — the AU wrapper prepares with the host's
-  maximum frames per slice, and a live or monitored Logic track delivers the I/O buffer instead.
-  With 1024 prepared and 512 delivered the trace runs at twice the design speed in alternating
-  0.97 / 1.93 px steps and the window spans ten seconds, not twenty; at 256 delivered, four times
-  and five seconds.
+- **Steady delivery is exact and the clamp is inert.** Frame-to-frame travel standard deviation
+  **≤ 0.00004 px** with **0 clamp bindings** over the runs. Millisecond callback jitter moves
+  nothing visible.
+- **The two edges do different things**, which the previous wording here ("any block that arrives a
+  whole entry early or late becomes a visible snap or stall") ran together and got wrong. The
+  LOWER edge is the snap, and it fires on data arriving EARLY: a burst delivering `n` entries at
+  once pulls the estimate to the new head and the whole trace jumps exactly `(n − 1) ·` one entry
+  pitch — **1.447 px at n = 4, 3.377 at 8, 7.236 at 16, 14.95 at 32, 30.39 at 64** — then stands
+  still until real time catches up, leaving **21.9 / 61.0 / 80.6 / 90.4 / 95.1 %** of frames
+  motionless at those burst sizes. A block arriving LATE produces no snap at all: the estimate
+  runs up to `head + 1` and waits there, which is the upper edge doing the job it exists for —
+  never drawing ahead of data that has not been processed.
+- **The worst case is a prefill**, not ordinary jitter: four seconds of audio in one callback moves
+  the trace **180.9 px in a single frame** and then freezes it for **3.97 s**.
 
-**Why it cannot be guessed.** The instrument that absorbs both is a lag allowance —
-`[head − L, head + 1]`, so the estimate keeps its nominal rate through a burst and catches up
-later — and `L` is a latency-versus-smoothness trade with no value that fits every host: a
-render-ahead host needs hundreds of milliseconds, a host that delivers one block per period needs
-none and would only see the display fall `L` entries behind. The mis-sized case additionally needs
-the display to learn the delivered size rather than trust the prepared one, which changes the time
-base the 20-second window is mapped through. The 0.2.8 review measured the burst case and declined
-it as the owner's call (`worklogs/2026-09-01-gr-history-scroll-jitter.md` §7 item 5); it was
-recorded in the code banner but never filed here. The 0.2.11 round, which fixed the newest vertex
-(the owner's second report), left this untouched by instruction and re-measured it
-(`worklogs/2026-09-05-gr-history-tip.md`).
+Hosts that render ahead of real time do this by design — REAPER's anticipative FX processing on
+prefill, seek, loop and catch-up; Cubase ASIO-Guard.
+
+**The mis-sized half is RESOLVED (2026-09-07, 0.2.12) and is not part of this question any more.**
+It was a second, independent defect that happened to share the symptom: the ring was pushed once
+per `processBlock` CALL while `GrHistoryView` maps entries through the PREPARED `(rate, block)`
+pair, so a host delivering D per call ran the time base out by `B / D` — the window spanning
+`20 s · D / B` and the trace scrolling `B / D` times the design speed, measured from 0.125× to 8×,
+with a bounded ripple of one entry pitch on top. An entry is now one PREPARED block of processed
+audio, published by the engine's chunk loop with the remainder carried across calls
+(`AnabasisEngine::setGrHistorySink`, ADR-0011's 2026-09-07 amendment,
+`testGrHistoryEntriesFollowThePreparedBlock` / `testTheGrHistoryScrollsAtThePreparedBlock`).
+Nothing in the view changed to fix it. **This is not a partial answer to the burst question**: the
+fix changes WHICH SAMPLES an entry stands for, and a burst delivers the same entries at the wrong
+INSTANTS, which no producer-side change can address.
+
+**Why the remaining half cannot be guessed.** The instrument that absorbs a burst is a lag
+allowance — `[head − L, head + 1]`, so the estimate keeps its nominal rate through a burst and
+catches up later — and `L` is a latency-versus-smoothness trade with no value that fits every
+host: a render-ahead host needs hundreds of milliseconds, a host that delivers one block per
+period needs none and would only see the display fall `L` entries behind. The 0.2.8 review measured
+the burst case and declined it as the owner's call
+(`worklogs/2026-09-01-gr-history-scroll-jitter.md` §7 item 5); it was recorded in the code banner
+but never filed here. The 0.2.11 round, which fixed the newest vertex (the owner's second report),
+left this untouched by instruction and re-measured it (`worklogs/2026-09-05-gr-history-tip.md`).
 
 **Options.**
 
-1. Leave as is. Steady hosts are exact; bursty and mis-sized hosts degrade to per-entry stepping at
-   the host's own cadence — never behind the data, never more than one entry ahead.
+1. Leave as is. Steady hosts are exact; a bursty host degrades to per-burst stepping at its own
+   cadence — never behind the data, never more than one entry ahead.
 2. A fixed lag allowance `L` (say 4–8 entries) plus a catch-up rule. Costs `L` entries of display
    latency everywhere; absorbs bursts up to `L`.
-3. An adaptive allowance: measure the delivered block size and the arrival pattern, size `L`
-   from them, and map the window through the measured size. Most machinery; fits every host.
+3. An adaptive allowance: measure the arrival pattern and size `L` from it. Most machinery; fits
+   every host. (Its third component — learning the delivered size and mapping the window through
+   it — is gone: the producer's cadence is the prepared block now, so there is nothing left for the
+   display to learn.)
 
-**Recommendation.** None without the owner's REAPER and Logic observations: whether the whole
-trace lurches with anticipative FX processing on and glides with it off, and whether a Logic
-session shows a twenty-second window or a shorter one. Those two observations decide between
-options 1 and 2/3.
+**Recommendation.** None without the owner's REAPER observation: whether the whole trace lurches
+with anticipative FX processing on and glides with it off. That one observation decides between
+options 1 and 2/3. The Logic observation this entry used to ask for is answered by the fix above
+and is no longer needed.
 
 **Evidence [Verified for the display arithmetic, Unverified for the hosts].** The display's
-response to each pattern is measured on the real paint path with a simulated host; what REAPER and
-Logic actually deliver is from the wrappers' contracts and reports, not from a measurement in
-either host.
+response to bursts is measured on the real paint path with a simulated host, re-derived 2026-09-07
+rather than carried forward; what REAPER actually delivers is from the wrapper's contract and
+reports, not from a measurement in REAPER.

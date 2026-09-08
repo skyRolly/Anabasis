@@ -62,26 +62,31 @@ class AnabasisAudioProcessor;
 //  other memory. They are read as a PAIR, and the pairing is safe by value
 //  rather than by synchronisation — see `frameFor`.
 //
-//  Time base: one ring entry spans one HOST block (the recorded caveat), so
-//  the window is mapped through the prepared (rate, block) pair — an
-//  approximation that drifts only when the host's delivered blocks differ
-//  from its prepared size, and only in display width, never in data. The pair
+//  Time base: one ring entry spans one PREPARED block of PROCESSED AUDIO
+//  since 0.2.12 (OQ-017 fix 1), so mapping the window through the prepared
+//  (rate, block) pair is EXACT rather than an approximation — a host
+//  delivering any other size, or a variable one, still publishes entries at
+//  `rate / block`, the remainder carried across its calls
+//  (`AnabasisEngine::setGrHistorySink`). Until 0.2.12 an entry spanned one
+//  HOST CALL and the mapping ran out by block / delivered with nothing
+//  bounding it: at an eighth of the prepared size the window held 2.5 s
+//  instead of 20 and the trace ran eight times too fast. The pair
 //  is the RING's (`GrHistoryBuffer::prepared`, stored inside the clear that
 //  starts a timeline and read under the same epoch bracket as the entries),
 //  not `AudioProcessor`'s: those members are plain, the host writes them from
 //  its callback thread, and this view reads on two others. Since
 //  0.2.8 the same prepared pair also paces the SMOOTHED HEAD the trace's
 //  sub-entry phase is read from (`entryPeriod`, `smoothedHead`, `phaseOf`),
-//  held to within one entry of the real head — so a host whose cadence
-//  differs degrades the MOTION to per-entry stepping at the host's own
-//  cadence (a longer-than-prepared block parks the trace for the excess of
-//  each block; a shorter one pins the phase near 0), never behind the data
-//  and never more than one entry ahead of it. Bursty delivery — several
-//  blocks per callback, which hosts rendering ahead of real time do — is the
-//  same case at the burst rate; the worklog measures it and records the
-//  lag-buffer design that would absorb it as a display-latency trade for
-//  the owner, not taken here and filed as OQ-017 (0.2.11 re-measured both
-//  cases on the real paint path and left them by instruction).
+//  held to within one entry of the real head. What that band still cannot
+//  absorb is delivery in LUMPS: several blocks in one callback, which hosts
+//  rendering ahead of real time do, arrive as several entries at one instant,
+//  and the trace jumps `(n − 1)` entry pitches and then stands still until
+//  real time catches up — never behind the data and never more than one entry
+//  ahead of it. That is the whole of what OQ-017 still asks; the worklog
+//  measures it and records the lag-buffer design that would absorb it as a
+//  display-latency trade for the owner, not taken here (0.2.11 re-measured it
+//  on the real paint path and left it by instruction, and 0.2.12 re-derived
+//  it before fixing the OTHER half).
 //
 //  WHAT A FRAME DRAWS (0.2.11): complete buckets only, each created once at
 //  the value it keeps and moved as one rigid body with the rest — the newest
@@ -120,7 +125,10 @@ public:
     // property only a test that can drive this by hand can pin.
     void tick (double dt);
 
-    // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band.
+    // 10–30 s per DESIGN §2.9; ⊕ default in the middle of the band. NOMINAL:
+    // what a frame actually gets is this OR what the ring can hold at the
+    // prepared pair, whichever is smaller — see `windowEntries`' clamp and
+    // `windowSeconds`, which is the quantity §2.9 states.
     static constexpr double kWindowSeconds = 20.0;
 
     // How many entries behind the head the frame may read, given the prepared
@@ -137,6 +145,24 @@ public:
         const int    bs = juce::jmax (1, blockSize);
         return juce::jmin ((int64_t) (anabasis::GrHistoryBuffer::kSize - 1),
                            (int64_t) std::ceil (kWindowSeconds * sr / (double) bs));
+    }
+
+    // …AND WHAT THAT WINDOW IS WORTH IN SECONDS, which is the quantity §2.9
+    // and USER_MANUAL.md actually promise and the one the ring's CAPACITY
+    // decides: `windowEntries · block / rate`. Pure and public for the reason
+    // `windowEntries` is — the clamp's CONSEQUENCE is the half with a
+    // correctness argument, and until 0.2.12 round 17 nothing in the tree
+    // stated it. A ring sized against one block size therefore read as a
+    // twenty-second promise at every block size, and was not one: the clamp
+    // binds whenever `rate / block` exceeds `(kSize - 1) / kWindowSeconds`
+    // entries a second, and the window shortens in exact proportion below
+    // that. `testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` pins
+    // the seconds themselves rather than the entry count.
+    static double windowSeconds (double sampleRate, int blockSize) noexcept
+    {
+        const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
+        const int    bs = juce::jmax (1, blockSize);
+        return (double) windowEntries (sr, bs) * (double) bs / sr;
     }
 
     // The decimation geometry one frame draws. Public and pure for the reason
@@ -197,11 +223,19 @@ public:
         // from `kFull`, and a window shorter than that would put the oldest
         // DRAWN bucket a pitch inside the left edge with the flat lead-in
         // behind it, which is the bucket-rate walk 0.2.8 removed. It binds
-        // only at a saturated window (`want` at `windowEntries`' clamp:
-        // blocks of about 234 samples or fewer at 48 kHz, 937 at 192 kHz),
-        // where it costs one bucket of the twenty seconds and 0.2 % of the
-        // pitch; every ordinary window sits far below it (1875 · 3 against
-        // 4089 at 48 kHz / 512). A panel so narrow that even two buckets
+        // only at a saturated window — `want` at `windowEntries`' clamp, which
+        // since round 19's capacity means blocks of 3 samples or fewer at
+        // 48 kHz, 14 at 192 kHz and 29 at 384 kHz (`20 · rate / (kSize - 1)`),
+        // below anything a host offers — and there the window is what the
+        // ring's safe lap allows rather than the whole `want`: at 192 kHz / 8
+        // on the Advanced well, 260420 entries of the 262143 the clamp
+        // permits, 0.072 s of the 10.92 s the ring holds at that pair. Every
+        // ordinary window sits far below the cap (1875 against 262143 at
+        // 48 kHz / 512), and BOTH figures this sentence used to quote have
+        // been retired by a capacity change: one bucket of the twenty seconds
+        // at blocks of 234 samples or fewer was the 4096-entry ring's, where
+        // the clamp bound at ordinary block sizes, and 7-at-48 kHz / 29-at-192
+        // was `1 << 17`'s. A panel so narrow that even two buckets
         // overflow the ring keeps its two and leaves the ring to
         // `firstDrawn`, which is where safety is enforced in any case.
         const int64_t kRing  = ((int64_t) anabasis::GrHistoryBuffer::kSize - stride) / stride;

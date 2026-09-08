@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
+#include <memory>
 
 // ============================================================================
 //  GrHistoryBuffer — the §2.9 GR/waveform history ring, the first Audio→GUI
@@ -9,7 +10,8 @@
 //  the ScopeBuffer idiom ADR-0011 cites):
 //
 //  - power-of-two storage, ONE producer (the audio thread, one entry per
-//    processed block), ONE reader side (whatever paints);
+//    PREPARED block of processed audio — see `push`), ONE reader side
+//    (whatever paints);
 //  - the monotonic write index is release-STORED once per entry, acquire-
 //    loaded by readers, so a reader that sees index N sees entry N−1's data
 //    complete;
@@ -17,7 +19,10 @@
 //    message-thread/GL-paint read sites stay safe (THREADING_POLICY's ring
 //    rule and its OpenGL nuance);
 //  - THE PREPARED PAIR IS RING METADATA (0.2.8 final review). One entry spans
-//    one host block, so the entries only mean anything mapped through the
+//    one PREPARED block (0.2.12 — see the first bullet and `push`; it used to
+//    say "one host block", which was the same thing only for a host that
+//    delivered exactly its declared maximum), so the entries only mean
+//    anything mapped through the
 //    (rate, block) they were recorded under — and that pair lives HERE, stored
 //    inside the same clear that starts a new timeline, rather than being read
 //    back from `AudioProcessor`'s plain `getSampleRate()`/`getBlockSize()`,
@@ -48,7 +53,8 @@
 //    [atomics.fences] and forces the re-read to observe the lapping push.
 //    THE INVARIANT IS THEREFORE: either the batch read clean data, or the
 //    discard is guaranteed — there is no third case. It costs the audio thread
-//    zero instructions on x86-64 and one `dmb ish` per HOST BLOCK on AArch64.
+//    zero instructions on x86-64 and one `dmb ish` per PUBLISHED ENTRY on
+//    AArch64 (`push`'s own note has the cadence that unit implies).
 //  - THE PAYLOAD ITSELF IS ATOMIC (0.2.8 review). The index ordering above
 //    settles what a reader SEES; it does not make a read that lands on the
 //    slot the producer is writing legal. That read is exactly what this
@@ -67,9 +73,23 @@
 //    `REALTIME_AUDIO_POLICY` forbids outright — it must fail the build).
 //
 //  Entry = per-block gain reduction (dB, ≤ 0) + the block's waveform peak
-//  (post-chain, linear). At 512-sample blocks a 4096-entry ring holds ~43 s
-//  at 48 kHz — beyond the 10–30 s display window at every rate the product
-//  supports; the GUI decimates for display.
+//  (post-chain, linear), ONE PER PREPARED BLOCK — so the seconds a full ring
+//  holds are `kSize · block / rate`, and the window a frame may read is one
+//  slot less than that (`GrHistoryView::windowEntries`). THE SIZE OF THIS RING
+//  IS THEREFORE A TIME CONTRACT, and it is one at EVERY prepared pair rather
+//  than at a nominal one. Sizing it against a single block size is what this
+//  constant did until 0.2.12 round 17, and the sentence that stood here —
+//  "~43 s at 48 kHz, beyond the 10–30 s display window at every rate the
+//  product supports" — was true only of the 512-sample block it quietly
+//  assumed. MEASURED at 4096 entries on the real engine, the real ring and
+//  the real view: 20 s held at 48 kHz / 256 and above, then 10.92 s at
+//  48 kHz / 128, 5.46 s at 48 kHz / 64, 2.73 s at 48 kHz / 32 and 0.6825 s at
+//  192 kHz / 32 — against the twenty seconds USER_MANUAL.md promises and the
+//  ten DESIGN §2.9 floors at. Round 17 replaced that with a capacity derived
+//  from the worst prepared PAIR it costed against; round 19 replaced THAT with
+//  one derived from an ENTRY RATE, because a pair is a ceiling and this
+//  product declares none. See the constant below for the band and its cost;
+//  the GUI decimates for display.
 // ============================================================================
 
 namespace anabasis
@@ -108,7 +128,50 @@ public:
         int    block = 0;
     };
 
-    static constexpr int kSize = 4096;            // power of two
+    // CHOSEN FROM AN ENTRY RATE, NOT FROM A NOMINAL BLOCK AND NOT FROM A
+    // NOMINAL SAMPLE RATE (0.2.12 round 17, raised in round 19). An entry is
+    // one prepared block, so `N` slots are `N · block / rate` seconds and the
+    // entries a 20 s window needs are `ceil (20 · rate / block)` — a quantity
+    // in ENTRIES A SECOND (`rate / block`), which is the only variable this
+    // capacity has ever been about. Round 17 derived it from one pair,
+    // 192 kHz / 32 = 6000 entries a second, and `1 << 17` was the next power
+    // of two above the 120000 that pair needs. That derivation assumed
+    // 192 kHz was the top of the range, and NOTHING IN THIS PRODUCT SAYS SO:
+    // `AnabasisEngine::prepare` rails the derived lookahead and deliberately
+    // not `sr` itself, `COMPATIBILITY_MATRIX.md` has no rate row, and
+    // `DSP_POLICY.md` invariant 4 claims the ceiling holds at "any sample
+    // rate". A capacity derived from an unstated ceiling is the same defect
+    // round 17 fixed, one octave up — so it is derived from the entry rate
+    // instead, and the pairs below are consequences rather than the premise.
+    //
+    // `1 << 18` holds the whole 20 s at every pair up to `(kSize - 1) / 20` =
+    // 13107 entries a second — 384 kHz / 32, 192 kHz / 16, 96 kHz / 8 and
+    // everything with a larger block — and stays inside DESIGN §2.9's 10 s
+    // floor up to `(kSize - 1) / 10` = 26214, i.e. 384 kHz / 16 and
+    // 192 kHz / 8. Below THAT the window is `(kSize - 1) · block / rate` and
+    // shortens in exact proportion, which is what `GrHistoryView::windowSeconds`
+    // states, what `USER_MANUAL.md` promises in those terms, and what
+    // `testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs` pins on both
+    // sides of the clamp. No rate is rejected to make this true: the shortfall
+    // above the band is documented, not clamped away.
+    //
+    // WHAT THE OCTAVE COSTS, measured (ADR-0040's 2026-09-08 amendment):
+    // +1.00 MiB per instance (2.00 MiB of slots against 1.00), `clear` at
+    // `prepare` 0.081 ms -> 0.178 ms on the host thread with the audio
+    // stopped, construction 0.44 ms -> 0.72 ms once per instance, and a GUI
+    // decimation scan that grows ONLY where the clamp was binding — the scan
+    // is O(window in entries) and every pair inside the band reads exactly the
+    // entries its own 20 s needs, unchanged. Nothing on the audio path moves:
+    // `push` is O(1) in `kSize` and the slots are heap, so `sizeof` this class
+    // is unchanged and no local grows a stack frame.
+    //
+    // FIXED, not sized at `prepare`. A reader can be inside `peek` when the
+    // host re-prepares: the epoch bracket makes a torn READ safe, and no
+    // amount of it makes a freed pointer safe. Re-allocating on the prepared
+    // pair would need a reclamation protocol this ring deliberately does not
+    // have, so the capacity is a constant and the shortfall below it is
+    // documented rather than allocated away.
+    static constexpr int kSize = 1 << 18;         // 262144 entries, power of two
     static constexpr int kMask = kSize - 1;
 
     GrHistoryBuffer() = default;
@@ -126,6 +189,16 @@ public:
     // dropped at worst, on an event (re-prepare) that already blanks the
     // programme. Readers must therefore never cache `available()` across an
     // epoch change; within one epoch the existing SPSC contract is unchanged.
+    //
+    // CALL `AnabasisEngine::resetHistoryTimeline()` INSTEAD when this ring has
+    // a producer (0.2.12 round 16). This starts a NEW TIMELINE, and the
+    // producer carries an unpublished partial entry belonging to the old one:
+    // clear without telling the engine to re-read the epoch and the new
+    // timeline's first entry is completed with the previous one's statistics,
+    // standing for as little as one sample. That wrapper is this call plus the
+    // sync, so it cannot be got wrong; the same is true of
+    // `prepareHistoryTimeline` for the gate below. This entry point stays
+    // public for rings with no producer attached, which is what the tests use.
     void reset() noexcept
     {
         clear (preparedRate.load (std::memory_order_relaxed),
@@ -235,10 +308,10 @@ private:
         // exists to announce — and the accesses on both sides have to be
         // atomic for the announcement to be about defined behaviour. The
         // fence above still orders the odd value before every one of them.
-        for (auto& e : entries)
+        for (int n = 0; n < kSize; ++n)
         {
-            e.grDb.store (0.0f, std::memory_order_relaxed);
-            e.peak.store (0.0f, std::memory_order_relaxed);
+            entries[(size_t) n].grDb.store (0.0f, std::memory_order_relaxed);
+            entries[(size_t) n].peak.store (0.0f, std::memory_order_relaxed);
         }
         // The pair the NEW timeline is recorded under, inside the same window
         // as the entries it governs — that is what lets a reader treat the two
@@ -253,10 +326,25 @@ public:
     // Reader side of the contract above. Even = stable; sample before a batch
     // of peeks, and close the batch with `batchIntact` — which is the fence
     // plus the re-read, and not this load again.
+    //
+    // THE PRODUCER'S OWNER READS IT TOO, since 0.2.12 round 16, and for a
+    // different question: not "did my batch survive a clear?" but "is the
+    // partial entry the engine is carrying still on this ring's timeline?". A
+    // clear is the only thing that moves this value, so a change in it IS the
+    // event "a new timeline started", whichever call caused it, and
+    // `AnabasisEngine::syncHistoryTimeline` throws the unpublished partial
+    // away when it sees one — welded to the two calls that can clear, as
+    // `prepareHistoryTimeline`/`resetHistoryTimeline`. That read takes no
+    // batch and needs no bracket —
+    // it compares one epoch against the one it recorded — and it happens on
+    // the HOST thread, right after the call that may have cleared, so it is
+    // not a read of this ring off the message thread and adds no path to
+    // `THREADING_POLICY.md`'s table.
     uint32_t resetEpoch() const noexcept
     { return resetGuard.load (std::memory_order_acquire); }
 
-    // Audio thread, once per block. The entry is written FIRST, the index
+    // Audio thread, once per PUBLISHED ENTRY — see the cadence note inside.
+    // The entry is written FIRST, the index
     // release-stored AFTER — that ordering is the whole synchronisation, and
     // it is unchanged by the fields being atomic: the release store still
     // orders both relaxed payload stores before the index a reader acquires,
@@ -299,8 +387,19 @@ public:
         // Cost, measured rather than asserted: **zero instructions on x86-64**
         // (clang-22 `-O3` emits `#MEMBARRIER`, a compiler barrier — the
         // previous amendment's two-`movss`-one-`movq` sequence is unchanged),
-        // and one `dmb ish` on AArch64 — once per HOST BLOCK, since `push`
-        // runs once per `processBlock` and never per sample.
+        // and one `dmb ish` on AArch64, PER CALL TO THIS FUNCTION.
+        //
+        // WHAT THAT UNIT IS, since it stopped being "one per `processBlock`"
+        // in 0.2.12 (OQ-017 fix 1; ADR-0011 amended 2026-09-07). The producer
+        // is `AnabasisEngine`, and one entry is one PREPARED block of
+        // processed audio, so a `processBlock` call publishes
+        // `floor((carried + delivered) / prepared)` entries — none when the
+        // host delivers less than the prepared size, one when it delivers
+        // exactly it, several when it delivers a multiple — with the remainder
+        // carried into the next call. What is guaranteed is the LONG-RUN rate,
+        // `sampleRate / preparedBlock`, and the bound: never more than
+        // `ceil(delivered / prepared)` calls to this function per host block,
+        // and never per sample.
         std::atomic_thread_fence (std::memory_order_release);
         slot.grDb.store (grDb, std::memory_order_relaxed);
         slot.peak.store (peak, std::memory_order_relaxed);
@@ -341,7 +440,18 @@ public:
     }
 
 private:
-    Slot entries[kSize];
+    // ON THE HEAP, ONE ALLOCATION AT CONSTRUCTION, AND THAT IS NOT AN
+    // AESTHETIC CHOICE. At `kSize` entries this array is two megabytes, and the
+    // suites build both this ring and whole `AnabasisAudioProcessor`s as
+    // LOCALS — two of the latter live at once in places, eight in one
+    // function — against a Windows main thread whose default stack is one
+    // megabyte in total. A member array would put
+    // the capacity decision and a stack overflow on the same line, with no
+    // diagnostic between them. Nothing on the audio path allocates: the block
+    // is taken once here, on the message thread, and lives as long as the
+    // ring, so `push` and `peek` pay one extra load of a pointer that is hot
+    // in L1 (measured: no change in the per-entry push cost).
+    std::unique_ptr<Slot[]> entries { new Slot[(size_t) kSize] };
     std::atomic<int64_t>  writeIndex { 0 };
     std::atomic<uint32_t> resetGuard { 0 };
     // Host-thread written inside `clear`'s epoch window, read by the painting
