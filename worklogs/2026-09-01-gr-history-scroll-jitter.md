@@ -944,7 +944,7 @@ both suites green from the LTO'd binaries. `grep -c 'float-equal'` on that log: 
 ### 12.5 — PREfast C6262 at `state_tests.cpp:6435`
 
 *(Anchor pinned 2026-09-08. 6435 is the line PREfast cited and is left as the analyser reported it;
-it resolves against `33b5842:tests/state_tests.cpp:6435`, the last revision at which it did. The
+it resolves against `33b5842:tests/state_tests.cpp:6435`, the revision used for this record. The
 same function is at `tests/state_tests.cpp:9955` today. Nothing below is re-measured.)*
 
 Line 6435 was `testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset` in every revision of the pull
