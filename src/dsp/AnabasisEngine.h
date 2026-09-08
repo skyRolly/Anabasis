@@ -394,8 +394,13 @@ public:
     // session-cumulative half — the integrated histogram. Deliberately not
     // touched: the §2.7 dry/wet meters (they feed the loudness COMPENSATION,
     // a monitor function — clearing them would bounce the monitor gain, which
-    // is not what a meter-reset button means) and the GR ring (a rolling ~43 s
-    // window that clears itself; the wrapper owns it in any case).
+    // is not what a meter-reset button means) and the GR ring (a rolling
+    // display window that clears itself; the wrapper owns it in any case).
+    // The "~43 s" this sentence used to quote was the 4096-entry ring's
+    // headroom at one block size and has been wrong twice over since — the
+    // window is `GrHistoryView::windowSeconds (rate, block)`, twenty seconds
+    // wherever the ring holds them (ADR-0040), and nothing here depends on
+    // the figure.
     void resetMeterHolds() noexcept { outMeter.resetIntegrated(); }
 
     // The per-stage GR figures the panel meters read, cleared. Called by the
