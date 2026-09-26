@@ -6,7 +6,7 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.12 (2026-09-08, round 19)** — the GR history ring's capacity is derived
+**Last updated:** for the **product / UX / UI / interaction audit (2026-09-26, `e769f33`)** — a dated audit record, documentation only: [`docs/reports/2026-09-26-anabasis-product-ux-audit.md`](reports/2026-09-26-anabasis-product-ux-audit.md) with its per-category finding records and fourteen captures, and the runtime observation register [`worklogs/2026-09-26-product-ux-audit.md`](../worklogs/2026-09-26-product-ux-audit.md) (addendum below). Before that, for **0.2.12 (2026-09-08, round 19)** — the GR history ring's capacity is derived
 from an ENTRY RATE rather than from one prepared pair, because a pair carries a sample-rate ceiling
 this product does not declare (`kSize` `1 << 17` → `1 << 18`; entry in the round-17 addendum, where
 the constant is argued), and the documentation-only anchor hygiene that followed it: ADR-0014's
@@ -443,6 +443,30 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-26) — the product / UX / UI / interaction audit, recorded as a report and not as a
+change to anything it audits.** A full audit of `e769f33` (== `main`, 0.2.12) with the UI and the
+interaction model as its core: eight code/document evidence maps, five runtime observers driving the
+real processor and editor under Xvfb with a synthetic signal (103 observations), 140 consolidated
+findings each re-verified against the code and, where runtime-only, re-run with stepped pointer motion
+or measured with an engine probe, an adversarial challenge of every high-priority judgement, and a
+calibration pass — 146 findings in all (P0 1, P1 9, P2 69, P3 50, 17 Preserve/Reject), a six-phase
+roadmap and seven high-leverage changes. **Nothing it describes was changed**: no source, test, CI,
+build, parameter, ADR, policy, KNOWN_ISSUES or user-manual file is touched, because every finding
+still needs the owner's decision and most of the P0/P1 remedies cross an `ARCHITECTURE_REVIEW_GATE.md`
+category or an Accepted ADR (the report names which). The documentation drift the audit found —
+including records that describe as implemented what the code does not do, such as ADR-0006 D2/D3's
+clamp-level true-peak gain and D8's loudness-matched bypass — is REPORTED in its DOC and DSP findings
+rather than silently corrected here (constraint C6), and becomes work of the roadmap phases that fix
+the code. Rows engaged: **Add a document** — `REPOSITORY_MAP.md` (the `reports/` entry, which also
+stops describing the folder as HTML-only), `README.md` §Documentation (the audit-records bullet);
+`SOURCE_OF_TRUTH.md` was checked and needs no edit, because its `docs/reports/` paragraph defines the
+class without enumerating its members; this file. The report's code anchors are revision-pinned
+(`e769f33:path:line`), which is the form `scripts/check-citations.py` deliberately leaves alone — right
+for a dated snapshot that is superseded rather than re-anchored, and the reason the report adds nothing
+to the citation gate's maintenance load. The worklog carries the step-by-step runtime evidence the
+report cites by observation id; the scratchpad harness that produced it is described in the report's
+method section and is not committed.
 
 **Addendum (2026-09-08, round 19) — a Rosetta failure that was not a defect, and the sentence it
 falsified.** The macOS x86_64 slice under Rosetta failed one check of 1423 at `4a5b71c` — `specSpan`'s
