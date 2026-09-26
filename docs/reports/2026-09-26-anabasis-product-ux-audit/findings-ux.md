@@ -2,7 +2,7 @@
 
 Part of [`2026-09-26-anabasis-product-ux-audit.md`](../2026-09-26-anabasis-product-ux-audit.md) (audited revision `e769f33`, 2026-09-26). This file holds the complete record of each finding in these categories; the report carries the index, the systemic themes, the roadmap and the decision record. Code anchors are pinned to `e769f33`; runtime observation ids refer to [`worklogs/2026-09-26-product-ux-audit.md`](../../../worklogs/2026-09-26-product-ux-audit.md).
 
-Each record: decision, priority and confidence after calibration; evidence; current behaviour; problem; root cause; user impact and scope; proposed improvement; alternatives considered; decision rationale (with any calibration or challenge outcome); architecture gates; dependencies; acceptance criteria; and the verification record.
+Each record: decision, priority and confidence after calibration; evidence; current behaviour; problem; root cause; user impact and scope; proposed improvement; alternatives considered; decision rationale (with any calibration or challenge outcome); architecture gates; dependencies; acceptance criteria; and the verification record. Terms in the records: the *candidate claim* is the claim as it entered verification; *the judge* is the verifier's decision pass (Phase 3, step 3), done per *batch* of 3–6 related findings; *Adversarial challenge* is the step-4 review and *Calibration* the Phase-4 pass that set the final decision and priority (see the report's *Evidence and method*). A paragraph marked *Merged at triage from another verifier's note* is evidence from another batch's verifier, kept in its words: 'add to X' there means it has been added to this record. 'Recorded at triage' marks a finding written from such a note. `rt/…` paths and ids such as `VER0-2` or `V24-TSAN-1` name uncommitted session captures, logs and probes; `PF-…` ids are potential findings from the uncommitted Phase-1 evidence maps.
 
 ## UX — User experience and operation logic
 
@@ -71,7 +71,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 ### UX-002
 
-**The whole STATISTICS panel, including about 310 px of empty glass in Simple, is an unmarked reset button: any click, drag or right-click discards I, LRA, PLR and both peak holds with no affordance, confirmation or undo**
+**The whole STATISTICS panel, including about 318 px of empty glass in Simple, is an unmarked reset button: any click, drag or right-click discards I, LRA, PLR and both peak holds with no affordance, confirmation or undo**
 
 | Decision | Priority | Confidence | Verification | Workstream | Theme | Roadmap |
 |---|---|---|---|---|---|---|
@@ -93,7 +93,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 - Runtime E04: session capture `rt/edges/30-stats-drag-strip.png` (reset at drag mouse-down), session capture `rt/edges/31-stats-click-strip.png` (click in empty lower area)
 - Runtime LAY-13(c): session capture `rt/layout/28-stats-before-c.png`, session capture `rt/layout/28-stats-after-c.png`
 - Runtime verify-1 R1 (stepped motion, display :131): [capture](captures/08-statistics-click-reset.png). Panels: before, hover on the empty area (no cue), +0.15 s after the click (I/LRA/PLR '-', TP hold cleared), +1.2 s
-- JUCE e18f7f50 juce_NSViewComponentPeer_mac.mm:2228: acceptsFirstMouse returns YES (the scratchpad copy of the pinned JUCE)
+- JUCE e18f7f50 juce_NSViewComponentPeer_mac.mm:2228: acceptsFirstMouse returns YES (in the pinned JUCE source)
 
 **Current behaviour.** Every mouseDown anywhere inside the STATISTICS component clears the integrated histograms (gated and ungated), LRA, and the TP and SP max-holds, so PLR clears too. This covers left, right and double clicks and the start of a drag, on a row or on the blank glass below the rows. There is no cursor change, hover or pressed state, label, confirmation, undo, context menu, keyboard path or accessible name. The explanation is a tooltip, and tooltips ship off.
 
@@ -103,7 +103,9 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 **User impact.** A click to focus or activate the plugin window lands on the reset: JUCE's macOS peer delivers the activating click. So does a click in dead space or on a row, and it throws away however long the programme has been measured. Recovery means replaying the whole programme. If the stray click happens mid-pass, the final I, LRA and PLR describe only the tail of the programme but look exactly like a full-programme reading, because no 'measuring since' cue exists ([VIS-009](findings-visualisation.md#vis-009)). That is the delivery number in the manual's podcast workflow. Conversely, someone who wants a fresh measurement cannot find the gesture unless they read §3.4 or enable tooltips. Keyboard and screen-reader users cannot reset at all. *Scope:* Both views and all formats. Simple is the most exposed: a 292x530 hit area that is about 60 % blank, about 23 % of the 940x720 editor. The integrated-loudness and PLR workflows depend on it (USER_MANUAL §3.4, §8).
 
-**Proposed improvement.** 1. Make the panel body inert. Clicks anywhere on rows or blank glass do nothing. Keep the tooltip on hover, reworded so it no longer says 'Waveform statistics off the output'.
+**Proposed improvement.**
+
+1. Make the panel body inert. Clicks anywhere on rows or blank glass do nothing. Keep the tooltip on hover, reworded so it no longer says 'Waveform statistics off the output'.
 2. Add a small labelled 'RESET' text button, right-aligned on the existing 16 px STATISTICS header line, in both views. It uses the family's quiet pill or text-button styling with hover and pressed states. It is keyboard focusable with Space/Enter and carries the accessible title 'Reset statistics'. It calls the unchanged requestMeterReset(). Because it sits in the header band, the 202 px row layout from ADR-0020 Decision 6 does not move.
 3. Optionally, a right-click anywhere on the panel opens a one-item menu, 'Reset statistics'.
 4. Acknowledge the reset visibly: a brief highlight on the button and, via [VIS-009](findings-visualisation.md#vis-009), a scope readout that returns to 0:00.
@@ -148,7 +150,7 @@ No hard-stop gate is touched. requestMeterReset and testMeterResetClearsSessionH
 
 <details><summary>Verification record</summary>
 
-**Method.** Read every cited anchor at e769f33: LoudnessMeterView.cpp:6-10, 53-57, 67-70, 153-281 and .h:42-43, 90; InternalState.h:110; PluginEditor.cpp:286, 1756-1757 and PluginEditor.h:633-634; USER_MANUAL.md:271-274 and 453. Viewed 13a/13b, 13g, edges/30 and 31. Reproduced on :131 with stepped motion (5 intermediate moves) in Simple while music played at -6 dB. Hovering the empty area at (830,560) gave no cursor, hover or tooltip change. One click there took I -14.2 to '-', LRA 4.4 LU to '-' and PLR 14.8 to '-', and TP 0.62 fell to -0.10 dBTP within 0.15 s; see [capture](captures/08-statistics-click-reset.png). Also checked the JUCE build the repo pins (ANABASIS_JUCE_TAG e18f7f50, CMakeLists.txt:83). Its macOS peer returns YES from acceptsFirstMouse (scratchpad build-tsan/_deps/juce-src/modules/juce_gui_basics/native/juce_NSViewComponentPeer_mac.mm:2228), so on macOS the click that activates a plugin window also reaches the component.
+**Method.** Read every cited anchor at e769f33: LoudnessMeterView.cpp:6-10, 53-57, 67-70, 153-281 and .h:42-43, 90; InternalState.h:110; PluginEditor.cpp:286, 1756-1757 and PluginEditor.h:633-634; USER_MANUAL.md:271-274 and 453. Viewed 13a/13b, 13g, edges/30 and 31. Reproduced on :131 with stepped motion (5 intermediate moves) in Simple while music played at -6 dB. Hovering the empty area at (830,560) gave no cursor, hover or tooltip change. One click there took I -14.2 to '-', LRA 4.4 LU to '-' and PLR 14.8 to '-', and TP 0.62 fell to -0.10 dBTP within 0.15 s; see [capture](captures/08-statistics-click-reset.png). Also checked the JUCE build the repo pins (ANABASIS_JUCE_TAG e18f7f50, CMakeLists.txt:83). Its macOS peer returns YES from acceptsFirstMouse (JUCE e18f7f50 modules/juce_gui_basics/native/juce_NSViewComponentPeer_mac.mm:2228), so on macOS the click that activates a plugin window also reaches the component.
 
 **Corrections to the candidate claim.** The empty region is about 318 px, not 310. The panel is 530 px tall and the rows end about 212 px down: 10 pad + 16 header + 2 + 3x26 + 6 + 5x20. Advanced also resets on any click, with about 42 px of empty space. The observer cross-reference in V-07 (LoudnessMeterView.cpp:194-197) does not match e769f33; the real mouseDown is at :67-70, and the finding's own anchors are correct. The finding also misses that the reset has no keyboard path and no accessible name. The view sets no title and is not focusable (:53-57), although HANDOVER.md:1337 claims 'Accessibility names on every control'.
 
@@ -179,7 +181,7 @@ No hard-stop gate is touched. requestMeterReset and testMeterResetClearsSessionH
 - verify-2 repro — prefill 'Alpha' while 'Alpha *' — session capture `rt/verify-2/05-save-prefill-crop.png`
 - verify-2 repro — 'Al/pha'+Return silently replaced Alpha.anabasis (loudness 0.0→90.0) — [capture](captures/13-save-overwrite.png)
 
-**Current behaviour.** Save (the button or Return) cleans the typed name (createLegalFileName), builds <user preset folder>/<name>.anabasis and writes it without checking whether it exists. The panel closes and the label and tick move to that file. The field opens prefilled with the current preset name, all selected, so Return right after opening replaces the loaded user preset. Typing a name that already exists, or one that becomes an existing name after illegal characters are stripped, replaces that other preset with no prompt and no feedback.
+**Current behaviour.** Save (the button or Return) cleans the typed name (createLegalFileName), builds `<user preset folder>/<name>.anabasis` and writes it without checking whether it exists. The panel closes and the label and tick move to that file. The field opens prefilled with the current preset name, all selected, so Return right after opening replaces the loaded user preset. Typing a name that already exists, or one that becomes an existing name after illegal characters are stripped, replaces that other preset with no prompt and no feedback.
 
 **Problem.** The only destructive file operation in the product has no guard. A collision, whether typed or created by stripping characters, silently destroys a different saved preset. The menu lists presets by file name only, so the loss shows up only when the user loads that preset later.
 
@@ -370,7 +372,9 @@ No engine or threading change: every state is derivable from the existing isLear
 
 **Method.** Read e769f33:src/gui/PluginEditor.cpp:614-644 (onClick, the minimum-pass guard at :632, the tooltip at :641-642), :2046-2075 (tick), :1797-1803 (simpleOnly[]); e769f33:src/gui/PluginEditor.h:555-561 and :627-630; e769f33:src/dsp/AnabasisEngine.cpp:411-422 (the command is consumed at a block top); e769f33:src/dsp/AdaptiveEngine.h:467-520 (startLearn, commitLearn, isLearning). Viewed G-18 session capture `rt/gestures/34-sheet.png` and 34e-learn-10s.png. Reproduced on :134 with stepped pointer motion and music at -6 dB. R1: a stop click at 2.76 s was ignored; the digits went on 2→1 and then an orange LEARN (verify-4/05-refused-sheet.png). R2: switching to ADV mid-pass showed no Learn control and no indicator; back in Simple the orange LEARN was still there (verify-4/06-adv-while-learning.png, 07-crop.png). R3: a stop after 5 s turned the text white, the same as idle, with no other change, although savexml showed an ADAPTIVE child had been written (verify-4/11-commit-sheet.png, s02-after-learn.xml). R4: a pass over silence gave a red/warn text flash of about 1.5 s and the previous references were kept (verify-4/15-empty-sheet.png, s03-after-empty.xml).
 
-**Corrections to the candidate claim.** 1. 'A click with the transport stopped shows nothing' should read 'a click while the host calls no processBlock shows nothing'. The start is a command the engine consumes at a block top, and commitLearn/startLearn run whether or not the block is audible. Many hosts keep processing with the transport stopped; there the countdown starts at once and a silent pass ends as the empty-pass warn flash. The harness cannot show the no-processing case because its audio always flows, so that part rests on code only.
+**Corrections to the candidate claim.**
+
+1. 'A click with the transport stopped shows nothing' should read 'a click while the host calls no processBlock shows nothing'. The start is a command the engine consumes at a block top, and commitLearn/startLearn run whether or not the block is audible. Many hosts keep processing with the transport stopped; there the countdown starts at once and a silent pass ends as the empty-pass warn flash. The harness cannot show the no-processing case because its audio always flows, so that part rests on code only.
 2. The manual does say how to stop ('press it again', USER_MANUAL.md:312-313). In the product, only the tooltip says it, and tooltips are OFF by default (e769f33:src/InternalState.h:110).
 3. Additions that make the problem wider: LEARN is Simple-only, so in Advanced a running pass has no indicator and cannot be stopped (R2).
 4. Clicks follow isLearning(). A user who reads the orange LEARN as idle and clicks to 'start' commits the running pass instead, and their next click (meant as 'stop') starts a new pass, so the user's model and the button fall out of phase.
@@ -585,7 +589,7 @@ No engine or threading change: every state is derivable from the existing isLear
 
 ### UX-009
 
-**Monitor-state combinations and persistence are not shown: DELTA is inaudible under BYPASS, MATCH makes BYPASS loudness-matched rather than unity, MATCH and DELTA can be on together, and a session saved with DELTA on reopens monitoring only the difference**
+**Monitor-state combinations and persistence are not shown: DELTA has no effect under BYPASS, MATCH scales BYPASS by the same gain as the wet so the bypass comparison stays as unmatched as with MATCH off, MATCH and DELTA can be on together, and a session saved with DELTA on reopens monitoring only the difference**
 
 | Decision | Priority | Confidence | Verification | Workstream | Theme | Roadmap |
 |---|---|---|---|---|---|---|
@@ -693,7 +697,7 @@ No engine or threading change: every state is derivable from the existing isLear
 - *Auto-disable MATCH/DELTA when the host starts recording* — Silently changing a user toggle is a worse surprise, and isRecording is not reliable across hosts. A warning is sufficient.
 - *Documentation only* — Necessary but not sufficient: the trap happens at print time, when nobody is reading the manual.
 
-**Decision: Modify · P2.** The code behaviour is intentional and must be preserved, but it is invisible, and in realtime prints it reaches the delivered audio. The fix is UI plus documentation only, with no gate impact. P1 because MATCH-on is the recommended judging state and a realtime print pass is a common mastering step; the recovery is a re-print. Host-side confirmation in a DAW is still owed.
+**Decision: Modify · P2.** The code behaviour is intentional and must be preserved, but it is invisible, and in realtime prints it reaches the delivered audio. The fix is UI plus documentation only, with no gate impact. The verifier rated it P1 because MATCH-on is the recommended judging state and a realtime print pass is a common mastering step, with a re-print as the recovery; calibration lowered it to P2 (below). Host-side confirmation in a DAW is still owed.
 
 *Calibration:* the verifier judged Proceed / P1; the final judgement is Modify / P2. Challenge accepted: the dominant export path (host offline bounce) yields the correct master by design (ADR-0006 D6); realtime-capture reach is JUCE-semantics inference, not host-measured, and an 8.7 dB print error is exposed by any post-print check, so P2. Modify: ship the shared persistent monitor-state indicator (with [UX-009](findings-ux.md#ux-009)/VIS-010) plus manual and tooltip text; defer the isRecording warning (new playhead read and audio->GUI flag = thread-model gate, unreliable across hosts); leave DSP_POLICY inv 4 wording alone or take it through the ceiling-guarantee gate. Raise to P1 if [TEST-002](findings-doc-test.md#test-002)'s DAW check shows realtime printing is a common path.
 
@@ -742,7 +746,7 @@ No engine or threading change: every state is derivable from the existing isLear
 - VER8-4 (after Copy, B reads the same as A): session capture `rt/verify-8/v12-top.png`
 - VER8-6 (A/B tooltip is 'A/B Compare' only): session capture `rt/verify-8/v17-ab-tooltip-crop.png`
 - ST-07/ST-08: session capture `rt/state/18-ab-topbars.png`, session capture `rt/state/19-copy-topbars.png`
-- Sibling parity: Anamorph e769f33:src/PluginEditor.h:224-236 (identical ABControl)
+- Sibling parity: Anamorph fd78c3b:src/PluginEditor.h:224-236 (identical ABControl)
 
 **Current behaviour.** The top bar shows one preset name, the live slot's with its ' *'. The A/B pill shows two letters and accents the active one. The inactive slot's name, its edited state, and whether it equals the live slot cannot be seen without switching. Switching costs a forced duck ([DSP-002](findings-dsp-tech.md#dsp-002)). The pill's tooltip, which is off by default, says only 'A/B Compare'.
 
@@ -752,7 +756,9 @@ No engine or threading change: every state is derivable from the existing isLear
 
 **User impact.** In a compare pass the user presses A/B just to find out what the other slot is. Each press is an audible dip, and on a fresh instance it lands on an unrelated Default patch. The user may also not notice that the two slots are already identical (after Copy), and so 'compare' two identical sounds. *Scope:* Every A/B comparison in both the Simple and the Advanced view. It is display-only: no DSP, no serialization, no parameter change.
 
-**Proposed improvement.** 1. Give the inactive slot a readout that does not depend on the tooltip switch. While the pointer is over the A/B pill, the preset-name field shows a dimmed preview of the other slot, for example 'B: Default' or 'B: Loud Pop *'. It returns to the live name on exit. No click, no switch, no duck.
+**Proposed improvement.**
+
+1. Give the inactive slot a readout that does not depend on the tooltip switch. While the pointer is over the A/B pill, the preset-name field shows a dimmed preview of the other slot, for example 'B: Default' or 'B: Loud Pop *'. It returns to the live name on exit. No click, no switch, no duck.
 2. Mark equality in the pill itself. When the two slots are equivalent, the inactive letter shows a small '=' mark or a linked glyph. The comparison is the stripped slot compare the Copy guard already uses (e769f33:src/PluginProcessor.cpp:397-424). It runs on the message thread, on change events (edit end, Copy, switch, preset apply, undo) or at the existing ~3 Hz dirty-poll cadence, never at 24 Hz, because saveSlotFromLive() takes the APVTS lock (KI-011).
 3. Processor additions: read-only accessors storedPresetName(), storedPresetDirty() and slotsEquivalent().
 
@@ -783,7 +789,7 @@ No engine or threading change: every state is derivable from the existing isLear
 
 <details><summary>Verification record</summary>
 
-**Method.** Read ABControl::paint (e769f33:src/gui/PluginEditor.cpp:241-272; it draws only 'A', '/' and 'B', with the active letter accented), the onToggle wiring (:318-327) and refreshPresetDisplay (:2144-2171; its only source is proc.currentPresetName() plus presetDirty()). Read copySlotToOther (e769f33:src/PluginProcessor.cpp:391-435) and saveSlotFromLive (:1219-1241): presetName and the ADR-0022 identity trio travel in the SLOT, and the baseline is copied at :434. Reproduced on :138 with stepped motion. On a fresh instance I dragged Loudness to 34 %, so A read 'Default *'. The first A/B then read 'Default', with only the star to tell them apart (VER8-2). After Copy both slots read 'Default *' (VER8-4). With tooltips on, the pill's tooltip reads only 'A/B Compare' (VER8-6). Compared with the sibling: Anamorph's ABControl is the same struct (Anamorph e769f33:src/PluginEditor.h:224-236, 'a single click toggles (FabFilter-style)').
+**Method.** Read ABControl::paint (e769f33:src/gui/PluginEditor.cpp:241-272; it draws only 'A', '/' and 'B', with the active letter accented), the onToggle wiring (:318-327) and refreshPresetDisplay (:2144-2171; its only source is proc.currentPresetName() plus presetDirty()). Read copySlotToOther (e769f33:src/PluginProcessor.cpp:391-435) and saveSlotFromLive (:1219-1241): presetName and the ADR-0022 identity trio travel in the SLOT, and the baseline is copied at :434. Reproduced on :138 with stepped motion. On a fresh instance I dragged Loudness to 34 %, so A read 'Default *'. The first A/B then read 'Default', with only the star to tell them apart (VER8-2). After Copy both slots read 'Default *' (VER8-4). With tooltips on, the pill's tooltip reads only 'A/B Compare' (VER8-6). Compared with the sibling: Anamorph's ABControl is the same struct (Anamorph fd78c3b:src/PluginEditor.h:224-236, 'a single click toggles (FabFilter-style)').
 
 **Corrections to the candidate claim.** 'History invisible' is accurate but not a meaningful gap: per-slot undo shows up in the undo/redo enablement once the slot is active, and a readout of the other slot's history has no workflow use. The label is identical after Copy because the slots really are identical, so the label is not wrong. The defect is that there is no readout of the inactive slot at all. On a fresh instance the labels are already near-identical before any Copy ('Default *' vs 'Default'), which makes the problem slightly worse than the finding states.
 
@@ -842,7 +848,7 @@ No engine or threading change: every state is derivable from the existing isLear
 **Architecture gates.**
 
 - No hard-stop category touched: label/paint only; ADR-0018 Copy semantics and undo placement unchanged
-- Product-family item, not a hard stop: e769f33:docs/BRAND_CONSISTENCY_CHECKLIST.md:55-56 (A/B 'same interaction model') — Anamorph uses the identical 'Copy' button and tooltip (Anamorph e769f33:src/PluginEditor.cpp:344), so port or record the divergence
+- Product-family item, not a hard stop: e769f33:docs/BRAND_CONSISTENCY_CHECKLIST.md:55-56 (A/B 'same interaction model') — Anamorph uses the identical 'Copy' button and tooltip (Anamorph fd78c3b:src/PluginEditor.cpp:344), so port or record the divergence
 - Top-bar geometry is sibling-derived (e769f33:src/gui/PluginEditor.cpp:1405-1424); widening Copy touches the brand checklist §A 'Overall frame layout'
 
 **Dependencies.** [UX-011](findings-ux.md#ux-011) (the acknowledgement is strongest when the destination slot has a visible readout)
@@ -922,7 +928,9 @@ Presets and sessions then store Release values the user believes are shaping the
 
 Each AUTO governor sits in the opposite column, 1-2 rows away from the knob it overrides, so the cause is not visually adjacent to the effect.
 
-**Root cause.** - Widgets are attached 1:1 to APVTS parameters. The editor has no derived 'is this parameter effective' state, and nothing re-renders a control when its governor changes.
+**Root cause.**
+
+- Widgets are attached 1:1 to APVTS parameters. The editor has no derived 'is this parameter effective' state, and nothing re-renders a control when its governor changes.
 - The look-and-feel has no inactive or disabled rendering for rotary sliders, toggles or combos (LookAndFeel.cpp:456,758 are the only isEnabled reads).
 - On the DSP side, AUTO replaces the manual release outright; it does not scale it. The auto poles are fixed constants, scaled only by the adaptive trim (ADR-0013). Some engineers may expect base-plus-auto behaviour instead.
 - The 0.1.1 layout moved all toggles into half-width foot rows (PluginEditor.cpp:1538-1543 comment). AUTO took the left half there, away from Release.
@@ -938,7 +946,9 @@ Nothing produces wrong output and nothing destroys work. *Scope:* - Advanced vie
 - Settings: Phase, dependent on Oversampling and Offline Render. Also Offline Render = Force Max is inert when Oversampling is already 16x.
 - Default patch: 3 inert Advanced controls plus Phase in Settings.
 
-**Proposed improvement.** 1. Add one pure, message-thread function isEffective(paramId, state). Evaluate it on the existing 24 Hz tick or on parameterChanged. It covers discrete governors only:
+**Proposed improvement.**
+
+1. Add one pure, message-thread function isEffective(paramId, state). Evaluate it on the existing 24 Hz tick or on parameterChanged. It covers discrete governors only:
    - compRelease: effective only when compAutoRelease is Off
    - limRelease: effective only when limAutoRelease is Off
    - ditherShaping: effective only when dither is not Off
@@ -1028,7 +1038,7 @@ Runtime reproduction on :139, harness in Advanced view, stepped pointer motion b
 - e769f33:docs/DESIGN.md:936-938 — §6.4 puts the latency note in the tooltip
 - ST-11: latency at 48 kHz, Minimum 480/484/486/486/486 and Linear 480/529/541/545/547 — session capture `rt/state/21a-settings.png`, session capture `rt/state/23a-crop.png`, session capture `rt/state/26b-crop.png`
 - verify-9 repro: Phase Linear at Oversampling Off gives latency=480; 4x Linear gives latency=541 — session capture `rt/verify-9/07c.png`, session capture `rt/verify-9/09c.png`
-- *Added from another verifier's note:* Add runtime evidence that the active oversampling factor and phase are invisible outside Settings. At 4x Linear the Advanced view looks the same as at OS Off apart from the Ceiling unit when TP is toggled (session capture `rt/verify-9/10c-tp-off-4x.png` vs 01-adv-default.png). The factor is read only to seed the Settings combos (PluginEditor.cpp:1869-1870). This supports [UX-014](findings-ux.md#ux-014)'s Settings latency footer. [UX-014](findings-ux.md#ux-014) rejected a top-bar latency readout; the decision should also say whether a compact OS tag next to TP (which is inert at 4x and above, [DSP-003](findings-dsp-tech.md#dsp-003)) is in or out.
+- *Merged at triage from another verifier's note, quoted as written:* Add runtime evidence that the active oversampling factor and phase are invisible outside Settings. At 4x Linear the Advanced view looks the same as at OS Off apart from the Ceiling unit when TP is toggled (session capture `rt/verify-9/10c-tp-off-4x.png` vs 01-adv-default.png). The factor is read only to seed the Settings combos (PluginEditor.cpp:1869-1870). This supports [UX-014](findings-ux.md#ux-014)'s Settings latency footer. [UX-014](findings-ux.md#ux-014) rejected a top-bar latency readout; the decision should also say whether a compact OS tag next to TP (which is inert at 4x and above, [DSP-003](findings-dsp-tech.md#dsp-003)) is in or out.
 
 **Current behaviour.** The Settings popup shows six label-and-combo rows and two toggles, with no inline text and no latency figure.
 
@@ -1044,14 +1054,18 @@ A Phase A/B at Oversampling Off silently does nothing, contradicting the tooltip
 
 The practical cost is small: Settings changes are infrequent, the added latency is at most 1.4 ms and compensated by the host, and most DAWs display plugin latency themselves.
 
-**Root cause.** - DESIGN §6.4 delegates the latency note to a tooltip, and tooltips default off.
+**Root cause.**
+
+- DESIGN §6.4 delegates the latency note to a tooltip, and tooltips default off.
 - The editor never reads the processor's reported latency.
 - There is no derived-state treatment for the Phase row ([UX-013](findings-ux.md#ux-013)).
 - The manual and tooltip text for Phase ignore its dependency on the effective oversampling factor.
 
 **User impact.** Low. It costs a wasted Phase comparison at Oversampling Off. Users who care about exact PDC must look in the host. *Scope:* The Settings popup (Oversampling, Phase and Offline Render rows), the Phase tooltip, and USER_MANUAL §3.5.
 
-**Proposed improvement.** 1. Add one read-only footer line to the Settings panel: 'Latency 529 smp · 11.0 ms (oversampling +49)'. Compute it on the message thread from getLatencySamples() and getSampleRate(), refreshed on the tick. When Force Max is set and differs, append the render figure, e.g. 'render 547'.
+**Proposed improvement.**
+
+1. Add one read-only footer line to the Settings panel: 'Latency 529 smp · 11.0 ms (oversampling +49)'. Compute it on the message thread from getLatencySamples() and getSampleRate(), refreshed on the tick. When Force Max is set and differs, append the render figure, e.g. 'render 547'.
 2. Give the Phase row the [UX-013](findings-ux.md#ux-013) inactive style, with a short inline hint ('needs Oversampling or Force Max') when Oversampling is Off and Offline Render is Follow Online.
 3. Correct the Phase tooltip and the USER_MANUAL §3.5 Phase note to state the dependency.
 4. Leave the UI Scale menu as it is.
@@ -1187,7 +1201,7 @@ Runtime on :139 with stepped clicks:
 - e769f33:docs/user/USER_MANUAL.md:141-151 — the Universal gestures list covers knob drag, double-click or Alt-click reset, value-box vertical drag and double-click typing, and says tooltips are off by default. It says nothing about fine-drag, the wheel, arrow keys, fader click-to-position or the right button.
 - grep of src/gui for `setMouseCursor|MouseCursor::` finds nothing, so no control gives a hover-cursor affordance
 - e769f33:src/gui/PluginEditor.h:237 — Knob::mouseDoubleClick resets the knob to default. The same gesture on the readout opens the editor.
-- Runtime G-05 / LAY-13(d) (rt = rt): session capture `rt/gestures/14c-loud-valuebox-typed75-crop.png`, session capture `rt/layout/35c-ratio-dblclick.png`, session capture `rt/layout/35c-inputgain-dblclick.png`
+- Runtime G-05 / LAY-13(d): session capture `rt/gestures/14c-loud-valuebox-typed75-crop.png`, session capture `rt/layout/35c-ratio-dblclick.png`, session capture `rt/layout/35c-inputgain-dblclick.png`
 - Runtime G-02 tooltip texts: session capture `rt/gestures/21-sheet.png`, session capture `rt/gestures/33-sheet.png`
 - Runtime verify-10 (stepped motion, :140): a single click on '50 %' opened no editor, and 75+Return left 50 %. A double-click opened the editor (outlined box, '50' selected), and 75+Return gave 75 %. Screenshot: session capture `rt/verify-10/07-sheet.png`
 
@@ -1199,7 +1213,7 @@ Runtime on :139 with stepped clicks:
 
 **User impact.** First-time and occasional users drag toward exact values. On the Ceiling that is about 0.08 dB per px; the wheel steps 0.59 dB per notch. They find typed entry only by accident or in the manual, and some double-click the knob and reset it instead. This costs time on every mastering pass that needs spec values. It does not produce wrong output. *Scope:* Every rotary knob (Simple and Advanced views, 50+ controls), the two utility faders and every value readout. Most relevant to Ceiling, Input Gain, the thresholds and the EQ frequencies, where exact values matter.
 
-**Proposed improvement.** The user should be able to tell from the product itself how to type, reset and fine-adjust. (1) Hovering any value readout shows a text (I-beam) cursor, and hovering a knob or fader shows a drag cursor. This adds no UI copy, so C8 is not engaged. (2) A single click on a readout, released without movement, opens the text editor. JUCE Label single-click editing opens only on a mouse-up that was not dragged, so drag-on-readout keeps working. This must ship only together with the fix in new_findings #1 (a click-away with nothing typed must commit nothing). (3) USER_MANUAL §3 gets a complete gesture table for knob, fader, readout, toggle, wheel, keyboard and right button, updated in the same change as [INPUT-007](findings-input.md#input-007), [INPUT-010](findings-input.md#input-010) and [INPUT-013](findings-input.md#input-013). (4) Whether tooltips should carry gesture hints (e.g. 'double-click the value to type') is the owner's call, since UI copy is owner-supplied under C8 and the 0.1.3 directive moved explanations out of tooltips. It is offered as an option, not implemented.
+**Proposed improvement.** The user should be able to tell from the product itself how to type, reset and fine-adjust. (1) Hovering any value readout shows a text (I-beam) cursor, and hovering a knob or fader shows a drag cursor. This adds no UI copy, so C8 is not engaged. (2) A single click on a readout, released without movement, opens the text editor. JUCE Label single-click editing opens only on a mouse-up that was not dragged, so drag-on-readout keeps working. This must ship only together with the fix in [INPUT-017](findings-input.md#input-017) and [MODEL-001](findings-state-model.md#model-001) (a click-away with nothing typed must commit nothing). (3) USER_MANUAL §3 gets a complete gesture table for knob, fader, readout, toggle, wheel, keyboard and right button, updated in the same change as [INPUT-007](findings-input.md#input-007), [INPUT-010](findings-input.md#input-010) and [INPUT-013](findings-input.md#input-013). (4) Whether tooltips should carry gesture hints (e.g. 'double-click the value to type') is the owner's call, since UI copy is owner-supplied under C8 and the 0.1.3 directive moved explanations out of tooltips. It is offered as an option, not implemented.
 
 **Alternatives considered.**
 
@@ -1210,7 +1224,7 @@ Runtime on :139 with stepped clicks:
 
 **Decision: Modify · P2.** The problem is real and reproduced, and it affects a frequent workflow. The obvious fix (tooltip hints) is constrained by C8 and by a recent owner directive. The smaller change fixes most of the discoverability without new UI copy: cursors, single-click entry once the no-op-commit defect is fixed, and a complete manual table. The tooltip text is left to the owner.
 
-**Dependencies.** new_findings #1 (no-op value-editor commit writes the rounded value and re-engages the macro): must be fixed before single-click entry; [INPUT-007](findings-input.md#input-007) (the fine modifier must be settled before it is documented); [INPUT-010](findings-input.md#input-010) (wheel behaviour to document); [INPUT-013](findings-input.md#input-013) (right-button behaviour to document; a context menu would be a second entry affordance); G-08 keyboard focus visibility (arrow-key nudging is only usable once focus is visible); AI_AGENT_POLICY C8: any tooltip wording is owner-supplied
+**Dependencies.** [INPUT-017](findings-input.md#input-017) and [MODEL-001](findings-state-model.md#model-001) (a no-op value-editor commit writes a changed value and re-engages the macro): must be fixed before single-click entry; [INPUT-007](findings-input.md#input-007) (the fine modifier must be settled before it is documented); [INPUT-010](findings-input.md#input-010) (wheel behaviour to document); [INPUT-013](findings-input.md#input-013) (right-button behaviour to document; a context menu would be a second entry affordance); G-08 keyboard focus visibility (arrow-key nudging is only usable once focus is visible); AI_AGENT_POLICY C8: any tooltip wording is owner-supplied
 
 **Acceptance criteria.**
 
@@ -1224,7 +1238,7 @@ Runtime on :139 with stepped clicks:
 
 **Method.** Read e769f33:src/gui/LookAndFeel.cpp:938-952 (createSliderTextBox, setEditable(false, editable, false)), :796-817 and :931 (rawEditText pre-fill), the tipFor table at e769f33:src/gui/PluginEditor.cpp:32-89 with the 0.1.3 legend-removal note at :90-98, InternalState default tooltipsOn=false, and USER_MANUAL §3 at e769f33:docs/user/USER_MANUAL.md:141-151. Grepped src/gui for setMouseCursor/MouseCursor and found none. Reproduced on :140 with stepped motion: a single click on '50 %' followed by typing 75 and Return left Loudness at 50 % with no editor opened; a double-click opened the editor and 75+Return gave 75 % (session capture `rt/verify-10/07-sheet.png`). Viewed the observers' 14c, 21-sheet, 33-sheet and 35c screenshots.
 
-**Corrections to the candidate claim.** The claim is accurate. It is incomplete in three ways. (1) No control in src/gui sets a mouse cursor, so the pointer gives no hover cue either: there is no I-beam over editable readouts and no drag cursor. (2) Double-click means different things in different places. On the knob body it resets to the default (e769f33:src/gui/PluginEditor.h:237), but on the 72x14 readout under the knob it opens text entry. A user who double-clicks the knob expecting to type loses the value; Undo recovers it. (3) Making entry easier would expose a defect found during this verification (see new_findings). A double-click on the readout followed by a click elsewhere, with nothing typed, commits the rounded display value and opens a gesture. On a macro knob that re-engaged a detached parameter.
+**Corrections to the candidate claim.** The claim is accurate. It is incomplete in three ways. (1) No control in src/gui sets a mouse cursor, so the pointer gives no hover cue either: there is no I-beam over editable readouts and no drag cursor. (2) Double-click means different things in different places. On the knob body it resets to the default (e769f33:src/gui/PluginEditor.h:237), but on the 72x14 readout under the knob it opens text entry. A user who double-clicks the knob expecting to type loses the value; Undo recovers it. (3) Making entry easier would expose a defect found during this verification, recorded as [INPUT-017](findings-input.md#input-017). A double-click on the readout followed by a click elsewhere, with nothing typed, commits the rounded display value and opens a gesture. On a macro knob that re-engaged a detached parameter.
 
 </details>
 
@@ -1271,7 +1285,7 @@ Runtime on :139 with stepped clicks:
 - *Modal error dialog* — Too heavy for a harmless no-op, and it adds a modal surface in a plugin window.
 - *Leave as-is* — Rejected. It is a silent failure path that contradicts the product's own inactive-row rule (LookAndFeel.cpp:502-505).
 
-**Decision: Proceed · P3.** Confirmed in code and reproduced twice (E11, verify-2). The inconsistency is real, and the product already states the rule it breaks. The fix reuses the single readability test, parsePresetFile, that ADR-0022 and the ring depend on, so the menu cannot disagree with the apply path. Nothing is gated: the ADR-0007 rule that corrupt input is a no-op is kept (only feedback is added), and the ring semantics of ADR-0022 are unchanged. Priority is P2 rather than P3 because it is a correctness-of-feedback and consistency fix, not polish. P2 rather than P1 because broken preset files are rare and nothing is lost.
+**Decision: Proceed · P3.** Confirmed in code and reproduced twice (E11, verify-2). The inconsistency is real, and the product already states the rule it breaks. The fix reuses the single readability test, parsePresetFile, that ADR-0022 and the ring depend on, so the menu cannot disagree with the apply path. Nothing is gated: the ADR-0007 rule that corrupt input is a no-op is kept (only feedback is added), and the ring semantics of ADR-0022 are unchanged. The verifier rated it P2 rather than P3, as a correctness-of-feedback and consistency fix rather than polish, and not P1 because broken preset files are rare and nothing is lost; calibration lowered it to P3 (below).
 
 *Calibration:* the verifier judged Proceed / P2; the final judgement is Proceed / P3. Lowered P2->P3 for uniformity: choosing a corrupt or foreign preset is a true no-op (no duck, no undo step, nothing lost) and rare (fr1, sev2), the same class and the same menu/ring model as [STATE-015](findings-state-model.md#state-015) (P3), and equal in severity x frequency to [UX-019](findings-ux.md#ux-019) and [STATE-010](findings-state-model.md#state-010) (P3). Land it with [UX-018](findings-ux.md#ux-018)'s status-line mechanism.
 
@@ -1318,7 +1332,7 @@ Runtime on :139 with stepped clicks:
 - ST-04 — no location hint — session capture `rt/state/15a-save-dialog.png`
 - verify-2 repro — after the empty-name Save click, typed 'Xyz' is dropped — session capture `rt/verify-2/18-20-strip.png`
 - verify-2 repro — 'Al/pha' saved as Alpha, no notice — [capture](captures/13-save-overwrite.png)
-- *Added from another verifier's note:* Add a concrete trigger for [UX-018](findings-ux.md#ux-018) part (c), the silent write failure. JUCE 9.0.1 File::createLegalFileName (juce_File.cpp:855-878) strips only the characters \"#@,;:<>*^|?\\/ and caps the length. It does not reject Windows reserved base names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) or trailing dots and spaces. Such a name reaches XmlElement::writeTo, and a false return falls through the Save handler with no else branch (e769f33:src/gui/PluginEditor.cpp:948-961): the panel stays open and nothing is said. Add a Windows acceptance case: 'save as CON shows the error line and changes no label or identity'. Inferred from code, not run on Windows.
+- *Merged at triage from another verifier's note, quoted as written:* Add a concrete trigger for [UX-018](findings-ux.md#ux-018) part (c), the silent write failure. JUCE 9.0.1 File::createLegalFileName (juce_File.cpp:855-878) strips only the characters \"#@,;:<>*^|?\\/ and caps the length. It does not reject Windows reserved base names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) or trailing dots and spaces. Such a name reaches XmlElement::writeTo, and a false return falls through the Save handler with no else branch (e769f33:src/gui/PluginEditor.cpp:948-961): the panel stays open and nothing is said. Add a Windows acceptance case: 'save as CON shows the error line and changes no label or identity'. Inferred from code, not run on Windows.
 
 **Current behaviour.** The Save panel has a title, a name field, and Save and Cancel buttons, and no message line. An empty or whitespace-only name, or one made only of stripped characters, makes Save do nothing. The Save button stays enabled, and a mouse click on it moves keyboard focus to the button, so further typing is lost. Characters that are illegal in file names are removed without notice, and the preset is saved and listed under the stripped name. A failed write leaves the panel open without explanation. Nothing in the panel says where the file goes.
 
@@ -1328,7 +1342,7 @@ Runtime on :139 with stepped clicks:
 
 **User impact.** Mild confusion and repeated attempts in the empty or failed cases. Preset names that don't match what was typed (e.g. 'Mix #2' is stored as 'Mix 2'). Lost keystrokes after a no-op click. The worst outcome, a stripped name hitting an existing file, is data loss, which is handled under [UX-003](findings-ux.md#ux-003). *Scope:* Save Preset… on all platforms: names that are empty or contain "#@,;:<>*^|?\/, names over 128 characters, and failed writes. Not in scope: the prefill, which is ADR-sanctioned and kept.
 
-**Proposed improvement.** Constrained change inside the existing overlay. Add one status line in the unused ~38 px under the buttons; the same line carries [UX-003](findings-ux.md#ux-003)'s replace prompt. (a) While the cleaned name is empty, show the Save button disabled, make Return inert, and have the status line read 'Enter a name'. (b) As the user types, when the cleaned name differs from the typed text, show it live: "Will save as 'EdgeTest1'". (c) If the write fails, keep the panel open with 'Couldn't save the preset — check that the preset folder is writable', and change no label or identity. (d) After any Save that does not close the panel, give keyboard focus back to the name field. The prefill with the current name stays as it is (ADR-0022). The folder location is better served by a menu affordance that reveals the folder than by static text in this panel (see new_findings), so it is not part of this change.
+**Proposed improvement.** Constrained change inside the existing overlay. Add one status line in the unused ~38 px under the buttons; the same line carries [UX-003](findings-ux.md#ux-003)'s replace prompt. (a) While the cleaned name is empty, show the Save button disabled, make Return inert, and have the status line read 'Enter a name'. (b) As the user types, when the cleaned name differs from the typed text, show it live: "Will save as 'EdgeTest1'". (c) If the write fails, keep the panel open with 'Couldn't save the preset — check that the preset folder is writable', and change no label or identity. (d) After any Save that does not close the panel, give keyboard focus back to the name field. The prefill with the current name stays as it is (ADR-0022). The folder location is better served by a menu affordance that reveals the folder than by static text in this panel (recorded as [UX-024](findings-ux.md#ux-024)), so it is not part of this change.
 
 **Alternatives considered.**
 
@@ -1420,7 +1434,9 @@ Runtime on :139 with stepped clicks:
 3. FREEZE off for 12 s, then on again: savexml s06. The vector had moved toward the new reference (releaseOctaves -0.0177, stereoLink 0.0035, scHpfHz 1.000).
 The UI showed the accent countdown and then a white LEARN, FREEZE stayed lit, and no message appeared (verify-4/18-freeze-learn-sheet.png).
 
-**Corrections to the candidate claim.** 1. The deferred effect is REQUIRED behaviour, not a defect: MODE_AND_ADAPTATION_POLICY invariant 3 says that while frozen the adaptive layer contributes a constant. The only gap is the missing explanation.
+**Corrections to the candidate claim.**
+
+1. The deferred effect is REQUIRED behaviour, not a defect: MODE_AND_ADAPTATION_POLICY invariant 3 says that while frozen the adaptive layer contributes a constant. The only gap is the missing explanation.
 2. Learning while frozen is a legitimate workflow (calibrate without the sound moving during the pass), so the 'no interlock' part of the title is not itself a problem.
 3. Any Learn is subtle even unfrozen: the trims are bounded and re-converge over about 2 s, so 'hears no change' is partly true without Freeze too.
 4. Code-derived and not run: the references are global (ADR-0007) and Freeze is per slot, so a Learn done in a frozen slot retargets the other slot straight away if that slot is unfrozen.
@@ -1602,7 +1618,7 @@ If the owner opts for resize: offer aspect-locked host resize per mode (940:720 
 
 **Root cause.** A family convention copied from Anamorph as-is: the componentID 'ghost' makes the LookAndFeel skip all painting, the button is not registered with the micro-animation driver, and no tooltip, title or cursor is set. Tooltips being off by default removes the one generic hint Anabasis has.
 
-**User impact.** It is rarely needed (version checks and support), so the cost is low. A user asked for their version who has not read the manual may not find it. A screen-reader user hears an unnamed button at the start of the top bar. *Scope:* One control (titleButton) in both views. The right-click activation is editor-wide (every juce::TextButton) and is out of scope here; it is listed under new_findings.
+**User impact.** It is rarely needed (version checks and support), so the cost is low. A user asked for their version who has not read the manual may not find it. A screen-reader user hears an unnamed button at the start of the top bar. *Scope:* One control (titleButton) in both views. The right-click activation is editor-wide (every juce::TextButton) and is out of scope here; it is recorded as [INPUT-013](findings-input.md#input-013).
 
 **Proposed improvement.** Keep the wordmark as the About opener, as the family requires. Register titleButton for the hover driver and, on hover, brighten the painted wordmark (text → a brighter tone, eased by hovA). Set the mouse cursor to PointingHandCursor over the hit area. Call titleButton.setTitle("About Anabasis") for accessibility and setTooltip("About"), which stays governed by the Tooltips switch. Optionally narrow the hit area to the painted wordmark and subtitle extent. Make Escape close About, covered separately by LAY-18.
 
@@ -1663,7 +1679,7 @@ If the owner opts for resize: offer aspect-locked host resize per mode (940:720 
 - Runtime E01 (edges): session capture `rt/edges/01-standalone-nodevice.png`, session capture `rt/edges/02-standalone-options-menu.png`, session capture `rt/edges/03-standalone-audio-settings.png`
 - Runtime V13-1, no device, stepped clicks: session capture `rt/verify-13/01-sa-launch.png` (banner plus top-bar Settings), session capture `rt/verify-13/02-banner-settings-clicked.png` (Audio/MIDI Settings window), session capture `rt/verify-13/03-plugin-settings-clicked.png` (plugin Settings overlay)
 - Runtime V13-2, working ALSA null default device, fresh HOME: session capture `rt/verify-13/12-nulldev-firstrun.png` (banner shown, all meters '-', GR 0 dB line drawn) and session capture `rt/verify-13/13-crop.png` (the audio dialog now lists channels, rate and buffer)
-- *Added from another verifier's note:* Add to [UX-023](findings-ux.md#ux-023)'s §2.5 rewrite: USER_MANUAL.md:117-119 calls the Standalone 'useful for checking a file', but the stock StandaloneFilterWindow has no file player. I re-checked with git grep at e769f33 over src and CMakeLists for AudioFormatReader, AudioTransportSource, AudioFormatManager and JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP: nothing. The rewrite must drop 'checking a file' or qualify it as 'via a loopback or virtual input device'.
+- *Merged at triage from another verifier's note, quoted as written:* Add to [UX-023](findings-ux.md#ux-023)'s §2.5 rewrite: USER_MANUAL.md:117-119 calls the Standalone 'useful for checking a file', but the stock StandaloneFilterWindow has no file player. I re-checked with git grep at e769f33 over src and CMakeLists for AudioFormatReader, AudioTransportSource, AudioFormatManager and JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP: nothing. The rewrite must drop 'checking a file' or qualify it as 'via a loopback or virtual input device'.
 
 **Current behaviour.** On every first launch of the Standalone, and whenever input stays muted, a yellow JUCE banner reads 'Audio input is muted to avoid feedback loop' and has a 'Settings...' button that opens the Audio/MIDI dialog. Just below it, the plugin's own top-bar 'Settings' button opens oversampling, phase, metering and UI preferences, with nothing about audio devices. The input is muted by default, so even with a correctly selected device the plugin receives silence and every meter reads '-'.
 
@@ -1737,7 +1753,9 @@ If the owner opts for resize: offer aspect-locked host resize per mode (940:720 
 
 **User impact.** Moderate friction in an infrequent task: cleaning up after a [UX-003](findings-ux.md#ux-003) overwrite or a [UX-018](findings-ux.md#ux-018) stripped name, renaming, or sharing. Users who cannot find the folder accumulate junk presets in the USER list and the ‹ › ring. Users who rename in the OS file manager then hit [STATE-015](findings-state-model.md#state-015)'s orphaned label.
 
-**Proposed improvement.** 1. Add one item, 'Show Preset Folder', after 'Load Preset…' in the preset menu. On the message thread, call PresetManager::userPresetDirectory().createDirectory(), then File::revealToUser() on the directory (Explorer, Finder or the xdg file manager). Fall back to startAsProcess() on the directory where reveal is unsupported.
+**Proposed improvement.**
+
+1. Add one item, 'Show Preset Folder', after 'Load Preset…' in the preset menu. On the message thread, call PresetManager::userPresetDirectory().createDirectory(), then File::revealToUser() on the directory (Explorer, Finder or the xdg file manager). Fall back to startAsProcess() on the directory where reveal is unsupported.
 2. Update USER_MANUAL §7.2 and the FAQ to name the item, and add one sentence on [STATE-015](findings-state-model.md#state-015): renaming the loaded preset on disk leaves its name without a tick.
 3. List the menu addition as a family deviation candidate under the checklist's preset-system item.
 In-plugin rename and delete stay out of scope (Defer to the owner and the family).

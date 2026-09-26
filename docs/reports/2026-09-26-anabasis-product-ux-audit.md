@@ -4,7 +4,7 @@
 
 **How this record is organised.** This file carries every section of the audit and the index of all 146 findings. The complete record of each finding — evidence, behaviour, root cause, impact, proposal, alternatives, decision, gates, dependencies, acceptance criteria and verification trail — is in the per-category files of [`2026-09-26-anabasis-product-ux-audit/`](2026-09-26-anabasis-product-ux-audit/), linked from every finding id. Runtime observations (`LAY-`, `G-`, `ST-`, `V-`, `E` ids) are recorded step by step in [`worklogs/2026-09-26-product-ux-audit.md`](../../worklogs/2026-09-26-product-ux-audit.md). Fourteen captures are committed under [`2026-09-26-anabasis-product-ux-audit/captures/`](2026-09-26-anabasis-product-ux-audit/captures/); every other capture named in the records existed only in the audit session.
 
-**Anchors.** Every code citation is pinned to the audited revision as `e769f33:path:line`, so it keeps naming the code it was written about after that code moves; the repository's citation gate deliberately leaves revision-pinned anchors alone, which is the right behaviour for a dated record.
+**Anchors.** Every full code citation is pinned to the audited revision as `e769f33:path:line`, so it keeps naming the code it was written about after that code moves. A short re-citation inside the same record (`file:line` or `:line`) refers to the same revision, and Anamorph (`fd78c3b`) and fetched JUCE 9.0.1 citations name their own source. The repository's citation gate deliberately leaves revision-pinned anchors alone, which is the right behaviour for a dated record.
 
 **Nothing in the product was changed by this audit.** No source, test, CI, build or parameter file was modified. The runtime evidence was produced with a scratchpad harness that compiles the plug-in's own sources and is not committed (see *Evidence and method*).
 
@@ -34,12 +34,12 @@
 
 The audit calibrated 146 records (140 verified plus 6 new): 1 P0, 9 P1 (one of them an investigation), 69 P2, 50 P3 and 17 Preserve/Reject.
 
-**Core UX/UI conclusion.** The weakness is not the layout or the look. It is whether the product tells the truth at the moment the user acts. Anabasis promises a dBTP ceiling, a loudness-matched comparison, a lock, a freeze and a session measurement. The user cannot see the scope, state or enforcement of any of them, and in a few places the DSP does not keep the promise. What the plugin explains about itself lives in tooltips, and those ship switched off (e769f33:src/gui/PluginEditor.cpp:972). The graphs are qualitative. Pointer and text input run on untuned JUCE defaults, so ordinary slips rewrite values.
+**Core UX/UI conclusion.** The weakness is not the layout or the look. It is whether the product tells the truth at the moment the user acts. Anabasis promises a dBTP ceiling, a loudness-matched comparison, a lock, a freeze and a session measurement. The user cannot see the scope, state or enforcement of any of them, and in a few places the DSP does not keep the promise. What the plugin explains about itself lives in tooltips, and those ship switched off (e769f33:src/InternalState.h:110). The graphs are qualitative. Pointer and text input run on untuned JUCE defaults, so ordinary slips rewrite values.
 
 **Most important findings (systemic).**
 1. **The delivery guarantee does not hold in TP mode ([DSP-001][dsp-001], P0).**
-   - The clamp is sample-peak only, and the limiter's TP detection is off at 4x and above (e769f33:src/dsp/AnabasisEngine.cpp:656).
-   - True peaks exceed the ceiling by 1.1–1.7 dB at every oversampling factor, including the Force Max bounce the manual recommends.
+   - The clamp is sample-peak only. The limiter acts before the down-sampling filter, whose overshoot reaches the clamp (e769f33:src/dsp/AnabasisEngine.cpp:1077-1078); at 4x and above it reads the oversampled signal directly and ignores the TP switch (e769f33:src/dsp/AnabasisEngine.cpp:653-656).
+   - At a mid Loudness setting (50 %), true peaks exceed the ceiling by 1.1–1.7 dB at every oversampling factor, including the Force Max bounce the manual recommends.
    - The TP row is red at the defaults, so a real over looks the same as normal operation ([VIS-002][vis-002], [VIS-008][vis-008]).
 2. **The comparison and the measurement are not fair.**
    - MATCH is applied after the bypass mix, so BYPASS plays the dry signal scaled by the same gain. The 4–7 LU advantage that MATCH exists to remove survives the manual's own A/B step ([UX-009][ux-009]).
@@ -53,11 +53,11 @@ The audit calibrated 146 records (140 verified plus 6 new): 1 P0, 9 P1 (one of t
    - There is no numeric gain-reduction reading anywhere ([VIS-007][vis-007]).
    - The spectrum reads 6.02 dB hot ([VIS-021][vis-021]), and above about 2.3 kHz it under-reads tones by tens of dB ([VIS-024][vis-024]).
 5. **Input slips change values.**
-   - Opening a percent box and confirming without typing multiplies a sub-1 % value by 100 ([INPUT-017][input-017]).
+   - Opening a percent box and confirming without typing multiplies a value of 1 % or less by 100 ([INPUT-017][input-017]).
    - Unparseable text drives the Ceiling to 0.00 dB, and typing `nan` mutes the output and is saved with the session ([INPUT-001][input-001]).
-   - Right-click performs the primary action everywhere ([INPUT-013][input-013]).
+   - Right-click performs the primary action on every control except the combo boxes ([INPUT-013][input-013]).
 6. **Verification stops at the headless boundary.**
-   - No host has ever loaded the plugin on record (COMPATIBILITY_MATRIX.md:68; [TEST-002][test-002]).
+   - No DAW host has ever been observed loading the plugin (e769f33:docs/architecture/COMPATIBILITY_MATRIX.md:68; [TEST-002][test-002]); pluginval and the minimal JUCE test host of KI-012 are the only hosts on record.
    - The Linux no-mouse-input report is still open ([TECH-001][tech-001]).
    - Several host behaviours are emulated rather than observed.
 
@@ -86,9 +86,9 @@ Almost every P0/P1 fix crosses an Architecture Review Gate category or an Accept
 | [STATE-004][state-004] | Any prepareToPlay, including one at the same rate and block size, silently drops the frozen trims from the audio. FREEZE stays lit and the save keeps the vector (KI-006 audio half) | Modify | P1 |
 | [TECH-001][tech-001] | KI-012 is still open: the owner reports that the Linux editor accepts no mouse input on a real session. The one measured mechanism is closed in current builds, but nothing here ca… | Investigate further | P1 |
 | [TEST-002][test-002] | No real-host or real-device Level-5 validation is on record for the behaviours the audit could only emulate: host bypass routing, transport stop, bursty delivery, offline render w… | Modify | P1 |
-| [UX-002][ux-002] | The whole STATISTICS panel, including about 310 px of empty glass in Simple, is an unmarked reset button: any click, drag or right-click discards I, LRA, PLR and both peak holds w… | Proceed | P1 |
+| [UX-002][ux-002] | The whole STATISTICS panel, including about 318 px of empty glass in Simple, is an unmarked reset button: any click, drag or right-click discards I, LRA, PLR and both peak holds w… | Proceed | P1 |
 | [UX-003][ux-003] | Save Preset silently overwrites an existing user preset, and because the name field comes prefilled with the current name, overwriting is the default action | Modify | P1 |
-| [UX-009][ux-009] | Monitor-state combinations and persistence are not shown: DELTA is inaudible under BYPASS, MATCH makes BYPASS loudness-matched rather than unity, MATCH and DELTA can be on togethe… | Proceed | P1 |
+| [UX-009][ux-009] | Monitor-state combinations and persistence are not shown: DELTA is inaudible under BYPASS, MATCH scales BYPASS by the same gain as the wet, so the bypass jump stays unmatched, MATCH and DELT… | Proceed | P1 |
 | [VIS-007][vis-007] | There is no numeric gain-reduction readout, current or peak, for any stage in either view | Modify | P1 |
 
 ## Scope
@@ -110,7 +110,7 @@ The audit examined Anabasis at `e769f33`, the merge commit of PR #40 and `origin
 | Sibling reference | Anamorph at `fd78c3b` (0.9.5), read-only. That commit is 211 commits past the ADR-0009 copy pin `b6a3db8`. Files read: `src/PluginEditor.{h,cpp}`, `src/gui/LookAndFeel.{h,cpp}`, `src/gui/LevelMeter.cpp`, `src/gui/FrameClock.h`, `src/InternalState.h`, `docs/user/USER_MANUAL.md`, `docs/KNOWN_ISSUES.md`, `docs/POSTMORTEMS.md`, `CHANGELOG.md` | Map anamorph-reference (code and documents only) |
 | Runtime: plugin UI | The real `AnabasisAudioProcessor` and its editor in the audit harness on Linux/Xvfb. Covered: the Simple view (940x720) and the Advanced view (940x822); the top bar (preset menu, prev/next preset buttons, A/B, Copy, undo/redo, Settings, ADV, BYPASS); the About overlay; every Settings row; Save Preset and Load Preset; the knobs, faders, toggles, combos and the inline value editor; keyboard focus and arrow keys; tooltips; the Statistics panel, 'out LUFS', GR history, SPEC, per-stage GR bars and curves; UI scale XS to XL | LAY-, G-, ST-, V- and E observations |
 | Runtime: host-style events | Emulated through the harness control channel: automation writes, host bypass, transport flag, sample-rate and block changes, state save/load, corrupt state blobs. Two harness processes also shared one preset folder | ST-, V- and E observations |
-| Runtime: plain Standalone | The product's own Linux Standalone with no audio device available on the machine. Only its no-device state and Options menu were exercised | E01, E21 |
+| Runtime: plain Standalone | The product's own Linux Standalone with no audio device available on the machine. Phase 2 exercised only its no-device state and Options menu; Phase 3 verifiers also drove its window with stepped and warp input ([TEST-002][test-002], [TECH-001][tech-001]) | E01, E21; V13-5, V13-6 |
 
 ### Not inspected
 
@@ -119,9 +119,9 @@ The audit examined Anabasis at `e769f33`, the merge commit of PR #40 and `origin
 - **AU and AUv3.** AU is built only on Apple (`e769f33:CMakeLists.txt:286-288`) and was neither built nor run.
 - **The OpenGL paint path.** The GL context is attached only when `JUCE_MAC || JUCE_WINDOWS` (`e769f33:src/gui/PluginEditor.cpp:1020-1022`), so on Linux it is compiled out and was never exercised.
 - **HiDPI.** Host-driven `setScaleFactor` was not exercised (`hostScale` stayed 1.0). Windows DPI scaling and Retina were not tested.
-- **Audio.** Nothing was listened to, and output audio was not recorded or measured.
-- **pluginval, CI and sanitizers.** pluginval was not run; its strictness lives in `ANABASIS_PLUGINVAL_STRICTNESS`, `e769f33:.github/workflows/build.yml:151`. No CI run or CI log was inspected. No test-suite result is used as evidence: the tests-ci-robustness map reads test and CI sources only. No ThreadSanitizer, AddressSanitizer, UBSan or RTSan build was made.
-- **Performance.** CPU, paint cost and frame pacing were not measured.
+- **Audio.** Nothing was listened to. Phase 2 recorded and measured no output audio; in Phase 3 several verifiers measured the output of the `e769f33` engine with DSP-only probes built from its sources (DSP-001's added read-only instrumentation only) ([DSP-001][dsp-001], [DSP-004][dsp-004], [DSP-005][dsp-005], [UX-009][ux-009], [STATE-004][state-004]).
+- **pluginval, CI and sanitizers.** pluginval was not run; its strictness lives in `ANABASIS_PLUGINVAL_STRICTNESS`, `e769f33:.github/workflows/build.yml:151`. Phases 1 and 2 inspected no CI run or CI log and used no test-suite result as evidence: the tests-ci-robustness map reads test and CI sources only. In Phase 3, verifiers read the e769f33 CI job logs for macOS and Windows, including their pluginval output (run 36039432935; [TECH-003][tech-003], [TEST-007][test-007]), and built and ran the state suite under ThreadSanitizer ([TECH-003][tech-003], [TEST-005][test-005]). No AddressSanitizer, UBSan or RTSan build was made.
+- **Performance.** Phase 2 measured no CPU, paint cost or frame pacing. One Phase-3 verifier sampled message-thread CPU and paint cost on the Xvfb harness ([TECH-004][tech-004]); audio-thread CPU and frame pacing on a real display were not measured.
 - **Offline rendering.** Non-realtime rendering, the Offline Render setting in its effect, and bus layouts other than stereo in and stereo out were not exercised.
 - **Editor lifecycle.** No editor was closed and reopened.
 - **Assistive technology and input methods.** Screen readers, colour-vision-deficiency simulation, IME input and clipboard paste were not tested.
@@ -133,7 +133,7 @@ The audit ran in four phases. Each phase worked from the written evidence of the
 
 ### Phase 1: code and document evidence maps
 
-Eight reader agents each mapped one area read-only. Each map has five parts:
+Eight reader agents each mapped one area read-only. The maps stayed in the audit session and are not committed; the findings carry what they drew from them, and a map's potential findings are cited as PF ids. Each map has five parts:
 
 - a narrative report;
 - an inventory of the relevant code and document elements with their locations;
@@ -175,9 +175,9 @@ Each observer also listed positives and limitations.
 | edges (E01 to E22) | :115, and :99 for the Standalone | Error, empty and unavailable states, input robustness, popups, focus | 22 | 0 / 7 / 13 / 2 |
 | Total | | | 103 | 7 / 34 / 51 / 11 |
 
-Observation counts are the `### ` headings in each observation file.
+Observation counts are the numbered observations, each recorded under its own heading in the worklog.
 
-A first edges run was stopped part-way. Its files are kept under `rt/edges.partial-stopped/`. The edges observer then re-ran every item and cites partial-run screenshots only where the file name makes the steps unambiguous (edges, Limitations).
+A first edges run was stopped part-way. Its files are kept under `rt/edges.partial-stopped/`. The edges observer then re-ran every item and cites partial-run screenshots only where the file name makes the steps unambiguous (worklog, the edges observer's 'Limitations recorded').
 
 #### The audit harness
 
@@ -246,9 +246,9 @@ A message-thread timer polls a text file every 100 ms and runs newly appended li
 
 **Plain Standalone.** The product's own Linux Standalone also ran on display :99. It is a Release binary from the repository's existing build tree, last linked 2026-09-08. Its sources differ from `e769f33` at most by the comment-only commit `e467e1d`. No audio device exists on this machine, so the Standalone shows JUCE's "Audio input is muted" banner and dashes in every meter (E01).
 
-**Nothing in the product was modified.** No product code, test, CI or build file was changed: `git status --porcelain` prints nothing. The harness compiles repository sources in place and writes only into the scratchpad. The orchestration scripts for Phases 3 and 4 sit in the repository's git-ignored `build/` directory (`build*/` in `.gitignore`) and are not committed.
+**Nothing in the product was modified.** No product code, test, CI or build file was changed: `git status --porcelain` prints nothing. The harness compiles repository sources in place and writes only into the audit session's own directory. The scripts that ran Phases 3 and 4 were session-local and are not committed.
 
-**Screenshots.** With `S` as the session scratchpad, `find $S/rt $S/shots -name '*.png' | wc -l` gives 1,597 PNG files:
+**Screenshots.** With `S` as the session scratchpad, `find $S/rt $S/shots -name '*.png' | wc -l` gave 1,597 PNG files before Phase 3 (2,652 at the end of the audit, once the Phase-3 `rt/verify-*/` captures are included):
 
 | Directory | PNG files | Content |
 |---|---|---|
@@ -261,13 +261,13 @@ A message-thread timer polls a text file every 100 ms and runs newly appended li
 | `shots/` | 11 | Bring-up before Phase 2. By timestamp, 9 captures of the Standalone taken before the harness was built, and 2 of the first harness run |
 | Total | 1,597 | |
 
-The count includes derived images (crops, zooms, strips, contact sheets) as well as full-screen captures. The file names do not separate the two reliably, so the number of distinct capture events is lower and was not established. No Phase-3 reproduction captures existed when the count was taken; any made later under `rt/verify-*/` are not included.
+The count includes derived images (crops, zooms, strips, contact sheets) as well as full-screen captures. The file names do not separate the two reliably, so the number of distinct capture events is lower and was not established. No Phase-3 reproduction captures existed when the count was taken. At the end of the audit the same command counts 2,652 PNG files, 1,055 of them the Phase-3 reproductions under `rt/verify-*/` that the finding records cite. Fourteen are committed with this report.
 
 ### Phase 3: consolidation, re-verification, judgement, challenge
 
-The workflow is defined in the git-ignored `build/wf-phase3.js`. It has four steps.
+Phase 3 ran as a scripted multi-agent workflow (session-local, not committed); its verify, judge and challenge steps ran in two parallel lanes over the same batches. It has four steps.
 
-**1. Consolidate.** Three domain consolidators built the candidate findings:
+**1. Consolidate.** Three domain consolidators built 170 candidate findings:
 
 | Domain | Maps read | Observations read |
 |---|---|---|
@@ -281,17 +281,18 @@ The consolidation rules were:
 - Every potential finding, and every observation of severity low or above, is included unless it is an environment artefact or belongs to another domain.
 - Each candidate records whether it was observed at runtime and whether it is sensitive to synthetic input.
 
-**2. Merge.** One agent de-duplicated across domains and assigned final IDs by category, numbered in order of importance within each category. The categories are UX, UI, INPUT, STATE, MODEL, VIS, DSP, TECH, DOC and TEST. The agent recorded each dropped key with its reason, formed verification batches of 3 to 6 related findings, and recorded systemic themes and positives to preserve.
+**2. Merge.** One agent de-duplicated the 170 candidates across domains into 140 findings and assigned final IDs by category, numbered in order of importance within each category. The categories are UX, UI, INPUT, STATE, MODEL, VIS, DSP, TECH, DOC and TEST. The agent recorded each of the 18 dropped keys with its reason (listed in the worklog), formed 31 verification batches of 3 to 6 related findings, and recorded systemic themes and positives to preserve.
 
-**3. Verify and judge.** One verifier per batch:
+**3. Verify and judge.** One verify-and-judge agent per batch, 31 in all:
 
 - re-opened every cited anchor at `e769f33` and viewed the key screenshots;
 - tried to refute each claim before accepting it;
 - reproduced runtime-only claims, and claims flagged as sensitive to synthetic input, on a private Xvfb display (:130 plus the batch index). Before every click it used stepped pointer motion: three or more intermediate moves with short sleeps;
+- where a claim concerned rendered audio, threading or CI, measured it directly rather than reading it: several verifiers built small DSP-only probe programs from the `e769f33` sources (not committed) and measured the engine's output — the [DSP-001][dsp-001] probe added three read-only lines of instrumentation at the clamp input and nothing else — one built the state suite with ThreadSanitizer and ran two-thread restore probes, and some read the logs of the existing CI run at `e769f33`. Each finding's verification record names its method;
 - recorded a verification status (confirmed, partially-confirmed, refuted, unverifiable), the method used, and any corrections to the claim;
 - wrote the root cause, user impact and scope, a concrete target behaviour with alternatives, a decision and rationale, a priority, the nine scores, a confidence level (high, medium, low), dependencies, gate flags, observable acceptance criteria and a workstream.
 
-**4. Challenge.** Every finding judged P0 or P1, and every Proceed finding with a user-impact score of 4 or more, went to an adversarial reviewer. The reviewer re-opened the evidence, and had to record the evidence as not holding if it could not confirm it independently. It then tested the priority, the decision and the proposal against the Accepted ADRs and the hard-stop gates. It returned `evidence_holds`, `priority_justified` with a suggested priority, `decision_justified` with a suggested decision, the proposal's risks, and reasons.
+**4. Challenge.** Every finding judged P0 or P1, and every Proceed finding with a user-impact score of 4 or more, went to an adversarial reviewer; 24 findings met this rule and were reviewed by 16 reviewers. The records show each review as *Adversarial challenge*. The reviewer re-opened the evidence, and had to record the evidence as not holding if it could not confirm it independently. It then tested the priority, the decision and the proposal against the Accepted ADRs and the hard-stop gates. It returned whether the evidence holds, whether the priority is justified (with a suggested priority), whether the decision is justified (with a suggested decision), the proposal's risks, and reasons. Each batch that held any qualifying finding had one challenge agent, 16 in all.
 
 Rules that applied throughout Phase 3:
 
@@ -311,7 +312,7 @@ Rules that applied throughout Phase 3:
   - build-system change;
   - conflict with an Accepted ADR.
 
-#### Rubric (as used, verbatim from the Phase-3 workflow)
+#### Rubric (verbatim, as applied in Phase 3)
 
 Priority definitions ("apply exactly; do not let ease of implementation raise priority or difficulty lower it"):
 
@@ -348,7 +349,14 @@ Workstreams: Interaction model, Information architecture, Visual hierarchy, Work
 
 ### Phase 4: synthesis
 
-Phase 4 turns the Phase-3 judgements and challenge reviews into the findings, themes and priority order in the rest of this report. This section records only the method. Outcomes, including each finding's verification status, are in the Findings section.
+Phase 4 ran the same way. It turned the Phase-3 judgements and challenge reviews into the findings, themes and priority order in the rest of this report, in four steps:
+
+1. **Triage.** Two triage agents disposed of the 115 notes verifiers had recorded outside their own batch: 72 duplicated an existing finding, 24 were merged into one as added evidence (marked *Merged at triage from another verifier's note* in the records), 13 were dropped, and 6 were written up as new findings, which carry the verification status 'recorded at triage'.
+2. **Calibrate.** One calibration agent read every judgement and challenge review and set the final decision, priority and confidence of all 146 findings. It changed the verifier's judgement on 22 of them (each record's *Calibration* note gives both) and merged 21 themes into the 14 in this report.
+3. **Synthesize.** One agent derived the systemic themes, the phased roadmap and the decision record. A second, holding that roadmap fixed, wrote the high-leverage changes, the executive summary, the preserved, rejected, deferred and investigate lists and the strengths.
+4. **Critique.** Three critic agents then reviewed the rendered report against the evidence and for internal consistency.
+
+This section records only the method. Outcomes, including each finding's verification status, are in the Findings section.
 
 ### Committed captures
 
@@ -357,7 +365,7 @@ Phase 4 turns the Phase-3 judgements and challenge reviews into the findings, th
 | [01-simple-view.png](2026-09-26-anabasis-product-ux-audit/captures/01-simple-view.png) | Simple view at defaults with the music signal playing (editor 940x720, scale M). |
 | [02-advanced-view.png](2026-09-26-anabasis-product-ux-audit/captures/02-advanced-view.png) | Advanced view (940x822): four stage panels, the utility strip, the graph well and STATISTICS. |
 | [03-knob-arcs-at-defaults.png](2026-09-26-anabasis-product-ux-audit/captures/03-knob-arcs-at-defaults.png) | Defaults: Character 0 shows no arc, Tone 0.00 (centre) shows a half arc, Ceiling -0.10 dB shows a near-full arc (LAY-02). |
-| [04-tp-over-ceiling-os4x.png](2026-09-26-anabasis-product-ux-audit/captures/04-tp-over-ceiling-os4x.png) | Oversampling 4x, default settings. Left: TP off, true peak 1.39 dBTP. Right: TP on, the Ceiling reads -0.10 dBTP, and true peak is 1.27 dBTP. Sample peak is -0.10 dBFS in both ([DSP-001][dsp-001]). |
+| [04-tp-over-ceiling-os4x.png](2026-09-26-anabasis-product-ux-audit/captures/04-tp-over-ceiling-os4x.png) | Oversampling 4x, Loudness 50 %, harness music at -6 dB, other parameters at defaults. Left: TP off, true peak 1.39 dBTP. Right: TP on, the Ceiling reads -0.10 dBTP, and true peak is 1.27 dBTP. Sample peak is -0.10 dBFS in both ([DSP-001][dsp-001]). |
 | [05-match-delta-states.png](2026-09-26-anabasis-product-ux-audit/captures/05-match-delta-states.png) | MATCH and DELTA can both be lit; nothing states what is being monitored (ST-15, [UX-009][ux-009]). |
 | [06-ceiling-typed-entry.png](2026-09-26-anabasis-product-ux-audit/captures/06-ceiling-typed-entry.png) | Typed Ceiling entry: an empty field commits 0.00 dB, as does 1e9; -1e9 clamps to -20.00 dB (E05, [INPUT-001][input-001]). |
 | [07-bypass-folds-into-holds.png](2026-09-26-anabasis-product-ux-audit/captures/07-bypass-folds-into-holds.png) | An 8.5 s BYPASS passage: the integrated reading and LRA keep integrating the dry signal (I -11.9 to -12.6, LRA 4.0 to 5.9) ([VIS-001][vis-001]). |
@@ -385,7 +393,7 @@ Runtime evidence below comes from the Phase-2 harness (Linux X11, Xvfb, syntheti
 - A Loudness knob, 224 px measured (LAY-01), with a 14 px "edited" dot at its top-right (`e769f33:src/gui/PluginEditor.cpp:1710`).
 - Character, Tone and Ceiling knobs, with TP stacked above LOCK beside Ceiling.
 - A toggle row: MATCH, DELTA, FREEZE, LEARN and an "out LUFS" readout.
-- A 292 x 530 STATISTICS panel, about 310 px of it empty (LAY-01).
+- A 292 x 530 STATISTICS panel, about 318 px of it empty (UX-002; LAY-01 estimated about 310 px).
 - A 924 x 108 graph well along the bottom.
 
 **Advanced view** (940 x 822, `e769f33:src/gui/PluginEditor.h:638`):
@@ -428,18 +436,18 @@ Advanced has no macro knob, LEARN, LOCK or out LUFS. Switching views changes the
 | A/B, Copy, undo, redo, presets, Settings | Slots, history, presets, preferences | Top bar | Top bar | Not parameters |
 | GR / SPEC pill, STATISTICS panel | Well mode; meter reset | Well; right column | Well; right of well | Not parameters |
 
-Non-automatable flags: `e769f33:src/PluginParameters.cpp:281`, `e769f33:src/PluginParameters.cpp:282`, `e769f33:src/PluginParameters.cpp:309`, `e769f33:src/PluginParameters.cpp:366`, `e769f33:src/PluginParameters.cpp:377`, `e769f33:src/PluginParameters.cpp:399`. LOCK and Settings live in host-hidden `ANABASIS_INTERNAL` (`e769f33:src/InternalState.h:27`).
+Non-automatable flags: `e769f33:src/PluginParameters.cpp:281`, `e769f33:src/PluginParameters.cpp:282`, `e769f33:src/PluginParameters.cpp:309`, `e769f33:src/PluginParameters.cpp:366`, `e769f33:src/PluginParameters.cpp:377`, `e769f33:src/PluginParameters.cpp:399`, plus Character, Tone and Noise Shaping at `e769f33:src/PluginParameters.cpp:283`, `e769f33:src/PluginParameters.cpp:286` and `e769f33:src/PluginParameters.cpp:400`. LOCK and Settings live in host-hidden `ANABASIS_INTERNAL` (`e769f33:src/InternalState.h:27`).
 
 ### The mental model the UI implies vs the model the code implements
 
 | Concept | What the screen implies | What the code does, which the user must know unaided |
 |---|---|---|
-| One-knob maximizer | One dominant knob: "How hard the adaptive chain pushes" (G-02) | Loudness never reaches the DSP (`e769f33:src/PluginParameters.h:132`); the mapper writes stage parameters (`e769f33:src/MacroEngine.cpp:225`). At Character 0, a 0–100 % sweep moved six knobs (G-13): Ratio 1.50→2.00:1, Threshold 0→−12 dB (flat from 75 %), Clip Drive 0→9 dB, Clip Shape 0.50→0.35, Dynamic Tame 0→1.5 dB, Limiter Gain 0→18 dB. The seventh, Color Depth, scales with Character. |
+| One-knob maximizer | One dominant knob: "How hard the adaptive chain pushes" (G-02) | Loudness never reaches the DSP (`e769f33:src/PluginParameters.h:132`); the mapper writes stage parameters (`e769f33:src/MacroEngine.cpp:225`). At Character 0, a 0–100 % sweep moved six knobs (G-13): Ratio 1.50→2.00:1, Threshold 0→−12 dB (flat from 60 %, e769f33:src/MacroEngine.h:52; G-13 sampled at 25 % steps), Clip Drive 0→9 dB, Clip Shape 0.50→0.35, Dynamic Tame 0→1.5 dB, Limiter Gain 0→18 dB. The seventh, Color Depth, scales with Character. |
 | Managed parameters | No knob is marked as managed (G-13) | Nine ids are managed (`e769f33:src/MacroEngine.h:34`). Under colourModel Clean the Character knob does nothing, and two factory presets set Clean. |
-| Detach | A ~5 px corner dot with no explanation even with tooltips on (G-14); a Simple dot explained only by a tooltip, off by default | A parameter detaches only while a gesture is open on it, including a double-click or Alt-click reset (`e769f33:src/PluginProcessor.cpp:650`); playback automation, preset apply, A/B, undo and load never detach. Simple does not say which or how many are detached. User presets store the mask (`e769f33:src/PresetManager.cpp:126`). |
+| Detach | A 7 px corner dot with no explanation even with tooltips on (G-14, which read it as ~5 px; UI-001); a Simple dot explained only by a tooltip, off by default | A parameter detaches only while a gesture is open on it, including a double-click or Alt-click reset (`e769f33:src/PluginProcessor.cpp:650`); playback automation, preset apply, A/B, undo and load never detach. Simple does not say which or how many are detached. User presets store the mask (`e769f33:src/PresetManager.cpp:126`). |
 | Re-engage | "Move a macro" | The start of a gesture on any macro clears the whole mask and re-lands all nine, even if nothing moves (`e769f33:src/PluginProcessor.cpp:306`). Typing into Loudness took a hand-set Threshold from −16.3 to −10.0 dB without a prompt (G-14). By code, touching Tone also resets a hand-set Limiter Gain. |
 | Simple / Advanced | Two layouts with largely disjoint controls | One parameter set; the switch only toggles visibility (`e769f33:src/gui/PluginEditor.cpp:1767`). Macro positions, invisible in Advanced, still decide the next re-engage and factory apply. ADV is an undo step that clears redo (ST-09) and is pinned across A/B. |
-| LOCK | "This knob is locked" | LOCK is a skip in preset apply only (`e769f33:src/PresetManager.cpp:67`, `e769f33:src/PresetManager.cpp:314`). With LOCK on, drag, typing, reset and automation still move the ceiling (G-16). A/B, undo, Copy and load also move it, because slot adoption has no lock check (`e769f33:src/PluginProcessor.cpp:1451`). The locked value shows no `*` (ST-20). TP is not locked. |
+| LOCK | "This knob is locked" | LOCK is a skip in preset apply only (`e769f33:src/PresetManager.cpp:67`, `e769f33:src/PresetManager.cpp:314`). With LOCK on, drag, typing, reset and automation still move the ceiling (G-16). A/B and undo also move it, because slot adoption has no lock check (`e769f33:src/PluginProcessor.cpp:1451`). Copy overwrites the other slot's ceiling, which takes effect on the next A/B; a session load restores the lock together with the ceiling it saved ([UX-001][ux-001]). The locked value shows no `*` (ST-20). TP is not locked. |
 | TP | A unit suffix | TP changes what the ceiling guarantees; the suffix follows (G-17). The TP row always shows true peak, and it read red in both modes at defaults: 0.49 dBTP with TP off, and −0.06/−0.07 dBTP against −0.10 dBTP with TP on (V-12, E14). |
 | LEARN / FREEZE | Two neighbouring toggles | LEARN latches: a 5 s countdown, then an orange label until clicked again; it runs under FREEZE without warning (G-18). The learned target is session-global, not per slot, undoable or in presets, and a stop followed by no audio is never saved (`e769f33:src/PluginProcessor.h:655`). FREEZE is a parameter with a per-slot trim vector. Neither trims nor target are displayed; `adaptiveReadout()` feeds only LEARN (`e769f33:src/gui/PluginEditor.cpp:624`, `e769f33:src/gui/PluginEditor.cpp:2048`). |
 | MATCH / DELTA | Toggles beside the processing toggles | Both do nothing in an offline render but stay lit (`e769f33:src/dsp/AnabasisEngine.cpp:668`). The meters read the render tap before both (`e769f33:src/PluginProcessor.cpp:966`, V-13). Both can be on at once (ST-15). They are excluded from A/B, undo and presets. |
@@ -513,15 +521,15 @@ The harness emulates host bypass via `processBlockBypassed`; a host driving the 
 
 | Gesture | Knobs | Faders | Toggles | Combos | Value text | Panels / other |
 |---|---|---|---|---|---|---|
-| Vertical drag | 100 px = 36 % of range; ~278 px for full travel (G-03) | pointer snap only (G-10) | n/a | n/a | 180 px for full range, ~1.5x the knob rate (G-07) | STATISTICS resets on press (E04); well inert (E19) |
+| Vertical drag | 100 px = 36 % of range; about 250 px for full travel after a ~5 px drag threshold (G-03, INPUT-011) | pointer snap only (G-10) | n/a | n/a | 180 px for full range, ~1.4x the knob rate (G-07, INPUT-011) | STATISTICS resets on press (E04); well inert (E19) |
 | Horizontal drag | nothing (E19) | Input Gain 0.44 dB/px; SC HPF 77→240 Hz per 40 px (G-10) | n/a | n/a | not tested | well inert (E19) |
-| Single click | focus only (G-08) | jumps to the pointer: +17.6 dB at x=140 (G-10) | flips; ADV also resizes (LAY-03) | opens the list (G-12) | nothing (G-05) | STATISTICS resets (V-07); pill flips (V-15); A/B acts on press (`e769f33:src/gui/PluginEditor.h:198`) |
+| Single click | focus only (G-08); on a macro knob it also re-engages every detached parameter (MODEL-001) | jumps to the pointer: +17.6 dB at x=140 (G-10) | flips; ADV also resizes (LAY-03) | opens the list (G-12) | nothing (G-05) | STATISTICS resets (V-07); pill flips (V-15); A/B acts on press (`e769f33:src/gui/PluginEditor.h:198`) |
 | Double-click | reset to default (G-05) | reset to default (G-05) | net no change (E18) | not tested | opens the editor without the unit (G-06, G-20) | STATISTICS resets (V-07); A/B nets out (E18) |
 | Alt-click | reset on press, then the drag is inert (G-03) | same `Knob` class (`e769f33:src/gui/PluginEditor.h:217`) | not tested | not tested | not tested | n/a |
-| Ctrl-drag | ~20:1 finer; readout gains a decimal (G-03) | 40 px = 0.1 dB (G-10) | n/a | n/a | not tested | n/a |
+| Ctrl-drag | velocity mode, not a fixed ratio: ~20:1 at 10 px per event (G-03), no change at 1 px per event (INPUT-007); readout gains a decimal | 40 px = 0.1 dB (G-10) | n/a | n/a | not tested | n/a |
 | Shift- or Super-drag | same as a plain drag (G-03) | not tested | n/a | n/a | not tested | n/a |
 | Wheel notch | 2.93 % of range; modifiers ignored (G-04) | Input Gain ~1.1 dB (G-04) | not tested | nothing (G-12) | works (G-04) | n/a |
-| Right-click | nothing (G-05) | nothing (G-05) | not tested | nothing (G-12) | not tested | STATISTICS resets (V-07; any button, `e769f33:src/gui/LoudnessMeterView.cpp:67`); wordmark and name open About and the menu (LAY-13) |
+| Right-click | a static press changes nothing (G-05), but a right-drag moves and detaches the knob, and a press on a macro knob re-engages (INPUT-013) | jumps to the pointer like a left click, +17.6 dB (INPUT-013) | flips MATCH and FREEZE (INPUT-013) | nothing (G-12) | a right-drag moves the value (INPUT-013) | STATISTICS resets (V-07; any button, `e769f33:src/gui/LoudnessMeterView.cpp:67`); A/B toggles, Copy runs and the pill flips (INPUT-013); wordmark and name open About and the menu (LAY-13) |
 | Arrow keys | 1 % of range; Ceiling 0.01 dB per press (G-08) | Input Gain +0.36 dB (G-08) | not tested | Down moves through the open list (G-12) | n/a | no focus ring anywhere (G-08, E08) |
 | Tab / Shift+Tab | Loudness → Character → Tone → Ceiling, then no slider responds (G-08, E08) | not reached | not identified | not identified | n/a | invisible |
 | Typed entry | n/a | n/a | n/a | n/a | Return, Tab or focus loss commits; Escape cancels. Garbage or empty input commits 0, so Ceiling becomes 0.00 dB; a comma truncates ("-2,5"→−2.00) (G-06, E05). "0.5"→50 %, "1"→100 %, "1.5"→1.5 % | n/a |
@@ -543,9 +551,9 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 | ID | Finding | Decision | Priority | Confidence | Theme | Roadmap |
 |---|---|---|---|---|---|---|
 | [DSP-001][dsp-001] | TP mode does not hold the dBTP ceiling: the clamp is sample-peak only (ADR-0006 D2/D3 unimplemented while ADR_INDEX reads Verified), so true peaks exceed a '-0.10 dBTP'… | Proceed | P0 | high | The dBTP delivery ceiling is claimed but not enforced, and its warning cannot tell an over from normal operation | Phase 0 |
-| [UX-002][ux-002] | The whole STATISTICS panel, including about 310 px of empty glass in Simple, is an unmarked reset button: any click, drag or right-click discards I, LRA, PLR and both pe… | Proceed | P1 | high | The session figures have no visible scope, liveness or tap, and a stray click wipes them | Phase 1 |
+| [UX-002][ux-002] | The whole STATISTICS panel, including about 318 px of empty glass in Simple, is an unmarked reset button: any click, drag or right-click discards I, LRA, PLR and both pe… | Proceed | P1 | high | The session figures have no visible scope, liveness or tap, and a stray click wipes them | Phase 1 |
 | [UX-003][ux-003] | Save Preset silently overwrites an existing user preset, and because the name field comes prefilled with the current name, overwriting is the default action | Modify | P1 | high | Save, load, browse and restore change or lose state without saying so | Phase 0 |
-| [UX-009][ux-009] | Monitor-state combinations and persistence are not shown: DELTA is inaudible under BYPASS, MATCH makes BYPASS loudness-matched rather than unity, MATCH and DELTA can be… | Proceed | P1 | high | Listening aids and default voicing do not do what the product says | Phase 1 |
+| [UX-009][ux-009] | Monitor-state combinations and persistence are not shown: DELTA is inaudible under BYPASS, MATCH scales BYPASS by the same gain as the wet, so the bypass jump stays unmatched, MATCH… | Proceed | P1 | high | Listening aids and default voicing do not do what the product says | Phase 1 |
 | [STATE-002][state-002] | Every factory-preset browse resets TP, Dither and Noise Shaping to Off: a locked Ceiling keeps its number but becomes a sample-peak limit, and 16-bit dither turns itself… | Proceed | P1 | high | Save, load, browse and restore change or lose state without saying so | Phase 0 |
 | [STATE-004][state-004] | Any prepareToPlay, including one at the same rate and block size, silently drops the frozen trims from the audio. FREEZE stays lit and the save keeps the vector (KI-006… | Modify | P1 | medium | The adaptive engine changes the audio from state the user cannot see, keep or reset | Phase 0 |
 | [VIS-007][vis-007] | There is no numeric gain-reduction readout, current or peak, for any stage in either view | Modify | P1 | medium | The graphs are qualitative and partly mis-calibrated | Phase 2 |
@@ -572,14 +580,14 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 | [UI-006][ui-006] | One amber-gold accent carries value, data and every mode/state cue (Learn running, toggles on including DELTA/MATCH/FREEZE, detach and edited dots, active A/B, selected… | Modify | P2 | medium | The inherited frame, renderer and palette were not re-derived for this product's content or the user's display | Phase 5 |
 | [UI-010][ui-010] | Simple view: the STATISTICS panel is 292x530 for about 212 px of content (about 318 px of blank glass), while the GR/spectrum well, the view's maximizer visual, is squee… | Proceed | P2 | high | The inherited frame, renderer and palette were not re-derived for this product's content or the user's display | Phase 2 |
 | [UI-013][ui-013] | The preset-name slot has 106 px of text width at 13 pt and ellipsises the whole 'name *' string, so the dirty marker is the first thing cut: 'Transparent Master *' and '… | Proceed | P2 | high | Save, load, browse and restore change or lose state without saying so | Phase 4 |
-| [INPUT-001][input-001] | Typed value entry commits a value for unparseable text: garbage, an empty field, a comma decimal or a typographic minus all give 0, which drives the Ceiling to 0.00 dB w… | Proceed | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
+| [INPUT-001][input-001] | Typed value entry commits a value for unparseable text: garbage, an empty field or a typographic minus give 0, which drives the Ceiling to 0.00 dB, and a comma decimal is cut… | Proceed | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
 | [INPUT-002][input-002] | The Input Gain and SC HPF faders jump to wherever they are pressed, from any mouse button, across a hit area about 113x48 px, on a ~73 px track: one stray click can put… | Modify | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
 | [INPUT-003][input-003] | Keyboard focus is accepted but never drawn, and Tab follows JUCE's screen-position order, which in Advanced zig-zags across all four panels row by row | Modify | P2 | high | Keyboard and assistive-technology operation is half-implemented | Phase 3 |
 | [INPUT-004][input-004] | Escape cannot close Settings or About (it closes every other pop-up), Settings has no close control, and keyboard focus stays on the controls hidden underneath | Proceed | P2 | high | Keyboard and assistive-technology operation is half-implemented | Phase 3 |
 | [INPUT-006][input-006] | Arrow keys step by the value interval or 1 % of the linear value range: Ceiling needs 2000 presses end to end, and log-tapered knobs jump (Lim Release 5 → 1 → 11 ms); Pa… | Proceed | P2 | high | Keyboard and assistive-technology operation is half-implemented | Phase 3 |
 | [INPUT-007][input-007] | No usable fine-adjust modifier: Shift does nothing, the Ctrl/Cmd/Alt velocity mode stalls on slow drags (1 px per event gives zero change), Alt resets instead, and knobs… | Modify | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
 | [INPUT-009][input-009] | KI-013: the click absorbed by a pop-up dismissal still starts a double-click run, so a quick second click on a knob resets it. Reproduced with the preset menu, the Setti… | Proceed | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
-| [INPUT-013][input-013] | The right button behaves exactly like the left button everywhere, with no context menu: right-click toggles A/B, MATCH and FREEZE, runs Copy, resets STATISTICS, jumps fa… | Modify | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
+| [INPUT-013][input-013] | The right button behaves exactly like the left button on every control except the combos, with no context menu: right-click toggles A/B, MATCH and FREEZE, runs Copy, re… | Modify | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
 | [INPUT-016][input-016] | Mouse-only controls have no accessible name, role or keyboard path: a screen reader or the keyboard cannot find or press the A/B pill, the edited dot or the GR\|SPEC pill… | Proceed | P2 | high | Keyboard and assistive-technology operation is half-implemented | Phase 3 |
 | [INPUT-017][input-017] | Opening a percent value editor and confirming without typing (Return, Tab or click-away) multiplies any value in (0, 1] % by 100: Loudness 0.5 % becomes 50 % and 1 % bec… | Proceed | P2 | high | Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values | Phase 3 |
 | [STATE-001][state-001] | The '*' edited marker stops working after every session load: a reopened project claims the clean preset and never marks later edits | Modify | P2 | high | Save, load, browse and restore change or lose state without saying so | Phase 4 |
@@ -703,11 +711,11 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 
 ### The dBTP delivery ceiling is claimed but not enforced, and its warning cannot tell an over from normal operation
 
-**Pattern.** With TP on, output true peak exceeds a '-0.10 dBTP' ceiling. The overshoot is about 0.03 dB at OS-Off defaults, +0.10 to +0.47 dB with Punchy or high Transients (three factory presets), and +1.04 to +1.58 dB at every oversampling factor, including the Force Max bounce the manual recommends. At 4x and above the TP toggle only relabels the Ceiling. The STATISTICS TP row is warn-red at the shipped defaults on every limited pass. In TP mode it is also red when its printed value equals the ceiling. TP and SP holds are judged against the current ceiling and mode, so lowering the ceiling paints earlier legal holds red, and raising it hides earlier overs.
+**Pattern.** With TP on, output true peak exceeds a '-0.10 dBTP' ceiling. The overshoot is about 0.03 dB at OS-Off defaults, about 0.2 to 0.9 dB with Punchy or high Transients (the three Punchy factory presets), and 1.1 to 1.7 dB (true peaks of +1.04 to +1.58 dBTP) at every oversampling factor at Loudness 50 %, including the Force Max bounce the manual recommends. At 4x and above the TP toggle only relabels the Ceiling. The STATISTICS TP row is warn-red at the shipped defaults on every limited pass. In TP mode it is also red when its printed value equals the ceiling. TP and SP holds are judged against the current ceiling and mode, so lowering the ceiling paints earlier legal holds red, and raising it hides earlier overs.
 
-**Shared root cause.** ADR-0006 D2/D3 and ADR-0002 D4 were never implemented: there is no clamp-level TP estimate driving a gain. CeilingClamp is still the sample-level backstop, and the limiter cannot stand in for it, because its TP detection is off at 4x and above (e769f33:src/dsp/AnabasisEngine.cpp:656) and decimation regrowth arrives after it. No test asserts TP-mode output ≤ ceiling + 0.1 dB, so ADR_INDEX keeps ADR-0006 at 'Verified'. On the display side, the view has one warn colour and an exact TP comparison (ADR-0020 Amendment 2), and it keeps no record of the ceiling or mode a hold was measured under.
+**Shared root cause.** ADR-0006 D2/D3 and ADR-0002 D4 were never implemented: there is no clamp-level TP estimate driving a gain. CeilingClamp is still the sample-level backstop, and the limiter cannot stand in for it: it acts before the down-sampling filter, whose regrowth arrives after it, and at 4x and above it ignores the TP switch because it reads the oversampled signal directly (e769f33:src/dsp/AnabasisEngine.cpp:653-656). No test asserts TP-mode output ≤ ceiling + 0.1 dB, so ADR_INDEX keeps ADR-0006 at 'Verified'. On the display side, the view has one warn colour and an exact TP comparison (ADR-0020 Amendment 2), and it keeps no record of the ceiling or mode a hold was measured under.
 
-**User consequence.** A master printed in TP mode at the recommended oversampling fails a -1 dBTP delivery spec by up to ~1.6 dB while the knob reads dBTP. The only red on the panel is lit in almost every configuration, so it does not single out the real over.
+**User consequence.** A master printed in TP mode at the recommended oversampling fails a -1 dBTP delivery spec by up to ~1.7 dB while the knob reads dBTP. The only red on the panel is lit in almost every configuration, so it does not single out the real over.
 
 **Direction.** A delivery guarantee is either enforced by the DSP and pinned by a test at every setting the UI offers, or the UI stops claiming it. Warn-red means exactly one thing: the guarantee in force was violated.
 
@@ -717,7 +725,7 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 
 **Pattern.** The MATCH gain is applied after the bypass mix (e769f33:src/dsp/AnabasisEngine.cpp:1284-1287), so BYPASS plays dry×g. The 4.5–6.5 LU loudness advantage survives while the manual promises a matched bypass. The predict floor counts only limiter GR, so the matched wet sits 0.7–1.3 LU below dry at macro settings and up to 5.3 LU below with a heavy compressor. Any Clip Drive above Loudness 30 % low-passes the programme at the OS-Off default: -2.0/-5.1/-11.7 dB at 10/15/20 kHz at 48 kHz. That loss is printed into the bounce, and 9 of 13 presets are affected. A/B, undo and preset re-selection dip to silence even when nothing changed. MATCH and DELTA stay lit but are inert in host offline bounces, and a realtime print captures them.
 
-**Shared root cause.** Monitor and voicing trade-offs are recorded only in engine comments and ADR text that the implementation diverges from. The comment on the predict floor's error direction is inverted (AnabasisEngine.cpp:1034-1042). No test pins the bypass level under MATCH or the clip stage's linear-region response. The duck is requested before the processor knows whether anything changed.
+**Shared root cause.** Monitor and voicing trade-offs are recorded only in engine comments and ADR text that the implementation diverges from. The comment on the predict floor's error direction is inverted (e769f33:src/dsp/AnabasisEngine.cpp:1034-1042). No test pins the bypass level under MATCH or the clip stage's linear-region response. The duck is requested before the processor knows whether anything changed.
 
 **User consequence.** The manual's central honesty workflow (judge with MATCH, then A/B against BYPASS) compares unmatched levels while telling the user they are matched. Pushed masters are darkened in the bounce with no cue. Comparing identical slots still produces an audible dropout.
 
@@ -779,7 +787,7 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 
 **Shared root cause.** ADR-0005 decision 6 keys re-engage on gesture begin and on the whole mask. The UI gives no transient feedback naming what was discarded, and the in-product legend removed by the 0.1.3 owner directive was not replaced.
 
-**User consequence.** Hand-tuned Advanced edits are discarded by an accidental Simple-view touch. The user notices only by spotting a 5 px dot disappear.
+**User consequence.** Hand-tuned Advanced edits are discarded by an accidental Simple-view touch. The user notices only by spotting a 10 px dot disappear.
 
 **Direction.** Whenever the macro layer overwrites a user value it says so at that moment, names what changed and offers a one-step undo. Changes to the contract go to the owner with evidence.
 
@@ -811,7 +819,7 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 
 ### Pointer and text entry run on untuned JUCE defaults, so ordinary slips rewrite values
 
-**Pattern.** Opening a percent editor and confirming without typing multiplies any value in (0, 1] % by 100, and on a macro it re-engages. Unparseable text, a comma decimal or a typographic minus commits 0, which drives the Ceiling to 0.00 dB; 'nan' writes NaN and mutes the output. The right button performs the primary action on every control. Faders jump to the press point from any button (+17.6 dB). A click that dismisses a pop-up starts a double-click run, so a quick second click resets the knob underneath. There is no usable fine modifier. The stock editor clips glyphs and hides the Ceiling's minus sign under the caret. No cursor or single-click cue reveals any of this.
+**Pattern.** Opening a percent editor and confirming without typing multiplies any value in (0, 1] % by 100, and on a macro it re-engages. Unparseable text or a typographic minus commits 0, which drives the Ceiling to 0.00 dB, and a comma decimal is cut at the comma ('-2,5' commits -2.00); 'nan' writes NaN and mutes the output. The right button performs the primary action on every control except the combo boxes. Faders jump to the press point from any button (+17.6 dB). A click that dismisses a pop-up starts a double-click run, so a quick second click resets the knob underneath. There is no usable fine modifier. The stock editor clips glyphs and hides the Ceiling's minus sign under the caret. No cursor or single-click cue reveals any of this.
 
 **Shared root cause.** The product never specified its own input grammar. It inherits JUCE Slider, Label and Button defaults and Anamorph's gestures unchanged. Parsing is getFloatValue with no validity check. The editor pre-fill strips the unit (e769f33:src/gui/LookAndFeel.cpp:796-817). snapsToMousePos stays on. Custom mouseDown handlers test no mouse button (e.g. e769f33:src/gui/PluginEditor.h:198). JUCE tracks multi-clicks per input source rather than per component.
 
@@ -839,7 +847,7 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 
 **Shared root cause.** Anamorph's 940×720 frame, single renderer and palette were adopted and not re-derived after ADR-0015 and ADR-0020 changed the content. The status and colour-blind palette pass deferred to P5 was waived. applyUiScale never reads the display area (e769f33:src/gui/PluginEditor.cpp:1923-1935).
 
-**User consequence.** The Simple view spends a third of its right column on blank glass while squeezing its maximizer visual. Large scales overflow laptop screens. Active modes do not stand out from value arcs, and a neutral Tone reads as engaged.
+**User consequence.** The Simple view spends about 60 % of its right column on blank glass while squeezing its maximizer visual. Large scales overflow laptop screens. Active modes do not stand out from value arcs, and a neutral Tone reads as engaged.
 
 **Direction.** Layout, colour and scale are derived from this product's content and the user's display, and every divergence from the family is recorded, not implicit.
 
@@ -859,7 +867,7 @@ Verification outcomes: confirmed 79, partially-confirmed 60, recorded at triage 
 
 ### Verification stops at the headless boundary, and gesture/restore threading can crash the host
 
-**Pattern.** No host has ever loaded Anabasis (e769f33:docs/architecture/COMPATIBILITY_MATRIX.md:68), and the harness's bypass path is not the one VST3 and AU hosts take. The editor's 24 Hz tick and the panel's warn and format rules have no tests. The GR-history frame harness behind three fixes lived outside the repo. There is no TSAN lane, although a TSAN build reports 23 KI-008 lock-order inversions. A knob grab during an off-message-thread restore aborts the host (KI-008), and restore races corrupt the heap (KI-003). The Linux no-mouse report (KI-012) is still open.
+**Pattern.** No DAW host has ever been observed loading Anabasis (e769f33:docs/architecture/COMPATIBILITY_MATRIX.md:68; pluginval and KI-012's minimal JUCE test host are the only hosts on record), and the harness's bypass path is not the one VST3 and AU hosts take. The editor's 24 Hz tick and the panel's warn and format rules have no tests. The GR-history frame harness behind three fixes lived outside the repo. There is no TSAN lane, although a TSAN build reports 23 KI-008 lock-order inversions. A knob grab during an off-message-thread restore aborts the host (KI-008), and restore races corrupt the heap (KI-003). The Linux no-mouse report (KI-012) is still open.
 
 **Shared root cause.** Tick and paint rules are private. Session tooling was never landed as tests. Level 5 was deferred. The sanitizer matrix has no TSAN. The §7 undo pre-state is captured with apvts.copyState() inside parameterGestureChanged, under the listener lock (e769f33:src/PluginProcessor.cpp:272-275, :350-353).
 
@@ -875,48 +883,57 @@ The roadmap orders work by user harm and dependency, not by ease. Each phase is 
 
 | Phase | Objective | Findings | Gates to clear |
 |---|---|---|---|
-| Phase 0 — Nothing printed or saved is silently wrong | Restore the delivered-audio guarantee (the only P0) and remove the P1 traps that change the printed master or destroy saved work without the user knowing. Start the real-host evidence pass that later priorities and fixes depend on. | 17 | [DSP-001][dsp-001]/DSP-007: ARCHITECTURE_REVIEW_GATE ceiling-guarantee change (the CeilingClamp stage behind DSP_POLICY invariant 4).; [DSP-001][dsp-001]: reported-latency change. Accepted ADR-0003 (option D; Consequences :239-241, footnote ⁴) makes truePeakMode latency-neutral, so the clamp lookahead must be mode-independent under the ADR-0004 constant-allowance contract. A TP-only lookahead conflicts with ADR-0003.; [DSP-001][dsp-001]: DSP signal-order/graph change (a new clamp TP tap and gain node, as ADR-0006 D2/D3 and ADR-0002 D4 specify). Correct ADR_INDEX, the ADR-0006 banner and Related code, and ADR-0015 D7 through a new ADR (ADR_POLICY rule 4, append-only). The owner names the yardstick for invariant 4. TP-on sessions change voicing, so SESSION_COMPATIBILITY review applies.; [STATE-002][state-002]: conflicts with Accepted ADR-0010 (lockable set {ceiling} at :191-195; option I, a wider set, rejected at :87-90), so it needs a superseding ADR. It is a Parameter Registry change (PARAMETER_COMPATIBILITY_POLICY rule 6; PARAMETER_REGISTRY.md:165-170) and a Serialization Registry semantic change to int_ceilingLock (SERIALIZATION_REGISTRY.md:337-339). Review it as a strengthening under the ceiling-guarantee gate.; [STATE-004][state-004]: a Freeze-semantics change is a MODE_AND_ADAPTATION_POLICY Enforcement item (ARCHITECTURE_REVIEW_GATE plus AI Agent Hard Stop). It needs a new ADR cross-linking Accepted ADR-0014. Carrying trims with Freeze off is a separate owner call.; [VIS-002][vis-002]: amends ADR-0020 Amendment 2 (the TP row's exact comparison, :229-231) and answers part of the owner's open fine-review question in ADR-0015 §Consequences (:217-229).; [DSP-004][dsp-004]: the owner's ⊕ oversampling-default decision is a reported-latency change; check how a restored session lacking int_oversample resolves. Any droop filter is a DSP-graph change, and an FIR form conflicts with ADR-0003 item 2.; [UX-003][ux-003]: a deviation from the inherited family convention of silent overwrite (DEVELOPMENT_BRIEF §1.2 'Inherit'; BRAND_CONSISTENCY_CHECKLIST.md:53 §A must-match). It needs an ADR plus owner sign-off, or a family-wide proposal. Not a hard stop.; [UX-003][ux-003]/UX-018 prompt and status wording is owner copy (DEVELOPMENT_BRIEF C8, :338). |
-| Phase 1 — Comparisons and session figures tell the truth | Make the MATCH/BYPASS/DELTA comparison fair and always labelled. Make the STATISTICS panel's scope, liveness, standard and reset explicit, so every figure the user judges a master by is honest before anything is made more discoverable. | 17 | [UX-009][ux-009] restores the outcome ADR-0006 D8 states ('loudness-matched by construction') and the Consequences bullet 'A/B loudness-matched comparison works out of the box'. It does not reverse them. D8's mechanism sentence ('the dry ring scaled by the same compensation') describes today's post-mix gain, so D8 needs a dated amendment (ADR_POLICY rule 4). Moving the gain is a DSP signal-order change on the monitor stage (hard stop), named at the gate; the render, reported latency and ceiling stay untouched. DSP_POLICY inv 7/12 wording is amended and inv 10 is preserved. Redefining DELTA+MATCH as dry − g·wet would be a second D8 change, which this plan avoids.; [DSP-005][dsp-005] must stay within ADR-0006 D7 (stateless, floor-only, attenuation-only) and DSP_POLICY inv 10 (no continuous AGC). A stateful predict/measure handover would be an Accepted-ADR conflict.; Thread Model review (ADR-0011; THREAD_MODEL Meters→GUI row) for the new relaxed meter-row scalars: the MATCH gain ([VIS-010][vis-010]), the since-reset counter ([VIS-009][vis-009]) and the engine-side session TP/SP holds ([VIS-001][vis-001]). ADR-0020's precedent treats such atomics as no new cross-thread path; confirm at the gate.; [VIS-001][vis-001] conflicts with Accepted ADR-0020's session-cumulative contract (every quantity on the render tap; reset and accumulate rules in Consequences) and with the documented choice that meters report what was emitted. It needs an owner-approved amendment or superseding ADR before code, and DESIGN §1.2 is reconciled.; [UX-002][ux-002]: a dated amendment note on ADR-0020 Consequences, not a rewrite (ADR_INDEX.md:91). It changes a recorded family convention (Anamorph's click-to-reset), so it needs owner acknowledgement and a BRAND_CONSISTENCY_CHECKLIST note. Header additions stay inside ADR-0020 Decision 6's budget.; [UX-008][ux-008] keeps the BYPASS pill's position, size, colour and dim unchanged (DEVELOPMENT_BRIEF §1.2; BRAND_CONSISTENCY_CHECKLIST A).; KI-007 item 6, an owner listening decision, precedes any spectrum idle change ([VIS-005][vis-005]).; New tags, captions, indicator words and the LRA threshold are owner copy or product calls (DEVELOPMENT_BRIEF C8). |
-| Phase 2 — Graphs you can read an amount from | Give the core maximizer reading a number, calibrate the spectrum, add scale and attribution to the graph well, and give the well room in the Simple view. | 14 | ADR-0023 decision 7 (the bottom-left pill as one whole toggle, with its corner reasoning) and decision 6 (fixed scales; the unmeasured region drawn as zero data) constrain [VIS-007][vis-007]'s placement and [VIS-006][vis-006]'s ticks. Moving the pill would conflict.; Accepted ADR-0020 Decision 6 (a fixed eight-row panel, 202/234 px): [VIS-015][vis-015] is a new metering surface and needs an amendment or new ADR with owner sign-off. [VIS-007][vis-007] needs one only if it is placed in the panel. [UI-010][ui-010] needs a dated note against D6's 'neither view relayouts' and keeps the 940×720 frame (BRAND_CONSISTENCY_CHECKLIST A).; Thread Model review: [VIS-015][vis-015]'s dry-tap scalars against the meter row, which is documented as render-tap-fed, and [VIS-007][vis-007]'s processor-side hold (ADR-0020 precedent). [VIS-018][vis-018] becomes a Thread Model change only if the audio side adds a read-and-reset publication, which it should avoid.; Per-stage clip/comp history traces ([VIS-003][vis-003] step 2) need an owner definition of the metric and an ADR-0040 amendment (the Slot layout assertion at e769f33:tests/state_tests.cpp:10258; ring memory 2 → 3–4 MiB). They are not part of this phase.; ADR-0009 provenance and brand deviations: [VIS-021][vis-021] and [VIS-024][vis-024] diverge from Anamorph's SpectrumImager, and [TEST-003][test-003] extracts FrameClock's pacing. Record both in the [UI-018][ui-018] ledger.; [TEST-003][test-003] lands inside AnabasisStateTests; a new CMake target would be a Build System change. What stays untestable carries ADR-0025's disclosures.; The §2.7 predict-floor input (grDbNow) must not change, or the MATCH gain would move.; Tick labels, legends and the GR readout's label are maintainer copy (C8). |
-| Phase 3 — Input does only what the user meant | Ordinary pointer, text and keyboard actions change a value only when the user deliberately asks. Keyboard and assistive-technology users can reach, see and operate every control. Gesture handling can no longer deadlock or abort the host during a state restore. | 19 | Simple/Advanced macro-layer contract (ADR-0005 items 3 and 6; MODE_AND_ADAPTATION_POLICY inv 3; DESIGN §5.3). [STATE-007][state-007]'s detach and re-engage behaviour for key bursts, and re-engage for wheel bursts over a macro, are owner decisions at the gate. [INPUT-013][input-013]'s filter changes which pointer events count as a macro gesture (e769f33:src/PluginProcessor.cpp:285-308), so it is confirmed at the gate. [INPUT-017][input-017] follows the recorded round-46 value-box precedent (e769f33:src/gui/LookAndFeel.cpp:897-919).; [TECH-003][tech-003] step 1: moving the §7 undo pre-state snapshot point is the undo-architecture change KI-008 routes to ARCHITECTURE_REVIEW_GATE review. The ADR-0018 undo grammar and the raw-exact restore must be shown unchanged. Step 2, restore staging or marshalling, would be a Thread Model change (hard stop) with ADR-0011 and ADR-0012 amendments. It is not in this phase.; [TEST-005][test-005]: a new CI job is arguably a Build System change. Record it as an ADR-0034 sanitizer-set amendment; ADR-0029 option D already requires a separate TSAN binary.; [UI-009][ui-009]: a display-name change under PARAMETER_COMPATIBILITY_POLICY rule 2, with the ID unchanged (registry doc, CHANGELOG, snapshot). Not a hard stop.; No parameter range, interval or default changes for [INPUT-002][input-002] or [INPUT-006][input-006]; any would be a Parameter Registry change.; Family and brand: ADR-0009:188 sanctions ABControl's accessibility delta. The gesture, parser and Settings-geometry divergences from Anamorph go into the [UI-018][ui-018] ledger. The focus indicator's look is a BRAND_CONSISTENCY_CHECKLIST Level-5 D item, and the accent is still ⊕.; Any gesture hint or context-menu copy is owner text (C8). |
-| Phase 4 — State you can trust: presets, sessions, A/B, undo and the macro layer | Make every state transition the user triggers legible before and after it happens: load, restore, A/B, Copy, Undo and macro touches. Stop silent overwrites of user edits. | 19 | [STATE-001][state-001]'s persisted per-slot flag is a Serialization schema change (hard stop) and needs a new ADR with owner clearance. Changing SESSION_COMPATIBILITY rule 4 is a Policy change, enacted by ADR (ADR_POLICY rule 5). ADR-0026:77-79 is corrected by amendment, append-only. The flag must never enter saveSlotFromLive, because that is the ADR-0007 StateSet: the A/B and undo unit.; [DSP-002][dsp-002] conflicts with Accepted ADR-0018 §Consequences (:93-95), where an ADV-only undo ducks 'for uniformity', so ADR-0018 needs an amendment. ADR-0014's 'every stager must request the duck' wording is amended, and the DSP_POLICY inv 8 test is re-fixtured.; [MODEL-001][model-001] part (c), and any change to [MODEL-003][model-003]'s lane-versus-macro precedence, are Simple/Advanced macro-layer contract changes (hard stop): Accepted ADR-0005 decision 6, MODE_AND_ADAPTATION_POLICY inv 3, the OQ-004 sign-off and DESIGN §5.3 rule 3. Parts (a) and (b) cross no hard stop, but the owner must approve the notice itself: the 0.1.3 directive (CHANGELOG.md:1426-1429), DESIGN §5.3 rule 2 and C8.; [TECH-002][tech-002] (b): a published bitmask read from paint is a new Message→Painting site, which is a Thread Model change under THREADING_POLICY's Message→Painting row and ADR-0027 clause 4 (as amended by ADR-0038/ADR-0039). It goes to the Architecture Review Gate. [STATE-005][state-005]'s epoch reuses the historyEpoch pattern but adds a THREAD_MODEL row, confirmed at the gate. [STATE-018][state-018] must not detect a Learn commit through a new audio→message flag.; Family must-match items: A/B (BRAND_CONSISTENCY_CHECKLIST.md:55-56) for [UX-011][ux-011] and [UX-012][ux-012], and the preset system (:53) for [UX-024][ux-024]. Propose each to Anamorph, which is read-only here, or record it as a deviation with an ADR and owner sign-off. Widening Copy touches §A 'Overall frame layout'.; [UI-013][ui-013] must not alter currentPresetName() or the stored name, which is a serialized SLOT field under ADR-0022.; KI-011: the equivalence query never runs on the 24 Hz tick, because of the APVTS lock cost. |
-| Phase 5 — Controls explain themselves, in both views and on any display (plus polish) | Without relying on tooltips, make every control show whether it is live, what it selects and what state it is in, in both views. Expose the adaptive engine's applied state and lifecycle. Make the editor fit the display. Clear the P3 polish and documentation backlog. | 36 | Owner ⊕ decisions pending the fine review: the int_tooltipsOn default (DESIGN.md:605), the accent swatch and colour-blind pass (BRAND_CONSISTENCY_CHECKLIST; DESIGN §6.1), and the Learn material wording.; [UX-004][ux-004]: Accepted ADR-0023 item 9 (Advanced 940×822) applies only if kUtilityH or kPanelRowH grows; the planned placements keep both.; [VIS-011][vis-011] implements Accepted ADR-0005 decision 10 and must stay display-only; writing trims to parameters would be a macro-layer contract change. If the owner declines the overlay, a superseding ADR is required.; [STATE-009][state-009]: the reset reuses ADR-0012's staged-record row through the paired helper, so no new cross-thread path. Revert or undoable Learn is reserved to the owner (MODE_AND_ADAPTATION_POLICY :164-166), and putting it in the undo stack would conflict with ADR-0007. [UX-019][ux-019]'s interlock and auto-release alternatives are Freeze-semantics gate items and are excluded.; [UX-020][ux-020]: the render-only fallback keeps ADR-0017 Decisions 1–2 and testAnOutOfListUiScaleClampsConsistently intact. A write-back or a new persisted scale field would be a Serialization Registry change and is excluded; so is moving int_tooltipsOn out of session state.; [UI-004][ui-004]: a detent through NormalisableRange, interval or default would be a Parameter Registry change, so any detent is UI-side only.; [UX-013][ux-013]: relocating the AUTO pills overrides an owner-directed 0.1.1 layout and needs owner review; not a hard stop. ADR-0010 option N already accepts that Character is inert under Clean.; Every family deviation in the [UI-018][ui-018] ledger needs an ADR and owner sign-off (BRAND_CONSISTENCY_CHECKLIST :34-37): [UX-002][ux-002], [UX-003][ux-003], [UX-011][ux-011], [UX-012][ux-012], [UX-024][ux-024], [UX-022][ux-022], [VIS-024][vis-024], [INPUT-015][input-015], [UI-004][ui-004] and [UI-021][ui-021].; Documentation: Accepted ADR text is corrected only by amendment banners or registry rows (ADR_INDEX.md:90-94). [DOC-007][doc-007]'s register needs owner approval (SOURCE_OF_TRUTH.md:35-37).; All captions, status words and hints are owner copy (C8). |
+| Phase 0 — Nothing printed or saved is silently wrong | Restore the delivered-audio guarantee (the only P0) and remove the P1 traps that change the printed master or destroy saved work without the user knowing. Start the real-host evidence pass that later priorities and fixes depend on. | 17 | 9 gate items (ADR-0002, ADR-0003, ADR-0004, ADR-0006, ADR-0010, ADR-0014, ADR-0015, ADR-0020) — listed under the phase |
+| Phase 1 — Comparisons and session figures tell the truth | Make the MATCH/BYPASS/DELTA comparison fair and always labelled. Make the STATISTICS panel's scope, liveness, standard and reset explicit, so every figure the user judges a master by is honest before anything is made more discoverable. | 17 | 8 gate items (ADR-0006, ADR-0011, ADR-0020) — listed under the phase |
+| Phase 2 — Graphs you can read an amount from | Give the core maximizer reading a number, calibrate the spectrum, add scale and attribution to the graph well, and give the well room in the Simple view. | 14 | 8 gate items (ADR-0009, ADR-0020, ADR-0023, ADR-0025, ADR-0040) — listed under the phase |
+| Phase 3 — Input does only what the user meant | Ordinary pointer, text and keyboard actions change a value only when the user deliberately asks. Keyboard and assistive-technology users can reach, see and operate every control. Gesture handling can no longer deadlock or abort the host during a state restore. | 19 | 7 gate items (ADR-0005, ADR-0009, ADR-0011, ADR-0012, ADR-0018, ADR-0029, ADR-0034) — listed under the phase |
+| Phase 4 — State you can trust: presets, sessions, A/B, undo and the macro layer | Make every state transition the user triggers legible before and after it happens: load, restore, A/B, Copy, Undo and macro touches. Stop silent overwrites of user edits. | 19 | 7 gate items (ADR-0005, ADR-0007, ADR-0014, ADR-0018, ADR-0022, ADR-0026, ADR-0027, ADR-0038, ADR-0039) — listed under the phase |
+| Phase 5 — Controls explain themselves, in both views and on any display (plus polish) | Without relying on tooltips, make every control show whether it is live, what it selects and what state it is in, in both views. Expose the adaptive engine's applied state and lifecycle. Make the editor fit the display. Clear the P3 polish and documentation backlog. | 36 | 10 gate items (ADR-0005, ADR-0007, ADR-0010, ADR-0012, ADR-0017, ADR-0023) — listed under the phase |
 
 ### Phase 0 — Nothing printed or saved is silently wrong
 
 **Objective.** Restore the delivered-audio guarantee (the only P0) and remove the P1 traps that change the printed master or destroy saved work without the user knowing. Start the real-host evidence pass that later priorities and fixes depend on.
 
-**Workstreams.** Clamp-stage true-peak control and honest ceiling readouts ([DSP-001][dsp-001], [DSP-003][dsp-003], [VIS-002][vis-002], [VIS-008][vis-008], [TEST-004][test-004]; [DSP-007][dsp-007] as a measurement and acceptance item), Preset LOCK holds the delivery limit ([STATE-002][state-002]), Freeze keeps its audio across host re-prepares ([STATE-004][state-004]), Clip-stage top-end loss disclosed and pinned; oversampling-default decision put to the owner ([DSP-004][dsp-004]), Save never destroys a preset silently ([UX-003][ux-003], [UX-018][ux-018]), Real-host Level-5 evidence pass ([TEST-002][test-002]), which also collects the data for [TECH-001][tech-001], [STATE-018][state-018], [MODEL-006][model-006], [VIS-019][vis-019] and [INPUT-005][input-005]
+**Workstreams.**
+
+- Clamp-stage true-peak control and honest ceiling readouts ([DSP-001][dsp-001], [DSP-003][dsp-003], [VIS-002][vis-002], [VIS-008][vis-008], [TEST-004][test-004]; [DSP-007][dsp-007] as a measurement and acceptance item)
+- Preset LOCK holds the delivery limit ([STATE-002][state-002])
+- Freeze keeps its audio across host re-prepares ([STATE-004][state-004])
+- Clip-stage top-end loss disclosed and pinned; oversampling-default decision put to the owner ([DSP-004][dsp-004])
+- Save never destroys a preset silently ([UX-003][ux-003], [UX-018][ux-018])
+- Real-host Level-5 evidence pass ([TEST-002][test-002]), which also collects the data for [TECH-001][tech-001], [STATE-018][state-018], [MODEL-006][model-006], [VIS-019][vis-019] and [INPUT-005][input-005]
 
 **Findings addressed.** [DSP-001][dsp-001], [DSP-003][dsp-003], [VIS-002][vis-002], [VIS-008][vis-008], [TEST-004][test-004], [STATE-002][state-002], [STATE-004][state-004], [DSP-004][dsp-004], [UX-003][ux-003], [UX-018][ux-018], [TEST-002][test-002], [DSP-007][dsp-007], [TECH-001][tech-001], [STATE-018][state-018], [MODEL-006][model-006], [VIS-019][vis-019], [INPUT-005][input-005]
 
 **Concrete changes.**
 
-- [DSP-001][dsp-001] (with [DSP-007][dsp-007] as an acceptance item): implement ADR-0006 D2/D3 and ADR-0002 D4 as recorded. The clamp gets its own TruePeakEstimator tap on its input (after the Post-EQ, at base rate), a short base-rate lookahead of at least the estimator's 6-sample lag plus an attack, and a smooth gain that holds the TP estimate ≤ ceiling in TP mode at every OS factor and style. The sample hard clip stays as the backstop. The limiter cannot stand in, because its TP detection is off at 4x and above (e769f33:src/dsp/AnabasisEngine.cpp:656). Add the hostile-input matrix test and name the yardstick behind the ≤0.1 dBTP promise. Until this merges: add a KNOWN_ISSUES true-peak entry, mark FUTURE_RISKS RISK-003 as triggered, downgrade ADR-0006's evidence entry in ADR_INDEX, and make the manual and tooltip state where TP mode currently holds dBTP (OS Off, Transparent/Loud, Transients ≤50 %). Drop 'true-peak accuracy' from the Oversampling row.
+- [DSP-001][dsp-001] (with [DSP-007][dsp-007] as an acceptance item): implement ADR-0006 D2/D3 and ADR-0002 D4 as recorded. The clamp gets its own TruePeakEstimator tap on its input (after the Post-EQ, at base rate), a short base-rate lookahead of at least the estimator's 6-sample lag plus an attack, and a smooth gain that holds the TP estimate ≤ ceiling in TP mode at every OS factor and style. The sample hard clip stays as the backstop. The limiter cannot stand in: it acts before the down-sampling filter, whose regrowth reaches the clamp, and at 4x and above it ignores the TP switch because it reads the oversampled signal directly (e769f33:src/dsp/AnabasisEngine.cpp:653-656, :1077-1078). Add the hostile-input matrix test and name the yardstick behind the ≤0.1 dBTP promise. Until this merges: add a KNOWN_ISSUES true-peak entry, mark FUTURE_RISKS RISK-003 as triggered, downgrade ADR-0006's evidence entry in ADR_INDEX, and make the manual and tooltip state where TP mode currently holds dBTP (OS Off, Transparent/Loud, Transients ≤50 %). Drop 'true-peak accuracy' from the Oversampling row.
 - [DSP-003][dsp-003]: once [DSP-001][dsp-001] lands, rewrite USER_MANUAL §3.2, §3.3, the Oversampling row and the TP tooltip to describe TP per factor: limiter detection at Off/2x, clamp TP gain at every factor. The interim text says that at 4x and above the toggle only changes the unit. The unit rule (ADR-0015 Decision 5) stays as it is.
 - [TEST-004][test-004]: extract LoudnessMeterView's inline paint rules into pure statics that paint() uses as its only source: tpWarns, spWarns, formatReading, barFraction. Add boundary tests (SP at ceiling+0.004 and +0.006, and -0.09999997 against -0.1), mutation-verified. Update ADR-0020:241-243's 'no headless driver' sentence.
 - [VIS-002][vis-002]: give the TP row the SP row's half-print slack (0.005 dB), at least in TP mode, so a TP hold printed equal to the ceiling is never warn-red. When TP is off, add an on-row, non-colour qualifier (e.g. 'ISP'). Keep colours::warn; no amber, per the CVD decision at e769f33:src/gui/LookAndFeel.h:53-60.
 - [VIS-008][vis-008]: the view records the ceiling and TP mode in force at the last reset and at each hold rise. When either differs, the TP/SP holds render in a neutral 'stale' style with an inline 'ceiling changed' hint instead of warn or white. GUI-only, through [TEST-004][test-004]'s statics.
 - [STATE-002][state-002]: interim, now: USER_MANUAL §3.2, §7.3 and the FAQ state that presets set TP, Dither and Noise Shaping, and that LOCK holds the number only. Then, through a superseding ADR, hold a locked ceiling as value plus mode: one shared isLockedByPresetLock(id) predicate replaces the two hand-written ceiling checks (e769f33:src/PresetManager.cpp:67, :314) and also covers truePeakMode. The owner rules whether a factory browse leaves dither and ditherShaping alone. That rule is expressed through the shared exclusion walk, not a third exclusion category, and is pinned against testTheDirtyMarkerMeasuresOnlyWhatAPresetCanCarry.
-- [STATE-004][state-004]: while Freeze is on, AdaptiveEngine::reset() (e769f33:src/dsp/AdaptiveEngine.h:118-121, :164-166) restores the four published trim atomics and pubTrimEver, and leaves the retained set and its generation untouched. A publishTrims(true) implementation would reopen the round-42 slot-isolation defect. When an A/B switch enters a Freeze-ON slot that has no FROZEN_TRIMS, stage a zero vector. Rewrite the two-set rationale at AdaptiveEngine.h:586-636. Correct USER_MANUAL §4's 'locks … exactly' now.
+- [STATE-004][state-004]: while Freeze is on, AdaptiveEngine::reset() (e769f33:src/dsp/AdaptiveEngine.h:118-121, :164-166) restores the four published trim atomics and pubTrimEver, and leaves the retained set and its generation untouched. A publishTrims(true) implementation would reopen the round-42 slot-isolation defect. When an A/B switch enters a Freeze-ON slot that has no FROZEN_TRIMS, stage a zero vector. Rewrite the two-set rationale at e769f33:src/dsp/AdaptiveEngine.h:586-636. Correct USER_MANUAL §4's 'locks … exactly' now.
 - [DSP-004][dsp-004], now: add a KNOWN_ISSUES entry, or widen KI-005 and fix its 'Character' to 'Loudness', with the steady-state droop at 44.1 and 48 kHz. State the OS-Off top-end cost in the Oversampling row, the §8 workflows and the Oversampling tooltip (e769f33:src/gui/PluginEditor.cpp:759-762). Add the linear-region figure to TEST_REPORT. Add a clip-stage regression test on the StageTrace clipOut tap that pins today's droop. The DSP remedy goes to the owner as the ⊕ oversampling-default decision: 4x is the only route verified to meet ±0.5 dB up to 16 kHz.
 - [UX-003][ux-003] + [UX-018][ux-018]: add one status line to the Save overlay (e769f33:src/gui/PluginEditor.cpp:1454, :1476-1484).
-- While the cleaned name is empty, Save is disabled and the line reads 'Enter a name'.
-- It shows 'Will save as …' when createLegalFileName changes the text.
-- A failed write, including a Windows reserved name, keeps the panel open with an error line.
-- Focus returns to the name field.
-- When the cleaned target exists, the first Save or Return writes nothing and arms 'Replace'. The one exception is the unedited prefill of the currently selected user preset. The confirm needs a fresh key press, so an auto-repeating Return cannot confirm it.
-- The decision is factored out of the private lambda so a test can exercise it outside the real preset folder.
+  - While the cleaned name is empty, Save is disabled and the line reads 'Enter a name'.
+  - It shows 'Will save as …' when createLegalFileName changes the text.
+  - A failed write, including a Windows reserved name, keeps the panel open with an error line.
+  - Focus returns to the name field.
+  - When the cleaned target exists, the first Save or Return writes nothing and arms 'Replace'. The one exception is the unedited prefill of the currently selected user preset. The confirm needs a fresh key press, so an auto-repeating Return cannot confirm it.
+  - The decision is factored out of the private lambda so a test can exercise it outside the real preset folder.
 - [TEST-002][test-002]: add the missing items as lines in RELEASE_COMPATIBILITY_CHECKLIST, and record results in the COMPATIBILITY_MATRIX A-rows and the brand Result table rather than in a parallel table. Expected observations come from the code: a mapped DAW bypass flips BYPASS and keeps processBlock running. The same sessions collect evidence for:
-- [TECH-001][tech-001]: same-machine Anamorph/Anabasis A/B on 9.0.1, xwininfo, scale factor, CPU load;
-- [STATE-018][state-018]: save prompt after changing only Oversampling, LOCK, Copy or Learn;
-- [MODEL-006][model-006]: which lanes record during a macro drag;
-- [VIS-019][vis-019]: anticipative-FX / ASIO-Guard stepping;
-- [INPUT-005][input-005]: keyboard matrix;
-- [UX-010][ux-010]: realtime print with MATCH on;
-- [STATE-004][state-004] and [VIS-009][vis-009]: re-prepare on transport start and on bounce;
-- [TECH-003][tech-003]: off-thread restores.
-The Debug-build pass runs in its own session.
+  - [TECH-001][tech-001]: same-machine Anamorph/Anabasis A/B on 9.0.1, xwininfo, scale factor, CPU load;
+  - [STATE-018][state-018]: save prompt after changing only Oversampling, LOCK, Copy or Learn;
+  - [MODEL-006][model-006]: which lanes record during a macro drag;
+  - [VIS-019][vis-019]: anticipative-FX / ASIO-Guard stepping;
+  - [INPUT-005][input-005]: keyboard matrix;
+  - [UX-010][ux-010]: realtime print with MATCH on;
+  - [STATE-004][state-004] and [VIS-009][vis-009]: re-prepare on transport start and on bounce;
+  - [TECH-003][tech-003]: off-thread restores;
+  - [VIS-005][vis-005]: whether transport stop and host bypass halt `processBlock`, which decides how often the frozen-meter case occurs.
+
+  The Debug-build pass runs in its own session.
 
 **Dependencies.**
 
@@ -968,37 +985,43 @@ The Debug-build pass runs in its own session.
 
 **Objective.** Make the MATCH/BYPASS/DELTA comparison fair and always labelled. Make the STATISTICS panel's scope, liveness, standard and reset explicit, so every figure the user judges a master by is honest before anything is made more discoverable.
 
-**Workstreams.** Monitor path: matched bypass, predict-floor bias, one persistent monitor-state indicator ([UX-009][ux-009], [DSP-005][dsp-005], [VIS-010][vis-010], [UX-010][ux-010]), STATISTICS reset and scope: explicit RESET, time since reset, bypass no longer folded in, honest A/B workflow text ([UX-002][ux-002] + [DOC-002][doc-002], [VIS-009][vis-009], [VIS-001][vis-001], [STATE-008][state-008]), Live, held, stale and unmeasured states, standards on the rows, and what the displays show under BYPASS ([VIS-012][vis-012] + [VIS-013][vis-013], [VIS-005][vis-005], [VIS-014][vis-014], [VIS-004][vis-004] + [UX-008][ux-008]; [UX-023][ux-023] for the muted-input Standalone), Feedback-layer test reach ([TEST-001][test-001]), landed first
+**Workstreams.**
+
+- Monitor path: matched bypass, predict-floor bias, one persistent monitor-state indicator ([UX-009][ux-009], [DSP-005][dsp-005], [VIS-010][vis-010], [UX-010][ux-010])
+- STATISTICS reset and scope: explicit RESET, time since reset, bypass no longer folded in, honest A/B workflow text ([UX-002][ux-002] + [DOC-002][doc-002], [VIS-009][vis-009], [VIS-001][vis-001], [STATE-008][state-008])
+- Live, held, stale and unmeasured states, standards on the rows, and what the displays show under BYPASS ([VIS-012][vis-012] + [VIS-013][vis-013], [VIS-005][vis-005], [VIS-014][vis-014], [VIS-004][vis-004] + [UX-008][ux-008]; [UX-023][ux-023] for the muted-input Standalone)
+- Feedback-layer test reach ([TEST-001][test-001]), landed first
 
 **Findings addressed.** [UX-009][ux-009], [DSP-005][dsp-005], [VIS-010][vis-010], [UX-010][ux-010], [UX-002][ux-002], [VIS-001][vis-001], [VIS-009][vis-009], [STATE-008][state-008], [VIS-012][vis-012], [VIS-005][vis-005], [VIS-014][vis-014], [VIS-004][vis-004], [UX-023][ux-023], [TEST-001][test-001], [DOC-002][doc-002], [UX-008][ux-008], [VIS-013][vis-013]
 
 **Concrete changes.**
 
-- [TEST-001][test-001]: add one public, message-thread refreshFromModel() that timerCallback calls, following the PluginEditor.h:59-76 precedent. Pin each tick direction with a mutation-verified test: bypass dim, out LUFS, undo/redo enablement, the GR|SPEC flip, the edited dot, the Learn states (with an injected clock) and the tooltip-gate predicate. The pointer and modal half stays under ADR-0025.
+- [TEST-001][test-001]: add one public, message-thread refreshFromModel() that timerCallback calls, following the e769f33:src/gui/PluginEditor.h:59-76 precedent. Pin each tick direction with a mutation-verified test: bypass dim, out LUFS, undo/redo enablement, the GR|SPEC flip, the edited dot, the Learn states (with an injected clock) and the tooltip-gate predicate. The pointer and modal half stays under ADR-0025.
 - [UX-009][ux-009]: move the MATCH gain from after the bypass mix (e769f33:src/dsp/AnabasisEngine.cpp:1279-1287) onto the wet leg, after the delta substitution.
-- BYPASS then plays the delay-aligned dry at unity.
-- DELTA stays D8's (dry − wet), scaled by g and labelled as such.
-- With MATCH off, bypass stays a bit-exact null.
-Add a test that pins the MATCH+BYPASS level relation on steady pink at macro settings. Re-word the DSP_POLICY inv 7/12 scope text, DESIGN §2.7, the engine comment and the flip-test comment (e769f33:tests/dsp_tests.cpp:3483-3484). Release-note that MATCH+BYPASS output rises by 5.5–8.7 dB.
-- [DSP-005][dsp-005] (after [UX-009][ux-009]): add the compressor's block-end GR to the predict floor's 'expected GR'. Read compGrDb at the next block top, the way grMinLinear is read. Keep the floor stateless and attenuation-only, and drop the clipper term. Correct the comments at AnabasisEngine.cpp:695-699 and :1034-1042 and AnabasisEngine.h:566. Prototype both acceptance criteria before committing to them.
+  - BYPASS then plays the delay-aligned dry at unity.
+  - DELTA stays D8's (dry − wet), scaled by g and labelled as such.
+  - With MATCH off, bypass stays a bit-exact null.
+
+  Add a test that pins the MATCH+BYPASS level relation on steady pink at macro settings. Re-word the DSP_POLICY inv 7/12 scope text, DESIGN §2.7, the engine comment and the flip-test comment (e769f33:tests/dsp_tests.cpp:3483-3484). Release-note that MATCH+BYPASS output rises by 5.5–8.7 dB.
+- [DSP-005][dsp-005] (after [UX-009][ux-009]): add the compressor's block-end GR to the predict floor's 'expected GR'. Read compGrDb at the next block top, the way grMinLinear is read. Keep the floor stateless and attenuation-only, and drop the clipper term. Correct the comments at e769f33:src/dsp/AnabasisEngine.cpp:695-699 and :1034-1042 and e769f33:src/dsp/AnabasisEngine.h:566. Prototype both acceptance criteria before committing to them.
 - [VIS-010][vis-010] + [UX-010][ux-010]: add one persistent monitor-state indicator in both views ('MATCH −x.x dB', 'DELTA', 'DELTA — no effect while bypassed'), painted on the first frame after a restore. While MATCH or DELTA is on, tag the STATISTICS header and out LUFS 'pre-monitor'. Publish the applied monitor gain as one relaxed scalar on the existing meter row. In USER_MANUAL §2.4, §3.2 and the FAQ, say that listening aids are inert in host offline bounces and are captured by realtime prints. No isRecording warning. DSP_POLICY invariant 4 wording stays untouched.
 - [UX-002][ux-002] + [DOC-002][doc-002]: make the panel body inert (e769f33:src/gui/LoudnessMeterView.cpp:67-70).
-- Add a labelled RESET text button on the STATISTICS header line in both views. Its hit box extends into the 10 px top padding; it is focusable and has the accessible name 'Reset statistics'.
-- A right-click item or tip is required to tell users where the gesture moved.
-- A user reset publishes only the session holds (I, ungated I, TP/SP holds, LRA, PLR) and leaves M/S/RMS rolling. prepareToPlay and state load keep the full clear.
-- Add a dated ADR-0020 amendment note, and record the cost-asymmetry rationale against Anamorph's click-to-reset in the brand checklist.
+  - Add a labelled RESET text button on the STATISTICS header line in both views. Its hit box extends into the 10 px top padding; it is focusable and has the accessible name 'Reset statistics'.
+  - A right-click item or tip is required to tell users where the gesture moved.
+  - A user reset publishes only the session holds (I, ungated I, TP/SP holds, LRA, PLR) and leaves M/S/RMS rolling. prepareToPlay and state load keep the full clear.
+  - Add a dated ADR-0020 amendment note, and record the cost-asymmetry rationale against Anamorph's click-to-reset in the brand checklist.
 - [VIS-009][vis-009]: show 'since reset m:ss' on the STATISTICS header, driven by a processed-sample counter that is cleared with dbTpMaxHold and published relaxed on the meter row (option B only). USER_MANUAL §3.4 lists what resets the statistics and what does not. §8 step 4 becomes 'switch, reset, replay, then read PLR'. No 'mixed' marker, and no auto-reset on A/B or preset.
 - [VIS-001][vis-001]: while bypassMix > 0, suspend the integrated and LRA commits through LoudnessMeter's existing integratedFrom/lraFrom watermarks, and resume with straddle offsets; no clearSessionCumulative.
-- Add engine-side session TP/SP holds gated per frame. renderPeakChunk and the GR-history feed stay unchanged.
-- Either limit the pause to !nonRealtime or document the automated-bypass divergence.
-- Replace the integrated route of e769f33:tests/dsp_tests.cpp:5777-5846, which would go vacuous.
-- Show 'held while bypassed' as text, not greying, because the bypass dim already greys.
+  - Add engine-side session TP/SP holds gated per frame. renderPeakChunk and the GR-history feed stay unchanged.
+  - Either limit the pause to !nonRealtime or document the automated-bypass divergence.
+  - Replace the integrated route of e769f33:tests/dsp_tests.cpp:5777-5846, which would go vacuous.
+  - Show 'held while bypassed' as text, not greying, because the bypass dim already greys.
 - [STATE-008][state-008]: USER_MANUAL §7.4 lists what is per slot and what is shared: Settings (incl. Oversampling, Phase, Offline Render), LOCK, the learned reference and the Statistics holds. Extend the A/B tooltip, and fix the 'OS factor' comment at e769f33:src/PluginProcessor.cpp:1573. No A/B-only tag.
 - [VIS-012][vis-012] + [VIS-013][vis-013]: formatReading owns the placeholder: no unit after '—', and '< −99' for real readings below the floor.
-- Session rows dim under a HOLD tag after ~0.5 s with no processed block (detected from the GR ring head) or when M falls below the −70 LUFS gate.
-- 'NO AUDIO' shows when no block has run since the editor opened.
-- LRA reads as provisional until an owner-set minimum.
-- An empty GR ring draws the same zero line as a freshly reset one.
+  - Session rows dim under a HOLD tag after ~0.5 s with no processed block (detected from the GR ring head) or when M falls below the −70 LUFS gate.
+  - 'NO AUDIO' shows when no block has run since the editor opened.
+  - LRA reads as provisional until an owner-set minimum.
+  - An empty GR ring draws the same zero line as a freshly reset one.
 - [VIS-005][vis-005]: about 0.5 s after the ring head stops, M, S, RMS and out LUFS switch to the stale form and the COMP/LIMITER lanes empty. The spectrum's idle behaviour waits for KI-007 item 6.
 - [VIS-014][vis-014]: the RMS unit names its reference ('dBFS AES' or 'dB RMS'). I and PLR carry a BS.1770-1/ungated marker when that standard is selected, and the panel tip names both settings. No row or height changes.
 - [VIS-004][vis-004] + [UX-008][ux-008]: while bypassMix ≥ 1, publish 0 dB GR into the history entries, the per-channel lane atomics and pubGrDb, and document the rule used during the ramp. The §2.7 predict-floor input stays on the processed GR. A 'BYPASSED' caption in the graph well says what the displays show; the family pill, dim and placement stay unchanged.
@@ -1052,7 +1075,14 @@ Add a test that pins the MATCH+BYPASS level relation on steady pink at macro set
 
 **Objective.** Give the core maximizer reading a number, calibrate the spectrum, add scale and attribution to the graph well, and give the well room in the Simple view.
 
-**Workstreams.** Frame-sequence harness first ([TEST-003][test-003]), Numeric GR with stage attribution ([VIS-007][vis-007], [VIS-003][vis-003] step 1), Spectrum calibration and column rule ([VIS-021][vis-021], [VIS-024][vis-024] + [VIS-022][vis-022], [VIS-023][vis-023]), Scales, ticks and lane semantics ([VIS-006][vis-006], [VIS-018][vis-018] + [VIS-017][vis-017], [UI-007][ui-007]), Orientation: input level and loudness gain ([VIS-015][vis-015] + [VIS-016][vis-016]), Simple-view room for the well ([UI-010][ui-010])
+**Workstreams.**
+
+- Frame-sequence harness first ([TEST-003][test-003])
+- Numeric GR with stage attribution ([VIS-007][vis-007], [VIS-003][vis-003] step 1)
+- Spectrum calibration and column rule ([VIS-021][vis-021], [VIS-024][vis-024] + [VIS-022][vis-022], [VIS-023][vis-023])
+- Scales, ticks and lane semantics ([VIS-006][vis-006], [VIS-018][vis-018] + [VIS-017][vis-017], [UI-007][ui-007])
+- Orientation: input level and loudness gain ([VIS-015][vis-015] + [VIS-016][vis-016])
+- Simple-view room for the well ([UI-010][ui-010])
 
 **Findings addressed.** [VIS-007][vis-007], [VIS-003][vis-003], [VIS-021][vis-021], [VIS-024][vis-024], [VIS-006][vis-006], [VIS-018][vis-018], [VIS-015][vis-015], [UI-010][ui-010], [TEST-003][test-003], [VIS-016][vis-016], [VIS-017][vis-017], [VIS-022][vis-022], [VIS-023][vis-023], [UI-007][ui-007]
 
@@ -1060,19 +1090,21 @@ Add a test that pins the MATCH+BYPASS level relation on steady pink at macro set
 
 - [TEST-003][test-003]: land the frame-sequence harness as AnabasisStateTests cases. It drives the real processor and GrHistoryView with scripted steady, jittered and bursty delivery and scripted 60/120/144 Hz clocks. It asserts 0 px steady-host residual, 0 drawn-vertex revisions, and no change at or right of visibleRight except scrolling. The 0.2.7, 0.2.10 and 0.2.11 defects become mutants that must fail. Extract FrameClock's pacing into a pure timestamp-driven function and note the change in its ADR-0009 provenance header. Add a real-display GR-motion line to RELEASE_COMPATIBILITY_CHECKLIST. Encode whatever OQ-017 answer [VIS-019][vis-019]'s evidence supports.
 - [VIS-007][vis-007] + [VIS-003][vis-003]: add a numeric GR readout in both views, to 0.1 dB.
-- Current GR is the deepest over ~300 ms of GrHistoryBuffer entries.
-- Peak GR is either the deepest over the visible window, taken from the ring, or a processor-side hold beside samplePeakMaxHold that requestMeterReset clears.
-- A no-data form shows when the ring head stalls.
-- Placement follows ADR-0023 d7's corner analysis: beside out LUFS in Simple, or in the LIMITER band that [UI-011][ui-011] frees.
-A label in the graph well names the trace as limiter reduction in both views (maintainer wording). Fix the stale comment at e769f33:src/dsp/AnabasisEngine.cpp:1035-1036. Per-stage clip/comp traces wait.
-- [VIS-021][vis-021]: fix the double Hann compensation at e769f33:src/gui/SpectrumView.cpp:202-203, either with norm 2/N as in the sibling or with normalise=false and 4/N. Give the top about +3 dB of headroom, or mark clamped columns. Raise the input trace to ≥3:1 contrast. A unit test checks that a bin-centred 0 dBFS sine reads 0.0 dB ±0.1. Correct the :202 comment and the text at state_tests.cpp:8503-8505.
+  - Current GR is the deepest over ~300 ms of GrHistoryBuffer entries.
+  - Peak GR is either the deepest over the visible window, taken from the ring, or a processor-side hold beside samplePeakMaxHold that requestMeterReset clears.
+  - A no-data form shows when the ring head stalls.
+  - Placement follows ADR-0023 d7's corner analysis: beside out LUFS in Simple, or in the LIMITER band that [UI-011][ui-011] frees.
+
+  A label in the graph well names the trace as limiter reduction in both views (maintainer wording). Fix the stale comment at e769f33:src/dsp/AnabasisEngine.cpp:1035-1036. Per-stage clip/comp traces wait.
+- [VIS-021][vis-021]: fix the double Hann compensation at e769f33:src/gui/SpectrumView.cpp:202-203, either with norm 2/N as in the sibling or with normalise=false and 4/N. Give the top about +3 dB of headroom, or mark clamped columns. Raise the input trace to ≥3:1 contrast. A unit test checks that a bin-centred 0 dBFS sine reads 0.0 dB ±0.1. Correct the :202 comment and the text at e769f33:tests/state_tests.cpp:8503-8505.
 - [VIS-024][vis-024] (+ [VIS-022][vis-022], [VIS-023][vis-023] as P3): in dbForColumn's averaging regime, reduce the covered bins by their MAX instead of the dB mean, and check the join with the Catmull-Rom regime. Record the divergence from Anamorph's reducer; ADR-0039's frame is unchanged. Add the manual sentence on the mono sum. Above 48 kHz, decimate to ~48 kHz so the 4096-point FFT keeps its low-frequency resolution.
 - [VIS-006][vis-006] (after [VIS-021][vis-021]), with [VIS-017][vis-017] and [UI-007][ui-007] (P3): add a fixed, low-contrast annotation overlay inside each plot.
-- GR dB ticks at 0/6/12/24.
-- Spectrum marks at 100 Hz, 1 kHz and 10 kHz, plus two or three dB ticks.
-- Lane captions with 0/12/24 marks.
-- An over-range cap marker beyond grSpanDb.
-Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Also add a dark under-stroke to the GR trace, a dB-mapped waveform fill, and a glyph backing on the GR|SPEC pill.
+  - GR dB ticks at 0/6/12/24.
+  - Spectrum marks at 100 Hz, 1 kHz and 10 kHz, plus two or three dB ticks.
+  - Lane captions with 0/12/24 marks.
+  - An over-range cap marker beyond grSpanDb.
+
+  Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Also add a dark under-stroke to the GR trace, a dB-mapped waveform fill, and a glyph backing on the GR|SPEC pill.
 - [VIS-018][vis-018]: give both lanes one meaning: the effective reduction, deepest since the previous frame, held for ~1 s and then falling at a fixed rate. The LIMITER lane's peak comes from the newest ring entries. The COMP lane is either Mix-weighted or captioned 'detector' (owner choice). Add L/R tags.
 - [VIS-015][vis-015] + [VIS-016][vis-016] (P3): publish the existing dryMeter short-term loudness and an input sample-peak hold as relaxed scalars in the same once-per-block publish, cleared with the session holds. Show 'IN' (warn above 0 dBFS) and 'GAIN' (out S − in S, time-aligned) beside Input Gain in Advanced and in the out-LUFS slot in Simple ('out S … (+x.x LU)').
 - [UI-010][ui-010]: re-derive the Simple interior inside 940×720. The preferred option A is the Advanced bottom-strip grammar: the well on the left, STATISTICS on the right at its content height. The fallback, option B, shrinks STATISTICS to its content and extends the well into the 76 px band. Either way the plot grows from 108 px to ≥180 px. The owner's layout sign-off covers the [VIS-007][vis-007] and [VIS-015][vis-015] placements.
@@ -1121,7 +1153,14 @@ Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Al
 
 **Objective.** Ordinary pointer, text and keyboard actions change a value only when the user deliberately asks. Keyboard and assistive-technology users can reach, see and operate every control. Gesture handling can no longer deadlock or abort the host during a state restore.
 
-**Workstreams.** Gesture thread safety first ([TECH-003][tech-003] step 1, [TEST-005][test-005]), Text entry that cannot write a wrong value ([INPUT-017][input-017], [INPUT-001][input-001], [UI-002][ui-002]), Pointer safety: primary button only, no stray jumps or resets ([INPUT-013][input-013], [INPUT-009][input-009], [INPUT-002][input-002]), One intention, one gesture: fine drag and key/wheel bursts ([INPUT-007][input-007], [STATE-007][state-007] + [INPUT-010][input-010], [INPUT-011][input-011]), Keyboard and assistive technology ([INPUT-004][input-004] + [INPUT-015][input-015], [INPUT-003][input-003], [INPUT-006][input-006], [INPUT-016][input-016] + [UI-009][ui-009]), Gesture discoverability, last ([UX-016][ux-016])
+**Workstreams.**
+
+- Gesture thread safety first ([TECH-003][tech-003] step 1, [TEST-005][test-005])
+- Text entry that cannot write a wrong value ([INPUT-017][input-017], [INPUT-001][input-001], [UI-002][ui-002])
+- Pointer safety: primary button only, no stray jumps or resets ([INPUT-013][input-013], [INPUT-009][input-009], [INPUT-002][input-002])
+- One intention, one gesture: fine drag and key/wheel bursts ([INPUT-007][input-007], [STATE-007][state-007] + [INPUT-010][input-010], [INPUT-011][input-011])
+- Keyboard and assistive technology ([INPUT-004][input-004] + [INPUT-015][input-015], [INPUT-003][input-003], [INPUT-006][input-006], [INPUT-016][input-016] + [UI-009][ui-009])
+- Gesture discoverability, last ([UX-016][ux-016])
 
 **Findings addressed.** [TECH-003][tech-003], [TEST-005][test-005], [INPUT-017][input-017], [INPUT-001][input-001], [UI-002][ui-002], [INPUT-013][input-013], [INPUT-009][input-009], [INPUT-002][input-002], [INPUT-007][input-007], [STATE-007][state-007], [INPUT-004][input-004], [INPUT-003][input-003], [INPUT-006][input-006], [INPUT-016][input-016], [UX-016][ux-016], [INPUT-010][input-010], [INPUT-011][input-011], [INPUT-015][input-015], [UI-009][ui-009]
 
@@ -1129,11 +1168,11 @@ Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Al
 
 - [TECH-003][tech-003] step 1: build the §7 undo pre-state at gesture begin and end (e769f33:src/PluginProcessor.cpp:272-275, :350-353) from each parameter's atomic and raw values, or from a message-thread snapshot, instead of apvts.copyState() under the listener lock. A knob grab or release then never contends with a restore's tree lock, and the undo grammar is unchanged. KNOWN_ISSUES KI-008 gains the gesture-end site and the Linux abort mode. KI-003 is re-rated to a crash and lists presetBaseline, storedSlot, activeSlot and liveBaseline. Step 2, restore staging, stays a separate gated decision.
 - [TEST-005][test-005]: add a tsan CI job on the pinned Clang with its own build directory.
-- A deliberate-race liveness canary runs first.
-- AnabasisStateTests runs under -fsanitize=thread and the job fails on any report.
-- Two-thread stimuli: an off-thread setStateInformation against the editor-tick reads (disclosed as known-failing until KI-003 is fixed), and gesture begin/end against a restore.
-- Deadlock detection is scoped out only until step 1 lands, recorded in KI-008 and TESTING_POLICY rule 4.
-- Correct the detection credit at KNOWN_ISSUES.md:683 and DOCUMENTATION_COVERAGE.md:2929.
+  - A deliberate-race liveness canary runs first.
+  - AnabasisStateTests runs under -fsanitize=thread and the job fails on any report.
+  - Two-thread stimuli: an off-thread setStateInformation against the editor-tick reads (disclosed as known-failing until KI-003 is fixed), and gesture begin/end against a restore.
+  - Deadlock detection is scoped out only until step 1 lands, recorded in KI-008 and TESTING_POLICY rule 4.
+  - Correct the detection credit at KNOWN_ISSUES.md:683 and DOCUMENTATION_COVERAGE.md:2929.
 - [INPUT-017][input-017]: ValueBox remembers the exact text it placed in the editor at editorShown. On Return, Tab or focus loss with that text unchanged, it restores the label and sends nothing. The [INPUT-008][input-008] fraction rule stays, so a typed '0.5' is still 50 %. A state test drives the real ValueBox for every parameter, including 0.1, 0.5 and 1 % on the seven percent parameters.
 - [INPUT-001][input-001]: Knob::getValueFromText returns getValue() unless the text contains an ASCII digit after minus normalisation and gives a finite result, so '0' and '.5' still commit. The shared parser maps U+2212 and U+2013 to '-', maps ',' to '.' when there is no '.', and never returns a non-finite value. getStateInformation never serialises a non-finite value, and ease() resets a non-finite stored value. A message-thread warn flash marks a rejected entry. ADR-0024 snapping stays after normalisation.
 - [UI-002][ui-002]: override Label::createEditorComponent in ValueBox. The text is centred, the caret and rim use palette colours, and the caret sits at the end, not over the Ceiling's minus sign. The text box grows to ~16 px (e769f33:src/gui/PluginEditor.cpp:577, :1136). A dim, non-editable unit suffix never reaches the parser. Set the caret colour once in the LookAndFeel, and fix the stale comment at e769f33:src/gui/LookAndFeel.cpp:942.
@@ -1199,18 +1238,25 @@ Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Al
 
 **Objective.** Make every state transition the user triggers legible before and after it happens: load, restore, A/B, Copy, Undo and macro touches. Stop silent overwrites of user edits.
 
-**Workstreams.** Edited marker and identity after load ([STATE-001][state-001], [UI-013][ui-013]), Session and Standalone state feedback ([STATE-005][state-005], [STATE-016][state-016] + [STATE-017][state-017]), Preset housekeeping ([UX-024][ux-024] + [UX-017][ux-017], [STATE-015][state-015]), A/B and Copy made legible; no dip on no-op switches ([UX-011][ux-011], [UX-012][ux-012], [DSP-002][dsp-002]), Undo says what it will revert ([STATE-003][state-003] + [STATE-010][state-010]), Macro re-engage made visible and reversible ([MODEL-001][model-001] + [DOC-006][doc-006], [MODEL-003][model-003] + [DOC-003][doc-003], [UI-001][ui-001] + [TECH-002][tech-002])
+**Workstreams.**
+
+- Edited marker and identity after load ([STATE-001][state-001], [UI-013][ui-013])
+- Session and Standalone state feedback ([STATE-005][state-005], [STATE-016][state-016] + [STATE-017][state-017])
+- Preset housekeeping ([UX-024][ux-024] + [UX-017][ux-017], [STATE-015][state-015])
+- A/B and Copy made legible; no dip on no-op switches ([UX-011][ux-011], [UX-012][ux-012], [DSP-002][dsp-002])
+- Undo says what it will revert ([STATE-003][state-003] + [STATE-010][state-010])
+- Macro re-engage made visible and reversible ([MODEL-001][model-001] + [DOC-006][doc-006], [MODEL-003][model-003] + [DOC-003][doc-003], [UI-001][ui-001] + [TECH-002][tech-002])
 
 **Findings addressed.** [STATE-001][state-001], [UI-013][ui-013], [STATE-005][state-005], [STATE-016][state-016], [UX-024][ux-024], [UX-011][ux-011], [UX-012][ux-012], [DSP-002][dsp-002], [STATE-003][state-003], [MODEL-001][model-001], [MODEL-003][model-003], [UI-001][ui-001], [UX-017][ux-017], [STATE-015][state-015], [STATE-010][state-010], [DOC-006][doc-006], [DOC-003][doc-003], [TECH-002][tech-002], [STATE-017][state-017]
 
 **Concrete changes.**
 
-- [STATE-001][state-001]: gate-free now. At the end of setStateInformation, seed presetBaseline from the loaded surface so '*' works for the rest of the session. At load, render the marker as an explicit 'unknown' instead of mapping unknown to clean (e769f33:src/PluginProcessor.h:165-168). Update the two tests that pin today's behaviour (state_tests.cpp:1644-1673, :2059-2067). Then put a persisted per-slot edited flag to the owner in a new ADR. The flag is written only in getStateInformation's A/B serialization, uses a sentinel-baseline encoding, follows ADR-0026's metadata rules and takes ADR-0022 as its precedent. The same ADR settles ADR-0007's 'baseline' and SESSION_COMPATIBILITY rule 4.
+- [STATE-001][state-001]: gate-free now. At the end of setStateInformation, seed presetBaseline from the loaded surface so '*' works for the rest of the session. At load, render the marker as an explicit 'unknown' instead of mapping unknown to clean (e769f33:src/PluginProcessor.h:165-168). Update the two tests that pin today's behaviour (e769f33:tests/state_tests.cpp:1644-1673, :2059-2067). Then put a persisted per-slot edited flag to the owner in a new ADR. The flag is written only in getStateInformation's A/B serialization, uses a sentinel-baseline encoding, follows ADR-0026's metadata rules and takes ADR-0022 as its precedent. The same ADR settles ADR-0007's 'baseline' and SESSION_COMPATIBILITY rule 4.
 - [UI-013][ui-013]: reserve a never-truncated slot for ' *'; today e769f33:src/gui/PluginEditor.cpp:2165 builds one string. Fit the name alone into the remaining width, using the sibling's consonant-skeleton abbreviation, then clip. Cache on (name, dirty, width). The accessible title carries the full name plus 'edited'.
 - [STATE-005][state-005]: when setStateInformation rejects a non-empty blob, it bumps a relaxed rejectedLoadEpoch. The editor then shows a persistent, dismissible top-bar notice in owner wording, cleared by a later successful load. The same surface carries preset-file load failures ([UX-017][ux-017]) and ADR-0026 partial drops. SESSION_COMPATIBILITY rule 7 is corrected to 'keeps the current state', and THREAD_MODEL gains a row.
 - [STATE-016][state-016] (+ [STATE-017][state-017] as P3): USER_MANUAL §2.5 says the Standalone restores its last state and audio device, names the settings file per OS, separates Options Save/Load state from presets, and warns that 'Reset to default state' is immediate and irreversible. Add a Level-5 quit/relaunch line. Add an owner-worded disclosure that loading a preset from outside the preset folder stores its absolute path in the project.
 - [UX-024][ux-024] (+ [UX-017][ux-017] and [STATE-015][state-015] as P3): add 'Show Preset Folder' after 'Load Preset…' (createDirectory, then revealToUser, with a startAsProcess fallback); it changes no state. List unreadable user files as inactive '(unreadable)' rows, so the menu and ‹ › agree, and report chooser failures on the [STATE-005][state-005] surface. Draw the name dim when no menu row is ticked. Update USER_MANUAL §7.1, §7.2 and the FAQ.
-- [UX-011][ux-011]: add read-only processor accessors storedPresetName(), storedPresetDirty() and slotsEquivalent(). slotsEquivalent() uses the stripped compare the Copy guard uses (e769f33:src/PluginProcessor.cpp:397-424), evaluated on change events or the ~3 Hz poll, never on the 24 Hz tick. Hovering the A/B pill previews 'B: <name> *' in the name field. An '=' mark on the inactive letter shows when the slots are equal.
+- [UX-011][ux-011]: add read-only processor accessors storedPresetName(), storedPresetDirty() and slotsEquivalent(). slotsEquivalent() uses the stripped compare the Copy guard uses (e769f33:src/PluginProcessor.cpp:397-424), evaluated on change events or the ~3 Hz poll, never on the 24 Hz tick. Hovering the A/B pill previews `B: <name> *` in the name field. An '=' mark on the inactive letter shows when the slots are equal.
 - [UX-012][ux-012]: Copy shows its direction, as a label or a hover arrow from the active letter to the inactive one. A Copy that changes the destination pulses the destination letter (a static accent with Animations off). A no-op Copy shows 'already identical'. The tooltip names the recovery: 'Undo in B reverts it'.
 - [DSP-002][dsp-002]: skip the explicit forced duck when switchToSlot's slots are equivalent, and for an undo or redo whose entry differs only in advancedMode. ADR-0014's record-derived duck stays for staged frozen trims. Re-fixture testAbSwitchRequestsDuck to differing slots and pin the skip. State the duration as one host buffer plus ~28 ms (≥34 ms) in the FAQ, ADR-0014 and the comments. Correct ADR-0018:95's 'inaudible-by-design'. Dry-fill stays with KI-010.
 - [STATE-003][state-003] (+ [STATE-010][state-010] as P3): Undo and Redo show hover labels, independent of the Tooltips switch, naming the step they would apply. The label comes from diffing the top entry against saveSlotFromLive on the message thread: a parameter name plus '+N more', 'preset X', 'view' or 'Copy'. A ~1.5 s 'Undone: …' acknowledgement follows each click. USER_MANUAL §3.1 lists what undo does not record (Settings, LOCK, LEARN, BYPASS, MATCH, DELTA) and says automation folds into the next Undo.
@@ -1237,7 +1283,7 @@ Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Al
 
 **Risks.**
 
-- [STATE-001][state-001]: the retraction arm at PluginProcessor.cpp:549-553 equates an invalid baseline with clean, and must be re-argued. Seeding inside setStateInformation writes presetBaseline off the message thread on some hosts (the KI-003 class).
+- [STATE-001][state-001]: the retraction arm at e769f33:src/PluginProcessor.cpp:549-553 equates an invalid baseline with clean, and must be re-argued. Seeding inside setStateInformation writes presetBaseline off the message thread on some hosts (the KI-003 class).
 - The notice's Undo reverts the wrong step if the stack depth is not recorded, or points at the other slot after an A/B switch.
 - [DSP-002][dsp-002] could skip a duck that a frozen-trim landing needs. Verify with testFrozenTrimRestore.
 - More transient cues (notices, pulses, previews) must honour UI Animations off and must not steal focus.
@@ -1254,7 +1300,7 @@ Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Al
 - With B holding an edited preset X, hovering the A/B pill shows 'B: X *' within 100 ms, with Tooltips off and no duck. Right after Copy the '=' mark shows, and editing either slot removes it within 400 ms.
 - Copy shows its direction with Tooltips off. A changing Copy cues the destination for ≥300 ms, and a repeated Copy pushes no undo entry.
 - Copy, then A/B, at 48 kHz/512: the next 150 ms of output are bit-identical to a run without the switch. A/B between differing slots still dips (re-fixtured testAbSwitchRequestsDuck). An ADV-only undo produces no dip, and testFrozenTrimRestore is unchanged.
-- With Tooltips off, hovering Undo shows 'Undo: <step>'. After an Oversampling change it names the previous recorded step. A click shows 'Undone: …' for ≥1 s. Undo semantics and latency are unchanged.
+- With Tooltips off, hovering Undo shows `Undo: <step>`. After an Oversampling change it names the previous recorded step. A click shows 'Undone: …' for ≥1 s. Undo semantics and latency are unchanged.
 - With Comp Threshold detached, one Tone wheel notch shows the re-engage notice within one tick. Its Undo restores values and mask exactly, even after a multi-notch scroll. No notice appears when nothing was detached.
 - For all nine managed knobs at every UI scale, each badge's nearest rotary face is its own knob (geometry test). A press-and-drag-off on the edited dot changes nothing. The Simple view shows the detached count.
 
@@ -1262,60 +1308,69 @@ Scales stay fixed (ADR-0023 d6), with no target lines and no geometry change. Al
 
 **Objective.** Without relying on tooltips, make every control show whether it is live, what it selects and what state it is in, in both views. Expose the adaptive engine's applied state and lifecycle. Make the editor fit the display. Clear the P3 polish and documentation backlog.
 
-**Workstreams.** LOCK and LEARN in both views ([UX-001][ux-001], [UX-004][ux-004] + [UI-011][ui-011]), Adaptive engine made visible and resettable ([UX-005][ux-005], [STATE-009][state-009], [VIS-011][vis-011] + [UX-019][ux-019], [DOC-004][doc-004]), Live vs inert controls, captions and Settings consequences ([UX-013][ux-013], [MODEL-004][model-004], [UI-005][ui-005] + [UX-014][ux-014]), Tooltip default decided; meaning on the surface ([UX-006][ux-006] + [UI-008][ui-008], [UX-022][ux-022]), Visual system: zero-origin arcs, a state colour role, fit to the display ([UI-004][ui-004], [UI-006][ui-006], [UX-020][ux-020]), Polish and documentation (remaining P3s; the documentation items can land at any time)
+**Workstreams.**
+
+- LOCK and LEARN in both views ([UX-001][ux-001], [UX-004][ux-004] + [UI-011][ui-011])
+- Adaptive engine made visible and resettable ([UX-005][ux-005], [STATE-009][state-009], [VIS-011][vis-011] + [UX-019][ux-019], [DOC-004][doc-004])
+- Live vs inert controls, captions and Settings consequences ([UX-013][ux-013], [MODEL-004][model-004], [UI-005][ui-005] + [UX-014][ux-014])
+- Tooltip default decided; meaning on the surface ([UX-006][ux-006] + [UI-008][ui-008], [UX-022][ux-022])
+- Visual system: zero-origin arcs, a state colour role, fit to the display ([UI-004][ui-004], [UI-006][ui-006], [UX-020][ux-020])
+- Polish and documentation (remaining P3s; the documentation items can land at any time)
 
 **Findings addressed.** [UX-001][ux-001], [UX-004][ux-004], [UX-005][ux-005], [STATE-009][state-009], [VIS-011][vis-011], [UX-013][ux-013], [MODEL-004][model-004], [UI-005][ui-005], [UX-006][ux-006], [UI-004][ui-004], [UI-006][ui-006], [UX-020][ux-020], [UX-019][ux-019], [DOC-004][doc-004], [UX-014][ux-014], [UI-008][ui-008], [UX-022][ux-022], [UX-015][ux-015], [UI-003][ui-003], [UI-011][ui-011], [UI-012][ui-012], [UI-017][ui-017], [UI-018][ui-018], [UI-019][ui-019], [UI-021][ui-021], [DOC-001][doc-001], [DOC-005][doc-005], [DOC-007][doc-007], [DOC-008][doc-008], [DOC-009][doc-009], [DOC-010][doc-010], [DOC-011][doc-011], [DSP-010][dsp-010], [TECH-004][tech-004], [TEST-006][test-006], [TEST-007][test-007]
 
 **Concrete changes.**
 
 - [UX-001][ux-001] + [UX-004][ux-004] (+ [UI-011][ui-011] as P3): anchor the LIMITER foot to the body bottom, so both GR lanes share one baseline.
-- Use the freed ~74 px band, or a split AUTO/TP row, for an Advanced LOCK toggle bound to the same int_ceilingLock. Today the only LOCK is hidden in Advanced (e769f33:src/gui/PluginEditor.cpp:1795-1800).
-- Show a lock glyph or tint on both Ceiling readouts that reflects value and mode (after [STATE-002][state-002]).
-- Give LOCK a scoped caption ('PRESET LOCK' or owner wording) that fits at XS–XL.
-- Make LEARN a shared control in the utility toggle cluster: re-balance the 92/92/100 px cells, keep kUtilityH unchanged. A pass started in either view is then visible and stoppable in both.
-- Update USER_MANUAL §3.2, §3.3 and §7.3.
+  - Use the freed ~74 px band, or a split AUTO/TP row, for an Advanced LOCK toggle bound to the same int_ceilingLock. Today the only LOCK is hidden in Advanced (e769f33:src/gui/PluginEditor.cpp:1795-1800).
+  - Show a lock glyph or tint on both Ceiling readouts that reflects value and mode (after [STATE-002][state-002]).
+  - Give LOCK a scoped caption ('PRESET LOCK' or owner wording) that fits at XS–XL.
+  - Make LEARN a shared control in the utility toggle cluster: re-balance the 92/92/100 px cells, keep kUtilityH unchanged. A pass started in either view is then visible and stoppable in both.
+  - Update USER_MANUAL §3.2, §3.3 and §7.3.
 - [UX-005][ux-005] (+ [UX-019][ux-019] and [DOC-004][doc-004] as P3): LEARN shows a latched running state by shape and fill: a lit background plus a progress ring over the 5 s minimum.
-- A 'waiting for audio' pending state before the first processed block.
-- An early click queues 'stop at minimum', or is visibly refused.
-- A success acknowledgement distinct from the empty-pass warn flash; it reads 'held by FREEZE' when Freeze is on.
-- A persistent learned marker driven by hasLearned().
-Tooltip and manual use one Learn-material wording (owner decides between 'representative' and 'loudest') and state the stop rule.
+  - A 'waiting for audio' pending state before the first processed block.
+  - An early click queues 'stop at minimum', or is visibly refused.
+  - A success acknowledgement distinct from the empty-pass warn flash; it reads 'held by FREEZE' when Freeze is on.
+  - A persistent learned marker driven by hasLearned().
+
+  Tooltip and manual use one Learn-material wording (owner decides between 'representative' and 'loudest') and state the stop rule.
 - [STATE-009][state-009]: add a 'Reset learned reference' action. It stages the never-learned record through one helper that pairs the stagedAdaptive* mirror stores with engine.restoreNeverLearned(); the session-load path uses the same helper. Add an OPEN_QUESTIONS entry for revert-to-previous or undoable Learn. USER_MANUAL §4 and §7.4 say the reference is shared by both slots, cannot be undone, and how to reset it.
 - [VIS-011][vis-011]: build ADR-0005 decision 10's display-only overlay.
-- Effective-value markers on Stereo Link, SC HPF and Dynamic Tame.
-- The release delta as an auto-path scale (e.g. 'auto ×1.46') while limAutoRelease is on; a ms marker only in manual mode.
-- Markers dimmed when their host stage is inert, and hidden until hasPublishedTrims().
-- A Simple status driven by both the published and the retained sets, so [STATE-004][state-004]'s state reads truthfully; 'settled' is dropped or precisely defined.
-Reconcile ADR-0013's context, DESIGN §5.4/§6.3, the MODE policy and KI-006.
+  - Effective-value markers on Stereo Link, SC HPF and Dynamic Tame.
+  - The release delta as an auto-path scale (e.g. 'auto ×1.46') while limAutoRelease is on; a ms marker only in manual mode.
+  - Markers dimmed when their host stage is inert, and hidden until hasPublishedTrims().
+  - A Simple status driven by both the published and the retained sets, so [STATE-004][state-004]'s state reads truthfully; 'settled' is dropped or precisely defined.
+
+  Reconcile ADR-0013's context, DESIGN §5.4/§6.3, the MODE policy and KI-006.
 - [UX-013][ux-013] + [MODEL-004][model-004] (+ [UX-014][ux-014] as P3): one pure message-thread isEffective(paramId, state) covers the discrete governors: Release vs AUTO, SHAPE vs Dither Off, Phase vs OS Off with Follow Online, the Colour knobs and the Simple Character vs Clean.
-- Inactive controls render dim but live: ~40 % alpha, still interactive, never setEnabled(false). TP is never dimmed.
-- Each AUTO pill moves into its Release column.
-- Transparent Master and Classical Dynamics move from Clean to Tape (or the default model) with Character 0.00, null-tested, so Character works on first touch.
-- Settings gets a latency footer ('Latency 529 smp · 11.0 ms') and an inactive Phase row with a 'needs Oversampling or Force Max' hint.
-- USER_MANUAL §3.3 says AUTO replaces Release.
+  - Inactive controls render dim but live: ~40 % alpha, still interactive, never setEnabled(false). TP is never dimmed.
+  - Each AUTO pill moves into its Release column.
+  - Transparent Master and Classical Dynamics move from Clean to Tape (or the default model) with Character 0.00, null-tested, so Character works on first touch.
+  - Settings gets a latency footer ('Latency 529 smp · 11.0 ms') and an inactive Phase row with a 'needs Oversampling or Force Max' hint.
+  - USER_MANUAL §3.3 says AUTO replaces Release.
 - [UI-005][ui-005]: each Advanced mode combo gets a dim in-box caption ('Detector', 'Model', 'Style', 'Position', or owner words) through a combo caption property that drawComboBox and positionComboBoxText read. No bounds change.
 - [UX-006][ux-006] (+ [UI-008][ui-008] and [UX-022][ux-022] as P3): the owner records the int_tooltipsOn default (DESIGN.md:605 ⊕) and its per-instance cost. USER_MANUAL §3 stops claiming that every control has a tip. Port Anamorph's TooltipSource live re-hit-test under ADR-0009; [UI-008][ui-008] rises to P2 if tips become default-on. The wordmark gets a hover state, a pointing cursor and the accessible title 'About Anabasis'.
 - [UI-004][ui-004]: for any range that spans zero, the arc or fill starts at the zero point (valueToProportionOfLength(0)) and runs in either direction, with an origin tick at exactly 0. This covers Tone, Odd/Even, Color Tone, Tilt, the four EQ gains and the Input Gain fader. The origin is computed in the eased position space. Unipolar knobs, Ceiling and Threshold are unchanged. Any snap is UI-side only. The provenance header records the divergence.
 - [UI-006][ui-006]: define one reserved state role, a non-amber hue or a neutral outline, for Learn running, MATCH/DELTA active, FREEZE latched and the detach cues. Each cue also gets a non-colour channel. Ratify the role together with the accent swatch and the colour-blind pass. Warn stays for over-ceiling and failure only. Record the role table in DESIGN §6.1's successor and the brand checklist.
 - [UX-020][ux-020]: the UI Scale menu shows each step's W×H for the current mode, and disables steps that exceed the display's user area minus a host-chrome allowance. Today e769f33:src/gui/PluginEditor.cpp:1923-1935 reads no display. On open or on an ADV toggle, a stored step that does not fit renders at the largest step that does, with a note, and int_uiScale is not rewritten. The display query is injectable for tests.
 - Polish (P3):
-- [UI-003][ui-003]: LUFS/PLR units and one display-format table.
-- [UI-012][ui-012]: one centre line in the utility row.
-- [UI-017][ui-017]: snap by default, ease only inside a sweep window, symmetric tau.
-- [UI-019][ui-019]: resync on the isShowing edge.
-- [UI-021][ui-021]: disabled buttons do not hover.
-- [UI-018][ui-018]: the brand ledger lists every deviation candidate raised in Phases 0–5.
-- [UX-015][ux-015]: an ADV-toggle tear check in the host matrix.
-- [TECH-004][tech-004]: a measured GUI budget.
-- [TEST-006][test-006]: an allocation guard around processBlock.
-- [TEST-007][test-007]: correct the Windows editor-hosting comments.
+  - [UI-003][ui-003]: LUFS/PLR units and one display-format table.
+  - [UI-012][ui-012]: one centre line in the utility row.
+  - [UI-017][ui-017]: snap by default, ease only inside a sweep window, symmetric tau.
+  - [UI-019][ui-019]: resync on the isShowing edge.
+  - [UI-021][ui-021]: disabled buttons do not hover.
+  - [UI-018][ui-018]: the brand ledger lists every deviation candidate raised in Phases 0–5.
+  - [UX-015][ux-015]: an ADV-toggle tear check in the host matrix.
+  - [TECH-004][tech-004]: a measured GUI budget.
+  - [TEST-006][test-006]: an allocation guard around processBlock.
+  - [TEST-007][test-007]: correct the Windows editor-hosting comments.
 - Documentation (P3, can land at any time):
-- [DOC-001][doc-001]: correct the core-law COMPATIBILITY_MATRIX mono→mono row first, then manual §2.1/§2.3 and README.
-- [DOC-005][doc-005].
-- [DOC-007][doc-007]: an owner-approved deviations register for the brief.
-- [DOC-008][doc-008]: DESIGN §6 supersession banners, keeping ADR-0005 d10 marked 'still owed' until [VIS-011][vis-011] ships.
-- [DOC-009][doc-009], [DOC-010][doc-010], [DOC-011][doc-011].
-- [DSP-010][dsp-010]: correct the lookahead rationale through amendment notes.
+  - [DOC-001][doc-001]: correct the core-law COMPATIBILITY_MATRIX mono→mono row first, then manual §2.1/§2.3 and README.
+  - [DOC-005][doc-005].
+  - [DOC-007][doc-007]: an owner-approved deviations register for the brief.
+  - [DOC-008][doc-008]: DESIGN §6 supersession banners, keeping ADR-0005 d10 marked 'still owed' until [VIS-011][vis-011] ships.
+  - [DOC-009][doc-009], [DOC-010][doc-010], [DOC-011][doc-011].
+  - [DSP-010][dsp-010]: correct the lookahead rationale through amendment notes.
 
 **Dependencies.**
 
@@ -1404,16 +1459,19 @@ The small number of changes that would most improve how Anabasis is used. Each m
 
 **Findings.** [DSP-001][dsp-001], [DSP-003][dsp-003], [DSP-007][dsp-007], [VIS-002][vis-002], [VIS-008][vis-008], [TEST-004][test-004]
 
-**What users do today.** A user mastering to a dBTP spec sets the Ceiling (e.g. -1.00), engages TP so the unit reads dBTP, and follows the manual: raise Oversampling to 4x, and bounce with Offline Render = Force Max (USER_MANUAL.md:282, :500-501). They then read the STATISTICS TP row to confirm the master. At the shipped defaults (TP off, -0.10) that row is red on essentially every limited pass (V-12). In TP mode it is still red at -0.06 against -0.10, because the TP comparison has no tolerance.
+**What users do today.** A user mastering to a dBTP spec sets the Ceiling (e.g. -1.00), engages TP so the unit reads dBTP, and follows the manual: raise Oversampling to 4x, and bounce with Offline Render = Force Max (USER_MANUAL.md:282, :500-501). They then read the STATISTICS TP row to confirm the master. At the shipped defaults (TP off, -0.10) that row is red on essentially every limited pass (V-12). In TP mode it is red even when the hold prints exactly the ceiling (-0.10 against -0.10, verify-19 R5), because the TP comparison has no tolerance.
 
-**Why that is a problem.** The clamp is sample-peak only (e769f33:src/dsp/CeilingClamp.h:10-16, :29-34; e769f33:src/dsp/AnabasisEngine.cpp:1188). The limiter's TP detection is switched off at 4x and above (e769f33:src/dsp/AnabasisEngine.cpp:656). The consequences:
-- In TP mode, true peaks exceed the ceiling by 1.1–1.7 dB at every oversampling factor, including the Force Max bounce.
-- At OS Off they exceed it by 0.2–1.2 dB with Punchy or high Transients, which covers Loud Pop, Rock Punch and Hip-Hop Low End.
+**Why that is a problem.** The clamp is sample-peak only (e769f33:src/dsp/CeilingClamp.h:10-16, :29-34; e769f33:src/dsp/AnabasisEngine.cpp:1188). The limiter acts before the down-sampling filter, whose overshoot reaches the clamp (e769f33:src/dsp/AnabasisEngine.cpp:1077-1078), and at 4x and above it ignores the TP switch because it reads the oversampled signal directly (e769f33:src/dsp/AnabasisEngine.cpp:653-656). The consequences:
+- In TP mode at a mid Loudness setting (50 %), true peaks exceed the ceiling by 1.1–1.7 dB at every oversampling factor, including the Force Max bounce.
+- At OS Off they exceed it by about 0.2–0.9 dB with Punchy or high Transients, which covers Loud Pop, Rock Punch and Hip-Hop Low End.
 - That violates DSP_POLICY invariant 4 (≤0.1 dBTP) by up to 17× the tolerance, while ADR_INDEX records ADR-0006 as Verified.
 - At 4x and above the TP toggle changes only the unit label.
+
 The display makes it worse. The warn colour is on in normal operation, so a real violation looks like every other pass. The holds are also judged against the current ceiling: lowering it paints earlier legal holds red, and raising it hides overs recorded under the old ceiling. The master ships about 1.5 dB over spec, and only external QC finds it.
 
-**Proposed workflow.** 1. Set the Ceiling, engage TP, and choose any Oversampling factor and Offline Render setting.
+**Proposed workflow.**
+
+1. Set the Ceiling, engage TP, and choose any Oversampling factor and Offline Render setting.
 2. The printed master holds ≤ ceiling + the stated tolerance at every factor, style and Transients setting.
 3. Read the TP row:
    - white means within the guarantee;
@@ -1427,11 +1485,16 @@ Until the DSP change merges, the manual and the TP tooltip state exactly where T
 - Gets the SP row's half-print slack (0.005 dB), at least in TP mode, so a hold printed equal to the ceiling is never red.
 - With TP off, shows an on-row, non-colour 'ISP' qualifier.
 - Both holds show a neutral 'stale' style with an inline 'ceiling changed' hint whenever the ceiling or TP mode differs from the values recorded at the last reset or hold rise.
+
 Colours: `colours::warn` stays and no amber is added (CVD decision at e769f33:src/gui/LookAndFeel.h:53-60).
+
 Text: the TP tooltip and the manual (§3.2, §3.3 and the Oversampling row) describe TP per factor.
+
 Layout: no new rows (ADR-0020 D6).
 
-**What changes in the interaction model.** - TP means the same thing at every oversampling factor: a dBTP delivery limit that the clamp enforces from its own TP estimate, not just a unit label.
+**What changes in the interaction model.**
+
+- TP means the same thing at every oversampling factor: a dBTP delivery limit that the clamp enforces from its own TP estimate, not just a unit label.
 - Warn-red has a single meaning: the guarantee in force was violated.
 - Changing the ceiling no longer changes the verdict on audio measured before the change; old holds are marked stale instead.
 
@@ -1441,7 +1504,7 @@ DSP:
 - Implement ADR-0006 D2/D3 and ADR-0002 D4 as recorded: a `TruePeakEstimator` tap on the clamp input, after the Post-EQ at base rate.
 - A base-rate lookahead of at least the estimator's 6-sample lag plus an attack. It must not depend on TP mode, under the ADR-0004 constant-allowance contract.
 - A smooth gain that holds the TP estimate ≤ ceiling. The sample hard clip stays as the backstop.
-- The owner names the yardstick behind the ≤0.1 dBTP promise: the 4x estimator reads 0.6–0.75 dB below a 32x reference on HF-heavy programme. Use a more accurate estimator or a stated margin, and correct the bound stated in TruePeak.h:29-33.
+- The owner names the yardstick behind the ≤0.1 dBTP promise: the 4x estimator reads 0.6–0.75 dB below a 32x reference on HF-heavy programme. Use a more accurate estimator or a stated margin, and correct the bound stated in e769f33:src/dsp/TruePeak.h:29-33.
 
 GUI:
 - Extract `LoudnessMeterView`'s inline paint rules into pure statics that `paint()` uses as its only source: `tpWarns`, `spWarns`, `formatReading`, `barFraction`.
@@ -1449,7 +1512,9 @@ GUI:
 
 Interim docs: a KNOWN_ISSUES true-peak entry, FUTURE_RISKS RISK-003 marked triggered, and ADR-0006's evidence entry downgraded in ADR_INDEX.
 
-**Gates.** - ARCHITECTURE_REVIEW_GATE ceiling-guarantee change: the CeilingClamp stage behind DSP_POLICY invariant 4.
+**Gates.**
+
+- ARCHITECTURE_REVIEW_GATE ceiling-guarantee change: the CeilingClamp stage behind DSP_POLICY invariant 4.
 - Reported-latency change. The clamp lookahead must be mode-independent. A TP-only lookahead conflicts with Accepted ADR-0003 option D (Consequences :239-241, footnote 4).
 - DSP signal-graph change (a new TP tap and gain node). It needs a new ADR that corrects ADR_INDEX, the ADR-0006 banner and Related code, and ADR-0015 D7, append-only under ADR_POLICY rule 4.
 - SESSION_COMPATIBILITY review, because TP-on sessions change voicing.
@@ -1479,12 +1544,16 @@ Real host: an external-meter check of a Force Max bounce, recorded in the [TEST-
 - A session saved with DELTA on reopens playing only the difference signal.
 The user pushes Loudness past 30 % at the default Oversampling Off and hears the result as 'the master'.
 
-**Why that is a problem.** - **Bypass is not matched.** The monitor gain is applied after the bypass mix (e769f33:src/dsp/AnabasisEngine.cpp:1284-1287), so BYPASS plays dry × g rather than dry at unity. The jump from processed to bypass is the same with MATCH on and off: 4.5 LU on music, 6.4 LU on pink noise. The louder-is-better bias that MATCH exists to remove survives the comparison the manual prescribes.
+**Why that is a problem.**
+
+- **Bypass is not matched.** The monitor gain is applied after the bypass mix (e769f33:src/dsp/AnabasisEngine.cpp:1284-1287), so BYPASS plays dry × g rather than dry at unity. The jump from processed to bypass is the same with MATCH on and off: 4.5 LU on music, 6.4 LU on pink noise. The louder-is-better bias that MATCH exists to remove survives the comparison the manual prescribes.
 - **The match gain is biased quiet.** The predict floor ignores compressor gain reduction, so the processed signal lands ~0.7–1.3 LU below the dry at macro settings.
 - **Monitor state is invisible.** Nothing says which monitor state is in force, or that the meters read before the monitor stage.
 - **The default voicing is dark.** At OS Off, any Clip Drive low-passes the whole programme (-2.0/-5.1/-11.7 dB at 10/15/20 kHz, 48 kHz). The Loudness macro switches it on at 30 % and it is printed into the bounce, yet the clipper is described as shaving peaks, not tone.
 
-**Proposed workflow.** 1. Switch MATCH on. An indicator in both views reads 'MATCH −x.x dB'.
+**Proposed workflow.**
+
+1. Switch MATCH on. An indicator in both views reads 'MATCH −x.x dB'.
 2. Toggle BYPASS. The user hears the delay-aligned dry at unity against the level-matched processed signal, and judges tone rather than level.
 3. DELTA shows 'DELTA', or 'DELTA — no effect while bypassed' when BYPASS is also on.
 4. While MATCH or DELTA is on, the STATISTICS header and out LUFS read 'pre-monitor'.
@@ -1493,13 +1562,17 @@ The user pushes Loudness past 30 % at the default Oversampling Off and hears the
 7. The manual says listening aids are inert in host offline bounces but are captured by realtime prints.
 8. The Oversampling row and tooltip state the top-end cost of OS Off where the user chooses it. The owner decides the default factor at the listening pass.
 
-**What changes in the UI.** - One persistent monitor-state indicator in both views.
+**What changes in the UI.**
+
+- One persistent monitor-state indicator in both views.
 - 'pre-monitor' tags on the STATISTICS header and on out LUFS.
 - A 'BYPASSED' caption in the graph well. The family BYPASS pill keeps its position, size, colour and dim.
 - The Oversampling tooltip (e769f33:src/gui/PluginEditor.cpp:759-762) and the manual's Oversampling row and §8 workflows state the OS-Off top-end loss.
 - All wording is owner copy (C8).
 
-**What changes in the interaction model.** - MATCH becomes a property of the processed (wet) leg only:
+**What changes in the interaction model.**
+
+- MATCH becomes a property of the processed (wet) leg only:
   - BYPASS always means the unprocessed input at unity;
   - MATCH means the processed signal brought to the input's loudness;
   - DELTA keeps ADR-0006 D8's dry − wet, scaled by g and labelled as such.
@@ -1515,14 +1588,18 @@ The user pushes Loudness past 30 % at the default Oversampling Off and hears the
 - **[TEST-001][test-001]:** a public, message-thread `refreshFromModel()` that `timerCallback` calls, so the indicator states are headlessly testable.
 - **[DSP-004][dsp-004]:** a regression test on the StageTrace `clipOut` tap that pins today's droop, and a KNOWN_ISSUES entry (or a widened KI-005 with 'Character' corrected to 'Loudness').
 
-**Gates.** - **[UX-009][ux-009]:** a DSP signal-order change on the monitor stage (hard stop), named at the gate. It needs a dated amendment to ADR-0006 D8's mechanism sentence and reworded DSP_POLICY inv 7/12 text; inv 10 is preserved. Render, reported latency and ceiling are untouched.
+**Gates.**
+
+- **[UX-009][ux-009]:** a DSP signal-order change on the monitor stage (hard stop), named at the gate. It needs a dated amendment to ADR-0006 D8's mechanism sentence and reworded DSP_POLICY inv 7/12 text; inv 10 is preserved. Render, reported latency and ceiling are untouched.
 - **[DSP-005][dsp-005]:** must stay within ADR-0006 D7 (stateless, floor-only, attenuation-only).
 - **[VIS-010][vis-010]:** Thread Model review (ADR-0011; THREAD_MODEL Meters→GUI row) for the MATCH-gain scalar.
 - **[UX-008][ux-008]:** BRAND_CONSISTENCY_CHECKLIST §A for the BYPASS pill.
 - **[DSP-004][dsp-004]:** the owner's ⊕ oversampling-default decision is a reported-latency change. Any droop filter is a DSP-graph change, and an FIR form conflicts with ADR-0003 item 2.
 - New captions and tags are owner copy (C8).
 
-**How success is verified.** - **Bypass level:** a test pins the MATCH+BYPASS relation on steady pink at macro settings. BYPASS equals dry at unity, and the matched wet sits within the agreed LU window of it.
+**How success is verified.**
+
+- **Bypass level:** a test pins the MATCH+BYPASS relation on steady pink at macro settings. BYPASS equals dry at unity, and the matched wet sits within the agreed LU window of it.
 - **Bypass null:** MATCH-off bypass is still bit-exact (invariant 7).
 - **DELTA:** DELTA+MATCH = g·(dry − wet) is pinned.
 - **Match bias:** [DSP-005][dsp-005]'s two acceptance criteria are prototyped, then pinned.
@@ -1549,7 +1626,9 @@ Nothing shows liveness either:
 
 The measurement standard is hidden too: the RMS reference and BS.1770-1 versus -2 do not appear on the rows. The number delivered against a spec therefore has an invisible, host-dependent scope.
 
-**Proposed workflow.** 1. Press RESET on the STATISTICS header. The header starts counting 'since reset m:ss'.
+**Proposed workflow.**
+
+1. Press RESET on the STATISTICS header. The header starts counting 'since reset m:ss'.
 2. Play the programme.
    - Rows show HOLD after ~0.5 s without a processed block.
    - 'NO AUDIO' shows before the first block.
@@ -1559,7 +1638,9 @@ The measurement standard is hidden too: the RMS reference and BS.1770-1 versus -
 
 Clicking the panel body only reads it; it never erases.
 
-**What changes in the UI.** - A labelled RESET text button on the STATISTICS header in both views. Its hit box extends into the 10 px top padding; it is focusable and has the accessible name 'Reset statistics'.
+**What changes in the UI.**
+
+- A labelled RESET text button on the STATISTICS header in both views. Its hit box extends into the 10 px top padding; it is focusable and has the accessible name 'Reset statistics'.
 - A required hint telling users where the old click-to-reset gesture moved.
 - A 'since reset m:ss' readout on the header.
 - HOLD/stale styling for the rows.
@@ -1567,7 +1648,9 @@ Clicking the panel body only reads it; it never erases.
 - The RMS unit names its reference ('dBFS AES' or 'dB RMS'). I and PLR carry a BS.1770-1 marker when that standard is selected.
 - No new rows and no height change (ADR-0020 D6).
 
-**What changes in the interaction model.** - Reset becomes a named command, not a side effect of any press.
+**What changes in the interaction model.**
+
+- Reset becomes a named command, not a side effect of any press.
 - A user reset clears only the session holds (I, ungated I, TP/SP, LRA, PLR); M, S and RMS keep rolling.
 - `prepareToPlay` and a state load keep the full clear.
 - Bypass pauses accumulation instead of mixing the input into the master's figures.
@@ -1579,16 +1662,20 @@ Clicking the panel body only reads it; it never erases.
 - Liveness is detected from the GR ring head, so it needs no new publication.
 - While `bypassMix` > 0, integrated and LRA commits are suspended through LoudnessMeter's existing `integratedFrom`/`lraFrom` watermarks and resume with straddle offsets. There is no `clearSessionCumulative`.
 - Engine-side session TP/SP holds are gated per frame. `renderPeakChunk` and the GR-history feed are unchanged.
-- The display rules live in HL1's [TEST-004][test-004] statics.
+- The display rules live in the [TEST-004][test-004] statics of high-leverage change 1.
 - The USER_MANUAL §3.4 reset matrix and the §7.4 per-slot/shared list are corrected.
 
-**Gates.** - **[UX-002][ux-002]:** a dated ADR-0020 Consequences amendment note, not a rewrite. It changes a recorded family convention (Anamorph's click-to-reset), so it needs owner acknowledgement and a BRAND_CONSISTENCY_CHECKLIST cost-asymmetry note.
+**Gates.**
+
+- **[UX-002][ux-002]:** a dated ADR-0020 Consequences amendment note, not a rewrite. It changes a recorded family convention (Anamorph's click-to-reset), so it needs owner acknowledgement and a BRAND_CONSISTENCY_CHECKLIST cost-asymmetry note.
 - **[VIS-001][vis-001]:** conflicts with Accepted ADR-0020's session-cumulative, render-tap contract. It needs an owner-approved amendment or a superseding ADR before code, and DESIGN §1.2 is reconciled.
 - **Thread Model review:** the since-reset counter and the engine-side session holds.
 - **[VIS-005][vis-005]:** KI-007 item 6 (an owner listening decision) comes before any spectrum idle change.
 - **Owner copy (C8):** the tags, the RESET label and the LRA threshold.
 
-**How success is verified.** - A state test clicks and right-clicks across the whole panel body and asserts nothing resets.
+**How success is verified.**
+
+- A state test clicks and right-clicks across the whole panel body and asserts nothing resets.
 - RESET clears only the holds, and M/S/RMS keep rolling with audio stopped ([DOC-002][doc-002] regression).
 - The since-reset readout equals processed audio time.
 - A bypassed passage leaves I, LRA, PLR and the session holds unchanged. This replaces the integrated route in e769f33:tests/dsp_tests.cpp:5777-5846, which would otherwise go vacuous.
@@ -1600,9 +1687,11 @@ Clicking the panel body only reads it; it never erases.
 
 **Findings.** [VIS-007][vis-007], [VIS-003][vis-003], [VIS-006][vis-006], [VIS-021][vis-021], [VIS-024][vis-024], [VIS-018][vis-018], [VIS-015][vis-015], [VIS-016][vis-016], [UI-010][ui-010], [TEST-003][test-003], [VIS-017][vis-017], [VIS-022][vis-022], [VIS-023][vis-023], [UI-007][ui-007]
 
-**What users do today.** In Simple the user judges how hard they are pushing from a gold trace in a 108 px plot with no scale. Beside it sits a STATISTICS panel that is mostly empty glass. The only gain reduction shown is the limiter's; the clipper that Loudness engages above 30 %, and the compressor, never appear outside the Advanced COMP lane. The spectrum has no axes. In Advanced the two lanes mean different things: COMP shows detector GR and ignores Mix, while LIMITER shows one block in four with no peak hold.
+**What users do today.** In Simple the user judges how hard they are pushing from a gold trace in a 108 px plot with no scale. Beside it sits a STATISTICS panel that is mostly empty glass. The only gain reduction shown is the limiter's; the clipper that Loudness engages above 30 % appears in no GR display, and the compressor appears only in the Advanced COMP lane. The spectrum has no axes. In Advanced the two lanes mean different things: COMP shows detector GR and ignores Mix, while LIMITER shows one block in four with no peak hold.
 
-**Why that is a problem.** - **No GR number.** The most basic maximizer reading, dB of reduction now and at peak, cannot be stated in either view.
+**Why that is a problem.**
+
+- **No GR number.** The most basic maximizer reading, dB of reduction now and at peak, cannot be stated in either view.
 - **Spectrum 6 dB hot.** Hann compensation is applied twice (e769f33:src/gui/SpectrumView.cpp:202-203), so everything between -6 and 0 dBFS collapses onto one plateau, exactly where a maximizer's output lives.
 - **HF tones under-read.** Above ~2.3 kHz (48 kHz, Simple at M) each column is the dB mean of its covered bins, so a 5.86 kHz sine draws near -53 dB.
 - **No input side.** Nothing meters the input, and no figure says how much louder the processing made the programme.
@@ -1616,7 +1705,9 @@ Clicking the panel body only reads it; it never erases.
 
 In Simple the graph well grows to at least 180 px, so the view's main maximizer visual can be read without switching to Advanced.
 
-**What changes in the UI.** - **GR readout:** 0.1 dB resolution, with a no-data form when the ring stalls. Placement follows ADR-0023 d7's corner analysis: beside out LUFS in Simple, or in the LIMITER band that [UI-011][ui-011] frees.
+**What changes in the UI.**
+
+- **GR readout:** 0.1 dB resolution, with a no-data form when the ring stalls. Placement follows ADR-0023 d7's corner analysis: beside out LUFS in Simple, or in the LIMITER band that [UI-011][ui-011] frees.
 - **Annotation overlay:** fixed, low-contrast and inside each plot, with no geometry change and fixed scales (ADR-0023 d6). Lane captions carry 0/12/24 marks.
 - **Trace and pill (P3):** a dark under-stroke on the GR trace, a dB-mapped waveform fill, and a glyph backing on the GR|SPEC pill.
 - **Spectrum:** calibrated with ~+3 dB of headroom (or clamped columns marked); a max reducer; the input trace at ≥3:1 contrast.
@@ -1624,7 +1715,9 @@ In Simple the graph well grows to at least 180 px, so the view's main maximizer 
 - **Input metering:** 'IN' and 'GAIN' readouts.
 - **Simple layout:** re-derived inside 940×720 (preferred option A: the Advanced bottom-strip grammar).
 
-**What changes in the interaction model.** - The graphs become instruments. The user targets a GR amount and checks it as a number.
+**What changes in the interaction model.**
+
+- The graphs become instruments. The user targets a GR amount and checks it as a number.
 - Simple gains the whole gain-staging loop (input → reduction → loudness gained) without a view switch.
 - Scales stay fixed, so a picture means the same thing in every session.
 
@@ -1637,7 +1730,9 @@ In Simple the graph well grows to at least 180 px, so the view's main maximizer 
 - **Input figures:** publish the dry meter's short-term loudness and an input sample-peak hold as relaxed scalars in the existing once-per-block publish.
 - **[TEST-003][test-003]:** a frame-sequence harness inside AnabasisStateTests, with FrameClock's pacing extracted as a pure, timestamp-driven function.
 
-**Gates.** - ADR-0023 d7 (the bottom-left pill is one whole toggle) and d6 (fixed scales) constrain placement and ticks. Moving the pill would conflict.
+**Gates.**
+
+- ADR-0023 d7 (the bottom-left pill is one whole toggle) and d6 (fixed scales) constrain placement and ticks. Moving the pill would conflict.
 - [VIS-015][vis-015] is a new metering surface and needs an ADR-0020 amendment or new ADR with owner sign-off. [VIS-007][vis-007] needs one only if it is placed in the panel.
 - [UI-010][ui-010] needs a dated note against D6's 'neither view relayouts'; the frame stays 940×720 (BRAND checklist A).
 - Thread Model review for the dry-tap scalars and the processor-side GR hold.
@@ -1647,7 +1742,9 @@ In Simple the graph well grows to at least 180 px, so the view's main maximizer 
 - [TEST-003][test-003] lives in AnabasisStateTests; a new target would be a Build System change.
 - Tick labels and the GR label are owner copy (C8).
 
-**How success is verified.** - **Calibration:** a unit test shows a bin-centred 0 dBFS sine reads 0.0 dB ±0.1.
+**How success is verified.**
+
+- **Calibration:** a unit test shows a bin-centred 0 dBFS sine reads 0.0 dB ±0.1.
 - **HF tones:** a 5.86 kHz tone reads at its true level (±1 dB) at 48 kHz Simple M, and again at 96 and 192 kHz after decimation.
 - **GR readout:** equals the ring's deepest entry over its window, and shows the no-data form on a stall.
 - **History scrolling:** [TEST-003][test-003] asserts, against scripted 60/120/144 Hz clocks with steady, jittered and bursty delivery:
@@ -1662,7 +1759,7 @@ In Simple the graph well grows to at least 180 px, so the view's main maximizer 
 
 **Findings.** [INPUT-017][input-017], [INPUT-001][input-001], [UI-002][ui-002], [INPUT-013][input-013], [INPUT-009][input-009], [INPUT-002][input-002], [INPUT-007][input-007], [STATE-007][state-007], [INPUT-010][input-010], [INPUT-011][input-011], [INPUT-003][input-003], [INPUT-004][input-004], [INPUT-006][input-006], [INPUT-016][input-016], [INPUT-015][input-015], [UI-009][ui-009], [UX-016][ux-016], [TECH-003][tech-003], [TEST-005][test-005]
 
-**What users do today.** **Typing:** double-clicking a value box and pressing Return without typing turns Loudness 0.5 % into 50 %, because the editor is pre-filled with the unit-stripped text (e769f33:src/gui/LookAndFeel.cpp:796-817). Garbage, an empty field, a comma decimal or U+2212 all commit 0, which sets the Ceiling to 0.00 dB. Typing 'nan' mutes the output and is saved with the session.
+**What users do today.** **Typing:** double-clicking a value box and pressing Return without typing turns Loudness 0.5 % into 50 %, because the editor is pre-filled with the unit-stripped text (e769f33:src/gui/LookAndFeel.cpp:796-817). Garbage, an empty field or U+2212 commit 0, which sets the Ceiling to 0.00 dB, and a comma decimal is cut at the comma ('-2,5' commits -2.00). Typing 'nan' mutes the output and is saved with the session.
 
 **Pointer:**
 - Right-click performs the primary action: it toggles A/B, MATCH and FREEZE, runs Copy, resets STATISTICS and jumps the faders.
@@ -1691,7 +1788,9 @@ The gesture layer also sits on a restore path that can bring the host down. The 
 - Keyboard users see focus, tab panel by panel, and close any overlay with Escape; every control has a name.
 - Last, once confirm-without-typing is safe, a single click on a readout opens its editor. I-beam and drag cursors and a complete gesture table in the manual make the grammar discoverable.
 
-**What changes in the UI.** - **Inline editor:** centred, in palette colours, with the caret at the end and a ~16 px box. A dim, non-editable unit suffix never reaches the parser, and a rejected entry flashes warn.
+**What changes in the UI.**
+
+- **Inline editor:** centred, in palette colours, with the caret at the end and a ~16 px box. A dim, non-editable unit suffix never reaches the parser, and a rejected entry flashes warn.
 - **Focus:** a distinct, non-accent focus indicator (≥3:1 contrast), shown only while the plugin window has focus.
 - **Settings:** a close/Done control, and focus contained in the panel. The Settings toggles' hit areas shrink to their painted extent.
 - **Cursors:** I-beam over readouts, drag cursor over knobs and faders.
@@ -1700,13 +1799,15 @@ The gesture layer also sits on a restore path that can bring the host down. The 
   - role, title and press action for ABControl, EditedDot and the GR|SPEC pill;
   - the MATCH parameter's display name becomes 'Loudness Match', with its ID unchanged.
 
-**What changes in the interaction model.** - One user intention is one gesture and one undo step, whatever the device.
+**What changes in the interaction model.**
+
+- One user intention is one gesture and one undo step, whatever the device.
 - Secondary buttons are inert; context menus wait for owner design.
 - A key burst on a managed parameter detaches it, exactly like a drag. The owner decides once, for keys and wheel alike, whether a burst over a macro re-engages.
 - Key steps are in normalised travel (1 %, Shift 0.1 %, Page 10 %). The Ceiling steps 0.1/0.01/1 dB on the ADR-0024 grid.
 - A double-click reset counts only presses the component itself received.
 
-**Technical support required.** Roadmap Phase 3 ([TECH-003][tech-003] and [TEST-005][test-005] first, then [INPUT-017][input-017], [INPUT-001][input-001], [UI-002][ui-002], [INPUT-013][input-013], [INPUT-009][input-009], [INPUT-002][input-002], [INPUT-007][input-007], [STATE-007][state-007], [INPUT-004][input-004], [INPUT-003][input-003], [INPUT-006][input-006], [INPUT-016][input-016], and [UX-016][ux-016] last).
+**Technical support required.** Roadmap Phase 3 ([TECH-003][tech-003] and [TEST-005][test-005] first, then [INPUT-017][input-017], [INPUT-001][input-001], [UI-002][ui-002], [INPUT-013][input-013], [INPUT-009][input-009], [INPUT-002][input-002], [INPUT-007][input-007], [STATE-007][state-007], [INPUT-004][input-004], [INPUT-003][input-003], [INPUT-006][input-006], [INPUT-016][input-016], and [UX-016][ux-016] last; [INPUT-010][input-010], [INPUT-011][input-011], [INPUT-015][input-015] and [UI-009][ui-009] ride along as P3).
 
 Text entry:
 - ValueBox remembers the text it placed at `editorShown`; unchanged text on commit sends nothing.
@@ -1725,9 +1826,11 @@ Restore safety:
 - [TECH-003][tech-003] step 1 builds the undo pre-state from each parameter's atomics (or a message-thread snapshot) instead of `copyState()` under the lock.
 - A tsan CI job starts with a liveness canary.
 
-**Gates.** - **Macro-layer contract** (ADR-0005 items 3 and 6; MODE inv 3; DESIGN §5.3):
+**Gates.**
+
+- **Macro-layer contract** (ADR-0005 items 3 and 6; MODE inv 3; DESIGN §5.3):
   - [STATE-007][state-007]'s detach and re-engage rules for key and wheel bursts are owner decisions at the gate;
-  - [INPUT-013][input-013]'s filter changes which pointer events count as a macro gesture (e769f33:src/PluginProcessor.cpp:283-308), so it is confirmed there.
+  - [INPUT-013][input-013]'s filter changes which pointer events count as a macro gesture (e769f33:src/PluginProcessor.cpp:285-308), so it is confirmed there.
 - **[TECH-003][tech-003] step 1** is the undo-architecture change that KI-008 routes to ARCHITECTURE_REVIEW_GATE. It must show the ADR-0018 grammar and the raw-exact restore unchanged. Step 2 (restore staging) is a Thread Model hard stop and is excluded.
 - **[TEST-005][test-005]** is recorded as an ADR-0034 sanitizer-set amendment; a new CI job is arguably a Build System change.
 - **[UI-009][ui-009]** is a display-name change under PARAMETER_COMPATIBILITY_POLICY rule 2.
@@ -1735,7 +1838,9 @@ Restore safety:
 - **Brand:** gesture, parser and Settings-geometry divergences go into the [UI-018][ui-018] ledger. The focus look is a Level-5 D item.
 - **Owner copy (C8):** hints.
 
-**How success is verified.** - **No-op commit:** a state test drives the real ValueBox for every parameter, including 0.1, 0.5 and 1 % on the seven percent parameters. Opening and confirming by Return, Tab or click-away changes nothing and opens no gesture.
+**How success is verified.**
+
+- **No-op commit:** a state test drives the real ValueBox for every parameter, including 0.1, 0.5 and 1 % on the seven percent parameters. Opening and confirming by Return, Tab or click-away changes nothing and opens no gesture.
 - **Parser:** garbage, empty, 'nan' and 'inf' never reach a parameter; '0', '.5', '-3,5' and '−3' parse.
 - **Secondary buttons:** a tree walk sends right and middle presses to every control and asserts no value, toggle, reset or gesture changes.
 - **Fader press:** a press off the thumb with no movement changes nothing.
@@ -1752,7 +1857,9 @@ Restore safety:
 
 **What users do today.** Following the FAQ, the user engages LOCK and browses factory presets with ‹ ›. They save with the pre-filled name, reopen the project the next day, and move between candidates with A/B, Copy and Undo. In Advanced there is no LOCK control at all.
 
-**Why that is a problem.** - **Locked browse drops delivery settings.** A factory browse resets TP, Dither and Noise Shaping to Off. A locked '-1.00 dBTP' becomes '-1.00 dB' sample-peak and 16-bit dither turns itself off, because the lock is checked only for the ceiling value (e769f33:src/PresetManager.cpp:67, :314).
+**Why that is a problem.**
+
+- **Locked browse drops delivery settings.** A factory browse resets TP, Dither and Noise Shaping to Off. A locked '-1.00 dBTP' becomes '-1.00 dB' sample-peak and 16-bit dither turns itself off, because the lock is checked only for the ceiling value (e769f33:src/PresetManager.cpp:67, :314).
 - **LOCK is invisible in Advanced** (the `simpleOnly` list at e769f33:src/gui/PluginEditor.cpp:1797-1800).
 - **Save is silent.** It overwrites an existing preset without asking, and the pre-filled name makes overwriting the default. Empty names and stripped characters give no feedback.
 - **The edited marker lies.** '*' is lost on reopen, and on long names it is truncated away (e769f33:src/gui/PluginEditor.cpp:2165).
@@ -1764,7 +1871,9 @@ Restore safety:
   - Undo does not say what it reverts, so pressing it after an unrecorded control (Settings, LOCK, LEARN, BYPASS) reverts something else.
   - Every A/B switch dips to silence for one host buffer plus ~28 ms, even between identical slots.
 
-**Proposed workflow.** - **LOCK:** holds the delivery limit as value plus TP mode, and shows it as a lock mark on both Ceiling readouts and a scoped 'PRESET LOCK' toggle in both views. Browsing under LOCK cannot change delivery settings; the owner rules on dither and shaping.
+**Proposed workflow.**
+
+- **LOCK:** holds the delivery limit as value plus TP mode, and shows it as a lock mark on both Ceiling readouts and a scoped 'PRESET LOCK' toggle in both views. Browsing under LOCK cannot change delivery settings; the owner rules on dither and shaping.
 - **Save:**
   - 'Enter a name' with Save disabled while the cleaned name is empty;
   - 'Will save as …' when the name is cleaned;
@@ -1773,12 +1882,14 @@ Restore safety:
 - **Preset menu:** 'Show Preset Folder', and '(unreadable)' rows for files that cannot load.
 - **Reopen:** a reopened project shows its '*' state honestly ('unknown' until the per-slot flag ADR lands), and '*' is never truncated. A failed restore shows a persistent, dismissible notice.
 - **A/B, Copy, Undo:**
-  - hovering A/B previews 'B: <name> *', and '=' marks equal slots;
+  - hovering A/B previews `B: <name> *`, and '=' marks equal slots;
   - Copy shows 'A→B' and pulses the destination, or says 'already identical';
   - Undo and Redo name the step they would apply and acknowledge it afterwards;
   - switching between identical slots makes no dip.
 
-**What changes in the UI.** - **Save overlay:** a status line and a two-step Replace flow (e769f33:src/gui/PluginEditor.cpp:1454, :1476-1484).
+**What changes in the UI.**
+
+- **Save overlay:** a status line and a two-step Replace flow (e769f33:src/gui/PluginEditor.cpp:1454, :1476-1484).
 - **Preset name:** a reserved ' *' slot with the sibling's consonant-skeleton abbreviation; the name draws dim when no menu row is ticked.
 - **Notice surface:** one top-bar surface for rejected loads, preset-file load failures and ADR-0026 partial drops.
 - **Menu:** a 'Show Preset Folder' item.
@@ -1788,13 +1899,15 @@ Restore safety:
   - an Advanced LOCK toggle bound to the same `int_ceilingLock`, in the band [UI-011][ui-011] frees;
   - lock marks on both Ceiling readouts.
 
-**What changes in the interaction model.** - LOCK means 'hold my delivery settings', not 'skip one number'.
+**What changes in the interaction model.**
+
+- LOCK means 'hold my delivery settings', not 'skip one number'.
 - Overwriting a preset becomes a two-step confirm.
 - The edited marker is truthful for the whole session.
 - A/B, Copy and Undo can be previewed before they act and are acknowledged after.
 - A switch that changes nothing is silent.
 
-**Technical support required.** Roadmap Phase 0 ([STATE-002][state-002] interim docs and superseding ADR; [UX-003][ux-003] + [UX-018][ux-018]), Phase 4 ([STATE-001][state-001], [UI-013][ui-013], [STATE-005][state-005], [UX-024][ux-024], [UX-011][ux-011], [UX-012][ux-012], [STATE-003][state-003], [DSP-002][dsp-002]) and Phase 5 ([UX-001][ux-001]).
+**Technical support required.** Roadmap Phase 0 ([STATE-002][state-002] interim docs and superseding ADR; [UX-003][ux-003] + [UX-018][ux-018]; [STATE-018][state-018]'s save-prompt evidence in the [TEST-002][test-002] pass), Phase 4 ([STATE-001][state-001], [UI-013][ui-013], [STATE-005][state-005], [UX-024][ux-024], [UX-011][ux-011], [UX-012][ux-012], [STATE-003][state-003], [DSP-002][dsp-002], with [UX-017][ux-017], [STATE-015][state-015] and [STATE-010][state-010] as P3) and Phase 5 ([UX-001][ux-001]).
 - **LOCK:** one shared `isLockedByPresetLock(id)` predicate replaces both hand-written ceiling checks and also covers `truePeakMode`. It is expressed through the shared exclusion walk (`forEachPresetParameter`).
 - **Save:** the save decision is factored out of the private lambda so a test can exercise it outside the real preset folder.
 - **Reopen:** `presetBaseline` is seeded at the end of `setStateInformation`, and the load renders 'unknown'.
@@ -1803,7 +1916,9 @@ Restore safety:
 - **Undo labels:** computed by diffing the top entry against `saveSlotFromLive` on the message thread.
 - **Folder:** `revealToUser`, with a `startAsProcess` fallback.
 
-**Gates.** - **[STATE-002][state-002]:**
+**Gates.**
+
+- **[STATE-002][state-002]:**
   - conflicts with Accepted ADR-0010 (lockable set {ceiling} at :191-195; option I rejected at :87-90), so it needs a superseding ADR;
   - is a Parameter Registry change (PARAMETER_COMPATIBILITY_POLICY rule 6);
   - is a Serialization Registry semantic change to `int_ceilingLock` (SERIALIZATION_REGISTRY.md:337-339);
@@ -1816,7 +1931,9 @@ Restore safety:
 - **[UI-013][ui-013]** must not alter `currentPresetName()` (a serialized SLOT field under ADR-0022).
 - **Owner copy (C8):** all prompts and labels.
 
-**How success is verified.** - **LOCK:**
+**How success is verified.**
+
+- **LOCK:**
   - `testTheDirtyMarkerMeasuresOnlyWhatAPresetCanCarry` pins the shared lock predicate;
   - under LOCK, a walk through every factory preset leaves the ceiling value and TP mode unchanged (and dither per the owner's rule).
 - **Save decision tests:**
@@ -1824,7 +1941,7 @@ Restore safety:
   - a stripped or reserved name shows 'Will save as';
   - an existing target is not written until a fresh confirm, and an auto-repeating Return cannot confirm it;
   - a failed write keeps the panel open.
-- **Reopen:** after `setStateInformation`, '*' behaves as in a fresh session; the two tests at state_tests.cpp:1644-1673 and :2059-2067 are updated.
+- **Reopen:** after `setStateInformation`, '*' behaves as in a fresh session; the two tests at e769f33:tests/state_tests.cpp:1644-1673 and :2059-2067 are updated.
 - **Notice:** a rejected blob raises it, and a later good load clears it.
 - **A/B:**
   - `slotsEquivalent()` agrees with the Copy guard;
@@ -1835,11 +1952,15 @@ Restore safety:
 
 **Findings.** [STATE-004][state-004], [UX-005][ux-005], [UX-004][ux-004], [VIS-011][vis-011], [STATE-009][state-009], [UX-019][ux-019], [MODEL-001][model-001], [MODEL-003][model-003], [DOC-006][doc-006], [UI-001][ui-001], [TECH-002][tech-002], [MODEL-004][model-004], [UX-013][ux-013], [UX-014][ux-014], [UI-005][ui-005], [UX-006][ux-006], [UI-006][ui-006]
 
-**What users do today.** - **Learn and Freeze:** in Simple the user clicks LEARN, plays material and clicks again, then clicks FREEZE for 'one consistent sound' (manual §4).
+**What users do today.**
+
+- **Learn and Freeze:** in Simple the user clicks LEARN, plays material and clicks again, then clicks FREEZE for 'one consistent sound' (manual §4).
 - **Macro layer:** in Advanced the user hand-edits managed knobs, each then marked by a 7 px dot, returns to Simple and nudges a macro.
 - **Inert controls:** the user tunes the Release knobs, SHAPE and Phase, and after loading Transparent Master or Classical Dynamics also tries the Character macro.
 
-**Why that is a problem.** - **Freeze.** Any `prepareToPlay`, including one at the same rate and block size on transport start or bounce, silently drops the frozen trims from the audio. FREEZE stays lit and the save keeps the vector (e769f33:src/dsp/AdaptiveEngine.h:118-121).
+**Why that is a problem.**
+
+- **Freeze.** Any `prepareToPlay`, including one at the same rate and block size on transport start or bounce, silently drops the frozen trims from the audio. FREEZE stays lit and the save keeps the vector (e769f33:src/dsp/AdaptiveEngine.h:118-121).
 - **Learn.** Its state shows only through text colour:
   - a stop before 5 s is silently refused;
   - a commit gets no acknowledgement;
@@ -1854,7 +1975,9 @@ Restore safety:
   - Character under the Clean model in two factory presets.
 - **Help layer.** Almost all explanation sits in tooltips that ship off.
 
-**Proposed workflow.** - **FREEZE:** means the audio stays exactly what was frozen, across any host re-prepare.
+**Proposed workflow.**
+
+- **FREEZE:** means the audio stays exactly what was frozen, across any host re-prepare.
 - **LEARN**, in both views:
   - a latched running state, with progress over the 5 s minimum;
   - 'waiting for audio' before the first processed block;
@@ -1867,7 +1990,9 @@ Restore safety:
 - **Inert controls:** they render dim but stay live.
 - **Captions and footer:** the AUTO pills sit in their Release columns, the combos carry captions, and Settings shows a latency footer.
 
-**What changes in the UI.** - **LEARN placement:** LEARN joins the shared utility toggle cluster; the 92/92/100 px cells are re-balanced and `kUtilityH` is unchanged.
+**What changes in the UI.**
+
+- **LEARN placement:** LEARN joins the shared utility toggle cluster; the 92/92/100 px cells are re-balanced and `kUtilityH` is unchanged.
 - **LEARN state:** a progress ring on a lit background, plus the learned marker.
 - **Adaptive readout:** effective-value markers, dimmed when their stage is inert and hidden until `hasPublishedTrims()`. A Simple adaptive status reads both the published and the retained trim sets.
 - **Re-engage notice** beside the macro.
@@ -1878,22 +2003,26 @@ Restore safety:
 - **Settings:** a latency footer, and an inactive Phase row with a hint.
 - **Colour:** one reserved, non-amber state-colour role, paired with a non-colour cue.
 
-**What changes in the interaction model.** - **Adaptive state** has explicit start, stop, acknowledge and reset, and survives host lifecycle events exactly as displayed.
+**What changes in the interaction model.**
+
+- **Adaptive state** has explicit start, stop, acknowledge and reset, and survives host lifecycle events exactly as displayed.
 - **The macro layer** announces an overwrite at the moment it happens and offers undo.
 - **A control's look** says whether it is live.
 - **Meaning** lives on the surface, not in the optional help layer.
 - **Owner decisions that remain:** carrying trims with Freeze off, and axis-scoped re-engage.
 
-**Technical support required.** Roadmap Phase 0 ([STATE-004][state-004]), Phase 4 ([MODEL-001][model-001] + [DOC-006][doc-006], [MODEL-003][model-003], [UI-001][ui-001] + [TECH-002][tech-002]) and Phase 5 ([UX-005][ux-005], [UX-004][ux-004], [STATE-009][state-009], [VIS-011][vis-011], [UX-013][ux-013] + [MODEL-004][model-004], [UI-005][ui-005], [UX-006][ux-006], [UI-006][ui-006]).
+**Technical support required.** Roadmap Phase 0 ([STATE-004][state-004]), Phase 4 ([MODEL-001][model-001] + [DOC-006][doc-006], [MODEL-003][model-003], [UI-001][ui-001] + [TECH-002][tech-002]) and Phase 5 ([UX-005][ux-005], [UX-004][ux-004], [STATE-009][state-009], [VIS-011][vis-011], [UX-013][ux-013] + [MODEL-004][model-004], [UI-005][ui-005], [UX-006][ux-006], [UI-006][ui-006], with [UX-019][ux-019] and [UX-014][ux-014] as P3).
 - **Freeze across re-prepare:** while Freeze is on, `AdaptiveEngine::reset()` restores the four published trim atomics and `pubTrimEver`. It leaves the retained set and its generation untouched; `publishTrims(true)` would reopen round-42's slot-isolation defect.
 - **Freeze across A/B:** an A/B switch into a Freeze-ON slot with no FROZEN_TRIMS stages a zero vector.
-- **Re-engage notice:** fed by a processor-side, message-thread signal that fires only when `pendingReengage` clears a non-empty mask (e769f33:src/PluginProcessor.cpp:283-308).
+- **Re-engage notice:** fed by a processor-side, message-thread signal that fires only when `pendingReengage` clears a non-empty mask (e769f33:src/PluginProcessor.cpp:285-308).
 - **Inert controls:** one pure, message-thread `isEffective(paramId, state)`.
 - **Detach badges:** paint reads a published `std::atomic<uint32_t>` bitmask ([TECH-002][tech-002] b), or THREAD_MODEL records the existing read (a).
 - **Learn reset:** a helper that pairs the `stagedAdaptive*` stores with `engine.restoreNeverLearned()`.
 - **Factory presets:** Transparent Master and Classical Dynamics move from Clean to Tape with Character 0.00, checked by a null test.
 
-**Gates.** - **[STATE-004][state-004]:** a Freeze-semantics change (MODE_AND_ADAPTATION_POLICY Enforcement: ARCHITECTURE_REVIEW_GATE plus an AI Agent Hard Stop). It needs a new ADR cross-linking ADR-0014.
+**Gates.**
+
+- **[STATE-004][state-004]:** a Freeze-semantics change (MODE_AND_ADAPTATION_POLICY Enforcement: ARCHITECTURE_REVIEW_GATE plus an AI Agent Hard Stop). It needs a new ADR cross-linking ADR-0014.
 - **[VIS-011][vis-011]:** implements Accepted ADR-0005 d10 and must stay display-only.
 - **[MODEL-001][model-001]:**
   - part (c), and any lane-versus-macro precedence change, is a macro-layer contract hard stop (ADR-0005 d6, MODE inv 3, OQ-004, DESIGN §5.3);
@@ -1907,7 +2036,9 @@ Restore safety:
   - the state-colour role, together with the accent swatch and colour-blind pass;
   - the Learn material wording.
 
-**How success is verified.** - **Freeze across re-prepare:** Freeze on → `prepareToPlay` at the same and at a different rate/block → the rendered output equals the frozen audition.
+**How success is verified.**
+
+- **Freeze across re-prepare:** Freeze on → `prepareToPlay` at the same and at a different rate/block → the rendered output equals the frozen audition.
 - **Freeze across A/B:** A/B into a vectorless Freeze-ON slot → re-prepare → save → no FROZEN_TRIMS; the applied vector and the saved record agree.
 - **Learn:** state tests through `refreshFromModel()` with an injected clock cover refusal, queued stop, commit acknowledgement and the learned marker, in both views.
 - **Overlay:** hidden until trims publish, and dimmed when its stage is inert.
@@ -1937,6 +2068,8 @@ Restore safety:
 
 ### Rejected — not justified
 
+The first two entries are the findings whose final decision is Reject. The rest are rejected sub-proposals of findings that stay in the roadmap under Modify: the finding is addressed, but not in the way named here.
+
 - **A value-box drag released outside the window leaves a knob stuck in its pressed state** ([UI-020][ui-020]) — Refuted. X11 delivers the outside release, and the pinned JUCE converts a Windows capture loss into mouseUp. Reopen only on a host-specific field report.
 - **Input Gain shows '-0.0 dB' after a host write** ([UI-022][ui-022]) — The premise is refuted: the true default shows '0.0 dB', and '-0.0' appears only for values that really are below it. Any symmetric zero rounding belongs in [UI-003][ui-003]'s display-format table.
 - **Sub-proposal: an amber 'advisory' style for the TP row when TP is off** ([VIS-002][vis-002]) — It contradicts the recorded colour-blindness decision that moved warn off amber (e769f33:src/gui/LookAndFeel.h:53-60). Keep `colours::warn` and add the non-colour 'ISP' qualifier instead.
@@ -1949,6 +2082,8 @@ Restore safety:
 - **Sub-proposal: a stateful predict/measure handover or a boost in MATCH** ([DSP-005][dsp-005]) — It conflicts with Accepted ADR-0006 D7 ('stateless, floor-only, attenuation-only') and with DSP_POLICY invariant 10 (no continuous AGC).
 
 ### Deferred — worthwhile, not yet
+
+The first seven entries are the findings whose decision is Defer. The entries after them are deferred parts of findings whose own decision is Proceed, Modify or Investigate further (see the index), and the rest of each of those findings is in the roadmap.
 
 - **A glyph marking which Advanced knobs the macros manage, before any edit** ([UX-007][ux-007]) — Owner sign-off that reverses the 0.1.3 directive reducing per-knob annotation (CHANGELOG.md:1426-1429). It is best designed after [MODEL-001][model-001]'s notice and [UI-001][ui-001]'s badge rework, since detached knobs are already badged when the edit lands.
 - **Free or host-driven window resize instead of the five fixed steps** ([UX-021][ux-021]) — An owner or family decision (an OPEN_QUESTIONS entry) on stepped versus free resize. A continuous stored scale conflicts with Accepted ADR-0017, and a new persisted size field is a serialization gate. [UX-020][ux-020]'s screen-aware steps land first; the brief and checklist wording is synced through [DOC-007][doc-007].
@@ -1968,6 +2103,8 @@ Restore safety:
 
 ### Investigate further — evidence insufficient
 
+The first six entries are the findings whose decision is Investigate further. The last three name evidence still open for parts of Modify findings ([VIS-009][vis-009], [STATE-004][state-004], [UX-010][ux-010], [UX-020][ux-020]), which are in the roadmap.
+
 - **KI-012: the owner reported that the Linux editor accepts no mouse input on a real session** ([TECH-001][tech-001]) — On a current JUCE 9.0.1 build (the e769f33 CI artifact):
 - whether the report still reproduces on the same machine;
 - a same-machine, same-host, same-format A/B of Anamorph and Anabasis;
@@ -1985,11 +2122,13 @@ Collect it in [TEST-002][test-002]'s Linux session. Patching or moving the JUCE 
 - a completed Learn.
 Also whether the latency restart from an Oversampling change alone marks the project dirty. If any host fails, the fix is a message-thread `updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true))`, suppressed during restore and preset apply. Detecting the Learn commit through a new audio→message flag would be a thread-model gate.
 - **GR history stepping on hosts that deliver audio in bursts (OQ-017)** ([VIS-019][vis-019]) — Observed stepping and stalls of the GR trace in REAPER with anticipative FX and in Cubase with ASIO-Guard, during steady playback and at play-start, seek and loop. Also measure how far the trace's newest edge leads audible playback by the render-ahead depth. A lag allowance conflicts with ADR-0038 clause 3, and [TEST-003][test-003]'s harness must pin whichever answer is chosen.
-- **Does raising Oversampling make the output clamp clip more?** ([DSP-007][dsp-007]) — - Whole-output folded-component energy at OS Off versus 2x, 4x, 16x and Force Max, at Loudness 50 %, on a multitone or swept sine.
-- The clamp-error spectrum at 4x and 16x.
-- The same measurements on real programme.
-- A loudness-matched blind listening comparison.
-Until then, 'clamp engagements at OS ≥2x and Force Max ≤ OS Off' is tracked as a [DSP-001][dsp-001] acceptance item, and the Oversampling advice stays as it is.
+- **Does raising Oversampling make the output clamp clip more?** ([DSP-007][dsp-007]) — The evidence needed:
+  - Whole-output folded-component energy at OS Off versus 2x, 4x, 16x and Force Max, at Loudness 50 %, on a multitone or swept sine.
+  - The clamp-error spectrum at 4x and 16x.
+  - The same measurements on real programme.
+  - A loudness-matched blind listening comparison.
+
+  Until then, 'clamp engagements at OS ≥2x and Force Max ≤ OS Off' is tracked as a [DSP-001][dsp-001] acceptance item, and the Oversampling advice stays as it is.
 - **Keyboard delivery to the editor across hosts** ([INPUT-005][input-005]) — A documented keyboard host matrix: Logic (AU), one VST3 host on macOS, Windows REAPER plus Cubase or Live, and Linux REAPER. Record:
 - click a knob, then press Up;
 - double-click a readout and type;
@@ -2021,10 +2160,10 @@ Flipping EDITOR_WANTS_KEYBOARD_FOCUS would be a build-system change and touches 
 
 ### Candidates not carried as findings
 
-Consolidation dropped 18 candidates as duplicates, environment artefacts or non-findings, and the triage of verifier notes set aside 13 more; 72 notes duplicated an existing finding and 24 were merged into one as added evidence. Both dispositions lists, with reasons, are in the worklog.
+The merge step dropped 18 of the 170 consolidated candidates as duplicates, environment artefacts or non-findings, and triage dropped 13 of the 115 verifier notes; 72 notes duplicated an existing finding and 24 were merged into one as added evidence. Both dispositions lists, with reasons, are in the worklog.
 
 ## Evidence limitations
-The limits below reduce confidence in specific observations. Each one names the observations it touches, and the map potential findings (PF) where relevant, as the observers and readers recorded them. They do not invalidate the audit. They mark where a real host, a real platform, a physical pointing device or listening could change a conclusion. Whether Phase 3 reproduced a given claim with realistic input is recorded per finding in the Findings section.
+The limits below reduce confidence in specific observations. Each one names the observations it touches, and the map potential findings (PF) where relevant, as the observers and readers recorded them. They do not invalidate the audit. They mark where a real host, a real platform, a physical pointing device or listening could change a conclusion. Whether Phase 3 reproduced a given claim with realistic input is recorded per finding in the Findings section. A reference such as '(gestures, Limitations)' points to the 'Limitations recorded' list at the end of that observer's section in the worklog.
 
 ### Environment
 
@@ -2046,7 +2185,7 @@ The limits below reduce confidence in specific observations. Each one names the 
 
 ### Input fidelity
 
-All input came from `xdotool` (XTest): instant pointer warps with no intermediate motion, zero-duration clicks, and typing generated by the tool. Observers worked around this with 2 or 3 stepped moves for hovers (gestures) and a hover pause before clicks (the edges re-test in the 47 strip). The observers themselves flagged the following observations as sensitive to warps:
+All input came from `xdotool` (XTest): instant pointer warps with no intermediate motion, zero-duration clicks, and typing generated by the tool. Observers worked around this with 2 or 3 stepped moves for hovers (gestures) and a hover pause before clicks (the edges observer's hover-then-click re-test, E03). The observers themselves flagged the following observations as sensitive to warps:
 
 | Observation | What the observer recorded | Effect on confidence |
 |---|---|---|
@@ -2082,14 +2221,14 @@ Other input limits:
 
 ### Audio
 
-- **Nothing was heard.** Output was not auditioned, recorded or analysed; observers used meters, `dump` and screenshots only (state and edges, Limitations). As a result, none of the following could be verified:
+- **Nothing was heard.** Output was not auditioned, and Phase 2 neither recorded nor analysed it; observers used meters, `dump` and screenshots only (state and edges, Limitations). As a result, Phase 2 could verify none of the following:
   - whether MATCH is monitoring-only;
   - how Copy, A/B, bypass, preset loads and sample-rate changes sound, including the duck behaviour recorded as KI-010;
   - whether rapid toggling glitches.
 
   This touches ST-08, ST-13, ST-15 and E18.
 - **Meters do not show the monitored signal.** The meters read the render tap, not the listening buffer (V-13). Under MATCH or DELTA they cannot stand in for what the user hears.
-- **DSP claims rest on code reading.** The dsp-chain-behaviour map asked for measurements that no Phase-2 observation made:
+- **DSP claims rest on code reading in Phase 2.** The dsp-chain-behaviour map asked for measurements that no Phase-2 observation made (Phase-3 probes later measured the clip-drive low-pass, the TP toggle at 4x and above, MATCH convergence and clamp engagement: [DSP-004][dsp-004], [DSP-003][dsp-003], [DSP-005][dsp-005], [DSP-007][dsp-007]):
   - clip-drive low-pass at oversampling Off;
   - ducks on discrete rewires;
   - the effect of the TP toggle at 4x oversampling or more;
@@ -2128,7 +2267,7 @@ Other input limits:
 - **KI-018** (the previous spectrum trace lingers after a reset). It could not be provoked: control-channel commands run about 100 ms apart, so a signal change that coincides exactly with a re-prepare was not achievable (V-14; visuals, Limitations).
 - **OQ-017** (GR history under bursty hosts). The harness delivers evenly paced blocks.
 - **KI-013** (the click absorbed by the pop-up shield still counts toward a double-click). No observation records a dismissing click followed by a click inside the double-click interval. E03 and G-22 cover only the consumed click.
-- **KI-008 and other TSAN-only reports.** No sanitizer build was made, and off-thread state restore was not exercised.
+- **KI-008 and other TSAN-only reports.** Phase 2 made no sanitizer build and exercised no off-thread state restore. Phase 3 did both for [TECH-003][tech-003]: a TSAN build of the state suite and two scratch probes (deadlock and restore race) in rt/verify-24.
 - **KI-006, audio half.** Not observable; see Audio.
 - **Standalone persistence across launches** (PF state-presets-ab-undo-14). The Standalone was used only in its no-device state (E01).
 - **UI-scale and settings persistence across editor close and reopen.** Not exercised.
@@ -2148,19 +2287,19 @@ Other input limits:
 
 The roadmap orders work by what the user can lose without noticing, then by what each fix needs first. Ease never moved an item.
 
-**Phase 0 protects the delivered master and saved work.** [DSP-001][dsp-001] is the only P0: in TP mode the clamp works on sample peaks only, so a master bounced at the manual's recommended 4x or Force Max can exceed its dBTP ceiling by up to about 1.6 dB. The P1s that change the printed file or destroy work silently sit beside it:
+**Phase 0 protects the delivered master and saved work.** [DSP-001][dsp-001] is the only P0: in TP mode the clamp works on sample peaks only, so a master bounced at the manual's recommended 4x or Force Max can exceed its dBTP ceiling by up to about 1.7 dB. The P1s that change the printed file or destroy work silently sit beside it:
 - A preset browse under LOCK turns a dBTP ceiling into a sample-peak limit ([STATE-002][state-002]).
 - A host re-prepare drops frozen trims ([STATE-004][state-004]).
 - At the OS-Off default, the clip stage darkens every master pushed past 30 % Loudness ([DSP-004][dsp-004]).
 - Save overwrites another preset with no prompt ([UX-003][ux-003]).
 
-[VIS-002][vis-002] and [VIS-008][vis-008] ride with [DSP-001][dsp-001] because they share [TEST-004][test-004]'s extracted rules. [TEST-002][test-002] starts here rather than at the end: no host has ever loaded the plugin, and its results decide the priority of [STATE-004][state-004], [UX-010][ux-010], [TECH-003][tech-003] and [VIS-005][vis-005], and the evidence for all six Investigate items.
+[VIS-002][vis-002] and [VIS-008][vis-008] ride with [DSP-001][dsp-001] because they share [TEST-004][test-004]'s extracted rules. [TEST-002][test-002] starts here rather than at the end: no DAW host has ever been observed loading the plugin, and its results decide the priority of [STATE-004][state-004], [UX-010][ux-010], [TECH-003][tech-003] and [VIS-005][vis-005], and the evidence for five of the six Investigate items. The sixth, [DSP-007][dsp-007], needs an output measurement and a blind listening comparison instead.
 
 **Phase 1 makes the comparison and the session figures honest** before anything is made more discoverable. The MATCH+BYPASS comparison is unmatched while the manual calls it matched ([UX-009][ux-009]), and one click on 318 px of blank glass erases the integrated measurement ([UX-002][ux-002]). The scope, bypass, held/stale and standard fixes touch the same panel code and share [TEST-001][test-001]'s tick hook.
 
 **Phase 2 adds numbers to the graphs.** [VIS-007][vis-007] is P1, but it follows Phase 1 because its peak hold must share the reset path [UX-002][ux-002] defines, and its placement depends on [UI-010][ui-010] and [VIS-003][vis-003]'s attribution. The spectrum is calibrated ([VIS-021][vis-021], [VIS-024][vis-024]) before any dB tick is drawn ([VIS-006][vis-006]).
 
-**Phase 3 fixes input.** Its findings are P2: each is a wrong value from an ordinary slip, but it is visible and can be undone. The phase opens with [TECH-003][tech-003]'s KI-008 fix and the TSAN lane, because [STATE-007][state-007], [INPUT-007][input-007] and [INPUT-013][input-013] add gesture sources at exactly the lock-inversion site. [INPUT-017][input-017] lands before [UX-016][ux-016]'s single-click entry, which would otherwise multiply its trigger.
+**Phase 3 fixes input.** Its findings are P2, plus four P3s that ride along: each is a wrong value from an ordinary slip, but it is visible and can be undone. The phase opens with [TECH-003][tech-003]'s KI-008 fix and the TSAN lane, because [STATE-007][state-007], [INPUT-007][input-007] and [INPUT-013][input-013] add gesture sources at exactly the lock-inversion site. [INPUT-017][input-017] lands before [UX-016][ux-016]'s single-click entry, which would otherwise multiply its trigger.
 
 **Phase 4 makes the state model legible,** and it comes after Phase 3 for two reasons. [MODEL-001][model-001]'s re-engage notice would mostly announce accidents that [INPUT-017][input-017] and [INPUT-013][input-013] remove. Its Undo is also reliable only once [STATE-007][state-007] coalesces wheel notches.
 
@@ -2181,8 +2320,8 @@ The 14 themes were checked for further merges. Keyboard access and pointer tunin
 
 Deferred work waits on one of three things:
 - **Host evidence:** [VIS-019][vis-019], [MODEL-006][model-006], [STATE-018][state-018], [TECH-001][tech-001], [INPUT-005][input-005] and the [VIS-009][vis-009] prepare gate.
-- **A listening pass:** [DSP-008][dsp-008], the [DSP-004][dsp-004] oversampling default and KI-010.
-- **A family or owner decision:** [UX-021][ux-021], [STATE-012][state-012], [UI-014][ui-014], [UI-016][ui-016] and [UX-007][ux-007].
+- **A listening pass:** [DSP-008][dsp-008], the [DSP-004][dsp-004] oversampling default, KI-010, and [DSP-007][dsp-007]'s output measurements and blind comparison.
+- **A family or owner decision:** [UX-021][ux-021], [STATE-012][state-012], [UI-014][ui-014], [UI-016][ui-016], [UX-007][ux-007], and the gate ruling on [VIS-020][vis-020]'s marker payload.
 
 
 <!-- Finding links: one definition per finding id. -->

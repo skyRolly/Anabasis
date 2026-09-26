@@ -2,7 +2,7 @@
 
 Part of [`2026-09-26-anabasis-product-ux-audit.md`](../2026-09-26-anabasis-product-ux-audit.md) (audited revision `e769f33`, 2026-09-26). This file holds the complete record of each finding in these categories; the report carries the index, the systemic themes, the roadmap and the decision record. Code anchors are pinned to `e769f33`; runtime observation ids refer to [`worklogs/2026-09-26-product-ux-audit.md`](../../../worklogs/2026-09-26-product-ux-audit.md).
 
-Each record: decision, priority and confidence after calibration; evidence; current behaviour; problem; root cause; user impact and scope; proposed improvement; alternatives considered; decision rationale (with any calibration or challenge outcome); architecture gates; dependencies; acceptance criteria; and the verification record.
+Each record: decision, priority and confidence after calibration; evidence; current behaviour; problem; root cause; user impact and scope; proposed improvement; alternatives considered; decision rationale (with any calibration or challenge outcome); architecture gates; dependencies; acceptance criteria; and the verification record. Terms in the records: the *candidate claim* is the claim as it entered verification; *the judge* is the verifier's decision pass (Phase 3, step 3), done per *batch* of 3–6 related findings; *Adversarial challenge* is the step-4 review and *Calibration* the Phase-4 pass that set the final decision and priority (see the report's *Evidence and method*). A paragraph marked *Merged at triage from another verifier's note* is evidence from another batch's verifier, kept in its words: 'add to X' there means it has been added to this record. 'Recorded at triage' marks a finding written from such a note. `rt/…` paths and ids such as `VER0-2` or `V24-TSAN-1` name uncommitted session captures, logs and probes; `PF-…` ids are potential findings from the uncommitted Phase-1 evidence maps.
 
 ## VIS — Metering and visualisation
 
@@ -546,10 +546,10 @@ With TP on, some of the red is genuine over-tolerance output ([DSP-001](findings
 **Acceptance criteria.**
 
 - Simple and Advanced: with a -3 dBFS 1 kHz sine and limGain +12 dB, the readout shows current GR within 0.3 dB of the engine's value (about 8.9 dB), and within 0.3 dB of about 14.9 dB at +18 dB.
-- The peak readout holds the deepest reduction seen since the last STATISTICS reset, clears on that reset, and is never shallower than the deepest ring entry in its span.
+- The peak readout shows the deepest reduction over the visible window (ring-derived) or, if the owner wants a session peak, a processor-side hold beside samplePeakMaxHold that requestMeterReset clears. Either way it is never shallower than the deepest ring entry in its span.
 - With no reduction, the readout shows 0.0 (or the maintainer-specified zero form), not blank. With no processed audio it shows the no-data form.
 - The readout is legible at UI scale XS and does not overlap the GR|SPEC pill or the newest data at the right edge.
-- No new audio-thread publication or atomic is added (the readout is derived from existing ring peeks).
+- No new cross-thread path is added: the readout is derived from existing ring peeks, or its session hold is one relaxed atomic on the existing meter row (ADR-0020 precedent, confirmed at the Thread Model review).
 
 <details><summary>Verification record</summary>
 
@@ -583,10 +583,10 @@ With TP on, some of the red is genuine over-tolerance output ([DSP-001](findings
 - G-17: session capture `rt/gestures/33b-tp-on-simple.png`, session capture `rt/gestures/33c-tp-on-adv.png` — TP toggled on, stale 1.18 dBTP red, and no row changes.
 - verify-19 R3: session capture `rt/verify-19/03-tp-engaged-noreset-editor.png` — the TP-off hold of 0.12 stays red after engaging TP.
 - verify-19 R8: .../rt/verify-19/20-23-grid.png:
-- top-left: ceiling -0.10, TP 0.04 red, SP -0.10 white.
-- top-right: 0.8 s after ceiling → -1.0, SP -0.10 RED.
-- bottom-left: after reset, TP -0.85 red, SP -1.00.
-- bottom-right: 0.8 s after ceiling → -0.10, the same TP -0.85 WHITE.
+  - top-left: ceiling -0.10, TP 0.04 red, SP -0.10 white.
+  - top-right: 0.8 s after ceiling → -1.0, SP -0.10 RED.
+  - bottom-left: after reset, TP -0.85 red, SP -1.00.
+  - bottom-right: 0.8 s after ceiling → -0.10, the same TP -0.85 WHITE.
 
 **Current behaviour.** The TP and SP rows are session max-holds that persist until a panel click, a state load or a re-prepare. Their warn colours are recomputed every frame against whatever the Ceiling and mode are now.
 - After lowering the ceiling, holds recorded legally under the old one turn red. The SP row's red is defined as 'clamp exceeded'.
@@ -719,7 +719,7 @@ In none of these cases can they tell what period the numbers cover, which leads 
 - *Documentation only (list the reset events in the manual)* — Cheap, but the scope stays invisible at the moment of reading, and the stop/start loss on re-preparing hosts remains. Insufficient alone.
 - *Leave the prepare behaviour and add only the scope readout* — Acceptable fallback: users would at least see '0:02' after a stop/start. It still contradicts THREAD_MODEL's stated intent and ADR-0023 item 6's rationale.
 
-**Decision: Modify · P2.** Confirmed by code and a direct reproduction of the same-pair re-prepare. The complete fix, segmented or per-slot measurement, is disproportionate. The constrained version is enough: a visible scope, a mixed-settings marker, and a same-pair gate consistent with the product's own stated intent (THREAD_MODEL.md:316-317, ADR-0023 item 6). It fixes the decision-quality problem with display-side work plus one small metering-lifecycle change. P1: it affects the integrated and PLR readings in every comparison pass, and the documented A/B workflow reads a mixed figure.
+**Decision: Modify · P2.** Confirmed by code and a direct reproduction of the same-pair re-prepare. The complete fix, segmented or per-slot measurement, is disproportionate. The constrained version is enough: a visible scope, a mixed-settings marker, and a same-pair gate consistent with the product's own stated intent (THREAD_MODEL.md:316-317, ADR-0023 item 6). It fixes the decision-quality problem with display-side work plus one small metering-lifecycle change. The verifier rated it P1 because it affects the integrated and PLR readings in every comparison pass and the documented A/B workflow reads a mixed figure; calibration lowered it to P2 (below).
 
 *Calibration:* the verifier judged Modify / P1; the final judgement is Modify / P2. Challenge accepted: mixing across A/B, presets and bypass is ordinary integrated-meter semantics whose remedy is [UX-002](findings-ux.md#ux-002)'s P1 (a second P1 double-counts it); the stop/start restart matches THREAD_MODEL.md:316-319 and rests on unverified host behaviour; the cited misleading figure was leftover synthetic signal. So P2. Modify now: a 'since reset' readout via option B (sample counter cleared with dbTpMaxHold, relaxed on the meter row) and USER_MANUAL §3.4 / §8 step 4 fixes. The same-pair gate moves to Investigate further: it needs a per-host prepareToPlay/setNonRealtime matrix (rate, block, channels) and an owner ruling reversing THREAD_MODEL's recorded contract; key must include outChannels and an offline bounce must stay a reset point. Drop the marker; keep no auto-reset on A/B or preset.
 
@@ -750,7 +750,7 @@ Modify, constrained further than the judge proposed:
 - Thread Model (review only): option B, a published 'measured time since reset' atomic, would join THREAD_MODEL's meter row. ADR-0020 Consequences treats same-contract meter atomics as 'no new cross-thread path'; option A, derived from the GR ring head, adds none.
 - THREAD_MODEL.md:316-319 reset-contract text ('hosts that need a flush re-prepare, which reaches everything') changes if a same-pair re-prepare keeps the session holds. This needs a documentation sync and owner acknowledgement, but it is not a listed hard-stop category. No conflict with ADR-0020 or ADR-0023; it aligns with ADR-0023 item 6.
 
-**Dependencies.** [UX-002](findings-ux.md#ux-002) (a reset control is where the scope readout and its 0:00 feedback live); [VIS-012](findings-visualisation.md#vis-012) (held/live styling shares the same header state); V-05 plugin-BYPASS-meters-dry finding (other batch): the mixed marker covers it only partially
+**Dependencies.** [UX-002](findings-ux.md#ux-002) (a reset control is where the scope readout and its 0:00 feedback live); [VIS-012](findings-visualisation.md#vis-012) (held/live styling shares the same header state); [VIS-001](findings-visualisation.md#vis-001) (V-05, bypassed audio folded into the session figures): the mixed marker covers it only partially
 
 **Acceptance criteria.**
 
@@ -967,7 +967,7 @@ A single dash stands for 'not measured', 'silence' and 'below -99'. TP, SP and R
 
 **Decision: Proceed · P2.** Confirmed in code and at runtime. The change is display-only and can use a liveness signal the GUI already reads, so it touches no gate. It removes a recurring ambiguity at the moment users read delivery figures. P2 rather than P1: the held values are correct numbers and the harm is interpretive. The case where the ambiguity matters most, what period the numbers cover, is carried by [VIS-009](findings-visualisation.md#vis-009).
 
-**Dependencies.** [VIS-009](findings-visualisation.md#vis-009) (shared header state: scope readout plus HOLD tag); [DOC-002](findings-doc-test.md#doc-002) (what a reset blanks while no audio flows); [UX-002](findings-ux.md#ux-002); V-06/E07 host-bypass freeze finding (other batch): the HOLD state is its display half
+**Dependencies.** [VIS-009](findings-visualisation.md#vis-009) (shared header state: scope readout plus HOLD tag); [DOC-002](findings-doc-test.md#doc-002) (what a reset blanks while no audio flows); [UX-002](findings-ux.md#ux-002); [VIS-005](findings-visualisation.md#vis-005) (V-06/E07 host-bypass freeze): the HOLD state is its display half
 
 **Acceptance criteria.**
 
@@ -1207,7 +1207,7 @@ A single dash stands for 'not measured', 'silence' and 'below -99'. TP, SP and R
 - V-09: equal pairs -11.9/-11.9, -7.1/-7.1, -13.1/-13.1, -3.0/-3.0, -34.5/-34.5 — session capture `rt/visuals/02-music-6-outlufs.png`, 02-music-6-stats.png; V-17 — session capture `rt/visuals/11a-adv-on-editor.png`
 - verify-21 (own run, :151): 30 frames at about 0.2 s, 29 identical, one S -15.5 vs out -15.3 — session capture `rt/verify-21/04-S-vs-outLUFS-pairs.png`; S -9.2 vs out LUFS -9.1 — session capture `rt/verify-21/03-loud0-level+4.png`
 
-**Current behaviour.** In Simple, the toggle row beside the macro shows 'out LUFS <value>'. The value is the render short-term (3 s) loudness, the same atomic the STATISTICS S row prints on the same screen. It updates at 24 Hz against the panel's FrameClock, so it occasionally differs by 0.1-0.2 for a frame. It is hidden in Advanced, has no tooltip, and the manual calls it 'live' without naming the window.
+**Current behaviour.** In Simple, the toggle row beside the macro shows `out LUFS <value>`. The value is the render short-term (3 s) loudness, the same atomic the STATISTICS S row prints on the same screen. It updates at 24 Hz against the panel's FrameClock, so it occasionally differs by 0.1-0.2 for a frame. It is hidden in Advanced, has no tooltip, and the manual calls it 'live' without naming the window.
 
 **Problem.** Two labels ('out LUFS' and 'S') for one number, sampled at different instants, suggest two different measurements, and the brief momentary mismatches reinforce that. The most prominent readout position next to the macro repeats a panel value instead of carrying a figure that exists nowhere else, such as a loudness gain or numeric GR.
 
@@ -1390,7 +1390,7 @@ A single dash stands for 'not measured', 'silence' and 'below -99'. TP, SP and R
 - e769f33:tests/state_tests.cpp:6797-6798 — grPhase pins 'snaps FORWARD to a head the estimate did not expect, never behind the data', which is the current Option-1 behaviour.
 - e769f33:docs/procedures/RELEASE_COMPATIBILITY_CHECKLIST.md:64-66 — the host matrix's minimum is REAPER (Windows) plus Logic, but it has no GR-history motion item, which is the observation OQ-017 needs.
 - Independent re-derivation: rt/verify-22/burst.py (output: n=4 → 1.447 px / 21.9 %; n=64 → 30.389 px / 95.2 %).
-- *Added from another verifier's note:* Add a second render-ahead effect to [VIS-019](findings-visualisation.md#vis-019)'s host measurement. Entries are produced when audio is PROCESSED (GrHistoryView.h:641-648). On REAPER with anticipative FX, or Cubase with ASIO-Guard, the newest edge of the trace should therefore lead audible playback by the render-ahead depth, so GR appears before the audio is heard. This is inferred from the code and the host model, not measured. The OQ-017 REAPER/Cubase observation should record this lead as well as the stepping.
+- *Merged at triage from another verifier's note, quoted as written:* Add a second render-ahead effect to [VIS-019](findings-visualisation.md#vis-019)'s host measurement. Entries are produced when audio is PROCESSED (GrHistoryView.h:641-648). On REAPER with anticipative FX, or Cubase with ASIO-Guard, the newest edge of the trace should therefore lead audible playback by the render-ahead depth, so GR appears before the audio is heard. This is inferred from the code and the host model, not measured. The OQ-017 REAPER/Cubase observation should record this lead as well as the stepping.
 
 **Current behaviour.** The view anchors its scroll estimate to the newest ring entry and holds it within [head, head + 1]. Entries are timestamped by when they are PROCESSED. A host that processes n blocks in one burst therefore moves the whole trace (n − 1) entry-pitches in a single frame, lets it creep one entry, and then holds it still until the next burst. On a steady host the motion is exact.
 
@@ -1455,7 +1455,7 @@ A single dash stands for 'not measured', 'silence' and 'below -99'. TP, SP and R
 - e769f33:src/dsp/AnabasisEngine.h:102-114 — prepareHistoryTimeline and resetHistoryTimeline. The latter has no production caller.
 - e769f33:src/PluginProcessor.cpp:778-806 — the ring deliberately survives a re-prepare at the same pair so that the timeline continues (0.1.2 item 6).
 - e769f33:docs/user/USER_MANUAL.md:265-267 — 'Pausing and resuming continues the timeline; it restarts only when the sample rate or block size changes'. The manual makes no claim about events.
-- V-04 (obs/visuals.md:26-31): A/B, preset load, BYPASS, pill switch, ADV and state load all continue the trace with no mark. Screenshots: session capture `rt/visuals/10b2-after-AB-3s-well.png`, session capture `rt/visuals/10c-after-preset-next-editor.png`, session capture `rt/visuals/10d-bypass-on-editor.png`
+- V-04 (worklog): A/B, preset load, BYPASS, pill switch, ADV and state load all continue the trace with no mark. Screenshots: session capture `rt/visuals/10b2-after-AB-3s-well.png`, session capture `rt/visuals/10c-after-preset-next-editor.png`, session capture `rt/visuals/10d-bypass-on-editor.png`
 - Reproduction on :152: session capture `rt/verify-22/gr-after-state-load-3s.png` (Loudness 60 % → 100 % → state load back to 60 %: three unlabelled segments). session capture `rt/verify-22/editor-after-AB.png` (after the A/B click the B slot is lit, and the trace continues with no boundary).
 
 **Current behaviour.** The 20 s GR history is a continuous (GR, peak) series. A/B slot switches, preset '<'/'>' applies, host state loads and plugin BYPASS on/off leave no trace-level mark. The only visible hint is a change in the trace's character, if the change is large enough to see. A bypassed passage is recorded like any other segment, with no label.
@@ -1644,7 +1644,7 @@ A single dash stands for 'not measured', 'silence' and 'below -99'. TP, SP and R
 - e769f33:src/PluginProcessor.cpp:1022-1031 and :806 — one GR entry per PREPARED block, the host's declared maximum.
 - e769f33:src/gui/GrHistoryView.h:606-610 — entryPeriod = block / rate: 10.7 ms at 48k/512, 85 ms at 48k/4096, 93 ms at 44.1k/4096.
 - e769f33:docs/architecture/design-decisions/ADR-0039-spectrum-frame-publication.md:136,216,417 — the published frame is sized to 2048 + 2048 bins, allocated at construction, with a measured cost of 210.5 µs per tick.
-- E15 (obs/edges.md:111-116): session capture `rt/edges/48-spec-384k-48k-44k.png`, session capture `rt/edges/48a-sr44k4096-loud60-gr-crop.png`, session capture `rt/edges/46-gr-well-44k-4096.png`
+- E15 (worklog): session capture `rt/edges/48-spec-384k-48k-44k.png`, session capture `rt/edges/48a-sr44k4096-loud60-gr-crop.png`, session capture `rt/edges/46-gr-well-44k-4096.png`
 - Reproduction on :152: session capture `rt/verify-22/spec-48-96-192-strip.png` (the LF structure at 48k becomes a smooth interpolated curve at 96k and 192k)
 - Reproduction on :152: session capture `rt/verify-22/gr-48k-blocks-strip.png` (512/1024/2048 look alike; 4096 visibly loses the attack shape)
 
@@ -1759,7 +1759,7 @@ The bins published in ADR-0039's frame are unchanged, and there is no DSP, param
 
 <details><summary>Verification record</summary>
 
-Re-read e769f33:src/gui/SpectrumView.cpp:826-935 and :195-213.
+Re-read e769f33:src/gui/SpectrumView.cpp:826-932 and :195-213.
 - dbForColumn has two regimes. Below 1.5 bins per column it uses Catmull-Rom interpolation of bin dB values. At or above 1.5 bins it takes the arithmetic mean of the bins' dB values over the inclusive floor/ceil span (:886-897), then clamps with jlimit (:912).
 - Bins are gainToDecibels(mag·norm, -120) with an attack-instant EMA, so the floor is -120 dB.
 - Anamorph fd78c3b:src/gui/SpectrumImager.cpp:676-690 uses the same reducer with a -90 floor (read-only check).

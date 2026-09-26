@@ -2,7 +2,7 @@
 
 Part of [`2026-09-26-anabasis-product-ux-audit.md`](../2026-09-26-anabasis-product-ux-audit.md) (audited revision `e769f33`, 2026-09-26). This file holds the complete record of each finding in these categories; the report carries the index, the systemic themes, the roadmap and the decision record. Code anchors are pinned to `e769f33`; runtime observation ids refer to [`worklogs/2026-09-26-product-ux-audit.md`](../../../worklogs/2026-09-26-product-ux-audit.md).
 
-Each record: decision, priority and confidence after calibration; evidence; current behaviour; problem; root cause; user impact and scope; proposed improvement; alternatives considered; decision rationale (with any calibration or challenge outcome); architecture gates; dependencies; acceptance criteria; and the verification record.
+Each record: decision, priority and confidence after calibration; evidence; current behaviour; problem; root cause; user impact and scope; proposed improvement; alternatives considered; decision rationale (with any calibration or challenge outcome); architecture gates; dependencies; acceptance criteria; and the verification record. Terms in the records: the *candidate claim* is the claim as it entered verification; *the judge* is the verifier's decision pass (Phase 3, step 3), done per *batch* of 3–6 related findings; *Adversarial challenge* is the step-4 review and *Calibration* the Phase-4 pass that set the final decision and priority (see the report's *Evidence and method*). A paragraph marked *Merged at triage from another verifier's note* is evidence from another batch's verifier, kept in its words: 'add to X' there means it has been added to this record. 'Recorded at triage' marks a finding written from such a note. `rt/…` paths and ids such as `VER0-2` or `V24-TSAN-1` name uncommitted session captures, logs and probes; `PF-…` ids are potential findings from the uncommitted Phase-1 evidence maps.
 
 ## UI — Visual interface and layout
 
@@ -85,7 +85,6 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 **Evidence**
 
-- rt = rt
 - e769f33:src/gui/PluginEditor.cpp:1136 — setupRotary gives every knob setTextBoxStyle(TextBoxBelow, false, 72, 14)
 - e769f33:src/gui/PluginEditor.cpp:577 — the Input Gain and SC HPF faders use TextBoxRight 62x14
 - e769f33:src/gui/LookAndFeel.cpp:938-953 — createSliderTextBox makes a centred Label with a 13 pt font and sets its colours. It sets no CaretComponent::caretColourId, no editor justification and no indents
@@ -98,7 +97,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 - verify-26/ceiling-editor (display :156, stepped motion): session capture `rt/verify-26/01-sheet.png` shows six frames 230 ms apart of the Ceiling editor at 8x. The bottoms of '-0.10' are cut in every frame, and the '-' is hidden under the blue caret in 4 of 6 frames
 - verify-26/loudness-editor: session capture `rt/verify-26/10-12-sheet.png` — the editor shows '0.5' left-aligned in the outlined box, the '%' is gone and the glyph bottoms are cut
 - G-20 / E06 / LAY-13: session capture `rt/gestures/15a-loud-dblclick-valuebox-crop.png`, session capture `rt/gestures/22c-inputgain-valuebox-editor.png`, session capture `rt/edges/32b-ceiling-editor-8x.png`, session capture `rt/edges.partial-stopped/40-ceiling-dblclick-4x.png`, session capture `rt/layout/26c-dblclick-ceilval.png` (all viewed; they agree with the above)
-- *Added from another verifier's note:* A stale comment in the function [UI-002](findings-ui.md#ui-002) changes. e769f33:src/gui/LookAndFeel.cpp:942 says the 13 pt value-box font is an 'explicit default; Simple mode enlarges it (#A)'. Re-checked: no code under src/gui changes a value-box font; only outLufsValue sets its own (PluginEditor.cpp:652). The comment was inherited from Anamorph's applyWidenFonts. Correct it when [UI-002](findings-ui.md#ui-002) reworks createSliderTextBox/ValueBox.
+- *Merged at triage from another verifier's note, quoted as written:* A stale comment in the function [UI-002](findings-ui.md#ui-002) changes. e769f33:src/gui/LookAndFeel.cpp:942 says the 13 pt value-box font is an 'explicit default; Simple mode enlarges it (#A)'. Re-checked: no code under src/gui changes a value-box font; only outLufsValue sets its own (PluginEditor.cpp:652). The comment was inherited from Anamorph's applyWidenFonts. Correct it when [UI-002](findings-ui.md#ui-002) reworks createSliderTextBox/ValueBox.
 
 **Current behaviour.** Double-clicking any value readout opens a stock JUCE TextEditor filling the 72x14 box (62x14 on the two faders). It has a 2 px grey outline and shows the number without its unit, left-aligned, with all text selected and the blue JUCE caret at index 0. The 13 px glyphs start 5 px down, so their lower rows are cut off by the box. The caret draws over the first glyph, which is the minus sign of every Ceiling value except 0.00.
 
@@ -119,7 +118,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 **Decision: Proceed · P2.** The defect is confirmed at code level and by my own runtime reproduction. The corrected mechanism (caret overdraw rather than scrolling) is no less harmful, because the sign is still unreadable half the time. The recorded intent covers only the outline and the unit drop. The outline can stay neutral as long as it uses the palette. The unit drop's original purpose, letting the user type a bare number, is kept by showing the unit as a non-editable suffix. The change touches no parameter, no state and no DSP.
 
-**Dependencies.** NEW: percent open-and-confirm multiplies a sub-1 % value by 100 (see new_findings) — any change to the editor's text or unit display must keep 'open + Return without typing = no change'; [INPUT-001](findings-input.md#input-001) (the rejection cue for invalid entry lives in this editor); [INPUT-008](findings-input.md#input-008)
+**Dependencies.** [INPUT-017](findings-input.md#input-017) (percent open-and-confirm multiplies a value of 1 % or less by 100) — any change to the editor's text or unit display must keep 'open + Return without typing = no change'; [INPUT-001](findings-input.md#input-001) (the rejection cue for invalid entry lives in this editor); [INPUT-008](findings-input.md#input-008)
 
 **Acceptance criteria.**
 
@@ -152,7 +151,6 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 **Evidence**
 
-- rt = rt
 - e769f33:src/PluginParameters.cpp:85 — dbText prints 1 dp. :87-113 — pctText prints an integer for whole percents and 1 dp otherwise, with the stated owner rationale. :114-115 — hzText prints integer Hz below 1 kHz and 2-dp kHz above
 - e769f33:src/PluginParameters.cpp:283-288 — Character and Tone use String(v,2) with no unit. e769f33:src/PluginParameters.cpp:303-308 — the Ceiling uses String(v,2) plus ' dB'/' dBTP' (ADR-0024 / ADR-0015)
 - e769f33:src/gui/LoudnessMeterView.cpp:184 — the M/S/I numbers are drawn without a unit. :243-275 — TP ' dBTP', SP/RMS ' dBFS', LRA ' LU', PLR with no unit
@@ -466,7 +464,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 - e769f33:src/gui/PluginEditor.h:435-447 — GatedTooltipWindow::getTipFor: on/off gate then juce::TooltipWindow::getTipFor (c) on the CACHED component; no live re-hit-test
 - JUCE e18f7f5 (9.0.1) modules/juce_gui_basics/windows/juce_TooltipWindow.cpp:209 (newComp = mouseSource.getComponentUnderMouse(), cached) vs :223 (mousePos = mouseSource.getScreenPosition(), live); :92-95 updatePosition → setBounds + setVisible
-- Anamorph@fd78c3b:src/PluginEditor.h:15-76 (TooltipSource::choose, pure function), :282-313 (GatedTooltipWindow with componentAt live hit test), e769f33:src/PluginEditor.cpp:267 (componentAt wiring); Anamorph@fd78c3b:CHANGELOG.md:45-58 (0.9.4 fix, symptom and mechanism)
+- Anamorph@fd78c3b:src/PluginEditor.h:15-76 (TooltipSource::choose, pure function), :282-313 (GatedTooltipWindow with componentAt live hit test), Anamorph@fd78c3b:src/PluginEditor.cpp:267 (componentAt wiring); Anamorph@fd78c3b:CHANGELOG.md:45-58 (0.9.4 fix, symptom and mechanism)
 - runtime verify-5: session capture `rt/verify-5/32-sheet.png` (Ceiling text at LOCK, then correct after 2-px nudge), 33-sheet.png (rep1, rep2 wrong; smooth30 correct)
 - runtime verify-5: .../rt/verify-5/10-sheet.png (3-step moves across Comp knobs: correct), 34-35-sheet.png (onto-tip and Tone→Ceiling: correct), 06-07-sheet.png (Settings rows: correct, one no-show)
 - observers (teleport-only): LAY-14 session capture `rt/layout/41c-tip-lag-a.png`, session capture `rt/layout/41c-tip-lag-b.png`; G-21 session capture `rt/gestures/07b-tip-after-jump-crop.png`
@@ -501,7 +499,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 <details><summary>Verification record</summary>
 
-**Method.** Code: e769f33:src/gui/PluginEditor.h:435-447. GatedTooltipWindow::getTipFor only gates on and off; grep TooltipSource/componentAt in src = 0. Anamorph@fd78c3b:src/PluginEditor.h:15-76 (TooltipSource::choose), :282-313 (live hit test), e769f33:src/PluginEditor.cpp:267 (wiring), CHANGELOG.md:45-58 (0.9.4 symptom, confirmed on macOS by the reporter). Both products pin JUCE e18f7f5 (9.0.1). In the pinned juce_TooltipWindow.cpp:209 and :223, the text comes from the cached getComponentUnderMouse() and the box position from the live getScreenPosition(). Runtime on :135 (verify-5), Tooltips ON, XTest stepped moves:
+**Method.** Code: e769f33:src/gui/PluginEditor.h:435-447. GatedTooltipWindow::getTipFor only gates on and off; grep TooltipSource/componentAt in src = 0. Anamorph@fd78c3b:src/PluginEditor.h:15-76 (TooltipSource::choose), :282-313 (live hit test), Anamorph@fd78c3b:src/PluginEditor.cpp:267 (wiring), CHANGELOG.md:45-58 (0.9.4 symptom, confirmed on macOS by the reporter). Both products pin JUCE e18f7f5 (9.0.1). In the pinned juce_TooltipWindow.cpp:209 and :223, the text comes from the cached getComponentUnderMouse() and the box position from the live getScreenPosition(). Runtime on :135 (verify-5), Tooltips ON, XTest stepped moves:
 (a) An 8-step, 30 ms/step move from (360,620) to LOCK (597,508), then a 2 s hover, showed the CEILING tip at the LOCK position in 3 of 3 runs (32a, 33-rep1, 33-rep2). A 2-px nudge then showed the correct LOCK tip (32b).
 (b) A 30-step, 10 ms/step approach to LOCK showed the correct tip (33-smooth30).
 (c) Knee→Mix→Attack→Release in 3 steps each and Tone→Ceiling in 5 steps showed correct tips (10-sheet, 35b).
@@ -600,7 +598,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 **Current behaviour.** At 940x720 the Simple right column is a 292x530 glass STATISTICS panel whose readings occupy the top ~212 px; the lower ~318 px are empty but still clickable, and a click resets the measurement ([UX-002](findings-ux.md#ux-002)). The left column (big knob, macro row, toggle row) ends at y 530. A ~76 px empty band follows, then a full-width graph well whose plot is 108 px tall. The GR history hangs its 24 dB span in that height, about 4.5 px per dB.
 
-**Problem.** The primary view allocates about a third of its right column to blank glass, while its most informative maximizer visual (the GR history, which the manual calls 'the fastest way to see how hard and how often the limiter is working') gets the least height of any panel. The right column reads as a placeholder.
+**Problem.** The primary view allocates about 60 % of its right column (about 318 of 530 px) to blank glass, while its most informative maximizer visual (the GR history, which the manual calls 'the fastest way to see how hard and how often the limiter is working') gets the least height of any panel. The right column reads as a placeholder.
 
 **Root cause.** The Simple geometry is Anamorph's 940x720 frame with a fixed-height meter panel. That height was sized for the 0.1.0 content (M/S/I, TP, PLR and the streaming-target/penalty rows). ADR-0015 removed the target rows, ADR-0020 re-filled part of the space with five numeric rows, and neither re-derived the Simple layout. DESIGN §6.2's re-derivation request was never executed.
 
@@ -949,7 +947,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 - e769f33:src/gui/PluginEditor.cpp:1138-1141 — l.setColour (textColourId, colours::textDim); l.setFont (FontOptions (11.5f))
 - e769f33:src/InternalState.h:66 — steps { 75, 85, 100, 125, 150 }
 - e769f33:src/gui/PluginEditor.cpp:1309 ('MASTERING MAXIMIZER' 10.0f), :1323 (panel titles 11.0f), :648 ('out LUFS' 11.5f); e769f33:src/gui/LookAndFeel.h:342 (GR/SPEC 10.0f); e769f33:src/gui/LoudnessMeterView.cpp:162,180 (STATISTICS 11.0f, M/S/I tags 11.5f)
-- e769f33:src/gui/LookAndFeel.h:48-52 — bg #0e1014, bgPanel #161a21, textDim #8b94a3 (computed contrast 5.2-6.2:1)
+- e769f33:src/gui/LookAndFeel.h:47-52 — bg #0e1014, bgPanel #161a21, textDim #8b94a3 (computed contrast 5.2-6.2:1)
 - Runtime (verify-11, :141, stepped motion): XS 705x540/617; 1x pixel map of 'Ratio' shows a 6 px cap, 4 px x-height and peak luminance about 120/255 — session capture `rt/verify-11/04c-XS-adv.png`, session capture `rt/verify-11/05-ratio-4x.png`
 - Observers LAY-09 / E17 — session capture `rt/layout/14c-XS.png`, session capture `rt/layout/45c-XS-advanced.png`, session capture `rt/layout/45c-XS-eq-labels-1x.png`, session capture `rt/edges/36b-xs-native-1x-small-labels.png`
 
@@ -1192,7 +1190,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 - e769f33:src/gui/LookAndFeel.cpp:870 (dragging=true on press), :886 (cleared on mouseUp)
 - e769f33:src/gui/PluginEditor.cpp:2927 (actA from isMouseButtonDown(true))
-- e769f33:build/_deps/juce-src/modules/juce_gui_basics/native/juce_Windowing_windows.cpp:2617 (SetCapture on press), :2659-2670 and :3907-3909 (capture loss -> synthesised mouseUp) — pinned JUCE in the build tree
+- JUCE 9.0.1 (fetched, build/_deps/juce-src) juce_gui_basics/native/juce_Windowing_windows.cpp:2617 (SetCapture on press), :2659-2670 and :3907-3909 (capture loss -> synthesised mouseUp) — pinned JUCE in the build tree
 - Anamorph@fd78c3b:worklogs/MOUSE_RELEASE_STATE_FIX_v0.8.12.md §4-§5 (validated by reasoning; Slider gesture ends via the synthesised mouseUp; recovery on re-entry)
 - runtime V25-VBOX (display :155): session capture `rt/verify-25/43-vbox-strip.png` (pressed; dragged outside, still pressed; released outside, idle pointer 215/221/230 = idle reference), frames 40/41/42-*.png
 - runtime G-09 (observer): knob drag released outside ends cleanly — session capture `rt/gestures/19a-loud-drag-past-top.png`
@@ -1247,7 +1245,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 - e769f33:src/gui/LookAndFeel.cpp:456 — icon glyph colour multiplied to 0.4 alpha when !isEnabled()
 - e769f33:src/gui/PluginEditor.cpp:2926-2928 — over = isMouseOver(true); ease("hovA", over ? 1 : 0), regardless of isEnabled
 - e769f33:src/gui/PluginEditor.cpp:365-366 — undo/redo registerAnimated; :2138-2141 — the only setEnabled calls in src/gui (undo/redo follow canUndo/canRedo)
-- Anamorph@fd78c3b:src/gui/LookAndFeel.cpp:366-373 and e769f33:src/PluginEditor.cpp:1687-1692 — the same pattern in the sibling (no enabled term)
+- Anamorph@fd78c3b:src/gui/LookAndFeel.cpp:366-373 and Anamorph@fd78c3b:src/PluginEditor.cpp:1687-1692 — the same pattern in the sibling (no enabled term)
 - Runtime V12-1: session capture `rt/verify-12/14-hover-strip.png` — rows: rest; disabled-Undo hovered; rest; Copy hovered. The background pixel (678,60) goes (35,40,49)→(47,51,59) for DISABLED Undo, identical to Copy's (625,60) (35,40,49)→(47,51,59); max diff (12,11,10) in both boxes
 - Phase-2 ST-07 (enabled/disabled glyph states distinct)
 
@@ -1287,7 +1285,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 **Method.** Read e769f33:src/gui/LookAndFeel.cpp:318-359 (drawButtonBackground: hovA from the component property, base = bgRaised.brighter(0.06f*hovA), no isEnabled read) and :456 (glyph alpha 0.4 when disabled). Read e769f33:src/gui/PluginEditor.cpp:2926-2928 (hovA target = isMouseOver(true), no enabled check), :365-366 (undo/redo registered), and :2138-2141, the only setEnabled sites in the GUI. Runtime on :142 (V12-1): at session start (canUndo false, glyph dim) the pointer was moved onto Undo with stepped moves plus a relative wiggle. Absolute XTest moves alone did not register hover in this harness, the known warp artefact; the enabled-Copy control test confirmed hover delivery. Captured rest vs hover for disabled Undo and for enabled Copy.
 
-**Corrections to the candidate claim.** The effect is a background brightening ('wash'), not a 'lift'. JUCE itself passes highlighted=false and down=false for disabled buttons and ignores the click, so there is no press feedback and no action. Only the eased hovA property drives the wash. The behaviour is inherited: Anamorph's painter and driver also ignore the enabled state (Anamorph@fd78c3b:src/gui/LookAndFeel.cpp:366-373; e769f33:src/PluginEditor.cpp:1687-1692).
+**Corrections to the candidate claim.** The effect is a background brightening ('wash'), not a 'lift'. JUCE itself passes highlighted=false and down=false for disabled buttons and ignores the click, so there is no press feedback and no action. Only the eased hovA property drives the wash. The behaviour is inherited: Anamorph's painter and driver also ignore the enabled state (Anamorph@fd78c3b:src/gui/LookAndFeel.cpp:366-373; Anamorph@fd78c3b:src/PluginEditor.cpp:1687-1692).
 
 </details>
 
@@ -1305,7 +1303,6 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 **Evidence**
 
-- rt = rt
 - e769f33:src/PluginParameters.cpp:85 — dbText = String(v, 1) + ' dB', with no sign normalisation
 - e769f33:src/PluginParameters.cpp:314 — Input Gain range {-12, 24}, default 0, so the default normalised value is 1/3 (not exactly representable in float)
 - e769f33:src/gui/PluginEditor.cpp:1178 — the Knob reset value is convertFrom0to1(getDefaultValue()), which displays '0.0 dB'
@@ -1337,7 +1334,7 @@ Each record: decision, priority and confidence after calibration; evidence; curr
 
 <details><summary>Verification record</summary>
 
-**Method.** Read dbText (e769f33:src/PluginParameters.cpp:85) and the inputGain definition (:314, range −12…24, default 0, so the default normalised value is 1/3). Read the Knob reset path (e769f33:src/gui/PluginEditor.cpp:1178). Viewed session capture `rt/gestures/36-sheet.png`. Reproduced on :156 with 'param inputGain <norm>' for five values.
+**Method.** Read dbText (e769f33:src/PluginParameters.cpp:85) and the inputGain definition (:314, range −12…24, default 0, so the default normalised value is 1/3). Read the Knob reset path (e769f33:src/gui/PluginEditor.cpp:1178). Viewed session capture `rt/gestures/36-sheet.png`. Reproduced on :156 with `param inputGain <norm>` for five values.
 
 **Corrections to the candidate claim.** The premise is wrong. Writing the actual default normalised value (0.33333334f) shows '0.0 dB'. '-0.0 dB' appears only for values just below the default: 0.3333 gives -0.0012 dB and 0.333333 gives -0.000012 dB. So G-11's harness write of 0.3333 was a truncated, genuinely non-default value, and the display is an accurate rounding of it. The same '-0.0 dB' appears for any dB value in (-0.05, 0), for example an EQ gain dragged to just under zero. Double-click or Alt-click reset gives exactly '0.0 dB'.
 

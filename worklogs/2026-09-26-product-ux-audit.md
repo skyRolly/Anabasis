@@ -5,10 +5,10 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 ## How the observations were made
 
 - **Harness.** A scratchpad-only JUCE GUI application (not committed, not part of the product) that compiles the plugin target's own source list, hosts the processor and `createEditor()` in a window, calls `processBlock` from a simulated audio thread at real-time pace, and exposes a control file (`signal`, `level`, `transport`, `hostbypass` → `processBlockBypassed`, `sr` → `releaseResources` + `prepareToPlay`, `param`/`paramtext` → gestured host automation, `dump`, `save`/`load`/`savexml`, `quit`). Signal programs: silence, sine, pink, a 120 BPM kick + pad "music" loop with a louder section every other four bars, a 1 s loud / 2 s quiet pink burst, square, and a 20 Hz – 20 kHz sweep.
-- **Displays and input.** One Xvfb display per observer (1600x1100x24, no window manager, no compositor); `xdotool` for pointer and keys; ImageMagick `import` for captures, cropped and inspected at 2-4x. The plain Standalone was also run on its own display (this machine has no audio device).
+- **Displays and input.** One Xvfb display per observer (1600x1100x24, no window manager, no compositor); `xdotool` for pointer and keys; ImageMagick `import` for captures, cropped and inspected at 2-4x. The plain Standalone was also run on its own display (this machine has no audio device). It is a Release binary from the repository's existing build tree, whose sources differ from `e769f33` at most by the comment-only commit `e467e1d`.
 - **Input fidelity.** `xdotool` warps the pointer instantly and clicks with zero-length presses. Where a behaviour appeared only under warp+click the observer says so; the verification phase of the audit re-ran those with stepped pointer motion before any finding was accepted.
 - **Anchors.** Code references are pinned to `e769f33`; this directory is outside the citation gate and the anchors are not maintained.
-- **Screenshots.** About 800 captures were taken; they lived in the session scratchpad and are **not** retained except for the curated set committed beside the report. Paths below are kept as the observers recorded them, relative to the session scratchpad, so each observation still says which capture it was read from.
+- **Screenshots.** The audit left 2,652 PNG files in the session scratchpad, captures plus derived crops and sheets (1,597 before Phase 3; the number of distinct capture events was not established); they lived in the session scratchpad and are **not** retained except for the curated set committed beside the report. Paths below are kept as the observers recorded them, relative to the session scratchpad, so each observation still says which capture it was read from.
 
 ## Layout, hierarchy, scale and resize (18 observations)
 
@@ -17,6 +17,8 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 ### LAY-01 — Simple view hierarchy and dead space
 
 *Severity (observer's estimate): low · confidence: high*
+
+*Superseded in part by the audit's verification:* Verification measured the empty STATISTICS area as about 318 px — see UX-002.
 
 - **Steps.** Launched harness (HARNESS_SIGNAL=music, -18 dB); import -window root after 7 s; cropped top bar, big knob, small knobs, stats, graph well.
 - **Observed.** Editor 940x720 at (44,44). Primary: one 224 px Loudness knob centred at (360,240) with '0 %' / 'Loudness' caption below (360,380/396) — no tick ring, no scale. Secondary: three 76–78 px knobs Character (165,465), Tone (360,465), Ceiling (517,465), with TP (597,449) and LOCK (597,508) toggles beside Ceiling. Tertiary: one row y=558 of MATCH/DELTA/FREEZE toggle pills, a LEARN push button (345–421) and the 'out LUFS -22.1' readout (600,558). Right column: STATISTICS panel 684–975 x 100–628 whose lower ~310 px (y≈315–628) is empty. A ~70 px empty band separates the toggle row from the graph well (52–975 x 650–758, 108 px tall). About 80 px of unused width right of the knob block.
@@ -135,6 +137,8 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 
 *Severity (observer's estimate): medium · confidence: high*
 
+*Superseded in part by the audit's verification:* Verification found item (e) wrong: a right-click on A/B toggles the slot and a right-click on STATISTICS resets it — see INPUT-013 and UX-002.
+
 - **Steps.** Left/right-clicked wordmark (125,67), subtitle, preset name (481,67), graph well, Statistics (830,300/400), big knob, A/B, value labels; double-clicked Ceiling value (517,518), Ratio value (112,212), Input Gain value (204,562); pressed Escape / clicked outside after each.
 - **Observed.** (a) Wordmark left OR right click opens an in-editor About panel (440x290, centred); Escape leaves it open, a click outside closes it. (b) Preset name left OR right click opens an in-editor FACTORY list (13 presets + Save Preset… / Load Preset…), 227x288 under the name. (c) A single left click anywhere on the Statistics panel instantly reset I, LRA, PLR to '-' and TP/SP holds to the current value — no button, no confirmation, no hover cue (Tooltips OFF by default). (d) Double-click on any value readout opens an inline text editor; for Ceiling the 72x14 box showed '0.10' with the leading '-' scrolled out of view. (e) Right-click on knobs, graph well, Statistics, panel headers, combos, GR bars, curves, A/B: nothing. (f) A single click on the Input Gain slider thumb moved it 0.0 → 0.3 dB (jump-to-click); a click on its value box did not.
 - **Interpretation.** (c) is the one that bites: a stray click on a display-looking panel silently discards a long integrated measurement. (a)/(b)/(d) are useful but undiscoverable without tooltips. (d)'s clipped minus sign can mislead an edit. (f) is default JUCE behaviour but nudges a mastering input gain on a grab.
@@ -237,6 +241,8 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 
 *Severity (observer's estimate): medium · confidence: high*
 
+*Superseded in part by the audit's verification:* Verification showed the 20:1 figure is an artefact of this observation's 10-px-per-event motion: Ctrl switches to JUCE's velocity mode, whose movement depends on pointer speed — see INPUT-007 in the report.
+
 - **Steps.** Loudness knob (360,240): set 50 % via ctl, drag down 100 px in 10 steps with no modifier, then repeat from 50 % with shift, ctrl, alt, super held; dump after each. Same 100-px drags on Ceiling (517,465), Character (165,465), Tone (360,465), Comp Threshold (215,175).
 - **Observed.** Plain 100 px: Loudness 50 -> 14 % (36 % of range); Ceiling -10.00 -> -2.80 dB (7.2 dB); Character 0.50 -> 0.86; Tone 0.00 -> 0.72; Comp Threshold -20.0 -> -5.6 dB (14.4 dB). Shift 100 px: identical to plain (50 -> 14 %). Ctrl 100 px: 50 -> 48.2 % (1.8 %), Ceiling -10.00 -> -9.64 (0.36 dB), Comp Thr -20.0 -> -19.3 - ratio about 20:1 and the readout switches to one decimal ('48.2 %'). Alt: value jumped to the default (0 %) on press and the 100-px drag changed nothing. Super: same as plain. A 30-px Loudness drag gave '60.8 %' (fractional percent readout).
 - **Interpretation.** Sensitivity 0.36 % of range per px is uniform (JUCE default 250-px extent, measured ~278 with the step pattern). Shift, the modifier most plugin users try first for fine control, does nothing; the working fine modifier (ctrl) is JUCE's velocity mode and is not hinted anywhere. Alt-drag being inert after the reset is deliberate per source but surprising.
@@ -255,6 +261,8 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 ### G-05 — Double-click resets to default; right-click does nothing; single-click on the value text does nothing
 
 *Severity (observer's estimate): medium · confidence: high*
+
+*Superseded in part by the audit's verification:* Verification found this true only on the knob body and thumb: a right-click on a fader track jumps the value, and a right-click without movement on a macro knob re-engages detached parameters — see INPUT-013.
 
 - **Steps.** Set 50 %; double-click the Loudness knob (360,240) with 80 ms gap; right-click it; single-click the '50 %' text (360,380), type 75, Return. Repeat double-click/right-click on Ceiling, Character, Tone, Comp Threshold, Input Gain thumb, SC HPF thumb, Dither combo.
 - **Observed.** Double-click: Loudness -> 0 %, Ceiling -> -0.10 dB, Character -> 0.00, Tone (from 0.50) -> 0.00, Comp Threshold -> 0.0 dB, Input Gain -> 0.0 dB, SC HPF -> 20 Hz. Right-click: no menu, no value change on any control (13-loud-rightclick, 22a, 23d). Single click on the value text: no editor, no caret, typed '75'+Return changed nothing (14a-14d).
@@ -333,6 +341,8 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 ### G-13 — Loudness macro sweep 0-100 %: which Advanced controls move (mapping as observed)
 
 *Severity (observer's estimate): medium · confidence: high*
+
+*Superseded in part by the audit's verification:* The Threshold curve reaches its -12 dB plateau at 60 % Loudness (`compThresholdDb = -12 · min(1, l / 0.6)`, e769f33:src/MacroEngine.h:52), between this observation's 50 % and 75 % samples, not at 75 %.
 
 - **Steps.** All params reset to defaults; Simple view; music at -6 dB. Type 25, 50, 75, 100 into the Loudness value box, wait 2.5 s, capture Simple, dump, toggle ADV (838,67), capture, toggle back.
 - **Observed.** out LUFS (short-term) readouts: 0 % -11.9, 25 % -13.5, 50 % -7.9, 75 % -7.7, 100 % -5.7 (fluctuating with the music; I stays -11.6). Character/Tone/Ceiling readouts unchanged. Parameter diffs vs defaults - 25 %: Comp Ratio 1.62:1, Comp Threshold -5.0 dB, Limiter Gain 3.4 dB. 50 %: Ratio 1.75:1, Thr -10.0 dB, Clip Shape 0.46, Clip Drive 2.6 dB, Lim Gain 7.8 dB. 75 %: Ratio 1.88:1, Thr -12.0 dB, Clip Shape 0.40, Clip Drive 5.8 dB, Dynamic Tame 0.8 dB, Lim Gain 12.7 dB. 100 %: Ratio 2.00:1, Thr -12.0 dB (plateau from 75 %), Clip Shape 0.35, Clip Drive 9.0 dB, Dynamic Tame 1.5 dB, Lim Gain 18.0 dB. Nothing else moved (attack/release/knee/mix/links/colour/EQ/limiter release untouched). In the Advanced panels the six moved knobs look exactly like every other knob - no badge, colour or marker distinguishes macro-managed controls from free ones.
@@ -490,7 +500,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 *Severity (observer's estimate): low · confidence: high*
 
 - **Steps.** Menu → 'Save Preset…'; type 'AuditTest' (`xdotool type`); Return; `find $HOME`; reopen menu.
-- **Observed.** Overlay 'SAVE PRESET' with one text field pre-filled with the current preset's raw name (selected), Save / Cancel buttons, dimmed backdrop. Typing replaced the selection correctly; Return saved and closed; file created at $HOME/.config/RollyTech/Anabasis/Presets/AuditTest.anabasis (2017 bytes, <AnabasisPreset schemaVersion="1"> with 45 PARAM + empty DETACH_MASK; no internal settings). Preset name shows 'AuditTest'; menu now has a USER section with the tick on AuditTest. ctrl+a then typing also worked (second save).
+- **Observed.** Overlay 'SAVE PRESET' with one text field pre-filled with the current preset's raw name (selected), Save / Cancel buttons, dimmed backdrop. Typing replaced the selection correctly; Return saved and closed; file created at $HOME/.config/RollyTech/Anabasis/Presets/AuditTest.anabasis (2017 bytes, `<AnabasisPreset schemaVersion="1">` with 45 PARAM + empty DETACH_MASK; no internal settings). Preset name shows 'AuditTest'; menu now has a USER section with the tick on AuditTest. ctrl+a then typing also worked (second save).
 - **Interpretation.** Positive: no keyboard problem on Linux (KI-014 not reproduced here; macOS untested). The dialog gives no hint where the file is stored and offers no folder/rename/delete management.
 - **Code.** e769f33:src/gui/PluginEditor.cpp:2361-2382 (showSavePreset pre-fills raw stored name, grabs focus)
 - **Captures.** `rt/state/15a-save-dialog.png`, `rt/state/15b-crop.png`, `rt/state/15c-crop.png`, `rt/state/15d-crop.png`
@@ -577,7 +587,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** Click BYPASS (909,67); capture at 1 s and 4 s; dump; click again; capture.
 - **Observed.** BYPASS pill turns red; whole editor dims slightly; knobs unchanged (60 %); top bar 'AuditTest *'; Statistics keep updating and show the raw input: TP 4.03 dBTP and SP 3.83 dBFS in red, out LUFS −13.8; GR history continues — flat for the first second, then GR dips reappear while still bypassed; latency unchanged 480. Un-bypass restores normal display; SP/TP holds keep the red over-0 values.
 - **Interpretation.** From across the room only the small red pill signals bypass; the dim is faint. GR activity reappearing in the history while bypassed contradicts 'bypassed'. Bypass dirtying the preset ('*') is questionable since bypass is stored as a parameter.
-- **Code.** e769f33:src/gui/PluginEditor.cpp:1965 (dimOverlay visible when bypass ≥ 0.5)
+- **Code.** e769f33:src/gui/PluginEditor.cpp:1968 (dimOverlay visible when bypass ≥ 0.5)
 - **Captures.** `rt/state/30a-before-bypass.png`, `rt/state/30b-bypass-1s.png`, `rt/state/30c-bypass-4s.png`, `rt/state/30-bypass-composite.png`
 
 ### ST-14 — Host bypass (processBlockBypassed): no UI indication and all meters/GR history/out LUFS freeze at stale values
@@ -757,7 +767,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** Simple view: click TP row (720,220); click M row (720,138); double-click I row (720,190); click empty panel area (800,500); right-click (800,400); click the graph well (500,700). Captured 0.6 s and 3 s after each.
 - **Observed.** Every press (any row, empty area, double-click, right-click) reset I, LRA (prints '-' then '0.0 LU'), TP and SP holds within one frame; no flash/highlight/confirmation, no context menu on right-click, no button anywhere, nothing in Settings. Clicking the well does nothing. The only hint is a tooltip ('Click to reset the integrated measurement...') and Tooltips are OFF by default.
 - **Interpretation.** The reset works and is one click, but it is invisible and too easy to trigger by accident (a stray click while reaching for the ADV toggle wipes a 4-minute integrated measurement). Right-click could carry a menu; the panel offers none.
-- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:194-197 (mouseDown -> requestMeterReset, any button); e769f33:src/PluginProcessor.cpp:926-931 (reset consumed at block top)
+- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:67-70 (mouseDown -> requestMeterReset, any button); e769f33:src/PluginProcessor.cpp:926-931 (reset consumed at block top)
 - **Captures.** `rt/visuals/13a-stats-before-click-stats.png`, `rt/visuals/13b-after-click-TP-row-stats.png`, `rt/visuals/13e-after-dblclick-I-row-stats.png`, `rt/visuals/13g-after-rightclick-panel-editor.png`, `rt/visuals/13h-after-click-well-editor.png`
 
 ### V-08 — Statistics reset matrix is inconsistent: host state load resets, preset-browser load does not; transport stop, bypass, A/B and standard change do not
@@ -777,7 +787,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** Compared the 'out LUFS' value (Simple view, (600,558)) with the S row in every capture under music -6, Loudness 70, burst, sine.
 - **Observed.** Identical in every frame: -11.9/-11.9, -7.1/-7.1, -13.1/-13.1, -3.0/-3.0, -34.5/-34.5 (silence 3 s). Both are the render-tap short-term (3 s) LUFS. The readout disappears in Advanced view; there is no input LUFS, no delta LUFS and no integrated readout next to the knob.
 - **Interpretation.** A redundant number occupying the prime spot next to the macro; the one figure a maximiser user wants there (how much louder than the input, or the integrated value) is absent.
-- **Code.** e769f33:src/gui/PluginEditor.cpp:2038-2043 (outLufsValue <- meterLufsS()); e769f33:src/gui/LoudnessMeterView.cpp:210 (S row <- meterLufsS())
+- **Code.** e769f33:src/gui/PluginEditor.cpp:2038-2043 (outLufsValue <- meterLufsS()); e769f33:src/gui/LoudnessMeterView.cpp:83 (S row <- meterLufsS())
 - **Captures.** `rt/visuals/02-music-6-outlufs.png`, `rt/visuals/02-music-6-stats.png`, `rt/visuals/04-burst-6-editor.png`
 
 ### V-10 — No 'no signal' vs 'holding' vs 'stale' indication; silence and reset look identical in the well
@@ -787,7 +797,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** Music -6 for 21 s then 'signal silence'; captured at 3 s, 15 s and 27 s of silence.
 - **Observed.** 3 s: M '-', S -34.5, RMS '- dBFS' (the unit stays printed beside the dash), out LUFS -34.5. 15 s and 27 s: M/S/out LUFS '-', I -3.2 / TP 1.35 (red) / SP / LRA 24.2 / PLR 4.6 all hold with unchanged bar colour and no 'held' styling. The GR well scrolls the history out over 20 s and ends as an empty well with the flat orange zero line — exactly the post-reset picture.
 - **Interpretation.** Held values are not distinguished from live ones; a user returning to the screen cannot tell whether -3.2 LUFS integrated is still being measured, is a finished measurement, or is polluted by earlier test tones (it was: it included sine/square/sweep programs). '- dBFS' is a formatting slip.
-- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:284-285 (fmt prints '-'), :395 (RMS row appends ' dBFS' unconditionally)
+- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:157-158 (fmt prints '-'), :268 (RMS row appends ' dBFS' unconditionally)
 - **Captures.** `rt/visuals/08b-silence-3s-editor.png`, `rt/visuals/08c-silence-15s-editor.png`, `rt/visuals/08d-silence-27s-stats.png`
 
 ### V-11 — M/S/I bars: fixed -36..0 LUFS range, no target marker, silent saturation above 0 LUFS
@@ -797,7 +807,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** square 200 Hz at -0.5 dB; crop of the panel. Also pink -6, sine -3.
 - **Observed.** Square: M/S read +2.0 LUFS with the bar 100 % full (no overflow cue), I -5.4; RMS reads +2.5 dBFS (AES-17 +3.01 offset on a near-full-scale square); TP 1.35 dBTP red. Sine -3: bars ~92 %. No target line (-14, -9 etc.), no ceiling/reference tick anywhere on the bars; a gradient fill only.
 - **Interpretation.** The bars carry no reference the eye can use; the numbers do the work. Streaming targets were removed deliberately (owner directive in the source), but not even the user's own Loudness goal or a 'you are here vs input' mark is shown. A positive dBFS RMS is technically right under AES-17 yet reads as an error to most users because the reference is not named on the row.
-- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:293-323 (lo=-36, hi=0, jlimit); e769f33:src/gui/LoudnessMeterView.h:33-39 (targets removed); e769f33:src/gui/LoudnessMeterView.cpp:165-178 (AES-17 +3.0103)
+- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:166-196 (lo=-36, hi=0, jlimit); e769f33:src/gui/LoudnessMeterView.h:33-39 (targets removed); e769f33:src/gui/LoudnessMeterView.cpp:38-51 (AES-17 +3.0103)
 - **Captures.** `rt/visuals/06-square200-stats.png`, `rt/visuals/06-square200-editor.png`, `rt/visuals/05-sine1k-3-stats.png`
 
 ### V-12 — TP row is red in BOTH true-peak modes at the default ceiling
@@ -807,7 +817,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** Music -6, Loudness 0. TP toggle (597,449) ON (ceiling label shows '-0.10 dBTP'), click panel to reset, wait 20 s, capture. TP OFF, reset, wait 20 s, capture. Earlier 6 s pair as a repeat.
 - **Observed.** TP off: 0.49 dBTP in red (genuine inter-sample over; SP -0.10 white). TP on: -0.06 dBTP in red (0.04 dB above the -0.10 ceiling; exact comparison, no tolerance) — repeat run 6 s after reset: -0.07 dBTP red. SP -0.10 dBFS white in both.
 - **Interpretation.** The warn colour never turns off at the shipped defaults, so it carries no information: with TP engaged the residual 0.04-0.06 dB (the limiter's/meter's own TP tolerance) still paints red, and a user who just enabled TP to fix the red sees it stay red. The SP row has a 0.005 dB slack; the TP row has none.
-- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:370-371 (shownTp > shownCeiling, exact) vs :392-394 (SP row uses kCeilingWarnSlackDb); ADR-0015 open question referenced in the comment at :344-369
+- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:243-244 (shownTp > shownCeiling, exact) vs :265-267 (SP row uses kCeilingWarnSlackDb); ADR-0015 open question referenced in the comment at :217-242
 - **Captures.** `rt/visuals/28a-tp-on-20s-editor.png`, `rt/visuals/28b-tp-off-20s-editor.png`, `rt/visuals/27a-tp-on-after-reset-stats.png`
 
 ### V-13 — MATCH and DELTA do not change any meter (render tap), and nothing says so
@@ -847,7 +857,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** Settings > Tooltips ON, popup dismissed. Hover stats (800,300) 2 s; hover M row (720,138) 2 s; hover pill (95,745) 2 s; hover out LUFS (600,558); hover well body. Repeat: hover (300,300) then pill 2 s, then (300,300) 2 s.
 - **Observed.** Over the M row the panel tooltip appeared but cut off at the editor's right edge ('Click to reset t|', 'the loudness range an|'). Over the pill the tooltip shown read 'How hard the adaptive chain pushes...' (the Loudness knob's text, the previously hovered component) — and in the first run the stale stats tooltip stayed on screen while a second tooltip appeared elsewhere. Moving back to the knob then showed 'Switch the graph between the spectrum and the GR history' (the pill's text). One tooltip was drawn partly behind the Statistics panel. Reproduced twice.
 - **Interpretation.** The meter panel's affordance lives only in a tooltip, and the tooltip system shows the wrong text (previous hover) and truncates the right text. Whether the lag is a JUCE TooltipWindow/xdotool timing artefact or an editor-level shield issue was not determined; the visible outcome was consistent across two runs.
-- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:133-137 (tooltip text); tooltip window creation in src/gui/PluginEditor.cpp (not traced)
+- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:6-10 (tooltip text); tooltip window creation in src/gui/PluginEditor.cpp (not traced)
 - **Captures.** `rt/visuals/25b-hover-M-row-editor.png`, `rt/visuals/25c-hover-pill-editor.png`, `rt/visuals/25d-hover-outlufs-editor.png`, `rt/visuals/26a-hover-pill-repeat-editor.png`, `rt/visuals/26b-after-leaving-pill-editor.png`
 
 ### V-17 — Simple vs Advanced metering: same Statistics panel; Advanced adds unlabeled per-stage GR bars and a taller well, loses 'out LUFS'
@@ -867,7 +877,7 @@ Session-local evidence trail for [`docs/reports/2026-09-26-anabasis-product-ux-a
 - **Steps.** Settings > Integrated -> BS.1770-1; Settings > RMS Reference -> Mathematical; captures 0.5 s and 3 s after each; then restored.
 - **Observed.** Integrated flip: the I number changed instantly (-13.4 -> -13.3 here; the two standards can differ by more), row still reads 'I'. RMS flip: the RMS number dropped by ~3 dB instantly (AES-17 -> Mathematical), row still reads 'RMS ... dBFS'. Nothing in the panel says which standard/reference is active.
 - **Interpretation.** Instant switching with no audio involvement is good engineering; but a 3 dB RMS difference between two sessions with no on-panel label will be read as a metering bug.
-- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:206-211, 259 (choice resolved in the view; row tags are constant strings at :301 and :393-395)
+- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:79-84, 132 (choice resolved in the view; row tags are constant strings at :174 and :266-268)
 - **Captures.** `rt/visuals/22b-integrated-1770-1-0.5s-stats.png`, `rt/visuals/23a-rms-mathematical-0.5s-stats.png`, `rt/visuals/26g-settings-closed-editor.png`
 
 ### V-19 — Settings combo menus leave a ghost list after a selection (observed while changing metering settings)
@@ -1045,7 +1055,7 @@ The no-device Standalone gives no in-plugin explanation for its '-' meters or it
 - **Steps.** Own run: 'signal square 50', 'level 6', clicked Statistics to reset, then captured Simple and, after re-entering the square, Advanced.
 - **Observed.** Statistics: M/S/I -0.6 LUFS, TP 1.75 dBTP in red (TP mode off), SP -0.10 dBFS not red, RMS 2.9 dBFS, i.e. above SP because of the AES-17 +3 dB reference. The GR trace sits flat at about -6 dB and the limiter bar shows about 6 dB. Nothing indicates that the input itself is 6 dB over full scale; there is no input meter.
 - **Interpretation.** The output is correctly limited, and inter-sample overs are flagged. A hot or clipping input is invisible, and RMS reading above the sample peak can puzzle users who do not know the AES-17 convention.
-- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:245-252 (TP/SP warn rules)
+- **Code.** e769f33:src/gui/LoudnessMeterView.cpp:243-244, :265-267 (TP/SP warn rules)
 - **Captures.** `rt/edges/40a-square50-plus6-simple.png`, `rt/edges/50a-square-plus6-advanced.png`
 
 ### E14 — TP mode on: the TP row repeatedly reads 0.03 dB above the true-peak ceiling (red)
@@ -1159,7 +1169,7 @@ The no-device Standalone gives no in-plugin explanation for its '-' meters or it
 
 ## Candidates the consolidation dropped
 
-The merge step of the audit's third phase de-duplicated the three domain consolidators' candidates into the finding list. These candidates were not carried, with the merge agent's reason:
+The merge step of the audit's third phase de-duplicated the three domain consolidators' candidates into the finding list. These candidates were not carried; the reason recorded at the merge step follows each:
 
 - `A-46` — Environment artefact. The post-pop-up click misroute (ST-01, E20, ST-21) appears only when xdotool warps the pointer and presses without first delivering motion, the same mechanism as the known warp artefact. E20 labels it a harness artefact: 0/16 failures with a 150 ms hover. ST-01 was normal with continuous motion. The touch, pen and VNC spot check it still needs is carried as a residual in TEST-002.
 - `A-47` — Environment artefact. E21 found the combo's X window already unmapped while its pixels stayed on screen until a 1 px move, which is Xvfb with no compositor. The composited-desktop check is carried as a residual in TEST-002.
@@ -1224,7 +1234,7 @@ Verifiers recorded material they noticed outside their batch. Each note was disp
 - **duplicate → UX-023.** UX-023's correction 1 and current_behavior already state that JUCE mutes input by default at first launch (StandaloneFilterWindow.h:344, 453, 563-567), so a working device processes silence. The same ALSA null-device reproduction is used. *(note: The Standalone processes silence on first launch even with a working audio device. JUCE turns 'Mute audio input' on by default for a processor with inputs and outputs (JUCE 9.0.1 juce_StandaloneFilterWindow.h:344, :453, :563-567). Anabasis has no file player (…)*
 - **drop.** The anchor error is in the phase-1 map, not in the product. TECH-001 already cites the correct CHANGELOG.md:1094-1103. *(note: CHANGELOG anchor drift: the KI-012 'does not close the outstanding report' bullet is at e769f33:CHANGELOG.md:1094-1103, not 1097-1106 as cited in the phase-1 map.)*
 - **duplicate → TECH-001.** TECH-001's verification already reports the private-namespace experiment with libXi.so hidden (the Standalone accepted a stepped drag and click) and the correct CHANGELOG anchor. *(note: The 9.0.1-built Standalone accepts XTEST pointer input with the unversioned libXi.so hidden (private mount namespace; /tmp/claude-0/-home-user/52dd522c-a346-5a74-bfc9-56317277213a/scratchpad/rt/verify-13/ns/dlprobe.txt, rt/verify-13/15-crop.png). This is the e…)*
-- **duplicate → STATE-007.** PF-anamorph-reference-3 is already refuted (merge.dropped), and STATE-007's corrections record that typed entry is bracketed (juce_Slider.cpp:451) and detaches or re-engages like a drag. *(note: PF-anamorph-reference-3 ('typed value-box entry is gesture-less, so typed managed values neither detach nor undo') looks refuted at the JUCE pin. Slider's textChanged commits inside ScopedDragNotification (build/_deps/juce-src/modules/juce_gui_basics/widgets/j…)*
+- **duplicate → STATE-007.** PF-anamorph-reference-3 was already dropped as refuted at the merge step (see 'Candidates the consolidation dropped' above), and STATE-007's corrections record that typed entry is bracketed (juce_Slider.cpp:451) and detaches or re-engages like a drag. *(note: PF-anamorph-reference-3 ('typed value-box entry is gesture-less, so typed managed values neither detach nor undo') looks refuted at the JUCE pin. Slider's textChanged commits inside ScopedDragNotification (build/_deps/juce-src/modules/juce_gui_basics/widgets/j…)*
 - **duplicate → MODEL-006.** MODEL-006's verification already records ADR-0005 Decision 2 (:97-100) 'gesture-bracketed per knob drag' against the unbracketed mapper writes, and the unverified host Touch/Latch behaviour. *(note: ADR-0005 decision 2 (e769f33:docs/architecture/design-decisions/ADR-0005-macro-layer-architecture.md:97-100) says mapper writes are 'gesture-bracketed per knob drag', but applyMapping/setParam write the nine managed parameters with bare setValueNotifyingHost a…)*
 - **duplicate → UI-013.** Same truncated-marker defect: 'Transparent Mast…' after a Character edit. *(note: The preset label's modified marker is lost to truncation on longer preset names. refreshPresetDisplay sets the button text to name + " *" (e769f33:src/gui/PluginEditor.cpp:2165-2169), and the combined string is ellipsised. After loading 'Transparent Master' an…)*
 - **duplicate → DSP-004.** DSP-004's verification and proposal already say that KI-005 blames a 'Character-macro move' while Loudness drives clipDrive, and they require correcting KI-005 to 'Loudness'. *(note: KNOWN_ISSUES KI-005 says a 'Character-macro move' carries clipDrive across 0 dB (e769f33:docs/KNOWN_ISSUES.md:296-297). clipDrive is driven only by Loudness (e769f33:src/MacroEngine.h:54); Character drives only colourDepth (e769f33:src/MacroEngine.h:57).)*
@@ -1269,6 +1279,6 @@ Verifiers recorded material they noticed outside their batch. Each note was disp
 - **duplicate → DOC-011.** DOC-011's evidence already cites HANDOVER.md:28 ('C++20, warning-free', 'C++23 canary is wired'). The same row's 'P1 skeleton, 2026-07-31' belongs in that fix. *(note: HANDOVER Build Status is stale: e769f33:docs/HANDOVER.md:28 says 'C++20, warning-free' and 'The §2.1 C++23 canary is wired as of 2026-08-05 (cxx23-canary.yml …)', while ADR-0030 moved the baseline to C++23 and removed the canary workflow (e769f33:docs/DEVELOPM…)*
 - **duplicate → DOC-001.** DOC-001's evidence cites DOCUMENTATION_LIFECYCLE_POLICY.md:16-37, and its proposal item 5 adds trigger-map rows (packaging, I/O layout, user-visible control name). Extending those rows to GUI-layout and Settings-row changes is the same fix. *(note: Lifecycle trigger-map gap (the root cause of the manual and DESIGN UI drift): e769f33:docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.md:16-47 has no row that routes a GUI layout, Settings-row, control-label or I/O-layout change to USER_MANUAL.md or README.md. 'P…)*
 - **duplicate → INPUT-004.** INPUT-004's current_behavior and evidence already include the Settings Tab/Down probe (settings-tab-probe.txt, 21c.png), and its proposal makes the Backdrop a keyboard focus container. *(note: Modal overlays do not contain keyboard focus. With Settings open, Tab continues to the editor controls behind the backdrop, and Down changed Tone (−0.40, with the macro moving Color Tone and Tilt) and the Ceiling while the panel covered them; the preset label…)*
-- **drop.** CI cost and concurrency configuration, with no user-facing behaviour, so outside this product/UX/UI audit. It is still worth a separate engineering ticket: build.yml:3-7 and :25-27 run the full matrix twice per push to a PR branch (for example, 4a5b71c ran as 34220696244 and 34220698731). *(note: Each push to a branch that has an open PR runs the full build.yml matrix TWICE: the push and pull_request events land in different concurrency groups because github.ref differs (refs/heads/<b> vs refs/pull/<n>/merge). Evidence: e769f33:.github/workflows/build.…)*
+- **drop.** CI cost and concurrency configuration, with no user-facing behaviour, so outside this product/UX/UI audit. It is still worth a separate engineering ticket: build.yml:3-7 and :25-27 run the full matrix twice per push to a PR branch (for example, 4a5b71c ran as 34220696244 and 34220698731). *(note: Each push to a branch that has an open PR runs the full build.yml matrix TWICE: the push and pull_request events land in different concurrency groups because github.ref differs (`refs/heads/<b>` vs `refs/pull/<n>/merge`). Evidence: e769f33:.github/workflows/build.…)*
 - **drop.** Evidence hygiene. The V-10/VIS-012 observer anchors LoudnessMeterView.cpp:284-285 and :395 do not exist at e769f33 (the file has 281 lines). In the report, re-pin them to e769f33:src/gui/LoudnessMeterView.cpp:158 (the '-' formatter) and :266-268 (the ' dBFS' rows). *(note: The observers' code references for V-10 / VIS-012 cite e769f33:src/gui/LoudnessMeterView.cpp:284-285 and :395, which do not exist at e769f33 (the file has 281 lines). The '-' formatter is at e769f33:src/gui/LoudnessMeterView.cpp:158, and the rows that append ' dBFS' a…)*
 
