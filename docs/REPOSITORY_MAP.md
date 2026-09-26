@@ -145,11 +145,15 @@ docs/
 │                   Still planned, no date claimed: ARCHITECTURE, SIGNAL_FLOW,
 │                   DSP_GRAPH_REFERENCE, DSP_ALGORITHMS, API_REFERENCE,
 │                   STATE_SERIALIZATION
-├── reports/        dated audit records, HTML. Derived measured evidence in the TEST_REPORT.md
-│                   sense -- each is a snapshot of one analysis at one commit and is superseded by
-│                   a later run rather than edited in place. Since 2026-09-03:
+├── reports/        dated audit records, HTML or Markdown. Derived measured evidence in the
+│                   TEST_REPORT.md sense -- each is a snapshot of one analysis at one commit and is
+│                   superseded by a later run rather than edited in place. Since 2026-09-03:
 │                   2026-09-03-scanner-audit.html (the CodeQL + PREfast raw-SARIF finding
-│                   register, its dispositions and its Roadmap)
+│                   register, its dispositions and its Roadmap). Since 2026-09-26:
+│                   2026-09-26-anabasis-product-ux-audit.md (the product / UX / UI / interaction
+│                   audit of `e769f33`: verified findings with decisions and priorities, systemic
+│                   themes and the phased roadmap; its code anchors are revision-pinned) and its
+│                   folder of the captures it cites
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)

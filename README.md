@@ -139,7 +139,9 @@ The full technical documentation lives in **[`docs/`](docs/)**:
 - **How-to:** [`docs/procedures/`](docs/procedures/) (build, development, CI/CD, testing, release)
 - **Audit records:** [`docs/reports/`](docs/reports/) — dated, per-commit analysis snapshots;
   currently [`2026-09-03-scanner-audit.html`](docs/reports/2026-09-03-scanner-audit.html)
-  (CodeQL + PREfast raw-SARIF findings, dispositions and Roadmap)
+  (CodeQL + PREfast raw-SARIF findings, dispositions and Roadmap) and
+  [`2026-09-26-anabasis-product-ux-audit.md`](docs/reports/2026-09-26-anabasis-product-ux-audit.md)
+  (product / UX / UI / interaction audit: verified findings, decisions, priorities and the roadmap)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
   [`docs/FUTURE_RISKS.md`](docs/FUTURE_RISKS.md) · [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md)
