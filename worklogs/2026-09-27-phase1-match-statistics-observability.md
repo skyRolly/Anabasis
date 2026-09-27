@@ -121,3 +121,41 @@ step-free) and is kept to pin that the new order added no step.
 
 **Not done:** listening (no subjective claim is made); a realtime MATCH/BYPASS run in a DAW (see the
 host section).
+
+## STATISTICS — the reset, the bypass audition, the session length (ADR-0020 amendment 4)
+
+**What the code did before** (audit UX-002, VIS-001, VIS-009, DOC-002 — each re-read against the
+tree): `LoudnessMeterView::mouseDown` reset the session on any mouse-down anywhere on the panel
+(left, right, the first press of a double-click, a drag start, the empty glass below the rows);
+the render tap fed the session accumulators and the wrapper's TP/SP holds with no bypass condition,
+so a realtime bypass of a hot input raised the holds above the ceiling and pulled I toward the input;
+nothing showed what span the figures covered; a reset blanked every published reading until the
+next processed block, which the manual's "the rolling windows are not reset" did not say.
+
+**Decisions and why:** RESET as an uppercase `TextButton` (the family's action-label convention —
+LEARN, LOCK, MATCH, BYPASS), title "Reset statistics" (the LOCK/"Ceiling lock" pattern), tooltip in
+the existing panel tooltip's own words; the session pause **realtime-only**, so an offline render's
+statistics describe the file it wrote; the session length counts MEASURED audio, so it is the scope;
+DOC-002 fixed in the manual, not in the display clear (the round-33 pairing stays).
+
+**Measured through the wrapper** (`testABypassAuditionStaysOutOfTheSessionFigures`, −6 dB ceiling,
+997 Hz at 0.95 peak, 1.09 s audition in 5.12 s): processed programme SP −6.00 / TP −6.00 / I −6.00;
+with the realtime audition SP −6.00 / TP −6.00 / I −6.00 while the momentary reading followed the
+input (−0.44 LUFS against −6.00); offline, SP −0.45 and I −4.00; session length 5.120 s plain,
+4.022 s with the audition (the 1.088 s audition plus its ~10 ms ramps), 5.120 s offline.
+
+**Mutations (each against both suites):**
+
+| Mutant | Killed by |
+|---|---|
+| the session always open | `sessionScope` ×3 (holds, I, length) |
+| offline not exempt | `sessionScope` offline ×2, and the hardened extreme-level premise |
+| SP hold / TP hold reading the render peak | `sessionScope` holds (each) |
+| the meter's session half never paused | `sessionScope` I |
+| the pause dropped at the integrated / LRA admission site | `sessionPause` I ×4 / LRA |
+| no resume watermark / no straddler | `sessionPause` ×4 / ×2 |
+| the reset leaves the length / the display clear skips it | `sessionTime` from-the-reset / ×3 zero-publishes + `statsReset` |
+| the formatter rounds | `sessionTime` formatter |
+| RESET does nothing / the whole panel resets again | `statsReset` ×2 / body checks in both layouts |
+| **equivalent, recorded:** the view's child-click flag false | nothing — in the pinned JUCE `Component::hitTest` consults it only when the parent ignores clicks |
+| **equivalent, removed:** `jmax` on the resume watermark | nothing — a resume always follows any reset, so its watermark is never earlier; the `jmax` was dropped rather than claimed |

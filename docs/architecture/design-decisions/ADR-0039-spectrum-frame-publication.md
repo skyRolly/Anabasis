@@ -470,7 +470,7 @@ Collected here so a reviewer does not have to assemble it from the prose above.
 - `src/dsp/GrHistoryBuffer.h:171-178` (the clear-on-change gate), `:180-202` (the two-discipline
   rule this view now sits on the other side of), `:189-193` (`batchIntact`), `:217-235` (`clear`)
 - `src/PluginProcessor.cpp:776, 806` (the order the bracket's proof rests on),
-  `src/PluginProcessor.h:560-564`
+  `src/PluginProcessor.h:564-568`
 - `src/dsp/AnabasisEngine.cpp:68-69`, `src/dsp/ScopeBuffer.h:197-205`
 - `src/gui/GrHistoryView.cpp:144` (the same reader contract, already in the tree)
 - `docs/architecture/THREAD_MODEL.md` §"Which context paints"

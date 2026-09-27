@@ -532,8 +532,8 @@ void AnabasisAudioProcessor::closePresetUndoBracket (const PresetUndoBracket& b)
     // none, which is strictly better and observably identical.
     // BE HONEST ABOUT THE SECOND CONJUNCT: it is TRUE BY CONSTRUCTION today.
     // Every caller assigns `presetBaseline = presetShapeFromLive()` immediately
-    // before calling this (`src/PluginProcessor.cpp:1654` in
-    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1724` in `applyPresetFile` — spelled
+    // before calling this (`src/PluginProcessor.cpp:1664` in
+    // `applyFactoryPreset`, `src/PluginProcessor.cpp:1734` in `applyPresetFile` — spelled
     // in FULL rather than as a bare `:NNNN`, because only the full spelling is a citation
     // `check-citations.py` can see, and these two numbers had already drifted 24 lines
     // inside the round that built it), so `presetBaseline.isEquivalentTo (presetShapeFromLive())`
@@ -806,7 +806,7 @@ void AnabasisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     engine.prepareHistoryTimeline (sampleRate, samplesPerBlock);
     dbTpMaxHold = samplePeakMaxHold = -144.0f;
     // Publish the cleared values too, not just the state behind them: without
-    // this the six meter atomics keep the previous session's readings until a
+    // this the meter atomics keep the previous session's readings until a
     // block completes — and indefinitely if the host prepares without ever
     // processing (a rate change while stopped, a plugin rescan).
     publishSilentMeters();
@@ -874,6 +874,7 @@ void AnabasisAudioProcessor::publishSilentMeters() noexcept
     pubRmsDb.store (anabasis::RmsMeter::kSilentDb, std::memory_order_relaxed);
     pubLufsIUngated.store (anabasis::LoudnessMeter::kSilentLufs, std::memory_order_relaxed);
     pubLra.store (anabasis::LoudnessMeter::kNoLra, std::memory_order_relaxed);
+    pubSessionSecs.store (0.0f, std::memory_order_relaxed);
     // The two per-stage GR lanes live on the ENGINE's atomics rather than
     // here (the panel meters read them per channel), so the one list reaches
     // them through the engine instead of by holding its own copies — see
@@ -973,7 +974,12 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     // whenever the monitor functions are off). Same audio thread, right
     // after process(): plain reads, no atomics needed on this side.
     const auto& om = engine.outputLoudness();
-    const float blockTpDb = juce::Decibels::gainToDecibels (engine.lastRenderTpMax(), -144.0f);
+    // The two holds read the SESSION half of the render peaks (ADR-0020
+    // amendment 4, audit VIS-001): the frames a realtime bypass audition was
+    // audible are left out, so a comparison against the input cannot raise
+    // the delivery peaks. Identical to the render peaks whenever bypass is
+    // off, and in every offline render.
+    const float blockTpDb = juce::Decibels::gainToDecibels (engine.lastSessionTpMax(), -144.0f);
     dbTpMaxHold = juce::jmax (dbTpMaxHold, blockTpDb);
     // The SAMPLE peak's own hold (ADR-0020). `lastRenderPeak()` already
     // existed and fed the GR ring's waveform; the stats row needs it as a
@@ -981,7 +987,7 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     // the same reason the true peak is — the question "did this master ever
     // exceed X?" is a session question.
     samplePeakMaxHold = juce::jmax (samplePeakMaxHold,
-                                    juce::Decibels::gainToDecibels (engine.lastRenderPeak(), -144.0f));
+                                    juce::Decibels::gainToDecibels (engine.lastSessionPeak(), -144.0f));
 
     // `integratedLufs()` and `lraLu()` are CACHED inside `LoudnessMeter` and
     // cost a branch here between gating blocks; the histogram walks they hold
@@ -1012,6 +1018,10 @@ void AnabasisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     pubRmsDb.store (engine.outputRms().rmsDb(), std::memory_order_relaxed);
     pubLufsIUngated.store (om.integratedUngatedLufs(), std::memory_order_relaxed);
     pubLra.store (om.lraLu(), std::memory_order_relaxed);
+    // How much programme the session figures cover (ADR-0020 amendment 4,
+    // audit VIS-009) — one scalar, computed here from the engine's own rate
+    // so the view never pairs a count with a rate read at another moment.
+    pubSessionSecs.store ((float) engine.sessionSeconds(), std::memory_order_relaxed);
 
     // The §2.9 GR METER — this block's deepest reduction, one figure per
     // processBlock call, unchanged. It is a per-block reading and stays one;

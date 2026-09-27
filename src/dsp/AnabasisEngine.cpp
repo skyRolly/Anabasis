@@ -281,6 +281,9 @@ void AnabasisEngine::reset() noexcept
     outTp.reset();
     renderTpMaxCall = renderPeakCall = 0.0f;
     renderTpMaxChunk = renderPeakChunk = 0.0f;
+    sessionTpMaxCall = sessionPeakCall = 0.0f;
+    sessionTpMaxChunk = sessionPeakChunk = 0.0f;
+    sessionSamples = 0;
     grMinChunk = 1.0f;
     grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
     // THE HISTORY ACCUMULATOR IS DELIBERATELY NOT IN THIS LIST, and round 16
@@ -770,6 +773,8 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     grMinThisCallCh[0] = grMinThisCallCh[1] = 1.0f;
     renderTpMaxCall = 0.0f;
     renderPeakCall  = 0.0f;
+    sessionTpMaxCall = 0.0f;
+    sessionPeakCall  = 0.0f;
     // THE CHUNK LOOP BREAKS ON THE HISTORY'S BOUNDARY AS WELL AS ON `maxBlock`
     // (0.2.12, OQ-017 fix 1). `maxBlock - histSamples` is the distance to the
     // next prepared-block boundary of the PROCESSED-AUDIO stream, which is at
@@ -815,6 +820,8 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
         renderTpMaxChunk = 0.0f;
         renderPeakChunk  = 0.0f;
+        sessionTpMaxChunk = 0.0f;
+        sessionPeakChunk  = 0.0f;
         processChunk (buffer, start, num, p, eqPre, eqPost);
         // Chunk into call — the meters' figures, unchanged in meaning because
         // min and max are associative.
@@ -823,6 +830,8 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         grMinThisCallCh[1] = juce::jmin (grMinThisCallCh[1], grMinChunkCh[1]);
         renderTpMaxCall    = juce::jmax (renderTpMaxCall, renderTpMaxChunk);
         renderPeakCall     = juce::jmax (renderPeakCall, renderPeakChunk);
+        sessionTpMaxCall   = juce::jmax (sessionTpMaxCall, sessionTpMaxChunk);
+        sessionPeakCall    = juce::jmax (sessionPeakCall, sessionPeakChunk);
         // …and chunk into the history entry, which completes exactly when it
         // holds `maxBlock` samples. The loop above guarantees it never holds
         // more, so this is an `if`, not a `while`: no unbounded catch-up.
@@ -1404,6 +1413,17 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         dryMeter.processFrame (monFrameDry, nCh);
         wetMeter.processFrame (monFrameWet, nCh);
         adaptiveEngine.pushFrame (monFrameDry, nCh);
+        // ADR-0020 amendment 4 (audit VIS-001): the SESSION figures leave out
+        // the frames a realtime bypass audition is audible — any part of the
+        // ~10 ms ramp included, so no crossfaded input reaches them. Offline
+        // the bypass is part of the rendered file and is measured. The rolling
+        // readings (M, S, RMS) and the GR history's waveform keep following
+        // what the render tap carries, exactly as before. The true-peak
+        // estimator reports ~6 samples late, so at a release up to that many
+        // ramp samples can enter the TP hold — at under 2 % of the input's
+        // level, stated rather than compensated.
+        const bool sessionOpen = bypassMix <= 0.0f || p.nonRealtime;
+        outMeter.setSessionPaused (! sessionOpen);
         outMeter.processFrame (renderFrame, nCh);
         outRms.processFrame (renderFrame, nCh);      // §2.9 stats row (ADR-0020)
         {
@@ -1413,6 +1433,15 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             {
                 renderTpMaxChunk = juce::jmax (renderTpMaxChunk, tp[ch]);
                 renderPeakChunk = juce::jmax (renderPeakChunk, std::abs (renderFrame[ch]));
+            }
+            if (sessionOpen)
+            {
+                for (int ch = 0; ch < nCh; ++ch)
+                {
+                    sessionTpMaxChunk = juce::jmax (sessionTpMaxChunk, tp[ch]);
+                    sessionPeakChunk  = juce::jmax (sessionPeakChunk, std::abs (renderFrame[ch]));
+                }
+                ++sessionSamples;
             }
         }
         if (++dryReadPos >= dryRingSize)

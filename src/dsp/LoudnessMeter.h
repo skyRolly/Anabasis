@@ -76,6 +76,7 @@ public:
         subCount = 0;
         subFill  = 0;
         integratedFrom = 0;
+        sessionPaused  = false;
         for (auto& s : subRing) s = 0.0;
         clearSessionCumulative();
     }
@@ -153,6 +154,39 @@ public:
         // the session, and LRA has no averaging to dilute it.
         lraFrom = subCount + 30 + (subFill > 0 ? 1 : 0);
     }
+
+    // PAUSE the session-cumulative half (ADR-0020 amendment 4, audit VIS-001):
+    // while paused no gating block enters the integrated histogram or the
+    // ungated mean and no short-term value enters the LRA histogram; the
+    // rolling windows (momentary, short-term) keep running, because they
+    // describe what is playing now. The engine pauses it while a REALTIME
+    // bypass audition is audible, so a comparison against the input is not
+    // folded into the programme's session figures.
+    //
+    // RESUMING is resetIntegrated's watermark rule WITHOUT the clear: the
+    // first gating block admitted after a pause averages four sub-blocks that
+    // all post-date it, and the first LRA sample thirty — the sub-block in
+    // progress at the resume (the straddler) counted as paused. Pausing needs
+    // no watermark: admission is decided when a sub-block completes, and a
+    // completion while paused admits nothing. The cost, stated: up to one
+    // sub-block (100 ms) of programme either side of a pause is not measured,
+    // and LRA resumes ~3 s after it. A reset issued DURING a pause needs
+    // nothing extra: it admits nothing while paused, and the resume comes
+    // after it, so the resume's watermark is the later of the two and plain
+    // assignment is exact. Audio thread only; an edge-triggered compare.
+    void setSessionPaused (bool paused) noexcept
+    {
+        if (paused == sessionPaused)
+            return;
+        sessionPaused = paused;
+        if (! paused)
+        {
+            const int64_t straddler = subFill > 0 ? 1 : 0;
+            integratedFrom = subCount + 4 + straddler;
+            lraFrom        = subCount + 30 + straddler;
+        }
+    }
+    bool isSessionPaused() const noexcept { return sessionPaused; }
 
     // One frame (all channels of one sample step).
     void processFrame (const float* x, int numCh) noexcept
@@ -366,7 +400,7 @@ private:
 
         // A gating block exists once four sub-blocks have accumulated; its
         // mean square is the mean of the last four sub-block means.
-        if (subCount >= 4 && subCount >= integratedFrom)
+        if (! sessionPaused && subCount >= 4 && subCount >= integratedFrom)
         {
             double z = 0.0;
             for (int k = 0; k < 4; ++k)
@@ -411,7 +445,7 @@ private:
         // Its own watermark, not `integratedFrom`: a short-term window reaches
         // ten times further back, so sharing the integrated one would admit
         // 2.9 s of pre-reset programme.
-        if (subCount >= 30 && subCount >= lraFrom)
+        if (! sessionPaused && subCount >= 30 && subCount >= lraFrom)
         {
             const float st = windowLoudness (30);
             if (st >= -70.0f && std::isfinite (st))       // the absolute gate
@@ -508,6 +542,7 @@ private:
 
     // The fixed-size integrated-gating accumulator.
     int64_t integratedFrom = 0;   // resetIntegrated watermark (see there)
+    bool    sessionPaused  = false;   // setSessionPaused (see there)
     int32_t histCount[kBins] = {};
     double  histSum[kBins] = {};
     int64_t totalGatedBlocks = 0;

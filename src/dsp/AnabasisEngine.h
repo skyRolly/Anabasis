@@ -396,7 +396,8 @@ public:
 
     // §2.9 meter-hold reset, audio thread (the wrapper consumes the request at
     // the top of processBlock and calls this). Clears ONLY the render meter's
-    // session-cumulative half — the integrated histogram. Deliberately not
+    // session-cumulative half — the integrated histogram, the ungated mean and
+    // LRA — and the session length (ADR-0020 amendment 4). Deliberately not
     // touched: the §2.7 dry/wet meters (they feed the loudness COMPENSATION,
     // a monitor function — clearing them would bounce the monitor gain, which
     // is not what a meter-reset button means) and the GR ring (a rolling
@@ -406,7 +407,11 @@ public:
     // window is `GrHistoryView::windowSeconds (rate, block)`, twenty seconds
     // wherever the ring holds them (ADR-0040), and nothing here depends on
     // the figure.
-    void resetMeterHolds() noexcept { outMeter.resetIntegrated(); }
+    void resetMeterHolds() noexcept
+    {
+        outMeter.resetIntegrated();
+        sessionSamples = 0;
+    }
 
     // The per-stage GR figures the panel meters read, cleared. Called by the
     // wrapper's `publishSilentMeters()` so the two GR lanes obey the SAME
@@ -433,6 +438,23 @@ public:
     }
     float lastRenderTpMax() const noexcept { return renderTpMaxCall; }   // linear
     float lastRenderPeak() const noexcept  { return renderPeakCall; }    // plain |x| max
+
+    // The SESSION half of the two render peaks, and the length of programme
+    // the session figures cover (ADR-0020 amendment 4, audit VIS-001 /
+    // VIS-009). Identical to the two above except over the frames a REALTIME
+    // bypass audition was audible (`bypassMix > 0` and not `nonRealtime`),
+    // which the session statistics leave out: the integrated figure, LRA and
+    // the TP / SP holds describe the processed programme, and a comparison
+    // against the input is not part of it. Offline the bypass is part of the
+    // rendered file, so it is measured like everything else. The wrapper's
+    // holds read these; the GR history's waveform keeps reading
+    // `lastRenderPeak`, unchanged. Audio thread, plain reads after `process`.
+    float lastSessionTpMax() const noexcept { return sessionTpMaxCall; }   // linear
+    float lastSessionPeak() const noexcept  { return sessionPeakCall; }    // plain |x| max
+    // Frames measured into the session since the last `resetMeterHolds` or
+    // prepare, as seconds of programme. Stops while a realtime bypass is
+    // audible and while no audio is processed.
+    double sessionSeconds() const noexcept { return (double) sessionSamples / sr; }
 
 private:
     void latchOsConfig (int factorIdx, int phaseIdx, bool truePeakClamp) noexcept;
@@ -602,6 +624,9 @@ private:
     TruePeakEstimator outTp;
     float renderTpMaxCall = 0.0f, renderPeakCall = 0.0f;
     float renderTpMaxChunk = 0.0f, renderPeakChunk = 0.0f;
+    float sessionTpMaxCall = 0.0f, sessionPeakCall = 0.0f;       // see lastSessionTpMax
+    float sessionTpMaxChunk = 0.0f, sessionPeakChunk = 0.0f;
+    int64_t sessionSamples = 0;
 
     // THE HISTORY ENTRY UNDER CONSTRUCTION (0.2.12, OQ-017 fix 1): the two
     // statistics an entry carries, folded over the samples it has collected so

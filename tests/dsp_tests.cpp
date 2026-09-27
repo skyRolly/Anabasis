@@ -5241,6 +5241,101 @@ static void testAStagedFrozenVectorAlwaysGetsABottom()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0020 amendment 4 (audit VIS-001): the render meter's SESSION half can be
+// paused. The engine pauses it while a realtime bypass audition is audible, so
+// a comparison against the input is not folded into the programme's
+// integrated loudness or LRA. Each piece has a mutant it kills: the pause at
+// each of the two admission sites, the resume watermark, and its straddler.
+// A reset issued DURING a pause is pinned too (nothing is admitted until the
+// resume).
+static void testTheSessionFiguresPauseForABypassAudition()
+{
+    const double sr = 48000.0;
+    auto feed = [sr] (anabasis::LoudnessMeter& m, float amp, double seconds, long& t)
+    {
+        const long n = (long) (seconds * sr);
+        for (long k = 0; k < n; ++k, ++t)
+        {
+            const float v = amp * (float) std::sin (juce::MathConstants<double>::twoPi * 997.0 * (double) t / sr);
+            const float fr[2] = { v, v };
+            m.processFrame (fr, 2);
+        }
+    };
+    struct R { float i, lra; };
+    // A programme at -20 / -24 dBFS peak for 6 s + 6 s, with a 4 s INPUT
+    // audition at -2 dBFS peak between the halves. `mode` 0 measures the
+    // audition like programme, 1 pauses the session for it (resuming 37 ms
+    // into a sub-block, so the straddler rule is exercised), 2 is the
+    // programme with no audition at all.
+    auto run = [&] (int mode) -> R
+    {
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        long t = 0;
+        feed (m, 0.1f, 6.0, t);
+        if (mode != 2)
+        {
+            if (mode == 1) m.setSessionPaused (true);
+            feed (m, 0.8f, 4.037, t);
+            if (mode == 1) m.setSessionPaused (false);
+        }
+        feed (m, 0.063f, 6.0, t);
+        return { m.integratedLufs(), m.lraLu() };
+    };
+    const auto folded = run (0), paused = run (1), programme = run (2);
+    check (folded.i > programme.i + 3.0f,
+           "sessionPause: (premise) a loud audition measured like programme moves I by more than 3 LU");
+    check (std::abs (paused.i - programme.i) < 0.2f,
+           "sessionPause: with the session paused for the audition, I matches the programme alone within 0.2 LU");
+    check (folded.lra > programme.lra + 3.0f && paused.lra < programme.lra + 1.0f,
+           "sessionPause: LRA leaves the audition out too");
+
+    // The straddler: the sub-block in progress at the resume holds audition
+    // samples, so the first gating block admitted after it must not include
+    // it. A resume mid-sub-block into a DIFFERENT level shows it: with the
+    // straddler admitted, one gating block averages audition energy in.
+    {
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        long t = 0;
+        m.setSessionPaused (true);
+        feed (m, 0.9f, 2.05, t);              // resume 50 ms into a sub-block
+        m.setSessionPaused (false);
+        feed (m, 0.05f, 0.9, t);              // exactly enough for the first admitted blocks
+        const float i = m.integratedLufs();
+        anabasis::LoudnessMeter ref;
+        ref.prepare (sr);
+        long u = 0;
+        feed (ref, 0.05f, 3.0, u);
+        check (i > -99.0f && std::abs (i - ref.integratedLufs()) < 0.1f,
+               "sessionPause: the first blocks after a resume carry none of the paused audio (the straddler)");
+    }
+
+    // A reset issued DURING a pause: nothing is admitted until the resume,
+    // and afterwards the session holds only what followed it.
+    {
+        anabasis::LoudnessMeter m;
+        m.prepare (sr);
+        long t = 0;
+        feed (m, 0.1f, 2.0, t);
+        m.setSessionPaused (true);
+        feed (m, 0.8f, 1.0, t);
+        m.resetIntegrated();
+        feed (m, 0.8f, 1.0, t);
+        check (m.integratedLufs() < -99.0f && m.isSessionPaused(),
+               "sessionPause: a reset during a pause admits nothing while the pause lasts");
+        m.setSessionPaused (false);
+        feed (m, 0.1f, 2.0, t);
+        anabasis::LoudnessMeter ref;
+        ref.prepare (sr);
+        long u = 0;
+        feed (ref, 0.1f, 2.0, u);
+        check (std::abs (m.integratedLufs() - ref.integratedLufs()) < 0.1f,
+               "sessionPause: after the resume the session holds only post-resume programme");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The meter-reset watermark's OFF-BY-ONE half, which the wrapper-level test
 // cannot see: gating blocks are assembled from the last four 100 ms
 // sub-blocks, and at the instant of the reset one sub-block is PARTIALLY
@@ -7103,6 +7198,12 @@ static void testExtremeLevelDoesNotBreakTheMetersOrAdaptation()
         engine.prepare (sr, bigBlock, 2);
         anabasis::EngineParameters p;
         p.bypass = true;
+        // OFFLINE, so the bypassed audio IS measured into the session: since
+        // ADR-0020 amendment 4 a realtime bypass audition is left out of the
+        // integrated reading, which would leave `intBefore` and `intAfter`
+        // both at the sentinel and the last check below passing vacuously.
+        // The premise beside it now proves the route is live.
+        p.nonRealtime = true;
 
         auto bigTone = [&] (int b)
         {
@@ -7152,6 +7253,8 @@ static void testExtremeLevelDoesNotBreakTheMetersOrAdaptation()
         // needs no guard; the sliding window's does, and the half-second
         // assertion above is what measures it.
         const float intAfter = engine.outputLoudness().integratedLufs();
+        check (std::isfinite (intBefore) && intBefore > -40.0f,
+               "meters/adaptation: (test premise) the integrated reading measured the tone before the event");
         check (std::isfinite (intAfter) && std::abs (intAfter - intBefore) < 1.0f,
                "meters/adaptation: the integrated reading is not poisoned for the session");
     }
@@ -7714,6 +7817,7 @@ int main()
     testAutoReleaseFollowsTheTrimScale();
     testAStagedFrozenVectorAlwaysGetsABottom();
     testMeterResetIgnoresTheStraddlingSubBlock();
+    testTheSessionFiguresPauseForABypassAudition();
     testSpectrumRingsCarryTheTaps();
     testGrHistoryEntriesFollowThePreparedBlock();
     testTheHistorySurvivesASameConfigurationRePrepare();

@@ -542,6 +542,10 @@ public:
     // the audio thread from ever reading a UI preference (ADR-0020).
     float meterLufsIUngated() const noexcept { return pubLufsIUngated.load (std::memory_order_relaxed); }
     float meterLra()          const noexcept { return pubLra.load (std::memory_order_relaxed); }
+    // Seconds of programme the session figures cover (ADR-0020 amendment 4):
+    // advances with measured audio, stops during a realtime bypass audition
+    // and while no audio is processed, 0 after every reset, load and prepare.
+    float meterSessionSeconds() const noexcept { return pubSessionSecs.load (std::memory_order_relaxed); }
     float meterCompGrDb() const noexcept { return engine.lastCompGrDb(); }   // per-stage (P5 panels)
     // Per-channel per-stage GR (0.1.2 item 12) — the panel meters' L/R lanes
     // and the KI-009 field disambiguator; see the engine getters.
@@ -604,15 +608,15 @@ public:
     // §2.9 meter-hold reset — the THREADING_POLICY momentary-request row
     // (single atomic, payload-free, consumed with `exchange` at the top of
     // processBlock), the shape THREAD_MODEL reserved for it at P3. Clears the
-    // session-cumulative display state ONLY: the integrated-LUFS histogram
-    // (engine render meter) and the wrapper's dBTP max-hold; PLR follows by
-    // derivation. Two callers: the P5 meter panel's reset affordance, and
+    // session-cumulative display state ONLY: the integrated-LUFS histogram, the
+    // ungated mean and LRA (engine render meter), the session duration, and
+    // the wrapper's dBTP and sample-peak max-holds; PLR follows by derivation. Two callers: the P5 meter panel's reset affordance, and
     // setStateInformation — the P5 decision THREAD_MODEL left open is taken
     // there: loading a session clears the previous programme's holds.
     //
     // The DISPLAY clear is part of the request, not something a caller adds
     // beside it. The ENGINE half genuinely has to wait for a block top (it is
-    // audio-thread state); the six published atomics do not, and a request
+    // audio-thread state); the published atomics do not, and a request
     // that only sets the flag is INVISIBLE until audio flows — indefinitely so
     // if the host is stopped, which is the ordinary condition for both
     // callers. `setStateInformation` learned that at round 33 and paired the
@@ -641,10 +645,11 @@ public:
         // one frame late instead of the display going stale-blank.
         //
         // RELEASE on the flag, ACQUIRE on the `exchange` that consumes it, for
-        // the reason THREADING_POLICY's publication-flag row gives: all six
-        // meter atomics are relaxed and carry no ordering of their own, so
-        // source order alone would not stop the consumer observing the flag
-        // before the values. The flag announces them, so it orders them.
+        // the reason THREADING_POLICY's publication-flag row gives: the meter
+        // atomics (eleven since ADR-0020 amendment 4) are relaxed and carry
+        // no ordering of their own, so source order alone would not stop the
+        // consumer observing the flag before the values. The flag announces
+        // them, so it orders them.
         publishSilentMeters();
         meterResetPending.store (true, std::memory_order_release);
     }
@@ -687,7 +692,8 @@ private:
                        pubPeakMaxDb { -144.0f },
                        pubRmsDb { anabasis::RmsMeter::kSilentDb },
                        pubLufsIUngated { anabasis::LoudnessMeter::kSilentLufs },
-                       pubLra { anabasis::LoudnessMeter::kNoLra };
+                       pubLra { anabasis::LoudnessMeter::kNoLra },
+                       pubSessionSecs { 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnabasisAudioProcessor)
 };

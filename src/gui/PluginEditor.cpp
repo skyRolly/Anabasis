@@ -675,6 +675,9 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     compGrMeter.setComponentID ("compGrMeter");
     limGrMeter.setComponentID ("limGrMeter");
     addAndMakeVisible (*meterView);
+    // The STATISTICS panel's RESET (ADR-0020 amendment 4) eases its hover like
+    // every other editor button; the panel owns it, the animation list is here.
+    registerAnimated (meterView->resetControl());
     // The two modes of the shared graph well (both views, both editor modes) —
     // `int_spectrumOn` picks one; every layout pass and the 24 Hz tick keep the
     // visibility pair in step, starting with the first `resized()`.

@@ -286,3 +286,90 @@ Evidence [Verified]:
   fails only its own assertions.
 - Every pre-existing loudness assertion in `AnabasisTests` passes unedited, which is the
   bit-identity evidence: a cache returning anything different would fail there first.
+
+## Amendment 4 — RESET is an explicit control, a realtime bypass audition is not measured, and the session shows its length (2026-09-27)
+
+**On the owner's direction** (Phase 1 of the 2026-09-26 audit: the STATISTICS reset becomes an
+explicit control in the repository's own terminology, and the statistics' scope is made visible,
+bypass folding included), **⊕ flagged for the owner's review of the pull request that carries it.**
+Filed as a dated amendment rather than an edit, because it moves three things this record described:
+decision 6's panel (the header line now carries a control and a reading), the Consequences' "the
+meter-reset click" (there is no longer a panel click), and the scope of the session figures, which
+the Consequences place "all on the existing render tap" with a reset as the only clearing event.
+Audit findings UX-002, VIS-001, VIS-009, and DOC-002 (documentation only).
+
+1. **RESET (audit UX-002).** Until now the WHOLE panel was the reset: any mouse-down anywhere on it
+   — a right-click, the first press of a double-click, the start of a drag, a click on the ~318 px
+   of empty glass under the rows in Simple — discarded I, LRA, PLR and both peak holds with no
+   confirmation and no undo. The body is now inert and one named control does it: a `TextButton`
+   labelled **RESET** on the header line, right-aligned inside the 28 px above the first row, so no
+   reading moves (decision 6's 202 px stack is unchanged). The wording follows the family's
+   uppercase action-label convention (LEARN, LOCK, MATCH, BYPASS); the accessible title is
+   **"Reset statistics"**, after the panel's own header, as LOCK's title "Ceiling lock" follows its
+   control; the tooltip is **"Reset the integrated measurement, the loudness range and both peak
+   holds"**, the existing panel tooltip's own words. It is focusable (Return presses it, as every
+   editor `TextButton`) and has a `press` accessibility action. The panel's tooltip no longer says
+   "Click to reset". What a reset clears is unchanged: the integrated histogram, the ungated mean,
+   LRA and both peak holds (PLR follows) — plus the session length below.
+   **A family deviation, recorded:** Anamorph resets its holds on a click on any readout, and its
+   manual documents it. The cost is not symmetric — a stray click there clears a peak tick, here it
+   discards an integrated measurement of a whole programme — which is why the deviation is taken
+   and why `BRAND_CONSISTENCY_CHECKLIST.md` now lists it, so the Level-5 pass does not "restore"
+   the sibling's behaviour.
+2. **A realtime bypass audition is left out of the session figures (audit VIS-001).** The session
+   figures — the integrated reading (gated and ungated), LRA, the TP and SP holds, and so PLR —
+   describe the processed programme. A realtime BYPASS is an audition of the input (ADR-0044 makes
+   it play at unity), and folding it in let a comparison raise the delivery peak holds above the
+   ceiling and pull the integrated figure toward the input for the rest of the session. The engine
+   now pauses the session half while any part of the bypass is audible (`bypassMix > 0`, the ramp
+   included) and the session TP/SP maxima skip those frames; resuming applies
+   `resetIntegrated`'s straddler watermark without clearing, so the first gating block and the
+   first LRA window after a pause carry none of the paused audio. **Offline, the bypass is part
+   of the rendered file and is measured like everything else** — the statistics then describe the
+   file. Unchanged: the rolling readings (M, S, RMS) follow whatever plays, the GR history's
+   waveform keeps reading the render peak, and every rendered sample. Stated costs: up to one
+   100 ms sub-block of programme either side of a pause is not measured; LRA resumes ~3 s after it;
+   the true-peak estimator's ~6-sample report delay lets at most that many samples of the closing
+   ramp (under 2 % of the input's level) into the TP hold.
+   **Host-dependent, separated:** a host that bypasses the plug-in through its bypass parameter
+   (`getBypassParameter()` is `bypass`, so JUCE's VST3/AU wrappers route a host bypass here) gets
+   the same pause. A host that instead stops calling the plug-in — a disabled or frozen track,
+   some hosts' own bypass — processes nothing, so nothing is measured, the session length stops,
+   and the rolling readings hold their last values (VIS-005, unchanged). Which hosts do which is
+   real-DAW evidence (audit TEST-002).
+3. **The session shows its length (audit VIS-009).** Beside the header: the seconds of programme
+   the session figures cover, `m:ss` (h:mm:ss from an hour), whole seconds, never rounded up. It
+   advances with measured audio, stops while a realtime bypass audition is audible and while no
+   audio is processed, and returns to 0:00 after RESET, a state load and every prepare — exactly
+   the session figures' own reset points; an A/B switch or a preset apply resets neither. One more
+   relaxed scalar on the existing Meters → GUI row (`pubSessionSecs`, eleven in
+   `publishSilentMeters`' list), same contract, same clear list — the precedent of this record's
+   own Consequences for its five; no new path, no new ordering. `THREAD_MODEL.md` and
+   `THREADING_POLICY.md`'s meter row name it.
+4. **What a reset does NOT clear is documented, not changed (audit DOC-002).** The display clear
+   that pairs with the request (round 33) blanks every published reading, the rolling ones
+   included, until the next processed block republishes them — immediately while audio plays,
+   and not until audio flows while the transport is stopped. The rolling windows themselves are
+   not reset. `USER_MANUAL.md` §3.4 said "not reset" without that sentence; it says both now.
+
+Nothing here changes a parameter, a serialized field, the DSP signal path or the latency.
+
+Evidence [Verified]:
+- `AnabasisTests` `testTheSessionFiguresPauseForABypassAudition` — an audition 12 dB over the
+  programme moves I by > 3 LU when measured and by < 0.2 LU when paused; LRA likewise; the
+  straddler and a reset issued during a pause pinned separately. **Mutation-verified**: the pause
+  removed at either admission site, the resume watermark removed, and the straddler removed each
+  fail their own checks.
+- `AnabasisStateTests` `testABypassAuditionStaysOutOfTheSessionFigures` — a −0.45 dBFS input
+  auditioned over a −6 dB-ceiling programme leaves SP and TP at −6.00 and I within 0.3 LU, the
+  session length stops for the audition (to within its ramps), and an offline render measures it
+  (SP −0.45); `testTheSessionDurationFollowsTheSessionFigures` (counting, the reset/load/prepare
+  zeros with no audio, A/B and preset leaving it alone, the formatter);
+  `testTheStatisticsPanelResetsOnlyFromItsResetControl` (left/right/double clicks and drags on
+  the body reset nothing in both layouts; RESET's place, name, focus and hit-testing; a pointer
+  press on it resets). Each fails with its mechanism reverted (the 2026-09-27 Phase 1 worklog).
+  One mutant is equivalent in the pinned JUCE and recorded as such: the view's child-click flag,
+  which `Component::hitTest` consults only when the parent ignores clicks.
+- `dsp_tests.cpp`'s extreme-level route through the bypassed histogram now runs OFFLINE with a
+  premise that the integrated reading is live — it would otherwise have passed vacuously.
+

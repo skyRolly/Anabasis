@@ -48,7 +48,8 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ## [0.2.14] — 2026-09-27
 
 **Phase 1 of the 2026-09-26 product audit: listening and measurement you can trust.** MATCH now
-makes the BYPASS comparison loudness-matched. Nothing here changes a rendered sample, the reported
+makes the BYPASS comparison loudness-matched, and the STATISTICS panel resets only from a RESET
+button and says what it measured. Nothing here changes a rendered sample, the reported
 latency, a parameter or the saved state. Measurement trail:
 [`worklogs/2026-09-27-phase1-match-statistics-observability.md`](worklogs/2026-09-27-phase1-match-statistics-observability.md).
 
@@ -61,8 +62,26 @@ latency, a parameter or the saved state. Measurement trail:
   DELTA with MATCH is unchanged, and nothing changes in an offline bounce or on the meters.
   [ADR-0044](docs/architecture/design-decisions/ADR-0044-match-applies-to-the-processed-leg-so-bypass-is-loudness-matched.md)
   (on the owner's direction; flagged for review). Evidence: this release. [Verified]
+- **Listening to BYPASS no longer changes the session statistics.** During playback, a bypass
+  comparison was measured into the integrated loudness, the loudness range and the peak holds —
+  so auditioning an input that peaked above your Ceiling turned the TP and SP holds red for the
+  rest of the session, and the integrated figure drifted toward the input. A realtime bypass is
+  now left out of those figures (the M, S and RMS readings still follow what you hear); an
+  offline bounce still measures its bypassed sections, because they are in the file.
+  [ADR-0020 amendment 4](docs/architecture/design-decisions/ADR-0020-waveform-statistics-panel.md)
+  (on the owner's direction; flagged for review). Evidence: this release. [Verified]
+
+### Added
+- **The STATISTICS header shows how much programme the figures cover** (`m:ss`): it stops while
+  you listen to BYPASS and while no audio plays, and returns to 0:00 after RESET, a project load
+  or a host sample-rate/buffer change. Evidence: this release. [Verified]
 
 ### Changed
+- **STATISTICS resets only from its RESET button**, on the panel's header line. Until now any
+  click on the panel — a right-click, a drag, a click on the empty space under the readings —
+  discarded the integrated measurement, the loudness range and both peak holds. A deliberate
+  difference from Anamorph, which resets its holds on a click on a readout. What a reset clears is
+  unchanged. Evidence: this release. [Verified]
 - **MATCH + BYPASS is 5–10 dB louder than before** — it is now your input at its own level, never
   louder than a plain BYPASS. A realtime print that automates BYPASS with MATCH on records the input
   at unity in the bypassed sections. Evidence: this release. [Verified]

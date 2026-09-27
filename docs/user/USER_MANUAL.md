@@ -277,10 +277,26 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   and reaches the bottom at **24 dB** of reduction — the same span the COMP and LIMITER
   panels' own GR meters use, so the two read against each other directly.
 
-**Click the STATISTICS panel to reset** the integrated measurement, the loudness range and
-both peak holds — do it after changing the section you are judging. The rolling windows (M,
-S, RMS) are not reset: they measure the last few seconds and have nothing session-scoped in
-them.
+**RESET**, on the STATISTICS header line, clears the session figures: the integrated
+measurement (**I**), the loudness range (**LRA**), both peak holds (**TP**, **SP**) — and **PLR**
+with them — plus the session length beside the header. Do it after changing the section you
+are judging. Nothing else resets them except loading a project and the host re-preparing the
+plug-in (a sample-rate or buffer-size change); an A/B switch, a preset and BYPASS do not.
+Clicking anywhere else on the panel does nothing (since 0.2.14 — until then the whole panel was
+the reset, so a stray click, right-click or drag discarded the session). The rolling windows (M,
+S, RMS) are not reset — they measure the last few seconds and have nothing session-scoped in
+them — but every reading blanks for an instant at a reset and returns with the next audio; with
+the transport stopped they stay blank until audio flows.
+
+**What the session covers.** The time beside the header (`m:ss`, whole seconds) is how much
+programme the session figures describe. It stops while you listen to **BYPASS** during
+playback: an audition of your input is not part of the master you are measuring, so it is left
+out of I, LRA and the peak holds (since 0.2.14 — before, a bypass comparison could raise the
+peak holds above your Ceiling and pull I toward the input). The rolling readings still follow
+what you hear, bypass included. In an **offline bounce** the bypassed sections are part of the
+file, so they are measured. If your host stops sending audio to the plug-in (some hosts do when
+a track is disabled, frozen or bypassed by the host itself), nothing is measured, the time stops,
+and the rolling readings hold their last values.
 
 ### 3.5 Settings (gear)
 
@@ -485,7 +501,7 @@ travel with your DAW session.
 2. **LEARN** on a representative minute of the actual voice, then let it settle and
    **FREEZE** — one consistent sound for the whole episode, saved with the session.
 3. Aim for your distributor's integrated-loudness spec rather than maximum loudness;
-   reset the integrated meter (click the panel), play the episode through, and read **I**.
+   press **RESET** on the STATISTICS panel, play the episode through, and read **I**.
 
 ---
 

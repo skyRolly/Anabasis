@@ -3822,7 +3822,8 @@ static void testMeterResetClearsSessionHolds()
            "meterReset: a session load cleared the previous programme's holds");
 
     // The GUI affordance's half of the SAME row, which had nothing behind it.
-    // `LoudnessMeterView::mouseDown` calls `requestMeterReset()` and nothing
+    // The panel's reset (the whole panel's `mouseDown` then; the RESET button
+    // since 0.2.14) calls `requestMeterReset()` and nothing
     // else, and the display publish lived at the state-load call site — so with
     // the transport stopped (exactly when a user reads an integrated figure and
     // decides to clear it) the click set a flag no block ever consumed, and the
@@ -12383,6 +12384,226 @@ static void testTheTooltipSwitchGatesEveryTip()
            "tooltipGate: …and switching them off closes it");
 }
 
+// ---------------------------------------------------------------------------
+// ADR-0020 amendment 4 through the wrapper (audit VIS-001 / VIS-009). A
+// realtime BYPASS audition of an input that peaks well above the ceiling
+// stays out of the session figures — the TP and SP holds, the integrated
+// reading and the session duration — while an OFFLINE render measures the
+// bypassed audio like everything else, because it is part of the file. The
+// rolling readings follow what plays either way.
+static void testABypassAuditionStaysOutOfTheSessionFigures()
+{
+    struct R { float tp, sp, i, secs, sDuring; };
+    auto run = [] (bool offline, bool audition) -> R
+    {
+        AnabasisAudioProcessor proc;
+        proc.setNonRealtime (offline);
+        proc.prepareToPlay (48000.0, 512);
+        auto* ceil = proc.apvts.getParameter (pid::ceiling);
+        ceil->setValueNotifyingHost (ceil->getNormalisableRange().convertTo0to1 (-6.0f));
+        auto* bypass = proc.apvts.getParameter (pid::bypass);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        R r {};
+        long t = 0;
+        for (int b = 0; b < 480; ++b)                      // 5.1 s: 2 s, 1.1 s audition, 2 s
+        {
+            if (audition && b == 188) bypass->setValueNotifyingHost (1.0f);
+            if (audition && b == 290) bypass->setValueNotifyingHost (0.0f);
+            for (int n = 0; n < 512; ++n, ++t)
+            {
+                const float v = 0.95f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                  * 997.0f * (float) t / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+            if (b == 280) r.sDuring = proc.meterLufsM();   // 400 ms, all inside the audition
+        }
+        r.tp = proc.meterDbTpMax();
+        r.sp = proc.meterPeakMaxDb();
+        r.i = proc.meterLufsI();
+        r.secs = proc.meterSessionSeconds();
+        return r;
+    };
+    const auto plain = run (false, false), live = run (false, true), bounce = run (true, true);
+    std::printf ("       sessionScope: M during %.2f / %.2f, SP %.2f / %.2f / %.2f, TP %.2f / %.2f, I %.2f / %.2f / %.2f, secs %.3f / %.3f / %.3f\n",
+                 plain.sDuring, live.sDuring, plain.sp, live.sp, bounce.sp, plain.tp, live.tp,
+                 plain.i, live.i, bounce.i, plain.secs, live.secs, bounce.secs);
+    check (plain.sp <= -6.0f + 0.01f && plain.sDuring > -12.0f,
+           "sessionScope: (premise) the processed programme sits at the -6 dB ceiling");
+    check (live.sDuring > plain.sDuring + 3.0f,
+           "sessionScope: the rolling momentary reading follows the bypassed input while it plays");
+    check (live.sp <= -6.0f + 0.01f && live.tp <= plain.tp + 0.01f,
+           "sessionScope: a realtime bypass audition leaves the SP and TP holds at the processed programme's");
+    check (std::abs (live.i - plain.i) < 0.3f,
+           "sessionScope: …and the integrated reading at the processed programme's");
+    check (bounce.sp > -1.0f && bounce.i > plain.i + 1.0f,
+           "sessionScope: offline, the bypassed audio is part of the file and is measured");
+    const float auditionSecs = 102.0f * 512.0f / 48000.0f;
+    check (std::abs ((plain.secs - live.secs) - auditionSecs) < 0.03f,
+           "sessionScope: the session duration stops for the audition (to within its 10 ms ramps)");
+    check (std::abs (bounce.secs - plain.secs) < 1.0e-3f,
+           "sessionScope: …and runs through a bypass in an offline render");
+}
+
+// The session duration's life cycle (VIS-009): it counts measured audio, is 0
+// after a reset with no audio flowing, after a state load and after a
+// prepare, and is NOT reset by the things that do not reset the session
+// figures either — an A/B switch or a preset apply.
+static void testTheSessionDurationFollowsTheSessionFigures()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto feed = [&] (int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                buf.setSample (0, n, 0.1f);
+                buf.setSample (1, n, -0.1f);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    feed (375);                                        // 4.0 s
+    check (std::abs (proc.meterSessionSeconds() - 4.0f) < 1.0e-3f,
+           "sessionTime: counts the processed seconds (375 blocks of 512 at 48 kHz = 4.0 s)");
+    proc.switchToSlot (1);
+    feed (1);
+    proc.applyFactoryPreset (2);
+    feed (1);
+    check (proc.meterSessionSeconds() > 4.0f,
+           "sessionTime: an A/B switch and a preset apply do not reset it (nor the session figures)");
+    proc.requestMeterReset();
+    check (juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "sessionTime: a reset publishes 0 with no audio flowing");
+    feed (47);
+    check (std::abs (proc.meterSessionSeconds() - 47.0f * 512.0f / 48000.0f) < 1.0e-3f,
+           "sessionTime: …and counts from the reset");
+    juce::MemoryBlock state;
+    proc.getStateInformation (state);
+    proc.setStateInformation (state.getData(), (int) state.getSize());
+    check (juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "sessionTime: a state load publishes 0");
+    feed (10);
+    proc.prepareToPlay (48000.0, 512);
+    check (juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "sessionTime: a prepare publishes 0");
+
+    check (LoudnessMeterView::sessionTimeText (0.0f) == "0:00"
+             && LoudnessMeterView::sessionTimeText (59.99f) == "0:59"
+             && LoudnessMeterView::sessionTimeText (61.0f) == "1:01"
+             && LoudnessMeterView::sessionTimeText (3599.9f) == "59:59"
+             && LoudnessMeterView::sessionTimeText (3725.5f) == "1:02:05"
+             && LoudnessMeterView::sessionTimeText (-3.0f) == "0:00",
+           "sessionTime: whole seconds, never rounded up; m:ss, then h:mm:ss from an hour");
+}
+
+// UX-002: the STATISTICS panel's body is inert and RESET is the one control.
+// Until 0.2.14 any mouse-down anywhere on the panel — a right-click, the start
+// of a drag, a click on the empty glass under the rows — discarded the
+// session. Driven on a constructed view (no editor, no message loop): the
+// events are the ones a click delivers, and a JUCE Button fires on the
+// mouse-up of a press that began on it, synchronously.
+static void testTheStatisticsPanelResetsOnlyFromItsResetControl()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto feed = [&] (float amp, int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    feed (0.5f, 600);                                   // 6.4 s: the session figures exist
+    const float tp0 = proc.meterDbTpMax(), i0 = proc.meterLufsI(), lra0 = proc.meterLra();
+    check (tp0 > -10.0f && i0 > -20.0f, "statsReset: (premise) the session holds are raised");
+
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    auto event = [&] (juce::Component& c, juce::Point<float> pos, juce::ModifierKeys mods, int clicks, bool dragged)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (source, pos, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c,
+                                 now, pos, now, clicks, dragged);
+    };
+    for (const auto size : { juce::Point<int> (292, 530), juce::Point<int> (300, 254) })
+    {
+        LoudnessMeterView view (proc);
+        view.setBounds (0, 0, size.x, size.y);
+        view.setVisible (true);                          // hit-testing skips an invisible component
+        const juce::String where = size.y > 300 ? "Simple" : "Advanced";
+
+        auto* reset = findButtonByText (view, "RESET");
+        check (reset != nullptr && reset == &view.resetControl(),
+               ("statsReset: (" + where + ") the panel carries a RESET button").toRawUTF8());
+        if (reset == nullptr)
+            return;
+        check (reset->getBottom() <= 28 && reset->getRight() <= size.x - 12 && reset->getY() >= 0,
+               ("statsReset: (" + where + ") RESET sits on the header line, above the first row").toRawUTF8());
+        check (reset->getTitle() == "Reset statistics" && reset->getWantsKeyboardFocus(),
+               ("statsReset: (" + where + ") RESET is named for assistive tech and focusable").toRawUTF8());
+        check (view.getComponentAt (reset->getBounds().getCentre()) == reset,
+               ("statsReset: (" + where + ") a click on RESET reaches RESET, not the panel").toRawUTF8());
+
+        // The body: a row point and the empty glass below the rows.
+        const juce::Point<int> body[] = { { 150, 60 }, { 150, size.y - 12 } };
+        const auto left  = juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier);
+        const auto right = juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier);
+        for (const auto pt : body)
+        {
+            check (view.getComponentAt (pt) == &view,
+                   ("statsReset: (" + where + ") the body is the panel itself, not a control").toRawUTF8());
+            const auto p = pt.toFloat();
+            view.mouseDown (event (view, p, left, 1, false));
+            view.mouseUp (event (view, p, {}, 1, false));
+            view.mouseDown (event (view, p, right, 1, false));
+            view.mouseUp (event (view, p, {}, 1, false));
+            view.mouseDown (event (view, p, left, 2, false));
+            view.mouseDoubleClick (event (view, p, left, 2, false));
+            view.mouseDown (event (view, p, left, 1, false));
+            view.mouseDrag (event (view, p + juce::Point<float> (0.0f, 30.0f), left, 1, true));
+            view.mouseUp (event (view, p + juce::Point<float> (0.0f, 30.0f), {}, 1, true));
+        }
+        feed (0.5f, 2);                                  // a block top would consume a pending reset
+        check (proc.meterDbTpMax() >= tp0 - 0.01f && proc.meterLufsI() > i0 - 0.5f
+                 && proc.meterLra() >= lra0 - 0.5f,
+               ("statsReset: (" + where + ") clicks, right-clicks, double-clicks and drags on the body reset nothing").toRawUTF8());
+    }
+
+    // The control does reset — pressed the way a pointer presses it. Drained
+    // first, as in testMeterResetClearsSessionHolds: the lookahead line still
+    // holds ~10 ms of the loud tone, which is programme and would re-raise the
+    // holds after the reset.
+    feed (0.005f, 8);
+    LoudnessMeterView view (proc);
+    view.setBounds (0, 0, 292, 530);
+    auto& reset = view.resetControl();
+    const auto centre = reset.getLocalBounds().getCentre().toFloat();
+    auto& asComponent = static_cast<juce::Component&> (reset);   // Button's overrides are protected
+    asComponent.mouseDown (event (reset, centre, juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier), 1, false));
+    asComponent.mouseUp (event (reset, centre, {}, 1, false));
+    check (proc.meterDbTpMax() < -100.0f && juce::exactlyEqual (proc.meterLufsI(), anabasis::LoudnessMeter::kSilentLufs)
+             && juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "statsReset: pressing RESET clears the holds, the integrated reading and the session duration");
+    feed (0.005f, 400);
+    check (proc.meterDbTpMax() < -40.0f,
+           "statsReset: …and the session then describes only what followed");
+}
+
 int main (int argc, char** argv)
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -12433,6 +12654,9 @@ int main (int argc, char** argv)
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();
         testMeterResetClearsSessionHolds();
+        testABypassAuditionStaysOutOfTheSessionFigures();
+        testTheSessionDurationFollowsTheSessionFigures();
+        testTheStatisticsPanelResetsOnlyFromItsResetControl();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
         testTheTickAppliesAPendingModeSwitchAndTheComboHoverFlag();

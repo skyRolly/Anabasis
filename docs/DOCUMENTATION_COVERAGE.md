@@ -458,6 +458,30 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-27, 0.2.14) — STATISTICS: RESET, the bypass audition, the session length
+(ADR-0020 amendment 4).** Code: `LoudnessMeter::setSessionPaused` (the session half pauses; resume
+re-applies the straddler watermark); the engine's per-frame `sessionOpen` gate feeding session TP/SP
+maxima and a measured-sample count (`lastSessionTpMax`/`lastSessionPeak`/`sessionSeconds`); the
+wrapper's holds read them and publish `pubSessionSecs`; `LoudnessMeterView` loses its whole-panel
+`mouseDown`, gains a RESET `TextButton` and the header's `m:ss`; the editor eases RESET's hover.
+Rows engaged: **Metering** — ADR-0020 amendment 4 (on the owner's direction, ⊕ for review) and its
+ADR_INDEX status cell and registry row (the registry had never listed ADR-0020's three 2026-08-07
+self-amendments — drift, corrected), `USER_MANUAL.md` §3.4 (RESET, what is and is not reset — the
+DOC-002 blank-until-audio sentence — what the session covers, host-dependent behaviour kept
+separate) and §8 (the podcast step). **Threading** — `THREAD_MODEL.md`'s Meters → GUI row (eleven
+scalars, the session accessors, RESET as the message-thread writer) and `THREADING_POLICY.md`'s
+meter row: one more scalar on the existing path and clear list, the precedent of ADR-0020's own
+five — no new path, no new ordering. **Brand/UI** — `BRAND_CONSISTENCY_CHECKLIST.md` records the
+deliberate deviation from Anamorph's click-a-readout reset. **Design** — DESIGN §1.2's monitoring
+diagram gets a dated reconciliation note (the bypass crossfade runs in a render; the session figures
+alone skip a realtime audition). **Realtime** — no allocation added (plain members, fixed at
+`prepare`), so `REALTIME_SAFETY_AUDIT.md`'s allocation table needs no row; the per-frame work is one
+compare and, while measured, two `jmax` and an increment. **New/changed test** — four tests (two
+suites) and one hardened: the extreme-level route through the bypassed histogram now runs offline
+with a live-premise, since a realtime-bypassed session would have made its integrated check vacuous.
+Mutation table in the worklog; one equivalent mutant recorded (the child-click flag). The DSP-policy
+row (`DSP_ALGORITHMS.md`) is still planned.
+
 **Addendum (2026-09-27, 0.2.14) — MATCH on the processed leg (ADR-0044).** Code: stage E's §2.7
 gain moves from after the bypass crossfade onto `wetLeg`, before it; two engine comments corrected
 (the member comment still said "average measured GR" and "POST-mix"; the GR-tap comment stated the
